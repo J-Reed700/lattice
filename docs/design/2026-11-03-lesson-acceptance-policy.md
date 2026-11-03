@@ -1,0 +1,327 @@
+# Lesson acceptance: one policy, read by every stage
+
+Date: 2026-11-03. Status: design; nothing built. Code read at `lesson/kinds-and-shape` `5cb727a3`. Evidence: the removals of job 1 of lesson `9ad43b26` on `/models/Qwen3.8-27B-Q5_K_S.gguf` (the copy of its database taken when it failed at publication, read-only). Supersedes the mechanism of the claim classes design (2026-11-01) §3.1–§3.3 and §3.11's call count, and keeps its measured judges, prompts and intent.
+
+## 0. The finding in one paragraph
+
+The claim classes design decided, per class of statement, which check runs, what passes and what happens on failure: one table (§3.1). The code holds that table nowhere as one thing. Each stage keeps the column it needs, in its own words: the classifier the class, `class_checks.rs` the routing and the falsity veto, `bridge.rs` the pass rule of a cited sentence, `ClaimLedgerEntry::may_repair` and `ClaimLedger::cuts_next` the failure path, `repair/confine.rs` what a repair may change, `call_plan.rs` a hand copy of every path's cost, `sections.rs` and the writer's rules the lesson's shape. Where two columns meet they disagree, and the pipeline either goes round or deletes true statements (§1). Another patch at another seam leaves the next seam. The fix is to make the table a thing: **each class's check is one finite graph of steps, the graphs are the policy, every stage asks the policy, and what each stage used to copy is derived from the graphs**: the next step, what a repair is asked to achieve, the call ceiling, a statement's end state, and the proof that the loop ends.
+
+## 1. Split brain, located
+
+Every seam where two stages judge the same unit by different rules or with different context, read at `5cb727a3` (paths under `content_verification/` unless rooted):
+
+| # | One stage says | Another says | Effect | Answer |
+|---|---|---|---|---|
+| 1 | a cited sentence is Sourced by the writer, never lightened (`Class::prevails`, core `claim_review.rs:173`; `class_checks.rs:93`) | pass A fails a statement with no stated part (core `bridge.rs:102`, pinned by `nothing_stated_is_nothing_supported_whatever_is_common`) | a true all-common sentence is researched, rewritten, cut | §2.1 |
+| 2 | Common passes on three unanimous closed-book samples (core `classes.rs:147`) | a common part beside a stated one passes on one part-wise reading (core `bridge.rs:98`) | the bar for "common" depends on whether the writer cited the sentence | §2.1, §2.3 |
+| 3 | the knowledge judge sees `Statement: …` alone (core `classes.rs:240`) | the consistency judge saw the passages and passed it (`class_checks.rs:255`) | a closed-book majority overrules a reading of the sources | §2.2 |
+| 4 | a vetoed Reasoning statement is saved only if the strict judge finds it stated outright (`class_checks.rs:267`, `stated_by`) | an explanation goes beyond its passages by definition (core `classes.rs:14`) | the overrule never fires for the class it exists for | §2.3 `r.ground` |
+| 5 | a Common statement most samples call false fails at once (`class_checks.rs:302`), alone on its sentence it is cut without a rewrite (`claim_ledger.rs:565`) | a Reasoning one gets its passages read first | which class the model picked decides whether the sources are asked | §2.3 `c.ground` |
+| 6 | a rewritten sentence keeps its saved statement (`inventory/revisions/locations.rs:64`, pinned by `relocation_never_changes_an_assertion_even_if_it_is_now_false`; prompt `inventory/revisions.rs:270`) and receipts are reused by statement across quotes (`claim_reuse.rs:56`, `mod.rs:283`) | the repair changed the assertion on purpose | the re-check judges the old words, or copies the old verdict | §2.7 |
+| 7 | the repair prompt promises that changes elsewhere are discarded (`repair/confine.rs:15`) | confinement refuses the whole section on one mixed hunk (`confine.rs:255`, `:276`) and every target in the group is charged (`repair.rs:575`) | one stray edit sends a section's every target to the cut | §2.6 |
+| 8 | a check judges a claim (`inventory.rs:362`) | the cut removes every sentence the claim's quote touches, at every occurrence (`repair/cut.rs:44`), and every claim on them ends Removed (`cut.rs:209`, core `ledger.rs:539`) | true statements leave with a false neighbour | §2.6 (cut) |
+| 9 | the ledger does not re-judge a verified claim on reselected evidence (core `rules.rs:109`) | the report re-judges every claim each pass and `publishable()` reads the latest (`passes.rs:147`, `resolution.rs:20`) | two verdicts per claim; `Reconcile` patches one case (`claim_ledger.rs:428`) | §2.9 |
+| 10 | the citation repair moves the claim's citation | with no entry of its own it overwrites the section's quote (`repair/citation.rs:263`), the evidence of the section's other claims (`citations.rs:102`) | a repair for one claim changes what others are judged on | §2.6 (recite) |
+| 11 | `call_plan.rs` restates every path's cost (`:14`, `:18`, `released`) | the paths live in `class_checks`, `claim_ledger`, `repair` | the ceiling and the calls drift; it is only logged when exceeded (`lesson_progress.rs:118`) | §2.4 |
+| 12 | "specific" per the classifier (`classify.rs:24`), the rule layer (`:150`), the bridge (core `bridge.rs:20`), the consistency (core `classes.rs:16`) and knowledge (`:26`) prompts; the bridge's guard ignores the givens the rule layer honours (`evidence_checks/bridge.rs:69`, `Givens::NONE`) | — | a part is a specific or not depending on who asks | §2.6 (guard), §6 (prompts) |
+| 13 | the writer is told to add no explanation the excerpts do not give (`generation.rs:159`) and to explain why it works (`generation/lesson.rs:166`); uncited specifics are advisory to it (`lesson_rules.rs:5`) | the checker classes explanations Reasoning and removes uncited specifics | the writer cannot know what will pass | §6 |
+| 14 | the repair history forbids reintroducing every non-publishable finding, unjudged ones and ones never sent for repair included (`repair_loop.rs:450`) | only statements that failed and were repaired are known false | the rewrite avoids true statements | §2.6 (rewrite) |
+| 15 | the design gives every lighter class the falsity veto (classes design §3.1) | a model-Internal statement gets no check (`class_checks.rs:207`) | a false statement the model calls a scenario is never read | §3 |
+| 16 | the ledger ends a claim that no re-extraction continues `Superseded { None, Machine }`, replayed as Removed (`claim_ledger/observe.rs:380-423`, core `ledger.rs:539`) | the draft still holds its sentence; nothing compares the two | a sentence stays in the lesson with no live claim: unchecked text, recorded as removed | §2.9 |
+
+Outside the lesson's statements and left to their own designs: the teaching review's citation rules beside the claims' (`teaching.rs:441`), the Verifier skipping `Consistent` claims and disputing on an unanswered check (`audit/ledger.rs:54`, core `replay.rs:136`), and the outline repair still failing a supported claim on the gate (`planning/outline_repair/evidence.rs:74`).
+
+What the 27B's job 1 did with it (lesson `9ad43b26`: 16 claims removed, 6 with a failing verdict of their own; 23 with the retry that followed):
+
+- **A citation's fault taken as the sentence's.** A sentence the writer cited is Sourced by the writer's authority, which nothing below it can lighten (`Class::prevails`). Its check is the part-wise judge, whose pass rule is "every part stated or common, *and one stated*" (`BridgeOutcome::decision`, core `bridge.rs:98`). A cited sentence whose every part is standard knowledge therefore fails as unsupported ("a standard concept in machine learning … No passage states any part of it"), research finds nothing for common knowledge, and the sentence is rewritten and cut. "One stated" asks whether the citation is honest; the pipeline answers a question about the citation by deleting the sentence.
+- **Two bars for "common".** A part the part-wise judge calls common passes on that one reading beside a stated part. A Common statement passes only when three closed-book samples agree (`KnowledgeOutcome::is_common`). The same words meet a different bar depending on whether the writer happened to cite their sentence.
+- **Sources outrank the model, for one class, with the wrong judge.** A Reasoning statement a majority of closed-book samples call false is read against its section's passages before it fails, but by the strict judge, "stated outright" (`class_checks.rs:267`, `stated_by`), which an explanation never is. A Common statement gets no reading at all: a majority `false` fails it at once (`class_checks.rs:302`) and, alone on its sentence, it is cut without a rewrite (`ClaimLedger::cuts_next`). Job 1 lost two true statements about an acronym its own sources define, one Reasoning and one Common by the model classifier's choice, to a closed-book judge that did not know the term.
+- **The statement checked is not the sentence written.** After a rewrite ("must be routed" → "you would route") the section's revision kept the saved statement, so the re-check judged the old words and repeated the old verdict.
+- **A repair refused for a change the policy would accept.** Four claims in two requests were refused at their first attempt because a passing neighbour sat one character away in the same hunk (`confine.rs:255`); each was charged (`RepairOutcome::Rejected`), so its next attempt was the cut in code, and none was repaired. The teaching review's repair hit the same refusal three times.
+- **Ten removals with no failing verdict, all through one funnel** (#16): a claim no re-extraction continued was ended Removed whether or not its sentence stood. One shared a sentence with a failed claim whose rewrite left neither continued. Four went with sections marked to go, three of them in a block that fell under two teaching sentences because its three cited all-common and closed-book-vetoed statements had been cut (the first and third items above, compounding). Five went when a later preparation revised sections against the saved inventory of the section that used to sit at their index after an excision renumbered the lesson (that trigger is fixed, `8bcf1080`; the funnel is not): four of those sentences are still in the final draft with no live claim on them.
+- **The ceiling is a copy.** `call_plan.rs` restates each path's cost by hand (`SOURCED_FOLLOW_UP = 4`, `REASONING_FOLLOW_UP = 3 + SAMPLES`, `released`); a change to a path that misses the copy makes the panel's "at most T" wrong, which the acceptance run fails on.
+
+## 2. The design
+
+Six concerns, each behind its own seam, each free to change without the others:
+
+| Concern | Question it answers | Pattern | Where |
+|---|---|---|---|
+| Policy | for a statement of this class, after these outcomes, what next; when is it done | Strategy (one graph per class; the policy is the set) | `lattice-core` `domain::learning::acceptance` |
+| Readers | what does this judge, on this evidence, make of the statement | Adapter (each judge to one outcome vocabulary) | `lattice-core` `claim_verification` (interpretation), desktop (calls) |
+| Remedies | how the draft changes: cite, uncite, research, rewrite, cut | Adapter (each existing mechanism to one step) | desktop `content_verification` |
+| Round | in what order and batches steps run; sync points; when the lesson settles | Template Method | desktop `content_verification::round` |
+| Shape | what a lesson must keep to be a lesson | Strategy | `lattice-core` (rule), read by writer, cut, save, settle |
+| Ledger | what happened | (record) | `claim_review`, unchanged in kind |
+
+### 2.1 Two questions, not one
+
+A cited statement raises two questions, and they have different remedies:
+
+- **Standing**: may the lesson say this? Its parts are stated by evidence, standard knowledge, or explanation consistent with the sources; nothing contradicts it; it asserts no specific that nothing states. Remedies: research, a rewrite, a cut.
+- **Attribution**: is its citation honest? A cited passage states at least one of its parts (AIS, Rashkin et al. 2023: attribution is a relation between a statement and a source, "according to P, s"). Remedies: move the citation to the passage that states it, or drop it. **A citation's fault never rewrites or removes a sentence.**
+
+"One stated" stays, as the attribution test of a cited statement and as the meaning of "grounded" (§2.2). A cited statement whose parts are all common is a statement with a dishonest citation: the citation goes and the statement meets the bar every statement that rests on no passage meets, the knowledge judge's (§2.3, Sourced, `AllCommon`).
+
+### 2.2 Evidence has a rank
+
+A reading is grounded in one of three ways, weakest first: closed-book (the model alone: the knowledge judge), read (a judge that read the passages and named none for the point: "consistent", "common"), named (a passage, an example's run, or the user's evidence, named for a part). A negative finding is overruled only by a positive one of a stronger rank, and a named contradiction is overruled by nothing the machine has. In the graphs this is topology, not a rule each stage applies: **every edge on which a closed-book reading fails a statement leads to a part-wise reading of its passages before any rewrite or cut**, and a part-wise reading that grounds the statement (every part stated or common, one stated) ends it passed. Retrieval outranks parametric memory wherever retrieval has something (Mallen et al., ACL 2023); the closed-book judge is cheap and good on standard knowledge, so it runs first and the passages are read only when it objects (a cascade in the sense of FrugalGPT, Chen et al. 2023).
+
+### 2.3 Each class's check is a graph (Strategy)
+
+A graph is nodes; a node is one step and its cost in model calls; its edges map each outcome of the step to the next node, to another class's entry (a change of class the evidence makes), or to an end. Steps:
+
+- `Read(Parts)`: the part-wise judge (`BRIDGE_SYSTEM`) on the passages the statement's sentence cites, or its section's when it cites none. `Read(Page)`: the strict judge on the course's page for it (`page_one`). `Read(Consistency)`: the consistency judge on the section's passages. `Read(Knowledge)`: the knowledge judge's three closed-book samples, passing on unanimity. `Read(Veto)`: the same samples, failing only on a majority `false`.
+- `Research` (once in a statement's life, at most two pages), `Recite` (its citation moves to the passage found), `Uncite` (its citation goes), `Rewrite(goal)`, `Cut`.
+
+Outcomes of a reading, interpreted once per reading in `lattice-core` (§2.6): `Stands`, `StandsElsewhere` (on a passage it does not cite), `AllCommon` (the part-wise judge found every part common, none stated, guarded by the specifics test), `Unproven` (a specific nothing states; nothing supports it), `Refuted` (a passage, or a majority of samples, says otherwise), `NeedsSource` (Common: a `needs_source` or a lone `false`; Reasoning: an unfounded specific), `Unjudged`. Outcomes of a remedy: `Done`, `Saved`/`FoundNothing` (research), `Rewritten`/`NotApplied` (rewrite), `Cut`/`CannotCut`.
+
+`Unjudged` is no edge of any graph: a reading whose answer cannot be read (after the judge's own second asking) leaves the statement where it is, to be read once more; a second unanswered reading of the same statement, at that node or any later one, stops the lesson with the honest reason the classes design gives (§3.2 there). One re-ask per statement in its life, not one per reading: the code today allows one per reading (`ClaimLedgerEntry::unjudged` counts a run), which the ceiling's `U` never counted. A rewrite the confinement could not apply is asked once more, told why, by its own node (`*.again`), and then takes the next rung.
+
+The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class's graph, the class recorded `by: Evidence`):
+
+**Sourced** — entered by the writer's citation, the rule layer, the model, or evidence.
+
+| Node | Step | Calls | Outcomes |
+|---|---|---|---|
+| `s.read` | `Read(Parts)` on the passages of the cited sentence it restates, else its section's quote (every block carries one); `Read(Page)` only when neither gives a source passage | 1 | Stands → end Resolved · StandsElsewhere → `s.recite` · AllCommon → `s.uncite` the first time the statement changes class, `s.research` once it has · Unproven, Refuted → `s.research` |
+| `s.uncite` | `Uncite` | 0 | Done ⇒ Common |
+| `s.research` | `Research` | 0 | Saved, FoundNothing → `s.reread` |
+| `s.reread` | `Read(Page)` with what research saved | 1 | Stands → end Resolved · StandsElsewhere → `s.recite` · Unproven, Refuted → `s.rewrite` |
+| `s.recite` | `Recite` | 0 | Done → `s.citeread` |
+| `s.citeread` | `Read(Parts)` on the new citation | 1 | Stands → end Resolved · otherwise → `s.rewrite` |
+| `s.rewrite` | `Rewrite(what the passage states, or the point without the specific)` | 1 | Rewritten → `s.final` (the successor) · NotApplied → `s.rewrite.again` |
+| `s.rewrite.again` | the same, told why the first was not applied | 1 | Rewritten → `s.final` · NotApplied → `s.cut` |
+| `s.final` | `Read(Parts)`, or `Read(Page)` uncited | 1 | Stands → end Resolved · otherwise → `s.cut` |
+| `s.cut` | `Cut` | 0 | Cut → end Removed · CannotCut → end Removed, its section going (§3.10 of the classes design) |
+
+**Reasoning** — entered by the model.
+
+| Node | Step | Calls | Outcomes |
+|---|---|---|---|
+| `r.read` | `Read(Consistency)` | 1 | Stands → `r.veto` · Refuted → `r.rewrite` · NeedsSource ⇒ Sourced the first time the statement changes class, → `r.rewrite` once it has |
+| `r.veto` | `Read(Veto)` | 3 | Stands → end Consistent · Refuted → `r.ground` |
+| `r.ground` | `Read(Parts)` on its section's passages | 1 | Stands → end Consistent · otherwise → `r.rewrite` |
+| `r.rewrite` | `Rewrite(agree with the passages; correct what the reason names)` | 1 | Rewritten → `r.final` · NotApplied → `r.rewrite.again` |
+| `r.rewrite.again` | the same, told why | 1 | Rewritten → `r.final` · NotApplied → `r.cut` |
+| `r.final` | `Read(Consistency)` | 1 | Stands → `r.reveto` · otherwise → `r.cut` |
+| `r.reveto` | `Read(Veto)` | 3 | Stands → end Consistent · Refuted → `r.reground` |
+| `r.reground` | `Read(Parts)` on its section's passages | 1 | Stands → end Consistent · otherwise → `r.cut` |
+| `r.cut` | `Cut` | 0 | as `s.cut` |
+
+**Common** — entered by the model, or by evidence from Sourced (`AllCommon`, its citation dropped).
+
+| Node | Step | Calls | Outcomes |
+|---|---|---|---|
+| `c.read` | `Read(Knowledge)` | 3 | Stands → end GeneralKnowledge · NeedsSource ⇒ Sourced the first time the statement changes class, → `c.rewrite` once it has · Refuted → `c.ground` |
+| `c.ground` | `Read(Parts)` on its section's passages | 1 | Stands → end GeneralKnowledge, the passage on its check · otherwise → `c.rewrite` |
+| `c.rewrite` | `Rewrite(state it as the field has it, per the reason)` | 1 | Rewritten → `c.final` · NotApplied → `c.rewrite.again` |
+| `c.rewrite.again` | the same, told why | 1 | Rewritten → `c.final` · NotApplied → `c.cut` |
+| `c.final` | `Read(Knowledge)` | 3 | Stands → end GeneralKnowledge · Refuted → `c.reground` · NeedsSource → `c.cut` |
+| `c.reground` | `Read(Parts)` on its section's passages | 1 | Stands → end GeneralKnowledge · otherwise → `c.cut` |
+| `c.cut` | `Cut` | 0 | as `s.cut` |
+
+**Internal** — a statement the rule layer leaves out (a rubric or option field, "The sources…") never enters the ledger and asks nothing. One the model calls Internal meets the falsity veto (build step 10):
+
+| Node | Step | Calls | Outcomes |
+|---|---|---|---|
+| `i.veto` | `Read(Veto)` | 3 | Stands → end NotAClaim · Refuted → `i.ground` |
+| `i.ground` | `Read(Parts)` on its section's passages | 1 | Stands → end NotAClaim · otherwise → `i.rewrite` |
+| `i.rewrite` | `Rewrite(state it as the field has it, per the reason)` | 1 | Rewritten → `i.final` · NotApplied → `i.rewrite.again` |
+| `i.rewrite.again` | the same, told why | 1 | Rewritten → `i.final` · NotApplied → `i.cut` |
+| `i.final` | `Read(Veto)` | 3 | Stands → end NotAClaim · Refuted → `i.reground` |
+| `i.reground` | `Read(Parts)` on its section's passages | 1 | Stands → end NotAClaim · otherwise → `i.cut` |
+| `i.cut` | `Cut` | 0 | as `s.cut` |
+
+A `Cut` takes the statement out of its sentence: the sentence itself when no other live statement stands on it; otherwise one narrowing rewrite that keeps what the others say (their successors are read once from their class's post-rewrite node, the M reserve of §2.4), and the sentence only when that rewrite cannot be applied. A rewrite's successor continues at its parent's post-rewrite node (`s.final`, `r.final`, `c.final`); so does a statement whose sentence a neighbour's rewrite changed.
+
+What changed from the code, deliberately (§3): Sourced's `AllCommon` edge (was: fails as unsupported); the part-wise judge in place of the strict one where the passages overrule a veto (`r.ground`, `r.reground`; was `stated_by`); Common's `c.ground` and its one rewrite (was: failed at once and, alone on its sentence, cut); the rewrite's retry twin and per-target confinement (was: one mixed hunk refused the section and charged every target); the narrowing cut (was: the cut took every statement on the sentence, and every sentence the quote touched). Everything else is the code's present path, written down once.
+
+### 2.4 What the graphs decide, and what is derived from them
+
+- **The next step** of a statement is the step of the node it is at. No stage decides it.
+- **What a rewrite is asked** is the `Rewrite` step's goal, with the reading that failed the statement: the repair prompt says exactly what the next reading will test.
+- **The call ceiling** is, per statement, the longest path in calls from where it is to an end, plus the costliest reading still ahead of it while its one re-ask is unused (U), plus three reserves the graphs cannot see: the sorting calls, one flow repair per section that can take a cut (K), and, for a statement that shares its sentence, the longest path of its class from its post-rewrite node and the narrowing call (M). `call_plan.rs`'s constants go. From the graphs of §2.3, at entry: Sourced 11 (its longest path runs through `AllCommon` into Common) + 3, Reasoning 12 + 3, Common 10 + 3, model-Internal 10 + 3; from the post-rewrite node: Sourced 1, Reasoning 5, Common 4, the values `call_plan.rs` has by hand today. Because a node's longest path is at least its own cost plus the longest path of any successor, the ceiling cannot rise as statements move; a test holds every edge of every graph to that.
+- **A statement's end state** is the end it reaches: Resolved (`ResolvedByEvidence`), Consistent, GeneralKnowledge, Removed by the machine.
+- **That the loop ends**: the graphs are acyclic (a class changes by evidence at most once: a graph entered by evidence has no edge that changes class), each statement's path is finite, a rewrite's successor continues its parent's path (it does not start over), and a round in which no statement moved is a fault that stops the lesson with its reason (§2.7), not a count that runs out.
+
+### 2.5 Invariants, held by tests on every graph of every policy
+
+1. Acyclic, counting class changes; a graph entered by evidence changes class no further.
+2. Every path to end Removed passes a `Rewrite` (no statement is cut without one rewrite).
+3. Every `Refuted` edge out of `Read(Knowledge)` or `Read(Veto)` reaches a `Read(Parts)` before any `Rewrite` or `Cut`.
+4. `StandsElsewhere` and `AllCommon` edges lead to `Recite` or `Uncite` first, never to `Rewrite` or `Cut`.
+5. No node has an `Unjudged` edge (the walk keeps the statement in place once, then stops the lesson), and every `Rewrite` node's `NotApplied` edge leads to its `.again` node, whose own leads to the cut.
+6. A class's ends are its own: Sourced Resolved or Removed, Reasoning Consistent or Removed, Common GeneralKnowledge or Removed (the acceptance run's pairings, classes design §3.11), Internal NotAClaim or Removed.
+7. For every edge `n → m` and either state of the re-ask: `cost(n) + most(m) ≤ most(n)`, and using the re-ask never raises `most` (the ceiling never rises).
+
+A policy is a set of graphs; another policy (a stricter one for answer keys, one with the Verifier's reading before publication) is another set, and the same tests hold it.
+
+### 2.6 Readers and remedies (Adapter)
+
+A reader turns one judge's reply into the outcome vocabulary. The interpretation is pure and lives beside the judge in `claim_verification`; the call stays where it is.
+
+| Reading | Judge (unchanged) | Interpretation |
+|---|---|---|
+| `Parts` | `ClaimChecker::check_bridge`, `BridgeOutcome::guarded` | any part contradicted → Refuted; any part specific-missing → Unproven; every part common, none stated → AllCommon; stated parts all on uncited passages → StandsElsewhere; otherwise Stands. Replaces `BridgeOutcome::decision`. |
+| `Page` | strict judge (`ClaimVerdict`) | Supported → Stands or StandsElsewhere by the passage's source; Unsupported, NoSource → Unproven; Contradicted → Refuted; Unverified → Unjudged |
+| `Consistency` | `check_consistency` | Consistent → Stands; Contradicted → Refuted; UnfoundedSpecific → NeedsSource |
+| `Knowledge` | `check_knowledge` | unanimous `true_common` → Stands; majority `false` → Refuted; otherwise (a `needs_source`, a lone `false`) → NeedsSource. Replaces the routing in `class_checks::common`. |
+| `Veto` | `check_knowledge` | majority `false` → Refuted; otherwise Stands (`needs_source` never fails a Reasoning statement, classes design §4.5). |
+
+The part-wise reading's specifics guard asks the rule layer's own test with the unit's givens and its hypothetical-case exemption (`classify::rule_class`'s inputs), not `Givens::NONE`: one answer to "is this a specific" in code (§1 #12).
+
+A remedy is one existing mechanism behind one step:
+
+- `Research`: `research::expand`, with the per-statement page count.
+- `Recite`: `repair::cite_where_supported`, writing the sentence's own `citations` entry; it never overwrites the section's quote, which other statements are read against (§1 #10).
+- `Uncite`: removes the sentence's own `citations` entry (new, beside it); a sentence that carries none has nothing to remove.
+- `Rewrite`: `repair::candidate` for a section's targets, each told its goal and the reading that failed it; the history it may not reintroduce is the statements that failed a reading and were rewritten or cut, nothing unjudged (§1 #14). Confinement is per target: a hunk that touches a protected sentence is put back and only the targets in that hunk are `NotApplied`; the section's other targets keep their rewrites and nothing else is charged (§1 #7).
+- `Cut`: `repair/cut.rs`, on the claim's own located span, never every occurrence of its quote or every sentence a passage-wide quote touches (§1 #8), narrowing as §2.3 says when the sentence carries others.
+
+### 2.7 The round (Template Method)
+
+One function owns the order; a review supplies the steps. The preparation job is one review; a scripted review in the tests is another, which is what lets the loop's termination and its no-progress stop be tested without a model.
+
+```
+loop {
+    review.sync()                    // the user's actions since the last round
+    review.extract()                 // statements of new or changed sentences, from their current text alone
+    round = steps of every machine-owned statement, from the policy, grouped by step
+    if round is empty {
+        match review.settle(shape)   // flow repairs, sections that go, the shape's stop
+        { Again => continue, Done => return review.finish(policy.verdict(ledger, shape)) }
+    }
+    readings, then research, then recite/uncite, then rewrites by section, then cuts
+    if the ledger did not move: return review.finish(Stopped(no progress, with what was pending))
+}
+```
+
+`extract` carries the fix for the old words: a sentence a repair rewrote is extracted from its text alone, without the saved inventory's statements or the relocation that keeps them, and its claims keep their identity by `claim_review::identities` (same unit, overlapping span), never by a model's echo of the old statement; a receipt is reused only for the same statement on the same quote. Relocation stays what its test says it is, for a passage that moved without being rewritten.
+
+### 2.8 The lesson's shape (Strategy)
+
+One `ShapePolicy` answers, for a lesson: what the writer must produce (question kinds and counts, a first explanation), whether a cut may be taken (`admits_cut`), which sections go (too little to teach), and whether what is left can be published (a third of its sections, its first explanation, all its questions, every question of a kind it asks). The writer's rules, the cut, `validate_prepared`, `sections::settle` and the publication gate read it; `LessonQuestionKind::ALL` was its first piece.
+
+### 2.9 Where a statement is
+
+Its position is derived, not stored: the policy replays the statement's ledger events through its class's graph (`Classified` enters; `Checked` with its outcome, `Researched`, `CitationRepaired`, `CitationDropped`, `RepairAttempted` move along edges; a successor continues from its parent's post-rewrite node). The ledger keeps what happened; the policy says what it means. Two additions to the record: a check carries the reading and the outcome the policy read from it (`Check::reading`, `Check::outcome`, optional, so old rows still read), and `ClaimEvent::CitationDropped`. `ClassifiedBy` gains `Evidence`, above `Writer`. A replay that does not fit the graph is a fault of the pipeline and stops the lesson with its reason; it is never guessed past.
+
+The report's per-claim verdict is read from the same place: a finding is publishable when its claim's walk has reached a passing end, so the report and the ledger cannot disagree and `Reconcile` goes (§1 #9).
+
+**A claim ends Removed only when its sentence is gone from the draft**: cut, or in a section that went. A claim no re-extraction continues while its sentence stands is a fault of the extraction, not a removal: that sentence is extracted again from its text alone and the claim continues on what that finds. Publication holds the draft to the ledger the other way too: every sentence of a block body or answer explanation the rule layer does not leave out stands on a live claim at a passing end, or the lesson does not publish (§1 #16).
+
+## 3. What changes in behaviour, and what is measured first
+
+| Change | Why | Measured before it ships |
+|---|---|---|
+| A cited, all-common statement loses its citation and is checked as Common | §2.1 | the job-1 removals of this kind and the replay's bridge rows, on the 27B: each such statement passes the knowledge judge or fails it for a reason a reader accepts |
+| The passages overrule a veto by the part-wise judge, for Reasoning and Common | §2.2 | the 56 veto rows of `run1/veto.jsonl` and job 1's two vetoed statements about the acronym its sources define: the real catches (single pass/opposite of modular; fine-tuning) still fail, the two pass |
+| A Common statement gets one rewrite before a cut | invariant 2 | none: it adds a call, never a removal |
+| A refused hunk refuses only its own targets, and is asked once more, told why | §2.6 | none |
+| A cut takes the statement, not its neighbours: the claim's own span, narrowed when the sentence carries others | §2.3, §2.6 | the job-1 removals with no failing verdict of their own: each is kept, or goes for a reason of its own |
+| A rewritten sentence is extracted from its text alone | §2.7 | none |
+| One re-ask per statement in its life, where the code gives one per reading in a run | §2.3 | none; it can stop a lesson that today goes on, when one statement's answers twice cannot be read, each after the judge's own second asking. What it buys is a ceiling that holds (today's `U` undercounts) |
+| A statement the model calls Internal meets the falsity veto (as the classes design's §3.1 already says) | §1 #15 | the replay's 16 Internal rows: no scenario, rubric line or remark fails; cost 3 calls each, in the ceiling |
+
+The prompts of record are not touched by this design. One definition of "specific" and "common" across the three judge prompts, the writer's rule and `states_a_specific` (four wordings today) is the next design's, since each wording was measured.
+
+## 4. Interfaces
+
+The policy, pure (`lattice-core/src/domain/learning/acceptance.rs` and `acceptance/`):
+
+```rust
+pub trait AcceptancePolicy: Send + Sync {
+    /// Part of every receipt's and checkpoint's key: a change to any graph changes it.
+    fn version(&self) -> &str;
+    /// The graph of a class's check. A statement the rule layer leaves out never asks.
+    fn graph(&self, class: Class) -> &Graph;
+}
+
+pub enum Reading { Parts, Page, Consistency, Knowledge, Veto }
+pub enum Goal { WhatThePassageStates, AgreeWithThePassages, AsTheFieldHasIt, KeepTheOthers }
+pub enum Step { Read(Reading), Research, Recite, Uncite, Rewrite(Goal), Cut }
+pub enum Outcome {
+    Stands, StandsElsewhere, AllCommon, Unproven, Refuted, NeedsSource, Unjudged,
+    Done, Saved, FoundNothing, Rewritten, NotApplied, Cut, CannotCut,
+}
+pub enum End { Resolved, Consistent, GeneralKnowledge, NotAClaim, Removed { section_goes: bool } }
+pub enum Target {
+    Node(NodeId),
+    /// Another class's graph, at its entry: the statement changes class by evidence.
+    Enter(Class),
+}
+pub enum Next {
+    Go(Target),
+    /// `change` the first time the evidence moves the statement; `otherwise` once it
+    /// has changed class (no class changes twice).
+    FirstChange { change: Target, otherwise: NodeId },
+    End(End),
+}
+pub struct Node { pub name: &'static str, pub step: Step, pub calls: u32, /* edges: (Outcome, Next) */ }
+pub struct Graph { /* class, entry, nodes, after_rewrite */ }
+
+pub struct Position { pub class: Class, pub changed_class: bool, pub reasked: bool, pub node: NodeId }
+pub struct Taken { pub step: Step, pub outcome: Outcome }
+pub enum Walked { At(Position), Ended(End), Stopped, Diverged { at: Position, taken: Taken } }
+
+/// Where a statement that entered `class` is after `taken`, its steps in order.
+pub fn walk(policy: &dyn AcceptancePolicy, class: Class, taken: &[Taken]) -> Walked;
+/// The most calls a statement at `at` can still cost: its longest path to an end, and its
+/// re-ask on the costliest reading ahead while it is unused.
+pub fn most_calls(policy: &dyn AcceptancePolicy, at: Position) -> u32;
+/// The longest path from `class`'s post-rewrite node: what a neighbour's rewrite can cost.
+pub fn after_rewrite_calls(policy: &dyn AcceptancePolicy, class: Class) -> u32;
+/// Every invariant of §2.5 that `policy` breaks.
+pub fn violations(policy: &dyn AcceptancePolicy) -> Vec<Violation>;
+
+pub struct StandardPolicy; // the graphs of §2.3
+```
+
+The readers' interpretation, pure, beside each judge (`lattice-core/src/application/services/claim_verification/`): `BridgeOutcome::outcome(&self) -> Outcome` (after `guarded`), `KnowledgeOutcome::outcome(&self, Reading) -> Outcome` (`Knowledge` or `Veto`), `ConsistencyOutcome::outcome(&self) -> Outcome`, `page_outcome(ClaimVerdict, on_cited: bool) -> Outcome`.
+
+The round, in the desktop (`content_verification/round.rs`):
+
+```rust
+#[async_trait]
+pub(super) trait Review {
+    async fn sync(&mut self) -> Result<()>;
+    async fn extract(&mut self) -> Result<()>;
+    async fn read(&mut self, reading: Reading, claims: &[ClaimId]) -> Result<()>;
+    async fn research(&mut self, claims: &[ClaimId]) -> Result<()>;
+    async fn cite(&mut self, steps: &[(ClaimId, Step)]) -> Result<()>;
+    async fn rewrite(&mut self, section: usize, targets: &[(ClaimId, Goal)]) -> Result<()>;
+    async fn cut(&mut self, claims: &[ClaimId]) -> Result<()>;
+    async fn settle(&mut self, shape: &dyn ShapePolicy) -> Result<Settled>;
+    async fn finish(&mut self, verdict: LessonVerdict) -> Result<Finished>;
+    /// Each machine-owned claim's class and the steps it took, for the policy's walk.
+    fn walks(&self) -> Vec<(ClaimId, Class, Vec<Taken>)>;
+    /// Advances whenever the ledger records anything: the no-progress test.
+    fn revision(&self) -> Revision;
+}
+
+pub(super) async fn run(review: &mut dyn Review, policy: &dyn AcceptancePolicy, shape: &dyn ShapePolicy) -> Result<Finished>;
+```
+
+## 5. Build plan
+
+Each step is a builder's (`model: sonnet`), on branch `lesson/acceptance-policy`, tests first and seen failing where the step changes behaviour; each step's diff is read in full and its tests run in the build pool before the next starts.
+
+| Step | What | Where | Tests that come first |
+|---|---|---|---|
+| 1 | The policy: graph types, `StandardPolicy`, `walk`, `most_calls`, `violations` | core `domain/learning/acceptance*` | every invariant of §2.5 on `StandardPolicy`, and each one failing on a graph built to break it; the walk of every path of §2.3; the ceilings of §2.4 |
+| 2 | The readers' interpretation | core `claim_verification/{bridge,classes}.rs`, the strict judge | one table per reading: every part mix, every sample mix, every verdict |
+| 3 | The seams' tests at `5cb727a3`, through the loop's own harness: §1 #1, #5, #4, #6, #7, #8, #16 | desktop tests, worktree `acceptance-reds` | each fails on `5cb727a3` for the reason in §1 |
+| 4 | The ceiling from the graphs | `call_plan.rs` | the ceiling equals the graphs' longest paths plus reserves; it never rises over any scripted run |
+| 5 | The checks routed by the policy | `class_checks.rs`, `evidence_checks` | §1 #1, #4, #5 go green |
+| 6 | The next step decided by the policy | `claim_ledger::decide`, `may_repair`, `cuts_next`, `research_targets` | the loop's tests and step 3's |
+| 7 | Remedies: `Uncite`, per-target confinement and its retry, the narrowing cut on the claim's span, goals, recite on the sentence's own entry | `repair/*` | §1 #7, #8, #10 go green |
+| 8 | Fresh extraction of rewritten sentences; the report reads the policy; Removed only when the sentence is gone, and every standing sentence on a live claim at publication | `inventory/revisions*`, `claim_reuse.rs`, `claim_ledger/observe.rs`, `report.rs`, `resolution.rs` | §1 #6, #9, #16 go green |
+| 9 | The round (Template Method) with a scripted review | `repair_loop.rs` → `round.rs` | termination and the no-progress stop on the scripted review |
+| 10 | The veto for a model-Internal statement | the graph, `class_checks.rs`, the ledger's content rule | §1 #15 |
+| 11 | Measure §3 on the 27B, then the acceptance run | scratchpad replay; `acceptance_run.sh` | — |
+
+## 6. Not in this design
+
+- One wording of "specific" and "common" for every prompt (§3).
+- A user restoring a statement the machine removed (classes design §6).
