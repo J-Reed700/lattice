@@ -38,7 +38,9 @@ pub(in crate::features::learning) use fields::{field_pointer, field_text, locate
 pub(in crate::features::learning) use held::{
     held_for_review, held_lessons, needs_review, review_outcome, HeldForReview,
 };
-pub(in crate::features::learning) use located::{claim_quote, located, located_quote};
+pub(in crate::features::learning) use located::{
+    claim_quote, clip, located, located_quote, narrow,
+};
 
 /// The lesson checkpoint holding repairs awaiting the pass that decides them.
 const PENDING_KEY: &str = "claim-ledger-v1:pending";

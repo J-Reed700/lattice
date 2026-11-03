@@ -1,7 +1,10 @@
-//! Move quotation anchors through text edits without changing assertions.
-//! This is bookkeeping, never an approval: coverage and fidelity audit the
-//! complete revised section before any factual receipts can be reused.
+//! Move claim quotes through text edits without changing assertions: a quote
+//! follows what became of its sentence, and a claim whose sentence was cut
+//! leaves the inventory. This is bookkeeping, never an approval: coverage and
+//! fidelity audit the complete revised section before any factual receipts can
+//! be reused.
 use super::*;
+use lattice_core::shared::text::segmentation::{align, Alignment, Fate};
 
 fn fields(content: &Value) -> BTreeMap<String, String> {
     let input = inputs(std::slice::from_ref(content));
@@ -19,68 +22,65 @@ fn fields(content: &Value) -> BTreeMap<String, String> {
     fields
 }
 
-fn anchor(old: &str, new: &str, quote: &str) -> Option<String> {
-    let mut occurrences = old.match_indices(quote);
-    let (start, _) = occurrences.next()?;
-    if occurrences.next().is_some() {
-        return None;
+/// `claim` after the edit: its quote where its sentence is now, or `None` when
+/// the sentence was cut. The claim is left as it is when its quote is not in
+/// exactly one field of the old section, is in it twice, or still stands in
+/// its field.
+fn moved(
+    claim: &Claim,
+    (old, new): (&BTreeMap<String, String>, &BTreeMap<String, String>),
+    alignments: &mut BTreeMap<String, Alignment>,
+) -> Option<Claim> {
+    let stays = || Some(claim.clone());
+    if claim.quote.trim().is_empty() {
+        return stays();
     }
-    let start = old.get(..start)?.chars().count();
-    let end = start + quote.chars().count();
-    let old: Vec<_> = old.chars().collect();
-    let new: Vec<_> = new.chars().collect();
-    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-    let suffix = old
-        .iter()
-        .rev()
-        .zip(new.iter().rev())
-        .take(old.len().min(new.len()) - prefix)
-        .take_while(|(a, b)| a == b)
-        .count();
-    // Any boundary inside the changed interval expands to include the edit.
-    // Unicode character offsets keep the resulting quotation lossless.
-    let mapped_start = if start <= prefix {
-        start
-    } else if start >= old.len() - suffix {
-        new.len() - (old.len() - start)
-    } else {
-        prefix
+    // Require an unambiguous original field; never move to a different
+    // field (including an unendorsed assessment alternative).
+    let mut homes = old.iter().filter(|(_, text)| text.contains(&claim.quote));
+    let Some((path, was)) = homes.next() else {
+        return stays();
     };
-    let mapped_end = if end <= prefix {
-        end
-    } else if end >= old.len() - suffix {
-        new.len() - (old.len() - end)
-    } else {
-        new.len() - suffix
+    if homes.next().is_some() || was.match_indices(&claim.quote).nth(1).is_some() {
+        return stays();
+    }
+    // A field with no text left has no passages.
+    let now = new.get(path).map_or("", String::as_str);
+    if now.contains(&claim.quote) {
+        return stays();
+    }
+    // An older pass's quote may be its whole passage: the claim's sentence in
+    // it is what was kept, rewritten or cut.
+    let (quote, span) = claim_ledger::narrow(&claim.quote, None, &claim.statement, was);
+    let Some((start, end)) = span.or_else(|| was.find(&quote).map(|at| (at, at + quote.len())))
+    else {
+        return stays();
     };
-    let quote: String = new.get(mapped_start..mapped_end)?.iter().collect();
-    (!quote.trim().is_empty() && quote.chars().count() <= 1600).then_some(quote)
+    let alignment = alignments
+        .entry(path.clone())
+        .or_insert_with(|| align(was, now));
+    match alignment.fate(start..end) {
+        Fate::Removed => None,
+        Fate::Kept(span) | Fate::Rewritten(span) => match now.get(span) {
+            Some(text) if !text.trim().is_empty() => Some(Claim {
+                quote: claim_ledger::clip(text).to_owned(),
+                statement: claim.statement.clone(),
+            }),
+            _ => stays(),
+        },
+    }
 }
 
 pub(super) fn relocate(before: &Basis, current: &Value) -> UnitClaims {
-    let old = fields(&before.content);
-    let new = fields(current);
+    let (old, new) = (fields(&before.content), fields(current));
+    let mut alignments = BTreeMap::new();
     let mut inventory = before.inventory.clone();
-    for claim in &mut inventory.claims {
-        // Require an unambiguous original field; never move to a different
-        // field (including an unendorsed assessment alternative).
-        let mut locations = old.iter().filter(|(_, text)| text.contains(&claim.quote));
-        let Some((path, text)) = locations.next() else {
-            continue;
-        };
-        if locations.next().is_some() {
-            continue;
-        }
-        let Some(current) = new.get(path) else {
-            continue;
-        };
-        if current.contains(&claim.quote) {
-            continue;
-        }
-        if let Some(quote) = anchor(text, current, &claim.quote) {
-            claim.quote = quote;
-        }
-    }
+    inventory.claims = before
+        .inventory
+        .claims
+        .iter()
+        .filter_map(|claim| moved(claim, (&old, &new), &mut alignments))
+        .collect();
     inventory
 }
 
@@ -129,23 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn offsets_survive_unicode_insertions_and_changed_chunk_boundaries() {
-        let old = format!(
-            "{}\nTarget: café is a word.\n{}",
-            "🧪 ".repeat(300),
-            "Later. ".repeat(200)
-        );
-        let quote = "Target: café is a word.\nLater. Later. ";
-        let new = old
-            .replacen("🧪", "A longer prefix 🧬", 1)
-            .replace("café", "résumé");
-        let relocated = anchor(&old, &new, quote).unwrap();
-        assert!(new.contains(&relocated));
-        assert!(relocated.contains("résumé"));
-    }
-
-    #[test]
-    fn relocation_never_changes_or_drops_assertions_even_if_they_are_now_false() {
+    fn relocation_never_changes_an_assertion_even_if_it_is_now_false() {
         let before = Basis {
             content: json!({"body":"Sample A has two units."}),
             inventory: UnitClaims {
@@ -158,15 +142,13 @@ mod tests {
             },
         };
         let result = relocate(&before, &json!({"body":"Sample A has four units."}));
+        // The unchanged assertion must fail the independent fidelity check;
+        // the location mapper cannot silently correct or approve it.
         assert_eq!(
             result.claims[0].statement,
             before.inventory.claims[0].statement
         );
         assert_eq!(result.claims[0].quote, "Sample A has four units.");
-        // The unchanged assertion must fail the independent fidelity check;
-        // the location mapper cannot silently correct or approve it.
-        assert!(anchor("Repeated. Repeated.", "Changed.", "Repeated.").is_none());
-        assert!(anchor("Original.", &"A".repeat(1601), "Original.").is_none());
     }
 
     /// A section whose body is `body`, with a claim for each `(quote,
