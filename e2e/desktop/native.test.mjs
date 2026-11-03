@@ -194,9 +194,12 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share');
   assert.ok(dataRoot, 'Cannot locate the test application data directory');
   const dataDir = path.join(dataRoot, manifest.identifier);
-  await rename(dataDir, `${dataDir}.previous-${Date.now()}`).catch(error => {
-    if (error.code !== 'ENOENT') throw error;
-  });
+  const previous = `previous-${Date.now()}`;
+  for (const folder of [dataDir, scratchHome]) {
+    await rename(folder, `${folder}.${previous}`).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
   const step = async (name, action) => {
     let failure;
     await t.test(name, async () => {

@@ -78,6 +78,7 @@ pub fn build_page_snapshots(
     jobs: Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
     events: Arc<crate::features::web::snapshots::AppEvents>,
     background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
+    sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,
 ) -> Result<Arc<crate::features::web::snapshots::WebPageSnapshotService>> {
     use crate::features::web::snapshots::{store::SnapshotStore, WebPageSnapshotService};
     let capture = crate::features::web::services::snapshot::build_page_capture()?;
@@ -88,6 +89,7 @@ pub fn build_page_snapshots(
         jobs,
         events,
         background,
+        sweep_gate,
     )))
 }
 
@@ -97,6 +99,7 @@ pub fn build_chat_images(
     db_pool: SqlitePool,
     web_service: Arc<crate::features::web::services::web::WebService>,
     background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
+    sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,
 ) -> Result<Arc<crate::features::web::images::ChatImageService>> {
     use crate::features::web::images::{store::ImageStore, ChatImageService};
     Ok(Arc::new(ChatImageService::new(
@@ -104,6 +107,7 @@ pub fn build_chat_images(
         ImageStore::default_root()?,
         web_service,
         background,
+        sweep_gate,
     )))
 }
 

@@ -65,6 +65,8 @@ async fn fixture() -> Fixture {
     let capture = Arc::new(MockPageCapture::new());
     let events = Arc::new(RecordingEvents::default());
     let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
+    let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
+    sweep_gate.open();
     let service = Arc::new(WebPageSnapshotService::new(
         pool.clone(),
         dir.path().join("web-snapshots"),
@@ -72,6 +74,7 @@ async fn fixture() -> Fixture {
         jobs,
         events.clone(),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
+        sweep_gate,
     ));
     service.register_job().await.unwrap();
     Fixture {

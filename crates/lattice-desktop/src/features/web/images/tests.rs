@@ -409,11 +409,14 @@ async fn fixture() -> Fixture {
     );
     network.serve("https://upload.wikimedia.org/one.png", png(64, 48));
     network.serve("https://upload.wikimedia.org/two.png", gif(32, 24));
+    let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
+    sweep_gate.open();
     let service = Arc::new(ChatImageService::new(
         pool.clone(),
         dir.path().join("chat-images"),
         network.clone(),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
+        sweep_gate,
     ));
     Fixture {
         pool,
