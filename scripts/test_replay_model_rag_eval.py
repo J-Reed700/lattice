@@ -152,7 +152,7 @@ class Writing(unittest.TestCase):
     def test_the_review_replay_stamps_every_record(self):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder) / "out.jsonl"
-            args = Namespace(llama="http://server", out=str(out), seeds=1, shipped="a", candidate="b")
+            args = Namespace(llama="http://server", out=str(out), seeds=1, shipped="a", candidate="b", claude=None)
             with mock.patch.object(review, "served_model", return_value=MODEL), \
                     mock.patch.object(review, "verifier_system", side_effect=["old", "new"]), \
                     mock.patch.object(review, "ask", return_value=REVIEW_REPLY):
