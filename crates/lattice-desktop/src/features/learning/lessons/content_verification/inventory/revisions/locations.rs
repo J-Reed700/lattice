@@ -124,7 +124,7 @@ mod tests {
             result.claims[1].statement,
             before.inventory.claims[1].statement
         );
-        assert_eq!(result.claims[1].quote, current);
+        assert_eq!(result.claims[1].quote, "Sample B has three units.");
         assert_eq!(result.claims[0].statement, "Sample A has four units.");
     }
 
@@ -167,5 +167,196 @@ mod tests {
         // the location mapper cannot silently correct or approve it.
         assert!(anchor("Repeated. Repeated.", "Changed.", "Repeated.").is_none());
         assert!(anchor("Original.", &"A".repeat(1601), "Original.").is_none());
+    }
+
+    /// A section whose body is `body`, with a claim for each `(quote,
+    /// statement)` of `claims`.
+    fn section(body: &str, claims: &[(&str, &str)]) -> Basis {
+        Basis {
+            content: json!({"body":body}),
+            inventory: UnitClaims {
+                index: 0,
+                non_factual_reason: String::new(),
+                claims: claims
+                    .iter()
+                    .map(|(quote, statement)| Claim {
+                        quote: (*quote).into(),
+                        statement: (*statement).into(),
+                    })
+                    .collect(),
+            },
+        }
+    }
+
+    /// The quote and the statement of each claim of `unit`.
+    fn left(unit: &UnitClaims) -> Vec<(&str, &str)> {
+        unit.claims
+            .iter()
+            .map(|claim| (claim.quote.as_str(), claim.statement.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn a_claim_whose_sentence_was_cut_leaves_the_inventory_and_the_others_keep_theirs() {
+        let sentences = [
+            "Alpha holds the line.",
+            "Bravo stands firm today.",
+            "Charlie rests in the shade.",
+        ];
+        let before = section(&sentences.join(" "), &sentences.map(|s| (s, s)));
+        let result = relocate(
+            &before,
+            &json!({"body":"Alpha holds the line. Charlie rests in the shade."}),
+        );
+        assert_eq!(
+            left(&result),
+            [
+                ("Alpha holds the line.", "Alpha holds the line."),
+                ("Charlie rests in the shade.", "Charlie rests in the shade.")
+            ]
+        );
+    }
+
+    #[test]
+    fn two_edits_in_one_field_are_told_apart() {
+        let sentences = [
+            "Alpha holds the line.",
+            "Bravo stands firm today.",
+            "Charlie rests in the shade.",
+            "Delta runs across the field.",
+            "Echo waits by the gate.",
+        ];
+        let before = section(&sentences.join(" "), &sentences.map(|s| (s, s)));
+        // Sentence 2 is cut and sentence 4 rewritten.
+        let revised = "Alpha holds the line. Charlie rests in the shade. Delta sprints across the field. Echo waits by the gate.";
+        let result = relocate(&before, &json!({"body":revised}));
+        assert_eq!(
+            left(&result),
+            [
+                ("Alpha holds the line.", "Alpha holds the line."),
+                ("Charlie rests in the shade.", "Charlie rests in the shade."),
+                (
+                    "Delta sprints across the field.",
+                    "Delta runs across the field."
+                ),
+                ("Echo waits by the gate.", "Echo waits by the gate.")
+            ]
+        );
+    }
+
+    #[test]
+    fn an_older_passes_passage_wide_quote_is_narrowed_to_its_sentence_before_its_fate_is_decided() {
+        let old = "Alpha holds the line. Bravo stands firm today. Charlie rests in the shade. Delta runs across the field.";
+        let bravo = "Bravo stands firm today.";
+        let delta = "Delta runs across the field.";
+        let charlie = "Charlie rests in the shade.";
+        // As a pass that quoted whole passages stored them.
+        let before = section(old, &[(old, bravo), (old, delta), (old, charlie)]);
+
+        // Bravo's sentence is cut: its claim goes, the others take their own.
+        let result = relocate(
+            &before,
+            &json!({"body":"Alpha holds the line. Charlie rests in the shade. Delta runs across the field."}),
+        );
+        assert_eq!(left(&result), [(delta, delta), (charlie, charlie)]);
+
+        // Delta's sentence is rewritten: Bravo's and Charlie's, untouched, are
+        // their own sentences now.
+        let result = relocate(
+            &before,
+            &json!({"body":"Alpha holds the line. Bravo stands firm today. Charlie rests in the shade. Delta sprints across the field."}),
+        );
+        assert_eq!(
+            left(&result),
+            [
+                (bravo, bravo),
+                ("Delta sprints across the field.", delta),
+                (charlie, charlie)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_quote_found_twice_or_in_two_fields_is_left_as_it_is() {
+        // Twice in the field: which of the two the claim stood on is not known.
+        let echo = ("Echo waits here.", "Echo waits here.");
+        let before = section(
+            "Echo waits here. Delta runs home. Echo waits here.",
+            &[echo],
+        );
+        let result = relocate(
+            &before,
+            &json!({"body":"Delta runs home. Foxtrot swims on."}),
+        );
+        assert_eq!(left(&result), [echo]);
+
+        // In two fields: a claim never moves to another field.
+        let mut before = section("", &[echo]);
+        before.content =
+            json!({"body":"Echo waits here. Delta runs home.","explanation":"Echo waits here."});
+        let result = relocate(
+            &before,
+            &json!({"body":"Delta runs home.","explanation":"Foxtrot swims on."}),
+        );
+        assert_eq!(left(&result), [echo]);
+    }
+
+    #[test]
+    fn a_field_left_without_text_takes_its_claims_with_it() {
+        let alpha = ("Alpha holds the line.", "Alpha holds the line.");
+        let bravo = ("Bravo stands firm today.", "Bravo stands firm today.");
+        let mut before = section("", &[alpha, bravo]);
+        before.content =
+            json!({"body":"Alpha holds the line.","explanation":"Bravo stands firm today."});
+        let result = relocate(
+            &before,
+            &json!({"body":"Alpha holds the line.","explanation":""}),
+        );
+        assert_eq!(left(&result), [alpha]);
+    }
+
+    #[test]
+    fn offsets_stay_on_char_boundaries_after_an_emoji_and_a_combining_accent() {
+        let sentences = [
+            "🧪 Cafe\u{301} stays open.",
+            "Résumé files are kept.",
+            "Closing time is nine.",
+            "Staff lock the door.",
+            "Guests leave quietly.",
+        ];
+        let old = sentences.join(" ");
+        let mut claims: Vec<_> = sentences.iter().map(|s| (*s, *s)).collect();
+        // A claim that an older pass quoted by its whole passage.
+        claims.push((old.as_str(), "Guests leave quietly."));
+        let before = section(&old, &claims);
+        let revised = "🧪 Cafe\u{301} stays open. Closing time is nine. Staff lock every door. Guests leave quietly.";
+        let result = relocate(&before, &json!({"body":revised}));
+        let quotes: Vec<&str> = result.claims.iter().map(|c| c.quote.as_str()).collect();
+        assert_eq!(
+            quotes,
+            [
+                "🧪 Cafe\u{301} stays open.",
+                "Closing time is nine.",
+                "Staff lock every door.",
+                "Guests leave quietly.",
+                "Guests leave quietly."
+            ]
+        );
+        assert!(quotes.iter().all(|quote| revised.contains(quote)));
+        assert_eq!(result.claims[2].statement, "Staff lock the door.");
+    }
+
+    #[test]
+    fn a_sentence_rewritten_past_what_the_inventory_keeps_is_quoted_by_its_first_1600_characters() {
+        let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
+        let before = section(
+            "Alpha holds the line. Bravo stands firm today.",
+            &[("Alpha holds the line.", "Alpha holds the line.")],
+        );
+        let revised = format!("{long} Bravo stands firm today.");
+        let result = relocate(&before, &json!({"body":revised}));
+        let quote = &result.claims[0].quote;
+        assert_eq!(quote.chars().count(), 1_600);
+        assert!(long.starts_with(quote.as_str()));
     }
 }

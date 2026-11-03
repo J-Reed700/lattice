@@ -263,3 +263,120 @@ mod capacity_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+    use crate::features::learning::content_verification::tests::{
+        fixture_completion, fixture_prompts,
+    };
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use std::sync::Mutex;
+
+    /// A model that answers every revision with `reply` and keeps the prompt
+    /// and the schema of each.
+    struct Reviser {
+        reply: String,
+        asked: Mutex<Vec<(String, Value)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for Reviser {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            self.asked.lock().unwrap().push((
+                fixture_prompts(request).concat(),
+                request.json_schema.clone().unwrap_or(Value::Null),
+            ));
+            Ok(fixture_completion(request, vec![self.reply.clone()]))
+        }
+        fn model_name(&self) -> &str {
+            "reviser-fixture"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            128_000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn the_model_is_shown_and_answers_by_the_ids_of_the_claims_that_are_left() -> Result<()> {
+        let sentences = [
+            "Alpha holds the line.",
+            "Bravo stands firm today.",
+            "Charlie rests in the shade.",
+            "Delta runs across the field.",
+        ];
+        let unit = UnitClaims {
+            index: 0,
+            non_factual_reason: String::new(),
+            claims: sentences
+                .iter()
+                .map(|sentence| Claim {
+                    quote: (*sentence).into(),
+                    statement: (*sentence).into(),
+                })
+                .collect(),
+        };
+        let before = vec![json!({"kind":"teaching","body":sentences.join(" ")})];
+        // The second sentence is cut and the last rewritten.
+        let after = vec![
+            json!({"kind":"teaching","body":"Alpha holds the line. Charlie rests in the shade. Delta sprints across the field."}),
+        ];
+        // The model restates the last claim it is shown.
+        let model = Reviser {
+            reply: json!({"changes":[{"claimId":2,"passageId":"unit-0-passage-0","statement":"Delta sprints across the field."}],"nonFactualReason":""}).to_string(),
+            asked: Mutex::new(Vec::new()),
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            save(&model, &before, &unit).await?;
+            let updated = update(&model, &after, 0).await?.unwrap();
+
+            let asked = model.asked.lock().unwrap();
+            let [(prompt, schema)] = asked.as_slice() else {
+                panic!("one revision call: {asked:?}");
+            };
+            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            assert_eq!(
+                shown["existingClaims"],
+                json!([
+                    {"claimId":0,"quote":"Alpha holds the line.","statement":"Alpha holds the line."},
+                    {"claimId":1,"quote":"Charlie rests in the shade.","statement":"Charlie rests in the shade."},
+                    {"claimId":2,"quote":"Delta sprints across the field.","statement":"Delta runs across the field."}
+                ])
+            );
+            assert_eq!(
+                schema.pointer("/properties/changes/items/properties/claimId/enum"),
+                Some(&json!([0, 1, 2, null]))
+            );
+            let revised: Vec<_> = updated
+                .claims
+                .iter()
+                .map(|claim| (claim.quote.as_str(), claim.statement.as_str()))
+                .collect();
+            assert_eq!(
+                revised,
+                [
+                    ("Alpha holds the line.", "Alpha holds the line."),
+                    ("Charlie rests in the shade.", "Charlie rests in the shade."),
+                    (
+                        "Delta sprints across the field.",
+                        "Delta sprints across the field."
+                    )
+                ]
+            );
+            Ok(())
+        })
+        .await
+    }
+}
