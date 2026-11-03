@@ -756,4 +756,106 @@ mod tests {
             .is_err());
         }
     }
+
+    /// The passages the extractor is given for a section whose body is `body`.
+    fn body_passages(body: &str) -> Vec<String> {
+        let input = inputs(&[json!({"body":body})]);
+        input[0]["passages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["text"].as_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// Sentence `n` of a body: 83 characters.
+    fn sentence(n: usize) -> String {
+        format!(
+            "Sentence {n:02} of the lesson states one more checkable fact about the subject at hand."
+        )
+    }
+
+    /// `count` sentences from sentence `first` on, in one paragraph.
+    fn paragraph(first: usize, count: usize) -> String {
+        (first..first + count)
+            .map(sentence)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn a_field_is_cut_on_the_latest_paragraph_that_leaves_a_passage_past_600_characters() {
+        // Nine paragraphs of 335 characters, a blank line between each.
+        let body = (0..9)
+            .map(|k| paragraph(4 * k, 4))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        assert_eq!(body.chars().count(), 3_031);
+        let passages = body_passages(&body);
+        assert_eq!(passages.concat(), body);
+        let sizes: Vec<usize> = passages.iter().map(|p| p.chars().count()).collect();
+        assert_eq!(sizes.len(), 3, "{sizes:?}");
+        for passage in &passages[..2] {
+            let size = passage.chars().count();
+            assert!(
+                passage.ends_with("\n\n"),
+                "a paragraph ends it: {passage:?}"
+            );
+            assert!((602..=1_400).contains(&size), "{size}");
+            assert!(
+                size + 337 > 1_400,
+                "the next paragraph would have fit: {size}"
+            );
+        }
+        let input = inputs(&[json!({"body":body})]);
+        let named: Vec<_> = input[0]["passages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["id"].as_str().unwrap(), p["field"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("unit-0-passage-0", "/body"),
+                ("unit-0-passage-1", "/body"),
+                ("unit-0-passage-2", "/body")
+            ]
+        );
+    }
+
+    #[test]
+    fn with_no_paragraph_past_600_characters_to_cut_on_a_passage_ends_on_a_sentence() {
+        // A paragraph of 503 characters, then one of thirty sentences.
+        let body = format!("{}\n\n{}", paragraph(0, 6), paragraph(6, 30));
+        let passages = body_passages(&body);
+        assert_eq!(passages.concat(), body);
+        assert!(passages.len() >= 3, "{}", passages.len());
+        for (n, passage) in passages.iter().enumerate() {
+            assert!(passage.chars().count() <= 1_400, "passage {n}");
+            assert!(
+                passage.trim_end().ends_with('.'),
+                "passage {n} ends on a sentence: {passage:?}"
+            );
+            assert!(
+                n == 0 || passage.starts_with("Sentence"),
+                "passage {n} starts on a sentence: {passage:?}"
+            );
+        }
+        assert!(
+            passages[0].chars().count() > 600,
+            "the blank line at 505 is too early to cut on"
+        );
+    }
+
+    #[test]
+    fn a_sentence_longer_than_the_room_is_one_passage() {
+        let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
+        assert_eq!(long.chars().count(), 1_712);
+        let body = format!("{long} Next sentence follows here.");
+        assert_eq!(
+            body_passages(&body),
+            [format!("{long} "), "Next sentence follows here.".to_owned()]
+        );
+    }
 }
