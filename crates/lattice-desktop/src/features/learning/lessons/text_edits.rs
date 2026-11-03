@@ -407,8 +407,8 @@ mod tests {
     }
 
     #[test]
-    fn a_citation_that_names_no_part_or_a_sentence_the_part_lacks_or_one_it_lists_is_refused_alone(
-    ) {
+    fn a_citation_that_names_no_part_or_a_sentence_the_part_lacks_or_one_it_lists_is_refused_alone()
+    {
         let original = cited_lesson();
         let quote = "A timeout of 30 seconds applies to each request.";
         let refused = |path: &str, sentence: &str| {
