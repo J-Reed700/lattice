@@ -686,3 +686,15 @@ fn a_citation_for_a_sentence_the_confinement_took_back_is_not_kept() {
 
     assert_eq!(confined["citations"], json!([kept]));
 }
+
+#[test]
+fn a_section_given_back_no_citation_gets_no_citations_field() {
+    let section = json!({"kind":"explanation","body":"Keep this. Fix this."});
+    let stray = json!({"sentence":"A sentence the section lacks.","sourceIndex":0,"quote":"x"});
+
+    for appended in [Vec::new(), vec![stray]] {
+        let mut confined = section.clone();
+        citation::restore_appended(&mut confined, appended, "blocks");
+        assert_eq!(confined, section);
+    }
+}

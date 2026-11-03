@@ -379,4 +379,42 @@ mod revision_tests {
         })
         .await
     }
+
+    #[tokio::test]
+    async fn a_section_whose_every_claim_was_cut_says_why_it_has_none_when_its_revision_adds_none(
+    ) -> Result<()> {
+        let unit = UnitClaims {
+            index: 0,
+            non_factual_reason: String::new(),
+            claims: vec![Claim {
+                quote: "Bravo stands firm today.".into(),
+                statement: "Bravo stands firm today.".into(),
+            }],
+        };
+        let before = vec![
+            json!({"kind":"teaching","body":"Alpha holds the line. Bravo stands firm today."}),
+        ];
+        // The only claim's sentence is cut, and the model adds nothing.
+        let after = vec![json!({"kind":"teaching","body":"Alpha holds the line."})];
+        let model = Reviser {
+            reply: json!({"changes":[],"nonFactualReason":""}).to_string(),
+            asked: Mutex::new(Vec::new()),
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            save(&model, &before, &unit).await?;
+            let updated = update(&model, &after, 0).await?.unwrap();
+
+            assert!(updated.claims.is_empty(), "{:?}", updated.claims);
+            assert!(!updated.non_factual_reason.trim().is_empty());
+            assert_eq!(model.asked.lock().unwrap().len(), 1);
+            Ok(())
+        })
+        .await
+    }
 }
