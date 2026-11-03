@@ -335,8 +335,14 @@ async fn taking_the_sections_that_go_out_moves_the_claims_of_the_others_with_the
     ledger.cuts.go(1, "Example".into());
 
     let lesson = lesson();
-    let (raw, out, report) =
-        excise(&mut ledger, lesson.to_string(), lesson.clone(), report(6)).await?;
+    let (raw, out, report) = excise(
+        &llm,
+        &mut ledger,
+        lesson.to_string(),
+        lesson.clone(),
+        report(6),
+    )
+    .await?;
 
     assert_eq!(out["blocks"].as_array().unwrap().len(), 3);
     assert!(!raw.contains("Example"));
@@ -369,7 +375,8 @@ async fn the_ledger_pairs_the_findings_a_lesson_keeps_with_their_own_claims() ->
     let claims = ledger.finding_claims().to_vec();
     ledger.cuts.go(1, "Example".into());
 
-    let (_, _, report) = excise(&mut ledger, lesson.to_string(), lesson.clone(), pass).await?;
+    let (_, _, report) =
+        excise(&llm, &mut ledger, lesson.to_string(), lesson.clone(), pass).await?;
 
     // What binds a resolution to a finding is its place beside its claim.
     let statements: Vec<&str> = report
@@ -391,8 +398,14 @@ async fn a_lesson_nothing_goes_from_is_left_as_it_is() -> Result<()> {
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;
     let lesson = lesson();
 
-    let (raw, out, report) =
-        excise(&mut ledger, lesson.to_string(), lesson.clone(), report(6)).await?;
+    let (raw, out, report) = excise(
+        &llm,
+        &mut ledger,
+        lesson.to_string(),
+        lesson.clone(),
+        report(6),
+    )
+    .await?;
 
     assert_eq!((raw, out), (lesson.to_string(), lesson));
     assert_eq!(report.coverage.len(), 6);

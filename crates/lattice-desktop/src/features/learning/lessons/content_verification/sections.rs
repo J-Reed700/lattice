@@ -638,9 +638,11 @@ pub(super) async fn unmend(ledger: &mut ClaimLedger, candidate: &Value) -> Resul
     Ok(taken_back.then(|| restored.to_string()))
 }
 
-/// The lesson without the sections that go, with its report and its ledger
-/// moved to the lesson's new numbering; as it was when none goes.
+/// The lesson without the sections that go, with its report, its ledger and
+/// its saved inventories moved to the lesson's new numbering; as it was when
+/// none goes.
 pub(super) async fn excise(
+    llm: &dyn LLMPort,
     ledger: &mut ClaimLedger,
     raw: String,
     candidate: Value,
@@ -650,9 +652,15 @@ pub(super) async fn excise(
     if going.is_empty() {
         return Ok((raw, candidate, report));
     }
+    let units: usize = ["blocks", "questions"]
+        .iter()
+        .filter_map(|list| candidate.get(*list).and_then(Value::as_array))
+        .map(Vec::len)
+        .sum();
     let lesson = going.out_of(&candidate);
     ledger.keep_findings(&report, &going);
     ledger.relocate(&going).await?;
+    super::inventory::revisions::renumber(llm, units, |unit| going.after(unit)).await?;
     let raw = lesson.to_string();
     crate::features::learning::lesson_drafts::save(&raw).await?;
     ledger.clear_cuts().await?;

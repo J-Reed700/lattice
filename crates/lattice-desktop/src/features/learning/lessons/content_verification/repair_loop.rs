@@ -323,7 +323,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     sections::Settled::Done => {}
                 }
                 (raw, candidate, report) =
-                    sections::excise(&mut ledger, raw, candidate, report).await?;
+                    sections::excise(llm, &mut ledger, raw, candidate, report).await?;
                 // Then the Verifier audit, when the course opted in (§14.3):
                 // review pass → audit → publish. Its checks, and anything the
                 // user did while it ran, are read back before publishing.

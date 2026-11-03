@@ -20,6 +20,54 @@ fn key(llm: &dyn LLMPort, index: usize) -> String {
     format!("inventory-basis-v1:{}", digest(&json!({"policy":INVENTORY_POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"index":index}).to_string()))
 }
 
+/// Whether `now` is the section `before` was: of its kind and role, under its
+/// title or prompt. A basis is saved by index, and once a section ahead of it
+/// goes another section can sit at that index.
+fn same_section(before: &Value, now: &Value) -> bool {
+    let name = |section: &Value| {
+        (
+            section.get("kind").cloned(),
+            section.get("role").cloned(),
+            section
+                .get("title")
+                .or_else(|| section.get("prompt"))
+                .cloned(),
+        )
+    };
+    name(before) == name(now)
+}
+
+/// Moves the saved inventory of each of a lesson's `units` to the index
+/// `after` gives its section once the sections that go are out (claim
+/// classes design §3.10), so the next pass revises each section against its
+/// own. Indexes only come down, so each basis is read before another is
+/// written over it.
+pub(in crate::features::learning::lessons::content_verification) async fn renumber(
+    llm: &dyn LLMPort,
+    units: usize,
+    after: impl Fn(usize) -> Option<usize>,
+) -> Result<()> {
+    for index in 0..units {
+        let Some(now) = after(index).filter(|now| *now != index) else {
+            continue;
+        };
+        let Some(mut basis) =
+            crate::features::learning::lesson_drafts::checkpoint(&key(llm, index))
+                .await?
+                .and_then(|v| serde_json::from_value::<Basis>(v).ok())
+        else {
+            continue;
+        };
+        basis.inventory.index = now;
+        crate::features::learning::lesson_drafts::record_checkpoint(
+            &key(llm, now),
+            serde_json::to_value(basis)?,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 pub(in crate::features::learning::lessons::content_verification) async fn save(
     llm: &dyn LLMPort,
     content: &[Value],
@@ -182,6 +230,9 @@ pub(in crate::features::learning::lessons::content_verification) async fn update
     else {
         return Ok(None);
     };
+    if !same_section(&before.content, section) {
+        return Ok(None);
+    }
     if before.content == *section {
         return Ok(Some(before.inventory));
     }
@@ -443,6 +494,62 @@ mod revision_tests {
             save(&model, &before, &claims_of(1, "Bravo stands firm today.")).await?;
 
             assert!(update(&model, &after, 1).await?.is_none());
+            assert!(model.asked.lock().unwrap().is_empty());
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_sections_saved_inventory_moves_with_it_when_a_section_ahead_goes() -> Result<()> {
+        let before = vec![
+            section("Alpha", "Alpha holds the line."),
+            section("Bravo", "Bravo stands firm today."),
+            section("Charlie", "Charlie rests in the shade."),
+        ];
+        let after = vec![
+            section("Alpha", "Alpha holds the line."),
+            section("Charlie", "Charlie rests in the shade."),
+        ];
+        let model = Reviser {
+            reply: String::new(),
+            asked: Mutex::new(Vec::new()),
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            for (index, sentence) in [
+                "Alpha holds the line.",
+                "Bravo stands firm today.",
+                "Charlie rests in the shade.",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                save(&model, &before, &claims_of(index, sentence)).await?;
+            }
+
+            let places = [Some(0), None, Some(1)];
+            renumber(&model, before.len(), |unit| {
+                places.get(unit).copied().flatten()
+            })
+            .await?;
+
+            let moved = update(&model, &after, 1).await?.unwrap();
+            let kept: Vec<_> = moved
+                .claims
+                .iter()
+                .map(|claim| (claim.quote.as_str(), claim.statement.as_str()))
+                .collect();
+            assert_eq!(moved.index, 1);
+            assert_eq!(
+                kept,
+                [("Charlie rests in the shade.", "Charlie rests in the shade.")]
+            );
             assert!(model.asked.lock().unwrap().is_empty());
             Ok(())
         })
