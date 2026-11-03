@@ -356,6 +356,36 @@ async fn taking_the_sections_that_go_out_moves_the_claims_of_the_others_with_the
 }
 
 #[tokio::test]
+async fn the_ledger_pairs_the_findings_a_lesson_keeps_with_their_own_claims() -> Result<()> {
+    let llm = model(&[]);
+    let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+    let lesson = lesson();
+    let mut pass = report(3);
+    for (finding, sentence) in pass.findings.iter_mut().zip(["One.", "Alpha.", "Red."]) {
+        finding.quote = sentence.into();
+        finding.statement = sentence.into();
+    }
+    ledger.observe(&lesson, &pass).await?;
+    let claims = ledger.finding_claims().to_vec();
+    ledger.cuts.go(1, "Example".into());
+
+    let (_, _, report) = excise(&mut ledger, lesson.to_string(), lesson.clone(), pass).await?;
+
+    // What binds a resolution to a finding is its place beside its claim.
+    let statements: Vec<&str> = report
+        .findings
+        .iter()
+        .map(|finding| finding.statement.as_str())
+        .collect();
+    assert_eq!(statements, ["One.", "Red."]);
+    assert_eq!(
+        ledger.finding_claims(),
+        [claims[0].clone(), claims[2].clone()]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_lesson_nothing_goes_from_is_left_as_it_is() -> Result<()> {
     let llm = model(&[]);
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;
