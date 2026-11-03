@@ -423,6 +423,49 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
     Ok(())
 }
 
+#[tokio::test]
+async fn a_lesson_whose_sentences_stand_on_checked_claims_is_never_written_again_whole_for_its_shape(
+) -> Result<()> {
+    // After cuts a lesson lacks some of what its writer was asked for. A
+    // rewrite of the whole lesson changes the sentences its claims stand on
+    // and is always refused: four of them, fourteen minutes each on the 27B,
+    // in one job of 2026-11-03. What its shape asks waits for the user.
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    let mut candidate = lesson(EXCERPT);
+    candidate["blocks"][0]["body"] = json!(sentence);
+    let protected = [
+        crate::features::learning::lessons::content_verification::Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: sentence.into(),
+        },
+    ];
+    let model = model(vec![review(None)]);
+
+    let reviewed = review_protecting(&model, &candidate, &protected).await?;
+
+    assert!(
+        !model
+            .prompts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|prompt| prompt.contains("Give the complete corrected material")),
+        "the whole lesson was asked for again"
+    );
+    let waiting: Vec<_> = reviewed
+        .set_aside
+        .iter()
+        .map(|waiting| waiting.finding.key().id())
+        .collect();
+    assert_eq!(waiting, ["structure:section-0"]);
+    assert_eq!(
+        serde_json::from_str::<Value>(&reviewed.candidate)?,
+        candidate
+    );
+    Ok(())
+}
+
 #[test]
 fn a_missing_citation_does_not_hold_up_the_content_review_but_other_structure_does() {
     let note = "Something to fix in this section.";
