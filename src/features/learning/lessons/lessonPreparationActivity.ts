@@ -33,6 +33,19 @@ export function callsLine(activity: LearningGenerationActivity): string | null {
   return most == null ? made : `${made}, at most ${most}`;
 }
 
+/**
+ * "Preparing · 40 of 44 checked" while the claims are checked, and
+ * "Preparing · Repairing the draft" in any other phase: every claim can have
+ * had its check while the job goes on repairing and reviewing the lesson.
+ */
+export function preparingLine(activity: LearningGenerationActivity | null | undefined): string {
+  if (!activity) return 'Preparing';
+  if (activity.phase === 'evidence' && activity.checksTotal > 0) {
+    return `Preparing · ${activity.checksCompleted} of ${activity.checksTotal} checked`;
+  }
+  return `Preparing · ${PREPARATION_PHASES[activity.phase].title}`;
+}
+
 export function preparationDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   if (total >= 3600) return `${Math.floor(total / 3600)}h ${Math.floor(total % 3600 / 60)}m`;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { callsLine, preparationState, preparationSummary, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
+import { callsLine, preparationState, preparationSummary, preparingLine, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
 const job = (overrides: Partial<LearningGenerationJob> = {}): LearningGenerationJob => ({
@@ -51,5 +51,16 @@ describe('The plan of a lesson\'s statements', () => {
     expect(callsLine(activity(0, 278))).toBe('0 calls so far, at most 278');
     expect(callsLine(activity())).toBeNull();
     expect(callsLine(activity(0, null))).toBeNull();
+  });
+});
+
+describe('The row of a lesson being prepared', () => {
+  it('counts the claims checked while they are checked, and names the phase otherwise', () => {
+    const activity = job().activity!;
+    expect(preparingLine(null)).toBe('Preparing');
+    expect(preparingLine(undefined)).toBe('Preparing');
+    expect(preparingLine({ ...activity, phase: 'evidence', checksCompleted: 40, checksTotal: 44 })).toBe('Preparing · 40 of 44 checked');
+    expect(preparingLine({ ...activity, phase: 'evidence' })).toBe('Preparing · Verifying factual claims');
+    expect(preparingLine({ ...activity, phase: 'repair', checksCompleted: 44, checksTotal: 44 })).toBe('Preparing · Repairing the draft');
   });
 });

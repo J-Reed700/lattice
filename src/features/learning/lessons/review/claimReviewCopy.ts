@@ -281,13 +281,6 @@ export function jobTallyLine(tally: LearningClaimTally): string {
   return parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`).join(' · ');
 }
 
-/** "Preparing · 44 of 44 checked", from the running job's tally. */
-export function preparingLine(tally: LearningClaimTally | null | undefined): string {
-  if (!tally) return 'Preparing';
-  const total = tally.unchecked + tally.searching + tally.repairing + tally.waiting + tally.verified + tally.resolvedByYou;
-  return total > 0 ? `Preparing · ${total - tally.unchecked} of ${total} checked` : 'Preparing';
-}
-
 export const claimsNeedYou = (count: number) => `${claimsCount(count)} need${count === 1 ? 's' : ''} you`;
 export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching note', 'teaching notes')} for you`;
 
