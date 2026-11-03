@@ -438,7 +438,7 @@ async fn answer<T>(
 /// the answer itself: it did not parse, or it broke a rule the caller checks.
 /// Anything else (transport, configuration, cancellation, the window, a
 /// budget) says nothing about the answer and is never asked again.
-fn refusal(error: &AppError) -> Option<&str> {
+pub(in crate::features::learning) fn refusal(error: &AppError) -> Option<&str> {
     match error {
         AppError::InvalidInput(reason)
         | AppError::InvalidData(reason)
