@@ -59,8 +59,8 @@ impl Sketch {
             return None;
         }
         let mut values = [0u32; SKETCH_VALUES];
-        for (value, chunk) in values.iter_mut().zip(bytes.chunks_exact(4)) {
-            *value = u32::from_le_bytes(chunk.try_into().ok()?);
+        for (value, chunk) in values.iter_mut().zip(bytes.as_chunks::<4>().0) {
+            *value = u32::from_le_bytes(*chunk);
         }
         Some(Self(values))
     }
