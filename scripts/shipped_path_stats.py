@@ -178,7 +178,7 @@ def run_identity(scored_path):
     manifest = Path(str(scored_path) + ".manifest.json")
     if not manifest.exists():
         return None
-    settings = json.loads(manifest.read_text()).get("settings") or {}
+    settings = json.loads(manifest.read_text(encoding="utf-8")).get("settings") or {}
     judge = settings.get("judge") or {}
     return {"answering": {field: settings.get(field) for field in IDENTITY_FIELDS},
             "judge": judge.get("model")}
@@ -500,12 +500,12 @@ def main():
     elif args.command == "calibration-sample":
         if args.output.exists():
             raise SystemExit(f"{args.output} exists; a labelling file is never overwritten")
-        labels = calibration_sample(json.loads(args.questions.read_text()), load_jsonl(args.answers),
+        labels = calibration_sample(json.loads(args.questions.read_text(encoding="utf-8")), load_jsonl(args.answers),
                                     load_jsonl(args.scored), args.half_width, args.seed)
         scored = args.scored.resolve()
         labels["scored_run"] = str(scored.relative_to(ROOT) if scored.is_relative_to(ROOT) else scored)
         labels["scored_sha256"] = hashlib.sha256(args.scored.read_bytes()).hexdigest()
-        args.output.write_text(json.dumps(labels, indent=2, ensure_ascii=False) + "\n")
+        args.output.write_text(json.dumps(labels, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         frame = ", ".join(f"{v['sample']} of {v['population']} {k}" for k, v in labels["frame"].items()
                           if k != UNANSWERED)
         frame += f"; {labels['frame'][UNANSWERED]['population']} unanswered need no label"
@@ -514,7 +514,7 @@ def main():
               f"about {labels['estimated_minutes']} minutes to label")
         return
     else:
-        labels = json.loads(args.labels.read_text())
+        labels = json.loads(args.labels.read_text(encoding="utf-8"))
         design = Path(labels["scored_run"])
         design = design if design.is_absolute() else ROOT / design
         if labels.get("scored_sha256") != hashlib.sha256(design.read_bytes()).hexdigest():
@@ -523,7 +523,7 @@ def main():
                                    load_jsonl(args.judge) if args.judge else None)
         print(calibration_markdown(report))
     if args.json:
-        args.json.write_text(json.dumps(report, indent=2) + "\n")
+        args.json.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

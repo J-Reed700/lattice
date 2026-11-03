@@ -53,6 +53,40 @@
   .ui-resizable-sidebar { border-top: 1px solid hsl(var(--border-subtle)); }
 }
 
+/* The grab area is wider than the line it draws, so the edge is easy to catch. */
+.ui-split {
+  position: relative;
+  z-index: 1;
+  width: 0;
+  flex: 0 0 auto;
+}
+.ui-split > div {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.ui-split > div::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: 3px;
+  background: transparent;
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.ui-split > div:hover::after,
+.ui-split > div:focus-visible::after,
+.ui-split > div[data-dragging]::after {
+  background: hsl(var(--accent) / 0.75);
+}
+
 .ui-interaction-hint { margin-bottom: 12px; font-size: 12px; line-height: 1.7; color: hsl(var(--text-muted)); }
 .ui-sortable-list { display: flex; flex-direction: column; gap: 8px; }
 .ui-sortable-row { display: flex; position: relative; align-items: center; gap: 10px; padding: 6px; border: 1px solid hsl(var(--border-subtle)); border-radius: 7px; background: hsl(var(--surface)); color: hsl(var(--text-primary)); font-size: 13px; line-height: 1.65; }

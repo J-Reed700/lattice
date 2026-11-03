@@ -445,7 +445,7 @@ pub(crate) async fn ensure_memory_resources(
             );
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("INSERT OR IGNORE INTO journals(id,name,description,icon,is_archived,sort_order,created_at,updated_at) VALUES(?,?,?,?,0,0,?,?)")
-                .bind(&id).bind(&name).bind("Learning Studio notebook").bind("book-open").bind(&now).bind(&now)
+                .bind(&id).bind(&name).bind("Learning Studio notebook").bind("📖").bind(&now).bind(&now)
                 .execute(&mut **tx).await.map_err(db)?;
             let canonical_id: String =
                 sqlx::query_scalar("SELECT id FROM journals WHERE id=? OR name=?")

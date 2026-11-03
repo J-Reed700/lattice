@@ -27,7 +27,9 @@ mod search;
 
 use read::execute_read;
 pub use recall::{
-    recall_for_turn, PassageGroup, RecallAvailability, RecallRequest, RecalledContext,
+    build_recall_query, exact_identifiers, recall_for_turn, relevance_by_message,
+    what_the_turn_asks, PassageGroup, RecallAvailability, RecallRequest, RecalledContext,
+    RECALL_RELEVANCE_FLOOR,
 };
 use search::execute_search;
 

@@ -88,7 +88,7 @@ def main():
         finite_number(args.max_latency_ratio, 'max-latency-ratio', minimum=1)
     if args.min_queries < 2:
         parser.error('min-queries must be >= 2')
-    report = compare(json.loads(args.dataset.read_text()),
+    report = compare(json.loads(args.dataset.read_text(encoding="utf-8")),
                      [load_jsonl(p) for p in args.baseline], [load_jsonl(p) for p in args.candidate],
                      args.k, args.samples, args.seed)
     failures = []

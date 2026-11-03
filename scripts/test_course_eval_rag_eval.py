@@ -121,7 +121,7 @@ class FakeSolver:
 
 def write(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value if isinstance(value, str) else json.dumps(value))
+    path.write_text(value if isinstance(value, str) else json.dumps(value), encoding="utf-8")
 
 
 def build_run(root):
@@ -232,7 +232,7 @@ class Pipeline(unittest.TestCase):
         self.tmp.cleanup()
 
     def items(self, name="items.json"):
-        return {item["id"]: item for item in json.loads((self.out / name).read_text())["items"]}
+        return {item["id"]: item for item in json.loads((self.out / name).read_text(encoding="utf-8"))["items"]}
 
     def test_collect_writes_every_results_file(self):
         names = {p.relative_to(self.out).as_posix() for p in self.out.rglob("*") if p.is_file()}
@@ -281,7 +281,7 @@ class Pipeline(unittest.TestCase):
         self.assertEqual({row["pipeline_verdict"] for row in claims}, {"supported", "unsupported"})
 
     def test_token_sums_follow_call_ranges(self):
-        metrics = json.loads((self.out / "requests/pg/metrics.json").read_text())
+        metrics = json.loads((self.out / "requests/pg/metrics.json").read_text(encoding="utf-8"))
         self.assertEqual({k: metrics["outline"]["cost"][k] for k in ("input_tokens", "output_tokens",
                                                                      "peak_input_tokens", "call_files")},
                          {"input_tokens": 300, "output_tokens": 30, "peak_input_tokens": 200, "call_files": 2})
@@ -314,7 +314,7 @@ class Pipeline(unittest.TestCase):
         self.assertIn("verdict", sps.compare_markdown(report))
         slots = load_jsonl(self.out / "slots.scored.jsonl")
         self.assertEqual(sps.compare([slots], [slots], kind="both")["paired"], 5)
-        questions = json.loads((self.out / "items.json").read_text())
+        questions = json.loads((self.out / "items.json").read_text(encoding="utf-8"))
         labels = sps.calibration_sample(questions, load_jsonl(self.out / "answers.jsonl"), rows, half_width=0.0)
         self.assertEqual(labels["frame"], {"judge pass": {"population": 10, "sample": 10},
                                            "judge fail": {"population": 1, "sample": 1},
@@ -374,7 +374,7 @@ class Pipeline(unittest.TestCase):
                           summary["grounding"]["common"]), (2, 3, 1))
         self.assertEqual(summary["cost"]["lesson_minutes"], {"median": 90.0, "max": 120.0})
         self.assertEqual(summary["criteria"]["L3"], {"passed": 0, "graded": 1, "total": 2, "too_long": 0})
-        page = (self.out / "summary.md").read_text()
+        page = (self.out / "summary.md").read_text(encoding="utf-8")
         self.assertIn("web: 40 hits, 2 misses filled, 0 failed", page)
         self.assertIn(f"--baseline {ce.relative(earlier)}/slots.scored.jsonl", page)
         self.assertTrue((self.out / "summary.json").exists())
@@ -391,7 +391,7 @@ class QuizStage(unittest.TestCase):
         write(self.run_dir / "pg" / "quiz-m1.l1.json", BANK)
         self.out = self.root / "results" / "model" / "2026-10-23-course-eval-v1-base"
         ce.collect(self.run_dir, self.out, self.root / "set.json")
-        self.doc = json.loads((self.out / "quiz.items.json").read_text())
+        self.doc = json.loads((self.out / "quiz.items.json").read_text(encoding="utf-8"))
         self.items = {item["id"]: item for item in self.doc["items"]}
 
     def tearDown(self):
@@ -407,7 +407,7 @@ class QuizStage(unittest.TestCase):
         self.assertTrue((self.out / "requests/pg/quiz-m1.l1.json").exists())
 
     def test_mechanical_checks_go_into_metrics(self):
-        quiz = json.loads((self.out / "requests/pg/metrics.json").read_text())["lessons"]["m1.l1"]["quiz"]
+        quiz = json.loads((self.out / "requests/pg/metrics.json").read_text(encoding="utf-8"))["lessons"]["m1.l1"]["quiz"]
         self.assertEqual((quiz["origin"], quiz["items"], quiz["passed"]), ("bank", 5, False))
         self.assertEqual(quiz["hits"]["format_invalid"], ["bad"])
         self.assertEqual(quiz["harness"]["target"], 6)
@@ -481,7 +481,7 @@ class QuizStage(unittest.TestCase):
         ce.collect(self.run_dir, other, self.root / "set.json")
         report = ce.score(other, FakeJudge(), allowed, solver=FakeSolver(), allow_self_judge=True)
         self.assertEqual(report["quiz"]["graded"], 4)
-        manifest = json.loads((other / "quiz.scored.jsonl.manifest.json").read_text())
+        manifest = json.loads((other / "quiz.scored.jsonl.manifest.json").read_text(encoding="utf-8"))
         self.assertEqual((manifest["settings"]["judge"]["independent"],
                           manifest["settings"]["judge"]["self_judge_allowed"]), (False, True))
 
@@ -506,7 +506,7 @@ class QuizStage(unittest.TestCase):
         self.assertEqual(summary["quiz"]["items"], {"passing": 1, "total": 5, "ungraded": 1})
         self.assertEqual(summary["quiz"]["criteria"]["Q3"], {"passed": 0, "graded": 2, "total": 2, "too_long": 0})
         self.assertEqual(summary["quiz"]["mechanical"]["format_invalid"], 1)
-        page = (self.out / "summary.md").read_text()
+        page = (self.out / "summary.md").read_text(encoding="utf-8")
         self.assertIn("5. **Quizzes**: 1/5 items pass every judged criterion", page)
         self.assertIn("| Q3 Plausible distractors | 0 | 2 | 2 | 0 |", page)
         self.assertIn("| pg/m1.l1/quiz | bank | 5 | 6 | fail |", page)

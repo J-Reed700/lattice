@@ -105,6 +105,8 @@ vi.mock('@/features/chat/api/conversationQueryData', () => ({
   unwrap: (r: { ok: boolean; data?: unknown }) => r.data,
 }));
 
+vi.mock('@/features/chat/components/ChatPanel', () => ({ ChatPanel: () => <div data-testid="shared-chat" /> }));
+
 const mockProgram: LearningProgramDto = {
   summary: {
     id: 'test-program',
@@ -335,6 +337,16 @@ describe('ProgramTangents and Study Guide Tangents integration', () => {
         ),
       ).toBeInTheDocument();
     });
+
+    // ...and carries the shared chat, once the tangent's conversation has loaded.
+    const drawer = screen.getByRole('complementary', { name: 'Course tangents' });
+    expect(await within(drawer).findByTestId('shared-chat')).toBeInTheDocument();
+
+    // The tangent's header can expand the drawer over the lesson, and shrink it back.
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Expand tangents' }));
+    expect(drawer).toHaveAttribute('data-expanded', 'true');
+    fireEvent.click(within(drawer).getByRole('button', { name: 'Shrink tangents' }));
+    expect(drawer).not.toHaveAttribute('data-expanded');
   });
 
   it('selecting text inside a lesson section shows floating Ask in a tangent button and creates tangent', async () => {

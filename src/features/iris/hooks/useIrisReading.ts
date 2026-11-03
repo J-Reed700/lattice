@@ -1,22 +1,24 @@
 import { useMemo } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
-
-import { activitySnapshotQueryOptions } from '@/features/activity/api';
 import { useIndexingStatusQuery } from '@/features/files/hooks/useIndexingStatusQuery';
 import { useFlashcardDecks } from '@/features/learning/recall/flashcards/useFlashcards';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import type { ActivitySnapshotDto } from '@/lib/bindings';
 
 import { readIris, type IrisReading } from '../model/irisReading';
 import { useIrisStore } from '../stores/irisStore';
 
+/** What `useActivitySnapshot` hands over. */
+interface ActivityRead {
+  snapshot: ActivitySnapshotDto | undefined;
+  failed: boolean;
+}
+
 /**
  * Everything Iris reads, from the queries that already hold it. The activity
- * snapshot is kept current by `ActivityIndicator`, which owns its event
- * subscription; Iris only observes the same cache entry.
+ * snapshot comes from the caller, which owns its event subscription.
  */
-export function useIrisReading(): IrisReading {
-  const activity = useQuery(activitySnapshotQueryOptions()).data;
+export function useIrisReading({ snapshot: activity, failed: activityFailed }: ActivityRead): IrisReading {
   const indexing = useIndexingStatusQuery().data;
   const { downloadsMap } = useDownloadState();
   const decks = useFlashcardDecks().data;
@@ -33,7 +35,7 @@ export function useIrisReading(): IrisReading {
   const indexingFailures = indexing?.failures.length ?? 0;
 
   return useMemo(
-    () => readIris({ activity, indexingFailures, failedDownloads, dueCards, seenNoteIds }),
-    [activity, indexingFailures, failedDownloads, dueCards, seenNoteIds],
+    () => readIris({ activity, activityFailed, indexingFailures, failedDownloads, dueCards, seenNoteIds }),
+    [activity, activityFailed, indexingFailures, failedDownloads, dueCards, seenNoteIds],
   );
 }

@@ -171,9 +171,9 @@ round); and `journal.synthesis`. The renderer reads all of them through one
 jobs module (`src/features/jobs`: `list_jobs` plus one `jobs://status`
 listener).
 
-The renderer's Activity drawer (`features/activity`, command
-`activity_snapshot`) lists everything running, paused or waiting in one
-place: every job kind, each backend's model requests (the scheduler's
+The renderer's Iris card (`features/iris`, fed by `features/activity` and
+the command `activity_snapshot`) lists everything running, paused or waiting
+in one place: every job kind, each backend's model requests (the scheduler's
 running and queued counts, through `LLMPort::requests`), models and the
 embedding model loading, downloads, the library indexer, outline runs, and
 which index waits behind which in the embed turn order. Each feature

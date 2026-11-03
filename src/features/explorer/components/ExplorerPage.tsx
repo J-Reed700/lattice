@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 
+import { SplitHandle } from '@/components/ui/SplitHandle';
 import { useApi } from '@/contexts/ApiContext';
 import {
   explorerFoldersQueryOptions,
@@ -24,7 +25,6 @@ import { ExplorerStart } from './ExplorerStart';
 import { ExplorerTree } from './ExplorerTree';
 import { FolderSettingsDialog, type FolderSettingsTarget } from './FolderSettingsDialog';
 import { ScopeBar } from './ScopeBar';
-import { SplitHandle } from './SplitHandle';
 import { useExplorerThread } from '../hooks/useExplorerThread';
 
 import './explorer.css';

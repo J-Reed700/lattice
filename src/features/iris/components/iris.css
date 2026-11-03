@@ -242,6 +242,16 @@
   --iris-hue: 36;
 }
 
+/* The dot beside a piece of work: lit while it runs, amber while it holds, dim while it waits. */
+.iris-dot[data-state='paused'] {
+  --iris-hue: 36;
+}
+
+.iris-dot[data-state='waiting'] {
+  background: hsl(var(--text-muted) / 0.6);
+  box-shadow: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .iris *,
   .iris::before {

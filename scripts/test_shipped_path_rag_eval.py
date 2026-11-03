@@ -330,8 +330,8 @@ class QuestionSet(unittest.TestCase):
         self.assertTrue(spe.validate_questions(wrong, corpus))
 
     def test_shipped_question_set_is_valid_against_v3(self):
-        questions = json.loads((ROOT / "evals/retrieval/desktop-path-v1.json").read_text())
-        corpus = json.loads((ROOT / "evals/retrieval/synthetic-library-v3.json").read_text())
+        questions = json.loads((ROOT / "evals/retrieval/desktop-path-v1.json").read_text(encoding="utf-8"))
+        corpus = json.loads((ROOT / "evals/retrieval/synthetic-library-v3.json").read_text(encoding="utf-8"))
         self.assertEqual(spe.validate_questions(questions, corpus), [])
         items = questions["items"]
         self.assertTrue(20 <= len(items) <= 50)

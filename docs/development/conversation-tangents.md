@@ -6,6 +6,8 @@ Highlighting text also reveals **Ask in a tangent** beside the passage, without 
 
 Tangents use the existing conversation and message tables, generation lifecycle, streaming events, message renderer, citations, bookmarks, retry, regeneration, and cancellation. `ConversationSnapshotProvider` lets the drawer render another transcript through that same controller without changing the globally selected conversation. It does not create a second controller or stream listener lifecycle.
 
+The chat inside the drawer is `ChatPanel` itself, embedded: its composer, model and space pickers, attachments, read-aloud, citations and the rest are the main chat's, not a copy. `TangentConversation` scopes it to the tangent's conversation through the snapshot provider, after the inherited messages, and says when a turn ends. The provider also names the message the thread follows (`threadStartsAfter`), so a branch before the tangent's first question still forks with the inherited context instead of coming up empty. Course tangents (`CourseTangentChat`) use the same two pieces. The drawer itself is a `TangentDock`: its left edge drags between 340 and 800px, remembered under `tangents.width`, and its header can expand it over the conversation beside it.
+
 ## Persistence
 
 The conversation row has three additional fields:

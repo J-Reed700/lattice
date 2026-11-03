@@ -17,6 +17,13 @@ impl Container {
         &self.jobs
     }
 
+    /// Shut until startup finds that this database owns the files under the
+    /// lattice home. Every sweep that deletes a file because no row names it
+    /// reads this one gate.
+    pub fn sweep_gate(&self) -> &Arc<lattice_core::shared::fs::SweepGate> {
+        &self.sweep_gate
+    }
+
     /// The one registry of in-flight learning outline runs: the commands
     /// that start or stop a run all consult this same map.
     pub fn outline_run_registry(

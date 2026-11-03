@@ -22,19 +22,32 @@
   z-index: 35;
   display: flex;
   flex-direction: column;
-  width: min(420px, 100%);
+  width: var(--tangent-width, 420px);
+  max-width: 100%;
   min-height: 0;
   border-left: 1px solid hsl(var(--border-subtle));
   background: hsl(var(--bg));
   box-shadow: -8px 0 24px hsl(var(--text-primary) / 0.08);
 }
+.tangent-sidebar[data-expanded] { width: 100%; }
+
+/* The drag edge sits on the panel's left border, over whatever is beside it. */
+.tangent-split {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+}
 
 @container (min-width: 960px) {
   .tangent-sidebar {
     position: relative;
-    flex: 0 0 380px;
+    flex: 0 0 auto;
     box-shadow: none;
   }
+  /* Beside the conversation, expanded leaves it enough to see it is still there. */
+  .tangent-sidebar[data-expanded] { width: calc(100% - 320px); }
 }
 
 .tangent-sidebar .chat-turn-grid { display: block; }

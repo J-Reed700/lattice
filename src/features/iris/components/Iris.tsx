@@ -4,6 +4,7 @@ import { Eye, EyeOff } from 'lucide-react';
 
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useActivitySnapshot } from '@/features/activity/api';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
@@ -13,7 +14,7 @@ import { toast } from '@/stores/toastStore';
 
 import { IrisOrb } from './IrisOrb';
 import { useIrisReading } from '../hooks/useIrisReading';
-import { irisLabel, type IrisDestination } from '../model/irisReading';
+import { irisAnnouncement, irisLabel, type IrisDestination } from '../model/irisReading';
 import { useIrisStore } from '../stores/irisStore';
 
 const KEYWORDS = ['iris', 'assistant', 'companion', 'status', 'light'];
@@ -47,7 +48,8 @@ export function Iris({ compact }: IrisProps) {
 }
 
 function IrisPresence({ compact }: IrisProps) {
-  const reading = useIrisReading();
+  const activity = useActivitySnapshot();
+  const reading = useIrisReading(activity);
   const markSeen = useIrisStore((state) => state.markSeen);
   const setEnabled = useIrisStore((state) => state.setEnabled);
   const navigate = useAppNavigate();
@@ -55,15 +57,18 @@ function IrisPresence({ compact }: IrisProps) {
   const [open, setOpen] = useState(false);
   const label = irisLabel(reading);
 
+  const { refresh } = activity;
   const noteIds = useMemo(() => reading.notes.map((note) => note.id), [reading.notes]);
   const changeOpen = useCallback(
     (next: boolean) => {
       // What the card showed has been seen once it closes, so the light
       // stays as it was while you read.
       if (!next) markSeen(noteIds);
+      // Opening reads again, for anything that moved without an event.
+      if (next) void refresh();
       setOpen(next);
     },
-    [markSeen, noteIds],
+    [markSeen, noteIds, refresh],
   );
   const close = useCallback(() => changeOpen(false), [changeOpen]);
 
@@ -111,6 +116,10 @@ function IrisPresence({ compact }: IrisProps) {
           {reading.headline}
         </TooltipContent>
       </Tooltip>
+      {/* How much is running, for a screen reader that is elsewhere. */}
+      <span role="status" aria-live="polite" className="sr-only">
+        {irisAnnouncement(reading.work)}
+      </span>
       <PopoverContent side="right" align="end" sideOffset={12} className="w-[320px] p-0">
         <Suspense fallback={<div className="h-24" aria-busy="true" />}>
           <IrisCard reading={reading} onGo={go} onHide={hide} onClose={close} />

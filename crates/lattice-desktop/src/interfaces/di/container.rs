@@ -126,6 +126,11 @@ pub struct Container {
     /// Pictures shown inline in chat answers; fetched through `web_service`.
     pub(crate) chat_images: Arc<crate::features::web::images::ChatImageService>,
 
+    /// Whether the sweeps that delete files no row names may run. Shut until
+    /// startup finds that this database owns the files; the snapshot and
+    /// picture services hold the same gate.
+    pub(crate) sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,
+
     /// The Explorer's folder indexes: the open folder and its builds, which
     /// run as jobs. Built with the app handle, which it loads the embedder
     /// through; `None` in test fixtures.
@@ -419,16 +424,19 @@ impl Container {
 
         let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
         let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
+        let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.db_pool().clone(),
             Arc::clone(&jobs),
             Arc::clone(&web_snapshot_events),
             Arc::clone(core.background()),
+            Arc::clone(&sweep_gate),
         )?;
         let chat_images = crate::features::web::di::build_chat_images(
             core.db_pool().clone(),
             Arc::clone(&web_service),
             Arc::clone(core.background()),
+            Arc::clone(&sweep_gate),
         )?;
 
         let turn_cancellation = Arc::new(
@@ -466,6 +474,7 @@ impl Container {
             web_page_snapshots,
             web_snapshot_events,
             chat_images,
+            sweep_gate,
             turn_cancellation,
             research_waiters,
             outline_run_registry,
