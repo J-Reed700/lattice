@@ -14,6 +14,7 @@ export function CourseSyllabus({
   program,
   moduleId,
   onSelect,
+  onSelectModule,
   evidence,
   compact = false,
 }: {
@@ -22,12 +23,18 @@ export function CourseSyllabus({
   moduleId: string;
   evidence?: LearningOutlineEvidenceDto | null;
   onSelect: (module: LearningModuleDto, lessonId: string) => void;
+  onSelectModule: (module: LearningModuleDto) => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(program.summary.status === 'draft');
   const lessons = program.modules.flatMap((module) => module.lessons);
   const minutes = lessons.reduce((total, lesson) => total + lesson.estimatedMinutes, 0);
   const completed = lessons.filter((lesson) => lesson.completed).length;
+  const afterChoosing = () => {
+    if (!compact) return;
+    setOpen(false);
+    trigger.current?.focus();
+  };
 
   return (
     <section
@@ -66,8 +73,8 @@ export function CourseSyllabus({
       >
         <p className="mb-5 max-w-3xl text-sm leading-6 text-text-secondary">
           {program.summary.status === 'draft'
-            ? 'Review the whole progression before you begin. Open any lesson below to inspect its objective. Your pace is flexible, and you can revise upcoming work in the Plan.'
-            : 'Follow the sequence or revisit a topic. Opening a lesson never marks it complete.'}
+            ? 'Review the whole progression before you begin. Choose a module to open it, or a lesson to inspect its objective. Your pace is flexible, and you can revise upcoming work in the Plan.'
+            : 'Follow the sequence or revisit a topic: choose a module to pick up at its next lesson, or a lesson to go straight to it. Opening a lesson never marks it complete.'}
         </p>
         {evidence?.unavailableCount ? (
           <p className="mb-4 rounded-lg bg-amber-500/10 p-3 text-xs leading-5 text-text-secondary">
@@ -86,7 +93,20 @@ export function CourseSyllabus({
                   </span>
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-medium text-accent">Module {index + 1}{index === program.modules.length - 1 && ' · Final module'}</span>
-                    <h3 className="mt-1 font-serif text-xl leading-snug text-text-primary">{module.title}</h3>
+                    <h3 className="mt-1 font-serif text-xl leading-snug text-text-primary">
+                      <button
+                        type="button"
+                        aria-current={moduleId === module.id ? 'true' : undefined}
+                        onClick={() => {
+                          onSelectModule(module);
+                          afterChoosing();
+                        }}
+                        className="studio-syllabus-module group inline-flex items-center gap-2 text-left hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+                      >
+                        {module.title}
+                        <ArrowRight size={14} aria-hidden="true" className="shrink-0 text-accent opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
+                      </button>
+                    </h3>
                     <p className="mt-2 text-xs leading-5 text-text-secondary">{module.summary}</p>
                     <OutlineCitation citation={summaryCitation} evidence={evidence} />
                   </div>
@@ -121,7 +141,7 @@ export function CourseSyllabus({
                         type="button"
                         onClick={() => {
                           onSelect(module, lesson.id);
-                          if (compact) setOpen(false);
+                          afterChoosing();
                         }}
                         className="group flex min-h-12 w-full items-center gap-2 py-2 text-left text-sm hover:text-accent"
                       >

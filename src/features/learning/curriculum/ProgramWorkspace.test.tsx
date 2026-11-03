@@ -1,14 +1,14 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
 import { quizOverview } from '@/features/learning/quizzes/quizTestData';
-import type { LearningGenerationJob, LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
+import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 
 vi.mock('@/features/learning/tangents/ProgramTangents', () => ({
   ProgramTangents: ({ children }: { children: ReactNode }) => children,
@@ -19,7 +19,25 @@ vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   SectionTangentBar: () => null,
 }));
 vi.mock('@/features/learning/curriculum/CourseCoach', () => ({ CourseCoach: () => null }));
-vi.mock('@/features/learning/curriculum/CourseSyllabus', () => ({ CourseSyllabus: () => null }));
+// The journey's own markup is tested with it; here it only hands the workspace a module or a lesson to open.
+vi.mock('@/features/learning/curriculum/CourseSyllabus', () => ({
+  CourseSyllabus: ({ program, onSelect, onSelectModule }: {
+    program: LearningProgramDto;
+    onSelect: (module: LearningModuleDto, lessonId: string) => void;
+    onSelectModule: (module: LearningModuleDto) => void;
+  }) => (
+    <div role="group" aria-label="Course journey">
+      {program.modules.map((module) => (
+        <div key={module.id}>
+          <button type="button" onClick={() => onSelectModule(module)}>{`Journey: ${module.title}`}</button>
+          {module.lessons.map((lesson) => (
+            <button key={lesson.id} type="button" onClick={() => onSelect(module, lesson.id)}>{`Journey: ${lesson.title}`}</button>
+          ))}
+        </div>
+      ))}
+    </div>
+  ),
+}));
 vi.mock('@/features/reading/components/CitationVisibilityToggle', () => ({ CitationVisibilityToggle: () => null }));
 
 const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn() }));
@@ -51,6 +69,16 @@ function program(title: string, goal = GOAL): LearningProgramDto {
     modules: [{ id: 'module-1', title: 'Circulation', summary: 'How blood moves.', outcomes: ['Describe the cardiac cycle'], lessons: [held, next] }],
     sources: [],
   } as unknown as LearningProgramDto;
+}
+
+// A second module whose first lesson is done, so "the first lesson not done" is not "the first lesson".
+const gas = { ...held, id: 'lesson-3', title: 'Gas exchange', objective: 'Explain diffusion across the alveoli.', completed: true } as LearningLessonDto;
+const defenses: LearningLessonDto = { ...gas, id: 'lesson-4', title: 'Airway defenses', completed: false };
+
+function twoModules(): LearningProgramDto {
+  const course = program('Circulation');
+  const second = { id: 'module-2', title: 'Respiration', summary: 'How air moves.', outcomes: ['Describe gas exchange'], lessons: [gas, defenses] } as unknown as LearningModuleDto;
+  return { ...course, modules: [...course.modules, second] };
 }
 
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
@@ -158,5 +186,49 @@ describe('Course page', () => {
     await user.click(evolutionButton);
     expect(evolutionButton).toHaveAttribute('aria-pressed', 'true');
     expect(await screen.findByTestId('learning-recall-evolution')).toBeVisible();
+  });
+
+  describe('the course journey', () => {
+    const picked = (name: 'Module' | 'Lesson context') => screen.getByRole('combobox', { name });
+
+    beforeEach(() => {
+      Element.prototype.scrollIntoView = vi.fn();
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    });
+
+    it('opens a chosen module in the Lessons tab, on the lesson the module picker would choose', async () => {
+      const user = userEvent.setup();
+      show(twoModules());
+      const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
+      await user.click(tabs[1]);
+      await screen.findByRole('tablist', { name: 'Practice activities' });
+      await user.click(screen.getByRole('button', { name: 'Journey: Respiration' }));
+      expect(await screen.findByRole('heading', { level: 2, name: 'Respiration' })).toBeVisible();
+      expect(picked('Module')).toHaveTextContent('Module 2: Respiration');
+      expect(picked('Lesson context')).toHaveTextContent('2. Airway defenses');
+      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+    });
+
+    it('moves back to an earlier module the same way', async () => {
+      const user = userEvent.setup();
+      show(twoModules());
+      await user.click(screen.getByRole('button', { name: 'Journey: Respiration' }));
+      await waitFor(() => expect(picked('Module')).toHaveTextContent('Module 2: Respiration'));
+      await user.click(screen.getByRole('button', { name: 'Journey: Circulation' }));
+      await waitFor(() => expect(picked('Module')).toHaveTextContent('Module 1: Circulation'));
+      expect(picked('Lesson context')).toHaveTextContent('1. The heart as a pump');
+    });
+
+    it('opens a chosen lesson in its own module, and brings it into view', async () => {
+      const user = userEvent.setup();
+      show(twoModules());
+      await user.click(screen.getByRole('button', { name: 'Journey: Gas exchange' }));
+      expect(await screen.findByRole('heading', { level: 2, name: 'Respiration' })).toBeVisible();
+      expect(picked('Module')).toHaveTextContent('Module 2: Respiration');
+      expect(picked('Lesson context')).toHaveTextContent('1. Gas exchange');
+      await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'start', behavior: 'smooth' }));
+    });
   });
 });

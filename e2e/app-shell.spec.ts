@@ -145,7 +145,8 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     const errors: Error[] = [];
     page.on('pageerror', error => errors.push(error));
     await page.goto('/chat?conversationId=tangent-parent');
-    const composer = page.getByRole('textbox', { name: 'Message composer' });
+    // The tangent panel has a composer of its own, after this one.
+    const composer = page.getByRole('textbox', { name: 'Message composer' }).first();
     await composer.fill('Keep my main draft');
     const answer = page.locator('#message-source-answer .tiptap-viewer p');
     await expect(answer).toBeVisible();
@@ -175,11 +176,11 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     const expectedPassage = entry === 'reply' ? 'A tangent explores one idea without changing the main conversation.' : 'explores one idea';
     await expect(panel.getByRole('blockquote')).toHaveText(expectedPassage);
     await expect(composer).toHaveValue('Keep my main draft');
-    const tangentComposer = panel.getByRole('textbox', { name: 'Ask in this tangent' });
+    const tangentComposer = panel.getByRole('textbox', { name: 'Message composer' });
     await tangentComposer.fill('Cancel this tangent request');
     await tangentComposer.press('Enter');
-    await panel.getByRole('button', { name: 'Stop tangent response' }).click();
-    await expect(tangentComposer).toHaveValue('Cancel this tangent request');
+    await panel.getByRole('button', { name: 'Stop generating response' }).click();
+    await expect(tangentComposer).toHaveValue('');
     await expect(composer).toHaveValue('Keep my main draft');
     await tangentComposer.fill('What does that mean?');
     await tangentComposer.press('Enter');

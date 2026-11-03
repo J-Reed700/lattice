@@ -77,6 +77,7 @@ const drawer = () => screen.queryByRole('complementary', { name: 'Course tangent
 const trigger = () => screen.getByRole('button', { name: 'Course tangents' });
 
 beforeEach(() => {
+  localStorage.clear();
   mocks.query = { data: [], isPending: false, isError: false, isSuccess: true, refetch: vi.fn() };
   mocks.create = { mutateAsync: vi.fn().mockResolvedValue(tangent('new')), isPending: false };
   mocks.navigate.mockReset();
@@ -226,5 +227,35 @@ describe('ProgramTangents drawer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close tangents' }));
     expect(drawer()).not.toBeInTheDocument();
     await act(async () => { await Promise.resolve(); });
+  });
+
+  describe('sizing the drawer', () => {
+    const edge = () => within(drawer()!).getByRole('separator', { name: 'Resize tangents' });
+
+    it('is sized by its edge, in the list and in a tangent, and opens at that width the next time', () => {
+      mocks.query.data = [tangent('a')];
+      renderTangents();
+      fireEvent.click(trigger());
+      expect(edge()).toHaveAttribute('aria-valuenow', '420');
+      fireEvent.keyDown(edge(), { key: 'ArrowLeft' });
+      expect(edge()).toHaveAttribute('aria-valuenow', '444');
+      fireEvent.click(within(drawer()!).getByRole('button', { name: /Open tangent/ }));
+      expect(screen.getByText('Chat: Tangent a')).toBeInTheDocument();
+      expect(edge()).toHaveAttribute('aria-valuenow', '444');
+      fireEvent.click(screen.getByRole('button', { name: 'Close chat' }));
+      fireEvent.click(trigger());
+      expect(edge()).toHaveAttribute('aria-valuenow', '444');
+    });
+
+    it('expands over the lesson from the list, and shrinks back', () => {
+      renderTangents();
+      fireEvent.click(trigger());
+      fireEvent.click(within(drawer()!).getByRole('button', { name: 'Expand tangents' }));
+      expect(drawer()).toHaveAttribute('data-expanded', 'true');
+      expect(screen.queryByRole('separator')).not.toBeInTheDocument();
+      fireEvent.click(within(drawer()!).getByRole('button', { name: 'Shrink tangents' }));
+      expect(drawer()).not.toHaveAttribute('data-expanded');
+      expect(edge()).toHaveAttribute('aria-valuenow', '420');
+    });
   });
 });

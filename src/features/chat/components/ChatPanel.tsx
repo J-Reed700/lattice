@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
 
@@ -28,11 +28,12 @@ import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels'
 import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
 import { selectIsChatWarming, useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
+import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import type { ChatModelChoice } from '@/lib/bindings';
-import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { useConversationsStore, useThreadStartsAfter } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 import {
   buildChatModelOptions,
@@ -44,18 +45,25 @@ import {
 import { createDefaultConversationTitle } from '@/utils/conversationTitles';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-interface ChatPanelProps {
+export interface ChatPanelProps {
   /** A line above the composer from the surface hosting this chat. */
   composerNotice?: ReactNode;
   /** Chips at the top of the composer for what the host sends with the next turn. */
   composerChips?: ReactNode;
   /** What an empty thread suggests, in place of the library's questions. */
   starters?: string[];
+  /** A line an empty thread opens with, above the starters or alone when there are none. It too replaces the library's questions. */
+  startersNote?: string;
+  /** A chat inside another panel, a tangent: no tangents, palette verbs or app-wide notices of its own. */
+  embedded?: boolean;
+  /** Focus the composer when the chat opens. */
+  autoFocus?: boolean;
 }
 
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
+const NO_COMMANDS: PaletteCommand[] = [];
 
-export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanelProps = {}) {
+export function ChatPanel({ composerNotice, composerChips, starters, startersNote, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
   const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
@@ -73,6 +81,7 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
   const forkConversation = useConversationsStore((state) => state.forkConversation);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const settings = useSettingsQuery().data;
+  const threadStartsAfter = useThreadStartsAfter();
 
   const isSending = activeConversationId
     ? inFlightGenerations.has(activeConversationId)
@@ -212,6 +221,9 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
   });
   const { applyFocusDocuments, resolveEffectiveToolPreferences } = composer;
   const { chooseFiles } = attachments;
+  useEffect(() => {
+    if (autoFocus) composer.textareaRef.current?.focus();
+  }, [autoFocus, composer.textareaRef]);
   const { handleChangeSpace, handleSearchGeneral, handleChooseChatModel, handleUseDefault } = useChatSwitchActions({
     activeConversationId,
     applyFocusDocuments,
@@ -277,7 +289,7 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
       resolveEffectiveToolPreferences,
     ]
   );
-  useRegisterPaletteCommands(paletteCommands);
+  useRegisterPaletteCommands(embedded ? NO_COMMANDS : paletteCommands);
 
   if (!activeConversationId) {
     return (
@@ -288,8 +300,7 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
     );
   }
 
-  return (
-    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} toolPreferences={composer.toolPreferences} unavailable={isChatUnavailable}>
+  const panel = (
     <div
       ref={panelRef}
       data-thread={messages.length > 0 || undefined}
@@ -302,8 +313,12 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
           </p>
         </div>
       )}
-      <ImportFailuresNotice />
-      <UtilityModelNotice />
+      {!embedded && (
+        <>
+          <ImportFailuresNotice />
+          <UtilityModelNotice />
+        </>
+      )}
       <ConversationMemoryPanel
         conversationId={activeConversationId}
         isOpen={isMemoryOpen}
@@ -327,7 +342,7 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
           {messages.length === 0 ? (
             <div className="flex min-h-[50vh] flex-col items-center justify-center px-6">
               <div className="w-full max-w-[520px]">
-                {starters ? <StarterList starters={starters} onPick={composer.fill} /> : (
+                {starters || startersNote ? <StarterList starters={starters ?? []} note={startersNote} onPick={composer.fill} /> : (
                   <>
                     <ChatStarters
                       spaceId={startersSpaceId}
@@ -367,7 +382,7 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
                       isFresh={!prefersReducedMotion && freshMessageKeys.has(key)}
                       isLastTurn={index === messages.length - 1}
                       previousMessageId={
-                        previous && 'id' in previous ? previous.id : undefined
+                        previous ? ('id' in previous ? previous.id : undefined) : threadStartsAfter
                       }
                       nextMessageId={next && 'id' in next ? next.id : undefined}
                       chatModelSeesImages={chatModelSeesImages}
@@ -452,6 +467,12 @@ export function ChatPanel({ composerNotice, composerChips, starters }: ChatPanel
         onCancel={() => void handleCancel()}
       />
     </div>
+  );
+
+  if (embedded) return panel;
+  return (
+    <ConversationTangents key={activeConversationId} conversationId={activeConversationId} chat={ChatPanel}>
+      {panel}
     </ConversationTangents>
   );
 }

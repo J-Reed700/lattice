@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { ConversationSnapshotProvider } from '@/shared/conversations/conversationsStore';
 import { deferred } from '@/tests/deferred';
 
 import { ChatPanel } from './ChatPanel';
@@ -42,7 +43,8 @@ const { stub } = vi.hoisted(() => ({
 }));
 
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({
+vi.mock('@/shared/conversations/conversationsStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/shared/conversations/conversationsStore')>()),
   useConversationsStore: (selector: (state: Record<string, unknown>) => unknown) => selector(h.store),
 }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: h.settings }) }));
@@ -230,6 +232,22 @@ describe('ChatPanel', () => {
     expect(screen.queryByTestId('ChatEmptyStateIngestDelta')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Quiz me' }));
     expect(h.composer.fill).toHaveBeenCalledWith('Quiz me');
+  });
+
+  it('says its host’s note above the host’s starters in an empty thread', () => {
+    render(<ChatPanel starters={['Quiz me']} startersNote="Ask about this passage." />);
+    expect(screen.getByText('Ask about this passage.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Quiz me' })).toBeInTheDocument();
+    expect(screen.queryByTestId('ChatStarters')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ChatEmptyStateIngestDelta')).not.toBeInTheDocument();
+  });
+
+  it('says only its host’s note, and not the library’s starters, when the host has none of its own', () => {
+    render(<ChatPanel startersNote="Ask about this passage." />);
+    expect(screen.getByText('Ask about this passage.')).toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ChatStarters')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('ChatEmptyStateIngestDelta')).not.toBeInTheDocument();
   });
 
   it('takes starters from the sidebar’s space before the chat has one', () => {
@@ -492,7 +510,69 @@ describe('ChatPanel', () => {
       render(<ChatPanel composerNotice={<span>Folder: /notes</span>} composerChips={<span>chip</span>} />);
       expect(composerProps().notice).toBeTruthy();
       expect(composerProps().chips).toBeTruthy();
-      expect(h.props.ConversationTangents).toMatchObject({ conversationId: 'c1', toolPreferences: { web: true }, unavailable: false });
+      expect(h.props.ConversationTangents).toMatchObject({ conversationId: 'c1' });
+    });
+  });
+
+  describe('tangents and notices', () => {
+    it('gives its tangents this chat to show in their own panel, and shows the app-wide notices', () => {
+      render(<ChatPanel />);
+      expect(h.props.ConversationTangents.chat).toBe(ChatPanel);
+      expect(screen.getByTestId('ImportFailuresNotice')).toBeInTheDocument();
+      expect(screen.getByTestId('UtilityModelNotice')).toBeInTheDocument();
+    });
+
+    it('brings none of them when embedded in another panel, and registers no palette verbs', () => {
+      render(<ChatPanel embedded />);
+      expect(h.props.ConversationTangents).toBeUndefined();
+      expect(h.registered).toEqual([]);
+      expect(screen.queryByTestId('ImportFailuresNotice')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('UtilityModelNotice')).not.toBeInTheDocument();
+      expect(composerProps()).toBeDefined();
+      expect(screen.getByTestId('ChatStarters')).toBeInTheDocument();
+    });
+  });
+
+  describe('a thread that starts partway through its conversation', () => {
+    const thread = [
+      { id: 'm3', role: 'user', content: 'Which cities joined?' },
+      { id: 'm4', role: 'assistant', content: 'Lübeck led it.' },
+      { key: 'pending', role: 'user', content: 'And Bergen?' },
+    ];
+
+    it('hands its first message the message it follows, so a branch before it keeps what came earlier', () => {
+      h.thread = { messages: thread };
+      render(
+        <ConversationSnapshotProvider value={h.store as never} threadStartsAfter="c2">
+          <ChatPanel />
+        </ConversationSnapshotProvider>,
+      );
+      expect(h.props.messages.m3).toMatchObject({ previousMessageId: 'c2' });
+      expect(h.props.messages.m4).toMatchObject({ previousMessageId: 'm3' });
+      expect(h.props.messages.pending).toMatchObject({ previousMessageId: 'm4' });
+    });
+
+    it('leaves the first message of an ordinary thread with nothing to follow', () => {
+      h.thread = { messages: thread };
+      render(<ChatPanel />);
+      expect(h.props.messages.m3.previousMessageId).toBeUndefined();
+      expect(h.props.messages.m4).toMatchObject({ previousMessageId: 'm3' });
+    });
+  });
+
+  describe('focus', () => {
+    it('opens on its composer when asked to', () => {
+      const focus = vi.fn();
+      h.composer.textareaRef = { current: { focus } };
+      render(<ChatPanel autoFocus />);
+      expect(focus).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves focus where it is otherwise', () => {
+      const focus = vi.fn();
+      h.composer.textareaRef = { current: { focus } };
+      render(<ChatPanel />);
+      expect(focus).not.toHaveBeenCalled();
     });
   });
 });
