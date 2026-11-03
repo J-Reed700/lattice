@@ -76,8 +76,15 @@ async fn a_lesson_whose_bound_source_changed_is_prepared_again_once_and_not_a_th
     // It changes a second time in the same job: no third preparation; the job
     // ends saying so.
     sources[0].excerpt.push_str(" Revised again.");
-    let error = rounds.again(&[second], &sources, &model).unwrap_err();
-    assert!(error.to_string().contains("changed again"), "{error}");
+    let error = rounds
+        .again(&[second], &sources, &model)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("prepared again and still cannot be published")
+            && error.contains("changed while it was being prepared"),
+        "{error}"
+    );
     Ok(())
 }
 
