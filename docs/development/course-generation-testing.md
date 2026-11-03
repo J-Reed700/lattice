@@ -65,7 +65,7 @@ bash scripts/check-rust-layer-boundaries.sh
 cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 ```
 
-`scripts/rust-architecture-check` enforces, among other rules, that no Rust file other than a `tests.rs` exceeds 800 lines (`MAX_LINES` in `src/ratchet.rs`). Move inline tests to a sibling `tests.rs` or split the module.
+`scripts/rust-architecture-check` enforces, among other rules, that no Rust file other than a `tests.rs` exceeds 1000 lines (`MAX_LINES` in `src/ratchet.rs`). Move inline tests to a sibling `tests.rs` or split the module.
 
 ## 2. Live tests
 
