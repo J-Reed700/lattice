@@ -1,24 +1,20 @@
 //! The tokio runtime every task of the app runs on.
 
-use std::sync::OnceLock;
-
 /// Each worker and blocking thread's stack: the `RUST_MIN_STACK` every test
 /// runs with (`.cargo/config.toml`), which a packaged app never sees.
 pub const THREAD_STACK_BYTES: usize = 32 * 1024 * 1024;
 
-static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-
 /// Hands Tauri a runtime whose threads have [`THREAD_STACK_BYTES`]. Call it
 /// before anything spawns a task; Tauri accepts one runtime.
-pub fn install() -> std::io::Result<()> {
+/// The caller keeps the returned runtime for as long as the app runs.
+pub fn install() -> std::io::Result<tokio::runtime::Runtime> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("tokio-rt-worker")
         .thread_stack_size(THREAD_STACK_BYTES)
         .build()?;
-    let runtime = RUNTIME.get_or_init(|| runtime);
     tauri::async_runtime::set(runtime.handle().clone());
-    Ok(())
+    Ok(runtime)
 }
 
 #[cfg(test)]
@@ -47,7 +43,7 @@ mod tests {
     #[test]
     fn a_task_on_the_app_runtime_has_the_stack_the_tests_run_with() {
         if std::env::var_os(PROBE).is_some() {
-            install().expect("the app's runtime");
+            let _runtime = install().expect("the app's runtime");
             let task = tauri::async_runtime::spawn(async { use_stack(PROBE_BYTES) });
             let frames = tauri::async_runtime::block_on(task).expect("the probe task");
             assert_eq!(frames, PROBE_BYTES / FRAME_BYTES);
