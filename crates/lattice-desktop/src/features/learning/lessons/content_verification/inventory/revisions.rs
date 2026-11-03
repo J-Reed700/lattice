@@ -402,6 +402,53 @@ mod revision_tests {
         .await
     }
 
+    fn claims_of(index: usize, sentence: &str) -> UnitClaims {
+        UnitClaims {
+            index,
+            non_factual_reason: String::new(),
+            claims: vec![Claim {
+                quote: sentence.into(),
+                statement: sentence.into(),
+            }],
+        }
+    }
+
+    fn section(title: &str, body: &str) -> Value {
+        json!({"kind":"teaching","title":title,"body":body})
+    }
+
+    #[tokio::test]
+    async fn a_saved_inventory_is_no_basis_for_another_section_at_its_index() -> Result<()> {
+        // Once the section ahead of it goes, the next section sits at its
+        // index: it is read afresh, never as an edit of the one that went.
+        let before = vec![
+            section("Alpha", "Alpha holds the line."),
+            section("Bravo", "Bravo stands firm today."),
+        ];
+        let after = vec![
+            section("Alpha", "Alpha holds the line."),
+            section("Charlie", "Charlie rests in the shade."),
+        ];
+        let model = Reviser {
+            reply: json!({"changes":[{"claimId":null,"passageId":"unit-1-passage-0","statement":"Charlie rests in the shade."}],"nonFactualReason":""}).to_string(),
+            asked: Mutex::new(Vec::new()),
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            save(&model, &before, &claims_of(1, "Bravo stands firm today.")).await?;
+
+            assert!(update(&model, &after, 1).await?.is_none());
+            assert!(model.asked.lock().unwrap().is_empty());
+            Ok(())
+        })
+        .await
+    }
+
     #[tokio::test]
     async fn a_section_whose_every_claim_was_cut_says_why_it_has_none_when_its_revision_adds_none(
     ) -> Result<()> {
