@@ -1,5 +1,8 @@
 //! Claim locations are selected from lossless, app-owned text passages.
 use super::*;
+use lattice_core::shared::text::segmentation::{
+    partition, Chars, Overflow, Plan, Prose, Rung, Strength,
+};
 use std::collections::BTreeMap;
 
 pub(super) mod revisions;
@@ -65,22 +68,29 @@ pub(super) fn fixture_response(units: Vec<Value>) -> Value {
     json!({"units": units})
 }
 
+/// How a string field is cut into passages: at the latest paragraph break that
+/// leaves one past 600 characters, else at the latest sentence break within
+/// 1,400; a sentence longer than that is a passage of its own.
+const PASSAGE_PLAN: Plan<'static> = Plan {
+    max: 1_400,
+    ladder: &[
+        Rung {
+            at_least: Strength::Paragraph,
+            floor: 0.43,
+        },
+        Rung {
+            at_least: Strength::Sentence,
+            floor: 0.0,
+        },
+    ],
+    overflow: Overflow::Extend,
+};
+
 fn passages(value: &Value, path: &str, index: usize, output: &mut Vec<Value>) {
     match value {
         Value::String(text) => {
-            let mut start = 0;
-            let mut length = 0;
-            for (offset, character) in text.char_indices() {
-                length += 1;
-                if (length >= 600 && character == '\n') || length == 1400 {
-                    let end = offset + character.len_utf8();
-                    output.push(json!({"id":format!("unit-{index}-passage-{}",output.len()),"field":path,"text":text.get(start..end).unwrap_or_default()}));
-                    start = end;
-                    length = 0;
-                }
-            }
-            if start < text.len() {
-                output.push(json!({"id":format!("unit-{index}-passage-{}",output.len()),"field":path,"text":text.get(start..).unwrap_or_default()}));
+            for span in partition(text, &Prose, &Chars, &PASSAGE_PLAN) {
+                output.push(json!({"id":format!("unit-{index}-passage-{}",output.len()),"field":path,"text":text.get(span).unwrap_or_default()}));
             }
         }
         Value::Array(items) => {
