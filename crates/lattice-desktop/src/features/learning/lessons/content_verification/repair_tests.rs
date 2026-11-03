@@ -868,11 +868,16 @@ async fn the_last_attempt_on_a_sentence_that_also_states_a_passed_claim_leaves_w
 }
 
 #[tokio::test]
-async fn the_last_attempt_takes_a_claims_sentence_out_only_where_the_claim_stands_not_where_its_words_recur(
+async fn the_last_attempt_takes_out_the_sentence_that_states_the_claim_not_the_rest_of_a_passage_wide_quote(
 ) -> Result<()> {
     // §1 #8 (b) of the acceptance policy design
-    const RECURRING: &str = "Every kiln log needs a date.";
-    let body = format!("{RECURRING} Keep this one. {RECURRING}");
+    const OTHER: &str = "The kiln is loaded while cold.";
+    const STATING: &str = "A bisque firing reaches cone 04.";
+    const STATEMENT: &str = "A bisque firing reaches cone 04";
+    let passage = format!("{OTHER} {STATING}");
+    let body = format!("{passage} Closing line.");
+    // The claim's quote is the passage of both sentences, as an older pass
+    // stored it; no claim stands on the first.
     let llm = SmallWindow {
         window: 4_000,
         requests: Mutex::new(Vec::new()),
@@ -880,28 +885,33 @@ async fn the_last_attempt_takes_a_claims_sentence_out_only_where_the_claim_stand
     let mut ledger = failed_ledger(
         &llm,
         &body,
-        &[("recurring", RECURRING, 1), ("kept", "Keep this one.", 0)],
+        &[
+            ("stating", passage.as_str(), 1),
+            ("kept", "Closing line.", 0),
+        ],
     )
     .await?;
-    let recurring = ClaimId("recurring".into());
-    // The claim stands on the first of the two places the sentence is written.
-    let location = ClaimLocation {
-        span: Some((0, RECURRING.len())),
-        ..ledger.entry(&recurring).unwrap().location().clone()
-    };
+    let stating = ClaimId("stating".into());
+    let location = ClaimLocation::locate(0, UnitKind::Block, "body", passage.as_str(), &body);
     let extracted = ClaimEvent::Extracted {
         location,
-        statement: RECURRING.to_owned(),
+        statement: STATEMENT.to_owned(),
     };
-    ledger.append(&recurring, extracted).await?;
+    ledger.append(&stating, extracted).await?;
+    // The locator reads the statement as the passage's second sentence.
+    let located = lattice_core::shared::text::claim_sentence(&body, (0, passage.len()), STATEMENT);
+    assert_eq!(
+        located.and_then(|(start, end)| body.get(start..end)),
+        Some(STATING)
+    );
     ledger
-        .begin_repairs(&lesson_of(&body), std::slice::from_ref(&recurring))
+        .begin_repairs(&lesson_of(&body), std::slice::from_ref(&stating))
         .await?;
     let mut context = json!({
         "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
         "executions": [], "repairHistory": [],
         "failedClaims": [
-            {"unit":0,"claimId":"recurring","sentence":RECURRING,"evidence":[],"lastAttempt":true},
+            {"unit":0,"claimId":"stating","sentence":passage,"evidence":[],"lastAttempt":true},
         ],
     });
 
@@ -909,7 +919,7 @@ async fn the_last_attempt_takes_a_claims_sentence_out_only_where_the_claim_stand
 
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],
-        format!("Keep this one. {RECURRING}")
+        format!("{OTHER} Closing line.")
     );
     Ok(())
 }
