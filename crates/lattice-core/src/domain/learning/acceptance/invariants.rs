@@ -20,15 +20,16 @@ pub enum Violation {
         node: NodeId,
         missing: NodeId,
     },
-    /// 1: a statement can come back to a node it left, or change class twice.
+    /// 1: a statement can come back to a node it left, or change class at an
+    /// entry twice.
     Cycle { class: Class, node: NodeId },
     /// 2: a statement can be removed without a rewrite first.
     CutWithoutRewrite { class: Class, node: NodeId },
     /// 3: a closed-book refusal can lead to a rewrite, a cut or an end before
-    /// the passages are read.
+    /// the passages are read as a ground reading.
     VetoUnread { class: Class, node: NodeId },
-    /// 4: a first reading answers a citation's fault with anything but a
-    /// citation remedy.
+    /// 4: a citation's fault is answered with anything but the citation
+    /// remedy: a recite for `StandsElsewhere`, an uncite for `AllCommon`.
     CitationFaultNotRepaired {
         class: Class,
         node: NodeId,
@@ -46,6 +47,9 @@ pub enum Violation {
     },
     /// 7: the ceiling rises along an edge, or by using the re-ask.
     CeilingRises { class: Class, node: NodeId },
+    /// 8: a rewrite's successor can be rewritten again, or can change class
+    /// into an entry.
+    RewrittenTwice { class: Class, node: NodeId },
 }
 
 /// Every invariant of §2.5 that `policy` breaks, each once. The ceiling is
@@ -62,6 +66,7 @@ pub fn violations(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     found.extend(unjudged_edges(policy));
     found.extend(unretried_rewrites(policy));
     found.extend(foreign_ends(policy));
+    found.extend(rewritten_twice(policy));
     if ends {
         let mut ceiling = Ceiling::new(policy);
         found.extend(ceiling_rises(policy, &mut |at: Position| ceiling.most(at)));
@@ -88,7 +93,7 @@ fn nodes_of(next: Next) -> Vec<NodeId> {
             otherwise,
         } => vec![id, otherwise],
         Next::FirstChange { otherwise, .. } => vec![otherwise],
-        Next::Go(Target::Enter(_)) | Next::End(_) => Vec::new(),
+        Next::Go(Target::Enter(_) | Target::EnterAfterRewrite(_)) | Next::End(_) => Vec::new(),
     }
 }
 
@@ -233,8 +238,8 @@ fn cuts_without_rewrite(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     found
 }
 
-/// 3: a closed-book refusal reaches a part-wise reading before any rewrite,
-/// cut or end.
+/// 3: a closed-book refusal reaches a ground reading before any rewrite, cut
+/// or end.
 fn unread_vetoes(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     let mut found = Vec::new();
     for at in reachable(policy) {
@@ -257,8 +262,8 @@ fn unread_vetoes(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     found
 }
 
-/// Whether every path from `next` reaches a part-wise reading before a
-/// rewrite, a cut or an end.
+/// Whether every path from `next` reaches a ground reading before a rewrite,
+/// a cut or an end.
 fn reads_the_passages(policy: &dyn AcceptancePolicy, at: Position, next: Next) -> bool {
     let mut stack = match follow(policy, at, next) {
         Moved::To(first) => vec![first],
@@ -273,7 +278,7 @@ fn reads_the_passages(policy: &dyn AcceptancePolicy, at: Position, next: Next) -
             continue;
         };
         match node.step {
-            Step::Read(Reading::Parts) => continue,
+            Step::Read(Reading::Ground) => continue,
             Step::Rewrite(_) | Step::Cut => return false,
             _ => {}
         }
@@ -287,25 +292,26 @@ fn reads_the_passages(policy: &dyn AcceptancePolicy, at: Position, next: Next) -
     true
 }
 
-/// 4: the first readings (the part-wise and page readings the entry reaches
-/// through readings and research alone) answer a citation's fault with a
-/// citation remedy. Later readings judge standing, not attribution.
+/// 4: a citation's fault is answered on the citation: every `StandsElsewhere`
+/// edge leads to a recite and every `AllCommon` edge to an uncite, directly or
+/// as a first change's `change`. Its `otherwise`, taken by a statement that has
+/// changed class already, is held to nothing.
 fn unrepaired_citations(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     let mut found = Vec::new();
     for class in CLASSES {
         let graph = policy.graph(class);
-        for id in first_readings(graph) {
-            let Some(node) = graph.node(id) else {
-                continue;
-            };
-            for outcome in [Outcome::StandsElsewhere, Outcome::AllCommon] {
+        for node in graph.nodes() {
+            for (outcome, remedy) in [
+                (Outcome::StandsElsewhere, Step::Recite),
+                (Outcome::AllCommon, Step::Uncite),
+            ] {
                 let unrepaired = node
                     .next(outcome)
-                    .is_some_and(|next| !repairs_the_citation(graph, outcome, next));
+                    .is_some_and(|next| !leads_to(graph, next, remedy));
                 if unrepaired {
                     found.push(Violation::CitationFaultNotRepaired {
                         class,
-                        node: id,
+                        node: node.id(),
                         outcome,
                     });
                 }
@@ -315,44 +321,15 @@ fn unrepaired_citations(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
     found
 }
 
-fn first_readings(graph: &Graph) -> Vec<NodeId> {
-    let mut readings = Vec::new();
-    let mut seen = HashSet::new();
-    let mut stack = vec![graph.entry()];
-    while let Some(id) = stack.pop() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let Some(node) = graph.node(id) else {
-            continue;
-        };
-        match node.step {
-            Step::Read(Reading::Parts | Reading::Page) => readings.push(id),
-            Step::Research => {}
-            _ => continue,
-        }
-        for &(_, next) in node.edges() {
-            stack.extend(nodes_of(next));
-        }
-    }
-    readings
-}
-
-/// Whether `next` answers `outcome` with a recite or an uncite (on the first
-/// change, when it has one); an `AllCommon` that has changed class may
-/// research instead.
-fn repairs_the_citation(graph: &Graph, outcome: Outcome, next: Next) -> bool {
-    let remedy = |id: NodeId| matches!(step_of(graph, id), Some(Step::Recite | Step::Uncite));
-    let research = |id: NodeId| matches!(step_of(graph, id), Some(Step::Research));
+/// Whether `next` goes to a node of the step `wanted`, directly or as a first
+/// change's `change`.
+fn leads_to(graph: &Graph, next: Next, wanted: Step) -> bool {
     match next {
-        Next::Go(Target::Node(id)) => remedy(id),
-        Next::FirstChange {
+        Next::Go(Target::Node(id))
+        | Next::FirstChange {
             change: Target::Node(id),
-            otherwise,
-        } => {
-            remedy(id)
-                && (remedy(otherwise) || (outcome == Outcome::AllCommon && research(otherwise)))
-        }
+            ..
+        } => step_of(graph, id) == Some(wanted),
         _ => false,
     }
 }
@@ -451,6 +428,64 @@ fn is_own(class: Class, end: End) -> bool {
             | (Class::Internal, End::NotAClaim)
             | (_, End::Removed { .. })
     )
+}
+
+/// 8: from every class's post-rewrite node, in every state, no rewrite is
+/// reachable and no change of class goes to an entry: a rewrite's successor is
+/// never rewritten again.
+fn rewritten_twice(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
+    let mut found = Vec::new();
+    let mut seen = HashSet::new();
+    let mut stack = Vec::new();
+    for class in CLASSES {
+        for changed_class in [false, true] {
+            for reasked in [false, true] {
+                stack.push(Position {
+                    class,
+                    changed_class,
+                    reasked,
+                    node: policy.graph(class).after_rewrite(),
+                });
+            }
+        }
+    }
+    while let Some(at) = stack.pop() {
+        if !seen.insert(at) {
+            continue;
+        }
+        let Some(node) = policy.graph(at.class).node(at.node) else {
+            continue;
+        };
+        let rewrites = matches!(node.step, Step::Rewrite(_));
+        let enters = node
+            .edges()
+            .iter()
+            .any(|&(_, next)| enters_an_entry(at, next));
+        if rewrites || enters {
+            found.push(Violation::RewrittenTwice {
+                class: at.class,
+                node: at.node,
+            });
+        }
+        for &(_, next) in node.edges() {
+            if let Moved::To(to) = follow(policy, at, next) {
+                stack.push(to);
+            }
+        }
+    }
+    found
+}
+
+/// Whether `next`, taken from `at`, changes class at an entry.
+fn enters_an_entry(at: Position, next: Next) -> bool {
+    match next {
+        Next::Go(Target::Enter(_)) => true,
+        Next::FirstChange {
+            change: Target::Enter(_),
+            ..
+        } => !at.changed_class,
+        _ => false,
+    }
 }
 
 /// 7: along every edge from a position, in either state of the re-ask,

@@ -35,7 +35,7 @@ fn positions(policy: &dyn AcceptancePolicy) -> Vec<Position> {
 #[test]
 fn a_statement_at_its_entry_can_cost_the_longest_path_and_one_re_ask() {
     let policy = StandardPolicy::new();
-    for (class, most) in [(Sourced, 14), (Reasoning, 15), (Common, 13), (Internal, 13)] {
+    for (class, most) in [(Sourced, 16), (Reasoning, 15), (Common, 16), (Internal, 13)] {
         assert_eq!(
             most_calls(&policy, start(&policy, class)),
             most,
@@ -47,7 +47,7 @@ fn a_statement_at_its_entry_can_cost_the_longest_path_and_one_re_ask() {
 #[test]
 fn a_statement_whose_re_ask_is_spent_can_cost_the_longest_path_alone() {
     let policy = StandardPolicy::new();
-    for (class, most) in [(Sourced, 11), (Reasoning, 12), (Common, 10), (Internal, 10)] {
+    for (class, most) in [(Sourced, 13), (Reasoning, 12), (Common, 13), (Internal, 10)] {
         let spent = Position {
             reasked: true,
             ..start(&policy, class)
@@ -59,7 +59,7 @@ fn a_statement_whose_re_ask_is_spent_can_cost_the_longest_path_alone() {
 #[test]
 fn a_neighbours_rewrite_can_cost_the_longest_path_from_the_post_rewrite_node() {
     let policy = StandardPolicy::new();
-    for (class, most) in [(Sourced, 1), (Reasoning, 5), (Common, 4), (Internal, 4)] {
+    for (class, most) in [(Sourced, 5), (Reasoning, 5), (Common, 4), (Internal, 4)] {
         assert_eq!(after_rewrite_calls(&policy, class), most, "{class:?}");
     }
 }
@@ -67,29 +67,29 @@ fn a_neighbours_rewrite_can_cost_the_longest_path_from_the_post_rewrite_node() {
 #[test]
 fn a_spent_re_ask_lowers_the_ceiling_by_the_costliest_reading_ahead() {
     let policy = StandardPolicy::new();
-    let ground = position(Common, false, false, "c.ground");
-    assert_eq!(most_calls(&policy, ground), 10);
+    let grounding = position(Common, false, false, "c.ground");
+    assert_eq!(most_calls(&policy, grounding), 10);
     assert_eq!(
         most_calls(
             &policy,
             Position {
                 reasked: true,
-                ..ground
+                ..grounding
             }
         ),
         7
     );
-    let recite = position(Sourced, false, false, "s.recite");
-    assert_eq!(most_calls(&policy, recite), 5);
+    let reciting = position(Sourced, false, false, "s.recite");
+    assert_eq!(most_calls(&policy, reciting), 14);
     assert_eq!(
         most_calls(
             &policy,
             Position {
                 reasked: true,
-                ..recite
+                ..reciting
             }
         ),
-        4
+        11
     );
 }
 
@@ -102,7 +102,7 @@ fn a_statement_that_changed_class_costs_what_the_new_class_costs_from_where_it_e
     );
     assert_eq!(
         most_calls(&policy, position(Sourced, true, false, "s.read")),
-        7
+        13
     );
 }
 

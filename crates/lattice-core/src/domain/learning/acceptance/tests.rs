@@ -39,6 +39,10 @@ fn parts(outcome: Outcome) -> Taken {
     read(Reading::Parts, outcome)
 }
 
+fn ground(outcome: Outcome) -> Taken {
+    read(Reading::Ground, outcome)
+}
+
 fn page(outcome: Outcome) -> Taken {
     read(Reading::Page, outcome)
 }

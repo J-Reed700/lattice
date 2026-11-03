@@ -12,6 +12,7 @@ use crate::domain::learning::claim_review::Class;
 pub const STANDARD_POLICY: &str = "acceptance-v1";
 
 const PARTS: Step = Step::Read(Reading::Parts);
+const GROUND: Step = Step::Read(Reading::Ground);
 const PAGE: Step = Step::Read(Reading::Page);
 const CONSISTENCY: Step = Step::Read(Reading::Consistency);
 const KNOWLEDGE: Step = Step::Read(Reading::Knowledge);
@@ -72,6 +73,14 @@ fn rewrite(
         .on(&[NotApplied], Next::to(not_applied))
 }
 
+/// A ground reading: the passages ground the statement and it ends, or the
+/// veto stands and it goes on to `refuted`.
+fn ground(name: &'static str, end: End, refuted: &'static str) -> Node {
+    Node::new(name, GROUND, 1)
+        .on(&[Stands], Next::End(end))
+        .on(&[Refuted], Next::to(refuted))
+}
+
 /// A cut: the sentence, or its section when the sentence cannot be cut.
 fn cut(name: &'static str) -> Node {
     Node::new(name, Step::Cut, 0)
@@ -90,7 +99,6 @@ fn sourced() -> Graph {
         .with(
             Node::new("s.read", PARTS, 1)
                 .on(&[Stands], Next::End(End::Resolved))
-                .on(&[StandsElsewhere], Next::to("s.recite"))
                 .on(
                     &[AllCommon],
                     Next::first_change(Target::node("s.uncite"), "s.research"),
@@ -112,6 +120,10 @@ fn sourced() -> Graph {
         .with(
             Node::new("s.citeread", PARTS, 1)
                 .on(&[Stands], Next::End(End::Resolved))
+                .on(
+                    &[AllCommon],
+                    Next::first_change(Target::node("s.uncite"), "s.rewrite"),
+                )
                 .otherwise(Next::to("s.rewrite")),
         )
         .with(rewrite(
@@ -129,7 +141,12 @@ fn sourced() -> Graph {
         .with(
             Node::new("s.final", PARTS, 1)
                 .on(&[Stands], Next::End(End::Resolved))
+                .on(&[AllCommon], Next::to("s.final.uncite"))
                 .otherwise(Next::to("s.cut")),
+        )
+        .with(
+            Node::new("s.final.uncite", Step::Uncite, 0)
+                .on(&[Done], Next::enter_after_rewrite(Class::Common)),
         )
         .with(cut("s.cut"))
 }
@@ -151,11 +168,7 @@ fn reasoning() -> Graph {
                 .on(&[Stands], Next::End(End::Consistent))
                 .on(&[Refuted], Next::to("r.ground")),
         )
-        .with(
-            Node::new("r.ground", PARTS, 1)
-                .on(&[Stands], Next::End(End::Consistent))
-                .otherwise(Next::to("r.rewrite")),
-        )
+        .with(ground("r.ground", End::Consistent, "r.rewrite"))
         .with(rewrite(
             "r.rewrite",
             Goal::AgreeWithThePassages,
@@ -178,11 +191,7 @@ fn reasoning() -> Graph {
                 .on(&[Stands], Next::End(End::Consistent))
                 .on(&[Refuted], Next::to("r.reground")),
         )
-        .with(
-            Node::new("r.reground", PARTS, 1)
-                .on(&[Stands], Next::End(End::Consistent))
-                .otherwise(Next::to("r.cut")),
-        )
+        .with(ground("r.reground", End::Consistent, "r.cut"))
         .with(cut("r.cut"))
 }
 
@@ -199,11 +208,7 @@ fn common() -> Graph {
                 )
                 .on(&[Refuted], Next::to("c.ground")),
         )
-        .with(
-            Node::new("c.ground", PARTS, 1)
-                .on(&[Stands], Next::End(End::GeneralKnowledge))
-                .otherwise(Next::to("c.rewrite")),
-        )
+        .with(ground("c.ground", End::GeneralKnowledge, "c.rewrite"))
         .with(rewrite(
             "c.rewrite",
             Goal::AsTheFieldHasIt,
@@ -222,11 +227,7 @@ fn common() -> Graph {
                 .on(&[Refuted], Next::to("c.reground"))
                 .on(&[NeedsSource], Next::to("c.cut")),
         )
-        .with(
-            Node::new("c.reground", PARTS, 1)
-                .on(&[Stands], Next::End(End::GeneralKnowledge))
-                .otherwise(Next::to("c.cut")),
-        )
+        .with(ground("c.reground", End::GeneralKnowledge, "c.cut"))
         .with(cut("c.cut"))
 }
 
@@ -238,11 +239,7 @@ fn internal() -> Graph {
                 .on(&[Stands], Next::End(End::NotAClaim))
                 .on(&[Refuted], Next::to("i.ground")),
         )
-        .with(
-            Node::new("i.ground", PARTS, 1)
-                .on(&[Stands], Next::End(End::NotAClaim))
-                .otherwise(Next::to("i.rewrite")),
-        )
+        .with(ground("i.ground", End::NotAClaim, "i.rewrite"))
         .with(rewrite(
             "i.rewrite",
             Goal::AsTheFieldHasIt,
@@ -260,10 +257,6 @@ fn internal() -> Graph {
                 .on(&[Stands], Next::End(End::NotAClaim))
                 .on(&[Refuted], Next::to("i.reground")),
         )
-        .with(
-            Node::new("i.reground", PARTS, 1)
-                .on(&[Stands], Next::End(End::NotAClaim))
-                .otherwise(Next::to("i.cut")),
-        )
+        .with(ground("i.reground", End::NotAClaim, "i.cut"))
         .with(cut("i.cut"))
 }

@@ -34,6 +34,7 @@ fn each_graph_enters_at_its_first_reading_and_continues_a_rewrite_at_its_post_re
 #[test]
 fn the_standard_policys_nodes_are_the_designs_tables() {
     let parts = Step::Read(Reading::Parts);
+    let ground = Step::Read(Reading::Ground);
     let page = Step::Read(Reading::Page);
     let consistency = Step::Read(Reading::Consistency);
     let knowledge = Step::Read(Reading::Knowledge);
@@ -51,29 +52,30 @@ fn the_standard_policys_nodes_are_the_designs_tables() {
         (Sourced, "s.rewrite", sourced_rewrite, 1),
         (Sourced, "s.rewrite.again", sourced_rewrite, 1),
         (Sourced, "s.final", parts, 1),
+        (Sourced, "s.final.uncite", Step::Uncite, 0),
         (Sourced, "s.cut", Step::Cut, 0),
         (Reasoning, "r.read", consistency, 1),
         (Reasoning, "r.veto", veto, 3),
-        (Reasoning, "r.ground", parts, 1),
+        (Reasoning, "r.ground", ground, 1),
         (Reasoning, "r.rewrite", reasoning_rewrite, 1),
         (Reasoning, "r.rewrite.again", reasoning_rewrite, 1),
         (Reasoning, "r.final", consistency, 1),
         (Reasoning, "r.reveto", veto, 3),
-        (Reasoning, "r.reground", parts, 1),
+        (Reasoning, "r.reground", ground, 1),
         (Reasoning, "r.cut", Step::Cut, 0),
         (Common, "c.read", knowledge, 3),
-        (Common, "c.ground", parts, 1),
+        (Common, "c.ground", ground, 1),
         (Common, "c.rewrite", field_rewrite, 1),
         (Common, "c.rewrite.again", field_rewrite, 1),
         (Common, "c.final", knowledge, 3),
-        (Common, "c.reground", parts, 1),
+        (Common, "c.reground", ground, 1),
         (Common, "c.cut", Step::Cut, 0),
         (Internal, "i.veto", veto, 3),
-        (Internal, "i.ground", parts, 1),
+        (Internal, "i.ground", ground, 1),
         (Internal, "i.rewrite", field_rewrite, 1),
         (Internal, "i.rewrite.again", field_rewrite, 1),
         (Internal, "i.final", veto, 3),
-        (Internal, "i.reground", parts, 1),
+        (Internal, "i.reground", ground, 1),
         (Internal, "i.cut", Step::Cut, 0),
     ];
     let policy = StandardPolicy::new();
@@ -88,7 +90,7 @@ fn the_standard_policys_nodes_are_the_designs_tables() {
 }
 
 #[test]
-fn the_edges_that_change_a_class_are_first_changes() {
+fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
     let policy = StandardPolicy::new();
     let edge = |class: Class, node: &'static str, outcome: Outcome| {
         policy
@@ -101,8 +103,20 @@ fn the_edges_that_change_a_class_are_first_changes() {
         Some(Next::first_change(Target::node("s.uncite"), "s.research"))
     );
     assert_eq!(
+        edge(Sourced, "s.citeread", Outcome::AllCommon),
+        Some(Next::first_change(Target::node("s.uncite"), "s.rewrite"))
+    );
+    assert_eq!(
         edge(Sourced, "s.uncite", Outcome::Done),
         Some(Next::enter(Common))
+    );
+    assert_eq!(
+        edge(Sourced, "s.final", Outcome::AllCommon),
+        Some(Next::to("s.final.uncite"))
+    );
+    assert_eq!(
+        edge(Sourced, "s.final.uncite", Outcome::Done),
+        Some(Next::enter_after_rewrite(Common))
     );
     assert_eq!(
         edge(Common, "c.read", Outcome::NeedsSource),
@@ -132,14 +146,63 @@ fn every_node_answers_every_outcome_its_step_can_give_and_none_answers_unjudged(
 }
 
 #[test]
-fn a_cited_sentence_read_as_a_page_can_stand_elsewhere() {
+fn only_a_part_wise_reading_can_say_all_common_and_only_a_page_can_stand_elsewhere() {
+    for reading in [
+        Reading::Parts,
+        Reading::Ground,
+        Reading::Page,
+        Reading::Consistency,
+        Reading::Knowledge,
+        Reading::Veto,
+    ] {
+        let outcomes = Step::Read(reading).outcomes();
+        assert_eq!(
+            outcomes.contains(&Outcome::AllCommon),
+            reading == Reading::Parts,
+            "{reading:?}"
+        );
+        assert_eq!(
+            outcomes.contains(&Outcome::StandsElsewhere),
+            reading == Reading::Page,
+            "{reading:?}"
+        );
+    }
+    assert_eq!(
+        Step::Read(Reading::Ground).outcomes().to_vec(),
+        vec![Outcome::Stands, Outcome::Refuted]
+    );
     let policy = StandardPolicy::new();
     let read = policy.graph(Sourced).node(NodeId("s.read")).unwrap();
     assert_eq!(read.step, Step::Read(Reading::Parts));
+    assert_eq!(read.next(Outcome::StandsElsewhere), None);
+    let reread = policy.graph(Sourced).node(NodeId("s.reread")).unwrap();
     assert_eq!(
-        read.next(Outcome::StandsElsewhere),
+        reread.next(Outcome::StandsElsewhere),
         Some(Next::to("s.recite"))
     );
+}
+
+#[test]
+fn a_ground_reading_has_two_edges_its_end_and_its_next_node() {
+    let policy = StandardPolicy::new();
+    for (class, name, end, refuted) in [
+        (Reasoning, "r.ground", End::Consistent, "r.rewrite"),
+        (Reasoning, "r.reground", End::Consistent, "r.cut"),
+        (Common, "c.ground", End::GeneralKnowledge, "c.rewrite"),
+        (Common, "c.reground", End::GeneralKnowledge, "c.cut"),
+        (Internal, "i.ground", End::NotAClaim, "i.rewrite"),
+        (Internal, "i.reground", End::NotAClaim, "i.cut"),
+    ] {
+        let node = policy.graph(class).node(NodeId(name)).unwrap();
+        assert_eq!(node.step, Step::Read(Reading::Ground), "{name}");
+        assert_eq!(node.edges().len(), 2, "{name}");
+        assert_eq!(node.next(Outcome::Stands), Some(Next::End(end)), "{name}");
+        assert_eq!(
+            node.next(Outcome::Refuted),
+            Some(Next::to(refuted)),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -197,6 +260,10 @@ fn a_reading_a_goal_and_an_outcome_are_stored_in_snake_case() {
     assert_eq!(
         serde_json::to_value(Reading::Consistency).unwrap(),
         serde_json::json!("consistency")
+    );
+    assert_eq!(
+        serde_json::to_value(Reading::Ground).unwrap(),
+        serde_json::json!("ground")
     );
     assert_eq!(
         serde_json::to_value(Goal::WhatThePassageStates).unwrap(),

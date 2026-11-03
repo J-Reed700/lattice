@@ -19,8 +19,6 @@ pub use invariants::{violations, Violation};
 pub use standard::{StandardPolicy, STANDARD_POLICY};
 pub use walk::walk;
 
-use std::hash::{Hash, Hasher};
-
 use serde::{Deserialize, Serialize};
 
 use crate::domain::learning::claim_review::Class;
@@ -48,8 +46,13 @@ pub trait AcceptancePolicy: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reading {
-    /// The part-wise judge on the passages the statement's sentence cites.
+    /// The part-wise judge on the statement's own citation: the passages its
+    /// sentence cites, or its section's when it cites none. The one reading
+    /// that can say `AllCommon`.
     Parts,
+    /// The part-wise judge on the section's passages, asked only whether
+    /// they ground a statement a closed-book reading called false.
+    Ground,
     /// The strict judge on the course's page for the statement.
     Page,
     /// The consistency judge on the section's passages.
@@ -108,7 +111,7 @@ impl Step {
             Self::Read(Reading::Consistency | Reading::Knowledge) => {
                 &[Outcome::Stands, Outcome::Refuted, Outcome::NeedsSource]
             }
-            Self::Read(Reading::Veto) => &[Outcome::Stands, Outcome::Refuted],
+            Self::Read(Reading::Ground | Reading::Veto) => &[Outcome::Stands, Outcome::Refuted],
             Self::Research => &[Outcome::Saved, Outcome::FoundNothing],
             Self::Recite | Self::Uncite => &[Outcome::Done],
             Self::Rewrite(_) => &[Outcome::Rewritten, Outcome::NotApplied],
@@ -178,6 +181,9 @@ pub enum Target {
     /// Another class's graph, at its entry: the statement changes class by
     /// evidence.
     Enter(Class),
+    /// Another class's graph, at its post-rewrite node: a rewrite's successor
+    /// changes class, and is never rewritten again.
+    EnterAfterRewrite(Class),
 }
 
 impl Target {
@@ -211,6 +217,11 @@ impl Next {
         Self::Go(Target::Enter(class))
     }
 
+    /// Change to `class`, at its graph's post-rewrite node.
+    pub fn enter_after_rewrite(class: Class) -> Self {
+        Self::Go(Target::EnterAfterRewrite(class))
+    }
+
     /// `change` the first time, then the node named `otherwise`.
     pub fn first_change(change: Target, otherwise: &'static str) -> Self {
         Self::FirstChange {
@@ -221,7 +232,7 @@ impl Next {
 }
 
 /// Where a statement is in its class's graph.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {
     pub class: Class,
     /// The evidence has moved the statement to this class.
@@ -229,25 +240,6 @@ pub struct Position {
     /// The statement's one re-ask of an unreadable answer is spent.
     pub reasked: bool,
     pub node: NodeId,
-}
-
-// `Class` is not `Hash`, so a position hashes the slot of its class.
-impl Hash for Position {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        slot(self.class).hash(state);
-        self.changed_class.hash(state);
-        self.reasked.hash(state);
-        self.node.hash(state);
-    }
-}
-
-fn slot(class: Class) -> u8 {
-    match class {
-        Class::Sourced => 0,
-        Class::Reasoning => 1,
-        Class::Common => 2,
-        Class::Internal => 3,
-    }
 }
 
 /// One step a statement took and what came of it.

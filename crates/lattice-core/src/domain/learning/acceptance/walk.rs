@@ -8,7 +8,8 @@ use crate::domain::learning::claim_review::Class;
 pub(super) enum Moved {
     To(Position),
     Ended(End),
-    /// A change of class by a statement that has changed class already.
+    /// A change of class, at an entry, by a statement that has changed class
+    /// already.
     Illegal,
 }
 
@@ -49,6 +50,12 @@ fn go(policy: &dyn AcceptancePolicy, at: Position, target: Target) -> Moved {
             changed_class: true,
             reasked: at.reasked,
             node: policy.graph(class).entry(),
+        }),
+        Target::EnterAfterRewrite(class) => Moved::To(Position {
+            class,
+            changed_class: true,
+            reasked: at.reasked,
+            node: policy.graph(class).after_rewrite(),
         }),
     }
 }

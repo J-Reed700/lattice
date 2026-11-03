@@ -121,6 +121,19 @@ impl BridgeOutcome {
             Outcome::Stands
         }
     }
+
+    /// Whether the passages ground a statement a closed-book reading called
+    /// false: every part stated or common and one stated, else the veto
+    /// stands. Apply [`Self::guarded`] first.
+    pub fn ground_outcome(&self) -> Outcome {
+        let any = |kind: PartKind| self.parts.iter().any(|part| part.kind == kind);
+        if any(PartKind::Stated) && !any(PartKind::SpecificMissing) && !any(PartKind::Contradicted)
+        {
+            Outcome::Stands
+        } else {
+            Outcome::Refuted
+        }
+    }
 }
 
 /// The judge's user message: the passages under their ids, then the claim.

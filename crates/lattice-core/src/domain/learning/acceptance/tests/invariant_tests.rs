@@ -4,7 +4,7 @@
 use super::*;
 use crate::domain::learning::acceptance::invariants::ceiling_rises;
 use crate::domain::learning::acceptance::Outcome::{
-    AllCommon, Done, NotApplied, Refuted, Stands, StandsElsewhere, Unjudged, Unproven,
+    AllCommon, Done, NeedsSource, NotApplied, Refuted, Stands, StandsElsewhere, Unjudged, Unproven,
 };
 use crate::domain::learning::claim_review::Class::{Common, Internal, Sourced};
 
@@ -98,10 +98,50 @@ fn a_closed_book_refusal_that_ends_the_statement_breaks_the_third_invariant() {
 }
 
 #[test]
-fn a_first_reading_that_answers_a_citation_fault_with_a_rewrite_breaks_the_fourth_invariant() {
+fn a_ground_reading_replaced_by_a_part_wise_one_breaks_the_third_invariant() {
+    assert_eq!(
+        broken(Common, "c.ground", |_| {
+            Node::new("c.ground", Step::Read(Reading::Parts), 1)
+                .on(&[Stands], Next::End(End::GeneralKnowledge))
+                .on(&[Refuted], Next::to("c.rewrite"))
+        }),
+        vec![Violation::VetoUnread {
+            class: Common,
+            node: id("c.read"),
+        }]
+    );
+}
+
+#[test]
+fn a_citation_fault_answered_with_anything_but_the_remedy_breaks_the_fourth_invariant() {
+    // `AllCommon` at the first reading, at the re-cited reading and after a
+    // rewrite; `StandsElsewhere` at the page.
+    for (name, outcome, to) in [
+        ("s.read", AllCommon, "s.rewrite"),
+        ("s.citeread", AllCommon, "s.rewrite"),
+        ("s.final", AllCommon, "s.cut"),
+        ("s.reread", StandsElsewhere, "s.rewrite"),
+    ] {
+        assert_eq!(
+            broken(Sourced, name, |node| node.on(&[outcome], Next::to(to))),
+            vec![Violation::CitationFaultNotRepaired {
+                class: Sourced,
+                node: id(name),
+                outcome,
+            }],
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_first_change_must_change_by_the_remedy_but_its_otherwise_goes_where_it_must() {
     assert_eq!(
         broken(Sourced, "s.read", |node| {
-            node.on(&[AllCommon], Next::to("s.rewrite"))
+            node.on(
+                &[AllCommon],
+                Next::first_change(Target::node("s.rewrite"), "s.research"),
+            )
         }),
         vec![Violation::CitationFaultNotRepaired {
             class: Sourced,
@@ -109,20 +149,6 @@ fn a_first_reading_that_answers_a_citation_fault_with_a_rewrite_breaks_the_fourt
             outcome: AllCommon,
         }]
     );
-    assert_eq!(
-        broken(Sourced, "s.read", |node| {
-            node.on(&[StandsElsewhere], Next::to("s.rewrite"))
-        }),
-        vec![Violation::CitationFaultNotRepaired {
-            class: Sourced,
-            node: id("s.read"),
-            outcome: StandsElsewhere,
-        }]
-    );
-}
-
-#[test]
-fn a_first_change_must_repair_the_citation_and_only_all_common_may_research_after_it() {
     assert_eq!(
         broken(Sourced, "s.read", |node| {
             node.on(
@@ -130,36 +156,8 @@ fn a_first_change_must_repair_the_citation_and_only_all_common_may_research_afte
                 Next::first_change(Target::node("s.uncite"), "s.rewrite"),
             )
         }),
-        vec![Violation::CitationFaultNotRepaired {
-            class: Sourced,
-            node: id("s.read"),
-            outcome: AllCommon,
-        }]
+        Vec::<Violation>::new()
     );
-    assert_eq!(
-        broken(Sourced, "s.read", |node| {
-            node.on(
-                &[StandsElsewhere],
-                Next::first_change(Target::node("s.recite"), "s.research"),
-            )
-        }),
-        vec![Violation::CitationFaultNotRepaired {
-            class: Sourced,
-            node: id("s.read"),
-            outcome: StandsElsewhere,
-        }]
-    );
-}
-
-#[test]
-fn a_later_reading_may_answer_all_common_with_a_rewrite_or_a_cut() {
-    let policy = StandardPolicy::new();
-    let sourced = policy.graph(Sourced);
-    for (name, to) in [("s.citeread", "s.rewrite"), ("s.final", "s.cut")] {
-        let reading = sourced.node(id(name)).unwrap();
-        assert_eq!(reading.next(AllCommon), Some(Next::to(to)));
-    }
-    assert_eq!(violations(&policy), Vec::<Violation>::new());
 }
 
 #[test]
@@ -213,6 +211,45 @@ fn an_end_that_is_not_the_classes_own_breaks_the_sixth_invariant() {
             end: End::Consistent,
         }]
     );
+}
+
+#[test]
+fn a_rewrites_successor_that_can_be_rewritten_again_breaks_the_eighth_invariant() {
+    // The edit also loops (the first invariant) and skips the ground reading
+    // (the third), so the eighth is looked for among them.
+    let found = broken(Common, "c.final", |node| {
+        node.on(&[Refuted], Next::to("c.rewrite"))
+    });
+    let rewritten_again = Violation::RewrittenTwice {
+        class: Common,
+        node: id("c.rewrite"),
+    };
+    assert!(found.contains(&rewritten_again), "{found:?}");
+}
+
+#[test]
+fn a_rewrites_successor_that_changes_class_at_an_entry_breaks_the_eighth_invariant() {
+    let found = broken(Sourced, "s.final.uncite", |node| {
+        node.on(&[Done], Next::enter(Common))
+    });
+    let enters = Violation::RewrittenTwice {
+        class: Sourced,
+        node: id("s.final.uncite"),
+    };
+    assert!(found.contains(&enters), "{found:?}");
+
+    // A first change into an entry counts while the class has not changed.
+    let found = broken(Common, "c.final", |node| {
+        node.on(
+            &[NeedsSource],
+            Next::first_change(Target::Enter(Sourced), "c.cut"),
+        )
+    });
+    let enters = Violation::RewrittenTwice {
+        class: Common,
+        node: id("c.final"),
+    };
+    assert!(found.contains(&enters), "{found:?}");
 }
 
 #[test]

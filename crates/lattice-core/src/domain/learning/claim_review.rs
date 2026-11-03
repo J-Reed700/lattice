@@ -140,7 +140,7 @@ pub fn span_of(text: &str, quote: &str) -> Option<(usize, usize)> {
 }
 
 /// What a statement needs to be checked for (claim classes design §3.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Class {
     /// Attributes something to a source or states a specific: checked
