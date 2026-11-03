@@ -48,13 +48,14 @@ TERMINAL = {
     "reasoning": {"consistent"},
     "common": {"general_knowledge"},
 }
-# The longest path in calls through a class's graph, from its entry and from its post-rewrite node (acceptance design
-# 2.3, 2.4), which the app derives from the graphs.
+# The longest path in calls through a class's graph, from its entry and from its post-rewrite node with the re-ask
+# still possible (acceptance design 2.3, 2.4), which the app derives from the graphs.
 ENTRY = {"sourced": 16, "reasoning": 15, "common": 16, "internal": 13}
-AFTER_REWRITE = {"sourced": 5, "reasoning": 5, "common": 4, "internal": 4}
-# M, by class, for a statement that shares a sentence: two readings from its post-rewrite node, one after a
-# neighbour's rewrite and one after a neighbour's narrowing cut, and the narrowing call (design 2.4).
-RECHECK = {cls: 2 * calls + 1 for cls, calls in AFTER_REWRITE.items()}
+AFTER_REWRITE_UNSPENT = {"sourced": 8, "reasoning": 8, "common": 7, "internal": 7}
+# M, by class, for a statement that shares a sentence: two readings from its post-rewrite node, each with the re-ask
+# still possible, one after a neighbour's rewrite and one after a neighbour's narrowing cut, and the narrowing call
+# (design 2.4).
+RECHECK = {cls: 2 * calls + 1 for cls, calls in AFTER_REWRITE_UNSPENT.items()}
 STRICT_RESULTS = {"supported", "supported_elsewhere"}
 
 

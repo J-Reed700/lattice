@@ -207,13 +207,14 @@ class ScoreLessonAcceptance(unittest.TestCase):
 
         made = sla.score(self.path)["calls"]
 
-        # Each re-reads twice from its post-rewrite node (5 calls) and takes the narrowing call.
-        self.assertEqual(made["terms"]["M"], (2 * 5 + 1) + (2 * 5 + 1))
-        self.assertEqual(made["bound_with_every_term_at_most"], 1 + 94 + 22 + 1)
+        # Each re-reads twice from its post-rewrite node, the re-ask still possible (8 calls), and takes the
+        # narrowing call.
+        self.assertEqual(made["terms"]["M"], (2 * 8 + 1) + (2 * 8 + 1))
+        self.assertEqual(made["bound_with_every_term_at_most"], 1 + 94 + 34 + 1)
 
-    def test_the_recheck_of_a_class_is_two_readings_from_its_post_rewrite_node_and_the_narrowing_call(self):
-        self.assertEqual(sla.AFTER_REWRITE, {"sourced": 5, "reasoning": 5, "common": 4, "internal": 4})
-        self.assertEqual(sla.RECHECK, {"sourced": 11, "reasoning": 11, "common": 9, "internal": 9})
+    def test_the_recheck_of_a_class_is_two_readings_from_its_post_rewrite_node_with_the_re_ask_possible_and_the_narrowing_call(self):
+        self.assertEqual(sla.AFTER_REWRITE_UNSPENT, {"sourced": 8, "reasoning": 8, "common": 7, "internal": 7})
+        self.assertEqual(sla.RECHECK, {"sourced": 17, "reasoning": 17, "common": 15, "internal": 15})
         self.assertEqual(sla.ENTRY, {"sourced": 16, "reasoning": 15, "common": 16, "internal": 13})
 
     def test_the_bound_with_every_term_at_most_is_the_sorting_each_longest_path_the_rechecks_and_a_flow_repair_a_section(self):

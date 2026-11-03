@@ -5,9 +5,7 @@
 //! that reads again is paid from its statement's reserve; a rise beyond the
 //! reserve is shown.
 use lattice_core::application::services::claim_verification::KNOWLEDGE_SAMPLES;
-use lattice_core::domain::learning::acceptance::{
-    after_rewrite_calls, most_calls, AcceptancePolicy, Position, Walked,
-};
+use lattice_core::domain::learning::acceptance::{most_calls, AcceptancePolicy, Position, Walked};
 use lattice_core::domain::learning::claim_review::Class;
 
 /// The calls of one knowledge check: its samples.
@@ -90,12 +88,19 @@ fn most(policy: &dyn AcceptancePolicy, class: Class, at: PlannedAt) -> u32 {
     }
 }
 
-/// M for a statement of `class`: two readings from its post-rewrite node and
-/// the narrowing call.
+/// M for a statement of `class`: two readings from its post-rewrite node,
+/// each with the statement's re-ask still possible, and the narrowing call.
 fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
-    after_rewrite_calls(policy, class)
-        .saturating_mul(2)
-        .saturating_add(1)
+    let reading = most_calls(
+        policy,
+        Position {
+            class,
+            changed_class: false,
+            reasked: false,
+            node: policy.graph(class).after_rewrite(),
+        },
+    );
+    reading.saturating_mul(2).saturating_add(1)
 }
 
 /// A statement at the entry of a class with nothing spent has not moved,

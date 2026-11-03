@@ -70,16 +70,17 @@ fn the_ceiling_at_the_sort_is_the_sorting_calls_each_longest_path_the_reserves_a
     let plan = CallPlan::new(&policy, 3, &statements, 2);
 
     assert_eq!(mosts(&plan), [16, 15, 16, 16, 16, 16]);
-    assert_eq!(reserves(&plan), [11, 11, 0, 9, 9, 0]);
+    assert_eq!(reserves(&plan), [17, 17, 0, 15, 15, 0]);
     // The 3 sorting calls; the longest path from each entry, 16 for a
     // Sourced or a Common statement and 15 for a Reasoning one (95 in all);
     // the reserve of each of the four that share a sentence, two readings
-    // from the post-rewrite node and the narrowing call, 2 × 5 + 1 = 11 for
-    // the Sourced and the Reasoning one and 2 × 4 + 1 = 9 for a Common one
-    // (40 in all); a flow repair for each of the 2 sections.
+    // from the post-rewrite node with the re-ask still possible and the
+    // narrowing call, 2 × 8 + 1 = 17 for the Sourced and the Reasoning one
+    // and 2 × 7 + 1 = 15 for a Common one (64 in all); a flow repair for
+    // each of the 2 sections.
     assert_eq!(
         plan.ceiling(),
-        3 + (16 + 15 + 16 + 16 + 16 + 16) + (11 + 11 + 9 + 9) + 2
+        3 + (16 + 15 + 16 + 16 + 16 + 16) + (17 + 17 + 15 + 15) + 2
     );
 }
 
@@ -297,8 +298,8 @@ fn a_groups_reserves_are_released_when_the_whole_sentence_has_ended_and_never_co
         alone(Class::Common),
     ];
     let mut plan = CallPlan::new(&policy, 0, &statements, 0);
-    assert_eq!(reserves(&plan), [11, 11, 9, 0]);
-    assert_eq!(plan.ceiling(), (16 + 15 + 16 + 16) + (11 + 11 + 9));
+    assert_eq!(reserves(&plan), [17, 17, 15, 0]);
+    assert_eq!(plan.ceiling(), (16 + 15 + 16 + 16) + (17 + 17 + 15));
 
     // Two of the three end. Every reserve stays: the one that has not ended
     // can still rewrite the sentence, and itself waits to be read again.
@@ -311,8 +312,8 @@ fn a_groups_reserves_are_released_when_the_whole_sentence_has_ended_and_never_co
             statements[3],
         ],
     );
-    assert_eq!(reserves(&plan), [11, 11, 9, 0]);
-    assert_eq!(plan.ceiling(), (16 + 16) + (11 + 11 + 9));
+    assert_eq!(reserves(&plan), [17, 17, 15, 0]);
+    assert_eq!(plan.ceiling(), (16 + 16) + (17 + 17 + 15));
 
     // The last of them ends: the whole sentence has, and nothing is reserved.
     plan.moved(
@@ -370,7 +371,7 @@ fn a_statement_that_has_not_ended_keeps_its_reserve_though_every_neighbour_had_w
 
     // The finished Sourced statement is read again if the Reasoning one is
     // rewritten, and the Reasoning one has not ended itself.
-    assert_eq!(reserves(&plan), [11, 11]);
+    assert_eq!(reserves(&plan), [17, 17]);
     assert_eq!(mosts(&plan), [0, 15]);
 
     let both_ended = [
@@ -428,18 +429,18 @@ fn a_passed_statements_successor_reads_again_from_its_reserve_and_the_ceiling_do
     // The Reasoning statement passes while its neighbour is still to be read.
     plan.moved(&policy, &[ended(reasoning), sourced]);
     assert_eq!(mosts(&plan), [0, 16]);
-    assert_eq!(reserves(&plan), [11, 11]);
+    assert_eq!(reserves(&plan), [17, 17]);
     let before = plan.ceiling();
 
     // The neighbour is rewritten, so the Reasoning statement's successor
     // reads from the post-rewrite node, its re-ask unspent: 8 calls, drawn
-    // from the 11 held for it. What the statement is held for stays 11.
+    // from the 17 held for it. What the statement is held for stays 17.
     let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final"));
     let rewritten = moved_to(sourced, at_node(&policy, Class::Sourced, "s.final"));
     plan.moved(&policy, &[reading, rewritten]);
     assert_eq!(mosts(&plan), [8, 8]);
-    assert_eq!(reserves(&plan), [3, 11]);
-    assert_eq!(plan.ceiling(), (8 + 3) + (8 + 11));
+    assert_eq!(reserves(&plan), [9, 17]);
+    assert_eq!(plan.ceiling(), (8 + 9) + (8 + 17));
     assert!(plan.ceiling() <= before);
 
     // The successor reads on: what it may still cost falls, and the rest of
@@ -447,7 +448,7 @@ fn a_passed_statements_successor_reads_again_from_its_reserve_and_the_ceiling_do
     let reveto = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.reveto"));
     plan.moved(&policy, &[reveto, rewritten]);
     assert_eq!(mosts(&plan), [7, 8]);
-    assert_eq!(reserves(&plan), [3, 11]);
+    assert_eq!(reserves(&plan), [9, 17]);
 
     // Both end, and with them the sentence.
     plan.moved(&policy, &[ended(reasoning), ended(sourced)]);
@@ -470,12 +471,47 @@ fn a_reserve_is_held_while_the_statements_own_successor_reads_though_its_neighbo
     // The neighbour's end releases nothing: the statement has not ended, so
     // its reserve (less what the successor drew) and the neighbour's stay.
     assert_eq!(mosts(&plan), [8, 0]);
-    assert_eq!(reserves(&plan), [3, 11]);
+    assert_eq!(reserves(&plan), [9, 17]);
 
     // The successor ends, the sentence is over, and nothing is held.
     plan.moved(&policy, &[ended(reasoning), ended(sourced)]);
     assert_eq!(reserves(&plan), [0, 0]);
     assert_eq!(plan.ceiling(), 0);
+}
+
+#[test]
+fn two_re_readings_in_a_row_each_with_the_re_ask_unspent_are_paid_from_the_reserve_without_a_rise()
+{
+    let policy = StandardPolicy::new();
+    let reasoning = on_sentence(Class::Reasoning, 0);
+    let sourced = on_sentence(Class::Sourced, 0);
+    let mut plan = CallPlan::new(&policy, 0, &[reasoning, sourced], 0);
+    let reading = moved_to(reasoning, at_node(&policy, Class::Reasoning, "r.final"));
+    let rewritten = moved_to(sourced, at_node(&policy, Class::Sourced, "s.final"));
+    let mut ceilings = Vec::new();
+    let mut step = |plan: &mut CallPlan, statements: [Planned; 2]| {
+        plan.moved(&policy, &statements);
+        ceilings.push(plan.ceiling());
+        (plan.slots[0].most, plan.slots[0].reserve)
+    };
+
+    // The Reasoning statement passes; its neighbour is rewritten, and the
+    // statement's successor reads from the post-rewrite node, its re-ask
+    // unspent: 8 of the 17 held for it.
+    step(&mut plan, [ended(reasoning), sourced]);
+    assert_eq!(step(&mut plan, [reading, rewritten]), (8, 9));
+    // The successor passes and the neighbour is narrowed: the next successor
+    // starts with the re-ask unspent again, and the 9 left pay for its 8.
+    assert_eq!(step(&mut plan, [ended(reasoning), rewritten]), (0, 9));
+    assert_eq!(step(&mut plan, [reading, rewritten]), (8, 1));
+    // Both end, and with the sentence the reserve.
+    assert_eq!(step(&mut plan, [ended(reasoning), ended(sourced)]), (0, 0));
+
+    // Neither re-reading raises the ceiling: the statement is held for 17
+    // while its first successor reads (8 + 9), for 9 once that has passed
+    // (0 + 9), and for 9 again while the second reads (8 + 1).
+    assert_eq!(ceilings, [50, 42, 34, 34, 0]);
+    assert!(ceilings.windows(2).all(|pair| pair[1] <= pair[0]));
 }
 
 /// A policy whose every class reads once and ends, and reads once more after
@@ -552,7 +588,7 @@ fn a_statement_the_evidence_moved_to_another_class_is_costed_there_and_keeps_the
     let first = on_sentence(Class::Common, 0);
     let second = on_sentence(Class::Common, 0);
     let mut plan = CallPlan::new(&policy, 0, &[first, second], 0);
-    assert_eq!(reserves(&plan), [9, 9]);
+    assert_eq!(reserves(&plan), [15, 15]);
 
     // Sent to its source: Sourced's entry, the class changed.
     let sourced = Position {
@@ -563,7 +599,7 @@ fn a_statement_the_evidence_moved_to_another_class_is_costed_there_and_keeps_the
 
     assert_eq!(plan.slots[0].class, Class::Sourced);
     assert_eq!(mosts(&plan), [13, 16]);
-    assert_eq!(reserves(&plan), [9, 9]);
+    assert_eq!(reserves(&plan), [15, 15]);
 }
 
 #[test]
