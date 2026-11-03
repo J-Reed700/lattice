@@ -610,7 +610,8 @@ async fn verified_lesson_checkpoint_is_bound_to_content_sources_policy_and_model
 async fn a_lesson_that_still_cannot_publish_when_prepared_again_says_why() -> Result<()> {
     let model = Model::new();
     let sources = vec![source()];
-    let candidate = candidate(GOOD);
+    let mut candidate = candidate(GOOD);
+    candidate["blocks"][0]["sourceIds"] = json!([]);
     let report = verify(&model, &candidate, &sources).await?;
     let mut prepared = PreparedLearningLesson {
         verification: None,
