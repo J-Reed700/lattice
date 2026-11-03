@@ -329,6 +329,59 @@ fn the_repaired_quote_is_the_run_of_sentences_that_best_matches_the_claim() {
     assert_eq!(repair::quotation(CLAIM, &endless, &endless), None);
 }
 
+/// The citation a section is repaired to for `claim`, from the bytes
+/// `within` of `text`.
+fn cite<'t>(claim: &str, text: &'t str, within: std::ops::Range<usize>) -> Option<&'t str> {
+    repair::quotation(claim, &text[within], text)
+}
+
+/// A study's words are in the prose that discusses it and its figures in a
+/// table further on than verification reads around a citation. The check
+/// that decides the repair reads the citation's passage, so the citation is
+/// one whose passage shows the claim's figures.
+#[test]
+fn a_repaired_citation_shows_its_check_the_figures_the_claim_states() -> Result<()> {
+    let claim = "In a study of stance classification, tuned models scored an F1 of 0.94 while zero-shot models scored only 0.51.";
+    let prose = "This study compared tuned models with zero-shot models on stance classification, and the tuned models scored higher on F1 in every comparison.";
+    let filler: String = (0..40)
+        .map(|line| format!("Kiln log {line} records glaze batches and cooling ramps. "))
+        .collect();
+    let table = [
+        "Table 2: Stance classification results",
+        "",
+        "| Model | Accuracy | F1 |",
+        "|---|---|---|",
+        "| Encoder-A | 0.95 | 0.94 |",
+        "| Encoder-B | 0.91 | 0.90 |",
+        "| Zero-shot-A | 0.58 | 0.51 |",
+    ]
+    .join("\n");
+    let text = format!("{prose}\n\n{filler}\n\n{table}\n\n{filler}");
+    let references = ReferenceCollection::lexical(&[LearningSourceDto {
+        id: "study".into(),
+        title: "Stance classification study".into(),
+        url: None,
+        excerpt: text.clone(),
+        acquired_at: 0,
+    }])?;
+
+    let quote = cite(claim, &text, 0..text.len()).unwrap();
+    assert!(quote.chars().count() <= crate::features::learning::generation::MAX_QUOTE_CHARS);
+    let start = text.find(quote).unwrap();
+    let read: String = references
+        .source_passages("study", &[(start, start + quote.len())])?
+        .iter()
+        .map(|passage| passage.text.as_str())
+        .collect();
+    for figure in ["0.94", "0.51"] {
+        assert!(
+            read.contains(figure),
+            "the check of {quote:?} cannot read {figure}"
+        );
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_first_request_carries_pass_a_only_and_its_answers_size_pass_b() -> Result<()> {
     use lattice_core::application::ports::llm_port::Pace;

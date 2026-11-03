@@ -1430,6 +1430,90 @@ async fn a_verified_claim_is_not_rejudged_on_reselected_evidence_while_its_sente
 }
 
 #[tokio::test]
+async fn a_verified_claim_whose_citation_was_repaired_is_decided_by_the_next_pass() -> Result<()> {
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let lesson = cell_lesson(CELL);
+    ledger
+        .observe(
+            &lesson,
+            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
+        )
+        .await?;
+    let id = ledger.finding_claims()[0].clone();
+    // Its section now cites the passage found for it elsewhere (§5.1).
+    let cited = "Glycolysis in the cytoplasm also yields a little ATP.";
+    ledger
+        .append(
+            &id,
+            ClaimEvent::CitationRepaired {
+                cited: vec!["source-1".into()],
+                source_version_id: "source-1".into(),
+                quote: cited.into(),
+                added_source: false,
+            },
+        )
+        .await?;
+    let from = ledger.entry(&id).unwrap().events().len();
+
+    // The next pass reads the new citation, which does not support it.
+    ledger
+        .observe(
+            &lesson,
+            &pass_report(vec![passage_finding(CELL, ATP, false, cited)]),
+        )
+        .await?;
+
+    let entry = ledger.entry(&id).unwrap();
+    let events = added(entry, from);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ClaimEvent::Checked(_))),
+        "{events:?}"
+    );
+    assert!(
+        matches!(entry.state(), ClaimState::Open { .. }),
+        "{:?}",
+        entry.state()
+    );
+    assert!(matches!(ledger.decide(), claim_ledger::Decision::Repair(_)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_is_not_published_with_a_claim_its_last_pass_could_not_support() -> Result<()> {
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let lesson = cell_lesson(CELL);
+    ledger
+        .observe(
+            &lesson,
+            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
+        )
+        .await?;
+    let id = ledger.finding_claims()[0].clone();
+    // The last pass compares other passages and cannot support it. While
+    // the lesson is prepared that leaves the verified claim alone (claim
+    // sources design §18.4 ii), but the report it would publish says the
+    // claim is unsupported.
+    let other = "Glycolysis in the cytoplasm also yields a little ATP.";
+    let last = pass_report(vec![passage_finding(CELL, ATP, false, other)]);
+    ledger.observe(&lesson, &last).await?;
+    assert!(matches!(
+        ledger.entry(&id).unwrap().state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+
+    assert!(
+        !matches!(ledger.decide(), claim_ledger::Decision::Publish),
+        "the report would carry {:?}",
+        ledger.bind(last.clone()).issues
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_rewritten_and_both_are_checked_again(
 ) -> Result<()> {
     let model = Model::new();

@@ -606,6 +606,43 @@ async fn verified_lesson_checkpoint_is_bound_to_content_sources_policy_and_model
     Ok(())
 }
 
+#[tokio::test]
+async fn a_lesson_that_still_cannot_publish_when_prepared_again_says_why() -> Result<()> {
+    let model = Model::new();
+    let sources = vec![source()];
+    let candidate = candidate(GOOD);
+    let report = verify(&model, &candidate, &sources).await?;
+    let mut prepared = PreparedLearningLesson {
+        verification: None,
+        blocks: serde_json::from_value(candidate["blocks"].clone())?,
+        questions: vec![],
+        keys: vec![],
+    };
+    let mut report = report.bind("lesson", &prepared)?;
+    let reason = "The table gives 0.86 for this model, not 0.94.";
+    report.findings[0].verdict = ClaimVerdict::Contradicted;
+    report.findings[0].reason = reason.into();
+    report.issues = vec![format!(
+        "Section 1: {} — {reason}",
+        report.findings[0].statement
+    )];
+    prepared.verification = Some(report);
+    let staged = vec![("lesson".to_owned(), prepared)];
+
+    let mut rounds = Rounds::default();
+    assert!(
+        rounds.again(&staged, &sources, &model)?,
+        "prepared once more"
+    );
+    let error = rounds
+        .again(&staged, &sources, &model)
+        .expect_err("a second time is an error")
+        .to_string();
+    assert!(error.contains(reason), "{error}");
+    assert!(!error.contains("changed"), "no source changed: {error}");
+    Ok(())
+}
+
 #[test]
 fn incomplete_or_unquoted_receipts_never_resume_as_approval() {
     let claim = Claim {

@@ -167,6 +167,44 @@ fn new_information_names_each_cause_and_nothing_else() {
 }
 
 #[test]
+fn a_verified_claim_is_checked_again_after_its_citation_is_repaired_and_only_then() {
+    let mut entry = verified_claim("c1");
+    let mut elsewhere = observation(&entry);
+    elsewhere.fingerprint = local_check(None, "v2").fingerprint;
+    assert_eq!(
+        new_information(&entry, &elsewhere),
+        None,
+        "reselected evidence"
+    );
+
+    entry
+        .append(
+            machine(3),
+            ClaimEvent::CitationRepaired {
+                cited: vec!["v1".into()],
+                source_version_id: "v2".into(),
+                quote: "At sea level, water boils at 100 °C.".into(),
+                added_source: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        new_information(&entry, &elsewhere),
+        Some(NewInformation::EvidenceChanged),
+        "the repaired citation is what the next check reads"
+    );
+
+    entry.append(machine(4), checked(None, "v2")).unwrap();
+    let mut later = observation(&entry);
+    later.fingerprint = local_check(None, "v3").fingerprint;
+    assert_eq!(
+        new_information(&entry, &later),
+        None,
+        "the check decided the repair; the claim is verified again"
+    );
+}
+
+#[test]
 fn only_the_sentence_or_a_bound_source_reopens_a_confirmation() {
     let bound = HumanBinding::new(QUOTE, vec!["v1".into()]);
     let cases = [
