@@ -600,6 +600,53 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_attributions_t
     Ok(())
 }
 
+/// An answer explanation reasons from its question's givens: a figure it
+/// shares with the question's prompt or options is the question's, and the
+/// model sorts a statement that states no other. A figure of its own is the
+/// rules' to send to a source.
+#[tokio::test]
+async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific() -> Result<()> {
+    const GIVEN: &str =
+        "With 300 labeled examples, fine-tuning is expected to beat zero-shot prompting.";
+    const MEASURED: &str = "Fine-tuning Mistral-7B with 160 samples achieved 72.5% accuracy.";
+    let model = Classes::new(&[GIVEN, MEASURED]).classed(&[(GIVEN, "reasoning")]);
+    let candidate = json!({"blocks":[],"questions":[{"kind":"practice",
+        "prompt":"You have 300 labeled examples of 5 document types. Which strategy is best supported by the evidence?",
+        "options":["Zero-shot prompting","Fine-tuning","Embeddings and kNN","Rules"],
+        "explanation":format!("{GIVEN} {MEASURED}")}]});
+    let claims: Vec<(usize, Claim)> = [GIVEN, MEASURED]
+        .into_iter()
+        .map(|statement| {
+            (
+                0,
+                Claim {
+                    quote: statement.to_owned(),
+                    statement: statement.to_owned(),
+                },
+            )
+        })
+        .collect();
+    let nothing = claim_ledger::Rewrites::default();
+
+    let classes =
+        class_checks::sort(&model, &candidate, &claims, &nothing, &Citations::default()).await?;
+
+    assert_eq!(
+        classes,
+        [
+            Classed {
+                class: Class::Reasoning,
+                by: ClassifiedBy::Model
+            },
+            Classed {
+                class: Class::Sourced,
+                by: ClassifiedBy::Rule
+            },
+        ]
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_cited_statement_meets_the_strict_check_whatever_the_model_would_have_sorted(
 ) -> Result<()> {

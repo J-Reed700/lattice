@@ -603,6 +603,28 @@ mod tests {
         assert!(lesson_rules(&candidate).is_empty());
     }
 
+    /// An answer explanation reasons from its question's givens: the figures
+    /// its prompt and options state need no citation there, and a figure of
+    /// its own still does.
+    #[test]
+    fn an_answer_that_restates_its_questions_figures_needs_no_citation_for_them() {
+        let mut candidate = lesson();
+        candidate["questions"][0]["prompt"] = json!(
+            "A classifier outputs a confidence score of 0.75. Your threshold for automatic routing is 0.80. What should the system do?"
+        );
+        candidate["questions"][0]["options"] =
+            json!(["Route it automatically", "Send it to review", "Retry", "Lower it to 0.70"]);
+        candidate["questions"][0]["explanation"] = json!(
+            "Since 0.75 is below the 0.80 threshold, the document goes to review. Lowering the threshold to 0.70 would route it automatically."
+        );
+        assert!(lesson_rules(&candidate).is_empty());
+
+        candidate["questions"][0]["explanation"] = json!(
+            "Since 0.75 is below the 0.80 threshold, the document goes to review, as 30% of documents do."
+        );
+        assert_eq!(lesson_rules(&candidate).len(), 1);
+    }
+
     const SOURCE_SAYS: &str = "A timeout of 30 seconds applies to each request.";
 
     fn uncited_lesson() -> Value {
