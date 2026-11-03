@@ -651,6 +651,7 @@ pub(super) async fn excise(
         return Ok((raw, candidate, report));
     }
     let lesson = going.out_of(&candidate);
+    ledger.keep_findings(&report, &going);
     ledger.relocate(&going).await?;
     let raw = lesson.to_string();
     crate::features::learning::lesson_drafts::save(&raw).await?;

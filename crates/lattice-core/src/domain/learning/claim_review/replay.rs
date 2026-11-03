@@ -14,6 +14,9 @@ pub(super) struct Cursor {
     pub(super) basis: Option<CheckBasis>,
     /// A rewrite awaits the check that decides it.
     pub(super) repair_pending: bool,
+    /// The machine repaired the claim's citation and no local check has read
+    /// the new one yet (course evidence index §5.1).
+    pub(super) citation_pending: bool,
     /// Research ran: once per claim for its life, whatever evidence a later
     /// check brings (claim classes design §3.6).
     pub(super) researched: bool,
@@ -160,6 +163,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
     // The gate's assessment, if it decided this check, follows it.
     cursor.trust = None;
     let charged = std::mem::take(&mut cursor.repair_pending);
+    cursor.citation_pending = false;
     cursor.basis = Some(CheckBasis {
         fingerprint: check.fingerprint.clone(),
         checker_model: model,

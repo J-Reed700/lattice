@@ -436,6 +436,13 @@ impl ClaimLedger {
         if self.sink.is_some() {
             self.save_pending().await?;
         }
+        self.unpublishable = report
+            .findings
+            .iter()
+            .zip(&claim_ids)
+            .filter(|(finding, _)| !finding.publishable())
+            .map(|(_, id)| id.clone())
+            .collect();
         let examples = claim_ids.split_off(report.findings.len());
         self.examples = example_ids.into_iter().zip(examples).collect();
         self.findings = claim_ids;
@@ -598,6 +605,34 @@ impl ClaimLedger {
             // Never transplant an assessment from reselected evidence.
             if let Some(trust) = trust.filter(|trust| entry.trust() != Some(trust)) {
                 self.append(id, assessed(trust)).await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Records the checks `report` made of `claims`, which the ledger holds
+    /// verified and that pass could not support: the report a lesson
+    /// publishes and its ledger say the same of every claim (§4 `decide`).
+    pub(in crate::features::learning::lessons::content_verification) async fn reconcile(
+        &mut self,
+        report: &LessonVerificationReport,
+        claims: &[ClaimId],
+    ) -> Result<()> {
+        let checks: Vec<(ClaimId, Check, Option<TrustAssessment>)> = report
+            .findings
+            .iter()
+            .zip(&self.findings)
+            .filter(|(_, id)| claims.contains(id))
+            .map(|(finding, id)| {
+                let (check, trust) = self.check_of(finding);
+                (id.clone(), check, trust)
+            })
+            .collect();
+        for (id, check, trust) in checks {
+            tracing::warn!(claim = %id.0, reason = %check.reason, "claim.state: the last pass could not support a verified claim; its check applies before the lesson publishes");
+            self.append(&id, ClaimEvent::Checked(check)).await?;
+            if let Some(trust) = trust {
+                self.append(&id, assessed(trust)).await?;
             }
         }
         Ok(())

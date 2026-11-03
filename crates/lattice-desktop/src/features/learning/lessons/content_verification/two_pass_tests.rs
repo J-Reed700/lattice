@@ -317,22 +317,16 @@ fn the_repaired_quote_is_the_run_of_sentences_that_best_matches_the_claim() {
         .collect();
     let stated = "Mineral alpha shows property beta under pressure in the lab.";
     let passage = format!("{filler}{stated} A closing remark follows.");
-    let quote = repair::quotation(CLAIM, &passage, &passage).unwrap();
+    let quote = repair::quotation(CLAIM, &passage, 0..passage.len()).unwrap();
     assert_eq!(quote, stated, "the matching sentence near the end, alone");
     assert!(quote.chars().count() <= crate::features::learning::generation::MAX_QUOTE_CHARS);
     // Two runs that match as well: the earliest.
     let twice = format!("{stated} Then a pause comes here. {stated}");
-    let quote = repair::quotation(CLAIM, &twice, &twice).unwrap();
+    let quote = repair::quotation(CLAIM, &twice, 0..twice.len()).unwrap();
     assert_eq!(twice.find(quote), Some(0));
     // No run of whole sentences short enough to cite: none.
     let endless = format!("{} pressure", "mineral alpha ".repeat(200));
-    assert_eq!(repair::quotation(CLAIM, &endless, &endless), None);
-}
-
-/// The citation a section is repaired to for `claim`, from the bytes
-/// `within` of `text`.
-fn cite<'t>(claim: &str, text: &'t str, within: std::ops::Range<usize>) -> Option<&'t str> {
-    repair::quotation(claim, &text[within], text)
+    assert_eq!(repair::quotation(CLAIM, &endless, 0..endless.len()), None);
 }
 
 /// A study's words are in the prose that discusses it and its figures in a
@@ -365,7 +359,7 @@ fn a_repaired_citation_shows_its_check_the_figures_the_claim_states() -> Result<
         acquired_at: 0,
     }])?;
 
-    let quote = cite(claim, &text, 0..text.len()).unwrap();
+    let quote = repair::quotation(claim, &text, 0..text.len()).unwrap();
     assert!(quote.chars().count() <= crate::features::learning::generation::MAX_QUOTE_CHARS);
     let start = text.find(quote).unwrap();
     let read: String = references

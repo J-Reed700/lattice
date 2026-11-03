@@ -94,6 +94,19 @@ impl ClaimLedger {
             .collect()
     }
 
+    /// The claims of the findings of `report` that stay once the units
+    /// `going` are out, in its order: each finding the lesson publishes is
+    /// still beside its own claim.
+    pub(in crate::features::learning::lessons::content_verification) fn keep_findings(
+        &mut self,
+        report: &LessonVerificationReport,
+        going: &Going,
+    ) {
+        let mut units = report.findings.iter().map(|finding| finding.unit);
+        self.findings
+            .retain(|_| units.next().is_some_and(|unit| going.after(unit).is_some()));
+    }
+
     /// Moves the claims standing in the units after the ones that go to the
     /// places those units have once the others are out, so a claim keeps its
     /// state, its attempts and its history.

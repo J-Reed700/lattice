@@ -119,6 +119,11 @@ pub(super) enum Decision {
     Stop(usize),
     /// Repair these claims.
     Repair(Vec<ClaimId>),
+    /// The latest pass could not support these claims the ledger holds
+    /// verified, its checks on other evidence having been set aside while the
+    /// lesson was prepared (claim sources design §18.4 ii). Those checks
+    /// apply before anything publishes.
+    Reconcile(Vec<ClaimId>),
     /// Every claim is resolved.
     Publish,
     /// Nothing is left for the machine; this many claims wait for the user.
@@ -134,6 +139,9 @@ pub(super) struct ClaimLedger {
     pub(super) pending: Pending,
     /// The claim of each finding of the latest observed report, in order.
     findings: Vec<ClaimId>,
+    /// The claims whose finding in the latest observed report may not
+    /// publish.
+    unpublishable: HashSet<ClaimId>,
     /// The claim of each tracked example, by observation id.
     examples: HashMap<String, ClaimId>,
     /// Claims whose user edit was just applied: re-extraction names their
@@ -175,6 +183,7 @@ impl ClaimLedger {
             window_tokens: llm.max_context_tokens(),
             pending: Pending::default(),
             findings: Vec::new(),
+            unpublishable: HashSet::new(),
             examples: HashMap::new(),
             edited_now: HashSet::new(),
             cuts: Cuts::default(),
@@ -383,8 +392,9 @@ impl ClaimLedger {
 
     /// §4: a claim the checker could not answer for twice stops the lesson;
     /// repair what the rules allow; check again what the checker did not
-    /// answer once; otherwise publish if every claim is resolved, else the
-    /// lesson waits for the user. Only claims in the user's hands are left
+    /// answer once; otherwise publish if every claim is resolved and the
+    /// latest pass supports every claim it holds verified, else the lesson
+    /// waits for the user. Only claims in the user's hands are left
     /// then: a dispute, a reopening, a withdrawn confirmation, or what the
     /// user's own change of a source's trust re-decided. A last attempt that
     /// cannot take its sentence out ends its claim removed with its section
@@ -414,7 +424,24 @@ impl ClaimLedger {
             return Decision::Recheck;
         }
         match end_state(self.entries.iter()) {
-            LessonReviewState::Ready => Decision::Publish,
+            LessonReviewState::Ready => {
+                let unsupported: Vec<ClaimId> = self
+                    .findings
+                    .iter()
+                    .filter(|id| {
+                        self.unpublishable.contains(*id)
+                            && self.entry(id).is_some_and(|entry| {
+                                matches!(entry.state(), ClaimState::ResolvedByEvidence { .. })
+                            })
+                    })
+                    .cloned()
+                    .collect();
+                if unsupported.is_empty() {
+                    Decision::Publish
+                } else {
+                    Decision::Reconcile(unsupported)
+                }
+            }
             state => {
                 if state == LessonReviewState::Verifying {
                     tracing::warn!("claim.state: claims are the machine's but nothing is left for it to do; handing the lesson to the user");

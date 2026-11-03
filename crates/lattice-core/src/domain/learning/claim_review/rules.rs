@@ -103,8 +103,11 @@ pub fn new_information(prev: &ClaimLedgerEntry, now: &Observation) -> Option<New
         // A verified claim is not re-judged on reselected evidence (claim
         // sources design §18.4 ii): only its sentence or a source it cites
         // changing reopens it, as `reopen_cause` says. The gate weighed other
-        // evidence, so it is not compared either.
-        _ if matches!(prev.state(), ClaimState::ResolvedByEvidence { .. }) => {}
+        // evidence, so it is not compared either. A citation the machine
+        // repaired is not reselected: the check that reads it decides the
+        // repair (course evidence index §5.1).
+        _ if matches!(prev.state(), ClaimState::ResolvedByEvidence { .. })
+            && !prev.citation_awaits_check() => {}
         _ => return Some(NewInformation::EvidenceChanged),
     }
     now.attached_source_version_id

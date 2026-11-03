@@ -289,6 +289,10 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 );
                 return Err(error);
             }
+            claim_ledger::Decision::Reconcile(claims) => {
+                ledger.reconcile(&report, &claims).await?;
+                continue;
+            }
             claim_ledger::Decision::Publish => {
                 // The last sync point: an edit made during this pass is
                 // applied and verified before anything publishes.

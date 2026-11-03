@@ -155,6 +155,7 @@ impl ClaimLedgerEntry {
             state: ClaimState::Unchecked,
             basis: None,
             repair_pending: false,
+            citation_pending: false,
             researched: false,
             latest_failure: None,
             trust: None,
@@ -215,6 +216,12 @@ impl ClaimLedgerEntry {
     /// What the latest local check depended on; `None` before the first.
     pub fn basis(&self) -> Option<&CheckBasis> {
         self.cursor().basis.as_ref()
+    }
+
+    /// The machine repaired the claim's citation and no local check has read
+    /// the new one yet.
+    pub fn citation_awaits_check(&self) -> bool {
+        self.cursor().citation_pending
     }
 
     /// The latest failing verdict from either checker, kept after the claim
@@ -485,9 +492,8 @@ impl ClaimLedgerEntry {
                 outcome,
                 ..
             } => self.apply_repair(&mut next, *attempt, *escalated, outcome, at, &record.event)?,
-            ClaimEvent::Executed { .. }
-            | ClaimEvent::CitationRepaired { .. }
-            | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::CitationRepaired { .. } => next.citation_pending = true,
+            ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
             ClaimEvent::Classified { class, by } => {
                 if next.class.is_none_or(|(_, before)| *by >= before) {
                     next.class = Some((*class, *by));

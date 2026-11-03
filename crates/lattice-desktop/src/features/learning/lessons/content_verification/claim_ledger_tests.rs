@@ -1510,6 +1510,29 @@ async fn a_lesson_is_not_published_with_a_claim_its_last_pass_could_not_support(
         "the report would carry {:?}",
         ledger.bind(last.clone()).issues
     );
+
+    // The last pass's check applies, and the claim goes to the repairs.
+    let claim_ledger::Decision::Reconcile(claims) = ledger.decide() else {
+        panic!("the claims to reconcile");
+    };
+    assert_eq!(claims, vec![id.clone()]);
+    ledger.reconcile(&last, &claims).await?;
+    assert!(
+        matches!(ledger.entry(&id).unwrap().state(), ClaimState::Open { .. }),
+        "{:?}",
+        ledger.entry(&id).unwrap().state()
+    );
+    assert!(matches!(ledger.decide(), claim_ledger::Decision::Repair(_)));
+
+    // A claim its last pass supports publishes as it is.
+    let mut supported = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let pass = pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]);
+    supported.observe(&lesson, &pass).await?;
+    supported.observe(&lesson, &pass).await?;
+    assert!(matches!(
+        supported.decide(),
+        claim_ledger::Decision::Publish
+    ));
     Ok(())
 }
 

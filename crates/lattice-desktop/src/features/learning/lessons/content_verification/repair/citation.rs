@@ -4,42 +4,79 @@
 //! found. No model writes it: the found passage is the citation. A source the
 //! lesson does not number yet is added to the lesson's numbered sources, as
 //! the writer's are, so the citation can name it.
+use super::super::classify::figures;
 use super::super::*;
 use crate::features::learning::generation::{validate_excerpt_quote, MAX_QUOTE_CHARS};
-use crate::features::learning::reference_collection::shared_terms;
+use crate::features::learning::reference_collection::{checked_span, shared_terms};
 use lattice_core::domain::learning::claim_review::ClaimEvent;
 use lattice_core::shared::text::sentences;
 use std::collections::BTreeSet;
+use std::ops::Range;
 
-/// The quotation a section can cite for the found `passage` of `source`:
-/// the contiguous run of the passage's whole sentences that holds most of
-/// `claim`'s terms, read as the course index reads words ([`shared_terms`]),
-/// no longer than a lesson quotation may be. Of the runs that match best,
-/// the shortest, since a longer one only adds words the claim does not name,
-/// and of those the earliest. `None` when no run of whole sentences is one a
-/// lesson citation may carry.
-pub(in crate::features::learning::lessons::content_verification) fn quotation<'p>(
+/// A run of a passage's whole sentences that a section could cite.
+struct Run<'s> {
+    /// How many of the claim's figures its checked passage shows.
+    figures: usize,
+    /// How many of the claim's terms its checked passage holds.
+    read: usize,
+    /// How many of the claim's terms it holds itself.
+    own: usize,
+    chars: usize,
+    start: usize,
+    text: &'s str,
+}
+
+/// The quotation a section can cite for `claim` from the passage `within`
+/// `source` that supports it: a contiguous run of the passage's whole
+/// sentences, no longer than a lesson quotation may be. The check that
+/// decides the repair reads the citation as verification widens it
+/// ([`checked_span`]), so the run is the one whose checked passage shows most
+/// of the claim's figures, then most of its terms, read as the course index
+/// reads words ([`shared_terms`]). Of those, the run holding most of the
+/// terms itself, then the shortest, since a longer one only adds words the
+/// claim does not name, then the earliest. `None` when no run of whole
+/// sentences is one a lesson citation may carry.
+pub(in crate::features::learning::lessons::content_verification) fn quotation<'s>(
     claim: &str,
-    passage: &'p str,
-    source: &str,
-) -> Option<&'p str> {
+    source: &'s str,
+    within: Range<usize>,
+) -> Option<&'s str> {
+    let passage = source.get(within.clone())?;
+    let stated: BTreeSet<&str> = figures(claim).collect();
     let spans = sentences(passage);
-    let mut runs: Vec<(usize, usize, usize, &str)> = Vec::new();
+    let mut runs: Vec<Run<'s>> = Vec::new();
     for (first, &(start, _)) in spans.iter().enumerate() {
         for &(_, end) in spans.iter().skip(first) {
-            let Some(run) = passage.get(start..end) else {
+            let Some(text) = passage.get(start..end) else {
                 continue;
             };
-            let chars = run.chars().count();
+            let chars = text.chars().count();
             if chars > MAX_QUOTE_CHARS {
                 break;
             }
-            runs.push((shared_terms(claim, run), start, chars, run));
+            let (from, to) = checked_span(source, within.start + start, within.start + end);
+            let read = source.get(from..to).unwrap_or(text);
+            let shown: BTreeSet<&str> = figures(read).collect();
+            runs.push(Run {
+                figures: stated.intersection(&shown).count(),
+                read: shared_terms(claim, read),
+                own: shared_terms(claim, text),
+                chars,
+                start,
+                text,
+            });
         }
     }
-    runs.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)));
+    runs.sort_by(|a, b| {
+        b.figures
+            .cmp(&a.figures)
+            .then(b.read.cmp(&a.read))
+            .then(b.own.cmp(&a.own))
+            .then(a.chars.cmp(&b.chars))
+            .then(a.start.cmp(&b.start))
+    });
     runs.into_iter()
-        .map(|(_, _, _, run)| run)
+        .map(|run| run.text)
         .find(|run| validate_excerpt_quote(run, source).is_ok())
 }
 
@@ -185,11 +222,11 @@ pub(in crate::features::learning::lessons::content_verification) fn cite_where_s
         else {
             continue;
         };
-        let passage = source
-            .excerpt
-            .get(found.start_byte..found.end_byte)
-            .unwrap_or_default();
-        let Some(quote) = quotation(&finding.statement, passage, &source.excerpt) else {
+        let Some(quote) = quotation(
+            &finding.statement,
+            &source.excerpt,
+            found.start_byte..found.end_byte,
+        ) else {
             tracing::warn!(
                 unit = finding.unit,
                 source = %found.source_id,

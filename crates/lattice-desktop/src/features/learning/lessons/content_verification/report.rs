@@ -17,13 +17,38 @@ impl LessonVerificationReport {
         sources: &[crate::features::learning::dto::LearningSourceDto],
         llm: &dyn LLMPort,
     ) -> bool {
-        self.checker_model == llm.model_name()
-            && self.validate(lesson_id, lesson).is_ok()
-            && self.sources.iter().all(|binding| {
-                sources.iter().any(|source| {
-                    source.id == binding.id && digest(&source.excerpt) == binding.sha256
-                })
-            })
+        self.refusal(lesson_id, lesson, sources, llm).is_none()
+    }
+
+    /// Why this report cannot stand for `lesson` while the program holds
+    /// `sources` and `llm` checks lessons; `None` when it can.
+    pub(in crate::features::learning) fn refusal(
+        &self,
+        lesson_id: &str,
+        lesson: &PreparedLearningLesson,
+        sources: &[crate::features::learning::dto::LearningSourceDto],
+        llm: &dyn LLMPort,
+    ) -> Option<String> {
+        if self.checker_model != llm.model_name() {
+            return Some(format!(
+                "it was checked by {}, and {} checks lessons now",
+                self.checker_model,
+                llm.model_name()
+            ));
+        }
+        match self.unpublishable(lesson_id, lesson) {
+            Ok(Some(reason)) => return Some(format!("its verification report {reason}")),
+            Ok(None) => {}
+            Err(error) => return Some(error.to_string()),
+        }
+        let changed = !self.sources.iter().all(|binding| {
+            sources
+                .iter()
+                .any(|source| source.id == binding.id && digest(&source.excerpt) == binding.sha256)
+        });
+        changed.then(|| {
+            "a source it was checked against changed while it was being prepared; prepare it again once the sources stop changing".to_owned()
+        })
     }
 
     pub(in crate::features::learning) fn bind(
@@ -79,6 +104,23 @@ impl LessonVerificationReport {
     }
 
     pub(super) fn validate(&self, lesson_id: &str, lesson: &PreparedLearningLesson) -> Result<()> {
+        match self.unpublishable(lesson_id, lesson)? {
+            Some(reason) => Err(invalid(format!(
+                "This lesson cannot be published: its verification report {}.",
+                reason.trim_end_matches('.')
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    /// Why this report may not publish `lesson`; `None` when it is a complete
+    /// report of this exact revision whose every statement a passage supports
+    /// or the user resolved.
+    fn unpublishable(
+        &self,
+        lesson_id: &str,
+        lesson: &PreparedLearningLesson,
+    ) -> Result<Option<String>> {
         let unit_count = lesson.blocks.len() + lesson.questions.len();
         let coverage_ids = self
             .coverage
@@ -115,27 +157,42 @@ impl LessonVerificationReport {
             *count -= 1;
             true
         }) && outstanding.values().all(|count| *count == 0);
-        if unit_count == 0
+        let reason = if unit_count == 0
             || self.coverage.len() != unit_count
             || coverage_ids.len() != unit_count
             || self.coverage_audit.len() != unit_count
             || audit_ids != coverage_ids
             || coverage_ids.iter().any(|index| *index >= unit_count)
-            || self.policy != POLICY
-            || self.lesson_id != lesson_id
-            || self.content_sha256 != content_hash(lesson)?
-            || !self.issues.is_empty()
-            || self.findings.is_empty()
-            || !findings_complete
-            || self.findings.iter().any(|f| !f.publishable())
-            || self
-                .executions
-                .iter()
-                .any(|e| !e.passed() && !self.example_confirmed(&e.id))
         {
-            return Err(invalid("A complete verification report for this exact lesson revision is required before publication."));
-        }
-        Ok(())
+            "does not cover each section and question of the lesson once"
+        } else if self.policy != POLICY {
+            "was made under another verification policy"
+        } else if self.lesson_id != lesson_id || self.content_sha256 != content_hash(lesson)? {
+            "was made for another revision of the lesson"
+        } else if self.findings.is_empty() || !findings_complete {
+            "does not answer for every statement its claim inventory lists"
+        } else if !self.issues.is_empty() {
+            return Ok(Some(format!(
+                "leaves {} open: {}",
+                if self.issues.len() == 1 {
+                    "1 issue".to_owned()
+                } else {
+                    format!("{} issues", self.issues.len())
+                },
+                self.issues.join("; ")
+            )));
+        } else if self.findings.iter().any(|f| !f.publishable()) {
+            "holds a statement no passage supports and you have not resolved"
+        } else if self
+            .executions
+            .iter()
+            .any(|e| !e.passed() && !self.example_confirmed(&e.id))
+        {
+            "holds a code example that did not complete"
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(reason.to_owned()))
     }
 }
 

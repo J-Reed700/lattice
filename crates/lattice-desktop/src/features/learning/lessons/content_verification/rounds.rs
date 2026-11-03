@@ -19,8 +19,10 @@ pub(in crate::features::learning) struct Rounds {
 
 impl Rounds {
     /// Whether the job goes round again once `staged` are prepared and the
-    /// program holds `sources`: a lesson whose report is bound to a source that
-    /// is gone or changed is prepared again, once. A second time is an error.
+    /// program holds `sources`: a lesson whose report does not stand (another
+    /// checker, a report that may not publish, a bound source gone or
+    /// changed) is prepared again, once. A second time is an error that says
+    /// what stops it.
     pub(in crate::features::learning) fn again(
         &mut self,
         staged: &[(String, PreparedLearningLesson)],
@@ -29,19 +31,20 @@ impl Rounds {
     ) -> Result<bool> {
         let mut again = false;
         for (id, prepared) in staged {
-            let stands = prepared
-                .verification
-                .as_ref()
-                .is_some_and(|report| report.reusable(id, prepared, sources, llm));
-            if stands {
+            let refusal = match &prepared.verification {
+                Some(report) => report.refusal(id, prepared, sources, llm),
+                None => Some("it has no verification report".to_owned()),
+            };
+            let Some(refusal) = refusal else {
                 continue;
-            }
+            };
             if !self.prepared_again.insert(id.clone()) {
-                return Err(AppError::InvalidState(
-                    "A source a lesson was checked against changed again while the lesson was being prepared. Prepare it again once the sources stop changing."
-                        .into(),
-                ));
+                return Err(AppError::InvalidState(format!(
+                    "The lesson was prepared again and still cannot be published: {}.",
+                    refusal.trim_end_matches('.')
+                )));
             }
+            tracing::info!(lesson = %id, %refusal, "The lesson's preparation does not stand; it is prepared again");
             again = true;
         }
         Ok(again)
