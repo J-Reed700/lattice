@@ -112,7 +112,7 @@ impl ReviewFinding {
 }
 
 /// A finding's identity across passes and reviews.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub(in crate::features::learning) struct FindingKey {
     pub kind: FindingKind,
     pub site: FindingSite,

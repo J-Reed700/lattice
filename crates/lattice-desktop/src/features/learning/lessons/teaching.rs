@@ -399,6 +399,18 @@ pub async fn review_and_repair_with_progress(
     .map(|reviewed| reviewed.candidate)
 }
 
+/// Saves the draft; a lesson's review saves with it the state that decides
+/// when it stops repairing, in one write.
+async fn save_draft(candidate: &str, passes: Option<&Passes>) -> Result<()> {
+    match passes {
+        Some(passes) => {
+            crate::features::learning::lesson_drafts::save_with_passes(candidate, passes.saved()?)
+                .await
+        }
+        None => crate::features::learning::lesson_drafts::save(candidate).await,
+    }
+}
+
 async fn review_material(
     llm: &dyn LLMPort,
     system: &str,
@@ -415,7 +427,15 @@ async fn review_material(
         .lesson_references
         .is_some()
         .then(|| Passes::new(context.held));
-    crate::features::learning::lesson_drafts::save(&candidate).await?;
+    // A review cut short resumes with the repairs it had made to this draft.
+    if let Some(passes) = passes.as_mut() {
+        if let Some(saved) =
+            crate::features::learning::lesson_drafts::teaching_passes(&candidate).await?
+        {
+            passes.resume(&saved);
+        }
+    }
+    save_draft(&candidate, passes.as_ref()).await?;
     let progress = outline.as_ref().map(|context| context.progress);
     let references = outline
         .as_ref()
@@ -457,7 +477,7 @@ async fn review_material(
                     "Restoring exact saved-source quotations",
                 );
                 candidate = serde_json::to_string(&candidate_value)?;
-                crate::features::learning::lesson_drafts::save(&candidate).await?;
+                save_draft(&candidate, passes.as_ref()).await?;
                 tracing::info!(
                     restored,
                     "Restored lesson quotation typography from source bytes"
@@ -471,7 +491,7 @@ async fn review_material(
                     "Citing the saved passages the revised quotations referred to",
                 );
                 candidate = serde_json::to_string(&candidate_value)?;
-                crate::features::learning::lesson_drafts::save(&candidate).await?;
+                save_draft(&candidate, passes.as_ref()).await?;
             }
         }
         if let Some(references) = &references {
@@ -719,7 +739,7 @@ async fn review_material(
             }
             (repaired, _) => repaired?,
         };
-        crate::features::learning::lesson_drafts::save(&candidate).await?;
+        save_draft(&candidate, passes.as_ref()).await?;
     }
     Err(AppError::InternalError(
         "Teaching review did not complete".into(),
