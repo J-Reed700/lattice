@@ -48,7 +48,7 @@ export function progressPercent(progress: ActivityProgress): number {
   return Math.min(100, Math.round((progress.done / progress.total) * 100));
 }
 
-const STATE_WORDS: Record<ActivityEntryDto['state'], string> = {
+export const STATE_WORDS: Record<ActivityEntryDto['state'], string> = {
   running: 'Running',
   paused: 'Paused',
   waiting: 'Waiting',
@@ -64,13 +64,6 @@ export function stateLine(item: ActivityEntryDto, now: number): string {
     return `${said}. ${formatRetry(item.retryAt, now)}`;
   }
   return said;
-}
-
-/** The trigger's label: "Activity: 3 running", "Activity: nothing running". */
-export function activityLabel(running: number, total: number): string {
-  if (running > 0) return `Activity: ${running} running`;
-  if (total > 0) return `Activity: ${total} waiting or paused`;
-  return 'Activity: nothing running';
 }
 
 /** "3 running, 1 paused, 2 waiting", or "Nothing is running." */

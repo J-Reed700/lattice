@@ -31,8 +31,8 @@ export async function installShell(page: Page): Promise<ShellBackend> {
     get_settings: () => settings,
     initialize_database: () => 'ready',
     list_downloads: () => [],
+    // Iris, in the rail, lists what is running and counts the flashcards due.
     activity_snapshot: () => ({ items: [], running: 0 }),
-    // Iris, in the rail, counts the flashcards due.
     list_study_decks: () => [],
     // Every answer and lesson offers Listen; the voice is not downloaded.
     get_speech_status: () => ({
