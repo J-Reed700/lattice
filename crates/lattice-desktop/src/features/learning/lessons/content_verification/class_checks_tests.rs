@@ -539,6 +539,67 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
     Ok(())
 }
 
+/// A worked example's figures are its case's own, as the writer's rule has
+/// it: the writer cites none of them, so the rules do not send them to a
+/// source, and the model sorts them. What the example attributes to a source
+/// the rules still send.
+#[tokio::test]
+async fn a_worked_examples_figures_are_the_models_to_sort_and_its_attributions_the_rules(
+) -> Result<()> {
+    const CASE: &str = "5 documents have confidence scores below 0.70.";
+    const ATTRIBUTED: &str = "According to the survey, most teams retrain monthly.";
+    let model = Classes::new(&[CASE, ATTRIBUTED]).classed(&[(CASE, "internal")]);
+    let example = json!({"blocks":[{"kind":"worked_example","title":"Thresholds",
+        "body":format!("{CASE} {ATTRIBUTED}"),"rubric":[]}],"questions":[]});
+    let claims: Vec<(usize, Claim)> = [CASE, ATTRIBUTED]
+        .into_iter()
+        .map(|statement| {
+            (
+                0,
+                Claim {
+                    quote: statement.to_owned(),
+                    statement: statement.to_owned(),
+                },
+            )
+        })
+        .collect();
+    let nothing = claim_ledger::Rewrites::default();
+
+    let classes =
+        class_checks::sort(&model, &example, &claims, &nothing, &Citations::default()).await?;
+
+    assert_eq!(
+        classes,
+        [
+            Classed {
+                class: Class::Internal,
+                by: ClassifiedBy::Model
+            },
+            Classed {
+                class: Class::Sourced,
+                by: ClassifiedBy::Rule
+            },
+        ]
+    );
+    // An explanation states what is so: there the figure is the rules' to send.
+    let stated = class_checks::sort(
+        &model,
+        &lesson(CASE),
+        &claims[..1],
+        &nothing,
+        &Citations::default(),
+    )
+    .await?;
+    assert_eq!(
+        stated,
+        [Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule
+        }]
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_cited_statement_meets_the_strict_check_whatever_the_model_would_have_sorted(
 ) -> Result<()> {
