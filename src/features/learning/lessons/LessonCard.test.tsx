@@ -71,6 +71,28 @@ describe('Lesson card review state', () => {
     expect(onReview).toHaveBeenCalledWith('program-1', 'lesson-1');
   });
 
+  // Every claim can have had its check while the job goes on repairing and
+  // reviewing; the row then says what it is doing, as the job reports it.
+  it.each([
+    ['evidence', { unchecked: 4, verified: 40 }, 40, 'Preparing · 40 of 44 checked'],
+    ['repair', { unchecked: 0, verified: 44 }, 44, 'Preparing · Repairing the draft'],
+    ['review', { unchecked: 0, verified: 44 }, 44, 'Preparing · Reviewing teaching and assessments'],
+  ] as const)('says what a preparation in its %s phase is doing', async (phase, counts, checksCompleted, row) => {
+    const claims = { unchecked: 0, searching: 0, repairing: 0, waiting: 0, verified: 0, resolvedByYou: 0, ...counts };
+    const preparing: LearningGenerationJob = {
+      ...held, status: 'running', progressMessage: '', resultId: null, finishedAt: null,
+      activity: {
+        phase, phaseStartedAt: 1, lastActivityAt: 1, lastCheckpointAt: null, lessonTitle: lesson.title, modelName: null,
+        modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,
+        checksCompleted, checksTotal: 44, checksReused: 0, newReferences: null, claims, recentSteps: [],
+      },
+    };
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [preparing] } });
+    api.review.mockResolvedValue(noReview);
+    show(lesson);
+    expect(await within(screen.getByRole('article')).findByText(row)).toBeVisible();
+  });
+
   it('keeps an outline lesson with no review as it was', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [] } });
     api.review.mockResolvedValue(noReview);
