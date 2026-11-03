@@ -858,4 +858,54 @@ mod tests {
             [format!("{long} "), "Next sentence follows here.".to_owned()]
         );
     }
+
+    /// The one claim `statement`, located at passage `passage`.
+    fn extracted(passage: &str, statement: &str) -> ExtractedUnit {
+        serde_json::from_value(json!({"index":0,"claims":[{"passageId":passage,"statement":statement}],"nonFactualReason":""})).unwrap()
+    }
+
+    #[test]
+    fn a_claims_quote_is_the_sentence_it_restates_and_a_statement_no_sentence_holds_keeps_the_passage(
+    ) {
+        let body = "Alpha holds the line. Bravo stands firm today. Charlie rests in the shade.";
+        let content = vec![json!({"body":body})];
+        let unit = resolve(
+            extracted("unit-0-passage-0", "Bravo stands firm today."),
+            &inputs(&content),
+        )
+        .unwrap();
+        assert_eq!(unit.claims[0].quote, "Bravo stands firm today.");
+        validate_inventory(&Inventory { units: vec![unit] }, &content).unwrap();
+
+        let history = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
+        let unit = resolve(
+            extracted(
+                "unit-0-passage-0",
+                "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.",
+            ),
+            &inputs(&[json!({"body":history})]),
+        )
+        .unwrap();
+        assert_eq!(unit.claims[0].quote, history);
+    }
+
+    #[test]
+    fn a_sentence_longer_than_the_inventory_keeps_is_quoted_by_its_first_1600_characters() {
+        let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
+        let content = vec![json!({"body":long})];
+        let input =
+            vec![json!({"passages":[{"id":"unit-0-passage-0","field":"/body","text":long}]})];
+        // One statement restates the sentence; the other no sentence holds, so
+        // it is quoted by the passage, which is the sentence and no more.
+        for statement in [
+            "Alpha beta gamma delta omega.",
+            "A scoped factual statement.",
+        ] {
+            let unit = resolve(extracted("unit-0-passage-0", statement), &input).unwrap();
+            let quote = &unit.claims[0].quote;
+            assert_eq!(quote.chars().count(), 1_600, "{statement}");
+            assert!(long.starts_with(quote.as_str()), "{statement}");
+            validate_inventory(&Inventory { units: vec![unit] }, &content).unwrap();
+        }
+    }
 }
