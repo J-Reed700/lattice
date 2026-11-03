@@ -640,6 +640,7 @@ impl ClaimLedger {
                     before: record.before,
                     after: None,
                     outcome: outcome.clone(),
+                    goal: None,
                 },
             )
             .await?;

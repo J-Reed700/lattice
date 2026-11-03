@@ -2,6 +2,7 @@
 
 mod ceiling_tests;
 mod invariant_tests;
+mod record_tests;
 mod standard_tests;
 mod walk_tests;
 

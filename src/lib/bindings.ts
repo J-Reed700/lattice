@@ -4996,7 +4996,7 @@ quote: string;
 quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
 export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
-export type ClassifiedByDto = "model" | "rule" | "writer"
+export type ClassifiedByDto = "model" | "rule" | "writer" | "evidence"
 /**
  * Clean article content extracted from HTML (reader mode).
  *

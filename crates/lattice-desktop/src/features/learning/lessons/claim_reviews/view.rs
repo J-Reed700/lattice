@@ -427,6 +427,7 @@ fn item(
                 before,
                 after,
                 outcome,
+                ..
             } => repairs.push(RepairAttemptDto {
                 attempt: *attempt,
                 escalated: *escalated,
@@ -516,8 +517,8 @@ fn item(
         history: entry
             .events()
             .iter()
-            .map(|record| {
-                let mut event = ClaimEventDto::from(record);
+            .filter_map(|record| {
+                let mut event = ClaimEventDto::of(record)?;
                 if let (
                     ClaimEvent::Extracted {
                         location,
@@ -528,7 +529,7 @@ fn item(
                 {
                     (*quote, *span) = located_in(units, location, statement);
                 }
-                event
+                Some(event)
             })
             .collect(),
         local_check: checker_verdict(entry, false, sources, texts),

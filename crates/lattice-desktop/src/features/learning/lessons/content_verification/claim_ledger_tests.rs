@@ -1663,6 +1663,7 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
                 outcome: RepairOutcome::Rejected {
                     reason: "unusable".into(),
                 },
+                goal: None,
             },
         )
         .await?;

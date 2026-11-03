@@ -301,6 +301,7 @@ fn claim_events_mirror_the_domain() {
             outcome: RepairOutcome::Rejected {
                 reason: "The rewrite dropped its citation.".into(),
             },
+            goal: None,
         },
         ClaimEvent::Executed {
             observation_id: "obs-1".into(),
@@ -407,7 +408,7 @@ fn claim_events_mirror_the_domain() {
             }
         })
         .collect();
-    let dtos: Vec<ClaimEventDto> = records.iter().map(ClaimEventDto::from).collect();
+    let dtos: Vec<ClaimEventDto> = records.iter().filter_map(ClaimEventDto::of).collect();
     assert_mirrors(&dtos, &fixture);
 }
 

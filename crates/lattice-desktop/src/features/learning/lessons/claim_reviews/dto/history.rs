@@ -24,17 +24,20 @@ pub struct ClaimEventDto {
     pub event: ClaimEventPayloadDto,
 }
 
-impl From<&RecordedEvent> for ClaimEventDto {
-    fn from(record: &RecordedEvent) -> Self {
-        Self {
+impl ClaimEventDto {
+    /// The history entry for a stored event; `None` for the acceptance
+    /// policy's own records (`Stepped`, `CitationDropped`), which the card
+    /// does not show yet.
+    pub fn of(record: &RecordedEvent) -> Option<Self> {
+        Some(Self {
             ordinal: record.ordinal,
             actor: record.provenance.actor.into(),
             at: record.provenance.at,
             job_id: record.provenance.job_id.clone(),
             app_version: record.provenance.app_version.clone(),
             checker_model: record.provenance.checker_model.clone(),
-            event: (&record.event).into(),
-        }
+            event: ClaimEventPayloadDto::of(&record.event)?,
+        })
     }
 }
 
@@ -121,9 +124,10 @@ pub enum ClaimEventPayloadDto {
     },
 }
 
-impl From<&ClaimEvent> for ClaimEventPayloadDto {
-    fn from(event: &ClaimEvent) -> Self {
-        match event {
+impl ClaimEventPayloadDto {
+    /// How the history shows `event`; `None` when it does not.
+    pub fn of(event: &ClaimEvent) -> Option<Self> {
+        Some(match event {
             ClaimEvent::Extracted {
                 location,
                 statement,
@@ -152,6 +156,7 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 before,
                 after,
                 outcome,
+                ..
             } => Self::RepairAttempted {
                 attempt: *attempt,
                 escalated: *escalated,
@@ -222,7 +227,8 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 class: (*class).into(),
                 by: (*by).into(),
             },
-        }
+            ClaimEvent::Stepped { .. } | ClaimEvent::CitationDropped { .. } => return None,
+        })
     }
 }
 

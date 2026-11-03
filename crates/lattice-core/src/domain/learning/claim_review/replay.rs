@@ -2,9 +2,10 @@
 //! the transitions the ledger applies once it has validated the event.
 
 use super::{
-    Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
+    Actor, Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
     ReopenCause, TrustAssessment, TrustCause, VerdictKind,
 };
+use crate::domain::learning::acceptance::{End, Outcome, Step, Then};
 
 /// The replayed position after an event: the state, plus what the rules
 /// need to remember about how the claim got there.
@@ -33,6 +34,13 @@ pub(super) struct Cursor {
     pub(super) attempts_left: u8,
     /// The statement's class and the strongest authority that decided it.
     pub(super) class: Option<(Class, ClassifiedBy)>,
+    /// The latest decision of the acceptance policy: its version and where it
+    /// sent the statement. A claim that has one is read from it, and the
+    /// rules below that decide machine transitions leave it alone.
+    pub(super) decided: Option<(String, Then)>,
+    /// The source version and quote of the latest supported local check, which
+    /// a decision to resolve the claim names.
+    pub(super) last_support: Option<(String, String)>,
 }
 
 pub(super) fn queued(kind: VerdictKind, reason: String) -> ClaimState {
@@ -130,16 +138,22 @@ fn after_machine_failure(
 /// is when the check was recorded, which a pass that rests on no passage
 /// carries into its state.
 pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at: i64) {
+    // A decided claim's state is its decision's: a local check that is not the
+    // user's evidence is what was observed, never what follows.
+    let observation =
+        cursor.decided.is_some() && !attached && matches!(check.checker, Checker::Local { .. });
     // A local checker that gave no answer taught nothing about the claim:
     // no attempt is charged and a rewrite keeps waiting for its check. A
     // claim that passed on text since changed has no check now.
     if !attached && matches!(check.checker, Checker::Local { .. }) && check.result.is_unjudged() {
-        if matches!(
-            cursor.state,
-            ClaimState::ResolvedByEvidence { .. }
-                | ClaimState::Consistent { .. }
-                | ClaimState::GeneralKnowledge { .. }
-        ) {
+        if !observation
+            && matches!(
+                cursor.state,
+                ClaimState::ResolvedByEvidence { .. }
+                    | ClaimState::Consistent { .. }
+                    | ClaimState::GeneralKnowledge { .. }
+            )
+        {
             cursor.state = ClaimState::Unchecked;
             cursor.basis = None;
             cursor.trust = None;
@@ -174,7 +188,10 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
             .map(|seen| seen.source_version_id.clone())
             .collect(),
     });
-    if cursor.state.is_settled() {
+    if let Some((source_version_id, supporting_quote)) = check.result.support() {
+        cursor.last_support = Some((source_version_id.to_owned(), supporting_quote.to_owned()));
+    }
+    if observation || cursor.state.is_settled() {
         return;
     }
     cursor.state = match &check.result {
@@ -292,4 +309,66 @@ pub(super) fn redecided(
         }
         (state, _) => state,
     };
+}
+
+/// Why a decision has no state to give a claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Undecidable {
+    /// Resolved by evidence, with no supported local check to name.
+    NoSupport,
+    /// An end the ledger has no state for yet.
+    NoState(&'static str),
+}
+
+/// The state a decision sends a claim to; `None` leaves it where it is. At a
+/// node that is a remedy the claim is Open, with the rewrites still reachable
+/// from it; at a reading, a recite or an uncite it waits for the machine's next
+/// step; at an end it is that end's state (acceptance design §2.9).
+pub(super) fn stepped(
+    cursor: &Cursor,
+    outcome: Outcome,
+    then: &Then,
+    reason: &str,
+    rewrite_ahead: bool,
+    at: i64,
+) -> Result<Option<ClaimState>, Undecidable> {
+    Ok(match then {
+        Then::Stop => None,
+        Then::Node { step, .. } => Some(match step {
+            Step::Research | Step::Rewrite(_) | Step::Cut => ClaimState::Open {
+                kind: failure_kind(outcome, &cursor.state),
+                reason: reason.to_owned(),
+                machine_attempts_left: u8::from(rewrite_ahead),
+            },
+            Step::Read(_) | Step::Recite | Step::Uncite => ClaimState::Unchecked,
+        }),
+        Then::End(End::Resolved) => {
+            let (source_version_id, supporting_quote) =
+                cursor.last_support.clone().ok_or(Undecidable::NoSupport)?;
+            Some(ClaimState::ResolvedByEvidence {
+                source_version_id,
+                supporting_quote,
+            })
+        }
+        Then::End(End::Consistent) => Some(ClaimState::Consistent { at }),
+        Then::End(End::GeneralKnowledge) => Some(ClaimState::GeneralKnowledge { at }),
+        Then::End(End::NotAClaim) => return Err(Undecidable::NoState("not a claim")),
+        Then::End(End::Removed { .. }) => Some(ClaimState::Removed {
+            at,
+            by: Actor::Machine,
+        }),
+    })
+}
+
+/// What failed a statement, from what the step found: a remedy's outcome keeps
+/// the failure the claim was Open with.
+fn failure_kind(outcome: Outcome, held: &ClaimState) -> VerdictKind {
+    match (outcome, held) {
+        (Outcome::Refuted, _) => VerdictKind::Contradicted,
+        (Outcome::Unproven | Outcome::NeedsSource | Outcome::AllCommon, _) => {
+            VerdictKind::Unsupported
+        }
+        (_, ClaimState::Open { kind, .. }) => kind.clone(),
+        _ => VerdictKind::Unsupported,
+    }
 }

@@ -434,6 +434,26 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
         },
         ClaimEvent::Undone { event_ordinal: 4 },
         classified(Class::Reasoning, ClassifiedBy::Model),
+        classified(Class::Common, ClassifiedBy::Evidence),
+        ClaimEvent::CitationDropped {
+            cited: vec!["v1".into()],
+        },
+        ClaimEvent::RepairAttempted {
+            attempt: 1,
+            escalated: false,
+            before: QUOTE.into(),
+            after: None,
+            outcome: RepairOutcome::Rewritten,
+            goal: Some(Goal::AsTheFieldHasIt),
+        },
+        ClaimEvent::Stepped {
+            policy: "acceptance-v1".into(),
+            step: Step::Cut,
+            outcome: acceptance::Outcome::CannotCut,
+            then: Then::End(acceptance::End::Removed { section_goes: true }),
+            reason: "The sentence cannot be cut.".into(),
+            rewrite_ahead: false,
+        },
         ClaimEvent::Checked(Check {
             result: CheckResult::Consistent,
             ..local_check(None, "v1")
@@ -508,6 +528,7 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
         (ClassifiedBy::Model, "model"),
         (ClassifiedBy::Rule, "rule"),
         (ClassifiedBy::Writer, "writer"),
+        (ClassifiedBy::Evidence, "evidence"),
     ] {
         assert_eq!(
             serde_json::to_value(classified(Class::Sourced, by)).unwrap(),

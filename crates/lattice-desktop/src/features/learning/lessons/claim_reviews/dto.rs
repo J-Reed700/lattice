@@ -335,6 +335,7 @@ pub enum ClassifiedByDto {
     Model,
     Rule,
     Writer,
+    Evidence,
 }
 
 impl From<ClassifiedBy> for ClassifiedByDto {
@@ -343,6 +344,7 @@ impl From<ClassifiedBy> for ClassifiedByDto {
             ClassifiedBy::Model => Self::Model,
             ClassifiedBy::Rule => Self::Rule,
             ClassifiedBy::Writer => Self::Writer,
+            ClassifiedBy::Evidence => Self::Evidence,
         }
     }
 }

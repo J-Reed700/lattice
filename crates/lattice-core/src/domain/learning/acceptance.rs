@@ -17,7 +17,7 @@ pub use ceiling::{after_rewrite_calls, most_calls};
 pub use graph::{Graph, Node};
 pub use invariants::{violations, Violation};
 pub use standard::{StandardPolicy, STANDARD_POLICY};
-pub use walk::walk;
+pub use walk::{check_record, decide, rewrite_ahead, walk, walk_from, RecordFault};
 
 use serde::{Deserialize, Serialize};
 
@@ -78,7 +78,8 @@ pub enum Goal {
 }
 
 /// One thing done to a statement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Step {
     Read(Reading),
     /// Look for a passage, once in a statement's life.
@@ -158,7 +159,8 @@ pub enum Outcome {
 }
 
 /// Where a statement's path ends.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum End {
     Resolved,
     Consistent,
@@ -247,6 +249,20 @@ pub struct Position {
 pub struct Taken {
     pub step: Step,
     pub outcome: Outcome,
+}
+
+/// Where the policy sent a statement after a step: what the ledger records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Then {
+    /// On to a node, named with its step so a reader needs no policy.
+    Node {
+        name: String,
+        step: Step,
+    },
+    End(End),
+    /// A second unanswered reading: the lesson stops.
+    Stop,
 }
 
 /// Where the steps a statement took leave it.

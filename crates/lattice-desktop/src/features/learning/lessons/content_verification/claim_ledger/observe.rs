@@ -401,6 +401,7 @@ impl ClaimLedger {
                         before: record.before.clone(),
                         after: Some(after),
                         outcome: RepairOutcome::Rewritten,
+                        goal: None,
                     };
                     self.append(&id, event).await?;
                     self.append(&id, gone).await?;
@@ -412,6 +413,7 @@ impl ClaimLedger {
                         before: record.before.clone(),
                         after: None,
                         outcome: RepairOutcome::Removed,
+                        goal: None,
                     };
                     // A claim that passed on the sentence has no repair to
                     // record: it went with the sentence.
@@ -571,6 +573,7 @@ impl ClaimLedger {
                         before: record.before.clone(),
                         after: Some(quote),
                         outcome: RepairOutcome::Rewritten,
+                        goal: None,
                     },
                 )
                 .await?;

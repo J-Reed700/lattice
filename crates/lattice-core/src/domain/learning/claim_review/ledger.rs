@@ -4,6 +4,8 @@
 //! loads is a log the rules allowed. State is never written, only replayed:
 //! undo restores the state as it stood before the undone event (§5.1).
 
+mod decisions;
+
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -91,6 +93,18 @@ pub enum LedgerError {
         attempt: u8,
         escalated: bool,
     },
+    #[error(
+        "claim {claim}: a decision under policy {recorded} cannot continue one made under {held}"
+    )]
+    PolicyChanged {
+        claim: String,
+        held: String,
+        recorded: String,
+    },
+    #[error("claim {claim}: resolved by evidence, but no local check supported it")]
+    ResolvedWithoutSupport { claim: String },
+    #[error("claim {claim}: the ledger has no state for the end {end} yet")]
+    NoStateForEnd { claim: String, end: &'static str },
 }
 
 impl From<LedgerError> for AppError {
@@ -161,6 +175,8 @@ impl ClaimLedgerEntry {
             trust: None,
             attempts_left: MACHINE_ATTEMPTS,
             class: None,
+            decided: None,
+            last_support: None,
         };
         let mut entry = Self {
             claim_id,
@@ -492,7 +508,10 @@ impl ClaimLedgerEntry {
                 outcome,
                 ..
             } => self.apply_repair(&mut next, *attempt, *escalated, outcome, at, &record.event)?,
-            ClaimEvent::CitationRepaired { .. } => next.citation_pending = true,
+            ClaimEvent::CitationRepaired { .. } | ClaimEvent::CitationDropped { .. } => {
+                next.citation_pending = true
+            }
+            ClaimEvent::Stepped { .. } => self.apply_step(&mut next, &record.event, at)?,
             ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
             ClaimEvent::Classified { class, by } => {
                 if class.prevails(*by, next.class) {
@@ -595,6 +614,15 @@ impl ClaimLedgerEntry {
     ) -> Result<(), LedgerError> {
         if *outcome == RepairOutcome::SupersededByUser {
             return Ok(());
+        }
+        // The policy decides what a repair of a decided claim leads to: the
+        // event is what happened, and its attempts are not counted here.
+        if next.decided.is_some() {
+            return if next.state.is_settled() || next.state.awaits_user() {
+                Err(self.refuse(event))
+            } else {
+                Ok(())
+            };
         }
         // A sentence rewritten for a claim that shares it is the attempt of
         // the claims that passed on it too: they are checked again on the new

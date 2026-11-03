@@ -671,6 +671,7 @@ mod loop_bound {
             before: FAILED.into(),
             after: Some(FIXED.into()),
             outcome: RepairOutcome::Rewritten,
+            goal: None,
         }
     }
 

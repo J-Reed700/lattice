@@ -322,6 +322,7 @@ fn the_statements_the_machine_took_out_are_counted_by_class() {
                         before: sentence.clone(),
                         after: None,
                         outcome: RepairOutcome::Removed,
+                        goal: None,
                     },
                 )
                 .unwrap();

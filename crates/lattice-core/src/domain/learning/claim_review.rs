@@ -5,8 +5,10 @@
 //! later checks bring; after that it waits for the user, who resolves it with
 //! an action that is recorded, undoable and never re-litigated by the machine
 //! unless the sentence or a cited source changes. A lesson with any unresolved
-//! claim is not ready. Pure types and rules, no I/O: the learning feature
-//! stores the ledger through
+//! claim is not ready. A claim the acceptance policy has decided
+//! ([`ClaimEvent::Stepped`]) is read from its latest decision instead, and
+//! the two-repair budget does not apply to it (acceptance design §2.9). Pure
+//! types and rules, no I/O: the learning feature stores the ledger through
 //! `application::ports::claim_review::ClaimReviewStore`.
 //!
 //! Storage forms: [`ClaimState`] and [`ClaimEvent`] are internally tagged
@@ -37,6 +39,7 @@ pub use trust::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::domain::learning::acceptance::{self, Goal, Step, Then};
 use crate::domain::provenance::{Bar, CountedSupport};
 
 /// Machine repairs a claim gets in its life, whatever evidence later checks
@@ -180,13 +183,16 @@ impl Class {
 /// Who decided a statement's class, weakest first. The model only splits
 /// what the rule layer leaves, and a sentence the writer cited is Sourced
 /// whatever anyone says later, so a class is never replaced by a weaker
-/// authority's (claim classes design §3.1).
+/// authority's (claim classes design §3.1). What a check found outranks them
+/// all: a statement that changes class because of it is the policy's to move
+/// (acceptance design §2.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClassifiedBy {
     Model,
     Rule,
     Writer,
+    Evidence,
 }
 
 /// Why a claim is not verified, in honest words, one per case.
@@ -657,6 +663,10 @@ pub enum ClaimEvent {
         before: String,
         after: Option<String>,
         outcome: RepairOutcome,
+        /// What the repair was asked to achieve (acceptance design §2.9);
+        /// `None` on repairs recorded before the policy named a goal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<Goal>,
     },
     Executed {
         observation_id: String,
@@ -676,6 +686,14 @@ pub enum ClaimEvent {
         /// The lesson did not number the source before: it was added to the
         /// lesson's sources to be cited.
         added_source: bool,
+    },
+    /// The machine dropped the sentence's citation: the claim's parts are all
+    /// common and the passages it cited state none (acceptance design §2.1).
+    /// The claim's words are unchanged, so no repair attempt is charged; the
+    /// next check reads it without the citation.
+    CitationDropped {
+        /// The source versions the sentence cited.
+        cited: Vec<String>,
     },
     UserAction {
         action: UserAction,
@@ -726,6 +744,22 @@ pub enum ClaimEvent {
         reason: String,
         cause: Option<TrustCause>,
     },
+    /// What the acceptance policy made of one machine step, recorded beside
+    /// the step's own event (acceptance design §2.9). A machine-owned claim's
+    /// state is read from its latest decision.
+    Stepped {
+        /// The policy's version, [`acceptance::STANDARD_POLICY`] for the
+        /// standard one. A claim is never continued under another.
+        policy: String,
+        step: Step,
+        outcome: acceptance::Outcome,
+        /// Where the policy sent the statement.
+        then: Then,
+        /// The step's own reason, which the claim shows while it is open.
+        reason: String,
+        /// A rewrite is reachable from `then`: the Open state's attempt left.
+        rewrite_ahead: bool,
+    },
 }
 
 impl ClaimEvent {
@@ -738,6 +772,7 @@ impl ClaimEvent {
             Self::RepairAttempted { .. } => "repair_attempted",
             Self::Executed { .. } => "executed",
             Self::CitationRepaired { .. } => "citation_repaired",
+            Self::CitationDropped { .. } => "citation_dropped",
             Self::UserAction { .. } => "user_action",
             Self::EvidenceAttached { .. } => "evidence_attached",
             Self::Superseded { .. } => "superseded",
@@ -747,6 +782,7 @@ impl ClaimEvent {
             Self::Undone { .. } => "undone",
             Self::Stopped { .. } => "stopped",
             Self::StandingAssessed { .. } => "standing_assessed",
+            Self::Stepped { .. } => "stepped",
         }
     }
 }

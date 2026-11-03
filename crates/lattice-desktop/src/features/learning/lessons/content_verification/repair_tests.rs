@@ -301,6 +301,7 @@ async fn failed_ledger(
                 outcome: RepairOutcome::Rejected {
                     reason: "Unusable.".into(),
                 },
+                goal: None,
             };
             ledger.append(&id, spent).await?;
         }
