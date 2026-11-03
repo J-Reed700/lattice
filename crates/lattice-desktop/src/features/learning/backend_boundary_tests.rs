@@ -9,7 +9,7 @@ use super::{
         LearningLabLimits,
     },
 };
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::testing::links::{self, LinkKind};
 
 fn id(seed: u128) -> String {
@@ -166,7 +166,7 @@ fn lab_spec_rejects_aliases_and_accepts_resource_limit_edges() {
     assert!(validate_execution_spec(&boundaries).is_err());
 }
 
-fn lab_materialization_rejects_a_linked_parent_that_escapes_workspace(
+fn an_existing_lab_run_folder_is_refused_so_a_planted_link_is_never_followed(
     kind: LinkKind,
 ) -> anyhow::Result<()> {
     let parent = tempfile::tempdir()?;
@@ -179,24 +179,36 @@ fn lab_materialization_rejects_a_linked_parent_that_escapes_workspace(
     }
 
     let spec = lab_spec(vec![LearningLabFile {
-        path: "linked/escaped.py".into(),
+        path: "linked/sub/escaped.py".into(),
         content: "should never be written".into(),
     }]);
+    let error = materialize_workspace(&root, &spec).unwrap_err();
     assert!(
-        materialize_workspace(&root, &spec).is_err(),
-        "a {kind} out of the workspace must be refused"
+        matches!(&error, AppError::Io { kind: io_kind, .. } if io_kind == "AlreadyExists"),
+        "a {kind} in an existing run folder must meet AlreadyExists, got {error:?}; \
+         outside/sub exists: {}",
+        outside.join("sub").exists()
     );
-    assert!(!outside.join("escaped.py").exists(), "{kind}");
+    assert!(
+        !outside.join("sub").exists(),
+        "{kind}: a spec file's folder was made through the link"
+    );
+    assert!(
+        std::fs::read_dir(&outside)?.next().is_none(),
+        "{kind}: something was created under the folder the link points at"
+    );
     Ok(())
 }
 
 #[test]
-fn lab_materialization_rejects_a_symlinked_parent_that_escapes_workspace() -> anyhow::Result<()> {
-    lab_materialization_rejects_a_linked_parent_that_escapes_workspace(LinkKind::Symlink)
+fn an_existing_lab_run_folder_is_refused_so_a_planted_symlink_is_never_followed(
+) -> anyhow::Result<()> {
+    an_existing_lab_run_folder_is_refused_so_a_planted_link_is_never_followed(LinkKind::Symlink)
 }
 
 #[cfg(windows)]
 #[test]
-fn lab_materialization_rejects_a_junctioned_parent_that_escapes_workspace() -> anyhow::Result<()> {
-    lab_materialization_rejects_a_linked_parent_that_escapes_workspace(LinkKind::Junction)
+fn an_existing_lab_run_folder_is_refused_so_a_planted_junction_is_never_followed(
+) -> anyhow::Result<()> {
+    an_existing_lab_run_folder_is_refused_so_a_planted_link_is_never_followed(LinkKind::Junction)
 }
