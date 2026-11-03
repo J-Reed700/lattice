@@ -55,12 +55,12 @@ pub(crate) fn largest_repetition_bound(schema: &serde_json::Value) -> (u64, Stri
 /// Identity of the extractor contract, stored in `extractor_prompt_version`.
 pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-10-21.14";
 /// Identity of the semantic-review contract.
-pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-11-01.10";
+pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-11-02.11";
 /// Identity of the summariser contract.
 pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-22.3";
 /// Stored in `validator_version`: the deterministic rules plus the review step
 /// that together decided what a commit was allowed to contain.
-pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-11-01.10";
+pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-11-02.11";
 
 /// Instructions for the extractor (§15, "Extractor must be told").
 ///
@@ -294,7 +294,8 @@ pub struct ReviewRequest<'a> {
     pub id: &'a str,
     pub change: &'a str,
     pub kind: &'a str,
-    pub label: &'a str,
+    /// What is proposed: a new item's label, or a transition's replacement's; `None` without one.
+    pub label: Option<&'a str>,
     /// Exact spans the proposal rests on, with the role that said them.
     pub proposed_evidence: Vec<ReviewPassage<'a>>,
     /// The existing item's own evidence, for a transition.
