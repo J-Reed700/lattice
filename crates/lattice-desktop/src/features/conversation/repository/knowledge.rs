@@ -574,7 +574,11 @@ impl ConversationRepository {
 }
 
 impl ConversationRepository {
-    async fn knowledge_semantic_scores(
+    /// How close in meaning each item `conversation` may read is to `query`: the best
+    /// cosine over its evidence messages' stored vectors. An item with no comparable
+    /// vector has no entry, and without an embedder, or when the query cannot be
+    /// embedded in time, the map is empty.
+    pub async fn knowledge_semantic_scores(
         &self,
         conversation: &str,
         query: &str,
