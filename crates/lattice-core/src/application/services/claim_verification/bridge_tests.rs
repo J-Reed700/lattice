@@ -333,3 +333,60 @@ async fn the_output_tokens_of_both_asks_are_counted() {
     assert!(matches!(answered.judgments, ClassJudgment::Judged(_)));
     assert_eq!(answered.output_tokens, 130);
 }
+
+#[test]
+fn every_mix_of_parts_has_the_outcome_the_design_gives_it() {
+    use PartKind::{Common, Contradicted, SpecificMissing, Stated};
+    let rows: &[(&[PartKind], Outcome)] = &[
+        (&[Stated], Outcome::Stands),
+        (&[Common], Outcome::AllCommon),
+        (&[SpecificMissing], Outcome::Unproven),
+        (&[Contradicted], Outcome::Refuted),
+        (&[Stated, Common], Outcome::Stands),
+        (&[Stated, SpecificMissing], Outcome::Unproven),
+        (&[Stated, Contradicted], Outcome::Refuted),
+        (&[Common, SpecificMissing], Outcome::Unproven),
+        (&[Common, Contradicted], Outcome::Refuted),
+        (&[SpecificMissing, Contradicted], Outcome::Refuted),
+        (&[Stated, Common, SpecificMissing], Outcome::Unproven),
+        (&[Stated, Common, Contradicted], Outcome::Refuted),
+        (&[Stated, SpecificMissing, Contradicted], Outcome::Refuted),
+        (&[Common, SpecificMissing, Contradicted], Outcome::Refuted),
+        (
+            &[Stated, Common, SpecificMissing, Contradicted],
+            Outcome::Refuted,
+        ),
+    ];
+    for (kinds, expected) in rows {
+        let parts: Vec<BridgePart> = kinds.iter().map(|kind| part("A part.", *kind)).collect();
+        assert_eq!(outcome(parts).outcome(), *expected, "{kinds:?}");
+    }
+}
+
+#[test]
+fn a_cited_statement_whose_parts_are_all_common_is_all_common_whatever_the_old_rule_said() {
+    let (guarded, changed) = outcome(vec![
+        part("A lexer turns characters into tokens.", PartKind::Common),
+        part("A token is a unit of text.", PartKind::Common),
+    ])
+    .guarded(names_a_figure);
+    assert!(changed.is_empty());
+    assert_eq!(guarded.outcome(), Outcome::AllCommon);
+    assert_eq!(guarded.decision(), BridgeDecision::Unsupported);
+}
+
+#[test]
+fn a_common_part_that_names_a_specific_is_unproven_once_guarded() {
+    let parts = vec![
+        part("Quillet is a lexer.", PartKind::Stated),
+        part("It shipped in 1999.", PartKind::Common),
+    ];
+    assert_eq!(outcome(parts.clone()).outcome(), Outcome::Stands);
+    let (guarded, changed) = outcome(parts).guarded(names_a_figure);
+    assert_eq!(changed, vec!["It shipped in 1999.".to_owned()]);
+    assert_eq!(guarded.outcome(), Outcome::Unproven);
+
+    let (alone, _) =
+        outcome(vec![part("It has 12 rules.", PartKind::Common)]).guarded(names_a_figure);
+    assert_eq!(alone.outcome(), Outcome::Unproven);
+}

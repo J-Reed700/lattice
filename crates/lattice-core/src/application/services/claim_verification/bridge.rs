@@ -105,6 +105,22 @@ impl BridgeOutcome {
             BridgeDecision::Supported
         }
     }
+
+    /// What the parts add up to in the acceptance policy's words. Apply
+    /// [`Self::guarded`] first: a common part that names a specific is one
+    /// no passage gives.
+    pub fn outcome(&self) -> Outcome {
+        let any = |kind: PartKind| self.parts.iter().any(|part| part.kind == kind);
+        if any(PartKind::Contradicted) {
+            Outcome::Refuted
+        } else if any(PartKind::SpecificMissing) {
+            Outcome::Unproven
+        } else if !any(PartKind::Stated) {
+            Outcome::AllCommon
+        } else {
+            Outcome::Stands
+        }
+    }
 }
 
 /// The judge's user message: the passages under their ids, then the claim.

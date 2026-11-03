@@ -4,6 +4,7 @@ use crate::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use crate::application::ports::LLMPort;
+use crate::domain::learning::acceptance::Outcome;
 use crate::shared::error::Result;
 use crate::shared::text::normalize_whitespace;
 use serde::{Deserialize, Serialize};
@@ -56,6 +57,18 @@ impl ClaimVerdict {
             Self::Unsupported => "unsupported",
             Self::Unverified => "unverified",
         }
+    }
+}
+
+/// A strict `verdict` on a claim's page in the acceptance policy's words.
+/// `on_cited`: the supporting passage is one the claim's sentence cites.
+pub fn page_outcome(verdict: ClaimVerdict, on_cited: bool) -> Outcome {
+    match verdict {
+        ClaimVerdict::Supported if on_cited => Outcome::Stands,
+        ClaimVerdict::Supported => Outcome::StandsElsewhere,
+        ClaimVerdict::Unsupported => Outcome::Unproven,
+        ClaimVerdict::Contradicted => Outcome::Refuted,
+        ClaimVerdict::Unverified => Outcome::Unjudged,
     }
 }
 

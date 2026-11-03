@@ -264,6 +264,63 @@ fn the_samples_decide_a_pass_a_falsity_veto_and_a_need_for_a_source() {
     assert!(!KnowledgeOutcome { samples: vec![] }.is_common());
 }
 
+fn samples_of(verdicts: [KnowledgeVerdict; 3]) -> KnowledgeOutcome {
+    KnowledgeOutcome {
+        samples: verdicts
+            .into_iter()
+            .map(|verdict| KnowledgeSample {
+                verdict,
+                reason: "Because.".into(),
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn every_mix_of_three_samples_has_the_outcome_a_common_statement_and_a_veto_give_it() {
+    use KnowledgeVerdict::{False, NeedsSource as Needs, TrueCommon as Common};
+    use Outcome::{NeedsSource as Source, Refuted, Stands};
+    let rows = [
+        ([Common, Common, Common], Stands, Stands),
+        ([Common, Common, Needs], Source, Stands),
+        ([Common, Common, False], Source, Stands),
+        ([Common, Needs, Needs], Source, Stands),
+        ([Common, Needs, False], Source, Stands),
+        ([Common, False, False], Refuted, Refuted),
+        ([Needs, Needs, Needs], Source, Stands),
+        ([Needs, Needs, False], Source, Stands),
+        ([Needs, False, False], Refuted, Refuted),
+        ([False, False, False], Refuted, Refuted),
+    ];
+    for (verdicts, knowledge, veto) in rows {
+        let samples = samples_of(verdicts);
+        assert_eq!(samples.knowledge_outcome(), knowledge, "{verdicts:?}");
+        assert_eq!(samples.veto_outcome(), veto, "{verdicts:?}");
+    }
+}
+
+#[test]
+fn no_samples_never_pass_a_statement_and_never_veto_it() {
+    let none = KnowledgeOutcome { samples: vec![] };
+    assert_eq!(none.knowledge_outcome(), Outcome::NeedsSource);
+    assert_eq!(none.veto_outcome(), Outcome::Stands);
+}
+
+#[test]
+fn each_consistency_verdict_has_its_outcome() {
+    for (verdict, expected) in [
+        (ConsistencyVerdict::Consistent, Outcome::Stands),
+        (ConsistencyVerdict::Contradicted, Outcome::Refuted),
+        (ConsistencyVerdict::UnfoundedSpecific, Outcome::NeedsSource),
+    ] {
+        let outcome = ConsistencyOutcome {
+            verdict,
+            reason: "Because.".into(),
+        };
+        assert_eq!(outcome.outcome(), expected, "{verdict:?}");
+    }
+}
+
 #[test]
 fn a_consistency_check_fits_the_window_only_beside_its_answer() {
     let llm = Scripted::new(vec![]);

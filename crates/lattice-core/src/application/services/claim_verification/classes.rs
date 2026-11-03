@@ -98,6 +98,17 @@ pub struct ConsistencyOutcome {
     pub reason: String,
 }
 
+impl ConsistencyOutcome {
+    /// The verdict in the acceptance policy's words.
+    pub fn outcome(&self) -> Outcome {
+        match self.verdict {
+            ConsistencyVerdict::Consistent => Outcome::Stands,
+            ConsistencyVerdict::Contradicted => Outcome::Refuted,
+            ConsistencyVerdict::UnfoundedSpecific => Outcome::NeedsSource,
+        }
+    }
+}
+
 /// What one sample of the knowledge judge said.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -157,6 +168,29 @@ impl KnowledgeOutcome {
     /// Some sample said it needs a source.
     pub fn needs_source(&self) -> bool {
         self.count(KnowledgeVerdict::NeedsSource) > 0
+    }
+
+    /// The samples read as a Common statement's check: unanimous
+    /// `true_common` stands, most `false` refutes, anything else (a
+    /// `needs_source`, a lone `false`) needs a source.
+    pub fn knowledge_outcome(&self) -> Outcome {
+        if self.is_common() {
+            Outcome::Stands
+        } else if self.is_false() {
+            Outcome::Refuted
+        } else {
+            Outcome::NeedsSource
+        }
+    }
+
+    /// The samples read as the falsity veto: most `false` refutes, anything
+    /// else stands (a `needs_source` never fails a statement here).
+    pub fn veto_outcome(&self) -> Outcome {
+        if self.is_false() {
+            Outcome::Refuted
+        } else {
+            Outcome::Stands
+        }
     }
 }
 
