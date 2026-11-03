@@ -71,29 +71,32 @@ A reading is grounded in one of three ways, weakest first: closed-book (the mode
 
 A graph is nodes; a node is one step and its cost in model calls; its edges map each outcome of the step to the next node, to another class's entry (a change of class the evidence makes), or to an end. Steps:
 
-- `Read(Parts)`: the part-wise judge (`BRIDGE_SYSTEM`) on the passages the statement's sentence cites, or its section's when it cites none. `Read(Page)`: the strict judge on the course's page for it (`page_one`). `Read(Consistency)`: the consistency judge on the section's passages. `Read(Knowledge)`: the knowledge judge's three closed-book samples, passing on unanimity. `Read(Veto)`: the same samples, failing only on a majority `false`.
+- `Read(Parts)`: the part-wise judge (`BRIDGE_SYSTEM`) on the statement's own citation: the passages its sentence cites, or its section's when it cites none. It answers both questions of §2.1, so it is the one reading that can say `AllCommon`. `Read(Ground)`: the same judge on the section's passages, asked only whether they ground a statement a closed-book reading called false (every part stated or common, one stated): yes stands, anything else leaves the veto standing. Same judge, different question, so a different reading. `Read(Page)`: the strict judge on the course's page for it (`page_one`). `Read(Consistency)`: the consistency judge on the section's passages. `Read(Knowledge)`: the knowledge judge's three closed-book samples, passing on unanimity. `Read(Veto)`: the same samples, failing only on a majority `false`.
 - `Research` (once in a statement's life, at most two pages), `Recite` (its citation moves to the passage found), `Uncite` (its citation goes), `Rewrite(goal)`, `Cut`.
 
 Outcomes of a reading, interpreted once per reading in `lattice-core` (§2.6): `Stands`, `StandsElsewhere` (on a passage it does not cite), `AllCommon` (the part-wise judge found every part common, none stated, guarded by the specifics test), `Unproven` (a specific nothing states; nothing supports it), `Refuted` (a passage, or a majority of samples, says otherwise), `NeedsSource` (Common: a `needs_source` or a lone `false`; Reasoning: an unfounded specific), `Unjudged`. Outcomes of a remedy: `Done`, `Saved`/`FoundNothing` (research), `Rewritten`/`NotApplied` (rewrite), `Cut`/`CannotCut`.
 
 `Unjudged` is no edge of any graph: a reading whose answer cannot be read (after the judge's own second asking) leaves the statement where it is, to be read once more; a second unanswered reading of the same statement, at that node or any later one, stops the lesson with the honest reason the classes design gives (§3.2 there). One re-ask per statement in its life, not one per reading: the code today allows one per reading (`ClaimLedgerEntry::unjudged` counts a run), which the ceiling's `U` never counted. A rewrite the confinement could not apply is asked once more, told why, by its own node (`*.again`), and then takes the next rung.
 
-The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class's graph, the class recorded `by: Evidence`):
+The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class's graph at its entry, the class recorded `by: Evidence`; `⇒ Class after its rewrite` enters it at its post-rewrite node, which has no rewrite in it, so a rewrite's successor may change class once more without ever being rewritten again):
 
 **Sourced** — entered by the writer's citation, the rule layer, the model, or evidence.
 
 | Node | Step | Calls | Outcomes |
 |---|---|---|---|
-| `s.read` | `Read(Parts)` on the passages of the cited sentence it restates, else its section's quote (every block carries one); `Read(Page)` only when neither gives a source passage | 1 | Stands → end Resolved · StandsElsewhere → `s.recite` · AllCommon → `s.uncite` the first time the statement changes class, `s.research` once it has · Unproven, Refuted → `s.research` |
+| `s.read` | `Read(Parts)` on the passages of the cited sentence it restates, else its section's quote (every block carries one) | 1 | Stands → end Resolved · AllCommon → `s.uncite` the first time the statement changes class, `s.research` once it has · Unproven, Refuted → `s.research` |
 | `s.uncite` | `Uncite` | 0 | Done ⇒ Common |
 | `s.research` | `Research` | 0 | Saved, FoundNothing → `s.reread` |
 | `s.reread` | `Read(Page)` with what research saved | 1 | Stands → end Resolved · StandsElsewhere → `s.recite` · Unproven, Refuted → `s.rewrite` |
 | `s.recite` | `Recite` | 0 | Done → `s.citeread` |
-| `s.citeread` | `Read(Parts)` on the new citation | 1 | Stands → end Resolved · otherwise → `s.rewrite` |
+| `s.citeread` | `Read(Parts)` on the new citation | 1 | Stands → end Resolved · AllCommon → `s.uncite` the first time the statement changes class, `s.rewrite` once it has · Unproven, Refuted → `s.rewrite` |
 | `s.rewrite` | `Rewrite(what the passage states, or the point without the specific)` | 1 | Rewritten → `s.final` (the successor) · NotApplied → `s.rewrite.again` |
 | `s.rewrite.again` | the same, told why the first was not applied | 1 | Rewritten → `s.final` · NotApplied → `s.cut` |
-| `s.final` | `Read(Parts)`, or `Read(Page)` uncited | 1 | Stands → end Resolved · otherwise → `s.cut` |
+| `s.final` | `Read(Parts)` | 1 | Stands → end Resolved · AllCommon → `s.final.uncite` · Unproven, Refuted → `s.cut` |
+| `s.final.uncite` | `Uncite` | 0 | Done ⇒ Common after its rewrite (at `c.final`) |
 | `s.cut` | `Cut` | 0 | Cut → end Removed · CannotCut → end Removed, its section going (§3.10 of the classes design) |
+
+A statement with no passage to be read against (no citation and no section quote, which the writer's schema does not allow) is `Unproven` at `s.read` without a call, and meets the course's page after its research. A rewrite that keeps "the point without the specific", as its goal allows, reads all common on its citation at `s.final`: it loses the citation and meets Common's check from Common's post-rewrite node, so it is never rewritten twice; today the bridge's "one stated" fails exactly that success, and the cut follows.
 
 **Reasoning** — entered by the model.
 
@@ -101,12 +104,12 @@ The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class'
 |---|---|---|---|
 | `r.read` | `Read(Consistency)` | 1 | Stands → `r.veto` · Refuted → `r.rewrite` · NeedsSource ⇒ Sourced the first time the statement changes class, → `r.rewrite` once it has |
 | `r.veto` | `Read(Veto)` | 3 | Stands → end Consistent · Refuted → `r.ground` |
-| `r.ground` | `Read(Parts)` on its section's passages | 1 | Stands → end Consistent · otherwise → `r.rewrite` |
+| `r.ground` | `Read(Ground)` | 1 | Stands → end Consistent · Refuted → `r.rewrite` |
 | `r.rewrite` | `Rewrite(agree with the passages; correct what the reason names)` | 1 | Rewritten → `r.final` · NotApplied → `r.rewrite.again` |
 | `r.rewrite.again` | the same, told why | 1 | Rewritten → `r.final` · NotApplied → `r.cut` |
 | `r.final` | `Read(Consistency)` | 1 | Stands → `r.reveto` · otherwise → `r.cut` |
 | `r.reveto` | `Read(Veto)` | 3 | Stands → end Consistent · Refuted → `r.reground` |
-| `r.reground` | `Read(Parts)` on its section's passages | 1 | Stands → end Consistent · otherwise → `r.cut` |
+| `r.reground` | `Read(Ground)` | 1 | Stands → end Consistent · Refuted → `r.cut` |
 | `r.cut` | `Cut` | 0 | as `s.cut` |
 
 **Common** — entered by the model, or by evidence from Sourced (`AllCommon`, its citation dropped).
@@ -114,11 +117,11 @@ The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class'
 | Node | Step | Calls | Outcomes |
 |---|---|---|---|
 | `c.read` | `Read(Knowledge)` | 3 | Stands → end GeneralKnowledge · NeedsSource ⇒ Sourced the first time the statement changes class, → `c.rewrite` once it has · Refuted → `c.ground` |
-| `c.ground` | `Read(Parts)` on its section's passages | 1 | Stands → end GeneralKnowledge, the passage on its check · otherwise → `c.rewrite` |
+| `c.ground` | `Read(Ground)` | 1 | Stands → end GeneralKnowledge, the passage on its check · Refuted → `c.rewrite` |
 | `c.rewrite` | `Rewrite(state it as the field has it, per the reason)` | 1 | Rewritten → `c.final` · NotApplied → `c.rewrite.again` |
 | `c.rewrite.again` | the same, told why | 1 | Rewritten → `c.final` · NotApplied → `c.cut` |
 | `c.final` | `Read(Knowledge)` | 3 | Stands → end GeneralKnowledge · Refuted → `c.reground` · NeedsSource → `c.cut` |
-| `c.reground` | `Read(Parts)` on its section's passages | 1 | Stands → end GeneralKnowledge · otherwise → `c.cut` |
+| `c.reground` | `Read(Ground)` | 1 | Stands → end GeneralKnowledge · Refuted → `c.cut` |
 | `c.cut` | `Cut` | 0 | as `s.cut` |
 
 **Internal** — a statement the rule layer leaves out (a rubric or option field, "The sources…") never enters the ledger and asks nothing. One the model calls Internal meets the falsity veto (build step 10):
@@ -126,34 +129,35 @@ The four graphs (`→ end X` is a terminal state; `⇒ Class` enters that class'
 | Node | Step | Calls | Outcomes |
 |---|---|---|---|
 | `i.veto` | `Read(Veto)` | 3 | Stands → end NotAClaim · Refuted → `i.ground` |
-| `i.ground` | `Read(Parts)` on its section's passages | 1 | Stands → end NotAClaim · otherwise → `i.rewrite` |
+| `i.ground` | `Read(Ground)` | 1 | Stands → end NotAClaim · Refuted → `i.rewrite` |
 | `i.rewrite` | `Rewrite(state it as the field has it, per the reason)` | 1 | Rewritten → `i.final` · NotApplied → `i.rewrite.again` |
 | `i.rewrite.again` | the same, told why | 1 | Rewritten → `i.final` · NotApplied → `i.cut` |
 | `i.final` | `Read(Veto)` | 3 | Stands → end NotAClaim · Refuted → `i.reground` |
-| `i.reground` | `Read(Parts)` on its section's passages | 1 | Stands → end NotAClaim · otherwise → `i.cut` |
+| `i.reground` | `Read(Ground)` | 1 | Stands → end NotAClaim · Refuted → `i.cut` |
 | `i.cut` | `Cut` | 0 | as `s.cut` |
 
 A `Cut` takes the statement out of its sentence: the sentence itself when no other live statement stands on it; otherwise one narrowing rewrite that keeps what the others say (their successors are read once from their class's post-rewrite node, the M reserve of §2.4), and the sentence only when that rewrite cannot be applied. A rewrite's successor continues at its parent's post-rewrite node (`s.final`, `r.final`, `c.final`); so does a statement whose sentence a neighbour's rewrite changed.
 
-What changed from the code, deliberately (§3): Sourced's `AllCommon` edge (was: fails as unsupported); the part-wise judge in place of the strict one where the passages overrule a veto (`r.ground`, `r.reground`; was `stated_by`); Common's `c.ground` and its one rewrite (was: failed at once and, alone on its sentence, cut); the rewrite's retry twin and per-target confinement (was: one mixed hunk refused the section and charged every target); the narrowing cut (was: the cut took every statement on the sentence, and every sentence the quote touched). Everything else is the code's present path, written down once.
+What changed from the code, deliberately (§3): Sourced's `AllCommon` edges, at its first reading, its re-cited reading and after its rewrite (was: fails as unsupported); the part-wise judge in place of the strict one where the passages overrule a veto (`Read(Ground)`; was `stated_by`); Common's `c.ground` and its one rewrite (was: failed at once and, alone on its sentence, cut); the rewrite's retry twin and per-target confinement (was: one mixed hunk refused the section and charged every target); the narrowing cut (was: the cut took every statement on the sentence, and every sentence the quote touched). Everything else is the code's present path, written down once.
 
 ### 2.4 What the graphs decide, and what is derived from them
 
 - **The next step** of a statement is the step of the node it is at. No stage decides it.
 - **What a rewrite is asked** is the `Rewrite` step's goal, with the reading that failed the statement: the repair prompt says exactly what the next reading will test.
-- **The call ceiling** is, per statement, the longest path in calls from where it is to an end, plus the costliest reading still ahead of it while its one re-ask is unused (U), plus three reserves the graphs cannot see: the sorting calls, one flow repair per section that can take a cut (K), and, for a statement that shares its sentence, the longest path of its class from its post-rewrite node and the narrowing call (M). `call_plan.rs`'s constants go. From the graphs of §2.3, at entry: Sourced 11 (its longest path runs through `AllCommon` into Common) + 3, Reasoning 12 + 3, Common 10 + 3, model-Internal 10 + 3; from the post-rewrite node: Sourced 1, Reasoning 5, Common 4, the values `call_plan.rs` has by hand today. Because a node's longest path is at least its own cost plus the longest path of any successor, the ceiling cannot rise as statements move; a test holds every edge of every graph to that.
+- **The call ceiling** is, per statement, the longest path in calls from where it is to an end, plus the costliest reading still ahead of it while its one re-ask is unused (U), plus three reserves the graphs cannot see: the sorting calls, one flow repair per section that can take a cut (K), and, for a statement that shares its sentence, the longest path of its class from its post-rewrite node and the narrowing call (M). `call_plan.rs`'s constants go. From the graphs of §2.3, at entry: Sourced 13 + 3 (its longest path re-cites, reads all common on the new citation and takes Common's whole check), Reasoning 12 + 3, Common 13 + 3 (sent to its source, rewritten there, then all common after the rewrite), model-Internal 10 + 3; from the post-rewrite node: Sourced 5, Reasoning 5, Common 4, Internal 4. `call_plan.rs` has Reasoning's and Common's by hand today and Sourced's as 1, because its post-rewrite reading had no path but the cut. Because a node's longest path is at least its own cost plus the longest path of any successor, the ceiling cannot rise as statements move; a test holds every edge of every graph to that.
 - **A statement's end state** is the end it reaches: Resolved (`ResolvedByEvidence`), Consistent, GeneralKnowledge, Removed by the machine.
-- **That the loop ends**: the graphs are acyclic (a class changes by evidence at most once: a graph entered by evidence has no edge that changes class), each statement's path is finite, a rewrite's successor continues its parent's path (it does not start over), and a round in which no statement moved is a fault that stops the lesson with its reason (§2.7), not a count that runs out.
+- **That the loop ends**: the graphs are acyclic (a class changes at an entry at most once, and after a rewrite only into a post-rewrite node, from which no rewrite and no entry is reachable), each statement's path is finite, a rewrite's successor continues its parent's path (it does not start over), and a round in which no statement moved is a fault that stops the lesson with its reason (§2.7), not a count that runs out.
 
 ### 2.5 Invariants, held by tests on every graph of every policy
 
-1. Acyclic, counting class changes; a graph entered by evidence changes class no further.
+1. Acyclic, counting class changes: a statement changes class at an entry at most once; after its rewrite it may change once more, into a post-rewrite node.
 2. Every path to end Removed passes a `Rewrite` (no statement is cut without one rewrite).
-3. Every `Refuted` edge out of `Read(Knowledge)` or `Read(Veto)` reaches a `Read(Parts)` before any `Rewrite` or `Cut`.
-4. `StandsElsewhere` and `AllCommon` edges lead to `Recite` or `Uncite` first, never to `Rewrite` or `Cut`.
+3. Every `Refuted` edge out of `Read(Knowledge)` or `Read(Veto)` reaches a `Read(Ground)` before any `Rewrite` or `Cut`.
+4. A citation's fault is answered on the citation: every `StandsElsewhere` edge leads to a `Recite`, and every `AllCommon` edge to an `Uncite`, directly or as a first change's `change`; only a first change's `otherwise`, taken by a statement that has already changed class, may lead elsewhere.
 5. No node has an `Unjudged` edge (the walk keeps the statement in place once, then stops the lesson), and every `Rewrite` node's `NotApplied` edge leads to its `.again` node, whose own leads to the cut.
 6. A class's ends are its own: Sourced Resolved or Removed, Reasoning Consistent or Removed, Common GeneralKnowledge or Removed (the acceptance run's pairings, classes design §3.11), Internal NotAClaim or Removed.
 7. For every edge `n → m` and either state of the re-ask: `cost(n) + most(m) ≤ most(n)`, and using the re-ask never raises `most` (the ceiling never rises).
+8. A rewrite's successor is never rewritten again: from every class's post-rewrite node no `Rewrite` node is reachable, and the only change of class is into another class's post-rewrite node.
 
 A policy is a set of graphs; another policy (a stricter one for answer keys, one with the Verifier's reading before publication) is another set, and the same tests hold it.
 
@@ -163,7 +167,8 @@ A reader turns one judge's reply into the outcome vocabulary. The interpretation
 
 | Reading | Judge (unchanged) | Interpretation |
 |---|---|---|
-| `Parts` | `ClaimChecker::check_bridge`, `BridgeOutcome::guarded` | any part contradicted → Refuted; any part specific-missing → Unproven; every part common, none stated → AllCommon; stated parts all on uncited passages → StandsElsewhere; otherwise Stands. Replaces `BridgeOutcome::decision`. |
+| `Parts` | `ClaimChecker::check_bridge`, `BridgeOutcome::guarded` | any part contradicted → Refuted; any part specific-missing → Unproven; every part common, none stated → AllCommon; otherwise Stands. Replaces `BridgeOutcome::decision`. |
+| `Ground` | the same | every part stated or common and one stated → Stands; anything else → Refuted (the veto stands). |
 | `Page` | strict judge (`ClaimVerdict`) | Supported → Stands or StandsElsewhere by the passage's source; Unsupported, NoSource → Unproven; Contradicted → Refuted; Unverified → Unjudged |
 | `Consistency` | `check_consistency` | Consistent → Stands; Contradicted → Refuted; UnfoundedSpecific → NeedsSource |
 | `Knowledge` | `check_knowledge` | unanimous `true_common` → Stands; majority `false` → Refuted; otherwise (a `needs_source`, a lone `false`) → NeedsSource. Replaces the routing in `class_checks::common`. |
@@ -215,7 +220,7 @@ The report's per-claim verdict is read from the same place: a finding is publish
 
 | Change | Why | Measured before it ships |
 |---|---|---|
-| A cited, all-common statement loses its citation and is checked as Common | §2.1 | the job-1 removals of this kind and the replay's bridge rows, on the 27B: each such statement passes the knowledge judge or fails it for a reason a reader accepts |
+| A cited, all-common statement loses its citation and is checked as Common: at its first reading, on a re-cited passage, and after a rewrite that kept the point without the specific (then from Common's post-rewrite node) | §2.1 | the job-1 removals of this kind and the replay's bridge rows, on the 27B: each such statement passes the knowledge judge or fails it for a reason a reader accepts |
 | The passages overrule a veto by the part-wise judge, for Reasoning and Common | §2.2 | the 56 veto rows of `run1/veto.jsonl` and job 1's two vetoed statements about the acronym its sources define: the real catches (single pass/opposite of modular; fine-tuning) still fail, the two pass |
 | A Common statement gets one rewrite before a cut | invariant 2 | none: it adds a call, never a removal |
 | A refused hunk refuses only its own targets, and is asked once more, told why | §2.6 | none |
@@ -238,7 +243,7 @@ pub trait AcceptancePolicy: Send + Sync {
     fn graph(&self, class: Class) -> &Graph;
 }
 
-pub enum Reading { Parts, Page, Consistency, Knowledge, Veto }
+pub enum Reading { Parts, Ground, Page, Consistency, Knowledge, Veto }
 pub enum Goal { WhatThePassageStates, AgreeWithThePassages, AsTheFieldHasIt, KeepTheOthers }
 pub enum Step { Read(Reading), Research, Recite, Uncite, Rewrite(Goal), Cut }
 pub enum Outcome {
@@ -250,6 +255,9 @@ pub enum Target {
     Node(NodeId),
     /// Another class's graph, at its entry: the statement changes class by evidence.
     Enter(Class),
+    /// Another class's graph, at its post-rewrite node: a rewrite's successor
+    /// changes class, and is never rewritten again.
+    EnterAfterRewrite(Class),
 }
 pub enum Next {
     Go(Target),
@@ -278,7 +286,7 @@ pub fn violations(policy: &dyn AcceptancePolicy) -> Vec<Violation>;
 pub struct StandardPolicy; // the graphs of §2.3
 ```
 
-The readers' interpretation, pure, beside each judge (`lattice-core/src/application/services/claim_verification/`): `BridgeOutcome::outcome(&self) -> Outcome` (after `guarded`), `KnowledgeOutcome::outcome(&self, Reading) -> Outcome` (`Knowledge` or `Veto`), `ConsistencyOutcome::outcome(&self) -> Outcome`, `page_outcome(ClaimVerdict, on_cited: bool) -> Outcome`.
+The readers' interpretation, pure, beside each judge (`lattice-core/src/application/services/claim_verification/`): `BridgeOutcome::outcome(&self) -> Outcome` and `BridgeOutcome::ground_outcome(&self) -> Outcome` (both after `guarded`), `KnowledgeOutcome::knowledge_outcome(&self)` and `veto_outcome(&self)`, `ConsistencyOutcome::outcome(&self) -> Outcome`, `page_outcome(ClaimVerdict, on_cited: bool) -> Outcome`.
 
 The round, in the desktop (`content_verification/round.rs`):
 
