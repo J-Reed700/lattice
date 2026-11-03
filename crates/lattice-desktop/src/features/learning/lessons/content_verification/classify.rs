@@ -28,19 +28,53 @@ const SYSTEM: &str = concat!(
     "When a statement mixes kinds, answer sourced if any part needs a source. Answer with JSON: {\"<id>\": \"<class>\", ...}, one entry per id, nothing else."
 );
 
-/// A statement to sort and the lesson field it was extracted from.
+/// A statement to sort, the lesson field it was extracted from and the case
+/// its part works.
 pub(super) struct ToSort<'a> {
     pub(super) statement: &'a str,
     pub(super) field: &'a str,
+    pub(super) case: Case,
+}
+
+/// The sections that state what is so, where a specific needs a source: a
+/// worked example's, a practice's and a check's cases are hypothetical.
+pub(in crate::features::learning) const CITED_KINDS: [&str; 3] =
+    ["explanation", "contrast", "recap"];
+
+/// Whether a part of a lesson states what is so or works a hypothetical
+/// case, as the writer's rule reads it (claim classes design §3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::features::learning) enum Case {
+    Stated,
+    Hypothetical,
+}
+
+impl Case {
+    /// The case of the part at `unit` of `candidate`: a block whose kind is
+    /// not one of [`CITED_KINDS`] works a hypothetical case, and a question's
+    /// answer explanation states what is so.
+    pub(in crate::features::learning) fn of(candidate: &Value, unit: usize) -> Self {
+        let kind = candidate
+            .get("blocks")
+            .and_then(Value::as_array)
+            .and_then(|blocks| blocks.get(unit))
+            .and_then(|block| block.get("kind"))
+            .and_then(Value::as_str);
+        match kind {
+            Some(kind) if !CITED_KINDS.contains(&kind) => Self::Hypothetical,
+            _ => Self::Stated,
+        }
+    }
 }
 
 /// What the rules alone make of a statement. Sourced: a digit, quoted wording
-/// or an attribution cue, which can only err toward a check. Internal:
-/// anything in a rubric or an option, or a remark that opens "The sources"
-/// (not "The sources of") or "The other options"; these are the rules that
-/// can lighten a statement, to no check at all. Otherwise nothing, and the
-/// model sorts it.
-pub(super) fn rule_class(statement: &str, field: &str) -> Option<Class> {
+/// or an attribution cue, which can only err toward a check; in a
+/// hypothetical case, whose figures are its own, only the quotation or the
+/// attribution. Internal: anything in a rubric or an option, or a remark that
+/// opens "The sources" (not "The sources of") or "The other options"; these
+/// are the rules that can lighten a statement, to no check at all. Otherwise
+/// nothing, and the model sorts it.
+pub(super) fn rule_class(statement: &str, field: &str, case: Case) -> Option<Class> {
     let statement = statement.trim_start();
     let about_the_lesson = field.starts_with("rubric/")
         || field.starts_with("options/")
@@ -49,7 +83,11 @@ pub(super) fn rule_class(statement: &str, field: &str) -> Option<Class> {
     if about_the_lesson {
         return Some(Class::Internal);
     }
-    states_a_specific(statement).then_some(Class::Sourced)
+    let sourced = match case {
+        Case::Stated => states_a_specific(statement),
+        Case::Hypothetical => quotes_or_attributes(statement) || says(statement),
+    };
+    sourced.then_some(Class::Sourced)
 }
 
 /// Whether a text names what a source must hold: a digit, quoted wording or
@@ -58,24 +96,30 @@ pub(super) fn rule_class(statement: &str, field: &str) -> Option<Class> {
 /// sentence the writer has to cite is one the rule layer sorts Sourced
 /// (claim classes design §3.5).
 pub(in crate::features::learning) fn needs_citation(text: &str) -> bool {
-    lazy_regex::regex!(r"\d").is_match(text)
-        || lazy_regex::regex!(r#"['"‘’“”][^'"‘’“”]{12,}['"‘’“”]"#).is_match(text)
+    lazy_regex::regex!(r"\d").is_match(text) || quotes_or_attributes(text)
+}
+
+/// Whether a text quotes wording or attributes something to a source.
+fn quotes_or_attributes(text: &str) -> bool {
+    lazy_regex::regex!(r#"['"‘’“”][^'"‘’“”]{12,}['"‘’“”]"#).is_match(text)
         || lazy_regex::regex!(
             r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to)\b"
         )
         .is_match(text)
 }
 
-/// Whether a text states a specific: what needs a citation, or a verb of
-/// saying, which the rule layer reads as an attribution and so errs toward a
-/// check. The writer's rule leaves that to the check: an imperative to
-/// "state your assumptions" is no attribution.
-pub(super) fn states_a_specific(text: &str) -> bool {
-    needs_citation(text)
-        || lazy_regex::regex!(
-            r"(?i)\b(states?|reports?|found|notes? that|describes?|says?|documented)\b"
-        )
+/// Whether a text uses a verb of saying, which the rule layer reads as an
+/// attribution and so errs toward a check. The writer's rule leaves that to
+/// the check: an imperative to "state your assumptions" is no attribution.
+fn says(text: &str) -> bool {
+    lazy_regex::regex!(r"(?i)\b(states?|reports?|found|notes? that|describes?|says?|documented)\b")
         .is_match(text)
+}
+
+/// Whether a text states a specific: what needs a citation, or a verb of
+/// saying.
+pub(super) fn states_a_specific(text: &str) -> bool {
+    needs_citation(text) || says(text)
 }
 
 /// A class for every statement, in order: the rule layer's where it decides,
@@ -87,7 +131,8 @@ pub(super) async fn classify(
     let mut sorted: Vec<Option<(Class, ClassifiedBy)>> = statements
         .iter()
         .map(|to_sort| {
-            rule_class(to_sort.statement, to_sort.field).map(|class| (class, ClassifiedBy::Rule))
+            rule_class(to_sort.statement, to_sort.field, to_sort.case)
+                .map(|class| (class, ClassifiedBy::Rule))
         })
         .collect();
     let open: Vec<usize> = sorted

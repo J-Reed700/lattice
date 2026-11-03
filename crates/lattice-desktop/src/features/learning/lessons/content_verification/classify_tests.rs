@@ -31,6 +31,7 @@ fn body(statement: &str) -> ToSort<'_> {
     ToSort {
         statement,
         field: "body",
+        case: Case::Stated,
     }
 }
 
@@ -44,7 +45,11 @@ fn scripted(replies: Vec<Value>) -> ScriptedModel {
 #[test]
 fn the_rules_catch_a_figure_a_quotation_or_a_cue_and_leave_the_rest_to_the_model() {
     for (statement, expected) in PLANTED {
-        assert_eq!(rule_class(statement, "body"), expected, "{statement}");
+        assert_eq!(
+            rule_class(statement, "body", Case::Stated),
+            expected,
+            "{statement}"
+        );
     }
 }
 
@@ -56,7 +61,11 @@ fn a_vendors_name_alone_is_no_cue_and_the_model_sorts_what_a_named_product_does(
         "Confluent Cloud manages the brokers of a cluster.",
         "The Kafka documentation is long.",
     ] {
-        assert_eq!(rule_class(statement, "body"), None, "{statement}");
+        assert_eq!(
+            rule_class(statement, "body", Case::Stated),
+            None,
+            "{statement}"
+        );
     }
 }
 
@@ -68,7 +77,7 @@ fn a_remark_about_the_lessons_own_sources_or_options_is_internal_whatever_else_i
         "The other options each remove the evidence needed to check a table.",
     ] {
         assert_eq!(
-            rule_class(statement, "body"),
+            rule_class(statement, "body", Case::Stated),
             Some(Class::Internal),
             "{statement}"
         );
@@ -80,12 +89,17 @@ fn a_statement_about_the_sources_of_something_is_not_a_remark_about_the_lessons_
     assert_eq!(
         rule_class(
             "The sources of latency in a network are queuing and propagation.",
-            "body"
+            "body",
+            Case::Stated
         ),
         None
     );
     assert_eq!(
-        rule_class("The sources offered no figure for the choice.", "body"),
+        rule_class(
+            "The sources offered no figure for the choice.",
+            "body",
+            Case::Stated
+        ),
         Some(Class::Internal)
     );
 }
@@ -95,21 +109,69 @@ fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
     assert_eq!(
         rule_class(
             "The answer names at least 2 trade-offs.",
-            "rubric/2/description"
+            "rubric/2/description",
+            Case::Stated
         ),
         Some(Class::Internal)
     );
     assert_eq!(
         rule_class(
             "Retries use exponential backoff three times, up to 30 seconds.",
-            "options/1"
+            "options/1",
+            Case::Stated
         ),
         Some(Class::Internal)
     );
     assert_eq!(
-        rule_class("Retries use exponential backoff up to 30 seconds.", "body"),
+        rule_class(
+            "Retries use exponential backoff up to 30 seconds.",
+            "body",
+            Case::Stated
+        ),
         Some(Class::Sourced)
     );
+}
+
+#[test]
+fn an_explanation_a_contrast_a_recap_and_an_answer_state_what_is_so_and_the_rest_a_case() {
+    let lesson = json!({"blocks":[
+        {"kind":"explanation"},{"kind":"worked_example"},{"kind":"contrast"},{"kind":"check"},
+        {"kind":"guided_practice"},{"kind":"independent_practice"},{"kind":"reflection"},
+        {"kind":"recap"},{"title":"No kind"}],
+        "questions":[{"kind":"quiz"}]});
+    let cases: Vec<Case> = (0..10).map(|unit| Case::of(&lesson, unit)).collect();
+    use Case::{Hypothetical, Stated};
+    assert_eq!(
+        cases,
+        [
+            Stated,
+            Hypothetical,
+            Stated,
+            Hypothetical,
+            Hypothetical,
+            Hypothetical,
+            Hypothetical,
+            Stated,
+            Stated,
+            Stated
+        ]
+    );
+    // In a case, a figure is the case's own; a quotation or an attribution
+    // still needs a source.
+    let figure = "Suppose 5 documents score below 0.70.";
+    assert_eq!(rule_class(figure, "body", Hypothetical), None);
+    assert_eq!(rule_class(figure, "body", Stated), Some(Class::Sourced));
+    for attributed in [
+        "According to the survey, most teams retrain monthly.",
+        "The vendor reports that 5 documents in 100 need review.",
+        "The page reads \"Total due on receipt of goods\" at the foot.",
+    ] {
+        assert_eq!(
+            rule_class(attributed, "body", Hypothetical),
+            Some(Class::Sourced),
+            "{attributed}"
+        );
+    }
 }
 
 #[test]
@@ -117,12 +179,17 @@ fn quoted_wording_is_sourced_but_a_lone_apostrophe_is_not() {
     assert_eq!(
         rule_class(
             "The page reads \"Total due on receipt of goods\" at the foot.",
-            "body"
+            "body",
+            Case::Stated
         ),
         Some(Class::Sourced)
     );
     assert_eq!(
-        rule_class("The model's output is parsed by the next stage.", "body"),
+        rule_class(
+            "The model's output is parsed by the next stage.",
+            "body",
+            Case::Stated
+        ),
         None
     );
 }

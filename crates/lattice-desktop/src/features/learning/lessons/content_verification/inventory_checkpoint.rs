@@ -1,6 +1,6 @@
 //! Resuming, completing and checkpointing the claim inventory and its coverage audit.
 use super::claim_ledger::Rewrites;
-use super::classify::rule_class;
+use super::classify::{rule_class, Case};
 use super::*;
 use lattice_core::domain::learning::claim_review::ExtractedClaim;
 
@@ -102,16 +102,19 @@ pub(super) fn adopt_specifics(
         };
         let mut kept = Vec::new();
         let mut located: Vec<String> = Vec::new();
+        let case = Case::of(candidate, unit.index);
         for missing in std::mem::take(&mut unit.missing_assertions) {
             let claim = passages
                 .iter()
                 .find(|passage| passage["id"] == missing.passage_id)
                 .and_then(|passage| {
                     let (field, quote) = (passage["field"].as_str()?, passage["text"].as_str()?);
-                    (rule_class(&missing.statement, field) == Some(Class::Sourced)).then(|| Claim {
-                        quote: quote.to_owned(),
-                        statement: missing.statement.clone(),
-                    })
+                    (rule_class(&missing.statement, field, case) == Some(Class::Sourced)).then(
+                        || Claim {
+                            quote: quote.to_owned(),
+                            statement: missing.statement.clone(),
+                        },
+                    )
                 })
                 .filter(|claim| {
                     let extracted = ExtractedClaim {

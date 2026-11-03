@@ -6,7 +6,7 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text, MAX_BODY, MAX_EXPLANATION, MAX_OPTION, MAX_QUESTION};
-use crate::features::learning::content_verification::needs_citation;
+use crate::features::learning::content_verification::{needs_citation, CITED_KINDS};
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -77,10 +77,6 @@ fn structure(site: FindingSite, note: String) -> ReviewFinding {
 fn citation(site: FindingSite, note: String) -> ReviewFinding {
     ReviewFinding::new(FindingKind::Quotation, Some(site), note)
 }
-
-/// The sections that state what is so, where a specific needs its citation:
-/// a worked example's, a practice's and a check's cases are hypothetical.
-const CITED_KINDS: [&str; 3] = ["explanation", "contrast", "recap"];
 
 /// `sentence` without the Markdown that opens it, a heading's hashes or a
 /// list item's marker, which is no part of what it states.

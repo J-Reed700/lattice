@@ -7,7 +7,7 @@
 //! Sourced. Every judgment is saved as a receipt, so a resumed pass asks
 //! nothing twice.
 use super::claim_ledger::{stand_together, Place, Rewrites};
-use super::classify::{classify, rule_class, ToSort};
+use super::classify::{classify, rule_class, Case, ToSort};
 use super::*;
 use crate::features::learning::lessons::call_plan::{Counted, Fate, SAMPLES};
 use lattice_core::application::services::claim_verification::{
@@ -65,10 +65,16 @@ pub(super) async fn sort(
         .iter()
         .map(|claim| claim.location.field.clone())
         .collect();
+    let cases: Vec<Case> = claims
+        .iter()
+        .map(|(unit, _)| Case::of(candidate, *unit))
+        .collect();
     let parents = rewrites.classes(candidate, &extracted);
     let mut sorted: Vec<Option<Classed>> = Vec::with_capacity(claims.len());
-    for (((unit, claim), field), parent) in claims.iter().zip(&fields).zip(parents) {
-        let rule = rule_class(&claim.statement, field);
+    for ((((unit, claim), field), case), parent) in
+        claims.iter().zip(&fields).zip(&cases).zip(parents)
+    {
+        let rule = rule_class(&claim.statement, field, *case);
         sorted.push(match (parent, rule) {
             (Some(parent), rule) => {
                 let inherited = carried(parent, rule);
@@ -95,19 +101,25 @@ pub(super) async fn sort(
         });
     }
     {
-        let mut open: Vec<(&mut Option<Classed>, &str, &str)> = Vec::new();
-        for ((slot, (_, claim)), field) in sorted.iter_mut().zip(claims).zip(&fields) {
+        let mut open: Vec<(&mut Option<Classed>, &str, &str, Case)> = Vec::new();
+        for (((slot, (_, claim)), field), case) in
+            sorted.iter_mut().zip(claims).zip(&fields).zip(&cases)
+        {
             if slot.is_none() {
-                open.push((slot, claim.statement.as_str(), field.as_str()));
+                open.push((slot, claim.statement.as_str(), field.as_str(), *case));
             }
         }
         if !open.is_empty() {
             let to_sort: Vec<ToSort<'_>> = open
                 .iter()
-                .map(|(_, statement, field)| ToSort { statement, field })
+                .map(|(_, statement, field, case)| ToSort {
+                    statement,
+                    field,
+                    case: *case,
+                })
                 .collect();
             let answered = classify(llm, &to_sort).await?;
-            for ((slot, statement, _), (class, by)) in open.into_iter().zip(answered) {
+            for ((slot, statement, _, _), (class, by)) in open.into_iter().zip(answered) {
                 save_class(llm, statement, class).await?;
                 *slot = Some(Classed { class, by });
             }
