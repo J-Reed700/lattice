@@ -904,6 +904,30 @@ fn a_claims_class_is_the_strongest_authoritys_whatever_the_order() {
 }
 
 #[test]
+fn the_same_authority_deciding_again_only_makes_a_class_stricter() {
+    // A later pass that sorts a statement again is no reason to check it more
+    // lightly (claim classes design §3.1).
+    let mut entry = claim("c1");
+    entry
+        .append(machine(2), classified(Class::Sourced, ClassifiedBy::Model))
+        .unwrap();
+    entry
+        .append(
+            machine(3),
+            classified(Class::Reasoning, ClassifiedBy::Model),
+        )
+        .unwrap();
+
+    assert_eq!(
+        entry.classified(),
+        Some((Class::Sourced, ClassifiedBy::Model))
+    );
+    let replayed =
+        ClaimLedgerEntry::from_events(entry.claim_id().clone(), entry.events().to_vec()).unwrap();
+    assert_eq!(replayed.class(), Some(Class::Sourced));
+}
+
+#[test]
 fn a_claim_that_was_verified_and_fails_again_resumes_from_what_it_had_left() {
     // One attempt spent on a rewrite, then verified: failing again it has the
     // one it had left, not a full budget (claim classes design §3.2).

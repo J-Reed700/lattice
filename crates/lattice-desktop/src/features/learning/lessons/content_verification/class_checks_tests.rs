@@ -7,7 +7,7 @@ use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
-use lattice_core::domain::learning::claim_review::{ClaimState, VerdictKind};
+use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimState, VerdictKind};
 
 const COMMON: &str = "A page number identifies the page of a document that a value appears on.";
 const REASONED: &str =
@@ -714,6 +714,74 @@ async fn a_rewrite_that_brings_in_a_figure_is_sourced_by_the_rule_layer_with_no_
         }]
     );
     assert_eq!(model.calls("sort"), 0);
+    Ok(())
+}
+
+/// The ledger after a pass found `statement` supported, checked as `classed`.
+async fn ledger_holding(
+    model: &Classes,
+    statement: &str,
+    classed: Classed,
+) -> Result<claim_ledger::ClaimLedger> {
+    let mut ledger = claim_ledger::ClaimLedger::open(model, "{}").await?;
+    let mut finding = passage_finding(statement, statement, true, SOURCE);
+    finding.class = Some(classed);
+    ledger
+        .observe(&lesson(statement), &pass_report(vec![finding]))
+        .await?;
+    Ok(ledger)
+}
+
+#[tokio::test]
+async fn a_statement_the_ledger_holds_keeps_its_class_and_is_not_sorted_again() -> Result<()> {
+    // Sorted again, the model would lighten it to Reasoning.
+    let model = Classes::new(&[]).classed(&[(REASONED, "reasoning")]);
+    let held = Classed {
+        class: Class::Sourced,
+        by: ClassifiedBy::Model,
+    };
+    let ledger = ledger_holding(&model, REASONED, held).await?;
+
+    let classes = sorted_after(&model, &ledger.rewrites(), REASONED).await?;
+
+    assert_eq!(classes, [held]);
+    assert_eq!(model.calls("sort"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_class_a_later_pass_gives_a_held_statement_is_recorded_only_when_it_prevails(
+) -> Result<()> {
+    let model = Classes::new(&[]);
+    let cited = Classed {
+        class: Class::Sourced,
+        by: ClassifiedBy::Writer,
+    };
+    let mut ledger = ledger_holding(&model, GOOD, cited).await?;
+    let id = ledger.finding_claims()[0].clone();
+
+    for lighter in [Class::Common, Class::Reasoning] {
+        let mut finding = passage_finding(GOOD, GOOD, true, SOURCE);
+        finding.class = Some(Classed {
+            class: lighter,
+            by: ClassifiedBy::Model,
+        });
+        ledger
+            .observe(&lesson(GOOD), &pass_report(vec![finding]))
+            .await?;
+    }
+
+    let entry = ledger.entry(&id).unwrap();
+    let classified = entry
+        .events()
+        .iter()
+        .filter(|record| matches!(record.event, ClaimEvent::Classified { .. }))
+        .count();
+    assert_eq!(classified, 1);
+    assert_eq!(
+        entry.classified(),
+        Some((Class::Sourced, ClassifiedBy::Writer))
+    );
     Ok(())
 }
 
