@@ -181,7 +181,7 @@ A remedy is one existing mechanism behind one step:
 - `Research`: `research::expand`, with the per-statement page count.
 - `Recite`: `repair::cite_where_supported`, writing the sentence's own `citations` entry; it never overwrites the section's quote, which other statements are read against (§1 #10).
 - `Uncite`: removes the sentence's own `citations` entry (new, beside it); a sentence that carries none has nothing to remove.
-- `Rewrite`: `repair::candidate` for a section's targets, each told its goal and the reading that failed it; the history it may not reintroduce is the statements that failed a reading and were rewritten or cut, nothing unjudged (§1 #14). Confinement is per target: a hunk that touches a protected sentence is put back and only the targets in that hunk are `NotApplied`; the section's other targets keep their rewrites and nothing else is charged (§1 #7).
+- `Rewrite`: `repair::candidate` for a section's targets, each told its goal and the reading that failed it; the history it may not reintroduce is the statements that failed a reading and were rewritten or cut, nothing unjudged (§1 #14). Confinement is per target: a hunk that touches a protected sentence is put back and only the targets in that hunk are `NotApplied`; the section's other targets keep their rewrites and nothing else is charged (§1 #7). No repair writes a new statement: what a rewrite wrote is extracted again, and a statement there that continues neither a target nor a statement that shared its sentence takes that target's rewrite back (`NotApplied`), the rule the flow repair already keeps (classes design §3.10). So a rewrite has one successor per statement it touched, born of nothing, and the ceiling counts every check a rewrite can cause; today's children of a split sentence (`BornOfRepair`) cost checks no ceiling counted.
 - `Cut`: `repair/cut.rs`, on the sentence that states the claim. A quote that spans a passage is first narrowed to that sentence (`shared::text::claim_sentence`), so its other sentences stay (§1 #8); every copy of the sentence in the field still goes, each asserting what failed (`every_place_a_sentence_is_written_goes_with_it` stays true). A statement that draws on several sentences, which `claim_sentence` declines to name, and a sentence that carries other live statements are narrowed by the rewrite of §2.3 instead, and cut whole only when that rewrite cannot be applied.
 
 ### 2.7 The round (Template Method)
@@ -230,6 +230,7 @@ The report's per-claim verdict is read from the same place: a finding is publish
 | A refused hunk refuses only its own targets, and is asked once more, told why | §2.6 | none |
 | A cut takes the statement, not its neighbours: the sentence that states it (a passage-wide quote narrowed to it, every copy of it going), narrowed by a rewrite when the sentence carries others | §2.3, §2.6 | the job-1 removals with no failing verdict of their own: each is kept, or goes for a reason of its own |
 | A rewritten sentence is extracted from its text alone | §2.7 | none |
+| A rewrite that writes a statement neither its target nor a sentence-mate had is taken back, as a flow repair is | §2.6 | none; it can send a target that today would split into two checked statements to its retry and then its cut |
 | One re-ask per statement in its life, where the code gives one per reading in a run | §2.3 | none; it can stop a lesson that today goes on, when one statement's answers twice cannot be read, each after the judge's own second asking. What it buys is a ceiling that holds (today's `U` undercounts) |
 | A statement the model calls Internal meets the falsity veto (as the classes design's §3.1 already says) | §1 #15 | the replay's 16 Internal rows: no scenario, rubric line or remark fails; cost 3 calls each, in the ceiling |
 
@@ -336,4 +337,5 @@ Each step is a builder's (`model: sonnet`), on branch `lesson/acceptance-policy`
 ## 6. Not in this design
 
 - One wording of "specific" and "common" for every prompt (§3).
+- An example's run as a reading. Example claims keep their own path (`exampleClaims`, the run as pass A evidence, a failed run blocking publication) until a `Read(Run)` joins the graphs.
 - A user restoring a statement the machine removed (classes design §6).
