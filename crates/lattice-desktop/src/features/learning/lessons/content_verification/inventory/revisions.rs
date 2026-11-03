@@ -5,6 +5,11 @@ use super::*;
 
 mod locations;
 
+/// Why a section whose every claim was taken out has none, when its revision
+/// adds none.
+const ALL_TAKEN_OUT: &str =
+    "Every statement this section made was taken out of it, and its revision added none.";
+
 #[derive(Serialize, Deserialize)]
 struct Basis {
     content: Value,
@@ -121,10 +126,21 @@ fn apply(
             claims.push(replacement);
         }
     }
+    let claims: Vec<Claim> = claims.into_iter().flatten().collect();
+    // A section that came with no claims and gained none keeps its reason
+    // when the model gives none; one whose claims the model removed does not.
+    let non_factual_reason = if claims.is_empty()
+        && before.claims.is_empty()
+        && revision.non_factual_reason.trim().is_empty()
+    {
+        before.non_factual_reason.clone()
+    } else {
+        revision.non_factual_reason
+    };
     let updated = UnitClaims {
         index: before.index,
-        claims: claims.into_iter().flatten().collect(),
-        non_factual_reason: revision.non_factual_reason,
+        claims,
+        non_factual_reason,
     };
     let section = content
         .get(before.index)
@@ -188,7 +204,13 @@ pub(in crate::features::learning::lessons::content_verification) async fn update
     if input["passages"].as_array().is_none_or(Vec::is_empty) {
         return Ok(None);
     }
-    let relocated = locations::relocate(&before, section);
+    let mut relocated = locations::relocate(&before, section);
+    if relocated.claims.is_empty()
+        && !before.inventory.claims.is_empty()
+        && relocated.non_factual_reason.trim().is_empty()
+    {
+        relocated.non_factual_reason = ALL_TAKEN_OUT.into();
+    }
     crate::features::learning::lesson_progress::stage(format!(
         "Updating claims only where lesson section {} changed",
         index + 1

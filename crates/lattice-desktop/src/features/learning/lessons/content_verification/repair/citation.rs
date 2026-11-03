@@ -129,6 +129,18 @@ pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    let standing: Vec<Value> = appended
+        .into_iter()
+        .filter(|entry| {
+            entry
+                .get("sentence")
+                .and_then(Value::as_str)
+                .is_some_and(|sentence| held.contains(sentence))
+        })
+        .collect();
+    if standing.is_empty() {
+        return;
+    }
     let Some(listed) = confined
         .as_object_mut()
         .map(|section| section.entry("citations").or_insert_with(|| json!([])))
@@ -136,12 +148,8 @@ pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field
     else {
         return;
     };
-    for entry in appended {
-        let stands = entry
-            .get("sentence")
-            .and_then(Value::as_str)
-            .is_some_and(|sentence| held.contains(sentence));
-        if stands && !listed.contains(&entry) {
+    for entry in standing {
+        if !listed.contains(&entry) {
             listed.push(entry);
         }
     }
