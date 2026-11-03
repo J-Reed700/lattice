@@ -80,17 +80,19 @@ fn a_common_statement_sent_to_its_source_check_does_not_raise_the_ceiling() {
 #[test]
 fn a_sourced_statement_that_fails_its_rewrite_keeps_every_call_on_its_way_to_the_cut() {
     // The first check, the re-check against what research found, the
-    // rewrite, its re-check and the flow repair after the cut.
+    // re-check of the citation repaired to what it found, the rewrite when
+    // that citation does not support it after all, its re-check and the flow
+    // repair after the cut.
     let mut plan = CallPlan::new(0, &statements(1, 0, 0), 1);
     plan.lighter_checked(&[(Class::Sourced, Fate::ToSource)]);
     plan.strict_checked(&[(Class::Sourced, Fate::Failed)]);
-    assert_eq!(plan.ceiling(), 1 + 3 + 1);
+    assert_eq!(plan.ceiling(), 1 + 4 + 1);
 
     // The later passes check the lesson's statements again: the ceiling
     // stays, whatever they find.
     plan.lighter_checked(&[(Class::Sourced, Fate::ToSource)]);
     plan.strict_checked(&[(Class::Sourced, Fate::Passed)]);
-    assert_eq!(plan.ceiling(), 5);
+    assert_eq!(plan.ceiling(), 6);
 }
 
 #[test]
