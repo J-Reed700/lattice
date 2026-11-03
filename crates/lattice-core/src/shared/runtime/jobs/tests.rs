@@ -626,8 +626,22 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
         .acquire_timeout(Duration::from_millis(100))
         .idle_timeout(None)
         .max_lifetime(None)
-        .connect(":memory:")
+        .connect_lazy(":memory:")
+        .unwrap();
+    // The short timeout is for the write that ends the job, but it bounds
+    // opening the pool's one connection too, which a loaded machine can take
+    // longer than that to do.
+    let opened = async {
+        loop {
+            match pool.acquire().await {
+                Err(sqlx::Error::PoolTimedOut) => continue,
+                other => break other.map(drop),
+            }
+        }
+    };
+    tokio::time::timeout(Duration::from_secs(30), opened)
         .await
+        .expect("the connection opens")
         .unwrap();
     sqlx::migrate!("../lattice-desktop/migrations")
         .run(&pool)
