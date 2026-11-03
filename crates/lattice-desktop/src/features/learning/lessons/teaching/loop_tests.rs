@@ -2,8 +2,13 @@
 //! settle waiting for the user.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
+use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use crate::features::learning::reference_collection::ReferenceCollection;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -40,7 +45,7 @@ fn references() -> Vec<crate::features::learning::dto::LearningSourceDto> {
     }]
 }
 
-async fn run(model: &ScriptedModel, candidate: Value) -> Result<Reviewed> {
+async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
     review_material(
@@ -191,6 +196,16 @@ async fn a_repair_whose_answer_cannot_be_used_leaves_the_lesson_unchanged_and_wa
     Ok(())
 }
 
+/// Whether `request` asks the model to repair the lesson.
+fn asks_for_repair(request: &CompletionRequest) -> bool {
+    request.input.iter().any(|item| {
+        matches!(
+            item,
+            CompletionInput::Message { content, .. } if content.contains("issuesToFix")
+        )
+    })
+}
+
 /// The scripted review, with every teaching repair request longer than the
 /// model's window.
 struct RepairTooLong(ScriptedModel);
@@ -201,14 +216,7 @@ impl lattice_core::application::ports::llm_port::LLMPort for RepairTooLong {
         &self,
         request: &lattice_core::application::ports::llm_port::CompletionRequest,
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
-        let repair = request.input.iter().any(|item| {
-            matches!(
-                item,
-                lattice_core::application::ports::llm_port::CompletionInput::Message { content, .. }
-                    if content.contains("issuesToFix")
-            )
-        });
-        if repair {
+        if asks_for_repair(request) {
             return Err(AppError::PromptExceedsWindow {
                 prompt_tokens: 251_588,
                 window: 131_072,
@@ -548,5 +556,152 @@ async fn a_long_review_issue_is_repaired_where_a_review_fails_closed() -> Result
     let repaired: Value = serde_json::from_str(&repaired)?;
     assert_eq!(repaired["blocks"][0]["title"], "Corrected example");
     assert!(model.prompts.lock().unwrap()[1].contains(&long));
+    Ok(())
+}
+
+const INPUT: &str = "teaching-review-resume";
+
+/// The scripted review, its connection lost on the first call after its first
+/// repair is answered: the recheck. The error leaves the review as a requeue
+/// does.
+struct DropsAfterRepair {
+    model: ScriptedModel,
+    repaired: AtomicBool,
+    dropped: AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::llm_port::LLMPort for DropsAfterRepair {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if self.repaired.load(Ordering::SeqCst) && !self.dropped.swap(true, Ordering::SeqCst) {
+            return Err(AppError::Network("the connection dropped".into()));
+        }
+        let response = self.model.complete(request).await;
+        if asks_for_repair(request) {
+            self.repaired.store(true, Ordering::SeqCst);
+        }
+        response
+    }
+    fn model_name(&self) -> &str {
+        self.model.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.model.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.model.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn retitle_again(after: &str) -> String {
+    json!({"edits":[{"path":"/blocks/0/title","before":"Corrected example","after":after}]})
+        .to_string()
+}
+
+/// The defect of `a_defect_one_repair_did_not_fix_publishes_and_waits_for_the_user`,
+/// with the calls a second repair and its recheck would make after the first
+/// recheck.
+fn defect_no_repair_fixes() -> Vec<String> {
+    vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        retitle("Corrected example"),
+        review(Some(
+            "Section 1 still prints the result as the string \"4\" instead of the number.",
+        )),
+        actionable(),
+        retitle_again("Corrected twice"),
+        review(Some(
+            "Section 1 still prints the result as the string \"4\" after two repairs.",
+        )),
+        actionable(),
+    ]
+}
+
+/// What a claim repair does to a draft: it rewrites a sentence.
+fn claim_repair(draft: &mut Value) {
+    let body = draft["blocks"][0]["body"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    draft["blocks"][0]["body"] = json!(body.replacen("returns the number 4", "returns 4", 1));
+}
+
+fn repairs_asked(llm: &DropsAfterRepair) -> usize {
+    let prompts = llm.model.prompts.lock().unwrap();
+    prompts
+        .iter()
+        .filter(|prompt| prompt.contains("issuesToFix"))
+        .count()
+}
+
+/// A lesson's review run twice in one job, the first run cut short after its
+/// first repair as a requeue cuts one. The second starts on the draft that
+/// repair saved, after `between` has happened to it. Returns the repairs asked
+/// of the model across both runs and the second run's review.
+async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) =
+        crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(&pool)
+            .await?;
+    let llm = DropsAfterRepair {
+        model: model(defect_no_repair_fixes()),
+        repaired: AtomicBool::new(false),
+        dropped: AtomicBool::new(false),
+    };
+    let first = lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        run(&llm, lesson(EXCERPT)).await
+    })
+    .await;
+    assert!(matches!(first, Err(AppError::Network(_))));
+    assert_eq!(repairs_asked(&llm), 1, "cut short after the first repair");
+    let second = lesson_drafts::run(&repo, &job, &lesson_id, async {
+        let saved = lesson_drafts::resume(INPUT.into())
+            .await?
+            .expect("the repair saved its draft");
+        let mut draft: Value = serde_json::from_str(&saved)?;
+        assert_eq!(draft["blocks"][0]["title"], "Corrected example");
+        let repaired = draft.clone();
+        between(&mut draft);
+        if draft != repaired {
+            lesson_drafts::save(&draft.to_string()).await?;
+        }
+        run(&llm, draft).await
+    })
+    .await?;
+    Ok((repairs_asked(&llm), second))
+}
+
+/// Run through, the review above repairs the defect once, rechecks, sees
+/// nothing fixed and stops. Cut short after that repair and run again, it
+/// stops the same way instead of repairing from zero.
+#[tokio::test]
+async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_had_made(
+) -> Result<()> {
+    let (repairs, reviewed) = cut_short_then_resumed(|_| {}).await?;
+    assert_eq!(repairs, 1);
+    assert_eq!(reviewed.set_aside.len(), 1);
+    let waiting = &reviewed.set_aside[0];
+    assert_eq!(waiting.finding.key().id(), "teaching:section-0");
+    assert_eq!(waiting.repairs, 1);
+    Ok(())
+}
+
+/// The repairs a review had made describe the draft it made them to: once a
+/// claim repair has changed that draft, the review starts again.
+#[tokio::test]
+async fn a_review_cut_short_resumes_afresh_on_a_draft_changed_since_its_repair() -> Result<()> {
+    let (repairs, reviewed) = cut_short_then_resumed(claim_repair).await?;
+    assert_eq!(repairs, 2);
+    assert_eq!(reviewed.set_aside.len(), 1);
+    let waiting = &reviewed.set_aside[0];
+    assert_eq!(waiting.finding.key().id(), "teaching:section-0");
+    assert_eq!(waiting.repairs, 1);
     Ok(())
 }

@@ -312,7 +312,7 @@ fn sections(sections: usize, claims: usize) -> Inventory {
             .collect(),
     }
 }
-pub(in crate::features::learning::lessons::content_verification) async fn setup(
+pub(in crate::features::learning::lessons) async fn setup(
     pool: &sqlx::SqlitePool,
 ) -> Result<(LearningCurriculumRepository, String, String)> {
     let programs = LearningRepository::new(pool.clone());

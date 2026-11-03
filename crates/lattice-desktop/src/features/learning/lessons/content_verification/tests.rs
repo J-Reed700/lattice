@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 #[path = "batch_scheduler_tests.rs"]
-pub(super) mod batch_scheduler_tests;
+pub(in crate::features::learning::lessons) mod batch_scheduler_tests;
 
 #[path = "incremental_tests.rs"]
 mod incremental_tests;
