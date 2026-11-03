@@ -77,7 +77,7 @@ def cut_reading(ctx, cut):
 def run(args):
     path = os.path.join(args.out, "records.jsonl")
     done = {r["key"] for r in base.read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     ctxs = grouped.contexts(args)
     print(f"{len(ctxs)} readings", flush=True)
     for ctx in ctxs:

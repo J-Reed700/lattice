@@ -33,7 +33,7 @@ class ExtractTests(unittest.TestCase):
             for key, value in options.items():
                 args += [f'--{key}', str(value)]
             pairs.main(args)
-            return [json.loads(line) for line in out.read_text().splitlines()]
+            return [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
 
     def test_the_cited_passage_and_the_closest_uncited_one_become_pairs(self):
         cited = 'Indexes speed up reads. A B-tree index supports equality and range queries.'
@@ -66,18 +66,18 @@ class AssembleTests(unittest.TestCase):
             root = Path(directory)
             base = {'passage': 'p', 'document_id': 'd', 'subject': 'sql', 'origin': 'approved'}
             (root / 'pairs.jsonl').write_text('\n'.join(json.dumps({'id': i, 'claim': i, **base})
-                                                        for i in ('a', 'b', 'c')))
+                                                        for i in ('a', 'b', 'c')), encoding="utf-8")
             label = lambda i, value: json.dumps({'id': i, 'label': value, 'difficulty': ['paraphrase'], 'note': 'n'})
             (root / 'first.jsonl').write_text('\n'.join([label('a', 'supported'), label('b', 'supported'),
-                                                         label('c', 'unsupported')]))
+                                                         label('c', 'unsupported')]), encoding="utf-8")
             (root / 'second.jsonl').write_text('\n'.join([label('a', 'supported'), label('b', 'unsupported'),
-                                                          label('c', 'unsupported')]))
+                                                          label('c', 'unsupported')]), encoding="utf-8")
             pairs.main(['assemble', '--pairs', str(root / 'pairs.jsonl'), '--labels', str(root / 'first.jsonl'),
                         str(root / 'second.jsonl'), '--out', str(root / 'gold.jsonl'),
                         '--disagreements', str(root / 'open.jsonl')])
-            gold = [json.loads(line) for line in (root / 'gold.jsonl').read_text().splitlines()]
+            gold = [json.loads(line) for line in (root / 'gold.jsonl').read_text(encoding="utf-8").splitlines()]
             self.assertEqual([(row['id'], row['label']) for row in gold], [('a', 'supported'), ('c', 'unsupported')])
-            self.assertEqual(json.loads((root / 'open.jsonl').read_text())['id'], 'b')
+            self.assertEqual(json.loads((root / 'open.jsonl').read_text(encoding="utf-8"))['id'], 'b')
 
     def test_kappa_is_one_for_identical_labels_and_zero_at_chance(self):
         self.assertEqual(pairs.kappa(['x', 'y'], ['x', 'y']), 1.0)

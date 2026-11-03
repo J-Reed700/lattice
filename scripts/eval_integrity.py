@@ -73,7 +73,7 @@ def manifest(dataset, expectations, retrieval, settings):
         'expectations_sha256': digest(expectations),
         'retrieval_sha256': digest(retrieval),
         'settings': settings,
-        'harness_sha256': digest({p.name: p.read_text() for p in
+        'harness_sha256': digest({p.name: p.read_text(encoding="utf-8") for p in
                                  [scripts / 'chat_rag_eval.py', scripts / 'rag_eval.py', Path(__file__)]}),
     }
     return {**identity, 'run_id': digest(identity), 'commit': commit,
@@ -88,16 +88,16 @@ def prepare_output(output, current, resume):
     if output.exists() or sidecar.exists():
         if not resume:
             raise ValueError('Output already exists; use a new path or --resume')
-        if not sidecar.exists() or json.loads(sidecar.read_text()).get('run_id') != current['run_id']:
+        if not sidecar.exists() or json.loads(sidecar.read_text(encoding="utf-8")).get('run_id') != current['run_id']:
             raise ValueError('Resume manifest is missing or incompatible')
         if output.exists():
-            existing = [json.loads(line) for line in output.read_text().splitlines() if line.strip()]
+            existing = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines() if line.strip()]
         unique_records(existing, 'query_id')
         if any(row.get('run_id') != current['run_id'] for row in existing):
             raise ValueError('Resume rows do not match the run manifest')
     else:
         output.parent.mkdir(parents=True, exist_ok=True)
-        sidecar.write_text(json.dumps(current, indent=2, allow_nan=False) + '\n')
+        sidecar.write_text(json.dumps(current, indent=2, allow_nan=False) + '\n', encoding="utf-8")
     return existing
 
 

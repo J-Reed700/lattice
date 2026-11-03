@@ -114,7 +114,7 @@ def score_reviews(dataset, expectations, rows, reviews):
         scored.append(fresh)
     report = aggregate(scored, len(dataset['queries']))
     report['dataset_sha256'] = digest(dataset)
-    report['review_grader_sha256'] = digest(Path(__file__).read_text())
+    report['review_grader_sha256'] = digest(Path(__file__).read_text(encoding="utf-8"))
     report['reviews_sha256'] = digest(reviews)
     report['by_dimension'] = {
         tag: aggregate([r for r in scored if tag in r['dimensions']],
@@ -157,26 +157,26 @@ def main():
     parser.add_argument('--reviews', type=Path)
     parser.add_argument('--policy', type=Path)
     args = parser.parse_args()
-    dataset, rows = json.loads(args.dataset.read_text()), load_jsonl(args.run)
+    dataset, rows = json.loads(args.dataset.read_text(encoding="utf-8")), load_jsonl(args.run)
     sidecar = args.run.with_suffix(args.run.suffix + '.manifest.json')
-    provenance = json.loads(sidecar.read_text())
+    provenance = json.loads(sidecar.read_text(encoding="utf-8"))
     identity = {key: provenance[key] for key in ('schema_version', 'dataset_sha256',
                 'expectations_sha256', 'retrieval_sha256', 'settings', 'harness_sha256')}
     if provenance['run_id'] != digest(identity) or provenance['dataset_sha256'] != digest(dataset):
         raise ValueError('Manifest identity or dataset mismatch')
     if any(row.get('run_id') != provenance['run_id'] for row in rows):
         raise ValueError('Mixed or incompatible runs')
-    if args.expectations and provenance['expectations_sha256'] != digest(json.loads(args.expectations.read_text())):
+    if args.expectations and provenance['expectations_sha256'] != digest(json.loads(args.expectations.read_text(encoding="utf-8"))):
         raise ValueError('Expectation labels differ from the run manifest')
     if args.export:
-        with args.export.open('x') as out:
+        with args.export.open('x', encoding="utf-8") as out:
             for packet in packets(dataset, rows):
                 out.write(json.dumps(packet, ensure_ascii=False) + '\n')
         return
     if not args.expectations or not args.reviews:
         parser.error('Scoring requires --expectations and --reviews')
-    report = score_reviews(dataset, json.loads(args.expectations.read_text()), rows, load_jsonl(args.reviews))
-    failures = gate(report, json.loads(args.policy.read_text())) if args.policy else []
+    report = score_reviews(dataset, json.loads(args.expectations.read_text(encoding="utf-8")), rows, load_jsonl(args.reviews))
+    failures = gate(report, json.loads(args.policy.read_text(encoding="utf-8"))) if args.policy else []
     report['gate_failures'] = failures
     print(json.dumps(report, indent=2, allow_nan=False))
     raise SystemExit(1 if failures else 0)

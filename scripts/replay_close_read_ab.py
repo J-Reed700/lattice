@@ -559,7 +559,7 @@ def write_round2(ctx, lines, notes_text, noted, arm, seed, dry_answer=None):
 # ---------- loading ----------
 def load_rows(path):
     """Calls rows in order; a growing file's torn last line is dropped."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             try:
                 yield json.loads(line)
@@ -682,7 +682,7 @@ def warm(ctx, notes_text, instruction):
 def run_stage1(args, ctxs):
     path = os.path.join(args.out, "stage1.jsonl")
     done = {(r["key"], r["arm"]) for r in read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     for ctx in ctxs:
         recs = []
         live = [a for a in args.arms if (ctx["key"], a) not in done
@@ -714,7 +714,7 @@ def run_stage2(args, ctxs, notes_arm):
     s1 = {r["key"]: r for r in read_out(os.path.join(args.out, "stage1.jsonl")) if r["arm"] == notes_arm}
     path = os.path.join(args.out, "stage2.jsonl")
     done = {(r["key"], r["notes_arm"], r["arm"], r["seed"]) for r in read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     for ctx in ctxs:
         n = s1.get(ctx["key"])
         if not n:
@@ -968,12 +968,12 @@ def main():
             summary(args)
         return
     for p in args.rubric:
-        items.update({i["id"]: i for i in json.load(open(p))["items"]})
+        items.update({i["id"]: i for i in json.load(open(p, encoding="utf-8"))["items"]})
     ctxs, tally = load(args)
     if args.dry:
         if not args.recipe:
             sys.exit("--dry needs --recipe for the stub n_ctx")
-        N_CTX = json.load(open(args.recipe))["server"]["expected_ctx"]
+        N_CTX = json.load(open(args.recipe, encoding="utf-8"))["server"]["expected_ctx"]
         dry(args, ctxs, tally)
     elif args.stage == 1:
         run_stage1(args, ctxs)

@@ -73,15 +73,15 @@ def sha256_file(path):
 
 
 def read_json(path, default=None):
-    return json.loads(Path(path).read_text()) if Path(path).exists() else default
+    return json.loads(Path(path).read_text(encoding="utf-8")) if Path(path).exists() else default
 
 
 def write_json(path, value):
-    Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
+    Path(path).write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def write_jsonl(path, rows):
-    with Path(path).open("x") as out:
+    with Path(path).open("x", encoding="utf-8") as out:
         for row in rows:
             out.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -678,7 +678,7 @@ def report(results, labels=None):
         "deterministic": {k: exact[k] for k in ("recorded", "mismatches")} | {"rows": len(exact["rows"])},
     }
     write_json(results / "summary.json", summary)
-    (results / "summary.md").write_text(markdown(summary))
+    (results / "summary.md").write_text(markdown(summary), encoding="utf-8")
     return summary
 
 
@@ -797,7 +797,7 @@ def main(argv=None):
               f"a blind verdict first")
     elif args.command == "report":
         report(args.results, args.labels)
-        print((args.results / "summary.md").read_text())
+        print((args.results / "summary.md").read_text(encoding="utf-8"))
     else:
         print(json.dumps(freeze(args.name, args.baseline, args.registry)))
 

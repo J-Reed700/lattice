@@ -14,7 +14,7 @@ def main():
     root = Path(__file__).resolve().parents[1] / 'evals/retrieval'
     datasets = {}
     for path in sorted(root.glob('*.json')):
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         if 'documents' in data:
             validate_dataset(data)
             datasets[path.stem] = data
@@ -23,13 +23,13 @@ def main():
         stem = path.stem.removesuffix('-answers')
         if stem not in datasets:
             raise ValueError(f'No dataset for {path.name}')
-        validate_expectations(datasets[stem], json.loads(path.read_text()))
+        validate_expectations(datasets[stem], json.loads(path.read_text(encoding="utf-8")))
         print(f'{path.name}: answer labels validated')
     # Desktop-path question sets name their corpus; every rubric fact must
     # occur in the documents it expects to be cited.
     for path in sorted(root.glob('desktop-path-*.json')):
-        questions = json.loads(path.read_text())
-        corpus = json.loads((root.parents[1] / questions['corpus']).read_text())
+        questions = json.loads(path.read_text(encoding="utf-8"))
+        corpus = json.loads((root.parents[1] / questions['corpus']).read_text(encoding="utf-8"))
         problems = validate_questions(questions, corpus)
         if problems:
             raise ValueError(f'{path.name}: ' + '; '.join(problems))

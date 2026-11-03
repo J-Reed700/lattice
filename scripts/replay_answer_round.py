@@ -17,7 +17,7 @@ from replay_model import served_model  # noqa: E402
 
 CALLS, SUBSET, OUT = sys.argv[1:4]
 ONLY = set(sys.argv[4:])
-items = {i['id']: i for i in json.load(open(SUBSET))['items']}
+items = {i['id']: i for i in json.load(open(SUBSET, encoding="utf-8"))['items']}
 
 READ = ("Before answering, go through every numbered passage above in order and write one line for each: "
         "its label, then the sentences of that passage that bear on my question, copied exactly as written and in "
@@ -88,12 +88,12 @@ def base_request(q):
     return req
 
 requests = {}
-for line in open(CALLS):
+for line in open(CALLS, encoding="utf-8"):
     r = json.loads(line); c = r['call']; q = c.get('request') or {}; m = q.get('messages') or []
     if q.get('tools') and m and str(m[0].get('content', '')).startswith('You are Lattice'):
         requests.setdefault(r['query_id'], (c['path'], q))
 
-out = open(OUT, 'a')
+out = open(OUT, 'a', encoding="utf-8")
 MODEL = served_model('http://127.0.0.1:8089')
 for qid, (path, shipped) in requests.items():
     if ONLY and qid not in ONLY:

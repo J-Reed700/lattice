@@ -207,7 +207,7 @@ def record(ctx, name, replies, results):
 def run(args):
     path = os.path.join(args.out, "records.jsonl")
     done = {(r["key"], r["arm"]) for r in base.read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     ctxs = grouped.contexts(args)
     if args.pack > 1:
         ctxs = packed(ctxs, args.pack)

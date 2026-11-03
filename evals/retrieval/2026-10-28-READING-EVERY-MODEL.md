@@ -1,5 +1,7 @@
 # Grouped reading on every model: the wording, not the group size (2026-10-28)
 
+> Corrected 2026-11-02: the Haiku, Sonnet and 9B rows were scored against garbled text. See the correction at the end.
+
 Qwen3.5-9B Q4_K_M (sha256 `03b74727…`) on this PC's llama-server (RTX 4070 Laptop GPU, 32,768-token window,
 the app's flags); Qwen3.8-27B on the llama-server the app is set to; Claude Haiku 5.5 and Sonnet 5.5 through
 the Messages API. Code: `chat/tool_loop/reading/groups.rs`, `chat/prompting.rs`, `llm/cloud.rs`.
@@ -72,3 +74,33 @@ build moves the result by itself; every comparison above is on one machine. Opus
 turn thinking off, were not run. Facts are planted details scored by spelling, as before.
 
 Records: `results/chat/<model>/2026-10-28-reading-*.jsonl.gz`.
+
+## Correction (2026-11-02): the Haiku, Sonnet and 9B runs read the logs as cp1252
+
+The replay opened the recorded logs with Python's default encoding. On this PC that is cp1252, so in the Haiku, Sonnet and 9B runs every non-ASCII character reached the model, and the scorer, garbled: "£4,680.83" as "Â£4,680.83", "—" as "â€”". A line that copied the garbled text was credited. A line that wrote the real character, as Claude often did, was scored a miss. The 27B runs read the logs as UTF-8, and none of their lines holds a garbled character, so their rows stand.
+
+Re-scored, a missed fact counts as noted when its line is an exact copy of the real passage (reported → re-scored):
+
+| Model | Wording, thinking | 2 | 4 | 8 | 16 | All at once |
+|---|---|---|---|---|---|---|
+| 9B (this PC) | old | | 277 → 294 | | | 284 → 295 |
+| 9B (this PC) | new | | 280 → 292 | | | 294 → 298 |
+| Haiku | old, thinking (as sent) | 89 → 92 | 115 → 119 | 219 → 220 | 230 → 232 | 224 → 224 |
+| Haiku | old, off | 144 → 147 | 201 → 204 | 242 → 247 | 250 → 254 | 269 → 270 |
+| Haiku | draft, off | 288 → 294 | 288 → 294 | 289 → 297 | 287 → 295 | 289 → 298 |
+| Haiku | draft, thinking | 284 → 286 | 288 → 290 | 280 → 282 | 289 → 292 | 285 → 287 |
+| Haiku | new, off | | 291 → 295 | | | 291 → 298 |
+| Sonnet (/108) | old, thinking | | 108 → 108 | | 108 → 108 | 108 → 108 |
+| Sonnet (/108) | draft, off | | 107 → 108 | 108 → 108 | 108 → 108 | 108 → 108 |
+| Sonnet (/108) | new, off | | | | | 108 → 108 |
+
+What changes:
+
+- The wording result holds, and on Haiku it is larger. The draft and new wordings note 294 to 298 at every size. The old wording, with thinking as sent, notes 92 to 232.
+- The 9B at four in the old wording re-scores to 294, the Mac's figure. The 17-fact gap was this bug, not the machine or build. The first paragraph of "What this does not show" is wrong.
+- On the 9B the new wording is about even with the old: 298 against 295 all at once, and 292 against 294 at four. All at once in the new wording is still the best or equal on every model, so the decision stands. The results bullet saying it beats the old wording at both sizes on the 9B no longer holds.
+- Once re-scored, thinking lowered Haiku's counts in the draft wording by 2 to 15 (286 to 292, against 294 to 298). The reported counts showed no difference.
+
+These figures re-score the saved replies; nothing was rerun. They assume that a model which wrote the real character would also have copied it from clean text.
+
+`scripts/` now opens every text file as UTF-8. `test_text_encoding_rag_eval.py` reads a log through an `open()` that defaults to cp1252, and it fails if any script touches a text file without naming an encoding. The only other committed result holding garbled text is Haiku's `2026-10-28-condense-16k-off` run. Its four lost facts are plain-ASCII terms, so its counts stand.

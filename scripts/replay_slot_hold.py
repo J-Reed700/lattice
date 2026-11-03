@@ -77,7 +77,7 @@ def turn(ctx, other, arm):
 def run(args):
     path = os.path.join(args.out, "records.jsonl")
     done = {(r["key"], r["arm"]) for r in base.read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     seen, chosen = set(), []
     for ctx in grouped.contexts(args):
         if ctx["qid"] not in seen:
