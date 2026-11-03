@@ -360,7 +360,35 @@ mod tests {
     }
 
     #[test]
-    fn a_citation_that_names_no_part_or_a_sentence_the_part_lacks_or_lists_twice_is_refused() {
+    fn a_citation_the_draft_cannot_hold_is_left_out_and_the_rest_of_the_repair_is_kept(
+    ) -> Result<()> {
+        let original = cited_lesson();
+        let quote = "A timeout of 30 seconds applies to each request.";
+        let patch = json!({
+            "edits":[{"path":"/blocks/0/body","before":"Retry later.","after":"Retry after a pause."}],
+            "citations":[
+                {"path":"/questions/0","sentence":"Timeouts last 30 seconds.","sourceIndex":0,"quote":quote},
+                {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,"quote":quote},
+                {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,"quote":quote},
+                {"path":"/blocks/7","sentence":TIMEOUT,"sourceIndex":0,"quote":quote}
+            ]
+        });
+
+        let revised = apply(&original, &patch.to_string())?;
+
+        let mut expected = original.clone();
+        expected["blocks"][0]["body"] = json!(format!(
+            "Calls end after a timeout. {TIMEOUT} Retry after a pause."
+        ));
+        expected["blocks"][0]["citations"] =
+            json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
+        assert_eq!(revised, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn a_citation_that_names_no_part_or_a_sentence_the_part_lacks_or_one_it_lists_is_refused_alone(
+    ) {
         let original = cited_lesson();
         let quote = "A timeout of 30 seconds applies to each request.";
         let refused = |path: &str, sentence: &str| {
@@ -382,13 +410,21 @@ mod tests {
         assert!(refused("/blocks/0", "  ").contains("copy it exactly"));
         // The cache sentence is in the question's explanation, not a body.
         assert!(refused("/blocks/0", "The cache holds 128 entries.").contains("copy it exactly"));
+        // Given twice, a citation is appended once; given again, it leaves
+        // nothing to apply.
         let twice = json!([
             {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,"quote":quote},
             {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,"quote":quote}
         ]);
-        let message = apply(&original, &citing(twice)).unwrap_err().to_string();
+        let once = apply(&original, &citing(twice)).unwrap();
+        assert_eq!(
+            once["blocks"][0]["citations"],
+            json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}])
+        );
+        let again = json!([{"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
+        let message = apply(&once, &citing(again)).unwrap_err().to_string();
         assert!(
-            message.contains("citation 1") && message.contains("listed in /blocks/0 already"),
+            message.contains("citation 0") && message.contains("listed in /blocks/0 already"),
             "{message}"
         );
         // A response with neither edits nor citations says nothing.
