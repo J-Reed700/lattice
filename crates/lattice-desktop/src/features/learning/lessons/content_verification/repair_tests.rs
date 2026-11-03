@@ -2,6 +2,9 @@
 use super::super::sections::Gap;
 use super::*;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation, ClaimState,
     EvidenceFingerprint, RepairOutcome, UnitKind, VerdictKind,
@@ -39,32 +42,87 @@ fn a_section_patch_keeps_other_content_and_only_receives_its_evidence() -> Resul
     Ok(())
 }
 
+/// Answers each request with the next of its answers and keeps every request.
+struct Recording {
+    answers: Mutex<std::collections::VecDeque<String>>,
+    sent: Mutex<Vec<CompletionRequest>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Recording {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.sent.lock().unwrap().push(request.clone());
+        let answer = self.answers.lock().unwrap().pop_front().unwrap_or_default();
+        Ok(CompletionResponse::from_text(&answer))
+    }
+    fn model_name(&self) -> &str {
+        "recording"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn messages(request: &CompletionRequest) -> Vec<(&str, &str)> {
+    request
+        .input
+        .iter()
+        .filter_map(|item| match item {
+            CompletionInput::Message { role, content } => Some((role.as_str(), content.as_str())),
+            _ => None,
+        })
+        .collect()
+}
+
 #[tokio::test]
-async fn an_ambiguous_edit_falls_back_to_one_validated_section() -> Result<()> {
+async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conversation(
+) -> Result<()> {
     let original = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Keep that."}],"questions":[]});
     let local =
         json!({"candidate":original,"failedClaims":[{"unit":0,"statement":"Correct one fact."}]});
     let replacement = json!({"blocks":[{"kind":"explanation","title":"Keep","body":"Keep this. Correct that."}],"questions":[]});
-    let model = ScriptedModel {
-        outputs: Mutex::new(vec![replacement.to_string()].into()),
-        prompts: Mutex::new(Vec::new()),
-    };
-    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
     let ambiguous =
         json!({"edits":[{"path":"/blocks/0/body","before":"Keep","after":"Correct"}]}).to_string();
+    let model = Recording {
+        answers: Mutex::new([ambiguous.clone(), replacement.to_string()].into()),
+        sent: Mutex::new(Vec::new()),
+    };
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let target = Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: "Keep that.".into(),
+    };
 
-    let repaired = apply_or_replace_section(
-        &model, &local, &original, &schema, "blocks", 4_000, &ambiguous,
+    let repaired = repair_group(
+        &model,
+        "Repair the section.",
+        (&local, &original),
+        &schema,
+        "blocks",
+        4_000,
+        (&[target], &[]),
     )
     .await?;
 
     assert_eq!(repaired, replacement);
-    let prompts = model
-        .prompts
-        .lock()
-        .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-    assert_eq!(prompts.len(), 1);
-    assert!(prompts[0].contains("rejectedEditResponse"));
+    let sent = model.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2, "the edits, then the section");
+    let (edits, section) = (messages(&sent[0]), messages(&sent[1]));
+    // The server has just read the edit request, so the section request
+    // continues it rather than opening another conversation.
+    assert_eq!(section.len(), edits.len() + 2, "{section:?}");
+    assert_eq!(section[..edits.len()], edits[..]);
+    assert_eq!(section[edits.len()], ("assistant", ambiguous.as_str()));
+    let (role, asked) = section[edits.len() + 1];
+    assert_eq!(role, "user");
+    assert!(asked.contains("occurs more than once"), "{asked}");
     Ok(())
 }
 
