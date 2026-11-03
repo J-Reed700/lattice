@@ -293,6 +293,31 @@ pub struct StandardPolicy; // the graphs of §2.3
 
 The readers' interpretation, pure, beside each judge (`lattice-core/src/application/services/claim_verification/`): `BridgeOutcome::outcome(&self) -> Outcome` and `BridgeOutcome::ground_outcome(&self) -> Outcome` (both after `guarded`), `KnowledgeOutcome::knowledge_outcome(&self)` and `veto_outcome(&self)`, `ConsistencyOutcome::outcome(&self) -> Outcome`, `page_outcome(ClaimVerdict, on_cited: bool) -> Outcome`.
 
+The readers and the reading driver, in the desktop (`content_verification/readings.rs`, one file per reader beneath it). Each reader adapts an existing judge path: `Parts` is pass A's comparison (the quotation settled in code first, then the bridge on the cited sentence's passages and the section's passed example runs; no passage is `Unproven` without a call), `Page` is pass B's first page, `Ground` is the bridge on `Citations::of(unit)`, `Consistency` and `Knowledge`/`Veto` are today's class judges. Pass A and pass B stop being combined in one finding (`evidence_checks/outcome.rs`): they are different nodes.
+
+```rust
+#[async_trait]
+pub(super) trait Reader: Send + Sync {
+    fn reading(&self) -> Reading;
+    /// One `Read` per statement, in order; an outage is an error the caller defers on.
+    async fn read(&self, at: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>>;
+}
+pub(super) struct Read { pub outcome: Outcome, pub finding: Finding }
+
+/// Reads each statement along its graph until its node is a remedy or an end, one
+/// batch per reading kind a round, and gives every reading it made with the policy's
+/// decision (the `Then`, the position after it, `rewrite_ahead`), for `observe` to
+/// record as a check and a `Stepped` each.
+pub(super) async fn read_until_remedy(
+    policy: &dyn AcceptancePolicy,
+    readers: &Readers,
+    at: &ReadContext<'_>,
+    statements: Vec<(Statement<'_>, Position)>,
+) -> Result<Vec<ReadSteps>>;
+```
+
+The check a reading records is its observation, named by the reading: `Parts`, `Ground` and `Page` give `Supported` (or `SupportedElsewhere` from a page) or a failure; `Consistency` gives `Consistent`; `Knowledge` gives `KnownCommon` only when unanimous; `Veto` gives `CheckResult::NotFalse` (new: the samples did not call it false), so a veto passed is never shown as a unanimous common-knowledge pass. `check_of`'s class-by-class mapping goes: the state is the `Stepped`'s, not the check's.
+
 The round, in the desktop (`content_verification/round.rs`):
 
 ```rust
@@ -327,7 +352,8 @@ Each step is a builder's (`model: sonnet`), on branch `lesson/acceptance-policy`
 | 3 | The seams' tests at `5cb727a3`, through the loop's own harness: §1 #1, #5, #4, #6, #7, #8, #16 | desktop tests, worktree `acceptance-reds` | each fails on `5cb727a3` for the reason in §1 |
 | 4 | The record of decisions: `Stepped`, `CitationDropped`, the goal on `RepairAttempted`, `ClassifiedBy::Evidence`; the state of a machine-owned claim read from its latest `then`; the walk's check of the record | core `claim_review/{claim_review,ledger,replay}.rs` | a claim's state follows each `then`; a record that does not walk to its `then`, or names another policy, is a fault; a successor continues at its parent's post-rewrite node |
 | 5 | The ceiling from the graphs | `call_plan.rs`, `lesson_progress.rs` | the ceiling is the sum of `most_calls` from each recorded position plus the reserves; it never rises over any scripted run |
-| 6 | Readings by the policy: each statement read until its node is a remedy or an end, each reading recorded with its `Stepped` | `class_checks.rs`, `evidence_checks*`, `claim_ledger/observe.rs` | §1 #4, #5 go green; #1 to its `Uncite` |
+| 6a | The readers: one adapter per reading, unit-tested on scripted models, not yet called by the pass | new `content_verification/readings*`; visibility in `class_checks.rs`, `evidence_checks*` | each reading's outcomes and findings, from the judges' fixtures |
+| 6b | Readings by the policy: `read_until_remedy` in `check_evidence`, each reading recorded with its check and its `Stepped` | `passes.rs`, `class_checks.rs` (routing goes), `evidence_checks*` (pass A/B selection and combination go), `claim_ledger/observe.rs` | §1 #4, #5 go green; #1 to its `Uncite` |
 | 7 | Remedies by the policy: research, recite on the sentence's own entry, `Uncite`, rewrites with their goals and per-target confinement with its retry, the cut on the stating sentence and its narrowing | `claim_ledger::decide`, `research_targets`, `repair/*` | §1 #1, #7, #8, #10 go green; `may_repair`, `cuts_next` and the replay's attempt rules go |
 | 8 | Fresh extraction of rewritten sentences; the report reads the policy; Removed only when the sentence is gone, and every standing sentence on a live claim at publication | `inventory/revisions*`, `claim_reuse.rs`, `claim_ledger/observe.rs`, `report.rs`, `resolution.rs` | §1 #6, #9, #16 go green |
 | 9 | The round (Template Method) with a scripted review | `repair_loop.rs` → `round.rs` | termination and the no-progress stop on the scripted review |
