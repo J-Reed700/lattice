@@ -44,9 +44,10 @@ impl Route {
 const LABEL_TOKENS: usize = 12;
 
 /// The class of each of `claims`, in order: that of the statement it
-/// replaces when a repair wrote it, otherwise Sourced when the writer cited
-/// its sentence, otherwise the rule layer's where it decides, otherwise the
-/// model's, which is asked once per statement.
+/// replaces when a repair wrote it, otherwise the one the ledger holds for
+/// it, otherwise Sourced when the writer cited its sentence, otherwise the
+/// rule layer's where it decides, otherwise the model's, which is asked once
+/// per statement.
 pub(super) async fn sort(
     llm: &dyn LLMPort,
     candidate: &Value,
@@ -75,8 +76,12 @@ pub(super) async fn sort(
         claims.iter().zip(&fields).zip(&cases).zip(parents)
     {
         let rule = rule_class(&claim.statement, field, case);
-        sorted.push(match (parent, rule) {
-            (Some(parent), rule) => {
+        let held = rewrites.held(*unit, &claim.statement);
+        sorted.push(match (parent, held, rule) {
+            (Some(parent), held, rule) => {
+                let parent = held
+                    .filter(|held| held.class.strictness() > parent.class.strictness())
+                    .unwrap_or(parent);
                 let inherited = carried(parent, rule);
                 // A resumed pass finds the class again without its parent.
                 if rule != Some(inherited.class) {
@@ -84,15 +89,16 @@ pub(super) async fn sort(
                 }
                 Some(inherited)
             }
-            (None, _) if citations.is_cited(*unit, &claim.statement) => Some(Classed {
+            (None, Some(held), rule) => Some(carried(held, rule)),
+            (None, None, _) if citations.is_cited(*unit, &claim.statement) => Some(Classed {
                 class: Class::Sourced,
                 by: ClassifiedBy::Writer,
             }),
-            (None, Some(class)) => Some(Classed {
+            (None, None, Some(class)) => Some(Classed {
                 class,
                 by: ClassifiedBy::Rule,
             }),
-            (None, None) => saved_class(llm, &claim.statement)
+            (None, None, None) => saved_class(llm, &claim.statement)
                 .await?
                 .map(|class| Classed {
                     class,

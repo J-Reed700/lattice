@@ -488,16 +488,13 @@ impl ClaimLedger {
         Ok(())
     }
 
-    /// Records the class a claim was checked as, when the ledger does not
-    /// hold it yet.
+    /// Records the class a claim was checked as, when it takes the place of
+    /// the one the ledger holds (claim classes design §3.1).
     async fn classify_claim(&mut self, id: &ClaimId, class: Option<Classed>) -> Result<()> {
         let Some(Classed { class, by }) = class else {
             return Ok(());
         };
-        if self
-            .entry(id)
-            .is_some_and(|entry| entry.class() == Some(class))
-        {
+        if !class.prevails(by, self.entry(id).and_then(ClaimLedgerEntry::classified)) {
             return Ok(());
         }
         self.append(id, ClaimEvent::Classified { class, by })

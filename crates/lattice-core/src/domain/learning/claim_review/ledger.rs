@@ -495,7 +495,7 @@ impl ClaimLedgerEntry {
             ClaimEvent::CitationRepaired { .. } => next.citation_pending = true,
             ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
             ClaimEvent::Classified { class, by } => {
-                if next.class.is_none_or(|(_, before)| *by >= before) {
+                if class.prevails(*by, next.class) {
                     next.class = Some((*class, *by));
                 }
             }

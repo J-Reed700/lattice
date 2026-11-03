@@ -8,9 +8,7 @@ use super::super::Classed;
 use super::fields::field_text;
 use super::RepairRecord;
 use crate::features::learning::reference_collection::shared_terms;
-use lattice_core::domain::learning::claim_review::{
-    ClaimId, Class, ExtractedClaim, MACHINE_ATTEMPTS,
-};
+use lattice_core::domain::learning::claim_review::{ClaimId, ExtractedClaim, MACHINE_ATTEMPTS};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -79,25 +77,17 @@ fn written(
             .is_some_and(|(from, to)| from < end && to > start)
 }
 
-/// How much checking a class gets: the stricter the class, the more.
-fn strictness(class: Class) -> u8 {
-    match class {
-        Class::Sourced => 3,
-        Class::Reasoning => 2,
-        Class::Common => 1,
-        Class::Internal => 0,
-    }
-}
-
 /// What the last step leaves for the pass that checks the lesson: whether
 /// that pass comes after another, the lesson as it was before the repairs or
-/// edits, and each repaired claim with the field its sentence stood in and the
-/// class it was checked as.
+/// edits, each repaired claim with the field its sentence stood in and the
+/// class it was checked as, and the class of each statement the ledger holds,
+/// by section and statement.
 #[derive(Default)]
 pub(in crate::features::learning::lessons::content_verification) struct Rewrites {
     later: bool,
     previous: Option<Value>,
     parents: Vec<(RepairRecord, String, Classed)>,
+    held: HashMap<(usize, String), Classed>,
 }
 
 impl Rewrites {
@@ -105,12 +95,25 @@ impl Rewrites {
         later: bool,
         previous: Option<Value>,
         parents: Vec<(RepairRecord, String, Classed)>,
+        held: HashMap<(usize, String), Classed>,
     ) -> Self {
         Self {
             later,
             previous,
             parents,
+            held,
         }
+    }
+
+    /// The class the ledger holds for `statement` of section `unit`, which a
+    /// later pass keeps: the model sorts in the first pass alone (claim
+    /// classes design §3.1).
+    pub(in crate::features::learning::lessons::content_verification) fn held(
+        &self,
+        unit: usize,
+        statement: &str,
+    ) -> Option<Classed> {
+        self.held.get(&(unit, statement.to_owned())).copied()
     }
 
     /// Whether this pass is the first to read `claim`: the first pass reads
@@ -168,7 +171,7 @@ impl Rewrites {
                         continue;
                     };
                     let lighter = found
-                        .is_some_and(|held| strictness(held.class) >= strictness(classed.class));
+                        .is_some_and(|held| held.class.strictness() >= classed.class.strictness());
                     if !lighter && written(claim, record.unit, field, before, *span) {
                         found = Some(*classed);
                     }

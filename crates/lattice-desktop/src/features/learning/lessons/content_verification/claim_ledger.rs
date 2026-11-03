@@ -453,8 +453,9 @@ impl ClaimLedger {
     }
 
     /// The repairs awaiting the pass that checks their text, for that pass
-    /// to give what they wrote the class of what they replaced (claim classes
-    /// design §3.1).
+    /// to give what they wrote the class of what they replaced, and the class
+    /// of each statement the ledger holds, which that pass keeps (claim
+    /// classes design §3.1).
     pub(super) fn rewrites(&self) -> Rewrites {
         let parents = self
             .pending
@@ -470,10 +471,28 @@ impl ClaimLedger {
                 ))
             })
             .collect();
+        let mut held: HashMap<(usize, String), Classed> = HashMap::new();
+        for entry in &self.entries {
+            if is_gone(entry.state()) || self.edited_now.contains(entry.claim_id()) {
+                continue;
+            }
+            let Some((class, by)) = entry.classified() else {
+                continue;
+            };
+            let classed = Classed { class, by };
+            held.entry((entry.location().unit_index, entry.statement().to_owned()))
+                .and_modify(|kept| {
+                    if class.prevails(by, Some((kept.class, kept.by))) {
+                        *kept = classed;
+                    }
+                })
+                .or_insert(classed);
+        }
         Rewrites::new(
             !self.entries.is_empty(),
             self.pending.previous.clone(),
             parents,
+            held,
         )
     }
 

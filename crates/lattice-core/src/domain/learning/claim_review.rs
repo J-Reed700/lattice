@@ -155,6 +155,28 @@ pub enum Class {
     Internal,
 }
 
+impl Class {
+    /// How much checking the class gets: the stricter, the more.
+    pub fn strictness(self) -> u8 {
+        match self {
+            Self::Sourced => 3,
+            Self::Reasoning => 2,
+            Self::Common => 1,
+            Self::Internal => 0,
+        }
+    }
+
+    /// Whether this class, decided `by` an authority, takes the place of the
+    /// one a statement holds: a stronger authority's always does, the same
+    /// authority's only when it is stricter, so nothing makes a statement's
+    /// check lighter but an authority above the one that gave its class.
+    pub fn prevails(self, by: ClassifiedBy, held: Option<(Class, ClassifiedBy)>) -> bool {
+        held.is_none_or(|(class, held_by)| {
+            by > held_by || (by == held_by && self.strictness() > class.strictness())
+        })
+    }
+}
+
 /// Who decided a statement's class, weakest first. The model only splits
 /// what the rule layer leaves, and a sentence the writer cited is Sourced
 /// whatever anyone says later, so a class is never replaced by a weaker
