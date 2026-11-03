@@ -72,6 +72,9 @@ fn lesson(statements: &[&str]) -> Value {
 pub(super) struct Figures {
     inner: Model,
     repair_to_good: bool,
+    /// The claim inventory's revision never takes a claim out, though the
+    /// section no longer states it.
+    revision_keeps_claims: bool,
     fail_repair_at: Option<usize>,
     /// The first asks for a strict judgment, each with the correction the
     /// checker sends after an answer it cannot read, whose answers come back
@@ -88,6 +91,7 @@ impl Figures {
         Self {
             inner: Model::new(),
             repair_to_good: false,
+            revision_keeps_claims: false,
             fail_repair_at: None,
             unusable_asks: 0,
             asks: AtomicUsize::new(0),
@@ -133,16 +137,17 @@ impl Figures {
                 .find(|p| p["field"] == "/body")
                 .unwrap_or(&passages[0]);
             let statement = statement_in(passage["text"].as_str().unwrap());
-            let changes: Vec<_> = data["existingClaims"]
-                .as_array()
-                .unwrap()
+            let existing = data["existingClaims"].as_array().unwrap();
+            let keeps = statement.is_none() && self.revision_keeps_claims;
+            let changes: Vec<_> = existing
                 .iter()
+                .filter(|_| !keeps)
                 .map(|claim| match &statement {
                     Some(statement) => json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":if claim["statement"] == json!(statement) { Value::Null } else { json!(statement) }}),
                     None => json!({"claimId":claim["claimId"],"passageId":Value::Null,"statement":Value::Null}),
                 })
                 .collect();
-            let reason = if statement.is_some() {
+            let reason = if statement.is_some() || (keeps && !existing.is_empty()) {
                 ""
             } else {
                 NOTHING_TO_CHECK
@@ -426,6 +431,61 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
     ));
     assert_eq!(
         repairs(gone),
+        vec![
+            (1, false, RepairOutcome::Rewritten),
+            (2, true, RepairOutcome::Removed)
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_cut_on_its_last_attempt_ends_removed_though_the_inventory_revision_keeps_its_statement(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    // The revision after the cut keeps every claim, as the 27B's did.
+    let model = Figures {
+        revision_keeps_claims: true,
+        ..Figures::new()
+    };
+    let (raw, report) = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&[GOOD, BAD]).to_string()),
+        &sources,
+    )
+    .await?;
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
+    let lesson: Value = serde_json::from_str(&raw)?;
+    assert_eq!(lesson["blocks"][1]["body"], PRACTICE.repeat(5).trim_start());
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    assert!(waiting(&ledger.claims).is_empty());
+    let cut = ledger
+        .claims
+        .iter()
+        .find(|entry| entry.statement() == figure(0))
+        .unwrap();
+    assert!(
+        matches!(
+            cut.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        cut.state()
+    );
+    assert_eq!(
+        repairs(cut),
         vec![
             (1, false, RepairOutcome::Rewritten),
             (2, true, RepairOutcome::Removed)
