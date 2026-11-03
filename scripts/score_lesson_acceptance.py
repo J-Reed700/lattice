@@ -36,8 +36,10 @@ PLANTED = "Microsoft's grounding feature returns bounding box coordinates in mil
 STATEMENT_LIMIT = 73
 SHORT_PAGE_WORDS = 400
 SORT_BATCH = 20
-# The authority of a class, weakest first (design 3.1): the ledger keeps the strongest.
+# The authority of a class, weakest first (design 3.1): the ledger keeps the strongest authority's, and of one
+# authority's the strictest.
 AUTHORITY = {"model": 0, "rule": 1, "writer": 2}
+STRICTNESS = {"internal": 0, "common": 1, "reasoning": 2, "sourced": 3}
 # What a class may end in (design 3.11); any class may also end removed by the machine.
 TERMINAL = {
     "sourced": {"resolved_by_evidence"},
@@ -91,12 +93,12 @@ class Claim:
         self.state = loads(row["state_json"]) or {}
         self.events = events
         self.cls = None
-        authority = -1
+        held = (-1, -1)
         for event in events:
             if event.get("kind") == "classified":
-                by = AUTHORITY.get(event.get("by"), -1)
-                if by >= authority:
-                    self.cls, authority = event.get("class"), by
+                rank = (AUTHORITY.get(event.get("by"), -1), STRICTNESS.get(event.get("class"), -1))
+                if rank > held:
+                    self.cls, held = event.get("class"), rank
 
     @property
     def kind(self):

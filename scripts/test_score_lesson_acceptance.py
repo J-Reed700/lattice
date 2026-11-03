@@ -227,6 +227,13 @@ class ScoreLessonAcceptance(unittest.TestCase):
 
         self.assertEqual(sla.Claim(row, events).cls, "sourced")
 
+    def test_one_authority_deciding_again_never_lightens_a_class(self):
+        events = [classified("sourced", "model"), classified("reasoning", "model"), classified("common", "model")]
+        row = {"claim_id": "z", "unit_index": 0, "field": "body", "quote": "q", "statement": "s", "state_json": "{}"}
+
+        self.assertEqual(sla.Claim(row, events).cls, "sourced")
+        self.assertEqual(sla.Claim(row, events[::-1]).cls, "sourced")
+
     def test_a_lesson_the_database_lacks_is_a_failure_not_a_crash(self):
         build(self.path)
 
