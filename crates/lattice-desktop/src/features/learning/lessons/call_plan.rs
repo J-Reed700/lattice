@@ -1,7 +1,9 @@
 //! The most calls a lesson's checks can make (acceptance design §2.4). The
 //! panel shows the calls made so far and this ceiling, never an expected
 //! count. Each statement's share is its longest path through its class's graph
-//! from where it is, so the ceiling only comes down as statements move.
+//! from where it is, so the ceiling comes down as statements move. A successor
+//! that reads again is paid from its statement's reserve; a rise beyond the
+//! reserve is shown.
 use lattice_core::application::services::claim_verification::KNOWLEDGE_SAMPLES;
 use lattice_core::domain::learning::acceptance::{
     after_rewrite_calls, most_calls, AcceptancePolicy, Position, Walked,
@@ -48,18 +50,21 @@ pub(crate) struct Planned {
 
 /// What the plan holds for one statement.
 struct Slot {
+    /// The class the statement is in: the one it was sorted into until its
+    /// walk is in another.
     class: Class,
     group: Option<u32>,
     /// The most calls it can still cost: its longest path from where it is.
     most: u32,
-    /// M: the readings of its class after a neighbour's rewrite and after a
-    /// neighbour's narrowing cut, held while a neighbour stands on its sentence.
+    /// M, sized at the sort: the readings of its class after a neighbour's
+    /// rewrite and after a neighbour's narrowing cut. A successor that reads
+    /// again draws on it; it goes when the statement and its whole sentence
+    /// have ended.
     reserve: u32,
     ended: bool,
 }
 
-/// The terms of the ceiling as the checks of one lesson leave them. None of
-/// them rises.
+/// The terms of the ceiling as the checks of one lesson leave them.
 pub(crate) struct CallPlan {
     /// The sorting calls, made before the statements had classes.
     sorting: u32,
@@ -93,6 +98,29 @@ fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
         .saturating_add(1)
 }
 
+/// A statement at the entry of a class with nothing spent has not moved,
+/// whatever class the ledger holds for it: it is at the entry of its own.
+fn settled(policy: &dyn AcceptancePolicy, at: PlannedAt) -> PlannedAt {
+    match at {
+        PlannedAt::At(position)
+            if !position.changed_class
+                && !position.reasked
+                && position.node == policy.graph(position.class).entry() =>
+        {
+            PlannedAt::Entry
+        }
+        other => other,
+    }
+}
+
+/// The class a statement sorted into `sorted` is in at `at`: where its walk is.
+fn class_at(sorted: Class, at: PlannedAt) -> Class {
+    match at {
+        PlannedAt::At(position) => position.class,
+        PlannedAt::Entry | PlannedAt::Ended => sorted,
+    }
+}
+
 impl CallPlan {
     /// The plan once `statements` are sorted, after `sorting` calls, in
     /// `sections` sections that could take cuts.
@@ -104,16 +132,20 @@ impl CallPlan {
     ) -> Self {
         let slots = statements
             .iter()
-            .map(|statement| Slot {
-                class: statement.class,
-                group: statement.sentence,
-                most: most(policy, statement.class, statement.at),
-                reserve: if statement.sentence.is_some() {
-                    reserve(policy, statement.class)
-                } else {
-                    0
-                },
-                ended: statement.at == PlannedAt::Ended,
+            .map(|statement| {
+                let at = settled(policy, statement.at);
+                let class = class_at(statement.class, at);
+                Slot {
+                    class,
+                    group: statement.sentence,
+                    most: most(policy, class, at),
+                    reserve: if statement.sentence.is_some() {
+                        reserve(policy, statement.class)
+                    } else {
+                        0
+                    },
+                    ended: at == PlannedAt::Ended,
+                }
             })
             .collect();
         let mut plan = Self {
@@ -140,9 +172,14 @@ impl CallPlan {
     }
 
     /// `statements` are the plan's statements in its order, each now at its
-    /// place; the class and sentence they carry are not read, the plan fixed
-    /// them when it was made. Those beyond the plan's are ignored. A number
-    /// never rises, and a reserve released stays released.
+    /// place; the sentence they carry is not read, the plan fixed it when it
+    /// was made, and their class is where their walk is. Those beyond the
+    /// plan's are ignored.
+    ///
+    /// A statement's number falls to what its place costs. Where the place
+    /// costs more, a successor of the statement reads again and the increase
+    /// comes out of its reserve; what the reserve cannot cover is a rise,
+    /// logged and shown. A reserve released stays released.
     pub(crate) fn moved(&mut self, policy: &dyn AcceptancePolicy, statements: &[Planned]) {
         let held = self.slots.len();
         if statements.len() > held {
@@ -153,23 +190,48 @@ impl CallPlan {
             );
         }
         for (slot, statement) in self.slots.iter_mut().zip(statements) {
-            slot.most = slot.most.min(most(policy, slot.class, statement.at));
-            slot.ended = statement.at == PlannedAt::Ended;
+            let at = settled(policy, statement.at);
+            slot.class = class_at(slot.class, at);
+            slot.ended = at == PlannedAt::Ended;
+            let now = most(policy, slot.class, at);
+            if now <= slot.most {
+                slot.most = now;
+                continue;
+            }
+            let taken = (now - slot.most).min(slot.reserve);
+            slot.reserve -= taken;
+            slot.most += taken;
+            if now > slot.most {
+                tracing::error!(
+                    class = ?slot.class,
+                    held = slot.most,
+                    now,
+                    "claim.plan: a statement can cost more than the plan held for it and its reserve; the ceiling rises"
+                );
+                slot.most = now;
+            }
         }
         self.release();
     }
 
-    /// Releases the reserve of each statement whose neighbours on its
-    /// sentence have all ended: none is left to rewrite it.
+    /// Releases the reserve of each statement that has ended when every other
+    /// statement on its sentence has: none is left to rewrite the sentence or
+    /// to be read again.
     fn release(&mut self) {
-        let standing: Vec<bool> = (0..self.slots.len())
-            .map(|index| self.neighbour_stands(index))
+        let over: Vec<bool> = (0..self.slots.len())
+            .map(|index| self.sentence_over(index))
             .collect();
-        for (slot, standing) in self.slots.iter_mut().zip(standing) {
-            if !standing {
+        for (slot, over) in self.slots.iter_mut().zip(over) {
+            if over {
                 slot.reserve = 0;
             }
         }
+    }
+
+    /// Whether the statement at `index` and every other statement on its
+    /// sentence have ended.
+    fn sentence_over(&self, index: usize) -> bool {
+        self.slots.get(index).is_some_and(|slot| slot.ended) && !self.neighbour_stands(index)
     }
 
     /// Whether a statement other than the one at `index` stands on its

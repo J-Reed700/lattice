@@ -68,8 +68,8 @@ impl ClaimLedger {
 
     /// The plan's statements as the ledger has them now: each of `claims`
     /// followed to the claim that carries its sentence on, at its place. The
-    /// class and sentence are not the plan's to read after it is made, so they
-    /// are the class the ledger holds and none.
+    /// plan reads where each stands, not the class or sentence it carries, so
+    /// those are the class the ledger holds and none.
     pub(in crate::features::learning::lessons::content_verification) fn planned(
         &self,
         policy: &dyn AcceptancePolicy,
