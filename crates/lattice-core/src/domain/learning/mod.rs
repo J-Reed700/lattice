@@ -4,4 +4,5 @@
 //! checker and the user did about each one, and the rules that bound the
 //! machine's work and keep the user's verdicts.
 
+pub mod acceptance;
 pub mod claim_review;
