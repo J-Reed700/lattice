@@ -8,6 +8,7 @@ use super::super::Classed;
 use super::fields::field_text;
 use super::RepairRecord;
 use crate::features::learning::reference_collection::shared_terms;
+use lattice_core::domain::learning::acceptance::Walked;
 use lattice_core::domain::learning::claim_review::{ClaimId, ExtractedClaim, MACHINE_ATTEMPTS};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -80,14 +81,15 @@ fn written(
 /// What the last step leaves for the pass that checks the lesson: whether
 /// that pass comes after another, the lesson as it was before the repairs or
 /// edits, each repaired claim with the field its sentence stood in and the
-/// class it was checked as, and the class of each statement the ledger holds,
-/// by section and statement.
+/// class it was checked as, and the class and the place in its graph of each
+/// statement the ledger holds, by section and statement.
 #[derive(Default)]
 pub(in crate::features::learning::lessons::content_verification) struct Rewrites {
     later: bool,
     previous: Option<Value>,
     parents: Vec<(RepairRecord, String, Classed)>,
     held: HashMap<(usize, String), Classed>,
+    walked: HashMap<(usize, String), Walked>,
 }
 
 impl Rewrites {
@@ -96,13 +98,25 @@ impl Rewrites {
         previous: Option<Value>,
         parents: Vec<(RepairRecord, String, Classed)>,
         held: HashMap<(usize, String), Classed>,
+        walked: HashMap<(usize, String), Walked>,
     ) -> Self {
         Self {
             later,
             previous,
             parents,
             held,
+            walked,
         }
+    }
+
+    /// Where the ledger has `statement` of section `unit` in its class's
+    /// graph, when it holds it and the claim has a class.
+    pub(in crate::features::learning::lessons::content_verification) fn walked(
+        &self,
+        unit: usize,
+        statement: &str,
+    ) -> Option<Walked> {
+        self.walked.get(&(unit, statement.to_owned())).copied()
     }
 
     /// The class the ledger holds for `statement` of section `unit`, which a

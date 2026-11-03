@@ -427,10 +427,10 @@ async fn the_calls_ceiling_only_comes_down_while_a_pass_checks_a_mix_of_classes(
     .await;
     report?;
 
-    // The statements sorted, the Reasoning and Common ones checked, the
-    // strict check done: three events, each at or below the one before, two
-    // Common statements sent on to their source check among them.
-    assert_eq!(trace.ceilings.len(), 3, "{:?}", trace.ceilings);
+    // The statements sorted: the plan's one event. A pass alone moves none of
+    // them through its graph, so its checks leave the ceiling where the sort
+    // set it, two Common statements sent on to their source check among them.
+    assert_eq!(trace.ceilings.len(), 1, "{:?}", trace.ceilings);
     assert!(trace.only_came_down(), "{:?}", trace.ceilings);
     // The sort, the knowledge samples of five statements, the consistency
     // call and the strict checks.
@@ -460,7 +460,7 @@ async fn rewrites_after_repair(
     ledger.observe(&before, &pass_report(vec![failed])).await?;
     let claim = ledger.finding_claims()[0].clone();
     ledger.begin_repairs(&before, &[claim]).await?;
-    Ok(ledger.rewrites())
+    Ok(ledger.rewrites(&StandardPolicy::new()))
 }
 
 /// What the sort makes of `statement`, which a repair wrote into the lesson.
@@ -478,6 +478,7 @@ async fn sorted_after(
     )];
     class_checks::sort(
         model,
+        &StandardPolicy::new(),
         &lesson(statement),
         &claims,
         rewrites,
@@ -509,7 +510,15 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
     )];
     let nothing = claim_ledger::Rewrites::default();
 
-    let classes = class_checks::sort(&model, &candidate, &claims, &nothing, &citations).await?;
+    let classes = class_checks::sort(
+        &model,
+        &StandardPolicy::new(),
+        &candidate,
+        &claims,
+        &nothing,
+        &citations,
+    )
+    .await?;
 
     assert_eq!(
         classes,
@@ -522,6 +531,7 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
     // Uncited, the model's word stands.
     let uncited = class_checks::sort(
         &model,
+        &StandardPolicy::new(),
         &lesson(REASONED),
         &claims,
         &nothing,
@@ -565,8 +575,15 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_attributions_t
         .collect();
     let nothing = claim_ledger::Rewrites::default();
 
-    let classes =
-        class_checks::sort(&model, &example, &claims, &nothing, &Citations::default()).await?;
+    let classes = class_checks::sort(
+        &model,
+        &StandardPolicy::new(),
+        &example,
+        &claims,
+        &nothing,
+        &Citations::default(),
+    )
+    .await?;
 
     assert_eq!(
         classes,
@@ -584,6 +601,7 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_attributions_t
     // An explanation states what is so: there the figure is the rules' to send.
     let stated = class_checks::sort(
         &model,
+        &StandardPolicy::new(),
         &lesson(CASE),
         &claims[..1],
         &nothing,
@@ -628,8 +646,15 @@ async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific()
         .collect();
     let nothing = claim_ledger::Rewrites::default();
 
-    let classes =
-        class_checks::sort(&model, &candidate, &claims, &nothing, &Citations::default()).await?;
+    let classes = class_checks::sort(
+        &model,
+        &StandardPolicy::new(),
+        &candidate,
+        &claims,
+        &nothing,
+        &Citations::default(),
+    )
+    .await?;
 
     assert_eq!(
         classes,
@@ -742,7 +767,7 @@ async fn a_statement_the_ledger_holds_keeps_its_class_and_is_not_sorted_again() 
     };
     let ledger = ledger_holding(&model, REASONED, held).await?;
 
-    let classes = sorted_after(&model, &ledger.rewrites(), REASONED).await?;
+    let classes = sorted_after(&model, &ledger.rewrites(&StandardPolicy::new()), REASONED).await?;
 
     assert_eq!(classes, [held]);
     assert_eq!(model.calls("sort"), 0);

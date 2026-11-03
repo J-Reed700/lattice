@@ -2,10 +2,11 @@
 //! coverage audit (reused per unchanged section), its executed examples, and
 //! the evidence check of every claim.
 use super::*;
-use crate::features::learning::lessons::call_plan::Fate;
+use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 
 pub(super) async fn verify_with_references(
     llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
     runtimes: &BuiltinRuntimes,
     candidate: &Value,
     references: &ReferenceCollection<'_>,
@@ -75,13 +76,14 @@ pub(super) async fn verify_with_references(
     );
     let executions = execution::observe(runtimes, candidate).await?;
     check_evidence(
-        llm, candidate, references, inventory, coverage, executions, checks,
+        llm, policy, candidate, references, inventory, coverage, executions, checks,
     )
     .await
 }
 
 pub(super) async fn check_evidence(
     llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
     candidate: &Value,
     references: &ReferenceCollection<'_>,
     inventory: Inventory,
@@ -122,9 +124,15 @@ pub(super) async fn check_evidence(
                 .map(move |claim| (unit.index, claim))
         })
         .collect();
-    let classes =
-        class_checks::sort(llm, candidate, &claims, &completed.rewrites, &citations).await?;
-    let origins: Vec<Class> = classes.iter().map(|classed| classed.class).collect();
+    let classes = class_checks::sort(
+        llm,
+        policy,
+        candidate,
+        &claims,
+        &completed.rewrites,
+        &citations,
+    )
+    .await?;
     let routes = class_checks::check(llm, &claims, classes, &citations).await?;
     // The strict check is asked about the statements that need a source, a
     // section at a time in the inventory's order.
@@ -155,14 +163,6 @@ pub(super) async fn check_evidence(
         &citations,
     )
     .await?;
-    let fates: Vec<(Class, Fate)> = checked
-        .iter()
-        .filter_map(|(ordinal, _, finding, _)| {
-            let at = *strict_at.get(*ordinal)?;
-            Some((*origins.get(at)?, Fate::of_strict(finding.verdict)))
-        })
-        .collect();
-    crate::features::learning::lesson_progress::strict_checked(&fates);
     let mut strict: HashMap<usize, (String, Finding)> = HashMap::new();
     for (ordinal, key, mut finding, _) in checked {
         let at = strict_at.get(ordinal).copied();
@@ -210,7 +210,7 @@ pub(super) async fn check_evidence(
     for (at, route) in routes.into_iter().enumerate() {
         match route {
             class_checks::Route::Left => {}
-            class_checks::Route::Done(finding, _) => findings.push(*finding),
+            class_checks::Route::Done(finding) => findings.push(*finding),
             class_checks::Route::Strict(_) => {
                 let (key, finding) = strict.remove(&at).ok_or_else(|| {
                     AppError::InternalError("A statement was left without a check".into())

@@ -6,14 +6,15 @@
 //! a lighter check cannot pass on its own goes to the strict check as
 //! Sourced. Every judgment is saved as a receipt, so a resumed pass asks
 //! nothing twice.
-use super::claim_ledger::{stand_together, Place, Rewrites};
+use super::claim_ledger::{sentences, Place, Rewrites};
 use super::classify::{classify, rule_class, Case, ToSort};
 use super::*;
-use crate::features::learning::lessons::call_plan::{Counted, Fate, SAMPLES};
+use crate::features::learning::lessons::call_plan::{Planned, PlannedAt, SAMPLES};
 use lattice_core::application::services::claim_verification::{
     ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
     KnowledgeVerdict, CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
+use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::ExtractedClaim;
 
 /// What becomes of a statement once it is sorted and has met its lighter
@@ -23,20 +24,8 @@ pub(super) enum Route {
     Left,
     /// To be checked against its sources by the strict check, as this class.
     Strict(Classed),
-    /// Checked: its finding, and how it fared.
-    Done(Box<Finding>, Fate),
-}
-
-impl Route {
-    /// How the statement fared in the check its class names; none when it is
-    /// left out.
-    fn fate(&self) -> Option<Fate> {
-        match self {
-            Self::Left => None,
-            Self::Strict(_) => Some(Fate::ToSource),
-            Self::Done(_, fate) => Some(*fate),
-        }
-    }
+    /// Checked: its finding.
+    Done(Box<Finding>),
 }
 
 /// Tokens a passage costs beside its text in the consistency check: its
@@ -50,6 +39,7 @@ const LABEL_TOKENS: usize = 12;
 /// per statement.
 pub(super) async fn sort(
     llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
     candidate: &Value,
     claims: &[(usize, Claim)],
     rewrites: &Rewrites,
@@ -135,7 +125,7 @@ pub(super) async fn sort(
         .into_iter()
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))?;
-    plan_calls(&classes, claims, &fields);
+    plan_calls(policy, rewrites, &classes, claims, &fields);
     Ok(classes)
 }
 
@@ -156,9 +146,17 @@ fn carried(parent: Classed, rule: Option<Class>) -> Classed {
     }
 }
 
-/// The calls the statements' checks can make, now that each has a class.
-fn plan_calls(classes: &[Classed], claims: &[(usize, Claim)], fields: &[String]) {
-    let counted: Vec<(Class, Place<'_>)> = classes
+/// The calls the statements' checks can make, now that each has a class: where
+/// each stands in its class's graph, as the ledger has it, and which of them
+/// stand on one sentence.
+fn plan_calls(
+    policy: &dyn AcceptancePolicy,
+    rewrites: &Rewrites,
+    classes: &[Classed],
+    claims: &[(usize, Claim)],
+    fields: &[String],
+) {
+    let counted: Vec<(Class, Place<'_>, &str)> = classes
         .iter()
         .zip(claims.iter().zip(fields))
         .filter(|(classed, _)| classed.class != Class::Internal)
@@ -170,22 +168,23 @@ fn plan_calls(classes: &[Classed], claims: &[(usize, Claim)], fields: &[String])
                     field: field.as_str(),
                     quote: claim.quote.as_str(),
                 },
+                claim.statement.as_str(),
             )
         })
         .collect();
-    let statements: Vec<Counted> = counted
+    let places: Vec<Place<'_>> = counted.iter().map(|(_, place, _)| *place).collect();
+    let statements: Vec<Planned> = counted
         .iter()
-        .enumerate()
-        .map(|(at, (class, here))| Counted {
+        .zip(sentences(&places))
+        .map(|((class, place, statement), sentence)| Planned {
             class: *class,
-            shares: counted
-                .iter()
-                .enumerate()
-                .any(|(other, (_, there))| other != at && stand_together(here, there)),
+            at: PlannedAt::of(rewrites.walked(place.unit, statement)),
+            sentence,
         })
         .collect();
-    let sections: HashSet<usize> = counted.iter().map(|(_, place)| place.unit).collect();
+    let sections: HashSet<usize> = places.iter().map(|place| place.unit).collect();
     crate::features::learning::lesson_progress::calls_planned(
+        policy,
         &statements,
         u32::try_from(sections.len()).unwrap_or(u32::MAX),
     );
@@ -200,21 +199,15 @@ pub(super) async fn check(
     citations: &Citations,
 ) -> Result<Vec<Route>> {
     let mut routes = Vec::with_capacity(claims.len());
-    let mut fates = Vec::with_capacity(claims.len());
     for ((unit, claim), classed) in claims.iter().zip(classes) {
-        let class = classed.class;
-        let route = match class {
+        let route = match classed.class {
             Class::Internal => Route::Left,
             Class::Sourced => Route::Strict(classed),
             Class::Reasoning => reasoning(llm, *unit, claim, classed, citations).await?,
             Class::Common => common(llm, *unit, claim, classed).await?,
         };
-        if let Some(fate) = route.fate() {
-            fates.push((class, fate));
-        }
         routes.push(route);
     }
-    crate::features::learning::lesson_progress::lighter_checked(&fates);
     Ok(routes)
 }
 
@@ -246,7 +239,7 @@ async fn reasoning(
         ConsistencyVerdict::UnfoundedSpecific => Route::Strict(sourced()),
         ConsistencyVerdict::Contradicted => done(
             (unit, claim, classed),
-            (ClaimVerdict::Contradicted, Fate::Failed),
+            ClaimVerdict::Contradicted,
             consistency.reason,
             &shown,
             None,
@@ -258,7 +251,7 @@ async fn reasoning(
             if !knowledge.is_false() {
                 return Ok(done(
                     (unit, claim, classed),
-                    (ClaimVerdict::Supported, Fate::Passed),
+                    ClaimVerdict::Supported,
                     consistency.reason,
                     &shown,
                     None,
@@ -267,14 +260,14 @@ async fn reasoning(
             match stated_by(llm, &claim.statement, &shown).await? {
                 Some((quote, reason)) => done(
                     (unit, claim, classed),
-                    (ClaimVerdict::Supported, Fate::Vetoed { stated: true }),
+                    ClaimVerdict::Supported,
                     reason,
                     &shown,
                     Some(quote),
                 ),
                 None => done(
                     (unit, claim, classed),
-                    (ClaimVerdict::Contradicted, Fate::Vetoed { stated: false }),
+                    ClaimVerdict::Contradicted,
                     vetoed(&knowledge),
                     &shown,
                     None,
@@ -294,7 +287,7 @@ async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed)
     Ok(if knowledge.is_common() {
         done(
             (unit, claim, classed),
-            (ClaimVerdict::Supported, Fate::Passed),
+            ClaimVerdict::Supported,
             standard(&knowledge),
             &[],
             None,
@@ -302,7 +295,7 @@ async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed)
     } else if knowledge.is_false() {
         done(
             (unit, claim, classed),
-            (ClaimVerdict::Contradicted, Fate::Failed),
+            ClaimVerdict::Contradicted,
             vetoed(&knowledge),
             &[],
             None,
@@ -318,35 +311,32 @@ async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed)
 /// The finding of a statement a lighter check decided.
 fn done(
     (unit, claim, classed): (usize, &Claim, Classed),
-    (verdict, fate): (ClaimVerdict, Fate),
+    verdict: ClaimVerdict,
     reason: String,
     evidence: &[EvidencePassage],
     supporting_quote: Option<String>,
 ) -> Route {
-    Route::Done(
-        Box::new(Finding {
-            unit,
-            quote: claim.quote.clone(),
-            statement: claim.statement.clone(),
-            verdict,
-            reason,
-            evidence: evidence.to_vec(),
-            supporting_quote,
-            resolution: None,
-            trust: None,
-            label: None,
-            class: Some(classed),
-            two_pass: Default::default(),
-        }),
-        fate,
-    )
+    Route::Done(Box::new(Finding {
+        unit,
+        quote: claim.quote.clone(),
+        statement: claim.statement.clone(),
+        verdict,
+        reason,
+        evidence: evidence.to_vec(),
+        supporting_quote,
+        resolution: None,
+        trust: None,
+        label: None,
+        class: Some(classed),
+        two_pass: Default::default(),
+    }))
 }
 
 /// A statement whose check's answer could not be read.
 fn unjudged(unit: usize, claim: &Claim, classed: Classed, evidence: &[EvidencePassage]) -> Route {
     done(
         (unit, claim, classed),
-        (ClaimVerdict::Unverified, Fate::Unanswered),
+        ClaimVerdict::Unverified,
         "The answer to this statement's check could not be read.".into(),
         evidence,
         None,

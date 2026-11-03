@@ -365,12 +365,23 @@ fn a_later_pass_adopts_only_a_gap_in_a_sentence_written_since_the_last() {
     // The first pass reads the whole lesson.
     assert_eq!(adopt(&claim_ledger::Rewrites::default()), (1, 1, true));
     // A later pass over text that did not change adopts nothing.
-    let unchanged =
-        claim_ledger::Rewrites::new(true, Some(candidate.clone()), vec![], Default::default());
+    let unchanged = claim_ledger::Rewrites::new(
+        true,
+        Some(candidate.clone()),
+        vec![],
+        Default::default(),
+        Default::default(),
+    );
     assert_eq!(adopt(&unchanged), (0, 0, false));
     // The sentence is new to a later pass when something wrote it since.
     let before = lesson("Exercise: write code that reads a file one row at a time.");
-    let rewritten = claim_ledger::Rewrites::new(true, Some(before), vec![], Default::default());
+    let rewritten = claim_ledger::Rewrites::new(
+        true,
+        Some(before),
+        vec![],
+        Default::default(),
+        Default::default(),
+    );
     assert_eq!(adopt(&rewritten), (1, 1, true));
 }
 

@@ -5,15 +5,18 @@
 //! allow (§3, §4, §6.1). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
 mod audit;
+mod cotenancy;
 mod cuts;
 mod fields;
 mod held;
 mod located;
 mod observe;
+mod position;
 mod receipts;
 mod successor;
 
 pub(super) use audit::Audited;
+pub(super) use cotenancy::sentences;
 pub(super) use successor::Rewrites;
 
 use super::provenance_gate::ProvenanceGate;
@@ -28,6 +31,7 @@ use crate::features::learning::lessons::claim_reviews::repository::{
 };
 use crate::features::learning::persistence::now;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
+use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::{
     end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
     ClaimState, EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision,
@@ -454,9 +458,9 @@ impl ClaimLedger {
 
     /// The repairs awaiting the pass that checks their text, for that pass
     /// to give what they wrote the class of what they replaced, and the class
-    /// of each statement the ledger holds, which that pass keeps (claim
-    /// classes design §3.1).
-    pub(super) fn rewrites(&self) -> Rewrites {
+    /// and place in its graph of each statement the ledger holds, which that
+    /// pass keeps (claim classes design §3.1).
+    pub(super) fn rewrites(&self, policy: &dyn AcceptancePolicy) -> Rewrites {
         let parents = self
             .pending
             .repairs
@@ -493,6 +497,7 @@ impl ClaimLedger {
             self.pending.previous.clone(),
             parents,
             held,
+            self.walks(policy),
         )
     }
 
@@ -567,35 +572,6 @@ impl ClaimLedger {
             entry.next_repair_escalates()
                 || (entry.class() == Some(Class::Common) && self.cotenants(claim_id).is_empty())
         })
-    }
-
-    /// The live claims standing on the same sentence as `claim_id`: those in
-    /// its unit and field whose quote holds its quote or is held by it. A
-    /// rewrite of the sentence changes them all (claim classes design §3.2).
-    pub(super) fn cotenants(&self, claim_id: &ClaimId) -> Vec<ClaimId> {
-        let Some(entry) = self.entry(claim_id) else {
-            return Vec::new();
-        };
-        let here = Place::of(entry.location());
-        self.entries
-            .iter()
-            .filter(|other| other.claim_id() != claim_id && !is_gone(other.state()))
-            .filter(|other| stand_together(&here, &Place::of(other.location())))
-            .map(|other| other.claim_id().clone())
-            .collect()
-    }
-
-    /// `claims` and the claims standing on their sentences.
-    pub(super) fn with_cotenants(&self, claims: &[ClaimId]) -> Vec<ClaimId> {
-        let mut all = claims.to_vec();
-        for id in claims {
-            for mate in self.cotenants(id) {
-                if !all.contains(&mate) {
-                    all.push(mate);
-                }
-            }
-        }
-        all
     }
 
     /// The repair of these claims produced nothing usable; each uses its

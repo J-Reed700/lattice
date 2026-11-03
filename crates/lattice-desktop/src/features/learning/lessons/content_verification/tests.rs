@@ -6,6 +6,7 @@
 )]
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::domain::learning::acceptance::StandardPolicy;
 use lattice_core::shared::runtime::jobs::JobStore;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -521,6 +522,9 @@ mod coverage_gaps_tests;
 #[path = "claim_ledger_tests.rs"]
 mod claim_ledger_tests;
 
+#[path = "claim_position_tests.rs"]
+mod claim_position_tests;
+
 #[path = "class_checks_tests.rs"]
 mod class_checks_tests;
 
@@ -558,6 +562,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     let mut checks = ClaimChecks::default();
     let first = verify_with_references(
         &model,
+        &StandardPolicy::new(),
         &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
@@ -572,6 +577,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     sources.push(unrelated);
     let expanded = verify_with_references(
         &model,
+        &StandardPolicy::new(),
         &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
@@ -588,6 +594,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = true;
     let failed = verify_with_references(
         &model,
+        &StandardPolicy::new(),
         &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
@@ -603,6 +610,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     model.failing_judge = false;
     verify_with_references(
         &model,
+        &StandardPolicy::new(),
         &runtimes,
         &lesson,
         &ReferenceCollection::lexical(&sources)?,
@@ -617,6 +625,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
 
     let edited = verify_with_references(
         &model,
+        &StandardPolicy::new(),
         &runtimes,
         &candidate(BAD),
         &ReferenceCollection::lexical(&sources)?,
@@ -645,8 +654,15 @@ async fn a_section_that_goes_is_not_checked_and_its_statements_are_not_in_the_re
         ..ClaimChecks::default()
     };
 
-    let report =
-        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
+    let report = verify_with_references(
+        &model,
+        &StandardPolicy::new(),
+        &runtimes,
+        &lesson,
+        &references,
+        &mut checks,
+    )
+    .await?;
 
     // The section that goes holds a statement the references contradict; it
     // is neither judged nor an issue, and the report still accounts for the
@@ -673,13 +689,27 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         .unwrap()
         .push(candidate(BAD)["blocks"][0].clone());
     let mut checks = ClaimChecks::default();
-    let first =
-        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
+    let first = verify_with_references(
+        &model,
+        &StandardPolicy::new(),
+        &runtimes,
+        &lesson,
+        &references,
+        &mut checks,
+    )
+    .await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 2);
     assert_eq!(first.findings[1].verdict, ClaimVerdict::Contradicted);
     lesson["blocks"][1] = candidate(GOOD)["blocks"][0].clone();
-    let repaired =
-        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
+    let repaired = verify_with_references(
+        &model,
+        &StandardPolicy::new(),
+        &runtimes,
+        &lesson,
+        &references,
+        &mut checks,
+    )
+    .await?;
     assert!(repaired.issues.is_empty());
     assert_eq!(
         *model.judge_calls.lock().unwrap(),
@@ -692,7 +722,15 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         "{} Additional wording.",
         lesson["blocks"][0]["body"].as_str().unwrap()
     ));
-    verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
+    verify_with_references(
+        &model,
+        &StandardPolicy::new(),
+        &runtimes,
+        &lesson,
+        &references,
+        &mut checks,
+    )
+    .await?;
     assert_eq!(*model.judge_calls.lock().unwrap(), 3);
     Ok(())
 }

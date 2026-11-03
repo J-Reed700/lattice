@@ -1,12 +1,13 @@
 //! Progress for the current durable lesson job, scoped to its future. Keeping
 //! this context task-local lets nested review calls report without affecting
 //! concurrent chat, outline generation, or other jobs.
-use super::call_plan::{CallPlan, Counted, Fate};
+use super::call_plan::{CallPlan, Planned};
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
     LearningClaimTally, LearningGenerationActivity, LearningGenerationPhase,
     LearningGenerationStep, LearningStatementPlan,
 };
+use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::Class;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobContext;
@@ -279,7 +280,11 @@ pub(in crate::features::learning) fn new_references(count: Option<usize>) {
 /// The lesson's statements are sorted: from here its checks' calls have a
 /// ceiling (claim classes design §3.12). Later passes sort again and change
 /// nothing.
-pub(in crate::features::learning) fn calls_planned(statements: &[Counted], sections: u32) {
+pub(in crate::features::learning) fn calls_planned(
+    policy: &dyn AcceptancePolicy,
+    statements: &[Planned],
+    sections: u32,
+) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.plan.is_none() {
@@ -295,7 +300,7 @@ pub(in crate::features::learning) fn calls_planned(statements: &[Counted], secti
                 reasoning: count(Class::Reasoning),
                 common: count(Class::Common),
             });
-            state.plan = Some(CallPlan::new(sorting, statements, sections));
+            state.plan = Some(CallPlan::new(policy, sorting, statements, sections));
             publish_ceiling(&mut state);
         }
     });
@@ -313,23 +318,16 @@ pub(in crate::features::learning) fn cuts_known(sections: usize) {
     });
 }
 
-/// Every Reasoning and Common statement has met the check its class names.
-pub(in crate::features::learning) fn lighter_checked(fates: &[(Class, Fate)]) {
+/// The plan's statements have moved through their graphs: `statements` are
+/// where the ledger now has them, in the plan's order.
+pub(in crate::features::learning) fn statements_moved(
+    policy: &dyn AcceptancePolicy,
+    statements: &[Planned],
+) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(plan) = state.plan.as_mut() {
-            plan.lighter_checked(fates);
-        }
-        publish_ceiling(&mut state);
-    });
-}
-
-/// Every statement that needed a source has met the strict check.
-pub(in crate::features::learning) fn strict_checked(fates: &[(Class, Fate)]) {
-    let _ = CURRENT.try_with(|progress| {
-        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(plan) = state.plan.as_mut() {
-            plan.strict_checked(fates);
+            plan.moved(policy, statements);
         }
         publish_ceiling(&mut state);
     });
@@ -500,6 +498,8 @@ pub(in crate::features::learning) async fn run<T>(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
+    use crate::features::learning::lessons::call_plan::PlannedAt;
+    use lattice_core::domain::learning::acceptance::StandardPolicy;
 
     #[tokio::test]
     async fn structured_progress_tracks_repeated_phases_and_concurrent_model_requests() {
@@ -670,22 +670,19 @@ mod tests {
                     (1, None)
                 );
 
+                let policy = StandardPolicy::new();
+                let alone = |class, at| Planned {
+                    class,
+                    at,
+                    sentence: None,
+                };
                 let statements = [
-                    Counted {
-                        class: Class::Sourced,
-                        shares: false,
-                    },
-                    Counted {
-                        class: Class::Common,
-                        shares: false,
-                    },
-                    Counted {
-                        class: Class::Common,
-                        shares: false,
-                    },
+                    alone(Class::Sourced, PlannedAt::Entry),
+                    alone(Class::Common, PlannedAt::Entry),
+                    alone(Class::Common, PlannedAt::Entry),
                 ];
                 assert_eq!(progress.snapshot().2.statements, None);
-                calls_planned(&statements, 1);
+                calls_planned(&policy, &statements, 1);
                 // The plan is what the statements were sorted into.
                 assert_eq!(
                     progress.snapshot().2.statements,
@@ -695,20 +692,18 @@ mod tests {
                         common: 2
                     })
                 );
-                // The sorting call made (1), the Sourced statement's check
-                // (1), the Common ones' samples (6), the four calls after
-                // each statement checked as Sourced fails, those sent to their
-                // source included (12), the flow repair of the section (1),
-                // the two source checks (2) and the repeat of every answer
-                // that cannot be read (7).
-                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(30));
-                calls_planned(&[], 0);
-                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(30));
+                // The sorting call made (1), the longest path of each
+                // statement from its entry (16 for the Sourced one, 16 for
+                // each Common one) and the flow repair of the section (1).
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
+                calls_planned(&policy, &[], 0);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
 
-                lighter_checked(&[(Class::Sourced, Fate::ToSource)]);
-                strict_checked(&[(Class::Sourced, Fate::Failed)]);
-                // The Sourced statement's answer was read: its repeat goes.
-                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(29));
+                // The Sourced statement is resolved: its path is over.
+                statements_moved(&policy, &[alone(Class::Sourced, PlannedAt::Ended)]);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(34));
+                cuts_known(0);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(33));
                 drop(model_calls(3));
                 assert_eq!(progress.snapshot().2.model_calls, 4);
 
@@ -724,24 +719,27 @@ mod tests {
 
     #[test]
     fn a_ceiling_that_goes_up_is_counted_and_one_that_comes_down_is_not() {
-        let statements = [Counted {
+        let policy = StandardPolicy::new();
+        let sourced = |at| Planned {
             class: Class::Sourced,
-            shares: false,
-        }];
+            at,
+            sentence: None,
+        };
         let mut state = State {
-            plan: Some(CallPlan::new(1, &statements, 1)),
+            plan: Some(CallPlan::new(&policy, 1, &[sourced(PlannedAt::Entry)], 1)),
             ..Default::default()
         };
         publish_ceiling(&mut state);
         let first = state.activity.model_calls_ceiling.unwrap();
+        assert_eq!(first, 1 + 16 + 1);
         assert_eq!(state.activity.model_calls_ceiling_rises, 0);
 
         // The plan's own events only lower it.
         if let Some(plan) = state.plan.as_mut() {
-            plan.lighter_checked(&[(Class::Sourced, Fate::ToSource)]);
-            plan.strict_checked(&[(Class::Sourced, Fate::Failed)]);
+            plan.moved(&policy, &[sourced(PlannedAt::Ended)]);
         }
         publish_ceiling(&mut state);
+        assert_eq!(state.activity.model_calls_ceiling, Some(2));
         assert!(state.activity.model_calls_ceiling.unwrap() <= first);
         assert_eq!(state.activity.model_calls_ceiling_rises, 0);
 

@@ -1,6 +1,7 @@
 //! The verify-and-repair loop and its resumable pending-repair checkpoint.
 use super::claim_ledger::{self, ClaimLedger};
 use super::*;
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, StandardPolicy};
 use lattice_core::domain::learning::claim_review::ClaimId;
 
 /// [`verify_and_repair_with_references`] over lexical references, for tests.
@@ -73,6 +74,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     references: &ReferenceCollection<'_>,
     (output_tokens, numbered): (usize, &mut Vec<LearningSourceDto>),
 ) -> Result<(String, LessonVerificationReport)> {
+    let policy = StandardPolicy::new();
     let writers = numbered.len();
     renumber(numbered, references).await?;
     let mut numbered_schema = writer_schema.clone();
@@ -83,6 +85,8 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     let mut resume_repair = true;
     let mut checks = ClaimChecks::default();
     let mut verified: Option<String> = None;
+    // The claims the call plan was made for, in its order: the first pass's.
+    let mut planned: Vec<ClaimId> = Vec::new();
     // Citations this job repaired to where a claim's support was found.
     let mut cited_where_supported = HashSet::new();
     loop {
@@ -92,7 +96,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         ledger.sync().await?;
         let active = expanded.as_ref().unwrap_or(references);
         checks.settled = ledger.user_evidence(active);
-        checks.rewrites = ledger.rewrites();
+        checks.rewrites = ledger.rewrites(&policy);
         checks.removed = ledger.cuts.units();
         if review_pass::apply_user_changes(&mut ledger, &mut candidate).await? {
             raw = candidate.to_string();
@@ -152,8 +156,9 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             verified = Some(raw.clone());
         }
         let mut report =
-            verify_with_references(llm, runtimes, &candidate, active, &mut checks).await?;
+            verify_with_references(llm, &policy, runtimes, &candidate, active, &mut checks).await?;
         ledger.observe(&candidate, &report).await?;
+        plan_moved(&policy, &ledger, &mut planned);
         // A flow repair that wrote a statement is taken back (claim classes
         // design §3.10).
         if let Some(restored) = sections::unmend(&mut ledger, &candidate).await? {
@@ -211,6 +216,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 checks.corroborate = waiting;
                 let evidence = check_evidence(
                     llm,
+                    &policy,
                     &candidate,
                     active,
                     Inventory {
@@ -233,6 +239,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             }
             if rechecked {
                 ledger.observe(&candidate, &report).await?;
+                plan_moved(&policy, &ledger, &mut planned);
             }
             if !saved {
                 break;
@@ -396,6 +403,23 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             }
         }
     }
+}
+
+/// Tells the call plan where the ledger has its statements now. They are the
+/// claims of the first pass the ledger observed, in its order, each followed
+/// to the claim that carries its sentence on.
+pub(super) fn plan_moved(
+    policy: &dyn AcceptancePolicy,
+    ledger: &ClaimLedger,
+    planned: &mut Vec<ClaimId>,
+) {
+    if planned.is_empty() {
+        planned.extend_from_slice(ledger.finding_claims());
+    }
+    crate::features::learning::lesson_progress::statements_moved(
+        policy,
+        &ledger.planned(policy, planned),
+    );
 }
 
 /// The lesson waits for the user's review (§6.1): the draft is saved, the

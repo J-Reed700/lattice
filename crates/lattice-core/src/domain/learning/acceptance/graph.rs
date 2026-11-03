@@ -108,4 +108,13 @@ impl Graph {
     pub fn node(&self, id: NodeId) -> Option<&Node> {
         self.nodes.iter().find(|node| node.name == id.0)
     }
+
+    /// The id of the node named `name`: how a name read back from a record
+    /// becomes a node of this graph.
+    pub fn id_of(&self, name: &str) -> Option<NodeId> {
+        self.nodes
+            .iter()
+            .find(|node| node.name == name)
+            .map(Node::id)
+    }
 }

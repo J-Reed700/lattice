@@ -69,6 +69,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         let result = verify_with_references(
             &model,
+            &StandardPolicy::new(),
             &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
@@ -102,6 +103,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         verify_with_references(
             &resumed_model,
+            &StandardPolicy::new(),
             &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
@@ -128,6 +130,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         verify_with_references(
             &changed_model,
+            &StandardPolicy::new(),
             &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
@@ -167,6 +170,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         let sources = vec![source()];
         let report = check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             inventory,
@@ -408,8 +412,10 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
     // on interruption here.
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         let mut checks = ClaimChecks::default();
+        let policy = StandardPolicy::new();
         let work = check_evidence(
             &model,
+            &policy,
             &candidate,
             &references,
             inventory.clone(),
@@ -482,6 +488,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         let report = check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate,
             &references,
             inventory.clone(),
@@ -503,6 +510,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
             .push_str(" Additional evidence changes the judgment input.");
         check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate,
             &ReferenceCollection::lexical(&changed)?,
             inventory,
@@ -522,6 +530,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
         };
         check_evidence(
             &changed_model,
+            &StandardPolicy::new(),
             &candidate,
             &references,
             Inventory {

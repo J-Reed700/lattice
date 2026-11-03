@@ -256,6 +256,22 @@ fn a_graph_holds_one_node_per_name() {
 }
 
 #[test]
+fn a_node_name_read_back_from_a_record_is_the_graphs_own_node_id() {
+    let policy = StandardPolicy::new();
+    for class in CLASSES {
+        let graph = policy.graph(class);
+        for node in graph.nodes() {
+            let name = String::from(node.name);
+            assert_eq!(graph.id_of(&name), Some(node.id()), "{name}");
+        }
+    }
+    let sourced = policy.graph(Sourced);
+    assert_eq!(sourced.id_of("c.read"), None, "another class's node");
+    assert_eq!(sourced.id_of("s.read.again"), None);
+    assert_eq!(sourced.id_of(""), None);
+}
+
+#[test]
 fn a_reading_a_goal_and_an_outcome_are_stored_in_snake_case() {
     assert_eq!(
         serde_json::to_value(Reading::Consistency).unwrap(),

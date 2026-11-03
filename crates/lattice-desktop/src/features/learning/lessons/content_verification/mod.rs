@@ -657,6 +657,7 @@ async fn verify(
     let references = ReferenceCollection::lexical(sources)?;
     verify_with_references(
         llm,
+        &lattice_core::domain::learning::acceptance::StandardPolicy::new(),
         &BuiltinRuntimes::for_tests(),
         candidate,
         &references,

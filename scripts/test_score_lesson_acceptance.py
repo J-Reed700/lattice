@@ -65,7 +65,7 @@ CLAIMS = [
 
 
 def build(path, claims=CLAIMS, preparation="ready", review="ready", ceiling=80, made=50, rises=0, minutes=20,
-          block_sources=("v1",), lesson=LESSON):
+          block_sources=("v1",), lesson=LESSON, statements=None):
     db = sqlite3.connect(path)
     db.executescript(SCHEMA)
     db.execute("INSERT INTO learning_lessons VALUES (?,?,?)", (lesson, PROGRAM, preparation))
@@ -80,7 +80,7 @@ def build(path, claims=CLAIMS, preparation="ready", review="ready", ceiling=80, 
         for ordinal, event in enumerate([classified(cls, by)] + events):
             db.execute("INSERT INTO learning_lesson_claim_events VALUES (?,?,?)",
                        (claim_id, ordinal, json.dumps({"event": event, "appVersion": "1", "checkerModel": "qwen-27b"})))
-    activity = {"statements": {"sourced": 2, "reasoning": 2, "common": 2}, "modelCalls": made,
+    activity = {"statements": statements or {"sourced": 2, "reasoning": 2, "common": 2}, "modelCalls": made,
                 "modelCallsCeiling": ceiling, "modelCallsCeilingRises": rises, "modelName": "qwen-27b"}
     db.execute("INSERT INTO jobs VALUES (?,?,?,?,?)", (JOB, "completed", json.dumps(activity), 0, minutes * 60000))
     db.execute("INSERT INTO job_checkpoints VALUES (?,?,?)",
@@ -205,7 +205,35 @@ class ScoreLessonAcceptance(unittest.TestCase):
         db.commit()
         db.close()
 
-        self.assertEqual(sla.score(self.path)["calls"]["terms"]["M"], 1 + 5)
+        made = sla.score(self.path)["calls"]
+
+        # Each re-reads twice from its post-rewrite node (5 calls) and takes the narrowing call.
+        self.assertEqual(made["terms"]["M"], (2 * 5 + 1) + (2 * 5 + 1))
+        self.assertEqual(made["bound_with_every_term_at_most"], 1 + 94 + 22 + 1)
+
+    def test_the_recheck_of_a_class_is_two_readings_from_its_post_rewrite_node_and_the_narrowing_call(self):
+        self.assertEqual(sla.AFTER_REWRITE, {"sourced": 5, "reasoning": 5, "common": 4, "internal": 4})
+        self.assertEqual(sla.RECHECK, {"sourced": 11, "reasoning": 11, "common": 9, "internal": 9})
+        self.assertEqual(sla.ENTRY, {"sourced": 16, "reasoning": 15, "common": 16, "internal": 13})
+
+    def test_the_bound_with_every_term_at_most_is_the_sorting_each_longest_path_the_rechecks_and_a_flow_repair_a_section(self):
+        build(self.path)
+
+        made = sla.score(self.path)["calls"]
+
+        # One sorting call for six statements; two of each class at the longest path of its graph from its entry
+        # (2 * 16 + 2 * 15 + 2 * 16); no statement shares a sentence; the one section's flow repair.
+        self.assertEqual(made["sort_calls"], 1)
+        self.assertEqual(made["terms"]["M"], 0)
+        self.assertEqual(made["bound_with_every_term_at_most"], 1 + (2 * 16 + 2 * 15 + 2 * 16) + 0 + 1)
+
+    def test_a_statement_the_model_calls_internal_adds_the_longest_path_of_its_graph(self):
+        statements = {"sourced": 1, "reasoning": 1, "common": 1, "internal": 1}
+        build(self.path, statements=statements)
+
+        made = sla.score(self.path)["calls"]
+
+        self.assertEqual(made["bound_with_every_term_at_most"], 1 + (16 + 15 + 16 + 13) + 0 + 1)
 
     def test_the_planted_statement_is_reported_with_its_class_and_how_it_ended(self):
         planted = ("p", 4, "sourced", "rule", REMOVED, [checked(CONTRADICTED), repair("removed")])

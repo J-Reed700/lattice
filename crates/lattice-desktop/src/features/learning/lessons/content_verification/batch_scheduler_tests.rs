@@ -156,6 +156,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
     let result = lesson_drafts::run(&repo, &job, &lesson, async {
         check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             inventory(8),
@@ -187,6 +188,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
     lesson_drafts::run(&repo, &job, &lesson, async {
         let report = check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             inventory(8),
@@ -209,6 +211,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         // All eight decisions are reusable.
         check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             inventory(8),
@@ -240,6 +243,7 @@ async fn a_group_counted_past_the_window_is_split_and_every_claim_is_judged() ->
     lesson_drafts::run(&repo, &job, &lesson, async {
         let report = check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             inventory(8),
@@ -282,6 +286,7 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
         };
         let result = check_evidence(
             &interrupted,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             inventory(8),
@@ -299,6 +304,7 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
         };
         let report = check_evidence(
             &resumed,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             inventory(8),
@@ -337,6 +343,7 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
         let result = lesson_drafts::run(&repo, &job, &lesson, async {
             check_evidence(
                 &model,
+                &StandardPolicy::new(),
                 &candidate(GOOD),
                 &references,
                 inventory(8),
@@ -433,6 +440,7 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
             let references = ReferenceCollection::lexical(&sources)?;
             let report = check_evidence(
                 &model,
+                &StandardPolicy::new(),
                 &candidate(GOOD),
                 &references,
                 inventory(10),
@@ -612,8 +620,8 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let evidence = evidence_for(&model, &claim.statement, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
-        let mut retained=measured();let candidate=candidate(GOOD);
-        let work=check_evidence(&model,&candidate,&references,input,coverage(8),vec![],&mut retained);
+        let mut retained=measured();let candidate=candidate(GOOD);let policy=StandardPolicy::new();
+        let work=check_evidence(&model,&policy,&candidate,&references,input,coverage(8),vec![],&mut retained);
         tokio::select! {
             result=work=>panic!("The incomplete claim should be waiting: {result:?}"),
             result=tokio::time::timeout(Duration::from_secs(5),async {
@@ -647,6 +655,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     lesson_drafts::run(&repo, &job, &lesson, async {
         let report = check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             inventory(8),
@@ -674,6 +683,7 @@ async fn claims_of_two_sections_never_share_a_request() -> Result<()> {
     lesson_drafts::run(&repo, &job, &lesson, async {
         let report = check_evidence(
             &model,
+            &StandardPolicy::new(),
             &candidate(GOOD),
             &references,
             sections(2, 3),

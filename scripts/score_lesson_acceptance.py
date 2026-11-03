@@ -16,6 +16,8 @@ Where each number comes from, in the app's own tables:
                went up: modelCallsCeilingRises (the app counts it as it publishes the ceiling)
   terms        S, R, C: activity_json.statements; F, G, V, D, U: the claims' check events; K: the job's
                `claim-ledger-v1:cuts` checkpoint; M: the claims' places in their sections
+  bound        with every term at most: the sorting calls, each class's statements times the longest path through its
+               graph from its entry, M, and a flow repair for each section (acceptance design 2.4)
   gate         learning_source_versions.not_a_source and admission_policy, learning_blocks.source_ids_json,
                the report's findings
   models       the checker of each check event, learning_lesson_reviews.checker_model, the report's checker_model,
@@ -46,8 +48,13 @@ TERMINAL = {
     "reasoning": {"consistent"},
     "common": {"general_knowledge"},
 }
-# Calls a second check of a statement sharing a sentence can make, by class (design 3.11, M).
-RECHECK = {"sourced": 1, "reasoning": 5, "common": 4}
+# The longest path in calls through a class's graph, from its entry and from its post-rewrite node (acceptance design
+# 2.3, 2.4), which the app derives from the graphs.
+ENTRY = {"sourced": 16, "reasoning": 15, "common": 16, "internal": 13}
+AFTER_REWRITE = {"sourced": 5, "reasoning": 5, "common": 4, "internal": 4}
+# M, by class, for a statement that shares a sentence: two readings from its post-rewrite node, one after a
+# neighbour's rewrite and one after a neighbour's narrowing cut, and the narrowing call (design 2.4).
+RECHECK = {cls: 2 * calls + 1 for cls, calls in AFTER_REWRITE.items()}
 STRICT_RESULTS = {"supported", "supported_elsewhere"}
 
 
@@ -208,7 +215,8 @@ def calls(db, lesson, claims, review, failures):
     ).fetchone()
     activity = (loads(job["activity_json"]) if job else None) or {}
     plan = activity.get("statements") or {}
-    s, r, c = (int(plan.get(k) or 0) for k in ("sourced", "reasoning", "common"))
+    counts = {cls: int(plan.get(cls) or 0) for cls in ENTRY}
+    s, r, c = counts["sourced"], counts["reasoning"], counts["common"]
     sections = db.execute("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id = ?", (lesson["id"],)).fetchone()[0]
     cuts = (cuts_of(db, review["job_id"]) if review else None) or {}
     by_class = lambda cls: [x for x in claims if x.cls == cls]
@@ -220,7 +228,7 @@ def calls(db, lesson, claims, review, failures):
     k = len(cuts.get("taken") or {})
     m = recheck_calls(claims)
     sorting = math.ceil((s + r + c) / SORT_BATCH)
-    worst = sorting + s + r + 3 * r + 3 * c + 4 * (s + c) + 6 * r + sections + r + c + m + (s + 3 * r + 3 * c)
+    worst = sorting + sum(counts[cls] * ENTRY[cls] for cls in ENTRY) + m + sections
     bound = sorting + s + r + 3 * r + 3 * c + 4 * f + 6 * g + k + v + d + m + u
     made, ceiling = activity.get("modelCalls"), activity.get("modelCallsCeiling")
     rises = activity.get("modelCallsCeilingRises")
