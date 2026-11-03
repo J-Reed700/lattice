@@ -216,8 +216,8 @@ def calls(db, lesson, claims, review, failures):
     k = len(cuts.get("taken") or {})
     m = recheck_calls(claims)
     sorting = math.ceil((s + r + c) / SORT_BATCH)
-    worst = sorting + s + r + 3 * r + 3 * c + 3 * (s + c) + 6 * r + sections + r + c + m + (s + 3 * r + 3 * c)
-    bound = sorting + s + r + 3 * r + 3 * c + 3 * f + 6 * g + k + v + d + m + u
+    worst = sorting + s + r + 3 * r + 3 * c + 4 * (s + c) + 6 * r + sections + r + c + m + (s + 3 * r + 3 * c)
+    bound = sorting + s + r + 3 * r + 3 * c + 4 * f + 6 * g + k + v + d + m + u
     made, ceiling = activity.get("modelCalls"), activity.get("modelCallsCeiling")
     rises = activity.get("modelCallsCeilingRises")
     recorded = Counter()

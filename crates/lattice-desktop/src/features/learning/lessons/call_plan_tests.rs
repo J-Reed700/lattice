@@ -34,11 +34,11 @@ fn before_any_check_the_ceiling_takes_every_term_at_its_most() {
     // The calls of sorting and of the first checks, 7 + 36 + 45 + 3·45 +
     // 3·8, then F at 36 + 8 statements, G at 45, K at 3, V at 45, D at 8 and
     // U at 36 + 3·45 + 3·8.
-    assert_eq!(replay().ceiling(), 247 + 3 * 44 + 6 * 45 + 3 + 45 + 8 + 195);
+    assert_eq!(replay().ceiling(), 247 + 4 * 44 + 6 * 45 + 3 + 45 + 8 + 195);
 }
 
 #[test]
-fn the_replays_first_checks_bring_the_ceiling_to_the_designs_278() {
+fn the_replays_first_checks_bring_the_ceiling_to_the_designs_281() {
     let mut plan = replay();
     let mut lighter = fates(Class::Sourced, Fate::ToSource, 36);
     lighter.extend(fates(Class::Reasoning, Fate::Passed, 42));
@@ -47,13 +47,13 @@ fn the_replays_first_checks_bring_the_ceiling_to_the_designs_278() {
     lighter.extend(fates(Class::Common, Fate::Passed, 8));
     plan.lighter_checked(&lighter);
     // G is down to 3 and V to 1, D to 0; F waits for the strict check.
-    assert_eq!(plan.ceiling(), 247 + 3 * 36 + 6 * 3 + 3 + 1 + 36);
+    assert_eq!(plan.ceiling(), 247 + 4 * 36 + 6 * 3 + 3 + 1 + 36);
 
     let mut strict = fates(Class::Sourced, Fate::Passed, 33);
     strict.extend(fates(Class::Sourced, Fate::Failed, 3));
     plan.strict_checked(&strict);
-    assert_eq!(plan.ceiling(), 247 + 3 * 3 + 6 * 3 + 3 + 1);
-    assert_eq!(plan.ceiling(), 278);
+    assert_eq!(plan.ceiling(), 247 + 4 * 3 + 6 * 3 + 3 + 1);
+    assert_eq!(plan.ceiling(), 281);
 }
 
 #[test]
@@ -74,7 +74,7 @@ fn a_common_statement_sent_to_its_source_check_does_not_raise_the_ceiling() {
         (Class::Common, Fate::Failed),
     ]);
     ceilings.push(plan.ceiling());
-    assert_eq!(ceilings, [41, 24, 17]);
+    assert_eq!(ceilings, [44, 26, 18]);
 }
 
 #[test]

@@ -8,8 +8,10 @@ use lattice_core::domain::learning::claim_review::Class;
 /// The calls of one knowledge check: its samples.
 pub(crate) const SAMPLES: u32 = KNOWLEDGE_SAMPLES as u32;
 /// The calls a failed Sourced statement leads to: the re-check against what
-/// research found, the rewrite and its re-check.
-const SOURCED_FOLLOW_UP: u32 = 3;
+/// research found, the re-check of the citation repaired to what it found,
+/// the rewrite when that citation does not support it after all, and the
+/// rewrite's re-check.
+const SOURCED_FOLLOW_UP: u32 = 4;
 /// The calls a failed Reasoning statement leads to: the rewrite, the
 /// consistency re-check, the veto's samples and the strict call on its
 /// passages.
