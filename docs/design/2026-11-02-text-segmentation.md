@@ -163,7 +163,7 @@ Each consumer keeps a `const` plan next to its code, so what it wants stays read
 
 | Consumer | Plan |
 |---|---|
-| Claim inventory | `partition(Prose, Chars, max 1,400, [Paragraph ≥ 0.43, Sentence 0], Extend)`. A claim's quote is narrowed at extraction to the sentence `claim_sentence` finds, the ledger's own locator, falling back to its passage. Revision drops a claim whose sentence is gone from the section. |
+| Claim inventory | `partition(Prose, Chars, max 1,400, [Paragraph ≥ 0.43, Sentence 0], Extend)`. A claim's quote is narrowed at extraction to the sentence `claim_sentence` finds, the ledger's own locator, falling back to its passage, and cut to the 1,600 characters an inventory keeps, which only a sentence the plan extends past 1,400 can pass. Revision drops a claim whose sentence is gone from the section. |
 | Memory segments | `partition(Prose, Bytes, 6 KiB, [Paragraph ¼, Line ¼, Sentence ¼], Cut)`, overlap context unchanged |
 | Embedding fit | `partition(Prose, Tokens, limit, [Paragraph ½, Sentence ½, Word ¾], Cut)`, then the exact re-count |
 | `split_into_parts` | `partition(Prose, Chars, max, [Line 0.8, Word 0.8], Cut)` |
@@ -184,7 +184,7 @@ Every phase is test-first. Before a consumer moves, its current output is record
 2. **The lesson pipeline** (on lesson/design):
    - `align` in core; `confine.rs` calls it.
    - The claim inventory on `partition`.
-   - Every claim quote, extracted or revised, narrowed by one `claim_quote(passage, statement)`: `claim_sentence`, or the passage when no single sentence holds the statement.
+   - Every claim quote, extracted or revised, narrowed by one `claim_quote(passage, statement)`: `claim_sentence`, or the passage when no single sentence holds the statement, cut to the 1,600 characters an inventory keeps.
    - Relocation by `fate`: a Kept quote moves, a Rewritten one becomes its new text for the model's revision to restate, and a Removed one takes its claim out of the inventory. An old passage-wide quote is narrowed first, so a cut inside it decides the claim's fate.
    - The red test is `a_claim_cut_on_its_last_attempt_ends_removed_though_the_inventory_revision_keeps_its_statement` (`claim_ledger_tests.rs`). Then comes the 27B acceptance run.
 3. **Sentence lists and small chunkers** (main): chat verification, teaching quotes, outline linking, notes, snippets, study recall, HyDE, claim review, memory segments, `split_into_parts`, `passages_from_text`, the tutor read, excerpts, read aloud, the course index. These behaviour changes stay inside each consumer's own tests. The course index runs its fixtures.

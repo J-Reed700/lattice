@@ -3,8 +3,26 @@
 //! hold a whole passage; the review screen and the sync points narrow it
 //! the way the next pass will, so they agree with the pass before it runs.
 
+use super::super::MAX_QUOTE_CHARS;
 use lattice_core::domain::learning::claim_review::ClaimLocation;
 use lattice_core::shared::text::{claim_sentence, sentences};
+
+/// The quote of a claim extracted from `passage`: the sentence `statement`
+/// restates, else the whole passage, cut to what an inventory keeps.
+pub(in crate::features::learning) fn claim_quote<'p>(passage: &'p str, statement: &str) -> &'p str {
+    let quote = claim_sentence(passage, (0, passage.len()), statement)
+        .and_then(|(start, end)| passage.get(start..end))
+        .unwrap_or(passage);
+    clip(quote)
+}
+
+/// `text` cut to the longest quote an inventory keeps.
+pub(in crate::features::learning) fn clip(text: &str) -> &str {
+    text.char_indices()
+        .nth(MAX_QUOTE_CHARS)
+        .and_then(|(end, _)| text.get(..end))
+        .unwrap_or(text)
+}
 
 /// `location.quote` narrowed to the claim's sentence in `field_text` when the
 /// stored quote is wider than one; the quote itself otherwise.
@@ -23,19 +41,24 @@ pub(in crate::features::learning) fn located(
     statement: &str,
     field_text: &str,
 ) -> (String, Option<(usize, usize)>) {
-    let quote = &location.quote;
-    let kept = || (quote.clone(), location.span);
+    narrow(&location.quote, location.span, statement, field_text)
+}
+
+/// [`located`] for a `quote` that stands in `field_text` at `span`, when that
+/// is known.
+pub(in crate::features::learning) fn narrow(
+    quote: &str,
+    span: Option<(usize, usize)>,
+    statement: &str,
+    field_text: &str,
+) -> (String, Option<(usize, usize)>) {
+    let kept = || (quote.to_owned(), span);
     if sentences(quote).len() < 2 {
         return kept();
     }
-    let within = location
-        .span
-        .filter(|&(start, end)| field_text.get(start..end) == Some(quote.as_str()))
-        .or_else(|| {
-            field_text
-                .find(quote.as_str())
-                .map(|at| (at, at + quote.len()))
-        });
+    let within = span
+        .filter(|&(start, end)| field_text.get(start..end) == Some(quote))
+        .or_else(|| field_text.find(quote).map(|at| (at, at + quote.len())));
     let Some(within) = within else {
         return kept();
     };

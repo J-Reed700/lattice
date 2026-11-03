@@ -458,6 +458,10 @@ fn contains_text(value: &Value, quote: &str) -> bool {
         _ => false,
     }
 }
+
+/// The longest quote an inventory keeps, in characters.
+const MAX_QUOTE_CHARS: usize = 1_600;
+
 fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     let mut seen = HashSet::new();
     let count: usize = inventory.units.iter().map(|u| u.claims.len()).sum();
@@ -475,7 +479,7 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
             || (unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty())
             || unit.claims.iter().any(|c| {
                 c.quote.trim().is_empty()
-                    || c.quote.chars().count() > 1600
+                    || c.quote.chars().count() > MAX_QUOTE_CHARS
                     || !contains_text(value, &c.quote)
                     || c.statement.trim().is_empty()
                     || c.statement.chars().count() > 2000

@@ -192,7 +192,7 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
     }
     let mut claims = Vec::new();
     for claim in unit.claims {
-        let quote = passages
+        let passage = passages
             .iter()
             .find(|p| p.get("id").and_then(Value::as_str) == Some(&claim.passage_id))
             .and_then(|p| p.get("text"))
@@ -210,7 +210,7 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
             ));
         }
         claims.push(Claim {
-            quote: quote.into(),
+            quote: claim_ledger::claim_quote(passage, &claim.statement).into(),
             statement: claim.statement,
         });
     }
