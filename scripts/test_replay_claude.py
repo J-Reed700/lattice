@@ -57,6 +57,38 @@ class BodyOf(unittest.TestCase):
             {"type": "text", "text": "message", "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": "\n\ngroup"}])
 
+    def test_no_thinking_is_each_models_off_form_and_a_model_without_one_thinks_at_low_effort(self):
+        reading = {"max_tokens": 900, "messages": [{"role": "user", "content": "x" * 4000}]}
+        for model, thinking, max_tokens in (("claude-haiku-5-5", {"type": "disabled"}, 900),
+                                            ("claude-sonnet-5-5", {"type": "between_tools"}, 900),
+                                            ("claude-opus-5-5", {"type": "adaptive"}, claude.MAX_TOKENS)):
+            claude.use(model, None, thinking="off")
+            body = claude.body_of(reading)
+            self.assertEqual(body["thinking"], thinking, model)
+            self.assertEqual(body["max_tokens"], max_tokens, model)
+            self.assertEqual(body["output_config"], {"effort": "low"}, model)
+        claude.use("claude-opus-5-5", None)
+        self.assertNotIn("output_config", claude.body_of(reading))
+
+    def test_a_json_schema_is_the_output_format_shaped_as_the_app_shapes_it(self):
+        schema = {"type": "object", "properties": {
+            "items": {"type": "array", "minItems": 2, "maxItems": 4, "items": {"type": "string", "maxLength": 80}},
+            "score": {"type": "integer", "minimum": 0, "description": "How sure."}}}
+        body = claude.body_of({"messages": [{"role": "user", "content": "Q"}],
+                               "response_format": {"type": "json_schema",
+                                                   "json_schema": {"name": "response", "strict": True, "schema": schema}}})
+        self.assertEqual(body["output_config"], {"format": {"type": "json_schema", "schema": {
+            "type": "object", "additionalProperties": False, "properties": {
+                "items": {"type": "array", "minItems": 1, "items": {"type": "string", "maxLength": 80},
+                          "description": "minItems: 2, maxItems: 4"},
+                "score": {"type": "integer", "description": "How sure. (minimum: 0)"}}}}})
+        self.assertEqual(body["thinking"], {"type": "adaptive"})
+        claude.use("claude-haiku-5-5", None, thinking="off")
+        body = claude.body_of({"messages": [{"role": "user", "content": "Q"}],
+                               "response_format": {"type": "json_schema", "json_schema": {"schema": {"type": "string"}}}})
+        self.assertEqual(body["output_config"], {"effort": "low",
+                                                 "format": {"type": "json_schema", "schema": {"type": "string"}}})
+
     def test_a_warmup_is_not_sent(self):
         self.assertEqual(claude.call({"messages": []}, "warmup")["content"], "")
 
