@@ -1,6 +1,7 @@
 use super::dto::ExplorerEntryKind;
 use super::fs::{self, SearchRequest, WalkBounds};
 use super::scope::Scope;
+use lattice_core::shared::testing::links::{self, LinkKind};
 use lattice_core::shared::AppError;
 use std::path::Path;
 use std::time::Duration;
@@ -68,40 +69,79 @@ fn an_absolute_path_is_refused_even_inside_the_root() {
     assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
 }
 
-#[cfg(unix)]
-#[test]
-fn a_symlink_pointing_out_of_the_root_is_refused_and_not_listed() {
+fn links_pointing_out_of_the_root_are_refused_and_not_listed(kind: LinkKind) {
     let (_dir, scope) = fixture();
     let outside = tempfile::tempdir().unwrap();
     write(outside.path(), "secret.txt", b"do not read");
-    std::os::unix::fs::symlink(outside.path(), scope.root().join("escape")).unwrap();
-    std::os::unix::fs::symlink(
-        outside.path().join("secret.txt"),
-        scope.root().join("secret-link.txt"),
-    )
-    .unwrap();
+    if !links::link_dir(kind, outside.path(), &scope.root().join("escape")).unwrap() {
+        return;
+    }
+    // A junction cannot point at a file.
+    let file_link = kind == LinkKind::Symlink;
+    if file_link
+        && !links::link_file(
+            &outside.path().join("secret.txt"),
+            &scope.root().join("secret-link.txt"),
+        )
+        .unwrap()
+    {
+        return;
+    }
 
-    assert!(matches!(
-        scope.resolve("escape/secret.txt").unwrap_err(),
-        AppError::PermissionDenied(_)
-    ));
-    assert!(fs::read_file(&scope, "secret-link.txt").is_err());
+    assert!(
+        matches!(
+            scope.resolve("escape/secret.txt").unwrap_err(),
+            AppError::PermissionDenied(_)
+        ),
+        "a {kind} out of the root must be refused"
+    );
+    if file_link {
+        assert!(fs::read_file(&scope, "secret-link.txt").is_err());
+    }
     let listing = fs::list_dir(&scope, "").unwrap();
-    assert!(listing
-        .entries
-        .iter()
-        .all(|entry| entry.name != "escape" && entry.name != "secret-link.txt"));
-    assert!(search_paths(&scope, "do not read").is_empty());
+    assert!(
+        listing
+            .entries
+            .iter()
+            .all(|entry| entry.name != "escape" && entry.name != "secret-link.txt"),
+        "a {kind} out of the root must not be listed"
+    );
+    assert!(
+        search_paths(&scope, "do not read").is_empty(),
+        "a search must not follow a {kind} out of the root"
+    );
 }
 
-#[cfg(unix)]
+#[test]
+fn a_symlink_pointing_out_of_the_root_is_refused_and_not_listed() {
+    links_pointing_out_of_the_root_are_refused_and_not_listed(LinkKind::Symlink);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_pointing_out_of_the_root_is_refused_and_not_listed() {
+    links_pointing_out_of_the_root_are_refused_and_not_listed(LinkKind::Junction);
+}
+
+fn a_link_staying_inside_the_root_resolves(kind: LinkKind) {
+    let (_dir, scope) = fixture();
+    if !links::link_dir(kind, &scope.root().join("src"), &scope.root().join("alias")).unwrap() {
+        return;
+    }
+    let resolved = scope.resolve("alias/main.rs").unwrap();
+    assert_eq!(resolved.relative, "alias/main.rs", "{kind}");
+    assert!(resolved.canonical.starts_with(scope.root()), "{kind}");
+}
+
 #[test]
 fn a_symlink_staying_inside_the_root_resolves() {
-    let (_dir, scope) = fixture();
-    std::os::unix::fs::symlink(scope.root().join("src"), scope.root().join("alias")).unwrap();
-    let resolved = scope.resolve("alias/main.rs").unwrap();
-    assert_eq!(resolved.relative, "alias/main.rs");
-    assert!(resolved.canonical.starts_with(scope.root()));
+    a_link_staying_inside_the_root_resolves(LinkKind::Symlink);
+}
+
+#[cfg(windows)]
+#[test]
+fn a_junction_staying_inside_the_root_resolves() {
+    a_link_staying_inside_the_root_resolves(LinkKind::Junction);
 }
 
 #[test]

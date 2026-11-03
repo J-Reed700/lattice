@@ -9,6 +9,7 @@ use crate::features::learning::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::testing::links;
 use std::path::Path;
 
 async fn course(pool: &sqlx::SqlitePool) -> Result<String> {
@@ -224,10 +225,8 @@ async fn save_as_refuses_app_data_links_and_non_pack_files() -> Result<()> {
 
     let real = elsewhere.path().join("real.txt");
     tokio::fs::write(&real, b"keep me").await?;
-    #[cfg(unix)]
-    {
-        let link = elsewhere.path().join("link.lattice-learning");
-        std::os::unix::fs::symlink(&real, &link)?;
+    let link = elsewhere.path().join("link.lattice-learning");
+    if links::link_file(&real, &link)? {
         let error = packs
             .save_as(&move_request(&program_id), &picks(&link))
             .await

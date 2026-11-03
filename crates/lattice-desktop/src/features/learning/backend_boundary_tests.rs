@@ -10,6 +10,7 @@ use super::{
     },
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::testing::links::{self, LinkKind};
 
 fn id(seed: u128) -> String {
     uuid::Uuid::from_u128(seed).to_string()
@@ -165,23 +166,37 @@ fn lab_spec_rejects_aliases_and_accepts_resource_limit_edges() {
     assert!(validate_execution_spec(&boundaries).is_err());
 }
 
-#[cfg(unix)]
-#[test]
-fn lab_materialization_rejects_a_symlinked_parent_that_escapes_workspace() -> anyhow::Result<()> {
-    use std::os::unix::fs::symlink;
-
+fn lab_materialization_rejects_a_linked_parent_that_escapes_workspace(
+    kind: LinkKind,
+) -> anyhow::Result<()> {
     let parent = tempfile::tempdir()?;
     let outside = parent.path().join("outside");
     std::fs::create_dir(&outside)?;
     let root = parent.path().join("run");
     std::fs::create_dir(&root)?;
-    symlink(&outside, root.join("linked"))?;
+    if !links::link_dir(kind, &outside, &root.join("linked"))? {
+        return Ok(());
+    }
 
     let spec = lab_spec(vec![LearningLabFile {
         path: "linked/escaped.py".into(),
         content: "should never be written".into(),
     }]);
-    assert!(materialize_workspace(&root, &spec).is_err());
-    assert!(!outside.join("escaped.py").exists());
+    assert!(
+        materialize_workspace(&root, &spec).is_err(),
+        "a {kind} out of the workspace must be refused"
+    );
+    assert!(!outside.join("escaped.py").exists(), "{kind}");
     Ok(())
+}
+
+#[test]
+fn lab_materialization_rejects_a_symlinked_parent_that_escapes_workspace() -> anyhow::Result<()> {
+    lab_materialization_rejects_a_linked_parent_that_escapes_workspace(LinkKind::Symlink)
+}
+
+#[cfg(windows)]
+#[test]
+fn lab_materialization_rejects_a_junctioned_parent_that_escapes_workspace() -> anyhow::Result<()> {
+    lab_materialization_rejects_a_linked_parent_that_escapes_workspace(LinkKind::Junction)
 }

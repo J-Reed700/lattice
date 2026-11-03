@@ -154,6 +154,7 @@ pub fn validate_bare_filename(name: &str) -> Result<(), AppError> {
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
+    use crate::shared::testing::links::{self, LinkKind};
     use tempfile::tempdir;
 
     #[test]
@@ -189,22 +190,30 @@ mod tests {
         assert!(confine_to_root(root.path(), &candidate).is_err());
     }
 
-    #[test]
-    fn rejects_a_symlink_pointing_outside_the_root() {
+    fn link_cannot_leave_the_root(kind: LinkKind) {
         let root = tempdir().unwrap();
         let outside = tempdir().unwrap();
         let link = root.path().join("escape");
-
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(outside.path(), &link).unwrap();
+        if !links::link_dir(kind, outside.path(), &link).unwrap() {
+            return;
+        }
 
         let candidate = link.join("payload.bin");
         assert!(
             confine_to_root(root.path(), &candidate).is_err(),
-            "a symlinked directory must not be a way out of the root"
+            "a {kind} to a directory must not be a way out of the root"
         );
+    }
+
+    #[test]
+    fn rejects_a_symlink_pointing_outside_the_root() {
+        link_cannot_leave_the_root(LinkKind::Symlink);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rejects_a_junction_pointing_outside_the_root() {
+        link_cannot_leave_the_root(LinkKind::Junction);
     }
 
     #[test]
