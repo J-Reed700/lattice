@@ -691,9 +691,9 @@ mod loop_bound {
         const BOILS: &str = "At sea level, water boils at 100 °C.";
         let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
         let body = format!("{VERIFIED} {ALSO_VERIFIED} {FAILED}");
-        // One inventory passage holds all three claims: it is each one's
-        // quote as the extractor names it, and the ledger locates each claim
-        // to its own sentence.
+        // One inventory passage holds all three claims: a pass that quoted
+        // whole passages stored it as each one's quote, and the ledger
+        // locates each claim to its own sentence.
         assert_eq!(only_passage(&body), body);
         let model = Model::new();
         let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;

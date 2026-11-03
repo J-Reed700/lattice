@@ -1234,8 +1234,8 @@ pub(super) fn only_passage(body: &str) -> String {
     passages[0]["text"].as_str().unwrap().to_owned()
 }
 
-/// A finding on `body`'s one passage as the inventory resolves it, the
-/// passage being its quote; checked against `source`.
+/// A finding on `body`'s one passage as an older pass's inventory resolved
+/// it, the passage being its quote; checked against `source`.
 pub(super) fn passage_finding(
     body: &str,
     statement: &str,
