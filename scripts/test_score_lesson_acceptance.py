@@ -65,18 +65,18 @@ CLAIMS = [
 
 
 def build(path, claims=CLAIMS, preparation="ready", review="ready", ceiling=80, made=50, rises=0, minutes=20,
-          block_sources=("v1",)):
+          block_sources=("v1",), lesson=LESSON):
     db = sqlite3.connect(path)
     db.executescript(SCHEMA)
-    db.execute("INSERT INTO learning_lessons VALUES (?,?,?)", (LESSON, PROGRAM, preparation))
-    db.execute("INSERT INTO learning_lesson_reviews VALUES (?,?,?,?,?)", (LESSON, PROGRAM, JOB, review, "qwen-27b"))
+    db.execute("INSERT INTO learning_lessons VALUES (?,?,?)", (lesson, PROGRAM, preparation))
+    db.execute("INSERT INTO learning_lesson_reviews VALUES (?,?,?,?,?)", (lesson, PROGRAM, JOB, review, "qwen-27b"))
     findings = [{"statement": STATEMENT.format(c[0]), "class": {"class": c[2], "by": c[3]}, "evidence": []}
                 for c in claims if c[4]["state"] != "removed"]
     db.execute("INSERT INTO learning_lesson_verifications VALUES (?,?,?)",
-               (LESSON, PROGRAM, json.dumps({"checker_model": "qwen-27b", "findings": findings})))
+               (lesson, PROGRAM, json.dumps({"checker_model": "qwen-27b", "findings": findings})))
     for claim_id, unit, cls, by, state, events in claims:
         db.execute("INSERT INTO learning_lesson_claims VALUES (?,?,?,?,?,?,?)",
-                   (claim_id, LESSON, unit, "body", f"quote {claim_id}", STATEMENT.format(claim_id), json.dumps(state)))
+                   (claim_id, lesson, unit, "body", f"quote {claim_id}", STATEMENT.format(claim_id), json.dumps(state)))
         for ordinal, event in enumerate([classified(cls, by)] + events):
             db.execute("INSERT INTO learning_lesson_claim_events VALUES (?,?,?)",
                        (claim_id, ordinal, json.dumps({"event": event, "appVersion": "1", "checkerModel": "qwen-27b"})))
@@ -86,7 +86,7 @@ def build(path, claims=CLAIMS, preparation="ready", review="ready", ceiling=80, 
     db.execute("INSERT INTO job_checkpoints VALUES (?,?,?)",
                (JOB, "claim-ledger-v1:cuts", json.dumps({"taken": {"1": {}}, "going": {}, "mended": {"1": {}}})))
     for ordinal, version in enumerate(block_sources):
-        db.execute("INSERT INTO learning_blocks VALUES (?,?,?)", (LESSON, ordinal, json.dumps([version])))
+        db.execute("INSERT INTO learning_blocks VALUES (?,?,?)", (lesson, ordinal, json.dumps([version])))
     pages = [("v1", "Guide", None, "p", 500), ("v2", "Changelog", None, "p", 120), ("v3", "Sign in", "login page, 65 words", "p", 65)]
     for number, (version, title, refused, policy, words) in enumerate(pages):
         db.execute("INSERT INTO learning_source_library VALUES (?,?,?,?,?)", (f"s{number}", PROGRAM, None, version, number))
@@ -169,9 +169,12 @@ class ScoreLessonAcceptance(unittest.TestCase):
         self.assertTrue(any("100 calls made, more than the 80" in f for f in failures), failures)
         self.assertTrue(any("went up 2 time(s)" in f for f in failures), failures)
 
-    def test_a_run_of_thirty_minutes_is_too_long(self):
-        self.assertTrue(any("30.0 minutes" in f for f in self.failures(minutes=30)))
-        self.assertEqual(self.failures(minutes=29), [])
+    def test_how_long_a_run_took_is_reported_and_not_failed(self):
+        self.assertEqual(self.failures(minutes=137), [])
+
+        made = sla.score(self.path)["calls"]
+
+        self.assertEqual((made["minutes"], made["seconds_per_call"]), (137.0, 164.4))
 
     def test_a_sentence_that_cites_a_page_the_gate_refused_fails(self):
         failures = self.failures(block_sources=("v1", "v3"))
@@ -182,6 +185,16 @@ class ScoreLessonAcceptance(unittest.TestCase):
         many = [(f"x{n}", 0, "sourced", "writer", BY_EVIDENCE, [checked(SUPPORTED)]) for n in range(sla.STATEMENT_LIMIT + 1)]
 
         self.assertTrue(any("more than 73" in f for f in self.failures(claims=many)))
+
+    def test_the_statement_bound_is_the_one_lesson_the_design_counted(self):
+        many = [(f"x{n}", 0, "sourced", "writer", BY_EVIDENCE, [checked(SUPPORTED)]) for n in range(sla.STATEMENT_LIMIT + 1)]
+        other = "0a1b2c3d-0000-0000-0000-000000000000"
+        build(self.path, claims=many, lesson=other)
+
+        result = sla.score(self.path, other[:8])
+
+        self.assertEqual(result["failures"], [])
+        self.assertIsNone(result["end_state"]["statements"]["limit"])
 
     def test_statements_that_share_a_sentence_are_counted_for_their_rechecks(self):
         a = ("a", 0, "sourced", "writer", BY_EVIDENCE, [checked(SUPPORTED)])

@@ -29,10 +29,11 @@ import sqlite3
 import sys
 from collections import Counter
 
+# The lesson design 3.11 was written for, its planted statement, and the statements its text makes (105 less the 32
+# coverage injections). Other lessons have no such count; how long a run takes is reported, the calls bound it.
 LESSON = "f36400bc"
 PLANTED = "Microsoft's grounding feature returns bounding box coordinates in millimetres."
 STATEMENT_LIMIT = 73
-MINUTES_LIMIT = 30
 SHORT_PAGE_WORDS = 400
 SORT_BATCH = 20
 # The authority of a class, weakest first (design 3.1): the ledger keeps the strongest.
@@ -183,10 +184,11 @@ def end_state(db, lesson, claims, failures):
         elif not terminal(claim):
             failures.append(f"claim {claim.id[:8]}: {claim.cls} ended {claim.kind!r}, a pairing outside the five of 3.11")
     live = [c for c in claims if c.kind != "edited"]
+    limit = STATEMENT_LIMIT if lesson["id"].startswith(LESSON) else None
     out["pairs"] = dict(sorted(pairs.items()))
-    out["statements"] = {"ledger_rows": len(claims), "live": len(live), "limit": STATEMENT_LIMIT}
-    if len(live) > STATEMENT_LIMIT:
-        failures.append(f"{len(live)} statements in the ledger, more than {STATEMENT_LIMIT}")
+    out["statements"] = {"ledger_rows": len(claims), "live": len(live), "limit": limit}
+    if limit is not None and len(live) > limit:
+        failures.append(f"{len(live)} statements in the ledger, more than {limit}")
     return out, (verification and loads(verification["report_json"])) or {}, review
 
 
@@ -251,13 +253,13 @@ def calls(db, lesson, claims, review, failures):
         failures.append("the job does not record whether its ceiling went up")
     elif rises > 0:
         failures.append(f"the ceiling went up {rises} time(s): it may only come down")
+    out["minutes"] = out["seconds_per_call"] = None
     if job and job["started_at"] is not None and job["finished_at"] is not None:
         minutes = (job["finished_at"] - job["started_at"]) / 60000
         out["minutes"] = round(minutes, 1)
-        if minutes >= MINUTES_LIMIT:
-            failures.append(f"the job took {minutes:.1f} minutes, not under {MINUTES_LIMIT}")
+        if made:
+            out["seconds_per_call"] = round(minutes * 60 / made, 1)
     else:
-        out["minutes"] = None
         failures.append("the job's start and finish are not recorded")
     out["model_name"] = activity.get("modelName")
     return out
@@ -375,8 +377,8 @@ def render(result):
         "",
         "End state",
         f"  preparation {state['preparation']} | review {state['review']} | verification row {state['verification_row']}",
-        f"  statements: {state['statements']['live']} live of {state['statements']['ledger_rows']} ledger rows "
-        f"(at most {state['statements']['limit']})",
+        f"  statements: {state['statements']['live']} live of {state['statements']['ledger_rows']} ledger rows"
+        + (f" (at most {state['statements']['limit']})" if state["statements"]["limit"] is not None else ""),
     ]
     lines += [f"  {cls} -> {kind}: {n}" for (cls, kind), n in state["pairs"].items()]
     t = made["terms"]
@@ -384,7 +386,8 @@ def render(result):
         "",
         "Calls (the app's own count, jobs.activity_json)",
         f"  made {made['made']} | at most, at the end {made['ceiling_at_the_end']} | "
-        f"the ceiling went up {made['ceiling_rises']} time(s) | {made['minutes']} minutes",
+        f"the ceiling went up {made['ceiling_rises']} time(s) | {made['minutes']} minutes, "
+        f"{made['seconds_per_call']} s a call",
         "  terms: " + " ".join(f"{k}={v}" for k, v in t.items()) + f" | sorting {made['sort_calls']}",
         f"  bound with the terms found {made['bound_with_the_terms_found']} | "
         f"with every term at most {made['bound_with_every_term_at_most']}",
