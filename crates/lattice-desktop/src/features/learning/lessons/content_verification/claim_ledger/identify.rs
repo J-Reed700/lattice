@@ -608,8 +608,10 @@ impl ClaimLedger {
                     goal: record.goal(),
                 };
                 // A claim that passed on the sentence has no repair to
-                // record: it went with the sentence.
-                if !self.append(id, event).await? {
+                // record, and a decided claim's record moves nothing: either
+                // way it went with the sentence.
+                self.append(id, event).await?;
+                if self.entry(id).is_some_and(|entry| !is_gone(entry.state())) {
                     self.append(id, gone).await?;
                 }
             }
