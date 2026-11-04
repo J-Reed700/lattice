@@ -224,6 +224,76 @@ The report's per-claim verdict is read from the same place: a finding is publish
 
 **A claim ends Removed only when its sentence is gone from the draft**: cut, or in a section that went. A claim no re-extraction continues while its sentence stands is a fault of the extraction, not a removal: that sentence is extracted again from its text alone and the claim continues on what that finds. Publication holds the draft to the ledger the other way too: every sentence of a block body or answer explanation the rule layer does not leave out stands on a live claim at a passing end, or the lesson does not publish (§1 #16).
 
+### 2.10 The switch: every decision the policy's
+
+Today a statement's next step is decided in ten places:
+- `class_checks::check`'s routes;
+- pass A and B's selection and `combine`;
+- `observe`'s class mapping of a check;
+- `research_targets`;
+- the findings `cite_where_supported` picks;
+- `decide`'s `may_repair` and its rechecks;
+- `cuts_next`;
+- `begin_repairs`' attempt numbers;
+- the replay's attempt rules;
+- the sort, which runs every pass.
+
+All ten go in one step. A half-switched loop strands statements: one the policy sends to `s.uncite` is one no old rule acts on. The loop keeps its shape (§2.7's template is step 9); what changes is who answers each of its questions.
+
+**A pass.**
+1. Extraction runs as now.
+2. Before anything is read, the ledger identifies what was extracted. This is observe's identity half: `identities`, a repair's heirs, the orphans and the user's edits.
+   - It records `Extracted`, a class for a statement new to the ledger, and the outcome of a repair that awaited this pass (below). No check is recorded here.
+   - Only a statement new to its lineage is sorted. Every other keeps its lineage's class (§2.9, §1 #17), so the sort runs on new statements only.
+3. Every live machine-owned statement then has a position (`ClaimLedger::position`):
+   - At a reading node, `read_until_remedy` reads it on to a remedy or an end, and each reading is recorded with its decision (`record_reading`).
+   - At any other node, nothing is read. The report carries its latest reading's finding, which the job keeps. After a restart that finding is rebuilt from the ledger (the latest check and the passages it showed), never asked for again. Either way it decides nothing.
+4. Three kinds of statement are outside the ledger's checks, as now: one the rule layer leaves out, a model-Internal statement until step 10, and a failed example, which keeps its own path (§6).
+
+**The remedies, by node.** Each remedy takes the statements at its nodes, and the step's outcome is recorded with its `Stepped`:
+- **Research.** The statements at `Research` nodes, plus a user's hint as now, go to `research::expand`. It records `Researched`, with outcome `Saved` when the round saved a source and `FoundNothing` otherwise. A round that reached nothing (`unreached`: every search and page read failed, or the planner gave no usable answer) is not research and records nothing, so the statements stay where they are.
+- **Recite.** The statements at `Recite` nodes go to `cite_where_supported` with their page's finding. It records its `CitationRepaired` and the outcome `Done`.
+- **Uncite.** For the statements at `Uncite` nodes, the sentence's own entry in `citations` goes. A sentence with no entry of its own keeps what it has: that is the section's quote, which others are read against. It records `CitationDropped { cited }`, the outcome `Done`, and `Classified { by: Evidence }` for the class the edge enters.
+- **Rewrite and Cut** are one repair, as now:
+  - The statements at `Rewrite` nodes are its targets, each with its node's goal on `RepairAttempted`.
+  - The statements at `Cut` nodes go on their last attempt (`lastAttempt`, which the code cuts).
+  - The outcome is recorded where the repair's is now: when the next pass identifies what the repair left.
+    - A target whose sentence changed → `Rewritten`.
+    - A target whose quote is still in its field → `NotApplied`.
+    - A sentence the cut took out, or that was out already → `Cut`.
+    - A refused cut, its section going → `CannotCut`.
+
+**What the loop does next** (`decide`), checked in this order:
+1. A statement whose walk is `Stopped`, or whose record does not fit its graph, stops the lesson with its reason.
+2. Statements at `Rewrite` or `Cut` nodes are repaired, along with failed examples by their own rule.
+3. A statement at any other node is taken by the next pass.
+4. Once every machine-owned statement has ended, the sections are settled as now, and the lesson publishes unless a claim waits for the user.
+
+An iteration that records no `Stepped` and leaves the draft as it was stops the lesson with what was pending: §2.7's no-progress stop, here before the template exists.
+
+**The report reads the policy.** A machine-owned claim's finding is publishable when its walk ended at a passing end (`Resolved`, `Consistent`, `GeneralKnowledge`, `NotAClaim`), and the user's resolution counts as now.
+- `Reconcile` goes. Its premise, a pass that disagrees with a claim the ledger holds verified, cannot arise when an ended claim is never decided again.
+- Kept, `Reconcile` would loop: it would re-record a check for a claim whose state only a decision can move.
+
+**What goes:**
+- the routes of `class_checks::check` (its judges stay, behind the readers);
+- `check_with_citations`' choice of passes, and `combine` and `alone` as a decision;
+- `check_of`'s class mapping;
+- `research_targets`' rule;
+- `may_repair`, `cuts_next` and `MACHINE_ATTEMPTS` for statements (failed examples keep them);
+- `Reconcile`;
+- the sort of statements the ledger already holds.
+
+**What stays as it is:**
+- **For step 7, what each remedy does:**
+  - the recite writes the section's citation;
+  - a refused hunk refuses its section's targets;
+  - the cut takes every sentence its quote touches;
+  - the goal is recorded but not yet in the prompt.
+- **For step 8:**
+  - a rewritten sentence is extracted with its saved statements;
+  - a claim no extraction continues is Removed.
+
 ## 3. What changes in behaviour, and what is measured first
 
 | Change | Why | Measured before it ships |
@@ -357,9 +427,10 @@ Each step is a builder's (`model: sonnet`), on branch `lesson/acceptance-policy`
 | 4 | The record of decisions: `Stepped`, `CitationDropped`, the goal on `RepairAttempted`, `ClassifiedBy::Evidence`; the state of a machine-owned claim read from its latest `then`; the walk's check of the record | core `claim_review/{claim_review,ledger,replay}.rs` | a claim's state follows each `then`; a record that does not walk to its `then`, or names another policy, is a fault; a successor continues at its parent's post-rewrite node |
 | 5 | The ceiling from the graphs | `call_plan.rs`, `lesson_progress.rs` | the ceiling is the sum of `most_calls` from each recorded position plus the reserves; it never rises over any scripted run |
 | 6a | The readers: one adapter per reading, unit-tested on scripted models, not yet called by the pass | new `content_verification/readings*`; visibility in `class_checks.rs`, `evidence_checks*` | each reading's outcomes and findings, from the judges' fixtures |
-| 6b | Readings by the policy: `read_until_remedy` in `check_evidence`, each reading recorded with its check and its `Stepped` | `passes.rs`, `class_checks.rs` (routing goes), `evidence_checks*` (pass A/B selection and combination go), `claim_ledger/observe.rs` | §1 #4, #5 go green; #1 to its `Uncite` |
-| 7 | Remedies by the policy: research, recite on the sentence's own entry, `Uncite`, rewrites with their goals and per-target confinement with its retry, the cut on the stating sentence and its narrowing | `claim_ledger::decide`, `research_targets`, `repair/*` | §1 #1, #7, #8, #10 go green; `may_repair`, `cuts_next` and the replay's attempt rules go |
-| 8 | Fresh extraction of rewritten sentences; the report reads the policy; Removed only when the sentence is gone, and every standing sentence on a live claim at publication | `inventory/revisions*`, `claim_reuse.rs`, `claim_ledger/observe.rs`, `report.rs`, `resolution.rs` | §1 #6, #9, #16 go green |
+| 6b-1 | The reading driver (`read_until_remedy`) on scripted readers; the ledger's record of a reading (`record_reading`: the check named by its reading, the `Stepped`, a class change by evidence, the decision and the observation held to agree); `CheckResult::NotFalse` | `readings/driver.rs`, `claim_ledger/readings.rs`, core `claim_review` | every path through reading nodes; the re-ask in place and the stop; a class change read on in the same call; the state after each recorded `then` |
+| 6b-2 | The switch (§2.10): identity before reading, the sort once, readings and remedies by node, `decide` by node, the report from the policy | `passes.rs`, `repair_loop.rs`, `claim_ledger/{observe,claim_ledger}.rs`, `class_checks.rs`, `evidence_checks*` | §1 #1, #4, #5 go green; the no-progress stop; every machine-owned claim's state read from its `then` |
+| 7 | Remedies done as §2.6 says: recite on the sentence's own entry, the goal in the rewrite's prompt, per-target confinement with its retry, the cut on the stating sentence and its narrowing, no repair writing a new statement | `repair/*`, `claim_ledger/successor.rs` | §1 #7, #8, #10 go green |
+| 8 | Fresh extraction of rewritten sentences; Removed only when the sentence is gone, and every standing sentence on a live claim at publication | `inventory/revisions*`, `claim_reuse.rs`, `claim_ledger/observe.rs`, `report.rs` | §1 #6, #16 go green |
 | 9 | The round (Template Method) with a scripted review | `repair_loop.rs` → `round.rs` | termination and the no-progress stop on the scripted review |
 | 10 | The veto for a model-Internal statement | the graph, `class_checks.rs`, the ledger's content rule | §1 #15 |
 | 11 | Measure §3 on the 27B, then the acceptance run | scratchpad replay; `acceptance_run.sh` | — |
