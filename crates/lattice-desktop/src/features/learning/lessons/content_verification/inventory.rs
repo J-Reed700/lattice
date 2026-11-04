@@ -926,6 +926,27 @@ mod tests {
     }
 
     #[test]
+    fn a_long_statement_or_nonfactual_reason_is_read_not_refused() {
+        let body = "Alpha holds the line. Bravo stands firm today.";
+        let content = vec![json!({"body":body})];
+        let statement = format!(
+            "Alpha holds the line {}today.",
+            "under every condition the section states ".repeat(60)
+        );
+        let unit: ExtractedUnit = serde_json::from_value(json!({"index":0,
+            "claims":[{"passageId":"unit-0-passage-0","statement":statement}],
+            "nonFactualReason":"The section frames its scope first. ".repeat(20)}))
+        .unwrap();
+        let unit = resolve(unit, &inputs(&content));
+        assert!(unit.is_ok(), "{:?}", unit.as_ref().err());
+        let unit = unit.unwrap();
+        assert_eq!(unit.claims[0].statement, statement);
+        let inventory = Inventory { units: vec![unit] };
+        let validated = validate_inventory(&inventory, &content);
+        assert!(validated.is_ok(), "{:?}", validated.as_ref().err());
+    }
+
+    #[test]
     fn a_sentence_longer_than_the_inventory_keeps_is_quoted_by_its_first_1600_characters() {
         let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
         let content = vec![json!({"body":long})];

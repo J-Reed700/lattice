@@ -1358,6 +1358,27 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     }
 }
 
+#[test]
+fn saved_coverage_with_a_long_missing_assertion_is_reused() {
+    let content = units(&candidate(GOOD)).unwrap();
+    let statement = format!(
+        "A missing condition {}holds.",
+        "that the passage states in full ".repeat(40)
+    );
+    let unit = CoverageUnit::from_missing(
+        0,
+        vec![MissingAssertion {
+            passage_id: "unit-0-passage-0".into(),
+            statement,
+        }],
+        "",
+    );
+    assert!(valid_saved_coverage(
+        &Coverage { units: vec![unit] },
+        &content
+    ));
+}
+
 #[tokio::test]
 async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
     let model = Model::new();

@@ -530,6 +530,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_long_reason_or_missing_assertion_from_the_judge_is_read_not_asked_for_again() {
+        let units = vec![
+            json!({"index":0,"passages":[{"id":"a","text":"A fact."}],"claims":[{"id":"c","statement":"Another fact."}]}),
+        ];
+        let raw =
+            json!({"a":{"claimIds":["c"],"nonFactualReason":"","missingClaims":[]}}).to_string();
+        let statement = format!(
+            "A fact {}holds.",
+            "that the passage states under its own condition ".repeat(30)
+        );
+        let reply =
+            json!({"missingAssertions":[statement],"reason":"The passage states it. ".repeat(40)})
+                .to_string();
+        let model = scripted(vec![reply.clone(), reply]);
+        let mut coverage = resolve(&raw, &units).unwrap();
+        let checked = check_fidelity(&model, &raw, &units, &mut coverage).await;
+        assert!(checked.is_ok(), "{checked:?}");
+        assert_eq!(model.prompts.lock().unwrap().len(), 1);
+        assert_eq!(coverage[0].missing_assertions[0].statement, statement);
+    }
+
+    #[test]
+    fn the_mapping_reads_a_long_nonfactual_reason_and_missing_claim() {
+        let units = vec![
+            json!({"index":0,"passages":[{"id":"a","text":"A heading."},{"id":"b","text":"A fact."}],"claims":[{"id":"claim-b"}]}),
+        ];
+        let missing = format!(
+            "A fact {}holds.",
+            "under the condition the passage states ".repeat(30)
+        );
+        let raw = json!({
+            "a":{"claimIds":[],"nonFactualReason":"It frames the section. ".repeat(30),"missingClaims":[]},
+            "b":{"claimIds":["claim-b"],"nonFactualReason":"","missingClaims":[missing]}})
+        .to_string();
+        let checked = resolve(&raw, &units);
+        assert!(checked.is_ok(), "{:?}", checked.as_ref().err());
+        assert_eq!(checked.unwrap()[0].missing_assertions[0].statement, missing);
+    }
+
+    #[tokio::test]
     async fn proposed_omissions_are_replaced_by_the_judges_own_list() {
         for (reply, complete) in [
             (represented(), true),

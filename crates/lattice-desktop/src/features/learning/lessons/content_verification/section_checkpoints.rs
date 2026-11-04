@@ -119,4 +119,29 @@ mod capacity_tests {
         assert!(checkpoint.valid(&content, 0));
         assert!(!checkpoint.valid(&json!({"body":"Changed section"}), 0));
     }
+
+    #[test]
+    fn a_section_saved_with_a_long_statement_or_reason_is_reused() {
+        let content = json!({"body":"A saved section with many measurements."});
+        let checkpoint = SectionCheckpoint {
+            inventory: UnitClaims {
+                index: 0,
+                claims: vec![Claim {
+                    quote: "A saved section with many measurements.".into(),
+                    statement: format!(
+                        "The section {}measures.",
+                        "states a measurement under its own condition ".repeat(50)
+                    ),
+                }],
+                non_factual_reason: "Its title frames the section. ".repeat(20),
+            },
+            coverage: CoverageUnit {
+                index: 0,
+                complete: true,
+                reason: "All assertions are represented.".into(),
+                missing_assertions: vec![],
+            },
+        };
+        assert!(checkpoint.valid(&content, 0));
+    }
 }

@@ -115,6 +115,22 @@ pub(in crate::features::learning) fn selection(indices: &[usize]) -> String {
     json!({"decisions":indices.iter().map(|i|json!({"id":format!("result-{i}"),"useForGap":true,"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
 }
 
+#[test]
+fn a_long_reason_for_a_reference_is_read_not_refused() {
+    let results = vec![WebSearchResult {
+        title: "Relevant reference".into(),
+        url: "https://example.org/reference".into(),
+        snippet: "Discovery metadata only".into(),
+        published_date: None,
+        source: None,
+    }];
+    let reason = "It states the scoped point in its own words. ".repeat(20);
+    let raw = json!({"decisions":[{"id":"result-0","useForGap":true,"reason":reason}]}).to_string();
+    let selected = super::selection(&raw, &results);
+    assert!(selected.is_ok(), "{:?}", selected.as_ref().err());
+    assert_eq!(selected.unwrap()[0].1, reason.trim());
+}
+
 #[tokio::test]
 async fn reference_selection_accepts_all_valid_selected_results_past_four() -> Result<()> {
     let results: Vec<_> = (0..8)
