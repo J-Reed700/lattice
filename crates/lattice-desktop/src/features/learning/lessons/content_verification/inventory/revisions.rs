@@ -551,7 +551,7 @@ mod revision_tests {
             (BRAVO, "Bravo is firm."),
             (CHARLIE, "Charlie is at ease."),
         ];
-        let before = vec![json!({"kind":"teaching","body":[ALPHA, BRAVO, CHARLIE].join(" ")})];
+        let before = vec![json!({"kind":"teaching","body":([ALPHA, BRAVO, CHARLIE].join(" "))})];
         // The second sentence is rewritten.
         let rewritten = "Bravo yields at noon.";
         let after =
@@ -612,7 +612,7 @@ mod revision_tests {
             (BRAVO, "Bravo is firm."),
             (CHARLIE, "Charlie is at ease."),
         ];
-        let before = vec![json!({"kind":"teaching","body":[ALPHA, BRAVO, CHARLIE].join(" ")})];
+        let before = vec![json!({"kind":"teaching","body":([ALPHA, BRAVO, CHARLIE].join(" "))})];
         // A repair rewrites the first sentence, and a later one the third.
         let (first, third) = ("Alpha gives ground at dawn.", "Charlie sits in the sun.");
         let once = vec![json!({"kind":"teaching","body":format!("{first} {BRAVO} {CHARLIE}")})];
@@ -652,7 +652,7 @@ mod revision_tests {
             (ALPHA, "Alpha is steady."),
             (CHARLIE, "Charlie is at ease."),
         ];
-        let before = vec![json!({"kind":"teaching","body":[ALPHA, CHARLIE].join(" ")})];
+        let before = vec![json!({"kind":"teaching","body":([ALPHA, CHARLIE].join(" "))})];
         let after = vec![json!({"kind":"teaching","body":format!("{ALPHA} {BRAVO} {CHARLIE}")})];
         let model = Answering {
             reply: finds("Bravo is firm."),
