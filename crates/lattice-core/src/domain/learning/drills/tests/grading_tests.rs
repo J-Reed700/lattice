@@ -513,30 +513,63 @@ fn an_empty_key_and_no_findings_is_fully_recalled_with_no_precision() {
     assert!(!scored.led_with_the_most_severe);
 }
 
-#[test]
-fn leading_means_the_first_finding_matches_an_issue_of_the_keys_highest_severity() {
+/// Whether the first finding led, for a Minor issue on line 1 and a Critical
+/// one on line 5, with a finding on each.
+fn leads(judged: Assessment) -> bool {
     let key = [
         issue(Severity::Minor, 1, 1),
         issue(Severity::Critical, 5, 5),
     ];
     let findings = [finding_at(1, 1), finding_at(5, 5)];
-    let leads = |judged: Assessment| score(&key, &findings, &judged).led_with_the_most_severe;
-    assert!(!leads(assessment(
-        vec![found(0), found(1)],
-        vec![matches(&[0]), matches(&[1])]
-    )));
+    score(&key, &findings, &judged).led_with_the_most_severe
+}
+
+#[test]
+fn the_first_finding_leads_when_it_found_the_most_severe_issue() {
     assert!(leads(assessment(
         vec![found(1), found(0)],
         vec![matches(&[1]), matches(&[0])]
     )));
+}
+
+#[test]
+fn the_first_finding_does_not_lead_when_a_later_one_found_the_most_severe_issue() {
+    assert!(!leads(assessment(
+        vec![found(0), found(1)],
+        vec![matches(&[0]), matches(&[1])]
+    )));
+}
+
+#[test]
+fn a_most_severe_issue_that_is_only_half_found_by_the_first_finding_is_not_led_with() {
+    assert!(!leads(assessment(
+        vec![found(0), half_found(0)],
+        vec![matches(&[0, 1]), valid_extra()]
+    )));
+    assert!(!leads(assessment(
+        vec![missed(), half_found(0)],
+        vec![matches(&[1]), false_positive()]
+    )));
+}
+
+#[test]
+fn a_first_finding_merely_listed_for_the_most_severe_issue_does_not_lead() {
+    assert!(!leads(assessment(
+        vec![missed(), found(1)],
+        vec![matches(&[1]), matches(&[1])]
+    )));
+}
+
+#[test]
+fn half_finding_a_lesser_issue_does_not_stop_the_first_finding_leading() {
     assert!(leads(assessment(
         vec![half_found(1), found(0)],
         vec![matches(&[1]), matches(&[0])]
     )));
-    assert!(leads(assessment(
-        vec![found(0), half_found(0)],
-        vec![matches(&[0, 1]), valid_extra()]
-    )));
+}
+
+#[test]
+fn a_first_finding_that_found_nothing_does_not_lead() {
     assert!(!leads(assessment(
         vec![missed(), found(1)],
         vec![false_positive(), matches(&[1])]
@@ -548,7 +581,7 @@ fn leading_means_the_first_finding_matches_an_issue_of_the_keys_highest_severity
 }
 
 #[test]
-fn when_every_issue_has_one_severity_matching_any_of_them_leads() {
+fn when_every_issue_has_one_severity_finding_any_of_them_first_leads() {
     let key = [issue(Severity::Major, 1, 1), issue(Severity::Major, 5, 5)];
     let findings = [finding_at(5, 5)];
     let judged = assessment(vec![missed(), found(0)], vec![matches(&[1])]);
@@ -585,7 +618,6 @@ fn an_assessment_that_is_too_short_scores_without_failing() {
     assert_eq!((scored.found, scored.missed), (1, 1));
     assert_eq!(scored.false_positives, 1);
     assert_eq!(scored.precision, Some(0.0));
-    assert!(!scored.led_with_the_most_severe);
 }
 
 #[test]
