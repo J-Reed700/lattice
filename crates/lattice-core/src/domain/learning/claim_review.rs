@@ -319,7 +319,8 @@ pub enum ClaimState {
         supporting_quote: String,
     },
     /// A Reasoning statement its section's passages do not contradict and
-    /// that asserts no specific they lack (claim classes design §3.11). Like
+    /// that asserts no specific they lack (claim classes design §3.11), or a
+    /// statement the model sorted Internal that the falsity veto passed. Like
     /// a verification it is the machine's, and the lesson may publish with it.
     Consistent { at: i64 },
     /// The user's verdict.

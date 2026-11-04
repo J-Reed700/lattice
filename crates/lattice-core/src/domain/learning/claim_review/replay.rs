@@ -329,8 +329,6 @@ pub(super) fn redecided(
 pub(super) enum Undecidable {
     /// Resolved by evidence, with no supported local check to name.
     NoSupport,
-    /// An end the ledger has no state for yet.
-    NoState(&'static str),
 }
 
 /// The state a decision sends a claim to; `None` leaves it where it is. At a
@@ -363,9 +361,10 @@ pub(super) fn stepped(
                 supporting_quote,
             })
         }
-        Then::End(End::Consistent) => Some(ClaimState::Consistent { at }),
+        // A statement that is not a claim has passed the falsity veto: the
+        // machine's pass, as a Reasoning statement's is.
+        Then::End(End::Consistent | End::NotAClaim) => Some(ClaimState::Consistent { at }),
         Then::End(End::GeneralKnowledge) => Some(ClaimState::GeneralKnowledge { at }),
-        Then::End(End::NotAClaim) => return Err(Undecidable::NoState("not a claim")),
         Then::End(End::Removed { .. }) => Some(ClaimState::Removed {
             at,
             by: Actor::Machine,

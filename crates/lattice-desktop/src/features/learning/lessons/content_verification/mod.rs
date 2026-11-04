@@ -235,6 +235,15 @@ struct Classed {
     class: Class,
     by: ClassifiedBy,
 }
+
+impl Classed {
+    /// Whether the statement is a claim to check. Only what the rule layer
+    /// makes Internal is left out; the model's Internal meets the veto.
+    fn checked(&self) -> bool {
+        !(self.class == Class::Internal && self.by == ClassifiedBy::Rule)
+    }
+}
+
 /// Completed comparisons and evidence selections. Durable checkpoints retain
 /// both across restarts; a selection is never itself a factual approval.
 #[derive(Default)]

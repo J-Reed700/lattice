@@ -42,11 +42,13 @@ SORT_BATCH = 20
 # authority's the strictest.
 AUTHORITY = {"model": 0, "rule": 1, "writer": 2}
 STRICTNESS = {"internal": 0, "common": 1, "reasoning": 2, "sourced": 3}
-# What a class may end in (design 3.11); any class may also end removed by the machine.
+# What a class may end in (design 3.11); any class may also end removed by the machine. A statement the model sorts
+# Internal is a claim that ends not a claim, which the ledger records as consistent (acceptance design 2.3).
 TERMINAL = {
     "sourced": {"resolved_by_evidence"},
     "reasoning": {"consistent"},
     "common": {"general_knowledge"},
+    "internal": {"consistent"},
 }
 # The longest path in calls through a class's graph, from its entry and from its post-rewrite node with the re-ask
 # still possible (acceptance design 2.3, 2.4), which the app derives from the graphs.
@@ -100,13 +102,13 @@ class Claim:
         self.statement = row["statement"] or ""
         self.state = loads(row["state_json"]) or {}
         self.events = events
-        self.cls = None
+        self.cls = self.by = None
         held = (-1, -1)
         for event in events:
             if event.get("kind") == "classified":
                 rank = (AUTHORITY.get(event.get("by"), -1), STRICTNESS.get(event.get("class"), -1))
                 if rank > held:
-                    self.cls, held = event.get("class"), rank
+                    self.cls, self.by, held = event.get("class"), event.get("by"), rank
 
     @property
     def kind(self):
@@ -189,8 +191,11 @@ def end_state(db, lesson, claims, failures):
     pairs = Counter()
     for claim in claims:
         pairs[(claim.cls or "none", claim.kind)] += 1
-        if claim.cls in (None, "internal"):
-            failures.append(f"claim {claim.id[:8]} has class {claim.cls!r}: the ledger holds no Internal or unsorted statement")
+        if claim.cls is None or (claim.cls == "internal" and claim.by == "rule"):
+            failures.append(
+                f"claim {claim.id[:8]} has class {claim.cls!r}: the ledger holds no unsorted statement "
+                "and no Internal one the rules sorted"
+            )
         elif not terminal(claim):
             failures.append(f"claim {claim.id[:8]}: {claim.cls} ended {claim.kind!r}, a pairing outside the five of 3.11")
     live = [c for c in claims if c.kind != "edited"]
@@ -215,12 +220,14 @@ def calls(db, lesson, claims, review, failures):
         (review["job_id"] if review else None,),
     ).fetchone()
     activity = (loads(job["activity_json"]) if job else None) or {}
+    by_class = lambda cls: [x for x in claims if x.cls == cls]
     plan = activity.get("statements") or {}
     counts = {cls: int(plan.get(cls) or 0) for cls in ENTRY}
+    # The activity's plan counts three classes; the statements the model sorted Internal are the ledger's to count.
+    counts["internal"] = counts["internal"] or len(by_class("internal"))
     s, r, c = counts["sourced"], counts["reasoning"], counts["common"]
     sections = db.execute("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id = ?", (lesson["id"],)).fetchone()[0]
     cuts = (cuts_of(db, review["job_id"]) if review else None) or {}
-    by_class = lambda cls: [x for x in claims if x.cls == cls]
     f = sum(1 for x in claims if x.cls in ("sourced", "common") and x.failed_for_real())
     g = sum(1 for x in by_class("reasoning") if x.failed_for_real())
     v = sum(1 for x in by_class("reasoning") if STRICT_RESULTS & set(x.results()))
@@ -228,7 +235,7 @@ def calls(db, lesson, claims, review, failures):
     u = sum(x.unjudged() for x in claims)
     k = len(cuts.get("taken") or {})
     m = recheck_calls(claims)
-    sorting = math.ceil((s + r + c) / SORT_BATCH)
+    sorting = math.ceil((s + r + c + counts["internal"]) / SORT_BATCH)
     worst = sorting + sum(counts[cls] * ENTRY[cls] for cls in ENTRY) + m + sections
     bound = sorting + s + r + 3 * r + 3 * c + 4 * f + 6 * g + k + v + d + m + u
     made, ceiling = activity.get("modelCalls"), activity.get("modelCallsCeiling")

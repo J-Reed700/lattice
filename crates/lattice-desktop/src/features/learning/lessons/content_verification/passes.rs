@@ -33,8 +33,8 @@ pub(super) struct Identified {
 pub(super) struct Pass {
     pub(super) extraction: Extraction,
     /// The statements of the sections that stay, in the inventory's order,
-    /// and whether the lesson itself makes each: such a statement is left out
-    /// of its claims.
+    /// and whether the rule layer makes each Internal: such a statement is
+    /// left out of its claims.
     left: Vec<bool>,
     /// The claims of the lesson's statements, in the inventory's order.
     pub(super) statements: Vec<Identified>,
@@ -139,8 +139,9 @@ pub(super) async fn extract(
 /// Matches `extraction`'s statements to the claims the ledger holds and
 /// identifies them, before anything is read: each statement that continues a
 /// claim takes that claim's class, a repair's heir takes its parent's, and
-/// only a statement new to the ledger is sorted. A statement the lesson itself
-/// makes (class `Internal`) is left out of the claims. The reopenings that
+/// only a statement new to the ledger is sorted. A statement the rule layer
+/// makes Internal (`Classed::checked`) is left out of the claims; one the model
+/// sorts Internal is a claim, put to the falsity veto. The reopenings that
 /// need no check are made here, and a failed or tracked example is checked.
 pub(super) async fn identify(
     llm: &dyn LLMPort,
@@ -177,10 +178,7 @@ pub(super) async fn identify(
         &citations,
     )
     .await?;
-    let left: Vec<bool> = classes
-        .iter()
-        .map(|classed| classed.class == Class::Internal)
-        .collect();
+    let left: Vec<bool> = classes.iter().map(|classed| !classed.checked()).collect();
     for (found, classed) in extracted.iter_mut().zip(&classes) {
         found.class = Some(*classed);
     }
@@ -646,7 +644,7 @@ pub(super) fn report(
             .cloned()
             .collect();
         let non_factual_reason = if claims.is_empty() && unit.non_factual_reason.trim().is_empty() {
-            "Its statements are about the lesson itself: a scenario, a rubric, an option or a remark about its sources.".to_owned()
+            "Its statements are about the lesson itself: a rubric, an option or a remark about its sources.".to_owned()
         } else {
             unit.non_factual_reason.clone()
         };

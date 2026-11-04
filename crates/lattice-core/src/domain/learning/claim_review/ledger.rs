@@ -103,8 +103,6 @@ pub enum LedgerError {
     },
     #[error("claim {claim}: resolved by evidence, but no local check supported it")]
     ResolvedWithoutSupport { claim: String },
-    #[error("claim {claim}: the ledger has no state for the end {end} yet")]
-    NoStateForEnd { claim: String, end: &'static str },
 }
 
 impl From<LedgerError> for AppError {

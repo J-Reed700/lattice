@@ -1650,3 +1650,98 @@ async fn the_ceiling_after_the_sort_counts_a_statement_the_model_calls_internal_
     assert_eq!(trace.ceilings, [1 + most_calls(&policy, entry) + 1]);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_claim_the_ledger_holds_as_the_models_internal_is_identified_again_and_never_sorted_again(
+) -> Result<()> {
+    // Sorted again, the model would call it Sourced.
+    let model = Classes::new(&[]).classed(&[(SCENARIO, "sourced")]);
+    let mut ledger = open().await?;
+    let held = claim(
+        &mut ledger,
+        "held",
+        (SCENARIO, SCENARIO),
+        SCENARIO,
+        (Class::Internal, ClassifiedBy::Model),
+    )
+    .await?;
+
+    let pass = identified(
+        &mut ledger,
+        &model,
+        &lesson(SCENARIO),
+        &[(SCENARIO, SCENARIO)],
+        &[],
+    )
+    .await?;
+
+    assert_eq!(model.calls("sort"), 0);
+    let ids: Vec<&ClaimId> = pass.statements.iter().map(|known| &known.id).collect();
+    assert_eq!(ids, [&held]);
+    assert_eq!(
+        ledger.entry(&held).unwrap().classified(),
+        Some((Class::Internal, ClassifiedBy::Model))
+    );
+    assert_eq!(node_of(&ledger, &held), Some("i.veto"));
+    Ok(())
+}
+
+#[test]
+fn only_what_the_rule_layer_makes_internal_is_left_out_of_the_claims() {
+    let classed = |class, by| Classed { class, by };
+    let kept = [
+        (Class::Internal, ClassifiedBy::Model),
+        (Class::Sourced, ClassifiedBy::Rule),
+        (Class::Sourced, ClassifiedBy::Writer),
+        (Class::Reasoning, ClassifiedBy::Model),
+        (Class::Common, ClassifiedBy::Model),
+        (Class::Reasoning, ClassifiedBy::Evidence),
+    ];
+
+    for (class, by) in kept {
+        assert!(classed(class, by).checked(), "{class:?} by {by:?}");
+    }
+    assert!(!classed(Class::Internal, ClassifiedBy::Rule).checked());
+}
+
+#[tokio::test]
+async fn the_plan_and_the_pass_agree_on_which_statements_are_checked_so_the_ceiling_only_comes_down_beside_one_the_model_calls_internal(
+) -> Result<()> {
+    let model = Classes::new(&[SCENARIO, GOOD]).classed(&[(SCENARIO, "internal")]);
+    let body = section(&format!("{SCENARIO} {GOOD}"));
+
+    let (finished, trace) = crate::features::learning::lesson_progress::traced(verify_and_repair(
+        &model,
+        "{}",
+        &json!({}),
+        lesson(&body).to_string(),
+        &[source()],
+        3000,
+    ))
+    .await;
+
+    let (_, report) = finished?;
+    assert_eq!(
+        outcomes(&report),
+        vec![
+            (SCENARIO, ClaimVerdict::Supported, Some(Class::Internal)),
+            (GOOD, ClaimVerdict::Supported, Some(Class::Sourced)),
+        ]
+    );
+    // The report accounts for both, as the pass identified them.
+    let accounted: Vec<&str> = report.coverage[0]
+        .claims
+        .iter()
+        .map(|claim| claim.statement.as_str())
+        .collect();
+    assert_eq!(accounted, [SCENARIO, GOOD]);
+    assert!(!trace.ceilings.is_empty(), "{:?}", trace.ceilings);
+    assert!(trace.only_came_down(), "{:?}", trace.ceilings);
+    assert!(
+        trace.within_the_ceiling(),
+        "{} calls, ceilings {:?}",
+        trace.calls,
+        trace.ceilings
+    );
+    Ok(())
+}

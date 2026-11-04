@@ -87,10 +87,6 @@ impl ClaimLedgerEntry {
             Undecidable::NoSupport => LedgerError::ResolvedWithoutSupport {
                 claim: self.claim_id.0.clone(),
             },
-            Undecidable::NoState(end) => LedgerError::NoStateForEnd {
-                claim: self.claim_id.0.clone(),
-                end,
-            },
         }
     }
 }

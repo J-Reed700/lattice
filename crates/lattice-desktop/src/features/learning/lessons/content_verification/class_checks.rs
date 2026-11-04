@@ -103,7 +103,8 @@ pub(super) async fn sort(
 
 /// The calls the statements' checks can make, now that each has a class: where
 /// each stands in its class's graph, as the ledger has it, and which of them
-/// stand on one sentence.
+/// stand on one sentence. A statement the rule layer leaves out asks nothing
+/// and is not counted (`Classed::checked`).
 fn plan_calls(
     policy: &dyn AcceptancePolicy,
     rewrites: &Rewrites,
@@ -114,7 +115,7 @@ fn plan_calls(
     let counted: Vec<(Class, Place<'_>, &str)> = classes
         .iter()
         .zip(claims.iter().zip(fields))
-        .filter(|(classed, _)| classed.class != Class::Internal)
+        .filter(|(classed, _)| classed.checked())
         .map(|(classed, ((unit, claim), field))| {
             (
                 classed.class,

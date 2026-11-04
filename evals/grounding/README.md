@@ -308,7 +308,7 @@ the server and written on every row.
 
 The real lesson is scored after the app's own job has prepared it, on a copy of the database, with
 `python scripts/score_lesson_acceptance.py PATH/TO/lattice.db [--lesson f36400bc]`. The database is opened read-only. The
-report gives the lesson's end state by class (every statement in a state its class allows, none Internal, at most 73),
+report gives the lesson's end state by class (every statement in a state its class allows, none rule-Internal, at most 73),
 the calls made beside the most the job ended at, whether that most ever went up, each term of the call count of the
 design's section 3.11 and the bound they give, the pages the admission gate refused and the admitted pages under 400
 words (the floors are provisional until these are read by eye), any sentence citing a refused page, the planted

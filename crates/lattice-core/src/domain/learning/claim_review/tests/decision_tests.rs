@@ -315,28 +315,6 @@ fn the_end_of_a_statement_that_is_not_a_claim_is_a_pass_the_machine_made() {
 }
 
 #[test]
-fn the_end_of_a_statement_that_is_not_a_claim_has_no_state_yet() {
-    let mut entry = claim("c1");
-    assert_eq!(
-        entry
-            .append(
-                machine(2),
-                stepped(
-                    Step::Read(Reading::Veto),
-                    Outcome::Stands,
-                    Then::End(End::NotAClaim)
-                )
-            )
-            .unwrap_err(),
-        LedgerError::NoStateForEnd {
-            claim: "c1".into(),
-            end: "not a claim"
-        }
-    );
-    assert_eq!(entry.state(), &ClaimState::Unchecked);
-}
-
-#[test]
 fn a_stop_changes_no_state_and_is_recorded() {
     let mut entry = decided_open("c1");
     let open = entry.state().clone();

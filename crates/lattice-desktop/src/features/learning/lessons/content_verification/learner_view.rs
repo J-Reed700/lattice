@@ -32,8 +32,8 @@ fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
     dto_map::sufficiency(&trust.profile, &trust.decision, trust.available)
 }
 
-/// The class the learner is told of; a remark about the lesson itself is
-/// never a claim in a report.
+/// The class the learner is told of; a statement about the lesson itself, which
+/// the model sorted Internal and the veto passed, is told none.
 fn statement_class(class: Class) -> Option<LearningStatementClassDto> {
     match class {
         Class::Sourced => Some(LearningStatementClassDto::Sourced),
@@ -303,6 +303,20 @@ mod tests {
             let view = report.learner_view(&lesson, &[]).unwrap();
             assert_eq!(view.teaching_claims[0].class, Some(expected));
         }
+    }
+
+    #[test]
+    fn a_statement_the_model_called_internal_reaches_the_learner_with_no_class() {
+        let (lesson, mut report) = fixture();
+        report.findings[0].class = Some(Classed {
+            class: Class::Internal,
+            by: ClassifiedBy::Model,
+        });
+
+        let claim = &report.learner_view(&lesson, &[]).unwrap().teaching_claims[0];
+
+        assert_eq!(claim.class, None);
+        assert_eq!(claim.verdict, "supported");
     }
 
     #[test]
