@@ -7,6 +7,7 @@ import type { LearningTangentDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 
 import {
+  MAX_STUDY_TANGENT_PASSAGE_LENGTH,
   SectionTangentBar,
   StudyTangentSelection,
   StudyTangentsContext,
@@ -140,14 +141,12 @@ describe('StudyTangentSelection', () => {
     }
   });
 
-  it('starts a tangent from a passage of any length', () => {
-    const long = 'The Nile flooded every summer. '.repeat(1000).trim();
-    const { context } = renderSelection(contextValue(), long);
+  it('refuses a passage longer than a tangent can start from', () => {
+    const { context } = renderSelection(contextValue(), 'a'.repeat(MAX_STUDY_TANGENT_PASSAGE_LENGTH + 1));
     select(passageText());
-    expect(screen.getByRole('button', { name: 'Ask in a tangent' })).toBeEnabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Ask in a tangent' }));
-    expect(context!.startTangent).toHaveBeenCalledWith({ moduleId: 'm1', lessonId: 'l1', sectionIndex: 2, sectionTitle: 'Floods', selectedText: long });
-    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.getByText('Select a shorter passage (up to 8,000 characters)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ask in a tangent' })).toBeDisabled();
+    expect(context!.startTangent).not.toHaveBeenCalled();
   });
 
   it('opens a menu on right-click with tangent and copy, moving focus with the arrows', async () => {
@@ -254,12 +253,29 @@ describe('SectionTangentBar', () => {
     expect(idle.startTangent).not.toHaveBeenCalled();
   });
 
-  it('starts a tangent from a section of any length, whole', () => {
+  it('asks for a shorter passage from a long section', () => {
     const context = contextValue();
-    const long = 'The Nile flooded every summer. '.repeat(1000);
-    renderBar(context, { sectionText: `  ${long}  ` });
+    const long = 'x'.repeat(MAX_STUDY_TANGENT_PASSAGE_LENGTH + 10);
+    renderBar(context, { sectionText: long });
     fireEvent.click(screen.getByTestId('section-tangent-btn-2'));
-    expect(context.startTangent).toHaveBeenCalledWith({ moduleId: 'm1', lessonId: 'l1', sectionIndex: 2, sectionTitle: 'Floods', selectedText: long.trim() });
+    const field = screen.getByRole('textbox', { name: 'Passage to explore' });
+    expect(field).toHaveValue('x'.repeat(4000));
+    expect(screen.getByText(`${(4000).toLocaleString()} / 8,000 characters`)).toBeInTheDocument();
+
+    fireEvent.change(field, { target: { value: '   ' } });
+    expect(screen.getByRole('button', { name: 'Start tangent' })).toBeDisabled();
+    fireEvent.change(field, { target: { value: '  The delta  ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Start tangent' }));
+    expect(context.startTangent).toHaveBeenCalledWith(expect.objectContaining({ selectedText: 'The delta' }));
+    expect(screen.queryByRole('textbox', { name: 'Passage to explore' })).not.toBeInTheDocument();
+  });
+
+  it('closes the passage chooser without starting anything', () => {
+    const context = contextValue();
+    renderBar(context, { sectionText: 'y'.repeat(MAX_STUDY_TANGENT_PASSAGE_LENGTH + 1) });
+    fireEvent.click(screen.getByTestId('section-tangent-btn-2'));
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(context.startTangent).not.toHaveBeenCalled();
   });
 });

@@ -1,14 +1,17 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import { Copy, GitBranch } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 import { selectedTextWithFormulas } from '@/components/TiptapEditor';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import type { LearningTangentDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 
 import '@/features/chat/components/tangents/tangents.css';
+
+export const MAX_STUDY_TANGENT_PASSAGE_LENGTH = 8000;
 
 export interface StartStudyTangentParams {
   moduleId: string;
@@ -157,6 +160,8 @@ export function StudyTangentSelection({
 
   if (!tangentsContext) return <>{children}</>;
 
+  const isTooLong = Boolean(selection && Array.from(selection.text).length > MAX_STUDY_TANGENT_PASSAGE_LENGTH);
+
   return (
     <div
       ref={bodyRef}
@@ -206,12 +211,23 @@ export function StudyTangentSelection({
               }
             }}
           >
+            {isTooLong && (
+              <p className="px-2 py-1 text-[11px] text-amber-600 dark:text-amber-400">
+                Select a shorter passage (up to 8,000 characters)
+              </p>
+            )}
             <button
               type="button"
               role={selection.mode === 'menu' ? 'menuitem' : undefined}
-              disabled={tangentsContext.isCreating}
+              disabled={tangentsContext.isCreating || isTooLong}
               className="tangent-menu-item"
               onClick={() => {
+                if (isTooLong) {
+                  toast.error('Choose a shorter passage', {
+                    message: 'A tangent can start from up to 8,000 characters.',
+                  });
+                  return;
+                }
                 void tangentsContext.startTangent({
                   moduleId,
                   lessonId,
@@ -267,6 +283,9 @@ export function SectionTangentBar({
   label,
 }: SectionTangentBarProps) {
   const tangentsContext = useContext(StudyTangentsContext);
+  const [trimPassage, setTrimPassage] = useState<string | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const passageId = useId();
 
   if (!tangentsContext) return null;
 
@@ -274,57 +293,112 @@ export function SectionTangentBar({
     (item) => item.lessonId === lessonId && (item.sectionIndex ?? null) === (sectionIndex ?? null),
   );
 
-  const handleStartClick = () => {
-    const trimmed = sectionText.trim();
-    if (!trimmed) return;
+  const startFromText = (text: string) => {
     void tangentsContext.startTangent({
       moduleId,
       lessonId,
       sectionIndex,
       sectionTitle,
-      selectedText: trimmed,
+      selectedText: text,
     });
+  };
+
+  const handleStartClick = () => {
+    const trimmed = sectionText.trim();
+    if (!trimmed) return;
+    if (Array.from(trimmed).length <= MAX_STUDY_TANGENT_PASSAGE_LENGTH) {
+      startFromText(trimmed);
+    } else {
+      setTrimPassage(trimmed.slice(0, 4000));
+    }
   };
 
   const testId = sectionIndex != null ? `section-tangent-btn-${sectionIndex}` : 'lesson-tangent-btn';
   const displayLabel = label ?? (sectionIndex != null ? 'Start tangent' : 'Start a tangent on this lesson');
+  const trimLength = Array.from(trimPassage?.trim() ?? '').length;
 
   return (
-    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5 text-xs text-text-muted">
-      <div className="flex flex-wrap items-center gap-1.5">
-        {sectionTangents.length > 0 && (
-          <button
-            type="button"
-            onClick={() => tangentsContext.openTangentsDrawer(lessonId)}
-            className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent hover:bg-accent/20 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            <GitBranch className="h-3 w-3 text-accent" aria-hidden="true" />
-            {sectionTangents.length} {sectionTangents.length === 1 ? 'tangent' : 'tangents'}
-          </button>
-        )}
-        {sectionTangents.slice(0, 2).map((t) => (
-          <button
-            key={t.conversationId}
-            type="button"
-            title={t.title}
-            onClick={() => tangentsContext.openTangent(t.conversationId)}
-            className="inline-flex max-w-[180px] items-center truncate rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-secondary hover:border-accent hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            {t.title}
-          </button>
-        ))}
+    <>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5 text-xs text-text-muted">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {sectionTangents.length > 0 && (
+            <button
+              type="button"
+              onClick={() => tangentsContext.openTangentsDrawer(lessonId)}
+              className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2.5 py-1 text-xs font-medium text-accent hover:bg-accent/20 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <GitBranch className="h-3 w-3 text-accent" aria-hidden="true" />
+              {sectionTangents.length} {sectionTangents.length === 1 ? 'tangent' : 'tangents'}
+            </button>
+          )}
+          {sectionTangents.slice(0, 2).map((t) => (
+            <button
+              key={t.conversationId}
+              type="button"
+              title={t.title}
+              onClick={() => tangentsContext.openTangent(t.conversationId)}
+              className="inline-flex max-w-[180px] items-center truncate rounded-full border border-border bg-surface px-2 py-0.5 text-[11px] text-text-secondary hover:border-accent hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              {t.title}
+            </button>
+          ))}
+        </div>
+
+        <button
+          ref={buttonRef}
+          type="button"
+          data-testid={testId}
+          disabled={tangentsContext.isCreating}
+          onClick={handleStartClick}
+          className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 font-medium text-text-secondary hover:border-accent hover:text-accent disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <GitBranch className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+          {displayLabel}
+        </button>
       </div>
 
-      <button
-        type="button"
-        data-testid={testId}
-        disabled={tangentsContext.isCreating}
-        onClick={handleStartClick}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border px-3 py-1 font-medium text-text-secondary hover:border-accent hover:text-accent disabled:opacity-50 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
-      >
-        <GitBranch className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
-        {displayLabel}
-      </button>
-    </div>
+      <Dialog open={trimPassage !== null} onOpenChange={(open) => { if (!open) setTrimPassage(null); }}>
+        <DialogContent
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (document.activeElement === document.body) buttonRef.current?.focus();
+          }}
+        >
+          <DialogTitle>Choose a starting passage</DialogTitle>
+          <DialogDescription>
+            This section is long. Keep the portion you want to explore, up to 8,000 characters.
+          </DialogDescription>
+          <label htmlFor={passageId} className="text-sm font-medium">
+            Passage to explore
+          </label>
+          <textarea
+            id={passageId}
+            value={trimPassage ?? ''}
+            rows={8}
+            onChange={(event) => setTrimPassage(event.target.value)}
+            aria-describedby={`${passageId}-length`}
+            className="w-full resize-y rounded-lg border border-border bg-surface p-3 text-sm leading-relaxed outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          />
+          <div className="flex items-center justify-between gap-3">
+            <span id={`${passageId}-length`} className="text-xs text-text-muted">
+              {trimLength.toLocaleString()} / 8,000 characters
+            </span>
+            <button
+              type="button"
+              disabled={!trimLength || trimLength > MAX_STUDY_TANGENT_PASSAGE_LENGTH || tangentsContext.isCreating}
+              className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-fg disabled:opacity-40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => {
+                if (trimPassage) {
+                  startFromText(trimPassage.trim());
+                  setTrimPassage(null);
+                }
+              }}
+            >
+              Start tangent
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

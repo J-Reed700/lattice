@@ -9,9 +9,10 @@ impl LearningRepository {
         request: &CreateLearningTangentRequestDto,
     ) -> Result<LearningTangentDto> {
         let trimmed = request.selected_text.trim();
-        if trimmed.is_empty() {
+        let char_count = trimmed.chars().count();
+        if char_count == 0 || char_count > 8_000 {
             return Err(AppError::InvalidInput(
-                "Select some text for a tangent.".into(),
+                "Select between 1 and 8,000 characters for a tangent.".into(),
             ));
         }
 

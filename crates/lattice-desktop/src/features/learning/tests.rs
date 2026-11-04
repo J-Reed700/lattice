@@ -1188,37 +1188,6 @@ async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Res
 }
 
 #[tokio::test]
-async fn a_study_tangent_can_start_from_a_selection_of_any_length() -> Result<()> {
-    let pool = pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let program = fixture();
-    repo.create(&program).await?;
-    let selected_text = "A long passage of the lesson, quoted whole. ".repeat(300);
-    let selected_text = selected_text.trim().to_string();
-
-    let tangent = repo
-        .create_tangent(&CreateLearningTangentRequestDto {
-            program_id: program.summary.id.clone(),
-            module_id: program.modules[0].id.clone(),
-            lesson_id: program.modules[0].lessons[0].id.clone(),
-            section_index: None,
-            section_title: None,
-            selected_text: selected_text.clone(),
-        })
-        .await?;
-
-    assert_eq!(tangent.selected_text, selected_text);
-    let first: String =
-        sqlx::query_scalar("SELECT content FROM conversation_messages WHERE conversation_id = ?")
-            .bind(&tangent.conversation_id)
-            .fetch_one(&pool)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
-    assert!(first.contains(&format!("> {selected_text}")));
-    Ok(())
-}
-
-#[tokio::test]
 async fn test_learning_tangents_lifecycle() -> Result<()> {
     let pool = pool().await?;
     let repo = LearningRepository::new(pool.clone());
@@ -1294,7 +1263,22 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
         Err(lattice_core::shared::error::AppError::InvalidInput(_))
     ));
 
-    // Test 2: Create tangent with section_index = Some(0) and section_title = None (resolves to block title)
+    // Test 2: Validation error on selection > 8000 chars
+    let huge_req = CreateLearningTangentRequestDto {
+        program_id: p1_id.clone(),
+        module_id: m1_id.clone(),
+        lesson_id: l1_id.clone(),
+        section_index: Some(0),
+        section_title: None,
+        selected_text: "x".repeat(8001),
+    };
+    let huge_err = repo.create_tangent(&huge_req).await;
+    assert!(matches!(
+        huge_err,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+
+    // Test 3: Create tangent with section_index = Some(0) and section_title = None (resolves to block title)
     let selected_text = "Why is &mut T invariant over T while &T is covariant?";
     let req1 = CreateLearningTangentRequestDto {
         program_id: p1_id.clone(),
