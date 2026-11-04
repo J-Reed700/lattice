@@ -1,11 +1,12 @@
 //! A pass identified with the ledger: `identify` records which claim each
 //! statement is and what is new about it, and records no check (acceptance
 //! design §2.10).
-use super::acceptance_switch_tests::{claim, SOURCED};
+use super::acceptance_switch_tests::{claim, walk, SOURCED};
 use super::claim_ledger_tests::{
     check_findings, identify_findings, pass_report, passage_finding, CELL,
 };
 use super::*;
+use lattice_core::domain::learning::acceptance::Step;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, RepairOutcome,
 };
@@ -247,6 +248,65 @@ async fn a_claim_no_statement_continues_whose_sentence_stands_is_a_fault_that_st
         ),
         "{:?}",
         entry.state()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_in_a_section_that_goes_is_ended_removed_though_its_sentence_stands() -> Result<()>
+{
+    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let id = claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    ledger.cuts.go(0, "Mitochondria".into());
+
+    identify_findings(&mut ledger, &lesson, &pass_report(vec![])).await?;
+
+    // The section stays in the draft until the lesson is final, with no
+    // statement of its own; its claim goes with it.
+    assert_eq!(ledger.fault(&StandardPolicy::new()), None);
+    assert!(
+        matches!(
+            ledger.entry(&id).unwrap().state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        ledger.entry(&id).unwrap().state()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_a_repair_awaits_is_decided_by_the_pass_that_finds_no_statement_for_it(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let id = claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    let to_rewrite = [
+        (Step::Read(Reading::Parts), Outcome::Unproven),
+        (Step::Research, Outcome::FoundNothing),
+        (Step::Read(Reading::Page), Outcome::Unproven),
+    ];
+    walk(&mut ledger, &id, Class::Sourced, &to_rewrite).await?;
+    ledger
+        .begin_repairs(&policy, &lesson, std::slice::from_ref(&id))
+        .await?;
+
+    identify_findings(&mut ledger, &lesson, &pass_report(vec![])).await?;
+
+    assert_eq!(ledger.fault(&policy), None);
+    assert!(
+        ledger
+            .entry(&id)
+            .unwrap()
+            .events()
+            .iter()
+            .any(|record| matches!(record.event, ClaimEvent::RepairAttempted { .. })),
+        "the pass records what became of the repair"
     );
     Ok(())
 }

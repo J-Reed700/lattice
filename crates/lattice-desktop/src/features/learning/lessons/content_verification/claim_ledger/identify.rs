@@ -5,7 +5,7 @@
 use super::super::*;
 use super::fields::{field_text, locate};
 use super::position::sorted_as;
-use super::{is_gone, successor, ClaimLedger, RepairRecord};
+use super::{is_example, is_gone, successor, ClaimLedger, RepairRecord};
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Step};
 use lattice_core::domain::learning::claim_review::{
     identities, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ExtractedClaim, RepairOutcome,
@@ -244,7 +244,9 @@ impl ClaimLedger {
     /// is new about it that needs no check. Returns the claims, in the order
     /// of `extracted`. The outcome of a repair that awaited this pass is
     /// recorded here, and what the reopenings and an example's check weigh of
-    /// each claim carried on is kept for them.
+    /// each claim carried on is kept for them. A claim no statement continues
+    /// while its sentence stands, and no repair awaits it, is not ended: it is
+    /// a fault of the pass (`unplaced`), which `fault` stops the lesson for.
     pub(in super::super) async fn identify(
         &mut self,
         policy: &dyn AcceptancePolicy,
@@ -263,6 +265,7 @@ impl ClaimLedger {
             .map(|record| (record.claim_id.clone(), record))
             .collect();
         self.carried.clear();
+        self.unplaced.clear();
         let mut claim_ids = Vec::with_capacity(extracted.len());
         let mut findings = Vec::new();
         let mut examples = HashMap::new();
@@ -331,6 +334,10 @@ impl ClaimLedger {
             if self.edited_now.contains(&id) {
                 continue;
             }
+            if !records.contains_key(&id) && self.stands(candidate, &id) {
+                self.unplaced.push(id);
+                continue;
+            }
             let after = rewritten.get(&id).cloned().flatten();
             self.orphan(&id, records.get(&id), after).await?;
         }
@@ -352,6 +359,20 @@ impl ClaimLedger {
         self.findings = findings;
         self.examples = examples;
         Ok(claim_ids)
+    }
+
+    /// Whether the statement `id` still has its sentence in the lesson, in a
+    /// section that stays: a code example's claim has none, and a section that
+    /// goes takes its claims with it.
+    fn stands(&self, candidate: &Value, id: &ClaimId) -> bool {
+        let Some(entry) = self.entry(id).filter(|entry| !is_example(entry)) else {
+            return false;
+        };
+        let at = entry.location();
+        !self.cuts.going.contains_key(&at.unit_index)
+            && !at.quote.trim().is_empty()
+            && field_text(candidate, at.unit_index, &at.field)
+                .is_some_and(|text| text.contains(&at.quote))
     }
 
     /// Whether the claim `id`, which a repair of another claim sent for as a

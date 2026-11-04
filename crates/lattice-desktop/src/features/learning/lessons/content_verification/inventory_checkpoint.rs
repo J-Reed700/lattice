@@ -2,7 +2,7 @@
 use super::claim_ledger::Rewrites;
 use super::classify::{rule_class, Case};
 use super::*;
-use lattice_core::domain::learning::claim_review::ExtractedClaim;
+use lattice_core::domain::learning::claim_review::{identities, ClaimLedgerEntry, ExtractedClaim};
 
 async fn save_inventory(
     llm: &dyn LLMPort,
@@ -154,6 +154,69 @@ pub(super) fn adopt_specifics(
     adopted
 }
 
+/// A claim the ledger holds whose sentence stands in the lesson stays in the
+/// inventory, as it was extracted from that same text, when no statement of
+/// the inventory continues it: an extraction that misses it is at fault, and
+/// the claim is not ended for it (acceptance design §2.9). Who continues whom
+/// is the pass's own rule, so what is kept is what identification would
+/// otherwise end. How many claims were kept.
+fn keep_held(inventory: &mut Inventory, candidate: &Value, held: &[ClaimLedgerEntry]) -> usize {
+    if held.is_empty() {
+        return 0;
+    }
+    let found: Vec<ExtractedClaim> = inventory
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.claims.iter().map(move |claim| ExtractedClaim {
+                location: claim_ledger::locate(
+                    candidate,
+                    unit.index,
+                    &claim.quote,
+                    Some(&claim.statement),
+                ),
+                statement: claim.statement.clone(),
+            })
+        })
+        .collect();
+    let texts: HashMap<(usize, String), String> = held
+        .iter()
+        .filter_map(|entry| {
+            let at = entry.location();
+            claim_ledger::field_text(candidate, at.unit_index, &at.field)
+                .map(|text| ((at.unit_index, at.field.clone()), text))
+        })
+        .collect();
+    let prior: Vec<&ClaimLedgerEntry> = held.iter().collect();
+    let left = identities(&prior, &found, |unit, field| {
+        texts.get(&(unit, field.to_owned())).map(String::as_str)
+    })
+    .orphaned;
+    let mut kept = 0;
+    for entry in held.iter().filter(|entry| left.contains(entry.claim_id())) {
+        let at = entry.location();
+        let stands = !at.quote.trim().is_empty()
+            && at.quote.chars().count() <= MAX_CLAIM_QUOTE_CHARS
+            && texts
+                .get(&(at.unit_index, at.field.clone()))
+                .is_some_and(|text| text.contains(&at.quote));
+        let Some(unit) = inventory
+            .units
+            .iter_mut()
+            .find(|unit| unit.index == at.unit_index)
+            .filter(|_| stands)
+        else {
+            continue;
+        };
+        unit.claims.push(Claim {
+            quote: at.quote.clone(),
+            statement: entry.statement().to_owned(),
+        });
+        kept += 1;
+    }
+    kept
+}
+
 pub(super) async fn complete_inventory(
     llm: &dyn LLMPort,
     content: &[Value],
@@ -181,6 +244,12 @@ pub(super) async fn complete_inventory(
     }
     inventory.units.sort_by_key(|unit| unit.index);
     coverage.units.sort_by_key(|unit| unit.index);
+    let kept = keep_held(&mut inventory, parsed, rewrites.held());
+    if kept > 0 {
+        tracing::info!(
+            "claim.inventory: kept {kept} claims the extraction left out, whose sentences stand"
+        );
+    }
     validate_inventory(&inventory, content)?;
     section_checkpoints::save(llm, content, &inventory.units, &coverage.units).await?;
     save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;

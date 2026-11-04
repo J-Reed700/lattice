@@ -1822,7 +1822,10 @@ async fn a_sentence_a_repair_rewrote_is_read_afresh_so_its_re_check_judges_the_w
 async fn a_claim_whose_sentence_still_stands_is_not_ended_removed_because_no_extraction_continued_it(
 ) -> Result<()> {
     // §1 #16 (a) of the acceptance policy design
-    let model = Model::new();
+    let policy = StandardPolicy::new();
+    // The extractor names the sentence about twelve mitochondria, and not the
+    // one the ledger holds a claim on.
+    let model = Classes::new(&[TWELVE_SENTENCE]);
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let lesson = cell_lesson(CELL);
     let id = claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
@@ -1833,8 +1836,31 @@ async fn a_claim_whose_sentence_still_stands_is_not_ended_removed_because_no_ext
         ClaimState::ResolvedByEvidence { .. }
     ));
 
-    // The next extraction names no claim for a sentence the draft still holds.
-    identify_findings(&mut ledger, &lesson, &pass_report(vec![])).await?;
+    // The next pass: its extraction names no claim for a sentence the draft
+    // still holds.
+    let checks = ClaimChecks {
+        rewrites: ledger.rewrites(&policy),
+        ..ClaimChecks::default()
+    };
+    let extraction =
+        passes::extract(&model, &BuiltinRuntimes::for_tests(), &lesson, &checks).await?;
+    let course = [LearningSourceDto {
+        id: "source-1".into(),
+        title: "Mitochondria".into(),
+        url: None,
+        excerpt: CELL_SOURCE.into(),
+        acquired_at: 0,
+    }];
+    let references = ReferenceCollection::lexical(&course)?;
+    passes::identify(
+        &model,
+        &policy,
+        &mut ledger,
+        (&lesson, &references),
+        extraction,
+        &checks,
+    )
+    .await?;
 
     let entry = ledger.entry(&id).unwrap();
     assert!(
@@ -1944,6 +1970,103 @@ async fn a_full_extraction_that_misses_a_claim_whose_sentence_stands_carries_it_
         pass.statements.iter().any(|known| known.id == id),
         "no statement of the pass continues the claim"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_whose_sentence_is_gone_is_not_carried_by_the_extraction() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let model = Classes::new(&[TWELVE_SENTENCE]);
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    let cut = cell_lesson(&CELL.replace(&format!("{ATP_SENTENCE} "), ""));
+    let checks = ClaimChecks {
+        rewrites: ledger.rewrites(&policy),
+        ..ClaimChecks::default()
+    };
+
+    let extraction = passes::extract(&model, &BuiltinRuntimes::for_tests(), &cut, &checks).await?;
+
+    let claims = &extraction.inventory.units[0].claims;
+    assert!(
+        claims.iter().all(|claim| claim.statement != ATP),
+        "{claims:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_the_extraction_words_differently_on_its_sentence_is_continued_not_carried_twice(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    // The extractor states the sentence itself, where the ledger holds a
+    // restatement of it.
+    let model = Classes::new(&[ATP_SENTENCE]);
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    let checks = ClaimChecks {
+        rewrites: ledger.rewrites(&policy),
+        ..ClaimChecks::default()
+    };
+
+    let extraction = passes::extract(
+        &model,
+        &BuiltinRuntimes::for_tests(),
+        &cell_lesson(CELL),
+        &checks,
+    )
+    .await?;
+
+    let claims = &extraction.inventory.units[0].claims;
+    let on_the_sentence = claims
+        .iter()
+        .filter(|claim| claim.quote == ATP_SENTENCE)
+        .count();
+    assert_eq!(on_the_sentence, 1, "{claims:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_claims_on_one_sentence_are_both_kept_when_the_extraction_names_one() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let overstated = "Mitochondria produce all of a cell's ATP.";
+    let model = Classes::new(&[ATP_SENTENCE]);
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let first = claim(&mut ledger, "first", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    let second = claim(
+        &mut ledger,
+        "second",
+        (ATP_SENTENCE, overstated),
+        CELL,
+        SOURCED,
+    )
+    .await?;
+    let checks = ClaimChecks {
+        rewrites: ledger.rewrites(&policy),
+        ..ClaimChecks::default()
+    };
+
+    let extraction =
+        passes::extract(&model, &BuiltinRuntimes::for_tests(), &lesson, &checks).await?;
+    let references = ReferenceCollection::lexical(&[])?;
+    let pass = passes::identify(
+        &model,
+        &policy,
+        &mut ledger,
+        (&lesson, &references),
+        extraction,
+        &checks,
+    )
+    .await?;
+
+    assert_eq!(ledger.fault(&policy), None);
+    for id in [&first, &second] {
+        assert!(
+            pass.statements.iter().any(|known| known.id == *id),
+            "no statement of the pass continues {id:?}"
+        );
+    }
     Ok(())
 }
 

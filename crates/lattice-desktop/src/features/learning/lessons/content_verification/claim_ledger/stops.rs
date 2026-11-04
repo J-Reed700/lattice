@@ -25,11 +25,23 @@ fn describe(step: Step) -> &'static str {
 impl ClaimLedger {
     /// The stop for a lesson whose statements the policy cannot walk: one
     /// decided under another policy than the current, or one whose record
-    /// does not fit its graph.
+    /// does not fit its graph; and for one whose pass left out a statement
+    /// while its sentence stands.
     pub(in crate::features::learning::lessons::content_verification) fn fault(
         &self,
         policy: &dyn AcceptancePolicy,
     ) -> Option<StopReason> {
+        if let Some(entry) = self.unplaced.iter().find_map(|id| self.entry(id)) {
+            return Some(self.stop_reason(
+                "claim_left_out",
+                format!(
+                    "The pass named no statement for \"{}\", though the lesson still holds its sentence, \"{}\". The claim is kept as it was, not ended.",
+                    entry.statement(),
+                    entry.location().quote
+                ),
+                "The draft is saved. Resume this lesson to read it again. If it stops here again, report this lesson's claim review so its extraction can be repaired.",
+            ));
+        }
         for id in &self.findings {
             let Some(entry) = self.entry(id).filter(|entry| !is_gone(entry.state())) else {
                 continue;

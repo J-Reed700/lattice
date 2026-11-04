@@ -8,7 +8,9 @@ use super::fields::field_text;
 use super::RepairRecord;
 use crate::features::learning::reference_collection::shared_terms;
 use lattice_core::domain::learning::acceptance::Walked;
-use lattice_core::domain::learning::claim_review::{ClaimId, ExtractedClaim, MACHINE_ATTEMPTS};
+use lattice_core::domain::learning::claim_review::{
+    ClaimId, ClaimLedgerEntry, ExtractedClaim, MACHINE_ATTEMPTS,
+};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -79,13 +81,14 @@ fn written(
 
 /// What the last step leaves for the pass that reads the lesson: whether
 /// that pass comes after another, the lesson as it was before the repairs or
-/// edits, and the place in its graph of each statement the ledger holds, by
-/// section and statement.
+/// edits, the place in its graph of each statement the ledger holds, by
+/// section and statement, and the claims the ledger holds that are not ended.
 #[derive(Default)]
 pub(in crate::features::learning::lessons::content_verification) struct Rewrites {
     later: bool,
     previous: Option<Value>,
     walked: HashMap<(usize, String), Walked>,
+    held: Vec<ClaimLedgerEntry>,
 }
 
 impl Rewrites {
@@ -98,7 +101,25 @@ impl Rewrites {
             later,
             previous,
             walked,
+            held: Vec::new(),
         }
+    }
+
+    /// These with `held`, the claims the ledger holds that are not ended:
+    /// an extraction that misses one whose sentence stands keeps it.
+    pub(in crate::features::learning::lessons::content_verification) fn holding(
+        mut self,
+        held: Vec<ClaimLedgerEntry>,
+    ) -> Self {
+        self.held = held;
+        self
+    }
+
+    /// The claims the ledger holds that are not ended.
+    pub(in crate::features::learning::lessons::content_verification) fn held(
+        &self,
+    ) -> &[ClaimLedgerEntry] {
+        &self.held
     }
 
     /// Where the ledger has `statement` of section `unit` in its class's

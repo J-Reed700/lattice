@@ -175,6 +175,9 @@ pub(super) struct ClaimLedger {
     /// What `identify` left for the reopenings and an example's check of each
     /// claim it carried on, until they are made.
     carried: HashMap<ClaimId, Carried>,
+    /// The claims the last `identify` found no statement for while their
+    /// sentences stand, which stop the lesson (`fault`).
+    unplaced: Vec<ClaimId>,
     /// Claims whose user edit was just applied: re-extraction names their
     /// successors (§5.1 Edit).
     pub(super) edited_now: HashSet<ClaimId>,
@@ -222,6 +225,7 @@ impl ClaimLedger {
             findings: Vec::new(),
             examples: HashMap::new(),
             carried: HashMap::new(),
+            unplaced: Vec::new(),
             edited_now: HashSet::new(),
             cuts: Cuts::default(),
             gate: Box::new(ProvenanceGate),
@@ -509,6 +513,17 @@ impl ClaimLedger {
             self.pending.previous.clone(),
             self.walks(policy),
         )
+        .holding(self.held())
+    }
+
+    /// The claims of the statements neither the user nor the machine has
+    /// ended. A code example's claim is none of them: its run is no sentence.
+    fn held(&self) -> Vec<ClaimLedgerEntry> {
+        self.entries
+            .iter()
+            .filter(|entry| !is_gone(entry.state()) && !is_example(entry))
+            .cloned()
+            .collect()
     }
 
     /// The repair sent for `claims` (§4): the step each is taking, saved with
