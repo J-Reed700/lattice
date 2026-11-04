@@ -192,15 +192,6 @@ impl ReindexDocumentUseCase {
         document.set_quality_score(quality_score);
         document.set_word_count(word_count);
 
-        let chunk_count = document.chunks().len();
-        for index in 0..chunk_count {
-            let chunk = document.chunks().get(index).ok_or_else(|| {
-                AppError::InvalidInput(format!("Chunk index {} out of bounds", index))
-            })?;
-            let token_count = metadata_extractor.count_tokens(chunk.content());
-            document.set_chunk_token_count(index, token_count);
-        }
-
         // 4. Generate new embeddings, chunked exactly as the import path chunks.
         let mut document = super::embedding_input::prepare_structured(
             document,
@@ -210,6 +201,24 @@ impl ReindexDocumentUseCase {
         // From this extraction alone: a page that has gained a text layer since
         // the last run loses its mark.
         document.mark_ocr_pages(&ocr_pages);
+
+        for index in 0..document.chunks().len() {
+            let (chunk_content, has_section) = {
+                let chunk = document.chunks().get(index).ok_or_else(|| {
+                    AppError::InvalidInput(format!("Chunk index {} out of bounds", index))
+                })?;
+                (chunk.content().to_string(), chunk.section().is_some())
+            };
+            document.set_chunk_token_count(index, metadata_extractor.count_tokens(&chunk_content));
+            document.set_chunk_word_count(
+                index,
+                metadata_extractor.count_words(&chunk_content) as usize,
+            );
+            document.set_chunk_has_code(index, metadata_extractor.contains_code(&chunk_content));
+            if !has_section {
+                document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
+            }
+        }
         let model_identity = self.embedding_service.model_identity();
         let embeddings = super::embedding_input::embed_prepared_chunks(
             &document,

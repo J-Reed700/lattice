@@ -11,12 +11,12 @@ import VaultAPI, { type ApiClient } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { unwrapApiResult } from '@/types/api/result';
 import type { DocumentMetadata } from '@/types/fileBrowser';
+import { isHttpUrl } from '@/utils/sourcePreview';
 
 import { THEMES_QUERY_KEY } from './useClustersQuery';
 
 type LibraryDocument = Pick<DocumentMetadata, 'id' | 'filePath' | 'fileName'>;
 
-const isHttpUrl = (path: string) => /^https?:\/\//i.test(path);
 const isAbsolutePath = (path: string) => path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path);
 
 /** Everything that lists or counts library documents. */
@@ -29,6 +29,7 @@ const DOCUMENT_VIEW_KEYS = [
   ['dashboard'],
   ['chat-empty-state-stats'],
   ['learning-space-documents'],
+  ['documents', 'study'],
   // Space memberships and the documents a conversation links.
   conversationKeys.all,
 ] as const;

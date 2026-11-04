@@ -4,7 +4,10 @@
 //! choice again: a model can disappear after it was chosen.
 
 use lattice_core::application::contracts::settings::LLMSettingsDto;
-use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
+use lattice_core::application::services::chat_model_resolution::{
+    cloud_provider_id, cloud_provider_name,
+};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -51,18 +54,25 @@ pub(crate) async fn check_available(
                 "No Ollama connection is configured. Add one in Settings → Chat".into(),
             ))
         }
+        ModelRef::Ollama { model } if model.trim().is_empty() => {
+            Err(AppError::InvalidConfig(
+                "The Ollama model is not configured. Choose one in Settings → Chat.".into(),
+            ))
+        }
         ModelRef::LlamaCpp { .. } if settings.llama_cpp.url.trim().is_empty() => {
             Err(AppError::InvalidConfig(
                 "No llama.cpp connection is configured. Add one in Settings → Chat".into(),
             ))
         }
+        ModelRef::LlamaCpp { model } if model.trim().is_empty() => {
+            Err(AppError::InvalidConfig(
+                "The llama.cpp model is not configured. Choose one in Settings → Chat.".into(),
+            ))
+        }
         ModelRef::Ollama { .. } | ModelRef::LlamaCpp { .. } => Ok(()),
         ModelRef::Cloud { provider, .. } => {
-            let (key, label) = match provider {
-                CloudProvider::Openai => ("openai", "OpenAI"),
-                CloudProvider::Anthropic => ("anthropic", "Anthropic"),
-                CloudProvider::Google => ("google", "Google"),
-            };
+            let key = cloud_provider_id(*provider);
+            let label = cloud_provider_name(*provider);
             if cloud_key_saved(key)? {
                 Ok(())
             } else {

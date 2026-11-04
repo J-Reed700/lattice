@@ -1,5 +1,8 @@
 import { VaultAPI, type ApiClient } from '@/lib/api';
-import type { BatchJobSummary, BatchJobStatus } from '@/types/api/batch';
+import type { BatchJobSummary } from '@/types/api/batch';
+import { BATCH_IMPORT_JOBS_QUERY_KEY, getBatchJobStatus } from './batchImport';
+
+export { BATCH_IMPORT_JOBS_QUERY_KEY, getBatchJobStatus, getBatchJobStatus as getBatchJobDetails };
 
 /** Include older unresolved failures, even after more than 100 later imports. */
 export async function listAllBatchJobs(api: ApiClient = VaultAPI): Promise<BatchJobSummary[]> {
@@ -35,14 +38,6 @@ export async function retryFailedItems(jobId: string, itemId?: string, replaceme
   if (!result.ok) {
     const detail: unknown = result.details?.details;
     throw new Error(typeof detail === 'string' && detail.trim() ? detail : result.error);
-  }
-  return result.data;
-}
-
-export async function getBatchJobDetails(jobId: string, api: ApiClient = VaultAPI): Promise<BatchJobStatus> {
-  const result = await api.getBatchJobStatus(jobId);
-  if (!result.ok) {
-    throw new Error(result.error);
   }
   return result.data;
 }

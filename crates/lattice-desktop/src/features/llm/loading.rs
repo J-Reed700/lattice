@@ -13,6 +13,9 @@ use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::instances::LaunchProfile;
 use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
+use lattice_core::application::services::chat_model_resolution::{
+    cloud_provider_id, cloud_provider_name,
+};
 use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
@@ -415,11 +418,8 @@ pub(crate) fn cloud_key_saved(provider: CloudProvider) -> Result<bool> {
 /// The API key for `provider`, read as everywhere else: its environment
 /// variable, else the keyring.
 fn cloud_api_key(provider: CloudProvider) -> Result<String> {
-    let (name, label) = match provider {
-        CloudProvider::Openai => ("openai", "OpenAI"),
-        CloudProvider::Anthropic => ("anthropic", "Anthropic"),
-        CloudProvider::Google => ("google", "Google"),
-    };
+    let name = cloud_provider_id(provider);
+    let label = cloud_provider_name(provider);
     crate::infrastructure::security::keyring_storage::SecureStorage::new()
         .cloud_api_key(name)?
         .ok_or_else(|| {

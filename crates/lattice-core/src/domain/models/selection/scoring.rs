@@ -131,6 +131,28 @@ impl CompatibilityScorer {
         Self
     }
 
+    /// Score RAM compatibility based on usable memory budget.
+    pub fn score_ram_compatibility(
+        &self,
+        model: &ModelMetadata,
+        capabilities: &SystemCapabilities,
+    ) -> (f64, Option<String>) {
+        let usable_ram = capabilities.usable_memory_gb();
+        let ram_ratio = usable_ram / model.recommended_ram_gb;
+        let ram_score = (ram_ratio * 100.0).clamp(0.0, 100.0);
+
+        let recommendation = if ram_score < 100.0 {
+            Some(format!(
+                "Model will run, but {} GB RAM recommended for best performance",
+                model.recommended_ram_gb
+            ))
+        } else {
+            None
+        };
+
+        (ram_score, recommendation)
+    }
+
     /// Score compatibility between a model and system capabilities.
     pub fn score_compatibility(
         &self,
@@ -142,8 +164,10 @@ impl CompatibilityScorer {
 
         if !capabilities.has_sufficient_ram(model.minimum_ram_gb) {
             blockers.push(format!(
-                "Insufficient RAM: need {} GB, have {} GB total",
-                model.minimum_ram_gb, capabilities.total_ram_gb
+                "Insufficient RAM: need {} GB, have {} GB usable ({} GB total)",
+                model.minimum_ram_gb,
+                capabilities.usable_memory_gb(),
+                capabilities.total_ram_gb
             ));
         }
 
@@ -170,14 +194,9 @@ impl CompatibilityScorer {
         }
 
         // RAM Score: percentage of recommended RAM available
-        let ram_ratio = capabilities.total_ram_gb / model.recommended_ram_gb;
-        let ram_score = (ram_ratio * 100.0).clamp(0.0, 100.0);
-
-        if ram_score < 100.0 {
-            recommendations.push(format!(
-                "Model will run, but {} GB RAM recommended for best performance",
-                model.recommended_ram_gb
-            ));
+        let (ram_score, ram_rec) = self.score_ram_compatibility(model, capabilities);
+        if let Some(rec) = ram_rec {
+            recommendations.push(rec);
         }
 
         // GPU Score: 100 if GPU available, 50 if CPU-only
@@ -240,7 +259,7 @@ impl CompatibilityScorer {
             };
 
             // Adjust for RAM
-            let ram_multiplier = if capabilities.total_ram_gb >= model.recommended_ram_gb {
+            let ram_multiplier = if capabilities.usable_memory_gb() >= model.recommended_ram_gb {
                 1.0
             } else {
                 0.7

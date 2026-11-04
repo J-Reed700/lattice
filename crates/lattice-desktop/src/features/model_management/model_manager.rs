@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use tauri::Emitter;
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 // BGE-M3 embedding model URLs
 const MODEL_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
@@ -184,12 +184,12 @@ impl ModelManager {
         self
     }
 
-    fn emit_progress(&self, progress: DownloadProgress) {
+    fn emit_progress(&self, model_id: &str, progress: DownloadProgress) {
         if let Some(handle) = &self.app_handle {
             let bytes_per_second = progress.speed_mbps * 1_048_576.0;
 
             let payload = DownloadProgressPayload {
-                id: "bge-m3".to_string(),
+                id: model_id.to_string(),
                 bytes_downloaded: progress.bytes_downloaded,
                 total_bytes: if progress.total_bytes > 0 {
                     Some(progress.total_bytes)
@@ -205,7 +205,7 @@ impl ModelManager {
         }
     }
 
-    fn emit_complete(&self) {
+    fn emit_complete(&self, model_id: &str) {
         if let Some(handle) = &self.app_handle {
             let elapsed_seconds = self
                 .download_start_time
@@ -216,7 +216,7 @@ impl ModelManager {
             let total_bytes = self.bytes_downloaded.load(Ordering::Relaxed);
 
             let payload = DownloadCompletedPayload {
-                id: "bge-m3".to_string(),
+                id: model_id.to_string(),
                 total_bytes_completed: Some(total_bytes),
                 elapsed_seconds,
             };
@@ -225,10 +225,10 @@ impl ModelManager {
         }
     }
 
-    fn emit_error(&self, error: &str) {
+    fn emit_error(&self, model_id: &str, error: &str) {
         if let Some(handle) = &self.app_handle {
             let payload = DownloadFailedPayload {
-                id: "bge-m3".to_string(),
+                id: model_id.to_string(),
                 error: error.to_string(),
             };
 
@@ -253,12 +253,12 @@ impl ModelManager {
         tracing::info!("Models not found, initiating download...");
         match self.download_all_models().await {
             Ok(_) => {
-                self.emit_complete();
+                self.emit_complete("bge-m3");
                 self.reset_download_progress();
                 Ok(model_path)
             }
             Err(e) => {
-                self.emit_error(&e.to_string());
+                self.emit_error("bge-m3", &e.to_string());
                 self.reset_download_progress();
                 Err(e)
             }
@@ -296,7 +296,7 @@ impl ModelManager {
             }
 
             tracing::info!("Downloading {}...", filename);
-            self.download_with_retry(url, &target_path, filename, checksum)
+            self.download_with_retry(url, &target_path, filename, checksum, "bge-m3")
                 .await?;
 
             if self.is_cancelled.load(Ordering::Relaxed) {
@@ -313,12 +313,13 @@ impl ModelManager {
         target_path: &Path,
         filename: &str,
         expected_checksum: Option<&str>,
+        model_id: &str,
     ) -> Result<()> {
         let mut attempts = 0;
         let mut last_error = None;
 
         while attempts < MAX_RETRIES {
-            match self.download_file(url, target_path, filename).await {
+            match self.download_file(url, target_path, filename, model_id).await {
                 Ok(_) => {
                     if let Some(checksum) = expected_checksum {
                         if self.verify_checksum(target_path, checksum).await? {
@@ -355,7 +356,7 @@ impl ModelManager {
         Err(last_error.unwrap_or_else(|| AppError::Network("Max retries exceeded".to_string())))
     }
 
-    async fn download_file(&self, url: &str, target_path: &Path, filename: &str) -> Result<()> {
+    async fn download_file(&self, url: &str, target_path: &Path, filename: &str, model_id: &str) -> Result<()> {
         let temp_path = target_path.with_extension("tmp");
 
         let mut downloaded: u64 = 0;
@@ -484,7 +485,7 @@ impl ModelManager {
                     0
                 };
 
-                self.emit_progress(DownloadProgress {
+                self.emit_progress(model_id, DownloadProgress {
                     bytes_downloaded: downloaded,
                     total_bytes: total_size,
                     percentage,
@@ -520,12 +521,24 @@ impl ModelManager {
     }
 
     async fn verify_checksum(&self, file_path: &Path, expected: &str) -> Result<bool> {
-        let contents = fs::read(file_path)
+        let mut file = fs::File::open(file_path)
             .await
-            .context("Failed to read file for checksum")?;
+            .context("Failed to open file for checksum")?;
 
         let mut hasher = Sha256::new();
-        hasher.update(&contents);
+        let mut buffer = [0u8; 64 * 1024];
+
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .context("Failed to read file for checksum")?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
+
         let hash = hasher.finalize();
         let hash_hex = hex::encode(hash);
 
@@ -566,12 +579,12 @@ impl ModelManager {
         tracing::info!("Reranker model not found, initiating download...");
         match self.download_reranker_models().await {
             Ok(_) => {
-                self.emit_complete();
+                self.emit_complete("qwen3-reranker-0.6b");
                 self.reset_download_progress();
                 Ok(model_path)
             }
             Err(e) => {
-                self.emit_error(&e.to_string());
+                self.emit_error("qwen3-reranker-0.6b", &e.to_string());
                 self.reset_download_progress();
                 Err(e)
             }
@@ -601,7 +614,7 @@ impl ModelManager {
             }
 
             tracing::info!("Downloading reranker {}...", filename);
-            self.download_with_retry(url, &target_path, filename, checksum)
+            self.download_with_retry(url, &target_path, filename, checksum, "qwen3-reranker-0.6b")
                 .await?;
 
             if self.is_cancelled.load(Ordering::Relaxed) {

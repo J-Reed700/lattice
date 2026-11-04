@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
+import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { SETTINGS_QUERY_KEY } from '@/features/settings/hooks/useSettingsQuery';
 import type { IndexedFolder } from '@/types/api/files';
-
 
 export const INDEXED_FOLDERS_QUERY_KEY = ['indexed-folders'] as const;
 
@@ -41,10 +41,21 @@ export function useSetWatchFolderEnabledMutation() {
       }
     },
     onSuccess: async () => {
+      (useFileBrowserStore.getState() as { loadSourceConnections?: () => void }).loadSourceConnections?.();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: INDEXED_FOLDERS_QUERY_KEY }),
         queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY }),
       ]);
     },
   });
+}
+
+export function useIndexedFoldersActions() {
+  const mutation = useSetWatchFolderEnabledMutation();
+  return {
+    addFolder: (path: string) => mutation.mutateAsync({ path, enabled: true }),
+    removeFolder: (path: string) => mutation.mutateAsync({ path, enabled: false }),
+    setWatchFolderEnabled: (args: SetWatchFolderEnabledArgs) => mutation.mutateAsync(args),
+    ...mutation,
+  };
 }

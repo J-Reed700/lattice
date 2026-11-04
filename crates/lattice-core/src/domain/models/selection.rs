@@ -229,9 +229,25 @@ pub struct SystemCapabilities {
 }
 
 impl SystemCapabilities {
-    /// Check if system has sufficient RAM for a model.
+    /// Calculate usable memory budget in GB for model inference, mirroring frontend computeModelFit.
+    pub fn usable_memory_gb(&self) -> f64 {
+        if matches!(self.gpu_type, GpuType::AppleSilicon)
+            || matches!(self.gpu_acceleration, GpuAcceleration::Metal)
+        {
+            self.total_ram_gb * 0.7
+        } else if !matches!(self.gpu_acceleration, GpuAcceleration::None) {
+            match self.vram_gb {
+                Some(vram) if vram > 0.0 => vram,
+                _ => self.total_ram_gb * 0.7,
+            }
+        } else {
+            self.total_ram_gb * 0.7
+        }
+    }
+
+    /// Check if system has sufficient usable RAM for a model.
     pub fn has_sufficient_ram(&self, required_gb: f64) -> bool {
-        self.total_ram_gb >= required_gb
+        self.usable_memory_gb() >= required_gb
     }
 
     /// Check if system has sufficient disk space for a model.

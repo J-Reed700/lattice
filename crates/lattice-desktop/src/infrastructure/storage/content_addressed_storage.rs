@@ -45,6 +45,7 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 
 /// Above this many cached per-hash locks, drop the ones nobody is holding.
 /// A sweep touches every blob in the library, and a lock no task holds carries
@@ -128,7 +129,7 @@ impl ContentAddressedStorage {
     /// - `AppError::FileNotFound` if file doesn't exist
     /// - `AppError::FileRead` if cannot read file
     async fn compute_file_hash(&self, path: &Path) -> Result<String> {
-        let content = fs::read(path).await.map_err(|e| match e.kind() {
+        let mut file = fs::File::open(path).await.map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => AppError::FileNotFound {
                 path: path.to_string_lossy().to_string(),
             },
@@ -142,7 +143,20 @@ impl ContentAddressedStorage {
         })?;
 
         let mut hasher = Sha256::new();
-        hasher.update(&content);
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| AppError::FileRead {
+                    path: path.to_string_lossy().to_string(),
+                    reason: e.to_string(),
+                })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
         let hash = hasher.finalize();
 
         Ok(format!("{:x}", hash))

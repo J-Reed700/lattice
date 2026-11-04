@@ -22,12 +22,18 @@ pub fn identity(input: &str) -> String {
 /// (`web_page_snapshots.normalized_url`): trimmed and lowercased, nothing
 /// else, so the two tables always agree on which page is which.
 pub fn normalize_web_source_url(url: &str) -> String {
-    url.trim().to_ascii_lowercase()
+    let trimmed = url.trim();
+    if let Ok(mut parsed) = url::Url::parse(trimmed) {
+        parsed.set_fragment(None);
+        parsed.to_string()
+    } else {
+        trimmed.to_ascii_lowercase()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::identity;
+    use super::{identity, normalize_web_source_url};
 
     #[test]
     fn canonicalizes_only_url_components_with_defined_equivalence() {
@@ -46,6 +52,22 @@ mod tests {
         assert_ne!(
             identity("https://example.com/?Q=A"),
             identity("https://example.com/?q=a")
+        );
+    }
+
+    #[test]
+    fn normalize_web_source_url_canonicalizes_scheme_host_and_strips_fragment() {
+        assert_eq!(
+            normalize_web_source_url(" HTTPS://Example.COM:443/Path/To/Resource?Key=Value#section "),
+            "https://example.com/Path/To/Resource?Key=Value"
+        );
+        assert_eq!(
+            normalize_web_source_url("http://example.com/foo#bar"),
+            "http://example.com/foo"
+        );
+        assert_eq!(
+            normalize_web_source_url("not a valid url: 123"),
+            "not a valid url: 123"
         );
     }
 }

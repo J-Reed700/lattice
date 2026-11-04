@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react';
 
-import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -277,7 +277,12 @@ const isStaleSessionError = (failure: ApiFailure): boolean =>
 export function useDownloadActions() {
   const api = useApi();
   const queryClient = useQueryClient();
-  const downloads = queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY);
+  const { data: downloads } = useQuery<Map<string, DownloadStatus>>({
+    queryKey: DOWNLOADS_QUERY_KEY,
+    queryFn: () => fetchDownloadMap(api),
+    enabled: false,
+    initialData: () => queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY),
+  });
   const resolveBackendId = useCallback((storeKey: string): string => {
     const row = queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY)?.get(storeKey);
     return row?.id ?? storeKey;

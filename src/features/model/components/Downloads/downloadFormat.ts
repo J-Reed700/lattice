@@ -7,8 +7,7 @@
  */
 
 import type { DownloadState } from '@/types/downloads';
-import { formatBytes } from '@/utils/formatters';
-
+import { formatBytes, formatEta as canonicalFormatEta } from '@/utils/formatters';
 
 /** Bytes-per-second rendered as a transfer rate, e.g. `1.2 MB/s`. */
 export function formatSpeed(bytesPerSecond: number): string {
@@ -18,13 +17,7 @@ export function formatSpeed(bytesPerSecond: number): string {
 
 /** Seconds remaining rendered compactly, e.g. `3m 20s`. */
 export function formatEta(seconds: number | null): string {
-  if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return '—';
-  const total = Math.round(seconds);
-  if (total < 60) return `${total}s`;
-  const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `${minutes}m ${total % 60}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  return canonicalFormatEta(seconds, 'compact');
 }
 
 /**

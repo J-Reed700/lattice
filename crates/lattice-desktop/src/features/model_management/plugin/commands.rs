@@ -12,9 +12,9 @@ use tauri::State;
 use crate::features::model_management::commands_extra::{
     clear_active_chat_model_impl, clear_active_embedding_model_impl,
     clear_active_utility_model_impl, delete_downloaded_model_and_file_impl,
-    get_active_chat_model_impl, get_active_embedding_model_impl, get_models_with_metadata_impl,
-    is_model_already_downloaded_impl, set_active_chat_model_impl, set_active_embedding_model_impl,
-    set_active_utility_model_impl, warm_up_active_chat_model_impl,
+    get_active_chat_model_typed, get_active_embedding_model_typed,
+    get_models_with_metadata_typed, is_model_already_downloaded_impl, set_active_chat_model_impl,
+    set_active_embedding_model_impl, set_active_utility_model_impl, warm_up_active_chat_model_impl,
     warm_up_active_utility_model_impl, warm_up_learning_model_impl, LearningWindowShortfallDto,
     LoadedModelDto,
 };
@@ -176,15 +176,9 @@ pub async fn delete_model(
 pub async fn list_downloaded_models(
     container: State<'_, Container>,
 ) -> Result<Vec<DownloadedModelResponse>, ApiError> {
-    let json_str = get_models_with_metadata_impl(container.inner())
+    get_models_with_metadata_typed(container.inner())
         .await
-        .map_err(ApiError::from)?;
-
-    serde_json::from_str(&json_str).map_err(|e| ApiError {
-        code: ErrorCode::SerializationError,
-        message: format!("Failed to parse models: {}", e),
-        details: None,
-    })
+        .map_err(ApiError::internal)
 }
 
 #[tauri::command]
@@ -226,15 +220,9 @@ pub async fn set_active_chat_model(
 pub async fn get_active_chat_model(
     container: State<'_, Container>,
 ) -> Result<Option<DownloadedModelResponse>, ApiError> {
-    let json_str = get_active_chat_model_impl(container.inner())
+    get_active_chat_model_typed(container.inner())
         .await
-        .map_err(ApiError::from)?;
-
-    serde_json::from_str(&json_str).map_err(|e| ApiError {
-        code: ErrorCode::SerializationError,
-        message: format!("Failed to parse active chat model: {}", e),
-        details: None,
-    })
+        .map_err(ApiError::internal)
 }
 
 #[tauri::command]
@@ -242,29 +230,21 @@ pub async fn get_active_chat_model(
 pub async fn get_active_embedding_model(
     container: State<'_, Container>,
 ) -> Result<Option<DownloadedModelResponse>, ApiError> {
-    let json_str = get_active_embedding_model_impl(container.inner())
+    get_active_embedding_model_typed(container.inner())
         .await
-        .map_err(ApiError::from)?;
-
-    serde_json::from_str(&json_str).map_err(|e| ApiError {
-        code: ErrorCode::SerializationError,
-        message: format!("Failed to parse active embedding model: {}", e),
-        details: None,
-    })
+        .map_err(ApiError::internal)
 }
 
 /// Get active models (both chat and embedding)
 #[tauri::command]
 #[specta::specta]
 pub async fn get_active_models(container: State<'_, Container>) -> Result<ActiveModels, ApiError> {
-    let chat_json = get_active_chat_model_impl(container.inner()).await.ok();
-    let embedding_json = get_active_embedding_model_impl(container.inner())
+    let chat_model = get_active_chat_model_typed(container.inner())
         .await
-        .ok();
-
-    let chat_model = chat_json.and_then(|json| serde_json::from_str(&json).ok());
-
-    let embedding_model = embedding_json.and_then(|json| serde_json::from_str(&json).ok());
+        .map_err(ApiError::internal)?;
+    let embedding_model = get_active_embedding_model_typed(container.inner())
+        .await
+        .map_err(ApiError::internal)?;
 
     Ok(ActiveModels {
         chat_model,

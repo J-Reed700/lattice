@@ -1,4 +1,4 @@
-export type FileType = 'markdown' | 'code' | 'text' | 'html' | 'docx' | 'pdf' | 'image' | 'unsupported';
+export type FileType = 'markdown' | 'code' | 'text' | 'html' | 'docx' | 'pdf' | 'image' | 'audio' | 'unsupported';
 
 export interface FileTypeInfo {
   type: FileType;
@@ -57,6 +57,10 @@ const IMAGE_EXTENSIONS = [
   '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.webp', '.ico',
 ];
 
+const AUDIO_EXTENSIONS = [
+  '.mp3', '.m4a', '.wav', '.flac', '.ogg', '.aac', '.wma',
+];
+
 export function detectFileType(filePath: string): FileTypeInfo {
   const lowerPath = filePath.toLowerCase();
   const extension = getExtension(lowerPath);
@@ -95,6 +99,10 @@ export function detectFileType(filePath: string): FileTypeInfo {
 
   if (IMAGE_EXTENSIONS.includes(extension)) {
     return { type: 'image', canPreview: true };
+  }
+
+  if (AUDIO_EXTENSIONS.includes(extension)) {
+    return { type: 'audio', canPreview: true };
   }
 
   return { type: 'unsupported', canPreview: false };

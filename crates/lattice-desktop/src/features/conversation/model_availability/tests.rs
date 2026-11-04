@@ -163,6 +163,34 @@ async fn a_server_model_needs_its_connection_and_nothing_more() {
 }
 
 #[tokio::test]
+async fn a_server_model_requires_non_empty_model_name() {
+    let mut settings = LLMSettingsDto {
+        ollama_url: "http://localhost:11434".into(),
+        ..LLMSettingsDto::default()
+    };
+    settings.llama_cpp.url = "http://localhost:8080".into();
+
+    let empty_ollama = ModelRef::Ollama {
+        model: "  ".into(),
+    };
+    let empty_llama_cpp = ModelRef::LlamaCpp {
+        model: "".into(),
+    };
+
+    let ollama_err = check(&empty_ollama, Rows(None), &settings).await.unwrap_err();
+    assert_eq!(
+        message(ollama_err),
+        "The Ollama model is not configured. Choose one in Settings → Chat."
+    );
+
+    let llama_err = check(&empty_llama_cpp, Rows(None), &settings).await.unwrap_err();
+    assert_eq!(
+        message(llama_err),
+        "The llama.cpp model is not configured. Choose one in Settings → Chat."
+    );
+}
+
+#[tokio::test]
 async fn a_cloud_model_needs_its_provider_key() {
     let model = ModelRef::Cloud {
         provider: CloudProvider::Openai,

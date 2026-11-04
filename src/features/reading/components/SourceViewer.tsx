@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
-import { DocxViewer } from '@/features/reading/components/ContentViewer/renderers/DocxViewer';
-import { HTMLViewer } from '@/features/reading/components/ContentViewer/renderers/HTMLViewer';
+import { DocxViewer } from '@/features/reading/components/viewers/DocxViewer';
+import { HTMLViewer } from '@/features/reading/components/viewers/HTMLViewer';
 import { AudioViewer, audioViewerPropsFromSource } from '@/features/reading/components/viewers/AudioViewer';
 import { ImageViewer } from '@/features/reading/components/viewers/ImageViewer';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
@@ -146,7 +146,18 @@ export const SourceViewer = ({
     return <DocxViewer filePath={previewFilePath} title={source.fileName} />;
   }
 
-  if (mimeType.startsWith('text/x-') || mimeType === 'application/javascript') {
+  if (
+    mimeType.startsWith('text/x-') ||
+    mimeType === 'application/javascript' ||
+    mimeType === 'text/javascript' ||
+    mimeType === 'text/javascript-jsx' ||
+    mimeType === 'text/typescript' ||
+    mimeType === 'text/typescript-jsx' ||
+    mimeType === 'text/css' ||
+    mimeType === 'application/json' ||
+    mimeType === 'application/xml' ||
+    mimeType === 'text/xml'
+  ) {
     const language = getLanguageFromFileName(source.fileName);
     return <TextViewer content={content} language={language} />;
   }

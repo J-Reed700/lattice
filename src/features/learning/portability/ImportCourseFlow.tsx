@@ -1,12 +1,11 @@
 import { useId, useRef, useState } from 'react';
 
-import { open } from '@tauri-apps/plugin-dialog';
 import { Check, RefreshCw, Upload } from 'lucide-react';
 
 import { awaitsPreparation, blockedConflicts, blockedReason, CONFLICT_KINDS, conflictPolicyOption, DEFAULT_CONFLICT_POLICY, existingCourseConflict, isBlocked, proceedingPolicies } from '@/features/learning/portability/conflictPolicies';
 import { failureMessage, idempotentEntry, type RetryEntry } from '@/features/learning/portability/requestRetry';
 import { RetryAlert } from '@/features/learning/portability/RetryAlert';
-import { useImportCourse } from '@/features/learning/portability/useLearningPortability';
+import { promptChooseCourseFile, useImportCourse } from '@/features/learning/portability/useLearningPortability';
 import type {
   ApplyLearningPackImportRequestDto,
   CancelLearningPackImportPreviewRequestDto,
@@ -60,8 +59,8 @@ export function ImportCourseFlow({ headingLevel, onImported }: { headingLevel: k
   const chooseFile = async () => {
     reset();
     try {
-      const chosen = await open({ multiple: false, directory: false, title: 'Choose a course file', filters: [{ name: 'Lattice course', extensions: ['lattice-learning'] }] });
-      if (!chosen || Array.isArray(chosen)) return;
+      const chosen = await promptChooseCourseFile();
+      if (!chosen) return;
       await previewFile(chosen, DEFAULT_CONFLICT_POLICY);
     } catch (cause) { setFailure({ message: failureMessage(cause, 'The selected file could not be previewed.') }); }
   };

@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, FileQuestion, X } from 'lucide-react';
 import { useExplorerFileQuery, useExplorerLocateQuery } from '@/features/explorer/api/queries';
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
 import { resolveLanguage } from '@/lib/code/languages';
+import { formatBytes } from '@/utils/formatters';
 
 import { CodeViewer } from './CodeViewer';
 import { describeLines } from '../model/describeLines';
@@ -59,11 +60,6 @@ function MissingFile({ root, path, message }: { root: string; path: string; mess
   );
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC');
 const MOD = isMac ? '⌘' : 'Ctrl+';

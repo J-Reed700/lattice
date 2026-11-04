@@ -42,8 +42,8 @@ vi.mock('@/features/reading', () => ({
   SelectionToolbar: () => null,
   useTextSelection: () => null,
 }));
-vi.mock('@/features/reading/components/ContentViewer/renderers/HTMLViewer', () => ({ HTMLViewer: () => null }));
-vi.mock('@/features/reading/components/ContentViewer/renderers/DocxViewer', () => ({
+vi.mock('@/features/reading/components/viewers/HTMLViewer', () => ({ HTMLViewer: () => null }));
+vi.mock('@/features/reading/components/viewers/DocxViewer', () => ({
   DocxViewer: ({ filePath, title }: { filePath: string; title?: string }) => (
     <div data-testid="docx-viewer" data-path={filePath}>{title}</div>
   ),

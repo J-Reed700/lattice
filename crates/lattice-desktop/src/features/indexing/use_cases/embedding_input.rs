@@ -1,6 +1,7 @@
 //! Structure-preserving, contextual input shared by imports and rebuilds.
 //! Source text remains byte-for-byte citation evidence; metadata is embedded separately.
 use crate::features::indexing::engine::extraction::is_code_mime;
+use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::domain::entities::{chunk::Chunk, document::Document};
 use lattice_core::domain::value_objects::section_identifier::SectionIdentifier;
@@ -59,13 +60,21 @@ pub fn prepare_structured(
         if !prefix.ends_with("\n\n") {
             prefix.push_str("\n\n");
         }
+        let is_code = is_code_mime(document.mime_type());
+        let extractor = MetadataExtractor::new();
         // The embedder validates the prefix + passage using its real tokenizer.
         for part in embedder.split_text(passage, &prefix)? {
             let mut chunk = Chunk::new(document.id().clone(), part.text.clone(), chunks.len());
             chunk.set_language(document.language().clone());
             chunk.set_token_count(part.token_count as i32);
             chunk.set_word_count(part.text.split_whitespace().count());
-            chunk.set_section(span.heading.clone());
+            let section = span
+                .heading
+                .clone()
+                .or_else(|| extractor.extract_section(&part.text));
+            chunk.set_section(section);
+            let has_code = is_code || extractor.contains_code(&part.text);
+            chunk.set_has_code(has_code);
             chunk.set_provenance(
                 Some(prefix.clone()),
                 Some(span.start + part.start),

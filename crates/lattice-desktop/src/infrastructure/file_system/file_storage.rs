@@ -26,6 +26,7 @@ use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
 use std::path::Path;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 
 /// Secure file storage implementation.
 ///
@@ -201,10 +202,34 @@ impl FileStoragePort for SecureFileStorage {
     async fn compute_hash(&self, path: &Path) -> Result<String> {
         self.validate_path(path)?;
 
-        let content = self.read_file_bytes(path).await?;
+        let mut file = fs::File::open(path).await.map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => AppError::FileNotFound {
+                path: path.to_string_lossy().to_string(),
+            },
+            std::io::ErrorKind::PermissionDenied => {
+                AppError::PermissionDenied(format!("Cannot read file: {}", path.display()))
+            }
+            _ => AppError::FileRead {
+                path: path.to_string_lossy().to_string(),
+                reason: e.to_string(),
+            },
+        })?;
 
         let mut hasher = Sha256::new();
-        hasher.update(&content);
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let n = file
+                .read(&mut buffer)
+                .await
+                .map_err(|e| AppError::FileRead {
+                    path: path.to_string_lossy().to_string(),
+                    reason: e.to_string(),
+                })?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buffer[..n]);
+        }
         let hash = hasher.finalize();
 
         let hash_string = format!("{:x}", hash);

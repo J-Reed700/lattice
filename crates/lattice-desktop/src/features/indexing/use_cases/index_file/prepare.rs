@@ -7,9 +7,10 @@ use tracing::instrument;
 use crate::features::indexing::dto::IndexFileRequestDto;
 use crate::features::indexing::mapper::IndexingMapper;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
-use lattice_core::application::factories::{ChecksumFactory, FileMetadataFactory};
+use lattice_core::application::factories::FileMetadataFactory;
 use lattice_core::application::ports::ImportedBlob;
 use lattice_core::domain::entities::Document;
+use lattice_core::domain::value_objects::Checksum;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::ValidatedFilePath;
 
@@ -34,8 +35,7 @@ impl IndexFileUseCase {
             .file_storage
             .compute_hash(source_path.as_path())
             .await?;
-        let content_checksum =
-            lattice_core::domain::value_objects::Checksum::new(content_hash.clone())?;
+        let content_checksum = Checksum::new(content_hash.clone())?;
 
         let requested_context: Option<
             lattice_core::domain::value_objects::source_context::SourceContext,
@@ -84,6 +84,7 @@ impl IndexFileUseCase {
             .build_prepared_document(
                 source_path.as_path(),
                 library_path.as_path(),
+                content_checksum,
                 request.chunking_strategy,
                 existing,
                 requested_context,
@@ -124,6 +125,7 @@ impl IndexFileUseCase {
         &self,
         source_path: &Path,
         library_path: &Path,
+        checksum: Checksum,
         chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto,
         existing: Option<Document>,
         requested_context: Option<
@@ -132,7 +134,6 @@ impl IndexFileUseCase {
     ) -> Result<(Document, Vec<EmbeddingWithVector>)> {
         // Heavy work (extraction + embeddings) - NO TRANSACTION
         let metadata = FileMetadataFactory::from_path(library_path)?;
-        let checksum = ChecksumFactory::from_path(library_path)?;
         let extracted = self.content_extractor.extract_content(library_path).await?;
         let page_ranges = extracted.page_ranges;
         let ocr_pages = extracted.ocr_pages;
@@ -176,29 +177,33 @@ impl IndexFileUseCase {
         ));
         document.set_word_count(metadata_extractor.count_words(&content));
 
-        for index in 0..document.chunks().len() {
-            let chunk = document.chunks().get(index).ok_or_else(|| {
-                AppError::InvalidInput(format!(
-                    "Chunk index {} out of bounds in index_file_and_persist",
-                    index
-                ))
-            })?;
-            let chunk_content = chunk.content().to_string();
-            document.set_chunk_token_count(index, metadata_extractor.count_tokens(chunk.content()));
-            document.set_chunk_word_count(
-                index,
-                metadata_extractor.count_words(&chunk_content) as usize,
-            );
-            document.set_chunk_has_code(index, metadata_extractor.contains_code(&chunk_content));
-            document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
-        }
-
         let mut document = super::super::embedding_input::prepare_structured(
             document,
             self.embedding_service.as_ref(),
             &page_ranges,
         )?;
         document.mark_ocr_pages(&ocr_pages);
+
+        for index in 0..document.chunks().len() {
+            let (chunk_content, has_section) = {
+                let chunk = document.chunks().get(index).ok_or_else(|| {
+                    AppError::InvalidInput(format!(
+                        "Chunk index {} out of bounds in index_file_and_persist",
+                        index
+                    ))
+                })?;
+                (chunk.content().to_string(), chunk.section().is_some())
+            };
+            document.set_chunk_token_count(index, metadata_extractor.count_tokens(&chunk_content));
+            document.set_chunk_word_count(
+                index,
+                metadata_extractor.count_words(&chunk_content) as usize,
+            );
+            document.set_chunk_has_code(index, metadata_extractor.contains_code(&chunk_content));
+            if !has_section {
+                document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
+            }
+        }
         let model_identity = self.embedding_service.model_identity();
         let embeddings = super::super::embedding_input::embed_prepared_chunks(
             &document,

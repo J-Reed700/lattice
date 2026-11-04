@@ -31,7 +31,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () => ({ systemCapabilities: h.capabilities }) }));
 vi.mock('@/features/settings/hooks/useHuggingFaceTokenQuery', () => ({ useHuggingFaceTokenStatusQuery: () => ({ data: h.hfToken }) }));
-vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => h.downloaded }));
+vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
+  useDownloadedModels: () => h.downloaded,
+  DOWNLOADED_MODELS_QUERY_KEY: ['downloaded-models'],
+}));
 vi.mock('@/features/model/hooks/useDownloadState', () => ({
   useDownloadState: () => ({
     getActiveDownloadForModel: () => h.activeDownload,
