@@ -45,6 +45,19 @@ pub(super) fn shown(passage: &EvidencePassage) -> ShownPassage {
     }
 }
 
+/// The claims a research round looks for evidence for.
+pub(in crate::features::learning::lessons::content_verification) struct Targets {
+    /// The claims, in the pass's order.
+    pub(in crate::features::learning::lessons::content_verification) claims: Vec<ClaimId>,
+    /// Each claim's latest finding.
+    pub(in crate::features::learning::lessons::content_verification) findings: Vec<Finding>,
+    /// The hints the user gave, searched verbatim.
+    pub(in crate::features::learning::lessons::content_verification) hints: Vec<String>,
+    /// The claims a hint names. They are the user's: they take no step, and
+    /// the round's page reading answers the hint.
+    pub(in crate::features::learning::lessons::content_verification) hinted: Vec<ClaimId>,
+}
+
 /// The failure a finding that is not supported records: what its verdict
 /// says, or that no passage was compared, or that none supports it.
 fn failed_check(finding: &Finding, verdict: ClaimVerdict) -> (CheckResult, String) {
@@ -278,23 +291,29 @@ impl ClaimLedger {
         &self,
         policy: &dyn AcceptancePolicy,
         report: &LessonVerificationReport,
-    ) -> (Vec<ClaimId>, Vec<Finding>, Vec<String>) {
+    ) -> Targets {
         let at_research = self.at(policy, super::position::StepKind::Research);
-        let mut claims = Vec::new();
-        let mut findings = Vec::new();
-        let mut hints = Vec::new();
+        let mut targets = Targets {
+            claims: Vec::new(),
+            findings: Vec::new(),
+            hints: Vec::new(),
+            hinted: Vec::new(),
+        };
         for (finding, id) in report.findings.iter().zip(&self.findings) {
             let Some(entry) = self.entry(id) else {
                 continue;
             };
             let hint = super::super::review_pass::pending_hint(entry);
             if at_research.contains(id) || hint.is_some() {
-                claims.push(id.clone());
-                findings.push(finding.clone());
-                hints.extend(hint);
+                targets.claims.push(id.clone());
+                targets.findings.push(finding.clone());
+                if hint.is_some() {
+                    targets.hinted.push(id.clone());
+                }
+                targets.hints.extend(hint);
             }
         }
-        (claims, findings, hints)
+        targets
     }
 
     /// Records a research round for each claim it looked for (§3

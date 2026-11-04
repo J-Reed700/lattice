@@ -223,7 +223,7 @@ describe('announcements', () => {
     expect(announcement('confirm', 0)).toBe(`Accepted. ${ALL_RESOLVED}`);
     expect(announcement('edit', 3)).toBe('Sentence edited. It is checked when you resume.');
     expect(announcement('remove', 1)).toBe('Removed. 1 left.');
-    expect(announcement('research_with_hint', 2)).toBe('Searched with your hint. 2 left.');
+    expect(announcement('research_with_hint', 2)).toBe('Hint saved. It is searched when you resume.');
     expect(announcement('unconfirm', 5)).toBe('Acceptance withdrawn. 5 left.');
     expect(announcement('undo', 5)).toBe('Undone. 5 left.');
   });

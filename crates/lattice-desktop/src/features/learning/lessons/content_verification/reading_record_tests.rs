@@ -190,6 +190,7 @@ async fn a_reading_that_stands_resolves_the_claim_on_the_passage_that_states_it(
     let evidence = [passage("source-1")];
     let read = Read {
         outcome: Outcome::Stands,
+        reused: false,
         finding: finding(
             SOURCED,
             ClaimVerdict::Supported,
@@ -257,6 +258,7 @@ async fn a_reading_that_sends_the_statement_to_a_remedy_leaves_it_open_with_a_re
     let id = claim(&mut ledger, "cited", SOURCED.0, SOURCED.1).await?;
     let read = Read {
         outcome: Outcome::Unproven,
+        reused: false,
         finding: finding(
             SOURCED,
             ClaimVerdict::Unsupported,
@@ -301,6 +303,7 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
     let evidence = [passage("source-1")];
     let consistent = Read {
         outcome: Outcome::Stands,
+        reused: false,
         finding: finding(
             REASONED,
             ClaimVerdict::Supported,
@@ -327,6 +330,7 @@ async fn a_passed_veto_records_not_false_and_ends_the_claim_consistent() -> Resu
 
     let not_called_false = Read {
         outcome: Outcome::Stands,
+        reused: false,
         finding: finding(
             REASONED,
             ClaimVerdict::Supported,
@@ -372,6 +376,7 @@ async fn a_unanimous_knowledge_reading_records_known_common_and_ends_as_general_
     let id = claim(&mut ledger, "common", COMMON.0, COMMON.1).await?;
     let read = Read {
         outcome: Outcome::Stands,
+        reused: false,
         finding: finding(
             COMMON,
             ClaimVerdict::Supported,
@@ -425,6 +430,7 @@ async fn a_page_that_supports_the_statement_on_another_source_records_supported_
     });
     let read = Read {
         outcome: Outcome::StandsElsewhere,
+        reused: false,
         finding: found,
     };
     let (step, _) = step_of(
@@ -473,6 +479,7 @@ async fn the_gates_weighing_is_recorded_between_the_check_and_the_decision() -> 
     }));
     let read = Read {
         outcome: Outcome::Stands,
+        reused: false,
         finding: found,
     };
     let (step, _) = step_of(
@@ -507,6 +514,7 @@ async fn a_second_unreadable_answer_is_recorded_as_its_check_alone_so_the_claim_
     let id = claim(&mut ledger, "cited", SOURCED.0, SOURCED.1).await?;
     let unreadable = || Read {
         outcome: Outcome::Unjudged,
+        reused: false,
         finding: finding(
             SOURCED,
             ClaimVerdict::Unverified,
@@ -571,6 +579,7 @@ async fn a_change_of_class_is_recorded_as_the_evidences_and_the_claim_takes_it()
     let id = claim(&mut ledger, "common", COMMON.0, COMMON.1).await?;
     let read = Read {
         outcome: Outcome::NeedsSource,
+        reused: false,
         finding: finding(
             COMMON,
             ClaimVerdict::Unsupported,
@@ -628,6 +637,7 @@ async fn a_check_that_disagrees_with_the_outcome_is_a_fault_and_records_nothing(
     // a statement the reading stood.
     let misquoted = Read {
         outcome: Outcome::Stands,
+        reused: false,
         finding: finding(
             SOURCED,
             ClaimVerdict::Supported,
@@ -639,6 +649,7 @@ async fn a_check_that_disagrees_with_the_outcome_is_a_fault_and_records_nothing(
     // A check that passes a statement the reading did not stand.
     let overruled = Read {
         outcome: Outcome::Refuted,
+        reused: false,
         finding: finding(
             SOURCED,
             ClaimVerdict::Supported,
@@ -676,6 +687,7 @@ async fn a_reading_of_a_claim_the_ledger_does_not_hold_is_a_fault() -> Result<()
     let mut ledger = open().await?;
     let read = Read {
         outcome: Outcome::Stands,
+        reused: false,
         finding: finding(SOURCED, ClaimVerdict::Supported, "Stated.", &[], None),
     };
     let (step, _) = step_of(
@@ -707,6 +719,7 @@ async fn a_claim_the_user_settled_first_keeps_its_state_and_takes_no_class_chang
     assert!(matches!(removed, ClaimState::Removed { .. }));
     let read = Read {
         outcome: Outcome::NeedsSource,
+        reused: false,
         finding: finding(
             COMMON,
             ClaimVerdict::Unsupported,

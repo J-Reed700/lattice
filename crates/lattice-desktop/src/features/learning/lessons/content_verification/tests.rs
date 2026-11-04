@@ -528,6 +528,9 @@ mod claim_position_tests;
 #[path = "acceptance_switch_tests.rs"]
 mod acceptance_switch_tests;
 
+#[path = "user_hint_tests.rs"]
+mod user_hint_tests;
+
 #[path = "claim_identity_tests.rs"]
 mod claim_identity_tests;
 

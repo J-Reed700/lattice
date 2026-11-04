@@ -4,12 +4,13 @@
 //! the ledger each statement is, the reading of each statement that waits for
 //! one along its graph, and the report of what the latest readings found.
 use super::claim_ledger::ClaimLedger;
-use super::readings::driver::{read_until_remedy, ReadSteps};
-use super::readings::{ReadContext, ReaderSet, Statement};
+use super::readings::driver::{read_page, read_until_remedy, ReadSteps};
+use super::readings::{Read, ReadContext, ReaderSet, Statement};
 use super::*;
+use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Position, Walked};
 use lattice_core::domain::learning::claim_review::{
-    ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
+    CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, VerdictKind,
 };
 
 /// What a pass extracts from a candidate lesson before anything is read.
@@ -270,14 +271,9 @@ pub(super) async fn read_steps(
     crate::features::learning::lesson_progress::phase(
         crate::features::learning::lesson_progress::Phase::Evidence,
         format!(
-            "Reading {} statement{} along {} checks",
+            "Checking {} statement{}",
             statements.len(),
             if statements.len() == 1 { "" } else { "s" },
-            if statements.len() == 1 {
-                "its"
-            } else {
-                "their"
-            }
         ),
     );
     crate::features::learning::lesson_progress::begin_checks(statements.len());
@@ -336,110 +332,265 @@ pub(super) async fn record_readings(
         if matches!(read.walked, Walked::Stopped) {
             stopped.push(id.clone());
         }
-        crate::features::learning::lesson_progress::checked(false);
+        // A statement's checks are reused when every reading of it was.
+        crate::features::learning::lesson_progress::checked(
+            !read.steps.is_empty() && read.steps.iter().all(|step| step.read.reused),
+        );
     }
     crate::features::learning::lesson_progress::claims(ledger.tally());
     Ok(stopped)
 }
 
-/// The finding of the statement `known`, its latest reading's: kept in this
-/// job's memory, otherwise restored from its checkpoint, otherwise rebuilt from
-/// the ledger for a statement no decision has been made about. A statement with
-/// a decision and no finding is a fault; it is never read again for it.
-async fn latest_finding(
-    ledger: &ClaimLedger,
-    checks: &mut ClaimChecks,
-    known: &Identified,
-) -> Result<Finding> {
-    let mut finding = match checks.latest.get(&known.id) {
-        Some(finding) => finding.clone(),
-        None => {
-            let saved =
-                crate::features::learning::lesson_drafts::checkpoint(&finding_key(&known.id))
-                    .await?
-                    .and_then(|value| serde_json::from_value::<Finding>(value).ok());
-            let finding = match saved {
-                Some(saved) => saved,
-                None => from_ledger(ledger, known)?,
-            };
-            checks.latest.insert(known.id.clone(), finding.clone());
-            finding
-        }
-    };
-    finding.unit = known.unit;
-    finding.quote = known.claim.quote.clone();
-    finding.statement = known.claim.statement.clone();
-    Ok(finding)
+/// The finding a statement's latest reading left, restored from the checkpoint
+/// the job saved it in, when it saved one.
+async fn saved_finding(id: &ClaimId) -> Result<Option<Finding>> {
+    Ok(
+        crate::features::learning::lesson_drafts::checkpoint(&finding_key(id))
+            .await?
+            .and_then(|value| serde_json::from_value::<Finding>(value).ok()),
+    )
+}
+
+/// What a check's result says of a statement.
+fn verdict_of(result: &CheckResult) -> ClaimVerdict {
+    match result {
+        CheckResult::Supported { .. }
+        | CheckResult::SupportedElsewhere { .. }
+        | CheckResult::Consistent
+        | CheckResult::KnownCommon
+        | CheckResult::NotFalse => ClaimVerdict::Supported,
+        CheckResult::Failed {
+            kind: VerdictKind::Contradicted,
+        } => ClaimVerdict::Contradicted,
+        CheckResult::Failed {
+            kind: VerdictKind::CouldNotJudge,
+        } => ClaimVerdict::Unverified,
+        CheckResult::Failed { .. } => ClaimVerdict::Unsupported,
+    }
 }
 
 /// The finding of a statement no reading of this job has made, rebuilt from the
-/// ledger: its latest check's reason, passing when the claim has. A statement
-/// the machine still owns and has a decision about is the exception: its
-/// finding is what the remedy that follows is sent, so its loss is a fault.
-fn from_ledger(ledger: &ClaimLedger, known: &Identified) -> Result<Finding> {
-    let fault = || {
+/// ledger: the verdict, reason and support of its latest local check, where a
+/// support found elsewhere is (which moving the citation needs), the passages
+/// its card shows, and its class. A fresh job over a lesson the ledger already
+/// holds has none saved, and a missing finding is never a fault.
+fn from_ledger(
+    ledger: &ClaimLedger,
+    known: &Identified,
+    shown: &[ShownPassage],
+) -> Result<Finding> {
+    let entry = ledger.entry(&known.id).ok_or_else(|| {
         AppError::InternalError(format!(
-            "The statement \"{}\" was left without a finding",
+            "The statement \"{}\" is not in the claim ledger",
             known.claim.statement
         ))
-    };
-    let entry = ledger.entry(&known.id).ok_or_else(fault)?;
-    if entry.decided().is_some() && entry.state().is_machine_owned() {
-        return Err(fault());
-    }
+    })?;
+    let latest = entry
+        .events()
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            ClaimEvent::Checked(check) if matches!(check.checker, Checker::Local { .. }) => {
+                Some(check)
+            }
+            _ => None,
+        });
     let passed = matches!(
         entry.state(),
         ClaimState::ResolvedByEvidence { .. }
             | ClaimState::Consistent { .. }
             | ClaimState::GeneralKnowledge { .. }
     );
+    let verdict = if passed {
+        ClaimVerdict::Supported
+    } else {
+        latest.map_or(ClaimVerdict::Unsupported, |check| verdict_of(&check.result))
+    };
     let supporting_quote = match entry.state() {
         ClaimState::ResolvedByEvidence {
             supporting_quote, ..
         } => Some(supporting_quote.clone()),
+        _ => latest
+            .and_then(|check| check.result.support())
+            .map(|(_, quote)| quote.to_owned()),
+    };
+    let supported_by = match latest.map(|check| (&check.result, &check.evidence)) {
+        Some((
+            CheckResult::SupportedElsewhere {
+                cited,
+                source_version_id,
+                supporting_quote,
+            },
+            seen,
+        )) => {
+            let of_source =
+                |passage: &&ShownPassage| passage.source_version_id == *source_version_id;
+            let bytes = shown
+                .iter()
+                .find(|passage| {
+                    of_source(passage) && passage.text.contains(supporting_quote.as_str())
+                })
+                .or_else(|| shown.iter().find(of_source))
+                .map(|passage| (passage.start_byte, passage.end_byte))
+                .or_else(|| {
+                    seen.iter()
+                        .find(|passage| passage.source_version_id == *source_version_id)
+                        .map(|passage| (passage.start_byte, passage.end_byte))
+                });
+            bytes.map(|(start_byte, end_byte)| SupportedElsewhere {
+                source_id: source_version_id.clone(),
+                start_byte,
+                end_byte,
+                cited: cited.clone(),
+            })
+        }
         _ => None,
     };
-    let reason = entry
-        .events()
+    let evidence = shown
         .iter()
-        .rev()
-        .find_map(|record| match &record.event {
-            ClaimEvent::Checked(check) => Some(check.reason.clone()),
-            _ => None,
+        .map(|passage| EvidencePassage {
+            source_id: passage.source_version_id.clone(),
+            text: passage.text.clone(),
+            start_byte: passage.start_byte,
+            end_byte: passage.end_byte,
+            retrieval_kind: passage.retrieval_kind.clone(),
+            score: 0.0,
         })
-        .unwrap_or_default();
+        .collect();
     Ok(Finding {
         unit: known.unit,
         quote: known.claim.quote.clone(),
         statement: known.claim.statement.clone(),
-        verdict: if passed {
-            ClaimVerdict::Supported
-        } else {
-            ClaimVerdict::Unsupported
-        },
-        reason,
-        evidence: Vec::new(),
+        verdict,
+        reason: latest.map(|check| check.reason.clone()).unwrap_or_default(),
+        evidence,
         supporting_quote,
         resolution: None,
         trust: None,
         label: None,
         class: entry.classified().map(|(class, by)| Classed { class, by }),
-        two_pass: Default::default(),
+        two_pass: TwoPass {
+            supported_by,
+            ..Default::default()
+        },
     })
 }
 
 /// The findings of the statements that are claims: each one's latest
-/// reading's, in the inventory's order.
+/// reading's, in the inventory's order. A finding is kept in this job's memory;
+/// otherwise it is restored from its checkpoint, otherwise rebuilt from the
+/// ledger. It decides nothing: the policy has decided from the reading.
 pub(super) async fn latest_findings(
     ledger: &ClaimLedger,
     checks: &mut ClaimChecks,
     pass: &Pass,
 ) -> Result<Vec<Finding>> {
+    let mut lost = Vec::new();
+    for known in &pass.statements {
+        if checks.latest.contains_key(&known.id) {
+            continue;
+        }
+        match saved_finding(&known.id).await? {
+            Some(finding) => {
+                checks.latest.insert(known.id.clone(), finding);
+            }
+            None => lost.push(known),
+        }
+    }
+    if !lost.is_empty() {
+        let shown = ledger.shown_passages().await?;
+        for known in lost {
+            let passages = shown.get(&known.id).map_or(&[][..], Vec::as_slice);
+            let finding = from_ledger(ledger, known, passages)?;
+            checks.latest.insert(known.id.clone(), finding);
+        }
+    }
     let mut findings = Vec::with_capacity(pass.statements.len());
     for known in &pass.statements {
-        findings.push(latest_finding(ledger, checks, known).await?);
+        let mut finding = checks.latest.get(&known.id).cloned().ok_or_else(|| {
+            AppError::InternalError(format!(
+                "The statement \"{}\" was left without a finding",
+                known.claim.statement
+            ))
+        })?;
+        finding.unit = known.unit;
+        finding.quote = known.claim.quote.clone();
+        finding.statement = known.claim.statement.clone();
+        findings.push(finding);
     }
     Ok(findings)
+}
+
+/// What reading the statements a hint named came to, by claim.
+pub(super) type Answers = Vec<(ClaimId, Read)>;
+
+/// Reads each of the `hinted` statements once by the page, over `references`
+/// the round expanded, whatever its class: the user asked for a source. Nothing
+/// is recorded, and no policy walks them.
+pub(super) async fn read_hinted(
+    llm: &dyn LLMPort,
+    readers: &dyn ReaderSet,
+    ledger: &ClaimLedger,
+    checks: &ClaimChecks,
+    (candidate, references): (&Value, &ReferenceCollection<'_>),
+    (pass, hinted): (&Pass, &[ClaimId]),
+) -> Result<Answers> {
+    let mut statements: Vec<Statement<'_>> = Vec::with_capacity(hinted.len());
+    let mut ids = Vec::with_capacity(hinted.len());
+    for id in hinted {
+        let Some(known) = pass.statements.iter().find(|known| known.id == *id) else {
+            continue;
+        };
+        let Some((class, by)) = ledger.entry(id).and_then(ClaimLedgerEntry::classified) else {
+            continue;
+        };
+        statements.push(Statement {
+            unit: known.unit,
+            claim: &known.claim,
+            classed: Classed { class, by },
+        });
+        ids.push(id.clone());
+    }
+    if statements.is_empty() {
+        return Ok(Vec::new());
+    }
+    let citations = section_citations(candidate, references)?;
+    let context = ReadContext::new(
+        llm,
+        candidate,
+        references,
+        &citations,
+        &pass.extraction.executions,
+        checks,
+    )
+    .await?;
+    let reads = read_page(readers, &context, &statements).await?;
+    Ok(ids.into_iter().zip(reads).collect())
+}
+
+/// Records the reading that answered each user's hint: its finding becomes the
+/// claim's latest (kept in memory and in a checkpoint, before the ledger
+/// records it), its passages are shown on the card, and the ledger records the
+/// check and nothing else.
+pub(super) async fn record_hinted(
+    ledger: &mut ClaimLedger,
+    checks: &mut ClaimChecks,
+    answers: Answers,
+) -> Result<()> {
+    for (id, read) in answers {
+        let finding = read.finding;
+        crate::features::learning::lesson_drafts::record_checkpoint(
+            &finding_key(&id),
+            serde_json::to_value(&finding)?,
+        )
+        .await?;
+        checks.latest.insert(id.clone(), finding.clone());
+        ledger.record_hint_reading(&id, &finding).await?;
+        if !finding.evidence.is_empty() {
+            ledger.show_evidence(&id, &finding.evidence).await?;
+        }
+    }
+    Ok(())
 }
 
 /// The report of a pass: one finding for each statement that is a claim, in

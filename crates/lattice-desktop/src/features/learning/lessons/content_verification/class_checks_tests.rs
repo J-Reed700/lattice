@@ -2,13 +2,17 @@
 //! own left out, a Reasoning statement read for consistency and put to the
 //! falsity veto, a Common one put to the model alone, and what neither can
 //! pass sent to the strict check as Sourced.
+use super::acceptance_switch_tests::{claim, events_of, identified, node_of, open, walk};
 use super::claim_ledger_tests::{pass_report, passage_finding, prepare, section};
 use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
-use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimState};
+use lattice_core::domain::learning::acceptance::{Outcome, Reading, Step};
+use lattice_core::domain::learning::claim_review::{
+    ClaimEvent, ClaimLedgerEntry, ClaimState, VerdictKind,
+};
 
 const COMMON: &str = "A page number identifies the page of a document that a value appears on.";
 const REASONED: &str =
@@ -80,7 +84,7 @@ impl Classes {
         *self.inner.judge_calls.lock().unwrap()
     }
 
-    async fn respond(&self, prompt: &str) -> Result<String> {
+    pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
             let data = context(prompt);
             let units = data["units"].as_array().unwrap();
@@ -955,4 +959,488 @@ async fn a_consistent_statement_most_samples_call_false_stays_and_passes_when_it
     );
     assert_eq!(model.inner.calls("repair"), 0);
     Ok(())
+}
+
+const CONSISTENCY: Step = Step::Read(Reading::Consistency);
+const KNOWLEDGE: Step = Step::Read(Reading::Knowledge);
+const GROUND: Step = Step::Read(Reading::Ground);
+const PARTS: Step = Step::Read(Reading::Parts);
+
+/// One pass over `lesson` with a fresh ledger: its statements identified, read
+/// along their graphs as far as the readers take them, and recorded.
+async fn one_pass(
+    model: &dyn LLMPort,
+    lesson: &Value,
+    sources: &[LearningSourceDto],
+) -> Result<(claim_ledger::ClaimLedger, passes::Pass)> {
+    let policy = StandardPolicy::new();
+    let references = ReferenceCollection::lexical(sources)?;
+    let mut checks = ClaimChecks::default();
+    let mut ledger = claim_ledger::ClaimLedger::open(model, &lesson.to_string()).await?;
+    let extraction = passes::extract(model, &BuiltinRuntimes::for_tests(), lesson, &checks).await?;
+    let pass = passes::identify(
+        model,
+        &policy,
+        &mut ledger,
+        (lesson, &references),
+        extraction,
+        &checks,
+    )
+    .await?;
+    let due = ledger.due(&policy);
+    let readings = passes::read_steps(
+        model,
+        &policy,
+        &readings::Readers::standard(),
+        &ledger,
+        &checks,
+        (lesson, &references),
+        (&pass, &due),
+    )
+    .await?;
+    passes::record_readings(&policy, &mut ledger, &mut checks, readings).await?;
+    Ok((ledger, pass))
+}
+
+/// The entry of the pass's statement `index`.
+fn statement<'a>(
+    ledger: &'a claim_ledger::ClaimLedger,
+    pass: &passes::Pass,
+    index: usize,
+) -> &'a ClaimLedgerEntry {
+    let known = &pass.statements[index];
+    ledger.entry(&known.id).unwrap()
+}
+
+/// The steps the policy has decided for `entry`, in order.
+fn steps_of(entry: &ClaimLedgerEntry) -> Vec<(Step, Outcome)> {
+    entry
+        .events()
+        .iter()
+        .filter_map(|record| match &record.event {
+            ClaimEvent::Stepped { step, outcome, .. } => Some((*step, *outcome)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_reasoning_statement_a_passage_contradicts_waits_at_its_rewrite_with_the_judges_reason_and_is_never_put_to_the_veto(
+) -> Result<()> {
+    let model = Classes::new(&[REASONED])
+        .classed(&[(REASONED, "reasoning")])
+        .consistent(&[(REASONED, "contradicted")]);
+
+    let (ledger, pass) = one_pass(&model, &lesson(REASONED), &[source()]).await?;
+
+    let entry = statement(&ledger, &pass, 0);
+    assert_eq!(node_of(&ledger, entry.claim_id()), Some("r.rewrite"));
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Open { kind: VerdictKind::Contradicted, reason, .. }
+                if reason == "The passages say otherwise."
+        ),
+        "{:?}",
+        entry.state()
+    );
+    assert_eq!(model.calls("consistency"), 1);
+    assert_eq!(model.calls("knowledge"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_reasoning_statement_with_an_unfounded_specific_enters_sourced_by_evidence_and_is_read_by_parts_in_the_same_pass(
+) -> Result<()> {
+    let model = Classes::new(&[REASONED])
+        .classed(&[(REASONED, "reasoning")])
+        .consistent(&[(REASONED, "unfounded_specific")]);
+
+    let (ledger, pass) = one_pass(&model, &lesson(REASONED), &[source()]).await?;
+
+    let entry = statement(&ledger, &pass, 0);
+    assert_eq!(
+        entry.classified(),
+        Some((Class::Sourced, ClassifiedBy::Evidence))
+    );
+    assert_eq!(
+        steps_of(entry),
+        [
+            (CONSISTENCY, Outcome::NeedsSource),
+            (PARTS, Outcome::Unproven)
+        ]
+    );
+    assert_eq!(model.calls("knowledge"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_common_statement_ends_as_general_knowledge_only_when_every_sample_agrees() -> Result<()>
+{
+    const FALSE: &str = "A header row names the columns of a CSV file after its data.";
+    const LONE: &str = "DictReader keeps whitespace in field names.";
+    const WANTS: &str = "Missing values in nonblank rows default to None.";
+    let model = Classes::new(&[COMMON, FALSE, LONE, WANTS])
+        .classed(&[
+            (COMMON, "common"),
+            (FALSE, "common"),
+            (LONE, "common"),
+            (WANTS, "common"),
+        ])
+        .knows(&[
+            (FALSE, ["false", "false", "true_common"]),
+            (LONE, ["true_common", "true_common", "false"]),
+            (WANTS, ["needs_source", "true_common", "true_common"]),
+        ]);
+    let body = format!("{COMMON} {FALSE} {LONE} {WANTS}");
+
+    let (ledger, pass) = one_pass(&model, &lesson(&body), &[source()]).await?;
+
+    let [unanimous, majority, lone, wants] =
+        [0, 1, 2, 3].map(|index| statement(&ledger, &pass, index));
+    // Unanimity ends as general knowledge.
+    assert!(matches!(
+        unanimous.state(),
+        ClaimState::GeneralKnowledge { .. }
+    ));
+    assert_eq!(
+        unanimous.classified(),
+        Some((Class::Common, ClassifiedBy::Model))
+    );
+    // A majority false is refuted, and its knowledge reading's check says so.
+    assert_eq!(
+        steps_of(majority),
+        [(KNOWLEDGE, Outcome::Refuted), (GROUND, Outcome::Refuted)]
+    );
+    assert_eq!(node_of(&ledger, majority.claim_id()), Some("c.rewrite"));
+    let reasons: Vec<&str> = majority
+        .events()
+        .iter()
+        .filter_map(|record| match &record.event {
+            ClaimEvent::Checked(check) => Some(check.reason.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(reasons[0].contains("(2 of 3)"), "{reasons:?}");
+    assert_eq!(
+        majority.classified(),
+        Some((Class::Common, ClassifiedBy::Model))
+    );
+    // A lone dissent forfeits the pass without failing the statement, as a
+    // request for a source does: both enter Sourced, and are read by Parts.
+    for entry in [lone, wants] {
+        assert_eq!(
+            entry.classified(),
+            Some((Class::Sourced, ClassifiedBy::Evidence))
+        );
+        assert_eq!(
+            steps_of(entry),
+            [
+                (KNOWLEDGE, Outcome::NeedsSource),
+                (PARTS, Outcome::Unproven)
+            ]
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_calls_ceiling_only_comes_down_while_the_loop_checks_a_mix_of_classes() -> Result<()> {
+    const FALSE: &str = "A header row names the columns of a CSV file after its data.";
+    const FIXED: &str = "A header row names the columns of a CSV file before its data.";
+    const LONE: &str = "DictReader keeps whitespace in field names.";
+    const WANTS: &str = "Missing values in nonblank rows default to None.";
+    let model = Classes::new(&[COMMON, FALSE, FIXED, LONE, WANTS, REASONED, GOOD])
+        .classed(&[
+            (COMMON, "common"),
+            (FALSE, "common"),
+            (LONE, "common"),
+            (WANTS, "common"),
+            (REASONED, "reasoning"),
+        ])
+        .knows(&[
+            (FALSE, ["false", "false", "true_common"]),
+            (LONE, ["true_common", "true_common", "false"]),
+            (WANTS, ["needs_source", "true_common", "true_common"]),
+        ])
+        .rewrites(FALSE, FIXED);
+    let body = section(&format!(
+        "{COMMON} {FALSE} {LONE} {WANTS} {REASONED} {GOOD}"
+    ));
+
+    let (finished, trace) = crate::features::learning::lesson_progress::traced(verify_and_repair(
+        &model,
+        "{}",
+        &json!({}),
+        lesson(&body).to_string(),
+        &[source()],
+        3000,
+    ))
+    .await;
+
+    // The statements sorted: the plan's first event, and each pass that moves
+    // them through their graphs another.
+    assert!(!trace.ceilings.is_empty(), "{:?}", trace.ceilings);
+    assert!(trace.only_came_down(), "{:?}", trace.ceilings);
+    assert!(
+        trace.within_the_ceiling(),
+        "{} calls, ceilings {:?}, finished {:?}",
+        trace.calls,
+        trace.ceilings,
+        finished.as_ref().map(|_| ())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_a_repair_wrote_beside_its_parents_successor_takes_the_parents_class_and_is_not_sorted(
+) -> Result<()> {
+    // The repair wrote two sentences where one stood, after a sentence whose
+    // length keeps the first one's place from overlapping the second's.
+    const FILLER: &str = "Opening the file puts the reader at its first record, which is the line under the header row, and nothing before it is kept.";
+    const CHILD: &str = "Each row arrives as a mapping from column names to values.";
+    assert!(FILLER.len() >= REASONED.len());
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let parent = claim(
+        &mut ledger,
+        "parent",
+        (REASONED, REASONED),
+        REASONED,
+        (Class::Reasoning, ClassifiedBy::Model),
+    )
+    .await?;
+    walk(
+        &mut ledger,
+        &parent,
+        Class::Reasoning,
+        &[(CONSISTENCY, Outcome::Refuted)],
+    )
+    .await?;
+    ledger
+        .begin_repairs(&policy, &lesson(REASONED), std::slice::from_ref(&parent))
+        .await?;
+    // Sorted, the model would call both Common.
+    let model = Classes::new(&[]).classed(&[(REWRITTEN, "common"), (CHILD, "common")]);
+
+    let pass = identified(
+        &mut ledger,
+        &model,
+        &lesson(&format!("{FILLER} {REWRITTEN} {CHILD}")),
+        &[(REWRITTEN, REWRITTEN), (CHILD, CHILD)],
+        &[],
+    )
+    .await?;
+
+    assert_eq!(pass.statements[0].id, parent);
+    let child = statement(&ledger, &pass, 1);
+    assert_ne!(child.claim_id(), &parent);
+    assert!(
+        events_of(child).iter().any(|event| matches!(
+            event,
+            ClaimEvent::BornOfRepair { parent: born, .. } if *born == parent
+        )),
+        "{:?}",
+        events_of(child)
+    );
+    assert_eq!(
+        child.classified(),
+        Some((Class::Reasoning, ClassifiedBy::Model))
+    );
+    assert_eq!(model.calls("sort"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rule_that_leaves_a_statement_out_does_not_apply_to_a_statement_a_repair_wrote_and_it_is_read(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let model = Classes::new(&[]);
+    // Alone, a remark about the lesson's sources is left out of its claims.
+    let mut fresh = open().await?;
+    let alone = identified(&mut fresh, &model, &lesson(OWN), &[(OWN, OWN)], &[]).await?;
+    assert!(alone.statements.is_empty());
+
+    // A repair that wrote it over a checked statement keeps that statement's
+    // class, and the check.
+    let mut ledger = open().await?;
+    let parent = claim(
+        &mut ledger,
+        "parent",
+        (COMMON, COMMON),
+        COMMON,
+        (Class::Common, ClassifiedBy::Model),
+    )
+    .await?;
+    walk(
+        &mut ledger,
+        &parent,
+        Class::Common,
+        &[(KNOWLEDGE, Outcome::Refuted), (GROUND, Outcome::Refuted)],
+    )
+    .await?;
+    ledger
+        .begin_repairs(&policy, &lesson(COMMON), std::slice::from_ref(&parent))
+        .await?;
+
+    let pass = identified(&mut ledger, &model, &lesson(OWN), &[(OWN, OWN)], &[]).await?;
+
+    let [kept] = pass.statements.as_slice() else {
+        panic!("the rewrite is a statement: {:?}", pass.statements.len());
+    };
+    assert_eq!(kept.id, parent);
+    assert_eq!(
+        ledger.entry(&parent).unwrap().classified(),
+        Some((Class::Common, ClassifiedBy::Model))
+    );
+    assert_eq!(model.calls("sort"), 0);
+    // It is read from where its rewrite left it.
+    assert_eq!(node_of(&ledger, &parent), Some("c.final"));
+    assert_eq!(
+        ledger
+            .due(&policy)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>(),
+        [parent]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_class_a_rewrite_took_is_kept_by_a_resumed_pass_after_the_repairs_record_is_gone(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    // Sorted again, the rewrite would be Common.
+    let model = Classes::new(&[]).classed(&[(REWRITTEN, "common")]);
+    let policy = StandardPolicy::new();
+
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume("class-fixture".into()).await?;
+        let mut ledger = open().await?;
+        let parent = claim(
+            &mut ledger,
+            "parent",
+            (REASONED, REASONED),
+            REASONED,
+            (Class::Reasoning, ClassifiedBy::Model),
+        )
+        .await?;
+        walk(
+            &mut ledger,
+            &parent,
+            Class::Reasoning,
+            &[(CONSISTENCY, Outcome::Refuted)],
+        )
+        .await?;
+        ledger
+            .begin_repairs(&policy, &lesson(REASONED), std::slice::from_ref(&parent))
+            .await?;
+        let first = identified(
+            &mut ledger,
+            &model,
+            &lesson(REWRITTEN),
+            &[(REWRITTEN, REWRITTEN)],
+            &[],
+        )
+        .await?;
+        assert_eq!(first.statements[0].id, parent);
+
+        // After a restart the repair's record is gone.
+        let mut resumed = open().await?;
+        assert!(resumed.pending.repairs.is_empty());
+        let again = identified(
+            &mut resumed,
+            &model,
+            &lesson(REWRITTEN),
+            &[(REWRITTEN, REWRITTEN)],
+            &[],
+        )
+        .await?;
+
+        assert_eq!(again.statements[0].id, parent);
+        assert_eq!(
+            resumed.entry(&parent).unwrap().classified(),
+            Some((Class::Reasoning, ClassifiedBy::Model))
+        );
+        assert_eq!(model.calls("sort"), 0);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_resumed_pass_whose_readings_are_all_restored_counts_each_statement_reused() -> Result<()>
+{
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = Classes::new(&[COMMON, REASONED, GOOD])
+        .classed(&[(COMMON, "common"), (REASONED, "reasoning")]);
+    let cited_section = json!({"kind":"explanation","title":"Cited","body":GOOD,"rubric":[],
+        "sourceIndex":0,"quote":GOOD,"citations":[{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}]});
+    let uncited_section = json!({"kind":"explanation","title":"Uncited","body":format!("{COMMON} {REASONED}"),"rubric":[]});
+    let lesson = json!({"blocks":[uncited_section, cited_section],"questions":[]});
+    let sources = [source()];
+    let policy = StandardPolicy::new();
+    let readers = readings::Readers::standard();
+
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume("class-fixture".into()).await?;
+        let references = ReferenceCollection::lexical(&sources)?;
+        let mut checks = ClaimChecks::default();
+        let mut ledger = claim_ledger::ClaimLedger::open(&model, &lesson.to_string()).await?;
+        let extraction =
+            passes::extract(&model, &BuiltinRuntimes::for_tests(), &lesson, &checks).await?;
+        let pass = passes::identify(
+            &model,
+            &policy,
+            &mut ledger,
+            (&lesson, &references),
+            extraction,
+            &checks,
+        )
+        .await?;
+        let due = ledger.due(&policy);
+        assert_eq!(due.len(), 3);
+        // A run that read the statements and stopped before it recorded them
+        // leaves its judgments as saved checks.
+        passes::read_steps(
+            &model,
+            &policy,
+            &readers,
+            &ledger,
+            &checks,
+            (&lesson, &references),
+            (&pass, &due),
+        )
+        .await?;
+        let asked = (model.calls("knowledge"), model.calls("consistency"));
+
+        // The run that resumes it reads them again, and records.
+        let (recorded, trace) = crate::features::learning::lesson_progress::traced(async {
+            let readings = passes::read_steps(
+                &model,
+                &policy,
+                &readers,
+                &ledger,
+                &checks,
+                (&lesson, &references),
+                (&pass, &due),
+            )
+            .await?;
+            passes::record_readings(&policy, &mut ledger, &mut checks, readings).await
+        })
+        .await;
+
+        assert!(recorded?.is_empty());
+        assert_eq!(
+            (model.calls("knowledge"), model.calls("consistency")),
+            asked,
+            "nothing was asked again"
+        );
+        assert_eq!((trace.checked, trace.reused), (3, 3));
+        Ok(())
+    })
+    .await
 }

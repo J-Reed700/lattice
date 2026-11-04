@@ -241,12 +241,13 @@ fn consistency_checker(llm: &dyn LLMPort) -> ClaimChecker<'_> {
 }
 
 /// The consistency judge's answer on `statement` and `passages`: restored
-/// from its receipt or asked for. `None` when its reply could not be read.
+/// from its receipt or asked for, and whether it was restored. `None` when its
+/// reply could not be read.
 pub(super) async fn consistency_of(
     llm: &dyn LLMPort,
     statement: &str,
     passages: &[EvidencePassage],
-) -> Result<Option<ConsistencyOutcome>> {
+) -> Result<Option<(ConsistencyOutcome, bool)>> {
     let shown: Vec<(&String, usize, usize, &String)> = passages
         .iter()
         .map(|passage| {
@@ -274,7 +275,7 @@ pub(super) async fn consistency_of(
         .await?
         .and_then(|value| serde_json::from_value::<ConsistencyOutcome>(value).ok())
     {
-        return Ok(Some(saved));
+        return Ok(Some((saved, true)));
     }
     let texts: Vec<String> = passages
         .iter()
@@ -293,7 +294,7 @@ pub(super) async fn consistency_of(
                 serde_json::to_value(&outcome)?,
             )
             .await?;
-            Ok(Some(outcome))
+            Ok(Some((outcome, false)))
         }
         ClassJudgment::Unusable => Ok(None),
         ClassJudgment::Failed(error) => Err(error),
@@ -301,11 +302,12 @@ pub(super) async fn consistency_of(
 }
 
 /// The knowledge judge's three samples on `statement`: restored from their
-/// receipt or asked for. `None` when a reply could not be read.
+/// receipt or asked for, and whether they were restored. `None` when a reply
+/// could not be read.
 pub(super) async fn knowledge_of(
     llm: &dyn LLMPort,
     statement: &str,
-) -> Result<Option<KnowledgeOutcome>> {
+) -> Result<Option<(KnowledgeOutcome, bool)>> {
     let key = format!(
         "{KNOWLEDGE_POLICY}:{}",
         digest(
@@ -321,7 +323,7 @@ pub(super) async fn knowledge_of(
         .await?
         .and_then(|value| serde_json::from_value::<KnowledgeOutcome>(value).ok())
     {
-        return Ok(Some(saved));
+        return Ok(Some((saved, true)));
     }
     let checker = ClaimChecker::new(
         llm,
@@ -340,7 +342,7 @@ pub(super) async fn knowledge_of(
                 serde_json::to_value(&outcome)?,
             )
             .await?;
-            Ok(Some(outcome))
+            Ok(Some((outcome, false)))
         }
         ClassJudgment::Unusable => Ok(None),
         ClassJudgment::Failed(error) => Err(error),

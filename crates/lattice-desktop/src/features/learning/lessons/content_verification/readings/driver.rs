@@ -152,18 +152,7 @@ pub(in super::super) async fn read_until_remedy(
         waves.sort_by_key(|(reading, _)| place(*reading));
         for (reading, members) in waves {
             let batch: Vec<Statement<'_>> = members.iter().map(|course| course.statement).collect();
-            let reads = readers.get(reading).read(at, &batch).await?;
-            if reads.len() != batch.len() {
-                return Err(AppError::InternalError(format!(
-                    "The {reading:?} reader gave {} readings for {} statements",
-                    reads.len(),
-                    batch.len()
-                )));
-            }
-            let reads = match reading {
-                Reading::Parts | Reading::Page => weighed(at, &batch, reads).await?,
-                _ => reads,
-            };
+            let reads = ask(readers, at, reading, &batch).await?;
             for (course, read) in members.into_iter().zip(reads) {
                 course.take(policy, reading, read)?;
             }
@@ -176,6 +165,62 @@ pub(in super::super) async fn read_until_remedy(
             steps: course.steps,
         })
         .collect())
+}
+
+/// What `reading`'s reader makes of `batch`, one `Read` for each statement; a
+/// `Parts` or `Page` batch is weighed for where its support comes from.
+async fn ask(
+    readers: &dyn ReaderSet,
+    at: &ReadContext<'_>,
+    reading: Reading,
+    batch: &[Statement<'_>],
+) -> Result<Vec<Read>> {
+    let reads = readers.get(reading).read(at, batch).await?;
+    if reads.len() != batch.len() {
+        return Err(AppError::InternalError(format!(
+            "The {reading:?} reader gave {} readings for {} statements",
+            reads.len(),
+            batch.len()
+        )));
+    }
+    match reading {
+        Reading::Parts | Reading::Page => weighed(at, batch, reads).await,
+        _ => Ok(reads),
+    }
+}
+
+/// Reads each of `statements` once by the course's page, whatever its class: a
+/// reading no graph walks, which answers a user's hint. An answer that could
+/// not be read is asked once more, as the driver asks it. Gives one `Read` for
+/// each statement, in order, and records nothing.
+pub(in super::super) async fn read_page(
+    readers: &dyn ReaderSet,
+    at: &ReadContext<'_>,
+    statements: &[Statement<'_>],
+) -> Result<Vec<Read>> {
+    let mut reads = ask(readers, at, Reading::Page, statements).await?;
+    let unread: Vec<usize> = reads
+        .iter()
+        .enumerate()
+        .filter(|(_, read)| read.outcome == Outcome::Unjudged)
+        .map(|(index, _)| index)
+        .collect();
+    if unread.is_empty() {
+        return Ok(reads);
+    }
+    let again: Vec<Statement<'_>> = unread
+        .iter()
+        .filter_map(|index| statements.get(*index).copied())
+        .collect();
+    for (index, read) in unread
+        .into_iter()
+        .zip(ask(readers, at, Reading::Page, &again).await?)
+    {
+        if let Some(slot) = reads.get_mut(index) {
+            *slot = read;
+        }
+    }
+    Ok(reads)
 }
 
 /// The ordinals of the `statements` a quotation found in its source settles,
@@ -206,9 +251,9 @@ async fn weighed(
     reads: Vec<Read>,
 ) -> Result<Vec<Read>> {
     let left_out = settled(at, statements)?;
-    let (outcomes, findings): (Vec<Outcome>, Vec<Finding>) = reads
+    let (outcomes, findings): (Vec<(Outcome, bool)>, Vec<Finding>) = reads
         .into_iter()
-        .map(|read| (read.outcome, read.finding))
+        .map(|read| ((read.outcome, read.reused), read.finding))
         .unzip();
     let mut results: Vec<CheckedClaim> = findings
         .into_iter()
@@ -219,6 +264,10 @@ async fn weighed(
     Ok(outcomes
         .into_iter()
         .zip(results)
-        .map(|(outcome, (_, _, finding, _))| Read { outcome, finding })
+        .map(|((outcome, reused), (_, _, finding, _))| Read {
+            outcome,
+            finding,
+            reused,
+        })
         .collect())
 }

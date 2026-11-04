@@ -41,6 +41,10 @@ pub(super) struct Cursor {
     /// The source version and quote of the latest supported local check, which
     /// a decision to resolve the claim names.
     pub(super) last_support: Option<(String, String)>,
+    /// The user asked for a search with a hint and no local check that gave an
+    /// answer has read what it found: that check answers the hint (acceptance
+    /// design §2.10, a user's hint).
+    pub(super) hinted: bool,
 }
 
 pub(super) fn queued(kind: VerdictKind, reason: String) -> ClaimState {
@@ -138,14 +142,22 @@ fn after_machine_failure(
 /// is when the check was recorded, which a pass that rests on no passage
 /// carries into its state.
 pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at: i64) {
+    let local = !attached && matches!(check.checker, Checker::Local { .. });
+    // The first local check that gave an answer after the user's hint is the
+    // claim's own: the hint asked for it, and an unjudged check does not use
+    // the hint up.
+    let answers_hint = local && cursor.hinted && !check.result.is_unjudged();
+    if answers_hint {
+        cursor.hinted = false;
+    }
     // A decided claim's state is its decision's: a local check that is not the
-    // user's evidence is what was observed, never what follows.
-    let observation =
-        cursor.decided.is_some() && !attached && matches!(check.checker, Checker::Local { .. });
+    // user's evidence or the answer to their hint is what was observed, never
+    // what follows.
+    let observation = cursor.decided.is_some() && local && !answers_hint;
     // A local checker that gave no answer taught nothing about the claim:
     // no attempt is charged and a rewrite keeps waiting for its check. A
     // claim that passed on text since changed has no check now.
-    if !attached && matches!(check.checker, Checker::Local { .. }) && check.result.is_unjudged() {
+    if local && check.result.is_unjudged() {
         if !observation
             && matches!(
                 cursor.state,

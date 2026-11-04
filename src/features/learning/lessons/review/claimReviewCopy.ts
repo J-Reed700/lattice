@@ -296,7 +296,7 @@ export function announcement(action: AnnouncedAction, remaining: number): string
     case 'confirm': return `Accepted. ${left(remaining)}`;
     case 'edit': return 'Sentence edited. It is checked when you resume.';
     case 'remove': return `Removed. ${left(remaining)}`;
-    case 'research_with_hint': return `Searched with your hint. ${left(remaining)}`;
+    case 'research_with_hint': return 'Hint saved. It is searched when you resume.';
     case 'unconfirm': return `Acceptance withdrawn. ${left(remaining)}`;
     case 'undo': return `Undone. ${left(remaining)}`;
   }

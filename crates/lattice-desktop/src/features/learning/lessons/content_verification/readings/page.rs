@@ -19,19 +19,26 @@ struct Paged {
 
 #[async_trait]
 impl Reader for Page {
+    #[cfg(test)]
     fn reading(&self) -> Reading {
         Reading::Page
     }
 
     async fn read(&self, at: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>> {
         let mut found: Vec<Option<Finding>> = vec![None; statements.len()];
+        let mut reused = vec![false; statements.len()];
         let mut paged = Vec::with_capacity(statements.len());
         let mut waiting = Vec::new();
         for (ordinal, statement) in statements.iter().enumerate() {
             let (page, opened) = open(at, ordinal, statement).await?;
             paged.push(page);
             match opened {
-                Restored::Receipt(finding) => keep(&mut found, ordinal, finding),
+                Restored::Receipt(finding, saved) => {
+                    keep(&mut found, ordinal, finding);
+                    if let Some(slot) = reused.get_mut(ordinal) {
+                        *slot = saved;
+                    }
+                }
                 Restored::Ask(pending) if answers(at.retained).per_claim().is_some() => {
                     waiting.push(pending);
                 }
@@ -40,11 +47,13 @@ impl Reader for Page {
         }
         ask(at, waiting, &mut found).await?;
         let mut reads = Vec::with_capacity(statements.len());
-        for ((statement, page), finding) in statements.iter().zip(paged).zip(found) {
+        for (((statement, page), finding), reused) in
+            statements.iter().zip(paged).zip(found).zip(reused)
+        {
             let finding = finding.ok_or_else(|| {
                 AppError::InternalError("A page was read without a finding".into())
             })?;
-            reads.push(read_of(statement, page, finding));
+            reads.push(read_of(statement, page, finding, reused));
         }
         Ok(reads)
     }
@@ -123,7 +132,7 @@ fn keep(found: &mut [Option<Finding>], ordinal: usize, finding: Finding) {
 /// passage that supports it is of a source its sentence cites, and otherwise
 /// the support is elsewhere, which the finding names. A sentence whose section
 /// cites nothing has no citation to move: a passage that supports it stands.
-fn read_of(statement: &Statement<'_>, page: Paged, finding: Finding) -> Read {
+fn read_of(statement: &Statement<'_>, page: Paged, finding: Finding, reused: bool) -> Read {
     let mut finding = combine(None, finding, (page.reach, 1), &page.cited);
     let on_cited = page.cited.is_empty()
         || finding
@@ -136,5 +145,9 @@ fn read_of(statement: &Statement<'_>, page: Paged, finding: Finding) -> Read {
         finding.two_pass.supported_by = None;
     }
     finding.class = Some(statement.classed);
-    Read { outcome, finding }
+    Read {
+        outcome,
+        finding,
+        reused,
+    }
 }

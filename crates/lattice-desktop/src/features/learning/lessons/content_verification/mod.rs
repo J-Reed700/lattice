@@ -4,7 +4,9 @@ use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::dto::PreparedLearningLesson;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
-use futures::{FutureExt, StreamExt, TryStreamExt};
+#[cfg(test)]
+use futures::TryStreamExt;
+use futures::{FutureExt, StreamExt};
 use lattice_core::application::ports::{llm_port::SamplingOverride, LLMPort};
 #[cfg(test)]
 use lattice_core::application::services::claim_verification::ClaimEvidence;
@@ -240,6 +242,9 @@ struct Classed {
 /// both across restarts; a selection is never itself a factual approval.
 #[derive(Default)]
 struct ClaimChecks {
+    /// The decisions of the two passes, by key: for the tests of those passes;
+    /// step 6b-3 retires it with them.
+    #[cfg(test)]
     findings: HashMap<String, Finding>,
     /// Claims the ledger holds as resolved by evidence the user brought, by
     /// unit and statement: that check is their receipt (`claim_ledger`).
@@ -304,6 +309,7 @@ impl ClaimChecks {
         digest(&json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
     }
 
+    #[cfg(test)]
     fn get(
         &self,
         key: &str,
@@ -337,6 +343,7 @@ impl ClaimChecks {
         })
     }
 
+    #[cfg(test)]
     fn record(&mut self, key: String, finding: &Finding) {
         // A failed/incomplete call is never a reusable decision.
         if finding.verdict != ClaimVerdict::Unverified {

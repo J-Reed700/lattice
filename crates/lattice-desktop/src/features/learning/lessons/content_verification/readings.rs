@@ -39,6 +39,8 @@ pub(super) struct Statement<'s> {
 pub(super) struct Read {
     pub(super) outcome: Outcome,
     pub(super) finding: Finding,
+    /// The finding was restored from a saved check, so no call was made for it.
+    pub(super) reused: bool,
 }
 
 /// What the readers read with: the model, the lesson and the course it cites,
@@ -82,6 +84,7 @@ impl<'c> ReadContext<'c> {
 /// A kind of reading. It reads each statement as the pipeline reads it today.
 #[async_trait]
 pub(super) trait Reader: Send + Sync {
+    #[cfg(test)]
     fn reading(&self) -> Reading;
     /// One `Read` per statement, in order; an outage is an error the caller
     /// defers on.
@@ -110,7 +113,7 @@ impl Readers {
             ground: ground::Ground,
             page: page::Page,
             consistency: consistency::Consistency,
-            knowledge: knowledge::Knowledge::knowledge(),
+            knowledge: knowledge::Knowledge::unanimous(),
             veto: knowledge::Knowledge::veto(),
         }
     }
@@ -183,13 +186,15 @@ fn comparison(
 
 /// A comparison restored from its receipt, or what is left to ask.
 enum Restored {
-    Receipt(Finding),
+    /// The finding, and whether it came from a saved check: a statement with no
+    /// passage to read is decided on the spot, with no saved check.
+    Receipt(Finding, bool),
     Ask(PendingClaim),
 }
 
 async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restored> {
     match compare(at.llm, at.retained, pending).await? {
-        Comparison::Done(finding, _) => Ok(Restored::Receipt(finding)),
+        Comparison::Done(finding, reused) => Ok(Restored::Receipt(finding, reused)),
         Comparison::Pending(pending) => Ok(Restored::Ask(pending)),
         #[cfg(test)]
         Comparison::Sent => Err(AppError::InternalError(
@@ -221,34 +226,37 @@ async fn ask_strict(
 /// The finding on `evidence` for `statement`, restored from its receipt or
 /// asked for, which pass A records under the same key: the part-wise judge's,
 /// or the strict judge's of a page that holds no source passage (an example's
-/// run is no source).
+/// run is no source). Whether it was restored.
 async fn judge_parts(
     at: &ReadContext<'_>,
     ordinal: usize,
     statement: &Statement<'_>,
     checked: &Claim,
     evidence: Vec<EvidencePassage>,
-) -> Result<Finding> {
+) -> Result<(Finding, bool)> {
     let pending = comparison(at, ordinal, statement, checked, evidence, Pass::Attribution);
-    let finding = match restored(at, pending).await? {
-        Restored::Receipt(finding) => finding,
+    let (finding, reused) = match restored(at, pending).await? {
+        Restored::Receipt(finding, reused) => (finding, reused),
         Restored::Ask(pending) if applies(&pending) => {
             let guard = specifics(at, statement.unit);
             let ((_, (_, _, finding, _)), answered) =
                 part_wise(at.llm, pending, &at.labels, guard).await?;
             tally(at.retained, answered);
-            finding
+            (finding, false)
         }
-        Restored::Ask(pending) => ask_strict(at, vec![pending])
-            .await?
-            .into_iter()
-            .next()
-            .map(|(_, finding)| finding)
-            .ok_or_else(|| {
-                AppError::InternalError("A comparison was asked without a finding".into())
-            })?,
+        Restored::Ask(pending) => {
+            let finding = ask_strict(at, vec![pending])
+                .await?
+                .into_iter()
+                .next()
+                .map(|(_, finding)| finding)
+                .ok_or_else(|| {
+                    AppError::InternalError("A comparison was asked without a finding".into())
+                })?;
+            (finding, false)
+        }
     };
-    Ok(alone(finding))
+    Ok((alone(finding), reused))
 }
 
 /// The finding of a statement with no passage to read, which no judge is

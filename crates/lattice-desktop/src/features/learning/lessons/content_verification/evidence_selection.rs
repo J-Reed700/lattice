@@ -47,7 +47,9 @@ pub(super) struct Selection {
 pub(super) struct Selected {
     pub(super) evidence: Vec<EvidencePassage>,
     pub(super) reach: Option<Reach>,
-    /// What the page's list said, when it was read now rather than restored.
+    /// What the page's list said, when it was read now rather than restored:
+    /// for the log of the tests of the two passes.
+    #[cfg(test)]
     pub(super) note: Option<evidence_checks::PageNote>,
 }
 
@@ -269,6 +271,7 @@ pub(super) async fn select(
 ) -> Result<Option<Selected>> {
     let budget = match sizing {
         evidence_checks::Sizing::Sized(budget) => Some(budget),
+        #[cfg(test)]
         evidence_checks::Sizing::Unmeasured => None,
     };
     let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING);
@@ -288,6 +291,7 @@ pub(super) async fn select(
         .as_ref()
         .and_then(|saved| saved.restore(references, current));
     let research_scope = research_scope(current, retained).await?;
+    #[cfg(test)]
     let mut note = None;
     let (mut evidence, reach, changed) =
         if let (Some(saved), Some(evidence)) = (saved.as_ref(), restored) {
@@ -334,7 +338,10 @@ pub(super) async fn select(
             )
             .await?;
             let reach = read.as_ref().map(|note| note.reach);
-            note = read;
+            #[cfg(test)]
+            {
+                note = read;
+            }
             (page, reach, true)
         };
     // Pass B never shows what pass A does, even when the section's citation
@@ -369,6 +376,7 @@ pub(super) async fn select(
     Ok(Some(Selected {
         evidence,
         reach,
+        #[cfg(test)]
         note,
     }))
 }

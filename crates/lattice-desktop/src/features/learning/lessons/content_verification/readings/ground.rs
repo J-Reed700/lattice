@@ -9,6 +9,7 @@ pub(super) struct Ground;
 
 #[async_trait]
 impl Reader for Ground {
+    #[cfg(test)]
     fn reading(&self) -> Reading {
         Reading::Ground
     }
@@ -29,8 +30,8 @@ impl Reader for Ground {
                 at.citations.of(unit),
             );
             canonicalize_evidence(&mut evidence);
-            let mut finding = if evidence.is_empty() {
-                no_passages(statement)
+            let (mut finding, reused) = if evidence.is_empty() {
+                (no_passages(statement), false)
             } else {
                 judge_parts(at, ordinal, statement, &checked, evidence).await?
             };
@@ -38,6 +39,7 @@ impl Reader for Ground {
             reads.push(Read {
                 outcome: ground_outcome(&finding),
                 finding,
+                reused,
             });
         }
         Ok(reads)

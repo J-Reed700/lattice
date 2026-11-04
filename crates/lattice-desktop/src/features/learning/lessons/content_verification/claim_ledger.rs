@@ -18,6 +18,7 @@ mod observe;
 mod position;
 mod readings;
 mod receipts;
+mod stops;
 mod successor;
 
 pub(super) use audit::Audited;
@@ -38,9 +39,7 @@ use crate::features::learning::lessons::claim_reviews::repository::{
 use crate::features::learning::persistence::now;
 use identify::Carried;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
-use lattice_core::domain::learning::acceptance::{
-    AcceptancePolicy, Goal, Outcome, Step, Then, Walked,
-};
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome, Step, Then};
 use lattice_core::domain::learning::claim_review::{
     end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
     ClaimState, EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision,
@@ -188,18 +187,6 @@ pub(super) struct ClaimLedger {
 /// statement has.
 fn is_example(entry: &ClaimLedgerEntry) -> bool {
     entry.classified().is_none()
-}
-
-/// What a step does, in words.
-fn describe(step: Step) -> &'static str {
-    match step {
-        Step::Read(_) => "waiting to be read",
-        Step::Research => "waiting for research",
-        Step::Recite => "waiting for its citation to move",
-        Step::Uncite => "waiting for its citation to go",
-        Step::Rewrite(_) => "waiting for a rewrite",
-        Step::Cut => "waiting to be cut",
-    }
 }
 
 /// A claim the machine may not act on any more: its sentence is gone.
@@ -434,6 +421,14 @@ impl ClaimLedger {
         }
     }
 
+    /// The passages each claim's card shows: what its latest check compared.
+    pub(super) async fn shown_passages(&self) -> Result<HashMap<ClaimId, Vec<ShownPassage>>> {
+        match &self.sink {
+            Some(sink) => sink.store.shown_passages(&sink.lesson_id).await,
+            None => Ok(HashMap::new()),
+        }
+    }
+
     /// The claims of the latest pass, findings and examples.
     fn observed(&self) -> impl Iterator<Item = &ClaimId> {
         self.findings.iter().chain(self.examples.values())
@@ -502,79 +497,6 @@ impl ClaimLedger {
             .flat_map(ClaimLedgerEntry::events)
             .filter(|record| matches!(record.event, ClaimEvent::Stepped { .. }))
             .count()
-    }
-
-    /// The stop for a lesson whose statements the policy cannot walk: one
-    /// decided under another policy than the current, or one whose record
-    /// does not fit its graph.
-    pub(super) fn fault(&self, policy: &dyn AcceptancePolicy) -> Option<StopReason> {
-        for id in &self.findings {
-            let Some(entry) = self.entry(id).filter(|entry| !is_gone(entry.state())) else {
-                continue;
-            };
-            let other = entry
-                .events()
-                .iter()
-                .find_map(|record| match &record.event {
-                    ClaimEvent::Stepped { policy: held, .. } if held != policy.version() => {
-                        Some(held.as_str())
-                    }
-                    _ => None,
-                });
-            if let Some(held) = other {
-                return Some(self.stop_reason(
-                    "policy_changed",
-                    format!(
-                        "The checks on this lesson were decided under earlier checking rules ({held}), and this version of the app checks under {}. \"{}\" cannot go on under them.",
-                        policy.version(),
-                        entry.statement()
-                    ),
-                    "The saved checks are kept. Resume this lesson with a version of the app that continues checks made under those rules.",
-                ));
-            }
-            if let Some(Walked::Diverged { at, taken }) = self.position(policy, id) {
-                let node = policy
-                    .graph(at.class)
-                    .node(at.node)
-                    .map_or("?", |node| node.name);
-                return Some(self.stop_reason(
-                    "policy_record_fault",
-                    format!(
-                        "The record of \"{}\" does not fit the checking rules: at {node}, {:?} came out {:?}, which the rules do not allow there.",
-                        entry.statement(),
-                        taken.step,
-                        taken.outcome
-                    ),
-                    "The draft is saved. Report this lesson's claim review so its record can be repaired.",
-                ));
-            }
-        }
-        None
-    }
-
-    /// A stop with `code`, in the checker's name.
-    fn stop_reason(&self, code: &str, message: String, fix: &str) -> StopReason {
-        StopReason {
-            code: code.into(),
-            message,
-            fix: fix.into(),
-            at: now(),
-            request: None,
-        }
-    }
-
-    /// The stop for `claims` statements whose checker gave no answer the
-    /// checks can use, asked twice.
-    fn unreadable(&self, claims: usize) -> StopReason {
-        self.stop_reason(
-            "checker_unreadable",
-            format!(
-                "The checking model's answers could not be read for {claims} statement{}: {} gave no answer the checks can use, asked twice.",
-                if claims == 1 { "" } else { "s" },
-                self.checker_model
-            ),
-            "Try another verifier model, or a larger context window, in Settings, then resume this lesson.",
-        )
     }
 
     /// What the next pass keeps of the ledger: whether it is a later pass, the
@@ -866,47 +788,6 @@ impl ClaimLedger {
     ) -> Result<()> {
         self.write_review(LessonReviewState::NeedsReview, raw, stop_reason)
             .await
-    }
-
-    /// The lesson stops for `reason`: the review row says so, and the draft is
-    /// kept as it is. No statement has been rewritten or cut for it (claim
-    /// classes design §3.2).
-    pub(super) async fn stop(&mut self, raw: &str, reason: StopReason) -> Result<AppError> {
-        self.write_review(LessonReviewState::Stopped, raw, Some(reason.clone()))
-            .await?;
-        Ok(AppError::Other(reason.message))
-    }
-
-    /// The lesson stops: a whole pass moved no statement and changed nothing,
-    /// so going on would repeat it. The stop names each statement that waits
-    /// and the node it waits at.
-    pub(super) async fn stop_no_progress(
-        &mut self,
-        raw: &str,
-        waiting: &[Waiting],
-    ) -> Result<AppError> {
-        let names: Vec<String> = waiting
-            .iter()
-            .map(|waits| {
-                let statement = self
-                    .entry(&waits.claim)
-                    .map_or("a statement", ClaimLedgerEntry::statement);
-                format!(
-                    "\"{statement}\" at {} ({})",
-                    waits.node,
-                    describe(waits.step)
-                )
-            })
-            .collect();
-        let reason = self.stop_reason(
-            "no_progress",
-            format!(
-                "The checks stopped because a whole pass moved no statement and changed nothing. Waiting: {}.",
-                names.join("; ")
-            ),
-            "Resume this lesson to try the step again. If it stops here again, the step is not being taken: a search that reaches nothing leaves its statements at research.",
-        );
-        self.stop(raw, reason).await
     }
 
     pub(super) fn tally(&self) -> LearningClaimTally {

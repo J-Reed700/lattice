@@ -22,7 +22,7 @@ fn recited(
     Ok(cited
         .into_iter()
         .filter_map(|cited| match cited {
-            repair::Cited::Recited(event) => Some(event),
+            repair::Cited::Recited(event) => Some(*event),
             _ => None,
         })
         .collect())

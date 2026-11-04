@@ -177,6 +177,7 @@ impl ClaimLedgerEntry {
             class: None,
             decided: None,
             last_support: None,
+            hinted: false,
         };
         let mut entry = Self {
             claim_id,
@@ -705,8 +706,10 @@ impl ClaimLedgerEntry {
                 claim: self.claim_id.0.clone(),
             });
         }
-        // The user's action supersedes any rewrite waiting for its check.
+        // The user's action supersedes any rewrite waiting for its check, and
+        // any hint but its own is no longer asking for a reading.
         next.repair_pending = false;
+        next.hinted = matches!(action, UserAction::ResearchWithHint { .. });
         match action {
             UserAction::Confirm { bound } => {
                 next.state = ClaimState::Confirmed {

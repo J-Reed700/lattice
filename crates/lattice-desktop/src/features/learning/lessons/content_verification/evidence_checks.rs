@@ -46,8 +46,10 @@ use run::Run;
 pub(super) use walk::first_page;
 #[cfg(test)]
 use walk::log_page;
+#[cfg(test)]
+pub(super) use walk::PageNote;
 pub(in crate::features::learning) use walk::Reach;
-pub(super) use walk::{page_of, page_one, within_page, PageBudget, PageNote, Sizing};
+pub(super) use walk::{page_of, page_one, within_page, PageBudget, Sizing};
 
 /// The most output a claim check may write, which the checker is built
 /// with: the largest an answer can be.

@@ -205,17 +205,21 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         }
         // Research for the statements at a research node and the claims a hint
         // names, once per claim: what it saves is read at once, and what it
-        // does not find is recorded as tried (§4). A round that reaches
-        // nothing records nothing, and the claims stay where they are.
+        // does not find is recorded as tried (§4). A claim a hint names is the
+        // user's: it takes no step, and the page that reads what the round
+        // saved answers the hint. A round that reaches nothing records
+        // nothing, and the claims stay where they are.
+        let mut unreached = false;
         while stopped.is_empty() {
-            let (claims, findings, hints) = ledger.research_targets(&policy, &report);
-            if claims.is_empty() {
+            let targets = ledger.research_targets(&policy, &report);
+            if targets.claims.is_empty() {
                 break;
             }
             let active = expanded.as_ref().unwrap_or(references);
-            let expansion = research::expand(llm, active, &findings, &hints, &checks)
-                .boxed()
-                .await?;
+            let expansion =
+                research::expand(llm, active, &targets.findings, &targets.hints, &checks)
+                    .boxed()
+                    .await?;
             let (searched, saved) = match expansion {
                 research::Expansion::Saved(additional, searched) => {
                     expanded = Some(*additional);
@@ -225,6 +229,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     tracing::info!(
                         "claim.state: research reached nothing; the claims stay at their node"
                     );
+                    unreached = true;
                     break;
                 }
                 research::Expansion::Unchanged(searched) => (searched, false),
@@ -257,40 +262,67 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     searched.sources_added.len(),
                 ));
             }
-            let readings = passes::read_steps(
-                llm,
-                &policy,
-                &readers,
-                &ledger,
-                &checks,
-                (&candidate, active),
-                (&pass, &due),
-            )
+            let read = async {
+                let readings = passes::read_steps(
+                    llm,
+                    &policy,
+                    &readers,
+                    &ledger,
+                    &checks,
+                    (&candidate, active),
+                    (&pass, &due),
+                )
+                .await?;
+                let hinted = if saved {
+                    passes::read_hinted(
+                        llm,
+                        &readers,
+                        &ledger,
+                        &checks,
+                        (&candidate, active),
+                        (&pass, &targets.hinted),
+                    )
+                    .await?
+                } else {
+                    Vec::new()
+                };
+                Ok::<_, AppError>((readings, hinted))
+            }
             .await;
             crate::features::learning::lesson_progress::new_references(None);
-            let readings = readings?;
+            let (readings, hinted) = read?;
             let found = |id: &ClaimId| {
-                readings
+                let finding = readings
                     .iter()
                     .find(|(read, _)| read == id)
                     .and_then(|(_, walk)| walk.steps.first())
-                    .map_or(0, |step| {
-                        step.read
-                            .finding
-                            .evidence
+                    .map(|step| &step.read.finding)
+                    .or_else(|| {
+                        hinted
                             .iter()
-                            .filter(|passage| searched.sources_added.contains(&passage.source_id))
-                            .count()
-                    })
+                            .find(|(read, _)| read == id)
+                            .map(|(_, read)| &read.finding)
+                    });
+                finding.map_or(0, |finding| {
+                    finding
+                        .evidence
+                        .iter()
+                        .filter(|passage| searched.sources_added.contains(&passage.source_id))
+                        .count()
+                })
             };
-            let round: Vec<(ClaimId, usize)> =
-                claims.iter().map(|id| (id.clone(), found(id))).collect();
+            let round: Vec<(ClaimId, usize)> = targets
+                .claims
+                .iter()
+                .map(|id| (id.clone(), found(id)))
+                .collect();
             ledger
                 .record_research(&policy, &round, &searched, saved)
                 .await?;
             stopped.extend(
                 passes::record_readings(&policy, &mut ledger, &mut checks, readings).await?,
             );
+            passes::record_hinted(&mut ledger, &mut checks, hinted).await?;
             let findings = passes::latest_findings(&ledger, &mut checks, &pass).await?;
             report = passes::report(llm, active, &candidate, &pass, findings, &checks);
             plan_moved(&policy, &ledger, &mut planned);
@@ -337,7 +369,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 // A pass that moved no statement and changed nothing would go
                 // round again as it was.
                 if ledger.stepped() == stepped && raw == draft {
-                    let error = ledger.stop_no_progress(&raw, &waiting).await?;
+                    let error = ledger.stop_no_progress(&raw, &waiting, unreached).await?;
                     crate::features::learning::lesson_progress::phase(
                         crate::features::learning::lesson_progress::Phase::Evidence,
                         error.to_string(),
@@ -509,7 +541,7 @@ pub(super) async fn recite(
     let mut moved = false;
     for ((id, _), cited) in findings.iter().zip(cited) {
         match cited {
-            Cited::Recited(event) => ledger.append(id, event).await?,
+            Cited::Recited(event) => ledger.append(id, *event).await?,
             Cited::Cannot => true,
             Cited::Deferred => continue,
         };

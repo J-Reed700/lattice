@@ -20,8 +20,9 @@ use lattice_core::domain::learning::acceptance::{
     Then, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, LessonReviewState,
-    ReopenCause, RepairOutcome, UnitKind,
+    text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    ClaimLocation, ClaimState, EvidenceFingerprint, EvidenceSeen, LessonReviewState, ReopenCause,
+    RepairOutcome, UnitKind, VerdictKind,
 };
 use std::collections::VecDeque;
 
@@ -38,7 +39,7 @@ const REWRITE: Step = Step::Rewrite(Goal::WhatThePassageStates);
 
 /// Steps that leave a Sourced statement at `s.research`, `s.rewrite`,
 /// `s.recite`, `s.cut`.
-const RESEARCHING: [(Step, Outcome); 1] = [(PARTS, Outcome::Unproven)];
+pub(super) const RESEARCHING: [(Step, Outcome); 1] = [(PARTS, Outcome::Unproven)];
 const REWRITING: [(Step, Outcome); 3] = [
     (PARTS, Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
@@ -59,20 +60,20 @@ const CUTTING: [(Step, Outcome); 5] = [
 /// Steps that end a Reasoning statement Consistent.
 const CONSISTENT: [(Step, Outcome); 2] = [(CONSISTENCY, Outcome::Stands), (VETO, Outcome::Stands)];
 
-const SOURCED: (Class, ClassifiedBy) = (Class::Sourced, ClassifiedBy::Writer);
+pub(super) const SOURCED: (Class, ClassifiedBy) = (Class::Sourced, ClassifiedBy::Writer);
 const REASONED: (Class, ClassifiedBy) = (Class::Reasoning, ClassifiedBy::Model);
 
-fn lesson_of(body: &str) -> Value {
+pub(super) fn lesson_of(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":body,"rubric":[]}],"questions":[]})
 }
 
-async fn open() -> Result<claim_ledger::ClaimLedger> {
+pub(super) async fn open() -> Result<claim_ledger::ClaimLedger> {
     claim_ledger::ClaimLedger::open(&Model::new(), "{}").await
 }
 
 /// A claim of section 0 the ledger holds, standing on `quote` of `body`,
 /// sorted into `class` by `by`.
-async fn claim(
+pub(super) async fn claim(
     ledger: &mut claim_ledger::ClaimLedger,
     name: &str,
     (quote, statement): (&str, &str),
@@ -94,7 +95,7 @@ async fn claim(
 
 /// Records `steps` for `id`, a statement of `class`, each with the decision the
 /// policy makes of it.
-async fn walk(
+pub(super) async fn walk(
     ledger: &mut claim_ledger::ClaimLedger,
     id: &ClaimId,
     class: Class,
@@ -148,7 +149,7 @@ fn extraction(claims: &[(&str, &str)]) -> Extraction {
 }
 
 /// A pass over `lesson` that identifies `claims` with the ledger's.
-async fn identified(
+pub(super) async fn identified(
     ledger: &mut claim_ledger::ClaimLedger,
     model: &dyn LLMPort,
     lesson: &Value,
@@ -220,13 +221,21 @@ fn passage(source: &str) -> EvidencePassage {
 /// given (the last again), and keeps what it was asked.
 struct Says {
     outcomes: Mutex<VecDeque<Outcome>>,
+    /// Whether each reading was restored from a saved check, in the same order
+    /// (the last again).
+    restored: Mutex<VecDeque<bool>>,
     asked: Mutex<Vec<String>>,
 }
 
 impl Says {
     fn new(outcomes: &[Outcome]) -> Self {
+        Self::restoring(outcomes, &[false])
+    }
+
+    fn restoring(outcomes: &[Outcome], restored: &[bool]) -> Self {
         Self {
             outcomes: Mutex::new(outcomes.iter().copied().collect()),
+            restored: Mutex::new(restored.iter().copied().collect()),
             asked: Mutex::new(Vec::new()),
         }
     }
@@ -262,6 +271,13 @@ impl Reader for Says {
                 outcomes.front().copied()
             };
             let outcome = next.expect("an outcome to answer with");
+            let mut restored = self.restored.lock().unwrap();
+            let reused = if restored.len() > 1 {
+                restored.pop_front()
+            } else {
+                restored.front().copied()
+            }
+            .unwrap_or(false);
             let at = (statement.unit, statement.claim, statement.classed);
             let finding = match outcome {
                 Outcome::Stands | Outcome::StandsElsewhere => finding_of(
@@ -276,7 +292,11 @@ impl Reader for Says {
                 }
                 _ => finding_of(at, ClaimVerdict::Unsupported, "Unstated.".into(), &[], None),
             };
-            reads.push(Read { outcome, finding });
+            reads.push(Read {
+                outcome,
+                finding,
+                reused,
+            });
         }
         Ok(reads)
     }
@@ -308,11 +328,11 @@ async fn read_pass(
     passes::record_readings(&policy, ledger, &mut checks, readings).await
 }
 
-fn events_of(entry: &ClaimLedgerEntry) -> Vec<&ClaimEvent> {
+pub(super) fn events_of(entry: &ClaimLedgerEntry) -> Vec<&ClaimEvent> {
     entry.events().iter().map(|record| &record.event).collect()
 }
 
-fn node_of(ledger: &claim_ledger::ClaimLedger, id: &ClaimId) -> Option<&'static str> {
+pub(super) fn node_of(ledger: &claim_ledger::ClaimLedger, id: &ClaimId) -> Option<&'static str> {
     let policy = StandardPolicy::new();
     match ledger.position(&policy, id)? {
         Walked::At(at) => policy.graph(at.class).node(at.node).map(|node| node.name),
@@ -470,14 +490,23 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     .unwrap()
     .to_string();
 
-    assert!(error.contains("s.research"), "{error}");
-    assert!(error.contains(GOOD), "{error}");
+    // The stop says what is wrong and how to mend it, in words and with no
+    // node names.
+    assert_eq!(
+        error,
+        format!("Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{GOOD}\".")
+    );
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
         .await?;
     let review = ledger.review.clone().unwrap();
     assert_eq!(review.state, LessonReviewState::Stopped);
-    assert_eq!(review.stop_reason.unwrap().code, "no_progress");
+    let reason = review.stop_reason.unwrap();
+    assert_eq!(reason.code, "no_progress");
+    assert_eq!(
+        reason.fix,
+        "Check your internet connection and the research settings, then resume this lesson."
+    );
     let [claim] = ledger.claims.as_slice() else {
         panic!("one claim: {:?}", ledger.claims);
     };
@@ -874,7 +903,7 @@ async fn a_cut_that_takes_the_sentence_out_ends_the_statement_removed() -> Resul
     let body = format!("{SENTENCE} {HEADER}");
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, &body).await?;
 
-    repair::cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
     assert_eq!(context["candidate"]["blocks"][0]["body"], HEADER);
     let entry = ledger.entry(&id).unwrap();
@@ -908,7 +937,7 @@ async fn a_refused_cut_ends_removed_and_its_section_goes() -> Result<()> {
     // The sentence is the whole of its field: it cannot be taken out.
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, SENTENCE).await?;
 
-    repair::cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
     let entry = ledger.entry(&id).unwrap();
     assert_eq!(
@@ -1223,6 +1252,298 @@ async fn a_confirmed_claim_whose_sentence_or_bound_source_changed_is_reopened_be
             Some(ReopenCause::SourceDeleted(BOUND.into()))
         );
         assert!(ledger.due(&StandardPolicy::new()).is_empty());
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_statement_counts_as_reused_only_when_every_reading_of_it_was_restored() -> Result<()> {
+    let mut ledger = open().await?;
+    let body = format!("{SENTENCE} {HEADER}");
+    claim(&mut ledger, "whole", (SENTENCE, SENTENCE), &body, REASONED).await?;
+    claim(&mut ledger, "half", (HEADER, HEADER), &body, REASONED).await?;
+    let lesson = lesson_of(&body);
+    let claims = [(SENTENCE, SENTENCE), (HEADER, HEADER)];
+    let pass = identified(&mut ledger, &Model::new(), &lesson, &claims, &[]).await?;
+    // Each statement is read for consistency, then put to the veto. Both
+    // readings of the first were restored from saved checks; the second's veto
+    // was asked.
+    let reader = Says::restoring(&[Outcome::Stands], &[true, true, true, false]);
+
+    let (stopped, trace) = crate::features::learning::lesson_progress::traced(read_pass(
+        &mut ledger,
+        &reader,
+        &pass,
+        &lesson,
+    ))
+    .await;
+
+    assert!(stopped?.is_empty());
+    assert_eq!((trace.checked, trace.reused), (2, 1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reading_phase_says_how_many_statements_are_checked() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let body = format!("{SENTENCE} {HEADER}");
+    let lesson = lesson_of(&body);
+    for (claims, words) in [
+        (vec![(SENTENCE, SENTENCE)], "Checking 1 statement"),
+        (
+            vec![(SENTENCE, SENTENCE), (HEADER, HEADER)],
+            "Checking 2 statements",
+        ),
+    ] {
+        let mut ledger = open().await?;
+        let pass = identified(&mut ledger, &Model::new(), &lesson, &claims, &[]).await?;
+        let due = ledger.due(&policy);
+        let references = ReferenceCollection::lexical(&[])?;
+        let reader = Says::new(&[Outcome::Stands]);
+        let checks = ClaimChecks::default();
+
+        let (read, trace) = crate::features::learning::lesson_progress::traced(passes::read_steps(
+            &Model::new(),
+            &policy,
+            &reader,
+            &ledger,
+            &checks,
+            (&lesson, &references),
+            (&pass, &due),
+        ))
+        .await;
+
+        read?;
+        assert_eq!(trace.message, words);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pass_that_changed_nothing_stops_naming_what_each_statement_waits_for_in_words(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let body = format!("{SENTENCE} {HEADER}");
+    let researching = claim(&mut ledger, "a", (SENTENCE, SENTENCE), &body, SOURCED).await?;
+    walk(&mut ledger, &researching, Class::Sourced, &RESEARCHING).await?;
+    let reciting = claim(&mut ledger, "b", (HEADER, HEADER), &body, SOURCED).await?;
+    walk(&mut ledger, &reciting, Class::Sourced, &RECITING).await?;
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(&body),
+        &[(SENTENCE, SENTENCE), (HEADER, HEADER)],
+        &[],
+    )
+    .await?;
+    let Decision::Continue(waiting) = ledger.decide(&policy, &[]) else {
+        panic!("statements wait for the next pass");
+    };
+
+    let error = ledger
+        .stop_no_progress("{}", &waiting, false)
+        .await?
+        .to_string();
+
+    assert_eq!(
+        error,
+        format!(
+            "The checks stopped because a whole pass changed nothing: \"{SENTENCE}\" waits for research; \"{HEADER}\" waits for its citation to move."
+        )
+    );
+    // Research that reached nothing is named as the cause of those waiting for it.
+    let error = ledger
+        .stop_no_progress("{}", &waiting, true)
+        .await?
+        .to_string();
+    assert_eq!(
+        error,
+        format!(
+            "Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{SENTENCE}\"."
+        )
+    );
+    Ok(())
+}
+
+/// A check of the fixture model.
+pub(super) fn local_check(result: CheckResult, reason: &str, evidence: Vec<EvidenceSeen>) -> Check {
+    Check {
+        checker: Checker::Local {
+            model: Model::new().model_name().into(),
+        },
+        result,
+        reason: reason.into(),
+        fingerprint: EvidenceFingerprint::of(POLICY, Model::new().model_name(), &evidence),
+        evidence,
+        window_tokens: 128_000,
+    }
+}
+
+/// A local check that found `statement` stated elsewhere, in `source`.
+fn found_elsewhere(source: &LearningSourceDto, statement: &str, at: usize) -> Check {
+    let evidence = vec![EvidenceSeen {
+        source_version_id: source.id.clone(),
+        start_byte: at,
+        end_byte: at + statement.len(),
+        text_sha256: text_sha256(statement),
+    }];
+    let result = CheckResult::SupportedElsewhere {
+        cited: vec![],
+        source_version_id: source.id.clone(),
+        supporting_quote: statement.into(),
+    };
+    local_check(result, "Stated elsewhere.", evidence)
+}
+
+#[tokio::test]
+async fn a_claim_at_recite_whose_finding_was_lost_is_recited_from_the_finding_rebuilt_from_the_ledger(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let policy = StandardPolicy::new();
+    let at = sources[0].excerpt.find(GOOD).unwrap();
+    let mut lesson = json!({"blocks":[{"kind":"explanation","title":"Rows","body":GOOD,"rubric":[],
+        "sourceIndex":0,"quote":"An unrelated quotation."}],"questions":[]});
+
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume("rebuild-fixture".into()).await?;
+        let mut ledger = open().await?;
+        let id = claim(&mut ledger, "recite", (GOOD, GOOD), GOOD, SOURCED).await?;
+        walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
+        // What an earlier run of the job left: the check that found the support
+        // elsewhere, and the passage the card shows.
+        ledger
+            .append(
+                &id,
+                ClaimEvent::Checked(found_elsewhere(&sources[0], GOOD, at)),
+            )
+            .await?;
+        let shown = EvidencePassage {
+            source_id: sources[0].id.clone(),
+            text: GOOD.into(),
+            start_byte: at,
+            end_byte: at + GOOD.len(),
+            retrieval_kind: "lexical".into(),
+            score: 1.0,
+        };
+        ledger.show_evidence(&id, &[shown]).await?;
+        let pass = identified(
+            &mut ledger,
+            &Model::new(),
+            &lesson,
+            &[(GOOD, GOOD)],
+            &sources,
+        )
+        .await?;
+
+        // This job saved no finding for the claim.
+        let findings = passes::latest_findings(&ledger, &mut ClaimChecks::default(), &pass).await?;
+
+        let [finding] = findings.as_slice() else {
+            panic!("one finding: {findings:?}");
+        };
+        assert_eq!(finding.verdict, ClaimVerdict::Supported);
+        assert_eq!(
+            finding.two_pass.supported_by.as_ref().map(|found| (
+                found.source_id.as_str(),
+                found.start_byte,
+                found.end_byte
+            )),
+            Some((sources[0].id.as_str(), at, at + GOOD.len()))
+        );
+        assert_eq!(
+            finding.class.map(|classed| classed.class),
+            Some(Class::Sourced)
+        );
+        let report = pass_report(findings);
+        let moved = super::super::repair_loop::recite(
+            &mut ledger,
+            &policy,
+            (&mut lesson, &report),
+            (&mut vec![sources[0].clone()], &mut HashSet::new()),
+            &references,
+        )
+        .await?;
+        assert!(moved, "the claim is recited");
+        assert_eq!(node_of(&ledger, &id), Some("s.citeread"));
+        assert_eq!(lesson["blocks"][0]["quote"], GOOD);
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_claim_at_a_rewrite_whose_finding_was_lost_sends_the_repair_its_reason_and_the_passages_its_card_shows(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let policy = StandardPolicy::new();
+    let lesson = lesson_of(SENTENCE);
+
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume("rebuild-fixture".into()).await?;
+        let mut ledger = open().await?;
+        let id = claim(
+            &mut ledger,
+            "rewrite",
+            (SENTENCE, SENTENCE),
+            SENTENCE,
+            SOURCED,
+        )
+        .await?;
+        walk(&mut ledger, &id, Class::Sourced, &REWRITING).await?;
+        let evidence = vec![EvidenceSeen {
+            source_version_id: sources[0].id.clone(),
+            start_byte: 0,
+            end_byte: GOOD.len(),
+            text_sha256: text_sha256(GOOD),
+        }];
+        let failed = CheckResult::Failed {
+            kind: VerdictKind::Unsupported,
+        };
+        ledger
+            .append(
+                &id,
+                ClaimEvent::Checked(local_check(failed, "No passage states it.", evidence)),
+            )
+            .await?;
+        ledger
+            .show_evidence(&id, &[passage(&sources[0].id)])
+            .await?;
+        let pass = identified(
+            &mut ledger,
+            &Model::new(),
+            &lesson,
+            &[(SENTENCE, SENTENCE)],
+            &sources,
+        )
+        .await?;
+
+        let findings = passes::latest_findings(&ledger, &mut ClaimChecks::default(), &pass).await?;
+
+        let report = pass_report(findings);
+        let context = super::super::repair_loop::repair_context(
+            "{}",
+            &lesson,
+            &report,
+            &[],
+            (&ledger, &policy),
+            std::slice::from_ref(&id),
+            &references,
+        )?;
+        let [failed] = context["failedClaims"].as_array().unwrap().as_slice() else {
+            panic!("one failed claim: {context}");
+        };
+        assert_eq!(failed["claimId"], "rewrite");
+        assert_eq!(failed["reason"], "No passage states it.");
+        assert_eq!(failed["evidence"], json!(["evidence-0"]));
+        assert_eq!(context["evidence"][0]["text"], SENTENCE);
         Ok(())
     })
     .await

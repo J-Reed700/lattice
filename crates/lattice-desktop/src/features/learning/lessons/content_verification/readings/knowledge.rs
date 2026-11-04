@@ -17,7 +17,7 @@ pub(super) struct Knowledge {
 }
 
 impl Knowledge {
-    pub(super) fn knowledge() -> Self {
+    pub(super) fn unanimous() -> Self {
         Self {
             rule: Rule::Knowledge,
         }
@@ -30,6 +30,7 @@ impl Knowledge {
 
 #[async_trait]
 impl Reader for Knowledge {
+    #[cfg(test)]
     fn reading(&self) -> Reading {
         match self.rule {
             Rule::Knowledge => Reading::Knowledge,
@@ -49,8 +50,9 @@ impl Reader for Knowledge {
                 None => Read {
                     outcome: Outcome::Unjudged,
                     finding: unjudged_finding(unit, claim, classed, &[]),
+                    reused: false,
                 },
-                Some(knowledge) => {
+                Some((knowledge, reused)) => {
                     let outcome = match self.rule {
                         Rule::Knowledge => knowledge.knowledge_outcome(),
                         Rule::Veto => knowledge.veto_outcome(),
@@ -68,6 +70,7 @@ impl Reader for Knowledge {
                     Read {
                         outcome,
                         finding: finding_of((unit, claim, classed), verdict, reason, &[], None),
+                        reused,
                     }
                 }
             };

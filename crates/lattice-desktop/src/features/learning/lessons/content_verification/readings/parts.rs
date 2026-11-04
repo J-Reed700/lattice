@@ -10,6 +10,7 @@ pub(super) struct Parts;
 
 #[async_trait]
 impl Reader for Parts {
+    #[cfg(test)]
     fn reading(&self) -> Reading {
         Reading::Parts
     }
@@ -29,13 +30,21 @@ async fn read_one(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_
         claim,
         classed,
     } = *statement;
-    let settled = quote_claims::settle(at.references, at.citations, unit, claim)?
-        .or_else(|| at.retained.settled_finding(unit, claim));
-    if let Some(mut finding) = settled {
+    // A quotation found in its source is settled by the match; evidence the
+    // user brought is a saved check.
+    let settled = match quote_claims::settle(at.references, at.citations, unit, claim)? {
+        Some(finding) => Some((finding, false)),
+        None => at
+            .retained
+            .settled_finding(unit, claim)
+            .map(|finding| (finding, true)),
+    };
+    if let Some((mut finding, reused)) = settled {
         finding.class = Some(classed);
         return Ok(Read {
             outcome: parts_outcome(&finding),
             finding,
+            reused,
         });
     }
     let checked = as_checked(claim, at.citations, at.references);
@@ -46,8 +55,8 @@ async fn read_one(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_
         &checked.statement,
         parts_fit(at),
     );
-    let mut finding = if evidence.is_empty() {
-        no_passages(statement)
+    let (mut finding, reused) = if evidence.is_empty() {
+        (no_passages(statement), false)
     } else {
         judge_parts(at, ordinal, statement, &checked, evidence).await?
     };
@@ -55,5 +64,6 @@ async fn read_one(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_
     Ok(Read {
         outcome: parts_outcome(&finding),
         finding,
+        reused,
     })
 }

@@ -195,7 +195,7 @@ pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field
 /// What the citation repair did for one finding.
 pub(in crate::features::learning::lessons::content_verification) enum Cited {
     /// The citation moved to the passage found: the event the ledger records.
-    Recited(ClaimEvent),
+    Recited(Box<ClaimEvent>),
     /// Its section was repaired already in this call, which repairs one claim
     /// of a section so that two cannot overwrite its quote: the claim waits
     /// for the next round.
@@ -318,12 +318,12 @@ pub(in crate::features::learning::lessons::content_verification) fn cite_where_s
             added_source = numbered_at.is_none(),
             "Repaired a section's citation to the passage that supports its claim"
         );
-        repairs.push(Cited::Recited(ClaimEvent::CitationRepaired {
+        repairs.push(Cited::Recited(Box::new(ClaimEvent::CitationRepaired {
             cited: found.cited.clone(),
             source_version_id: source.id.clone(),
             quote: quote.to_owned(),
             added_source: numbered_at.is_none(),
-        }));
+        })));
     }
     Ok(repairs)
 }

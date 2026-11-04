@@ -73,6 +73,7 @@ impl Reader for Scripted {
                         &[],
                         None,
                     ),
+                    reused: false,
                 }
             })
             .collect();

@@ -354,6 +354,11 @@ pub(in crate::features::learning) struct Trace {
     pub calls: u32,
     /// The ceiling after each event of the plan.
     pub ceilings: Vec<u32>,
+    /// The checks finished, and how many of them reused saved checks.
+    pub checked: u32,
+    pub reused: u32,
+    /// The latest stage message.
+    pub message: String,
 }
 
 #[cfg(test)]
@@ -384,6 +389,9 @@ pub(in crate::features::learning) async fn traced<T>(
     let trace = Trace {
         calls: state.activity.model_calls,
         ceilings: state.ceilings.clone(),
+        checked: state.activity.checks_completed,
+        reused: state.activity.checks_reused,
+        message: state.message.clone(),
     };
     (value, trace)
 }

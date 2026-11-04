@@ -150,7 +150,7 @@ fn last(context: &Value, key: &str) -> Vec<ClaimId> {
 /// removed with its section, which goes out of the lesson (claim classes
 /// design §3.10). Returns how many claims it dealt with, or the error that
 /// stops the lesson when the cuts leave no claim of it standing.
-pub(super) async fn last_attempts(
+pub(in crate::features::learning::lessons::content_verification) async fn last_attempts(
     policy: &dyn AcceptancePolicy,
     context: &mut Value,
     ledger: &mut ClaimLedger,
@@ -233,7 +233,7 @@ pub(super) async fn last_attempts(
         .entries()
         .iter()
         .map(|entry| entry.claim_id())
-        .filter(|id| taken.contains(*id) || refused.contains(*id) || vanished(*id))
+        .filter(|id| taken.contains(id) || refused.contains(id) || vanished(id))
         .cloned()
         .collect();
     withdraw(context, |id| cut.contains(id) || goes(id));

@@ -65,7 +65,9 @@ impl PageBudget {
 #[derive(Clone, Debug)]
 pub(in crate::features::learning::lessons::content_verification) enum Sizing {
     /// Before the job has measured an answer: a page that must be sized
-    /// waits for the answers of the job's first request.
+    /// waits for the answers of the job's first request. For the tests of the
+    /// two passes; step 6b-3 retires it with them.
+    #[cfg(test)]
     Unmeasured,
     /// Sized by this budget.
     Sized(PageBudget),
@@ -124,14 +126,20 @@ pub(in crate::features::learning::lessons::content_verification) fn page_of(
     (page, passed_over)
 }
 
-/// What a pass B page held, for its log line.
+/// What a pass B page held, for its log line, which the tests of the two
+/// passes read; step 6b-3 retires the rest of it with them.
 pub(in crate::features::learning::lessons::content_verification) struct PageNote {
     pub(in crate::features::learning::lessons::content_verification) reach: Reach,
+    #[cfg(test)]
     pub(in crate::features::learning::lessons::content_verification) page: usize,
+    #[cfg(test)]
     pub(in crate::features::learning::lessons::content_verification) budget: PageBudget,
     /// The page's last passage is its list's last.
+    #[cfg(test)]
     pub(in crate::features::learning::lessons::content_verification) list_end: bool,
+    #[cfg(test)]
     pub(in crate::features::learning::lessons::content_verification) counter: bool,
+    #[cfg(test)]
     pub(in crate::features::learning::lessons::content_verification) passed_over: usize,
 }
 
@@ -213,6 +221,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn page_o
         );
         return Ok((Vec::new(), None));
     }
+    #[cfg(test)]
     let list_end = !list.passages.iter().any(|passage| {
         !shown
             .iter()
@@ -221,10 +230,15 @@ pub(in crate::features::learning::lessons::content_verification) async fn page_o
     });
     let note = PageNote {
         reach: Reach::Course,
+        #[cfg(test)]
         page: 1,
+        #[cfg(test)]
         budget: budget.clone(),
+        #[cfg(test)]
         list_end,
+        #[cfg(test)]
         counter: list.counter,
+        #[cfg(test)]
         passed_over,
     };
     Ok((page, Some(note)))

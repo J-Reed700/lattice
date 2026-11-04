@@ -411,6 +411,122 @@ fn a_decided_claim_that_passed_stays_passed_whatever_a_check_finds() {
     assert_eq!(undecided.state(), &ClaimState::Unchecked);
 }
 
+/// A decided claim the user took over with a request for a search.
+fn hinted(id: &str) -> ClaimLedgerEntry {
+    let mut entry = decided_open(id);
+    let hint = UserAction::ResearchWithHint {
+        hint: "the monarch tagging study".into(),
+    };
+    entry.append(user(3), act(hint, None)).unwrap();
+    entry
+}
+
+#[test]
+fn a_decided_claim_the_user_holds_with_a_hint_is_verified_by_a_passing_local_check() {
+    let mut entry = hinted("c1");
+    assert!(matches!(entry.state(), ClaimState::Queued { .. }));
+
+    entry.append(machine(4), checked(None, "v2")).unwrap();
+
+    assert_eq!(
+        entry.state(),
+        &ClaimState::ResolvedByEvidence {
+            source_version_id: "v2".into(),
+            supporting_quote: "boils at 100 °C".into(),
+        }
+    );
+    // The check answered the hint; the decision the claim was held at is the
+    // machine's, and stays where it was.
+    assert_eq!(entry.decided(), Some(&node("s.rewrite", REWRITE)));
+}
+
+#[test]
+fn a_failing_check_after_a_hint_leaves_the_claim_queued_with_the_checks_reason() {
+    let mut entry = hinted("c1");
+
+    entry
+        .append(machine(4), checked(Some(VerdictKind::Contradicted), "v2"))
+        .unwrap();
+
+    assert_eq!(
+        entry.state(),
+        &ClaimState::Queued {
+            kind: VerdictKind::Contradicted,
+            reason: "compared v2".into(),
+        }
+    );
+    assert_eq!(entry.latest_failure(), Some(&VerdictKind::Contradicted));
+}
+
+#[test]
+fn a_later_local_check_with_no_new_hint_is_an_observation() {
+    // The hint's answer failed; a passing check after it verifies nothing.
+    let mut entry = hinted("c1");
+    entry
+        .append(machine(4), checked(Some(VerdictKind::Contradicted), "v2"))
+        .unwrap();
+    let queued = entry.state().clone();
+    entry.append(machine(5), checked(None, "v3")).unwrap();
+    assert_eq!(entry.state(), &queued);
+
+    // A new hint asks for the next one.
+    let hint = UserAction::ResearchWithHint {
+        hint: "the 2019 survey".into(),
+    };
+    entry.append(user(6), act(hint, None)).unwrap();
+    entry.append(machine(7), checked(None, "v4")).unwrap();
+    assert!(matches!(
+        entry.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+
+    // A claim the hint verified stays verified whatever a check finds after.
+    let verified = entry.state().clone();
+    entry
+        .append(machine(8), checked(Some(VerdictKind::Contradicted), "v5"))
+        .unwrap();
+    assert_eq!(entry.state(), &verified);
+}
+
+#[test]
+fn an_unjudged_check_leaves_the_hint_to_the_next() {
+    let mut entry = hinted("c1");
+    let queued = entry.state().clone();
+
+    entry
+        .append(
+            machine(4),
+            passes(CheckResult::Failed {
+                kind: VerdictKind::CouldNotJudge,
+            }),
+        )
+        .unwrap();
+    assert_eq!(entry.state(), &queued);
+
+    entry.append(machine(5), checked(None, "v2")).unwrap();
+    assert!(matches!(
+        entry.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+}
+
+#[test]
+fn another_action_of_the_user_ends_the_ask_of_a_hint() {
+    let mut entry = hinted("c1");
+    entry
+        .append(user(4), act(confirm(), Some("Seen.")))
+        .unwrap();
+    entry
+        .append(user(5), act(UserAction::Unconfirm, None))
+        .unwrap();
+    let reopened = entry.state().clone();
+    assert!(matches!(reopened, ClaimState::Reopened { .. }));
+
+    entry.append(machine(6), checked(None, "v2")).unwrap();
+
+    assert_eq!(entry.state(), &reopened);
+}
+
 #[test]
 fn a_verifier_dispute_still_queues_a_decided_claim() {
     let mut entry = claim("c1");

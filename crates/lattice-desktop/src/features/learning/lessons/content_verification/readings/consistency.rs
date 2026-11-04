@@ -8,6 +8,7 @@ pub(super) struct Consistency;
 
 #[async_trait]
 impl Reader for Consistency {
+    #[cfg(test)]
     fn reading(&self) -> Reading {
         Reading::Consistency
     }
@@ -25,8 +26,9 @@ impl Reader for Consistency {
                 None => Read {
                     outcome: Outcome::Unjudged,
                     finding: unjudged_finding(unit, claim, classed, &shown),
+                    reused: false,
                 },
-                Some(consistency) => {
+                Some((consistency, reused)) => {
                     let verdict = match consistency.verdict {
                         ConsistencyVerdict::Consistent => ClaimVerdict::Supported,
                         ConsistencyVerdict::Contradicted => ClaimVerdict::Contradicted,
@@ -41,6 +43,7 @@ impl Reader for Consistency {
                             &shown,
                             None,
                         ),
+                        reused,
                     }
                 }
             };
