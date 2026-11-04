@@ -275,6 +275,18 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
 
 An iteration that records no `Stepped` and leaves the draft as it was stops the lesson with what was pending: §2.7's no-progress stop, here before the template exists.
 
+**What is new about a claim, without a check.** Today a pass decides whether to check a claim again from what is new about it. The policy now decides when a statement is read, so the evidence or checker having changed no longer brings a check. Two reopenings stay, because they need no check:
+- a verified claim whose resolving source was deleted or replaced;
+- a confirmed claim whose sentence or bound source changed.
+
+Both are recorded at identification, from the claim's quote and the active sources, before anything is read. A reopened claim is the user's (`awaits_user`), and the round leaves it alone.
+
+**A stop belongs to its run.** A second unreadable answer stops the lesson. Its `Checked` is recorded, but not as a step: the claim stays at its node with its re-ask spent.
+- A resumed run, with the same checker or another, asks once more. The user's resume is a new ask, not the machine's one re-ask, which stays one per life.
+- This keeps what the stop message promises: resuming with another checker starts the checks again.
+- A change of checker otherwise continues every walk where it is. A decision stands with the checker that made it, and the history names that checker.
+- A claim whose decisions are another policy version's (an update that changed a graph) stops the lesson with that reason, until step 6b-4 lets a walk continue across a change of policy.
+
 **The report reads the policy.** A machine-owned claim's finding is publishable when its walk ended at a passing end (`Resolved`, `Consistent`, `GeneralKnowledge`, `NotAClaim`), and the user's resolution counts as now.
 - `Reconcile` goes. Its premise, a pass that disagrees with a claim the ledger holds verified, cannot arise when an ended claim is never decided again.
 - Kept, `Reconcile` would loop: it would re-record a check for a claim whose state only a decision can move.
@@ -434,6 +446,7 @@ Each step is a builder's (`model: sonnet`), on branch `lesson/acceptance-policy`
 | 6b-1 | The reading driver (`read_until_remedy`) on scripted readers; the ledger's record of a reading (`record_reading`: the check named by its reading, the `Stepped`, a class change by evidence, the decision and the observation held to agree); `CheckResult::NotFalse` | `readings/driver.rs`, `claim_ledger/readings.rs`, core `claim_review` | every path through reading nodes; the re-ask in place and the stop; a class change read on in the same call; the state after each recorded `then` |
 | 6b-2 | The switch (§2.10): identity before reading, the sort once, readings and remedies by node, `decide` by node, the report from the policy | `passes.rs`, `repair_loop.rs`, `claim_ledger/{observe,claim_ledger}.rs`, `class_checks.rs`, `evidence_checks*` | §1 #1, #4, #5 go green; the no-progress stop; every machine-owned claim's state read from its `then` |
 | 6b-3 | Retire the A/B pass: its tests of what a reader still runs (paging, packing, receipts, the page budget) move to that reader; its tests of the A/B decision go with `check_with_citations`, `prepare`, `corroborate`, `remember` and `combine` | `evidence_checks*`, `two_pass_tests.rs`, `evidence_paging_tests.rs`, `readings_tests.rs` | the moved tests pass on the readers; nothing outside tests called what goes |
+| 6b-4 | A walk across a change of policy: a claim's recorded steps are walked again under the new graphs, and it continues where they fit, or else starts again at its class's entry (a rewrite's successor at its post-rewrite node, so it is never rewritten twice), with research spent where it was spent | core `acceptance/walk.rs`, `claim_review/ledger/decisions.rs`, `claim_ledger/position.rs` | a record under v1 continues under a v2 that keeps its nodes; one under a v2 that drops them starts again, never rewritten twice and never researched twice |
 | 7 | Remedies done as §2.6 says: recite on the sentence's own entry, the goal in the rewrite's prompt, per-target confinement with its retry, the cut on the stating sentence and its narrowing, no repair writing a new statement | `repair/*`, `claim_ledger/successor.rs` | §1 #7, #8, #10 go green |
 | 8 | Fresh extraction of rewritten sentences; Removed only when the sentence is gone, and every standing sentence on a live claim at publication | `inventory/revisions*`, `claim_reuse.rs`, `claim_ledger/observe.rs`, `report.rs` | §1 #6, #16 go green |
 | 9 | The round (Template Method) with a scripted review | `repair_loop.rs` → `round.rs` | termination and the no-progress stop on the scripted review |
