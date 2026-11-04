@@ -130,6 +130,11 @@ pub(super) fn present(value: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// What a learner may write to ask for an activity: the bound a chat message has.
+pub(in crate::features::learning) fn validate_request(learner_brief: &str) -> Result<()> {
+    bounded(learner_brief, "Practical request", MAX_CHAT_MESSAGE_CHARS)
+}
+
 /// `context` with the snapshot passages `query` retrieves, as many as the
 /// request's window leaves room for, under `sourceSnapshots`.
 pub(super) async fn with_snapshots(
@@ -297,7 +302,7 @@ pub(in crate::features::learning) async fn generate_activity_with_plan(
     researched_source_version_ids: &[String],
     prepared_plan: Option<LearningInterviewPlanDto>,
 ) -> Result<GeneratedPracticalActivity> {
-    bounded(learner_brief, "Practical request", MAX_CHAT_MESSAGE_CHARS)?;
+    validate_request(learner_brief)?;
     let available = sources
         .iter()
         .map(|source| source.version.id.as_str())
@@ -471,7 +476,9 @@ pub(in crate::features::learning) async fn generate_activity_with_plan(
 /// `prompt` with the newest whole turns of `transcript`, in order, while they
 /// fit the room the window leaves under `system` (half of it when source
 /// snapshots share it), and a line saying how many earlier turns are not
-/// shown.
+/// shown. The learner's newest turn, and any turn after it, is always sent:
+/// when those do not fit the window the request is refused, as the context
+/// assembler refuses one it cannot fit, rather than sent without them.
 fn with_transcript(
     llm: &dyn LLMPort,
     system: &str,
@@ -479,23 +486,33 @@ fn with_transcript(
     transcript: Vec<serde_json::Value>,
     output_tokens: usize,
     shared: bool,
-) -> serde_json::Value {
-    let room = crate::features::learning::reference_collection::snapshot_room(
+) -> Result<serde_json::Value> {
+    let window = crate::features::learning::reference_collection::snapshot_room(
         llm,
         system,
         &prompt,
         output_tokens,
     );
-    let room = if shared { room / 2 } else { room };
+    let room = if shared { window / 2 } else { window };
+    let newest_learner_turn = transcript.iter().rposition(|turn| {
+        turn.get("speaker").and_then(serde_json::Value::as_str) == Some("learner")
+    });
     let mut used = 0;
-    let kept = transcript
-        .iter()
-        .rev()
-        .take_while(|turn| {
-            used += llm.count_tokens(&turn.to_string()) + 1;
-            used <= room
-        })
-        .count();
+    let mut kept = 0;
+    for (index, turn) in transcript.iter().enumerate().rev() {
+        used += llm.count_tokens(&turn.to_string()) + 1;
+        if newest_learner_turn.is_some_and(|newest| index >= newest) {
+            if used > window {
+                return Err(crate::features::learning::model_call::window_too_small(
+                    llm,
+                    "Your latest response does not fit",
+                ));
+            }
+        } else if used > room {
+            break;
+        }
+        kept += 1;
+    }
     let earlier = transcript.len() - kept;
     if let Some(fields) = prompt.as_object_mut() {
         fields.insert(
@@ -511,7 +528,7 @@ fn with_transcript(
             }),
         );
     }
-    prompt
+    Ok(prompt)
 }
 
 pub async fn generate_simulation_turn(
@@ -646,7 +663,7 @@ pub async fn generate_simulation_turn(
         transcript,
         output_tokens,
         !prompt_sources.is_empty(),
-    );
+    )?;
     let prompt =
         with_snapshots(llm, &system, prompt, prompt_sources, &query, output_tokens).await?;
     crate::features::learning::generation::complete_checked(

@@ -165,8 +165,10 @@ impl LearningPracticeRepository {
         req: &SaveLearningPracticeArtifactRequestDto,
         payload_hash: &str,
     ) -> Result<LearningPracticeWorkspaceDto> {
-        if req.text.chars().count() > MAX_ARTIFACT_CHARS {
-            return Err(invalid("Practice artifact is too long."));
+        if req.text.chars().count() > MAX_CHAT_MESSAGE_CHARS {
+            return Err(invalid(format!(
+                "A practice artifact is at most {MAX_CHAT_MESSAGE_CHARS} characters."
+            )));
         }
         let (summary, _, _, _, artifact_revision) = self
             .session_header(&req.program_id, &req.session_id)

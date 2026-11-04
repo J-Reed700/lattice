@@ -2,12 +2,13 @@
 use super::{
     assessment_operation, candidates_in, decode, format_name, invalid, json, mode_name,
     parse_form_status, parse_format, parse_grade, parse_mode, parse_purpose, parse_scope,
-    parse_timing, scope_kind_name, uuid, LearningAssessmentRepository, MAX_RESPONSE_CHARS,
+    parse_timing, scope_kind_name, uuid, LearningAssessmentRepository,
 };
 use crate::features::learning::assessment_engine as engine;
 use crate::features::learning::dto::*;
 use crate::features::learning::persistence::{db, now};
 use crate::features::learning::quiz_blueprints;
+use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
@@ -26,7 +27,7 @@ fn validate_response(
             .iter()
             .map(|b| b.chars().count())
             .sum::<usize>();
-    if total_text > MAX_RESPONSE_CHARS
+    if total_text > MAX_CHAT_MESSAGE_CHARS
         || response.ordered_values.len() > 32
         || response.blank_responses.len() > 8
         || response.matches.len() > 8
@@ -34,7 +35,7 @@ fn validate_response(
         || response
             .artifact_json
             .as_ref()
-            .is_some_and(|v| v.to_string().len() > MAX_RESPONSE_CHARS)
+            .is_some_and(|v| v.to_string().chars().count() > MAX_CHAT_MESSAGE_CHARS)
     {
         return Err(invalid("This answer is longer than a quiz answer may be."));
     }

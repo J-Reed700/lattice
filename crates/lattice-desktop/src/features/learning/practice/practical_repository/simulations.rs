@@ -1,11 +1,11 @@
 //! Role simulations: starting sessions, appending turns and finishing them.
 use super::{
-    decode, invalid, json, practical_operation, uuid, InternalActivitySnapshot,
-    LearningPracticalRepository, PracticalWorkspaceSnapshot, SimulationTurnWrite,
+    decode, invalid, json, practical_operation, uuid, validate_learner_turn,
+    InternalActivitySnapshot, LearningPracticalRepository, PracticalWorkspaceSnapshot,
+    SimulationTurnWrite,
 };
 use crate::features::learning::persistence::{db, hash, now};
 use crate::features::learning::practical_dto::*;
-use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
@@ -201,13 +201,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.session_id, "simulation")?;
-        if request.content.trim().is_empty()
-            || request.content.chars().count() > MAX_CHAT_MESSAGE_CHARS
-        {
-            return Err(invalid(format!(
-                "Simulation turns must contain 1–{MAX_CHAT_MESSAGE_CHARS} characters."
-            )));
-        }
+        validate_learner_turn(&request.content)?;
         if reply.content.trim().is_empty() {
             return Err(invalid("Simulation reply must not be blank."));
         }

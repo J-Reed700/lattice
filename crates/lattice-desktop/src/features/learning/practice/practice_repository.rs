@@ -16,8 +16,6 @@ mod submissions;
 #[cfg(test)]
 mod workbench_tests;
 
-const MAX_ARTIFACT_CHARS: usize = 24_000;
-
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }

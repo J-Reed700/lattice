@@ -1745,3 +1745,18 @@ fn the_command_boundary_carries_no_cap_of_its_own_on_a_learners_text() -> Result
     }
     Ok(())
 }
+
+#[test]
+fn the_boundary_and_the_checks_behind_it_share_one_limit() {
+    use crate::features::learning::practical_generation::validate_request;
+    use crate::features::learning::practical_repository::validate_learner_turn;
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let at_the_limit = "x".repeat(MAX_CHAT_MESSAGE_CHARS);
+    let over = "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1);
+    assert!(validate_request(&at_the_limit).is_ok());
+    assert!(validate_request(&over).is_err());
+    assert!(validate_request("  ").is_err());
+    assert!(validate_learner_turn(&at_the_limit).is_ok());
+    assert!(validate_learner_turn(&over).is_err());
+    assert!(validate_learner_turn("  ").is_err());
+}
