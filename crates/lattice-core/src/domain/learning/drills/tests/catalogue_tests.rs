@@ -192,6 +192,173 @@ fn the_designs_examples_are_all_in_the_catalogue() {
     }
 }
 
+/// The language ids a pattern applies to.
+fn applying(id: &str) -> HashSet<&'static str> {
+    let found = pattern(id).unwrap();
+    LANGUAGES
+        .iter()
+        .copied()
+        .filter(|language| found.applies_to(language))
+        .collect()
+}
+
+fn set(languages: &[&'static str]) -> HashSet<&'static str> {
+    languages.iter().copied().collect()
+}
+
+#[test]
+fn the_patterns_added_after_review_apply_where_their_language_has_the_thing() {
+    let all = set(&LANGUAGES);
+    let programming = set(&[
+        "python",
+        "javascript",
+        "typescript",
+        "rust",
+        "go",
+        "java",
+        "csharp",
+        "cpp",
+        "c",
+        "kotlin",
+        "swift",
+        "ruby",
+        "php",
+    ]);
+    let web = set(&[
+        "javascript",
+        "typescript",
+        "python",
+        "ruby",
+        "php",
+        "java",
+        "csharp",
+        "kotlin",
+        "go",
+    ]);
+    let async_await = set(&[
+        "python",
+        "javascript",
+        "typescript",
+        "csharp",
+        "rust",
+        "swift",
+        "kotlin",
+    ]);
+    let without_c: HashSet<&str> = programming.iter().copied().filter(|l| *l != "c").collect();
+    let cases = [
+        ("correctness.float_for_exact_values", all.clone()),
+        ("correctness.modified_while_iterating", programming.clone()),
+        (
+            "correctness.loop_variable_capture",
+            set(&["python", "javascript", "typescript", "csharp"]),
+        ),
+        (
+            "correctness.reference_equality",
+            set(&["java", "csharp", "python", "javascript", "typescript"]),
+        ),
+        ("correctness.naive_datetime", all.clone()),
+        (
+            "errors.overly_broad_catch",
+            set(&[
+                "python",
+                "javascript",
+                "typescript",
+                "java",
+                "csharp",
+                "cpp",
+                "kotlin",
+                "swift",
+                "ruby",
+                "php",
+            ]),
+        ),
+        ("errors.partial_update_without_rollback", all.clone()),
+        (
+            "concurrency.lock_held_across_slow_call",
+            programming.clone(),
+        ),
+        (
+            "concurrency.double_checked_locking",
+            set(&["java", "cpp", "csharp", "kotlin"]),
+        ),
+        (
+            "resources.lapsed_listener",
+            set(&[
+                "javascript",
+                "typescript",
+                "java",
+                "csharp",
+                "kotlin",
+                "swift",
+            ]),
+        ),
+        ("security.weak_randomness", programming.clone()),
+        ("security.timing_unsafe_comparison", programming.clone()),
+        ("security.mass_assignment", web.clone()),
+        ("security.open_redirect", web.clone()),
+        ("security.missing_csrf_protection", web.clone()),
+        (
+            "performance.string_building_in_loop",
+            set(&["java", "csharp", "kotlin", "go", "python"]),
+        ),
+        ("performance.sequential_awaits", async_await.clone()),
+        ("design.repeated_switches", programming.clone()),
+        ("design.large_class", without_c),
+        ("design.flag_argument", programming.clone()),
+        ("design.data_clumps", programming.clone()),
+        ("design.speculative_generality", programming.clone()),
+        ("design.hardwired_dependency", programming.clone()),
+        (
+            "readability.loop_instead_of_pipeline",
+            set(&[
+                "python",
+                "javascript",
+                "typescript",
+                "rust",
+                "java",
+                "csharp",
+                "kotlin",
+                "swift",
+                "ruby",
+                "php",
+            ]),
+        ),
+        ("readability.complex_conditional", all),
+    ];
+    for (id, expected) in cases {
+        assert_eq!(applying(id), expected, "{id}");
+    }
+}
+
+#[test]
+fn each_family_leads_with_what_comes_up_most_in_review_interviews() {
+    let leaders: Vec<&str> = Family::ALL
+        .iter()
+        .filter_map(|&family| CATALOGUE.iter().find(|pattern| pattern.family == family))
+        .map(|pattern| pattern.id)
+        .collect();
+    assert_eq!(
+        leaders,
+        [
+            "correctness.null_dereference",
+            "errors.swallowed_exception",
+            "concurrency.check_then_act",
+            "resources.leaked_handle",
+            "security.sql_injection",
+            "performance.n_plus_one_queries",
+            "design.long_function",
+            "readability.misleading_name",
+            "testing.untested_branch",
+        ]
+    );
+}
+
+#[test]
+fn missing_await_cites_where_it_is_named() {
+    let source = pattern("concurrency.missing_await").unwrap().source;
+    assert!(source.contains("asyncio") && source.contains("no-floating-promises"));
+}
+
 #[test]
 fn every_language_has_a_pattern_in_every_family() {
     for language in LANGUAGES {

@@ -179,7 +179,7 @@ fn due_patterns_of_one_family_wait_for_other_families() {
         ids(&targets("python", &states, 10, 3)),
         [
             "concurrency.lock_ordering",
-            "correctness.off_by_one",
+            "correctness.null_dereference",
             "errors.swallowed_exception"
         ]
     );
@@ -198,7 +198,7 @@ fn due_patterns_in_other_families_are_all_taken_before_a_never_practised_one() {
             "design.long_function",
             "security.sql_injection",
             "testing.untested_branch",
-            "correctness.off_by_one"
+            "correctness.null_dereference"
         ]
     );
 }
@@ -337,6 +337,6 @@ fn a_pattern_listed_twice_takes_its_first_entry() {
     ];
     assert_eq!(
         ids(&targets("python", &first_never, 10, 1)),
-        ["correctness.off_by_one"]
+        ["correctness.null_dereference"]
     );
 }
