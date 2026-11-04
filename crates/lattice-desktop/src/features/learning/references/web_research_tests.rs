@@ -274,6 +274,50 @@ fn every_planner_may_ask_for_rewordings_and_dates() {
     }
 }
 
+#[test]
+fn a_planned_search_schema_bounds_no_text_but_a_blank_one() {
+    for (what, schema) in [
+        ("a course plan", need_schema(None)),
+        ("a lesson plan", need_schema(Some(2))),
+    ] {
+        let caps = crate::features::learning::content_caps_tests::text_caps(&schema);
+        assert!(caps.is_empty(), "{what}: {caps:?}");
+    }
+}
+
+#[test]
+fn a_search_is_refused_for_being_blank_never_for_its_length() {
+    let long = "how a planner words a search ".repeat(20);
+    assert!(long.chars().count() > 240);
+    for (what, query) in [
+        ("a query under three characters", "ab".to_owned()),
+        ("a query past 240 characters", long.clone()),
+    ] {
+        let planned = need(&query, NeedKind::Web).one();
+        assert!(planned.is_some(), "{what}");
+    }
+    let reworded = PlannedNeed {
+        alternatives: vec!["ab".into(), long.trim().into()],
+        ..need("upload limit", NeedKind::Web)
+    }
+    .one();
+    assert!(reworded.is_some(), "rewordings of any length");
+    assert_eq!(
+        need("   ", NeedKind::Web).one(),
+        None,
+        "a blank query says nothing"
+    );
+    let blank_rewording = PlannedNeed {
+        alternatives: vec!["  ".into()],
+        ..need("upload limit", NeedKind::Web)
+    };
+    assert_eq!(
+        blank_rewording.one(),
+        None,
+        "a blank rewording says nothing"
+    );
+}
+
 #[tokio::test]
 async fn a_need_takes_its_subject_from_the_gap_it_serves_and_no_host_it_was_not_given() -> Result<()>
 {

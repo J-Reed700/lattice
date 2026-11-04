@@ -451,3 +451,43 @@ pub async fn complete(
     repo.complete(&request).await?;
     repo.get(&request.program_id).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::learning::tests::{fixture, prepared};
+
+    #[test]
+    fn a_generated_outline_is_checked_for_blank_text_never_for_how_long_it_is() {
+        let mut program = fixture();
+        assert!(validate_outline(&program.modules, &program.sources).is_ok());
+        let module = &mut program.modules[0];
+        module.title = "A module title that keeps going ".repeat(5);
+        module.summary = "What the module is for, said at length. ".repeat(60);
+        module.lessons[0].title = "A lesson title that keeps going ".repeat(7);
+        module.lessons[0].objective = "What the learner can do once it is taught. ".repeat(40);
+        let checked = validate_outline(&program.modules, &program.sources);
+        assert!(checked.is_ok(), "{checked:?}");
+    }
+
+    #[test]
+    fn a_prepared_lesson_is_checked_for_blank_text_never_for_how_long_it_is() {
+        let mut program = fixture();
+        program.sources.clear();
+        let lesson_id = program.modules[0].lessons[0].id.clone();
+        let mut lesson = prepared(&lesson_id);
+        assert!(validate_prepared(&lesson, &program).is_ok());
+        lesson.blocks[0].title = "A block title that keeps going ".repeat(7);
+        lesson.blocks[0].body = "What the block teaches, said at length. ".repeat(250);
+        lesson.questions[0].prompt = "Which of these does the passage support? ".repeat(60);
+        lesson.questions[0].options[0] = "An option that restates the claim in full. ".repeat(30);
+        lesson.keys[0].explanation = "Why that option is the supported one. ".repeat(100);
+        let checked = validate_prepared(&lesson, &program);
+        assert!(checked.is_ok(), "{checked:?}");
+        let saved = validate_generated(&lesson, &program);
+        assert!(
+            saved.is_ok(),
+            "the gate a written lesson meets at save: {saved:?}"
+        );
+    }
+}

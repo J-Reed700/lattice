@@ -758,6 +758,41 @@ async fn a_course_plan_keeps_rewordings_and_dates_and_refuses_an_unreadable_date
     Ok(())
 }
 
+/// A subtopic's title is the planner's own words; only a blank one is refused.
+#[tokio::test]
+async fn a_long_subtopic_title_from_the_planner_is_read_not_refused() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let title = "A randomized comparison isolates a treatment effect. "
+        .repeat(4)
+        .trim()
+        .to_owned();
+    let llm = model(vec![plan_output(&[(
+        title.as_str(),
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
+    assert_eq!(plan.subtopic_titles(), vec![title]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let recording = crate::features::learning::content_caps_tests::Recording::new(&llm);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("subtopics");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let caps = crate::features::learning::content_caps_tests::text_caps(schema);
+        assert!(caps.is_empty(), "{caps:?}");
+    }
+    Ok(())
+}
+
 /// A course made from a document the user chose and a page the outline's own
 /// research found, both short.
 async fn a_choice_and_a_find() -> Result<(sqlx::SqlitePool, String)> {

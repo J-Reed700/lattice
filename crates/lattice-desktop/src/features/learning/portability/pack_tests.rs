@@ -794,3 +794,45 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn an_outcome_longer_than_an_import_once_allowed_round_trips() -> Result<()> {
+    let pool = pool().await?;
+    let program = fixture();
+    LearningRepository::new(pool.clone())
+        .create(&program)
+        .await?;
+    let program_id = &program.summary.id;
+    let sentence =
+        "Reason from the stated evidence to a conclusion and name what would change it. ";
+    let title = sentence.repeat(8).trim().to_owned();
+    let description = sentence.repeat(70).trim().to_owned();
+    sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,?,?,?,0,10)")
+        .bind(id())
+        .bind(program_id)
+        .bind(&program.modules[0].id)
+        .bind(&program.modules[0].lessons[0].id)
+        .bind(&title)
+        .bind(&description)
+        .execute(&pool)
+        .await
+        .expect("long outcome definition");
+
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
+    let (copy_id, _) = export_copy(&packs, program_id).await?;
+
+    let copied: String = sqlx::query_scalar(
+        "SELECT description FROM learning_outcome_definitions WHERE program_id=? AND title=?",
+    )
+    .bind(&copy_id)
+    .bind(&title)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(copied, description);
+    Ok(())
+}

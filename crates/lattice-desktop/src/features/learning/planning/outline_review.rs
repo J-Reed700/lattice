@@ -589,3 +589,24 @@ mod placement_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn the_review_bounds_no_text_but_a_blank_one() {
+        let open = vec!["finding-1".to_owned(), "finding-2".to_owned()];
+        let allowed = vec!["/modules/0/summary".to_owned()];
+        for (what, schema) in [
+            ("a first review", review_schema(&[], &allowed)),
+            (
+                "a review with open findings",
+                review_schema(&open, &allowed),
+            ),
+        ] {
+            let caps = crate::features::learning::content_caps_tests::text_caps(&schema);
+            assert!(caps.is_empty(), "{what}: {caps:?}");
+        }
+    }
+}

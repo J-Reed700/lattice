@@ -342,4 +342,94 @@ mod tests {
         assert_eq!(findings[1].signal, LearningDiagnosticSignal::Uncertain);
         assert_eq!(findings[1].evidence_quote, None);
     }
+
+    fn attempt() -> LearningDiagnosticAttemptDto {
+        LearningDiagnosticAttemptDto {
+            id: "a1".into(),
+            program_id: "program".into(),
+            status: LearningDiagnosticStatus::Active,
+            revision: 0,
+            prompts: vec![LearningDiagnosticPromptDto {
+                id: "p1".into(),
+                prompt: "Which join column would you index first?".into(),
+                outcome_id: "o1".into(),
+                outcome_title: "Index a join".into(),
+                source_version_ids: vec![],
+            }],
+            responses: vec![],
+            source_coverage_gaps: vec![],
+            interpretation: String::new(),
+            findings: vec![],
+            created_at: 0,
+            submitted_at: None,
+        }
+    }
+
+    fn answer() -> String {
+        "I would index the join column first, because it lets the planner skip a scan. ".repeat(12)
+    }
+
+    #[test]
+    fn the_evaluator_bounds_no_text_but_a_blank_one() {
+        let caps = crate::features::learning::content_caps_tests::text_caps(&findings_schema(2));
+        assert!(caps.is_empty(), "{caps:?}");
+    }
+
+    #[test]
+    fn feedback_and_a_quote_of_any_length_are_read_not_refused() {
+        let answer = answer();
+        let responses = [LearningDiagnosticResponseDto {
+            prompt_id: "p1".into(),
+            response: answer.clone(),
+        }];
+        let finding = |feedback: String, quote: &str| LearningDiagnosticFindingDto {
+            prompt_id: "p1".into(),
+            outcome_id: "o1".into(),
+            signal: LearningDiagnosticSignal::ReadyForChallenge,
+            feedback,
+            evidence_quote: Some(quote.into()),
+        };
+        for (what, feedback, quote) in [
+            (
+                "a quote past 700 characters",
+                "You chose the right first step and said why.".to_owned(),
+                answer.as_str(),
+            ),
+            (
+                "feedback past 1,200 characters",
+                "You chose the right first step and said why. ".repeat(30),
+                "index the join column",
+            ),
+            (
+                "feedback under 20 characters",
+                "Right idea.".to_owned(),
+                "index the join column",
+            ),
+        ] {
+            let checked = validate_findings(&attempt(), &responses, &[finding(feedback, quote)]);
+            assert!(checked.is_ok(), "{what}: {checked:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_quote_found_in_the_response_keeps_its_finding() {
+        let answer = answer();
+        let responses = [LearningDiagnosticResponseDto {
+            prompt_id: "p1".into(),
+            response: answer.clone(),
+        }];
+        let mut findings = [LearningDiagnosticFindingDto {
+            prompt_id: "p1".into(),
+            outcome_id: "o1".into(),
+            signal: LearningDiagnosticSignal::ReadyForChallenge,
+            feedback: "You chose the right first step and said why.".into(),
+            evidence_quote: Some(answer.clone()),
+        }];
+        unquoted_are_uncertain(&responses, &mut findings);
+        assert_eq!(
+            findings[0].signal,
+            LearningDiagnosticSignal::ReadyForChallenge
+        );
+        assert_eq!(findings[0].evidence_quote.as_deref(), Some(answer.as_str()));
+    }
 }
