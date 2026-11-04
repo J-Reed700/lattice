@@ -171,7 +171,7 @@ fn schema(indices: &[usize], input: &[Value]) -> Value {
             .and_then(|unit| unit.get("passages")).and_then(Value::as_array)
             .into_iter().flatten()
             .filter_map(|passage| passage.get("id").and_then(Value::as_str)).collect();
-        (format!("unit-{index}"), json!({"type":"object","additionalProperties":false,"required":["claims","nonFactualReason"],"properties":{"nonFactualReason":{"type":"string","maxLength":500},"claims":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["passageId","statement"],"properties":{"passageId":{"type":"string","enum":ids},"statement":{"type":"string","minLength":1,"maxLength":2000}}}}}}))
+        (format!("unit-{index}"), json!({"type":"object","additionalProperties":false,"required":["claims","nonFactualReason"],"properties":{"nonFactualReason":{"type":"string"},"claims":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["passageId","statement"],"properties":{"passageId":{"type":"string","enum":ids},"statement":{"type":"string","minLength":1}}}}}}))
     }).collect();
     json!({"type":"object","additionalProperties":false,"required":["units"],"properties":{"units":{"type":"object","additionalProperties":false,"required":slots.keys().collect::<Vec<_>>(),"properties":slots}}})
 }

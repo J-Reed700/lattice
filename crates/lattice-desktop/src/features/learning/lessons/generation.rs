@@ -35,11 +35,8 @@ pub(in crate::features::learning) use recall::recall_output_tokens;
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
 const MIN_TEXT: usize = 3;
-const MAX_BODY: usize = 5000;
-const MAX_QUESTION: usize = 1200;
-const MAX_OPTION: usize = 500;
-const MAX_EXPLANATION: usize = 1600;
 const MIN_QUOTE_CHARS: usize = 25;
+/// The longest span the code itself picks as a quotation; a model's has no ceiling.
 pub(in crate::features::learning) const MAX_QUOTE_CHARS: usize = 1200;
 pub(in crate::features::learning) const OUTLINE_OUTPUT_RESERVE: usize = 4000;
 pub(in crate::features::learning) const LESSON_OUTPUT_RESERVE: usize = 10000;
@@ -71,10 +68,7 @@ pub(in crate::features::learning) fn validate_excerpt_quote(
     let quote = quote.trim();
     let chars = quote.chars().count();
     let words = quote.split_whitespace().count();
-    if !(MIN_QUOTE_CHARS..=MAX_QUOTE_CHARS).contains(&chars)
-        || words < 5
-        || !normalize(excerpt).contains(&normalize(quote))
-    {
+    if chars < MIN_QUOTE_CHARS || words < 5 || !normalize(excerpt).contains(&normalize(quote)) {
         return Err(invalid("The generated quotation does not match a valid passage in the saved reference. No material was published."));
     }
     Ok(())
@@ -174,9 +168,8 @@ fn citation_instructions(has_sources: bool) -> &'static str {
     }
 }
 
-fn validate_text(value: &str, max: usize) -> bool {
-    let value = value.trim();
-    value.chars().count() >= MIN_TEXT && value.chars().count() <= max
+fn validate_text(value: &str) -> bool {
+    !value.trim().is_empty()
 }
 
 fn validate_outline_request(request: &GenerateLearningProgramRequestDto) -> Result<()> {

@@ -61,7 +61,7 @@ fn shown(index: usize, candidate: &web_research::Candidate, owner_hints: &[Strin
 }
 
 fn selection_schema(ids: &[Value]) -> Value {
-    json!({"type":"object","additionalProperties":false,"required":["decisions"],"properties":{"decisions":{"type":"array","maxItems":ids.len(),"items":{"type":"object","additionalProperties":false,"required":["id","useForGap","reason"],"properties":{"id":{"type":"string","enum":ids},"useForGap":{"type":"boolean","description":"True only when this result is directly relevant and credible for the scoped evidence gap. False for a rejected candidate, even if its rejection is explained in reason."},"reason":{"type":"string","minLength":1,"maxLength":600}}}}}})
+    json!({"type":"object","additionalProperties":false,"required":["decisions"],"properties":{"decisions":{"type":"array","maxItems":ids.len(),"items":{"type":"object","additionalProperties":false,"required":["id","useForGap","reason"],"properties":{"id":{"type":"string","enum":ids},"useForGap":{"type":"boolean","description":"True only when this result is directly relevant and credible for the scoped evidence gap. False for a rejected candidate, even if its rejection is explained in reason."},"reason":{"type":"string","minLength":1}}}}}})
 }
 
 fn selection_prompt(topic: &str, query: &str, gaps: &[Value], shown: &[Value]) -> String {

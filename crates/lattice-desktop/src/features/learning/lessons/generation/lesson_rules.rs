@@ -5,7 +5,7 @@
 //! only in a sentence the writer cited. A broken rule is a finding:
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
-use super::{normalize, validate_text, MAX_BODY, MAX_EXPLANATION, MAX_OPTION, MAX_QUESTION};
+use super::{normalize, validate_text};
 use crate::features::learning::content_verification::{
     figures, needs_citation, Givens, CITED_KINDS,
 };
@@ -237,10 +237,10 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
     for (index, block) in blocks.iter().enumerate() {
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
         let title = text(block, "title");
-        if !validate_text(title, 160) {
+        if !validate_text(title) {
             findings.push(structure(
                 FindingSite::Section(index),
-                format!("{section} needs a title of 3–160 characters."),
+                format!("{section} needs a title."),
             ));
         } else if let Some(first) = titles.get(&normalize(title)) {
             findings.push(structure(
@@ -249,12 +249,6 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
             ));
         } else {
             titles.insert(normalize(title), index);
-        }
-        if text(block, "body").trim().chars().count() > MAX_BODY {
-            findings.push(structure(
-                FindingSite::Section(index),
-                format!("{section} is longer than {MAX_BODY} characters; tighten it without dropping what it teaches."),
-            ));
         }
     }
     let kinds = |items: &[Value], kind: &str| {
@@ -327,11 +321,8 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
         let label = format!("Question {}", index + 1);
         let site = FindingSite::Question(index);
         let prompt = text(question, "prompt");
-        if !validate_text(prompt, MAX_QUESTION) {
-            findings.push(structure(
-                site,
-                format!("{label} needs a prompt of 3–{MAX_QUESTION} characters."),
-            ));
+        if !validate_text(prompt) {
+            findings.push(structure(site, format!("{label} needs a prompt.")));
         } else if let Some(first) = prompts.get(&normalize(prompt)) {
             findings.push(structure(
                 site,
@@ -343,10 +334,10 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
         } else {
             prompts.insert(normalize(prompt), index);
         }
-        if !validate_text(text(question, "explanation"), MAX_EXPLANATION) {
+        if !validate_text(text(question, "explanation")) {
             findings.push(structure(
                 site,
-                format!("{label} needs an answer explanation of 3–{MAX_EXPLANATION} characters."),
+                format!("{label} needs an answer explanation."),
             ));
         }
         let options: Vec<_> = question
@@ -361,15 +352,13 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
             .unwrap_or_default();
         let mut choices = HashSet::new();
         if options.len() != 4
-            || options.iter().any(|option| {
-                !validate_text(option, MAX_OPTION) || !choices.insert(normalize(option))
-            })
+            || options
+                .iter()
+                .any(|option| !validate_text(option) || !choices.insert(normalize(option)))
         {
             findings.push(structure(
                 site,
-                format!(
-                    "{label} needs four distinct answer choices of 3–{MAX_OPTION} characters each."
-                ),
+                format!("{label} needs four distinct answer choices."),
             ));
         }
     }

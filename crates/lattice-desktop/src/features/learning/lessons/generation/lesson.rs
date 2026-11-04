@@ -102,19 +102,17 @@ pub(super) fn course_context(program: &LearningProgramDto, lesson_id: &str) -> s
 /// schema under which teaching review applies the lesson's rules
 /// (`lesson_rules`), so evals that review a lesson use it rather than a copy.
 pub fn lesson_schema(source_count: usize) -> serde_json::Value {
-    // A block body has no `maxLength`: llama.cpp drops the whole grammar for
-    // any repetition bound above 2000; `MAX_BODY` is a lesson rule (`lesson_rules`).
     json!({
         "type":"object","additionalProperties":false,"required":["blocks","questions"],
         "properties":{
             "blocks":{"type":"array","minItems":10,"maxItems":16,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","title","body","rubric","sourceIndex","quote","citations"],"properties":{
-                    "kind":{"type":"string","enum":["explanation","worked_example","contrast","check","guided_practice","independent_practice","reflection","recap"]},"title":{"type":"string","maxLength":160},"body":{"type":"string","minLength":150},"rubric":crate::features::learning::teaching::rubric_schema(),"sourceIndex":source_index_schema(source_count),"quote":{"type":"string","maxLength":1200},"citations":citations_schema(source_count)
+                    "kind":{"type":"string","enum":["explanation","worked_example","contrast","check","guided_practice","independent_practice","reflection","recap"]},"title":{"type":"string"},"body":{"type":"string","minLength":1},"rubric":crate::features::learning::teaching::rubric_schema(),"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }},
             "questions":{"type":"array","minItems":6,"maxItems":6,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","explanation","sourceIndex","quote","citations"],"properties":{
-                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string","maxLength":1200},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string","maxLength":500}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"explanation":{"type":"string","maxLength":1600},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string","maxLength":1200},"citations":citations_schema(source_count)
+                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }}
         }
@@ -133,7 +131,7 @@ fn citations_schema(source_count: usize) -> serde_json::Value {
     let most = if source_count == 0 { 0 } else { MAX_CITATIONS };
     json!({"type":"array","maxItems":most,"items":{
         "type":"object","additionalProperties":false,"required":["sentence","sourceIndex","quote"],"properties":{
-            "sentence":{"type":"string","minLength":3,"maxLength":600},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string","maxLength":1200}
+            "sentence":{"type":"string","minLength":1},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"}
         }
     }})
 }
@@ -272,7 +270,7 @@ pub async fn prepare_lesson_with_references<'a>(
         return Err(invalid("Add reference material in Sources before preparing a lesson. The MVP needs saved evidence to check its teaching."));
     }
     validate_source_snapshot_ids(&program.sources)?;
-    if !validate_text(&lesson.title, 160) || !validate_text(&lesson.objective, 1200) {
+    if !validate_text(&lesson.title) || !validate_text(&lesson.objective) {
         return Err(invalid(
             "This lesson outline is incomplete and cannot be prepared.",
         ));

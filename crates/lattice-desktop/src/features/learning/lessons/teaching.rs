@@ -24,23 +24,19 @@ pub(in crate::features::learning) use waiting::held as held_findings;
 pub(in crate::features::learning) use waiting::record as record_waiting;
 
 pub fn project_schema() -> Value {
-    let list = json!({"type":"array","minItems":2,"maxItems":5,"items":{"type":"string","minLength":15,"maxLength":500}});
-    json!({"type":"object","additionalProperties":false,"required":["title","brief","deliverables","successCriteria"],"properties":{"title":{"type":"string","minLength":5,"maxLength":160},"brief":{"type":"string","minLength":40,"maxLength":1600},"deliverables":list,"successCriteria":list}})
+    let list =
+        json!({"type":"array","minItems":2,"maxItems":5,"items":{"type":"string","minLength":1}});
+    json!({"type":"object","additionalProperties":false,"required":["title","brief","deliverables","successCriteria"],"properties":{"title":{"type":"string","minLength":1},"brief":{"type":"string","minLength":1},"deliverables":list,"successCriteria":list}})
 }
 
 pub fn validate_project(
     project: &crate::features::learning::dto::LearningProjectMilestoneDto,
 ) -> Result<()> {
-    if !(5..=160).contains(&project.title.trim().chars().count())
-        || !(40..=1600).contains(&project.brief.trim().chars().count())
+    if project.title.trim().is_empty()
+        || project.brief.trim().is_empty()
         || [&project.deliverables, &project.success_criteria]
             .iter()
-            .any(|list| {
-                !(2..=5).contains(&list.len())
-                    || list
-                        .iter()
-                        .any(|s| !(15..=500).contains(&s.trim().chars().count()))
-            })
+            .any(|list| !(2..=5).contains(&list.len()) || list.iter().any(|s| s.trim().is_empty()))
     {
         return Err(AppError::InvalidInput("Each project milestone needs a concrete brief, deliverables and observable success criteria.".into()));
     }
@@ -56,7 +52,7 @@ pub struct GeneratedCriterion {
 }
 
 pub fn rubric_schema() -> Value {
-    json!({"type":"array","maxItems":4,"items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":3,"maxLength":120},"description":{"type":"string","minLength":30,"maxLength":1000},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
+    json!({"type":"array","maxItems":4,"items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":1},"description":{"type":"string","minLength":1},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
 }
 
 pub fn rubric(
@@ -72,8 +68,8 @@ pub fn rubric(
     criteria
         .into_iter()
         .map(|c| {
-            if !(3..=120).contains(&c.title.trim().chars().count())
-                || !(30..=1000).contains(&c.description.trim().chars().count())
+            if c.title.trim().is_empty()
+                || c.description.trim().is_empty()
                 || !titles.insert(c.title.trim().to_lowercase())
             {
                 return Err(AppError::InvalidInput(
@@ -98,8 +94,8 @@ pub fn validate_saved_rubric(criteria: &[LearningPracticeCriterionDto]) -> Resul
         || criteria.iter().any(|c| {
             uuid::Uuid::parse_str(&c.id).is_err()
                 || !ids.insert(&c.id)
-                || !(3..=120).contains(&c.title.trim().chars().count())
-                || !(30..=1000).contains(&c.description.trim().chars().count())
+                || c.title.trim().is_empty()
+                || c.description.trim().is_empty()
                 || !(1..=100).contains(&c.max_points)
         })
     {
@@ -206,7 +202,7 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
                 FindingKind::Quotation,
                 Some(FindingSite::of_part(path).unwrap_or(FindingSite::Lesson)),
                 format!(
-                    "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain 25–1200 characters and at least five words.",
+                    "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least 25 characters and five words.",
                     check["error"].as_str().unwrap_or("it was not found.")
                 )
                 .chars()
@@ -523,7 +519,7 @@ async fn review_material(
             )));
         }
         let quote_issue = (!quote_checks.is_empty()).then(|| format!(
-            "Source quote validation found {} invalid citations. Fix every field listed in sourceQuoteChecks by copying a relevant exact source span, including its punctuation and formatting. Do not turn actual line breaks into literal backslash-n text. Quotes must contain 25–1200 characters and at least five words. An approval cannot override this deterministic check.", quote_checks.len()
+            "Source quote validation found {} invalid citations. Fix every field listed in sourceQuoteChecks by copying a relevant exact source span, including its punctuation and formatting. Do not turn actual line breaks into literal backslash-n text. Quotes must contain at least 25 characters and five words. An approval cannot override this deterministic check.", quote_checks.len()
         ));
         let correctness_priority = if is_outline {
             "Check the stated curriculum plan and supporting citations. Do not invent lesson content to evaluate. Recheck original findings and any concrete errors introduced by the revision."
@@ -580,7 +576,7 @@ async fn review_material(
                 &candidate_value,
                 progress,
                 if passes.is_some() {
-                    LengthRule::DropShortKeepLong
+                    LengthRule::DropBlank
                 } else {
                     LengthRule::Fail
                 },
@@ -610,9 +606,7 @@ async fn review_material(
             // any other, placed at the part that cites it.
             let mut findings = quotation_findings(&quote_checks);
             findings.extend(issues);
-            // A finding too short to act on is dropped; an over-long one is
-            // kept.
-            findings.retain(|finding| finding.note.trim().chars().count() >= 10);
+            findings.retain(|finding| !finding.note.trim().is_empty());
             // A finding about a sentence a live claim stands on waits for
             // the user: the review does not rewrite what passed (§10.3).
             passes.hold(protected::on_protected(&findings, context.protected));
@@ -650,10 +644,7 @@ async fn review_material(
                     issues.insert(0, issue);
                 }
             }
-            if issues
-                .iter()
-                .any(|s| !(10..=700).contains(&s.trim().chars().count()))
-            {
+            if issues.iter().any(|s| s.trim().is_empty()) {
                 return Err(AppError::InvalidInput(
                     "The course quality review returned invalid findings. Try again.".into(),
                 ));

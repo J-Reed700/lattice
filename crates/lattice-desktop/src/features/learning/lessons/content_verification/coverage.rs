@@ -70,8 +70,8 @@ fn schema(units: &[Value]) -> Value {
         for passage in unit["passages"].as_array().into_iter().flatten() {
             if let Some(id) = passage["id"].as_str() {
                 properties.insert(id.to_owned(), json!({"type":"object","additionalProperties":false,"required":["claimIds","nonFactualReason","missingClaims"],"properties":{
-                    "claimIds":claims,"nonFactualReason":{"type":"string","maxLength":500},
-                    "missingClaims":{"type":"array","items":{"type":"string","minLength":1,"maxLength":1000}}
+                    "claimIds":claims,"nonFactualReason":{"type":"string"},
+                    "missingClaims":{"type":"array","items":{"type":"string","minLength":1}}
                 }}));
             }
         }
@@ -81,8 +81,8 @@ fn schema(units: &[Value]) -> Value {
 
 fn fidelity_schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["missingAssertions","reason"],"properties":{
-        "missingAssertions":{"type":"array","items":{"type":"string","minLength":1,"maxLength":1000}},
-        "reason":{"type":"string","maxLength":500}
+        "missingAssertions":{"type":"array","items":{"type":"string","minLength":1}},
+        "reason":{"type":"string"}
     }})
 }
 

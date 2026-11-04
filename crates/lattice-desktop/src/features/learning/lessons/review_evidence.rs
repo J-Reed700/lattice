@@ -120,11 +120,8 @@ fn decided(
             "evidenceIds must contain at most eight unique IDs from the supplied evidence bank.",
         ));
     }
-    if !(10..=700).contains(&finding.reason.trim().chars().count()) {
-        return Err(invalid_finding(
-            index,
-            "reason must contain 10–700 characters.",
-        ));
+    if finding.reason.trim().is_empty() {
+        return Err(invalid_finding(index, "reason must not be blank."));
     }
     if finding
         .requirement_id
@@ -187,7 +184,7 @@ fn schema(keys: &[String], ids: &[String]) -> Value {
         "basis":{"type":"string","enum":["external_fact","lesson_contract","internal_conflict"]},
         "evidenceIds":{"type":"array","minItems":0,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":ids}},
         "requirementId":{"enum":["requirements",null]},
-        "reason":{"type":"string","minLength":10,"maxLength":700}}});
+        "reason":{"type":"string","minLength":1}}});
     let properties: serde_json::Map<_, _> = keys
         .iter()
         .map(|id| (id.clone(), decision.clone()))
@@ -636,6 +633,17 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_blank_reason_is_still_refused() {
+        let issues = proposal("The two statements in the candidate are incompatible.");
+        let evidence = HashMap::from([("questions-0".into(), EvidenceKind::Candidate)]);
+        let response = json!({"issue-0":{
+            "verdict":"actionable","basis":"internal_conflict","evidenceIds":["questions-0"],
+            "requirementId":null,"reason":"   "}})
+        .to_string();
+        assert!(first(&response, &issues, &evidence).is_err());
     }
 
     #[test]
