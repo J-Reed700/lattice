@@ -41,6 +41,22 @@ pub fn apply(
     files: &[DrillFile],
     edits: &[Edit],
 ) -> Result<(Vec<DrillFile>, Vec<LineSpan>), EditFault> {
+    let (edited, spans) = replace(files, edits)?;
+    if let Some((first, second)) = sharing_a_line(&spans) {
+        return Err(EditFault::Overlaps { first, second });
+    }
+    Ok((edited, spans))
+}
+
+/// The text replacement `apply` is made of: every edit's `before` text becomes
+/// its `after` text, all at once against the original text. It has the faults
+/// of the edits and of their `before` ranges, but not the rule that no two
+/// results share a line. Returns the edited files and, per edit in input
+/// order, the lines its `after` text lands on, two of which may be one line.
+pub(super) fn replace(
+    files: &[DrillFile],
+    edits: &[Edit],
+) -> Result<(Vec<DrillFile>, Vec<LineSpan>), EditFault> {
     let placed = locate(files, edits)?;
     if let Some((first, second)) = colliding(&placed) {
         return Err(EditFault::Overlaps { first, second });
@@ -53,10 +69,7 @@ pub fn apply(
         landed.extend(spans);
     }
     landed.sort_by_key(|&(edit, _)| edit);
-    let spans: Vec<LineSpan> = landed.into_iter().map(|(_, span)| span).collect();
-    if let Some((first, second)) = sharing_a_line(&spans) {
-        return Err(EditFault::Overlaps { first, second });
-    }
+    let spans = landed.into_iter().map(|(_, span)| span).collect();
     Ok((edited, spans))
 }
 

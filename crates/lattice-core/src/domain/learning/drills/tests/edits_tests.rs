@@ -4,6 +4,7 @@
 use proptest::prelude::*;
 
 use super::*;
+use crate::domain::learning::drills::edits::replace;
 
 /// Lines `span.start` to `span.end` of `text`, with their line breaks.
 fn lines_of(text: &str, span: &LineSpan) -> String {
@@ -418,6 +419,60 @@ fn one_edits_faults_are_found_in_the_order_of_the_file_then_the_before() {
     );
 }
 
+#[test]
+fn a_replacement_accepts_two_results_on_one_line_which_apply_refuses() {
+    let files = [file("main.py", "a b\n")];
+    let edits = [edit("main.py", "a", "x"), edit("main.py", "b", "y")];
+    let (edited, spans) = replace(&files, &edits).unwrap();
+    assert_eq!(edited[0].text, "x y\n");
+    assert_eq!(spans, vec![span("main.py", 1, 1), span("main.py", 1, 1)]);
+    assert_eq!(
+        fault(&files, &edits),
+        EditFault::Overlaps {
+            first: 0,
+            second: 1
+        }
+    );
+}
+
+#[test]
+fn a_replacement_refuses_what_apply_refuses_but_for_shared_lines() {
+    let files = [file("main.py", "abcdef a\n")];
+    let cases = [
+        (
+            vec![edit("other.py", "a", "b")],
+            EditFault::UnknownFile { edit: 0 },
+        ),
+        (vec![edit("main.py", "", "b")], EditFault::Empty { edit: 0 }),
+        (
+            vec![edit("main.py", "zz", "b")],
+            EditFault::NotFound { edit: 0 },
+        ),
+        (
+            vec![edit("main.py", "a", "b")],
+            EditFault::Ambiguous { edit: 0, count: 2 },
+        ),
+        (
+            vec![edit("main.py", "abc", "X"), edit("main.py", "cde", "Y")],
+            EditFault::Overlaps {
+                first: 0,
+                second: 1,
+            },
+        ),
+        (
+            vec![edit("main.py", "abc", "X"), edit("main.py", "def", "Y")],
+            EditFault::Overlaps {
+                first: 0,
+                second: 1,
+            },
+        ),
+    ];
+    for (edits, expected) in cases {
+        assert_eq!(replace(&files, &edits).unwrap_err(), expected);
+        assert_eq!(fault(&files, &edits), expected);
+    }
+}
+
 /// A generated line: its filler and, when the line is edited, the filler of
 /// the text that replaces it.
 type Row = (String, Option<String>);
@@ -536,6 +591,16 @@ proptest! {
                 prop_assert!(a.end < b.start);
             }
         }
+    }
+
+    #[test]
+    fn a_replacement_and_apply_agree_when_no_two_results_share_a_line(
+        generated in rows("[xyz\n]{0,4}"),
+        final_break in any::<bool>(),
+    ) {
+        let (original, edits) = build(&generated, final_break, marked);
+        let files = [original];
+        prop_assert_eq!(replace(&files, &edits), apply(&files, &edits));
     }
 
     #[test]
