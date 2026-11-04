@@ -1,8 +1,9 @@
 //! What a repair request tells the model (acceptance design §2.4, §2.6): the
 //! goal of each correction, why a retry's first correction could not be
 //! applied, and only the sentences an earlier correction replaced or removed.
+use super::super::repair::goal_words;
 use super::acceptance_switch_tests::{
-    claim, identified, lesson_of, local_check, open, walk, RESEARCHING, SOURCED,
+    claim, identified, lesson_of, local_check, open, walk, CUTTING, RESEARCHING, SOURCED,
 };
 use super::claim_ledger_tests::{pass_report, prepare, section};
 use super::class_checks_tests::Classes;
@@ -390,6 +391,54 @@ async fn a_claim_carries_the_goal_of_its_rewrite_and_a_retry_why_the_latest_corr
     assert_eq!(sent("last")["lastAttempt"], true);
     assert!(sent("last").get("goal").is_none());
     assert!(sent("last").get("notApplied").is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_beside_a_live_statement_on_its_sentence_is_asked_of_the_model_not_marked_for_the_code(
+) -> Result<()> {
+    // §1 #8 (a) of the acceptance policy design
+    let policy = StandardPolicy::new();
+    let sentence = REWRITING_SENTENCE;
+    let mut ledger = open().await?;
+    let cut = claim(&mut ledger, "cut", (sentence, sentence), sentence, SOURCED).await?;
+    walk(&mut ledger, &cut, Class::Sourced, &CUTTING).await?;
+    // The statement beside it is what the sentence also states.
+    claim(
+        &mut ledger,
+        "beside",
+        (sentence, WAITING_SENTENCE),
+        sentence,
+        SOURCED,
+    )
+    .await?;
+    let lesson = lesson_of(sentence);
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(sentence, sentence), (sentence, WAITING_SENTENCE)],
+        &[],
+    )
+    .await?;
+    let report = pass_report(vec![unsupported(sentence), unsupported(WAITING_SENTENCE)]);
+
+    let context = repair_context(
+        "{}",
+        &lesson,
+        &report,
+        (&ledger, &policy),
+        std::slice::from_ref(&cut),
+        &ReferenceCollection::lexical(&[])?,
+    )?;
+
+    let failed = context["failedClaims"].as_array().unwrap();
+    assert_eq!(failed.len(), 1);
+    // No last attempt for the code to take; the narrowing goal, and what the
+    // sentence also states, which the rewrite keeps.
+    assert!(failed[0].get("lastAttempt").is_none(), "{}", failed[0]);
+    assert_eq!(failed[0]["goal"], goal_words(Goal::KeepTheOthers));
+    assert_eq!(failed[0]["alsoStates"], json!([WAITING_SENTENCE]));
     Ok(())
 }
 

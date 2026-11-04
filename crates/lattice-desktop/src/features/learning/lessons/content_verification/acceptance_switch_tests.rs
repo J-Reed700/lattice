@@ -51,7 +51,7 @@ const RECITING: [(Step, Outcome); 3] = [
     (Step::Research, Outcome::FoundNothing),
     (PAGE, Outcome::StandsElsewhere),
 ];
-const CUTTING: [(Step, Outcome); 5] = [
+pub(super) const CUTTING: [(Step, Outcome); 5] = [
     (PARTS, Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
     (PAGE, Outcome::Unproven),
@@ -1113,6 +1113,245 @@ async fn a_refused_cut_ends_removed_and_its_section_goes() -> Result<()> {
         }
     ));
     assert!(ledger.cuts.going.contains_key(&0));
+    Ok(())
+}
+
+/// A ledger holding a target at `s.cut` and, beside it on one sentence, a
+/// Reasoning statement that ended Consistent, with the target's last attempt
+/// sent.
+async fn cut_beside_a_mate() -> Result<(claim_ledger::ClaimLedger, ClaimId, ClaimId)> {
+    let mut ledger = open().await?;
+    let target = claim(
+        &mut ledger,
+        "target",
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        SOURCED,
+    )
+    .await?;
+    walk(&mut ledger, &target, Class::Sourced, &CUTTING).await?;
+    let mate = claim(&mut ledger, "mate", (SENTENCE, HEADER), SENTENCE, REASONED).await?;
+    walk(&mut ledger, &mate, Class::Reasoning, &CONSISTENT).await?;
+    ledger
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(SENTENCE),
+            std::slice::from_ref(&target),
+        )
+        .await?;
+    Ok((ledger, target, mate))
+}
+
+#[tokio::test]
+async fn a_cut_beside_a_live_statement_on_its_sentence_is_a_narrowing_and_the_statement_rides_on_it(
+) -> Result<()> {
+    // §1 #8 (a) of the acceptance policy design
+    let (ledger, target, mate) = cut_beside_a_mate().await?;
+
+    // The target's repair is a rewrite that keeps the mate's words, so the mate
+    // rides on it as on any rewrite.
+    let records = &ledger.pending.repairs;
+    assert_eq!(records.len(), 2, "{records:?}");
+    assert_eq!(records[0].claim_id, target);
+    assert_eq!(records[0].goal(), Some(Goal::KeepTheOthers));
+    assert_eq!(records[1].claim_id, mate);
+    assert_eq!(records[1].rides_on.as_ref(), Some(&target));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_alone_on_its_sentence_is_no_narrowing_and_nothing_rides_on_it() -> Result<()> {
+    let body = format!("{SENTENCE} {HEADER}");
+    let (ledger, id, _) = cut_sent(SENTENCE, &body).await?;
+
+    let records = &ledger.pending.repairs;
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert_eq!(records[0].claim_id, id);
+    assert_eq!(records[0].goal(), None);
+    assert!(records[0].rides_on.is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_narrowing_whose_answer_was_unusable_is_closed_not_applied_with_its_goal_and_no_step(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let (mut ledger, target, _) = cut_beside_a_mate().await?;
+    let from = ledger.entry(&target).unwrap().events().len();
+
+    ledger
+        .reject(
+            &policy,
+            std::slice::from_ref(&target),
+            "The edit was unusable.",
+        )
+        .await?;
+
+    // It stays at its cut with its narrowing spent, and the mate's record is
+    // dropped with it.
+    assert_eq!(node_of(&ledger, &target), Some("s.cut"));
+    assert!(ledger.pending.repairs.is_empty());
+    let events = events_of(ledger.entry(&target).unwrap());
+    let added = &events[from..];
+    assert!(
+        matches!(
+            added,
+            [ClaimEvent::RepairAttempted {
+                outcome: RepairOutcome::Rejected { reason },
+                goal: Some(Goal::KeepTheOthers),
+                ..
+            }] if reason == "The edit was unusable."
+        ),
+        "{added:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_narrowing_that_wrote_the_sentence_without_the_target_ends_it_removed_by_its_cut_and_the_mate_continues_after_the_rewrite(
+) -> Result<()> {
+    let (mut ledger, target, mate) = cut_beside_a_mate().await?;
+
+    // The narrowing wrote a sentence that states what the mate states.
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(REWRITTEN),
+        &[(REWRITTEN, HEADER)],
+        &[],
+    )
+    .await?;
+
+    let entry = ledger.entry(&target).unwrap();
+    assert_eq!(
+        entry.decided(),
+        Some(&Then::End(End::Removed {
+            section_goes: false
+        }))
+    );
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    let events = events_of(entry);
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            ClaimEvent::RepairAttempted {
+                outcome: RepairOutcome::Removed,
+                goal: Some(Goal::KeepTheOthers),
+                after: Some(after),
+                ..
+            } if after == REWRITTEN
+        )),
+        "{events:?}"
+    );
+    assert!(matches!(
+        events.last(),
+        Some(ClaimEvent::Stepped {
+            step: Step::Cut,
+            outcome: Outcome::Cut,
+            ..
+        })
+    ));
+    // The statement beside it continues as a machine successor of its class,
+    // read from the node after the rewrite.
+    let successor = pass.statements[0].id.clone();
+    assert_ne!(successor, mate);
+    assert!(matches!(
+        ledger.entry(&mate).unwrap().state(),
+        ClaimState::Edited {
+            successor: Some(next),
+            by: Actor::Machine,
+            ..
+        } if *next == successor
+    ));
+    assert_eq!(node_of(&ledger, &successor), Some("r.final"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_narrowing_that_left_the_sentence_as_it_was_is_not_applied_and_the_target_stays_at_its_cut(
+) -> Result<()> {
+    let (mut ledger, target, mate) = cut_beside_a_mate().await?;
+    let from = ledger.entry(&target).unwrap().events().len();
+
+    // The pass after the repair finds the sentence as it was.
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(SENTENCE),
+        &[(SENTENCE, SENTENCE), (SENTENCE, HEADER)],
+        &[],
+    )
+    .await?;
+
+    assert_eq!(pass.statements[0].id, target);
+    assert_eq!(node_of(&ledger, &target), Some("s.cut"));
+    let events = events_of(ledger.entry(&target).unwrap());
+    let added = &events[from..];
+    assert!(
+        matches!(
+            added,
+            [ClaimEvent::RepairAttempted {
+                attempt: 2,
+                escalated: true,
+                outcome: RepairOutcome::Rejected { reason },
+                goal: Some(Goal::KeepTheOthers),
+                ..
+            }] if reason == "The repair left the sentence as it was."
+        ),
+        "no step, only the narrowing spent: {added:?}"
+    );
+    // The sentence stands, so its mate has no successor and its record is dropped.
+    assert_eq!(pass.statements[1].id, mate);
+    assert!(ledger.pending.repairs.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_narrowing_whose_new_sentence_still_states_the_target_is_not_applied_either() -> Result<()>
+{
+    let (mut ledger, target, _) = cut_beside_a_mate().await?;
+    let from = ledger.entry(&target).unwrap().events().len();
+
+    // The sentence changed, and what it says still holds the target's statement.
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(REWRITTEN),
+        &[(REWRITTEN, SENTENCE), (REWRITTEN, HEADER)],
+        &[],
+    )
+    .await?;
+
+    assert_eq!(pass.statements[0].id, target);
+    assert_eq!(node_of(&ledger, &target), Some("s.cut"));
+    let events = events_of(ledger.entry(&target).unwrap());
+    assert!(
+        matches!(
+            events.last(),
+            Some(ClaimEvent::RepairAttempted {
+                outcome: RepairOutcome::Rejected { reason },
+                goal: Some(Goal::KeepTheOthers),
+                ..
+            }) if reason == "The narrowed sentence still states it."
+        ),
+        "{events:?}"
+    );
+    assert!(
+        events[from..]
+            .iter()
+            .all(|event| !matches!(event, ClaimEvent::Stepped { .. })),
+        "no step is taken for it: {events:?}"
+    );
     Ok(())
 }
 

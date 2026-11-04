@@ -1244,3 +1244,207 @@ async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_cut_with_everyt
     assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
     Ok(())
 }
+
+/// Brings the Sourced statement `id` to `s.cut`: its readings and its rewrite
+/// came to nothing.
+async fn at_the_cut(ledger: &mut ClaimLedger, id: &ClaimId) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let sorted = ClaimEvent::Classified {
+        class: Class::Sourced,
+        by: ClassifiedBy::Writer,
+    };
+    ledger.append(id, sorted).await?;
+    for (step, outcome) in [
+        (Step::Read(Reading::Parts), Outcome::Unproven),
+        (Step::Research, Outcome::FoundNothing),
+        (Step::Read(Reading::Page), Outcome::Unproven),
+        (
+            Step::Rewrite(Goal::WhatThePassageStates),
+            Outcome::Rewritten,
+        ),
+        (Step::Read(Reading::Parts), Outcome::Unproven),
+    ] {
+        assert!(ledger.record_step(&policy, id, step, outcome).await?);
+    }
+    assert_eq!(node_of(ledger, id), Some("s.cut"));
+    Ok(())
+}
+
+/// The narrowing rewrite of claim `id`, which stands on `sentence`, was asked
+/// and not applied: the first attempt of a claim that has none yet.
+async fn narrowing_spent(ledger: &mut ClaimLedger, id: &str, sentence: &str) -> Result<()> {
+    let spent = ClaimEvent::RepairAttempted {
+        attempt: 1,
+        escalated: false,
+        before: sentence.to_owned(),
+        after: None,
+        outcome: RepairOutcome::Rejected {
+            reason: "The repair left the sentence as it was.".into(),
+        },
+        goal: Some(Goal::KeepTheOthers),
+    };
+    assert!(ledger.append(&ClaimId(id.to_owned()), spent).await?);
+    Ok(())
+}
+
+const GLAZE: &str = "Glaze needs a clean surface, so a bisque firing comes first.";
+const GLAZE_STATES: &str = "Glaze needs a clean surface";
+
+#[tokio::test]
+async fn a_statement_no_single_sentence_states_is_narrowed_and_sent_not_cut() -> Result<()> {
+    // §1 #8 (a) of the acceptance policy design
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    // No sentence of this passage holds the greater part of the statement, and a
+    // live statement stands on its first sentence and on its last.
+    let first =
+        "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster.";
+    let last = "Historians often date the modern order of sovereign states from these treaties.";
+    let passage = format!("{first} It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. {last}");
+    let statement = "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.";
+    let body = format!("{passage} Closing line.");
+    let (mut ledger, mut context) =
+        passage_wide(&llm, &body, (passage.as_str(), statement)).await?;
+    passed(&mut ledger, &llm, "first", (first, first), &body).await?;
+    passed(&mut ledger, &llm, "last", (last, last), &body).await?;
+
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    // Nothing is cut: the statement is sent, told to take its claim out and
+    // leave the others as they are.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
+    let failed = section_failures(&context, 0);
+    assert_eq!(failed.len(), 1);
+    assert!(failed[0].get("lastAttempt").is_none(), "{}", failed[0]);
+    assert_eq!(failed[0]["goal"], goal_words(Goal::KeepTheOthers));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_narrowed_is_still_sent_and_nothing_is_decided_for_it_yet() -> Result<()> {
+    // §1 #8 (a) of the acceptance policy design
+    let body = format!("Intro line. {GLAZE} Closing line.");
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        &body,
+        &[("cut", GLAZE, 0), ("intro", "Intro line.", 0)],
+    )
+    .await?;
+    passed(&mut ledger, &llm, "beside", (GLAZE, GLAZE_STATES), &body).await?;
+    let cut = ClaimId("cut".into());
+    at_the_cut(&mut ledger, &cut).await?;
+    ledger
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(&body),
+            std::slice::from_ref(&cut),
+        )
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"cut","sentence":GLAZE,"evidence":[],"lastAttempt":true,"alsoStates":[GLAZE_STATES]},
+        ],
+    });
+    let recorded = ledger.entry(&cut).unwrap().events().len();
+
+    let handled = cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    // Nothing is cut; the model is asked to take the claim out of the sentence.
+    assert_eq!(handled, 0);
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
+    let failed = section_failures(&context, 0);
+    assert_eq!(claim_ids(&failed), vec![cut.clone()]);
+    assert!(failed[0].get("lastAttempt").is_none(), "{}", failed[0]);
+    assert_eq!(failed[0]["goal"], goal_words(Goal::KeepTheOthers));
+    // Neither a step nor a repair is recorded for it until the pass that reads
+    // the sentence, and its repair is the narrowing.
+    assert_eq!(ledger.entry(&cut).unwrap().events().len(), recorded);
+    let record = ledger
+        .pending
+        .repairs
+        .iter()
+        .find(|record| record.claim_id == cut)
+        .unwrap();
+    assert_eq!(record.goal(), Some(Goal::KeepTheOthers));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_whose_narrowing_was_not_applied_is_cut_whole_and_its_neighbour_goes_with_it(
+) -> Result<()> {
+    let body = format!("Intro line. {GLAZE} Closing line.");
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        &body,
+        &[("cut", GLAZE, 0), ("intro", "Intro line.", 0)],
+    )
+    .await?;
+    passed(&mut ledger, &llm, "beside", (GLAZE, GLAZE_STATES), &body).await?;
+    let cut = ClaimId("cut".into());
+    at_the_cut(&mut ledger, &cut).await?;
+    narrowing_spent(&mut ledger, "cut", GLAZE).await?;
+    ledger
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(&body),
+            std::slice::from_ref(&cut),
+        )
+        .await?;
+    // The narrowing is not asked again, and nothing rides on the cut.
+    assert!(ledger
+        .pending
+        .repairs
+        .iter()
+        .all(|record| record.goal().is_none() && record.rides_on.is_none()));
+    let mut context = json!({
+        "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"cut","sentence":GLAZE,"evidence":[],"lastAttempt":true},
+        ],
+    });
+
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    // Everything its quote touches goes, the words of the neighbour with them.
+    assert_eq!(
+        context["candidate"]["blocks"][0]["body"],
+        "Intro line. Closing line."
+    );
+    let events = ledger.entry(&cut).unwrap().events();
+    assert!(
+        events.iter().any(|record| matches!(
+            &record.event,
+            ClaimEvent::RepairAttempted {
+                outcome: RepairOutcome::Removed,
+                goal: None,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    assert!(
+        events.iter().any(|record| matches!(
+            &record.event,
+            ClaimEvent::Stepped {
+                step: Step::Cut,
+                outcome: Outcome::Cut,
+                ..
+            }
+        )),
+        "{events:?}"
+    );
+    Ok(())
+}
