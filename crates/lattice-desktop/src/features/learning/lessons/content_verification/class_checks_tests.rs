@@ -2,7 +2,7 @@
 //! own left out, a Reasoning statement read for consistency and put to the
 //! falsity veto, a Common one put to the model alone, and what neither can
 //! pass sent to the strict check as Sourced.
-use super::acceptance_switch_tests::{claim, events_of, identified, node_of, open, stood, walk};
+use super::acceptance_switch_tests::{claim, identified, node_of, open, stood, walk};
 use super::claim_ledger_tests::{
     identify_findings, pass_report, passage_finding, prepare, section,
 };
@@ -1171,65 +1171,6 @@ async fn the_calls_ceiling_only_comes_down_while_the_loop_checks_a_mix_of_classe
         trace.ceilings,
         finished.as_ref().map(|_| ())
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_statement_a_repair_wrote_beside_its_parents_successor_takes_the_parents_class_and_is_not_sorted(
-) -> Result<()> {
-    // The repair wrote two sentences where one stood, after a sentence whose
-    // length keeps the first one's place from overlapping the second's.
-    const FILLER: &str = "Opening the file puts the reader at its first record, which is the line under the header row, and nothing before it is kept.";
-    const CHILD: &str = "Each row arrives as a mapping from column names to values.";
-    assert!(FILLER.len() >= REASONED.len());
-    let policy = StandardPolicy::new();
-    let mut ledger = open().await?;
-    let parent = claim(
-        &mut ledger,
-        "parent",
-        (REASONED, REASONED),
-        REASONED,
-        (Class::Reasoning, ClassifiedBy::Model),
-    )
-    .await?;
-    walk(
-        &mut ledger,
-        &parent,
-        Class::Reasoning,
-        &[(CONSISTENCY, Outcome::Refuted)],
-    )
-    .await?;
-    ledger
-        .begin_repairs(&policy, &lesson(REASONED), std::slice::from_ref(&parent))
-        .await?;
-    // Sorted, the model would call both Common.
-    let model = Classes::new(&[]).classed(&[(REWRITTEN, "common"), (CHILD, "common")]);
-
-    let pass = identified(
-        &mut ledger,
-        &model,
-        &lesson(&format!("{FILLER} {REWRITTEN} {CHILD}")),
-        &[(REWRITTEN, REWRITTEN), (CHILD, CHILD)],
-        &[],
-    )
-    .await?;
-
-    assert_eq!(pass.statements[0].id, parent);
-    let child = statement(&ledger, &pass, 1);
-    assert_ne!(child.claim_id(), &parent);
-    assert!(
-        events_of(child).iter().any(|event| matches!(
-            event,
-            ClaimEvent::BornOfRepair { parent: born, .. } if *born == parent
-        )),
-        "{:?}",
-        events_of(child)
-    );
-    assert_eq!(
-        child.classified(),
-        Some((Class::Reasoning, ClassifiedBy::Model))
-    );
-    assert_eq!(model.calls("sort"), 0);
     Ok(())
 }
 

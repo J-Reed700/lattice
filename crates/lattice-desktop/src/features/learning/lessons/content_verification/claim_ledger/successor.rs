@@ -365,33 +365,32 @@ mod tests {
     }
 
     #[test]
-    fn children_of_a_repair_inherit_the_parents_remaining_attempts() {
-        // A failed sentence rewritten into two: the one sharing most words
-        // with it continues the claim, the other is its child, with what the
-        // parent has left after this attempt.
+    fn a_narrowings_claim_continues_in_nothing_the_narrowing_wrote() {
+        // A narrowing takes its claim out of the sentence and keeps the rest:
+        // what it wrote there is never the claim said anew.
         let before = format!("{QUOTED} {REQUIRED}");
-        let first = "The schema names each argument.";
-        let second = "Each argument also has a type.";
-        let after = format!("{first} {second} {REQUIRED}");
-        let claims = [
-            extracted(&after, first),
-            extracted(&after, second),
-            extracted(&after, REQUIRED),
-        ];
+        let kept = "A tool schema lists each argument by name.";
+        let after = format!("{kept} {REQUIRED}");
+        let claims = [extracted(&after, kept), extracted(&after, REQUIRED)];
+        let narrowing = RepairRecord {
+            narrowing: true,
+            ..record("quoted", QUOTED, 2)
+        };
+
         let heirs = heirs(
-            &[record("quoted", QUOTED, 1)],
+            &[narrowing],
             &[ClaimId("quoted".into())],
-            (&claims, &[false, false, true]),
+            (&claims, &[false, true]),
             (Some(&lesson(&before)), &lesson(&after)),
             |_| Some("body".into()),
             field_text,
         );
-        assert_eq!(heirs.successors, vec![(ClaimId("quoted".into()), 0)]);
+
+        assert!(heirs.successors.is_empty(), "{:?}", heirs.successors);
         assert_eq!(
-            heirs.children.get(&1),
-            Some(&(ClaimId("quoted".into()), MACHINE_ATTEMPTS - 1))
+            heirs.rewritten.get(&ClaimId("quoted".into())),
+            Some(&Some(kept.to_owned()))
         );
-        assert_eq!(heirs.children.len(), 1);
     }
 
     #[test]
