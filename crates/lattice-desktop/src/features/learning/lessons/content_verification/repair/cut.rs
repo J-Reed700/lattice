@@ -6,8 +6,8 @@ use super::super::repair_work::{withdraw, withdraw_resolved};
 use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label};
 use super::super::*;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome};
-use lattice_core::domain::learning::claim_review::ClaimId;
-use lattice_core::shared::text::sentences;
+use lattice_core::domain::learning::claim_review::{span_of, ClaimId, ClaimLocation};
+use lattice_core::shared::text::{claim_sentence, sentences};
 
 /// What taking a claim's text out of its field comes to.
 enum Cut {
@@ -128,6 +128,24 @@ fn out(example: bool, text: &str, quote: &str) -> Cut {
     }
 }
 
+/// The sentence of `text`, the text of the field `place` is in, that states the
+/// statement of claim `id`, which its cut takes out in place of everything its
+/// quote touches: the one `claim_sentence` names in the quote's place in the
+/// field, where the quote occurs once or else where it was stored. None when it
+/// names none, and when another live statement stands on that sentence, whose
+/// words a cut of the sentence would take out too.
+fn stating<'t>(
+    ledger: &ClaimLedger,
+    id: &ClaimId,
+    place: &ClaimLocation,
+    text: &'t str,
+) -> Option<&'t str> {
+    let within = span_of(text, &place.quote).or(place.span)?;
+    let (start, end) = claim_sentence(text, within, ledger.entry(id)?.statement())?;
+    let sentence = text.get(start..end)?;
+    (!ledger.shares_sentence(id, text, sentence)).then_some(sentence)
+}
+
 /// The claims of `context`'s `key` sent on their last attempt.
 fn last(context: &Value, key: &str) -> Vec<ClaimId> {
     context
@@ -143,7 +161,10 @@ fn last(context: &Value, key: &str) -> Vec<ClaimId> {
 
 /// Takes out of `context`'s lesson the text of every claim sent on its last
 /// attempt, and those claims out of the work that remains: the code makes
-/// the cut, so the model is never asked to. The ledger keeps the sentences
+/// the cut, so the model is never asked to. A statement's text is the sentence
+/// that states it, wherever the lesson writes that sentence, unless none is
+/// named for it or another live statement stands on it: then it is everything
+/// its quote touches. The ledger keeps the sentences
 /// left beside each cut for the section's flow repair, and records the
 /// statements' cuts as the policy's step. A claim whose text cannot be taken
 /// out, because it is the whole of its field or sits in a code block, ends
@@ -177,9 +198,14 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
                 .and_then(|pointer| lesson.pointer(pointer))
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            let cut = text
-                .as_deref()
-                .map_or(Cut::Absent, |text| out(example, text, &place.quote));
+            let cut = text.as_deref().map_or(Cut::Absent, |text| {
+                let stated = if example {
+                    None
+                } else {
+                    stating(ledger, &id, &place, text)
+                };
+                out(example, text, stated.unwrap_or(&place.quote))
+            });
             let label = unit_label(&before, place.unit_index);
             match cut {
                 Cut::Done(after) => {

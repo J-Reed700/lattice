@@ -1,7 +1,8 @@
 //! Which statements stand on one sentence: a rewrite of the sentence changes
 //! them all (claim classes design §3.2).
 
-use super::{is_gone, stand_together, ClaimLedger, Place};
+use super::located::located_quote;
+use super::{is_example, is_gone, stand_together, ClaimLedger, Place};
 use lattice_core::domain::learning::claim_review::ClaimId;
 
 /// The group each of `places` stands in with the others on its sentence: an
@@ -51,6 +52,43 @@ impl ClaimLedger {
             .filter(|other| stand_together(&here, &Place::of(other.location())))
             .map(|other| other.claim_id().clone())
             .collect()
+    }
+
+    /// Whether a live statement other than `claim_id` stands on `sentence`, a
+    /// sentence of `text`, the text of `claim_id`'s field: the sentence its own
+    /// statement names in its quote is this one, holds it or is held by it. A
+    /// cut of the sentence takes that statement's words out with it.
+    pub(in crate::features::learning::lessons::content_verification) fn shares_sentence(
+        &self,
+        claim_id: &ClaimId,
+        text: &str,
+        sentence: &str,
+    ) -> bool {
+        let Some(entry) = self.entry(claim_id) else {
+            return false;
+        };
+        let (unit, field) = (entry.location().unit_index, entry.location().field.as_str());
+        let here = Place {
+            unit,
+            field,
+            quote: sentence,
+        };
+        self.entries
+            .iter()
+            .filter(|other| other.claim_id() != claim_id)
+            .filter(|other| !is_gone(other.state()) && !is_example(other))
+            .filter(|other| other.location().unit_index == unit && other.location().field == field)
+            .any(|other| {
+                let own = located_quote(other.location(), other.statement(), text);
+                stand_together(
+                    &here,
+                    &Place {
+                        unit,
+                        field,
+                        quote: &own,
+                    },
+                )
+            })
     }
 
     /// The statements of the claims still standing, each with its section,

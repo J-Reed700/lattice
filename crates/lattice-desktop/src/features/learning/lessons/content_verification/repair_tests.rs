@@ -1121,3 +1121,126 @@ fn the_system_prompt_says_what_the_goal_the_retry_and_the_history_are() {
     let said = system.find(goal).unwrap();
     assert!(also < said && said < system.find("When evidence cannot support").unwrap());
 }
+
+const COLD: &str = "The kiln is loaded while cold.";
+const BISQUE: &str = "A bisque firing reaches cone 04.";
+
+/// A claim "stating", located by `passage` as an older pass stored it and
+/// stating `statement`, sent on its last attempt in a lesson of `body`, with a
+/// claim "kept" on `Closing line.`.
+async fn passage_wide(
+    llm: &dyn LLMPort,
+    body: &str,
+    (passage, statement): (&str, &str),
+) -> Result<(ClaimLedger, Value)> {
+    let mut ledger = failed_ledger(
+        llm,
+        body,
+        &[("stating", passage, 1), ("kept", "Closing line.", 0)],
+    )
+    .await?;
+    let stating = ClaimId("stating".into());
+    let location = ClaimLocation::locate(0, UnitKind::Block, "body", passage, body);
+    let extracted = ClaimEvent::Extracted {
+        location,
+        statement: statement.to_owned(),
+    };
+    ledger.append(&stating, extracted).await?;
+    ledger
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            std::slice::from_ref(&stating),
+        )
+        .await?;
+    let context = json!({
+        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"stating","sentence":passage,"evidence":[],"lastAttempt":true},
+        ],
+    });
+    Ok((ledger, context))
+}
+
+#[tokio::test]
+async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_and_every_copy_of_it_goes(
+) -> Result<()> {
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let body = format!("{COLD} {BISQUE} Middle line. {BISQUE} Closing line.");
+    let passage = format!("{COLD} {BISQUE}");
+    let (mut ledger, mut context) = passage_wide(
+        &llm,
+        &body,
+        (passage.as_str(), "A bisque firing reaches cone 04"),
+    )
+    .await?;
+
+    let handled = cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    // The first sentence of the passage stays; the stating one goes where the
+    // lesson writes it again too.
+    assert_eq!(handled, 1);
+    assert_eq!(
+        context["candidate"]["blocks"][0]["body"],
+        format!("{COLD} Middle line. Closing line.")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_whose_sentence_another_live_statement_stands_on_takes_everything_its_quote_touches(
+) -> Result<()> {
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let body = format!("{COLD} {BISQUE} Closing line.");
+    let passage = format!("{COLD} {BISQUE}");
+    let (mut ledger, mut context) = passage_wide(
+        &llm,
+        &body,
+        (passage.as_str(), "A bisque firing reaches cone 04"),
+    )
+    .await?;
+    // A statement of the ledger's states the same sentence.
+    let mate = ClaimId("mate".into());
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(0, UnitKind::Block, "body", BISQUE, &body),
+        statement: "A bisque firing is taken to cone 04".to_owned(),
+    };
+    ledger.append(&mate, extracted).await?;
+    let sorted = ClaimEvent::Classified {
+        class: Class::Sourced,
+        by: ClassifiedBy::Writer,
+    };
+    ledger.append(&mate, sorted).await?;
+
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    // Until the narrowing rewrite, the quote is cut whole, as before.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_cut_with_everything_the_quote_touches(
+) -> Result<()> {
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    // No sentence of this passage holds the greater part of the statement.
+    let passage = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
+    let statement = "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.";
+    let body = format!("{passage} Closing line.");
+    let (mut ledger, mut context) = passage_wide(&llm, &body, (passage, statement)).await?;
+
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
+    Ok(())
+}
