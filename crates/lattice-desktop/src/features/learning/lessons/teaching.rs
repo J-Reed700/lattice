@@ -841,4 +841,59 @@ mod tests {
         let bounds = length_bounds(&rubric_schema());
         assert!(bounds.is_empty(), "{bounds:?}");
     }
+
+    fn structure(blocks: Value) -> Vec<ReviewFinding> {
+        let candidate = json!({"blocks":blocks,"questions":[]});
+        structural_findings(&json!({"type":"object"}), &candidate.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_block_of_any_length_is_no_finding_for_its_length() {
+        let rubric = json!([
+            {"title":"One","description":"Observable."},
+            {"title":"Two","description":"Observable."}
+        ]);
+        let blocks: Vec<_> = [
+            "explanation",
+            "worked_example",
+            "contrast",
+            "check",
+            "guided_practice",
+            "independent_practice",
+            "reflection",
+            "recap",
+        ]
+        .iter()
+        .map(|kind| json!({"kind":kind,"title":"Part","body":"Short.","rubric":rubric}))
+        .collect();
+        let found = structure(json!(blocks));
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_block_without_a_body_is_a_finding_at_its_place() {
+        let found = structure(json!([
+            {"kind":"explanation","title":"Fine","body":"A crisp, correct explanation."},
+            {"kind":"recap","title":"Empty","body":"  "},
+            {"kind":"guided_practice","title":"Bare","rubric":[]}
+        ]));
+        let notes: Vec<_> = found.iter().map(|finding| finding.note.as_str()).collect();
+        assert_eq!(
+            notes,
+            [
+                "Teaching block 2 has no body.",
+                "Teaching block 3 has no body.",
+                "Practice block 3 needs two to four observable, task-specific rubric criteria."
+            ]
+        );
+        let sites: Vec<_> = found.iter().map(|finding| finding.key().site).collect();
+        assert_eq!(
+            sites,
+            [
+                FindingSite::Section(1),
+                FindingSite::Section(2),
+                FindingSite::Section(2)
+            ]
+        );
+    }
 }

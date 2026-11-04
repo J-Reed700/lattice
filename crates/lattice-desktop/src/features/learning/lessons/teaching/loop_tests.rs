@@ -486,6 +486,22 @@ fn a_missing_citation_does_not_hold_up_the_content_review_but_other_structure_do
 }
 
 #[tokio::test]
+async fn a_crisp_block_is_reviewed_not_sent_to_repair_for_its_length() -> Result<()> {
+    let mut candidate = lesson(EXCERPT);
+    candidate["blocks"][0]["body"] =
+        json!("The function returns the number 4 for the sum of two and two.");
+    let model = model(vec![review(None)]);
+    let reviewed = run(&model, candidate.clone()).await?;
+    assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
+    assert_eq!(
+        serde_json::from_str::<Value>(&reviewed.candidate)?,
+        candidate
+    );
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_short_review_issue_is_checked_and_repaired_not_dropped() -> Result<()> {
     let mut brief: Value = serde_json::from_str(&review(None))?;
     brief["issues"] = json!(["Wrong."]);

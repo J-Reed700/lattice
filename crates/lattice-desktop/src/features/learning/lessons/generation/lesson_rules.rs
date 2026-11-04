@@ -760,6 +760,22 @@ mod tests {
     }
 
     #[test]
+    fn a_check_with_a_few_words_on_each_side_of_its_reveal_is_held_back() {
+        let mut candidate = lesson();
+        candidate["blocks"][3]["body"] = json!(format!("Which one?\n{CHECK_REVEAL}\nThe first."));
+        assert!(lesson_rules(&candidate).is_empty());
+        for body in [
+            format!("{CASE}\n{CHECK_REVEAL}\n"),
+            format!("\n{CHECK_REVEAL}\n{REVEAL}"),
+        ] {
+            candidate["blocks"][3]["body"] = json!(body);
+            let findings = lesson_rules(&candidate);
+            assert_eq!(findings.len(), 1, "{body}");
+            assert_eq!(findings[0].key().site, FindingSite::Section(3));
+        }
+    }
+
+    #[test]
     fn a_block_title_longer_than_160_characters_or_of_two_letters_is_no_finding() {
         let mut candidate = lesson();
         candidate["blocks"][2]["title"] = json!("A title that runs on and on. ".repeat(10));
