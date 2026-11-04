@@ -836,3 +836,102 @@ async fn an_outcome_longer_than_an_import_once_allowed_round_trips() -> Result<(
     assert_eq!(copied, description);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_canvas_the_app_may_save_round_trips_through_a_pack() -> Result<()> {
+    let pool = pool().await?;
+    let mut program = fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    LearningRepository::new(pool.clone())
+        .create(&program)
+        .await?;
+    let program_id = &program.summary.id;
+    let scene = serde_json::json!({
+        "type": "excalidraw",
+        "version": 2,
+        "elements": [],
+        "appState": {"notes": "x".repeat(2_500_000)},
+        "files": {}
+    });
+    let checked = crate::features::learning::canvas_repository::validate_scene(&scene)?;
+    assert!(checked.json.len() > 2_000_000, "past the old import bound");
+    crate::features::learning::canvas_repository::LearningCanvasRepository::new(pool.clone())
+        .create(
+            &crate::features::learning::dto::CreateLearningCanvasRequestDto {
+                operation_id: id(),
+                canvas_id: id(),
+                program_id: program_id.clone(),
+                lesson_id: None,
+                title: "A large canvas".into(),
+                description: String::new(),
+                scene_json: scene,
+            },
+            &checked,
+        )
+        .await?;
+
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
+    let (copy_id, _) = export_copy(&packs, program_id).await?;
+
+    let copied: String =
+        sqlx::query_scalar("SELECT scene_json FROM learning_canvases WHERE program_id=?")
+            .bind(&copy_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(copied.len(), checked.json.len());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_source_body_past_a_million_bytes_round_trips_through_a_pack() -> Result<()> {
+    let pool = pool().await?;
+    let mut program = fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    LearningRepository::new(pool.clone())
+        .create(&program)
+        .await?;
+    let program_id = &program.summary.id;
+    let body = "A long source states one more fact in every sentence it has. ".repeat(20_000);
+    let body = body.trim();
+    assert!(body.len() > 1_000_000, "past the old import bound");
+    LearningSourceLibraryRepository::new(pool.clone())
+        .add_by(
+            crate::features::learning::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &id(),
+                version_id: &id(),
+                program_id,
+                kind: crate::features::learning::dto::LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/a-long-source",
+                requested_url: Some("https://example.org/a-long-source"),
+                freshness: crate::features::learning::dto::LearningSourcePolicy::Manual,
+            },
+            captured(body),
+            "long-source-payload".into(),
+            lattice_core::domain::learning::claim_review::SourceAddedBy::User,
+        )
+        .await?;
+
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = LearningPackRepository::new(
+        pool.clone(),
+        workspace.path().join("learning-packs"),
+        workspace.path().to_path_buf(),
+    );
+    let (copy_id, _) = export_copy(&packs, program_id).await?;
+
+    let copied: i64 = sqlx::query_scalar(
+        "SELECT length(full_text) FROM learning_source_versions WHERE program_id=?",
+    )
+    .bind(&copy_id)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(copied as usize, body.len());
+    Ok(())
+}
