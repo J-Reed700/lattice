@@ -983,3 +983,155 @@ async fn a_long_grade_summary_is_kept_whole_in_the_evidence_ledger() -> Result<(
     );
     Ok(())
 }
+
+struct GradedQuiz {
+    program_id: String,
+    form_id: String,
+    /// A written answer the model has graded.
+    written: String,
+    /// A keyed question.
+    keyed: String,
+}
+
+/// A lesson quiz taken once, its written answer graded provisionally.
+async fn graded_quiz(pool: &SqlitePool) -> Result<GradedQuiz> {
+    let program = crate::features::learning::tests::fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let program_id = program.summary.id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    programs
+        .prepare(
+            &program_id,
+            &lesson_id,
+            1,
+            &crate::features::learning::tests::prepared(&lesson_id),
+        )
+        .await?;
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id),
+    };
+    fill_bank(pool, &program_id, &scope).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let form_id = id();
+    let form = repo
+        .start_quiz(
+            &StartLearningQuizRequestDto {
+                operation_id: id(),
+                form_id: form_id.clone(),
+                program_id: program_id.clone(),
+                scope,
+                mode: LearningQuizMode::Graded,
+                retake_of_form_id: None,
+            },
+            "start",
+        )
+        .await?;
+    let position = |format: LearningItemFormat| {
+        form.items
+            .iter()
+            .position(|item| item.format == format)
+            .unwrap()
+    };
+    let written = position(LearningItemFormat::Explanation);
+    let keyed = position(LearningItemFormat::SingleChoice);
+    let (written_id, keyed_id) = (form.items[written].id.clone(), form.items[keyed].id.clone());
+    let mut answer = engine::LearningAssessmentResponse::empty(written_id.clone());
+    answer.text = Some("Competitive inhibition: the inhibitor takes the active site.".into());
+    let saved = repo
+        .save_response(
+            &SaveLearningAssessmentResponseRequestDto {
+                operation_id: id(),
+                program_id: program_id.clone(),
+                form_id: form_id.clone(),
+                expected_revision: form.revision,
+                response: answer,
+                assistance: vec![],
+            },
+            "answer",
+        )
+        .await?;
+    repo.submit(
+        &MutateLearningAssessmentFormRequestDto {
+            operation_id: id(),
+            program_id: program_id.clone(),
+            form_id: form_id.clone(),
+            expected_revision: saved.revision,
+        },
+        "submit",
+    )
+    .await?;
+    repo.apply_grades(
+        &form_id,
+        &[ItemGrade::Graded {
+            ordinal: written as i64,
+            fraction: 0.5,
+            correct: None,
+            status: LearningAssessmentGradeStatus::Provisional,
+            detail: String::new(),
+            rationale: Some(LearningGradeRationaleDto {
+                summary: "Named the mechanism.".into(),
+                criteria: vec![],
+                grader_model: "test-model".into(),
+                rubric_version: "rubric:test".into(),
+                graded_at: 1,
+            }),
+        }],
+        "test-model",
+    )
+    .await?;
+    Ok(GradedQuiz {
+        program_id,
+        form_id,
+        written: written_id,
+        keyed: keyed_id,
+    })
+}
+
+#[tokio::test]
+async fn a_learners_long_note_is_held_to_the_chat_limit() -> Result<()> {
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let pool = migrated().await?;
+    let quiz = graded_quiz(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let pasted = "I read the question as asking about the rate, not the yield. ".repeat(100);
+    assert!(pasted.chars().count() > 2_000);
+    let contest = |note: String| ContestLearningQuizGradeRequestDto {
+        operation_id: id(),
+        program_id: quiz.program_id.clone(),
+        form_id: quiz.form_id.clone(),
+        item_id: quiz.written.clone(),
+        note,
+    };
+    let report = |note: String| ReportLearningQuizItemRequestDto {
+        operation_id: id(),
+        program_id: quiz.program_id.clone(),
+        form_id: quiz.form_id.clone(),
+        item_id: quiz.keyed.clone(),
+        note,
+    };
+    let over = "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1);
+    assert!(repo
+        .contest(&contest(over.clone()), "over-contest")
+        .await
+        .is_err());
+    assert!(repo
+        .report_item(&report(over), "over-report")
+        .await
+        .is_err());
+    let contested = repo.contest(&contest(pasted), "contest").await;
+    assert!(contested.is_ok(), "contest: {:?}", contested.err());
+    let at_the_limit = repo
+        .report_item(&report("x".repeat(MAX_CHAT_MESSAGE_CHARS)), "report")
+        .await;
+    assert!(at_the_limit.is_ok(), "report: {:?}", at_the_limit.err());
+    Ok(())
+}

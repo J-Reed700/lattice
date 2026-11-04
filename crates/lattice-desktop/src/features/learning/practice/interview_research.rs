@@ -695,4 +695,24 @@ mod tests {
         .is_err());
         Ok(())
     }
+
+    #[test]
+    fn pasted_company_notes_are_held_to_the_chat_limit() -> Result<()> {
+        use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+        let target = |context: String| LearningInterviewTargetDto {
+            company_context: Some(context),
+            ..Default::default()
+        };
+        let notes = "Our team runs the payments ledger and the settlement queue. ".repeat(500);
+        assert!(notes.chars().count() > 16_000);
+        assert_eq!(
+            validate_target(&target(notes.clone()))?
+                .company_context
+                .as_deref(),
+            Some(notes.trim())
+        );
+        assert!(validate_target(&target("x".repeat(MAX_CHAT_MESSAGE_CHARS))).is_ok());
+        assert!(validate_target(&target("x".repeat(MAX_CHAT_MESSAGE_CHARS + 1))).is_err());
+        Ok(())
+    }
 }

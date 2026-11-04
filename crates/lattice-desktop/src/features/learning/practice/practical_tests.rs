@@ -1618,3 +1618,113 @@ async fn a_long_simulation_reply_is_saved_whole() -> Result<()> {
     assert_eq!(advanced.turns[1].content, reply.content.trim());
     Ok(())
 }
+
+#[tokio::test]
+async fn a_learners_long_interview_turn_is_held_to_the_chat_limit() -> Result<()> {
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let (pool, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(pool.clone());
+    let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
+    let session_id = id();
+    repository
+        .start_simulation(
+            &StartLearningSimulationRequestDto {
+                operation_id: id(),
+                session_id: session_id.clone(),
+                program_id: program_id.clone(),
+                activity_id,
+                expected_activity_revision: 0,
+                practice_session_id: None,
+                learner_role: "Engineer".into(),
+                counterpart_role: "Reviewer".into(),
+            },
+            "start-payload",
+        )
+        .await?;
+    let reply = SimulationTurnWrite {
+        content: "Which observation would help?".into(),
+        citations: vec![],
+        model_name: "fixture-model".into(),
+    };
+    let turn = |expected_revision: i64, content: String| SendLearningSimulationTurnRequestDto {
+        operation_id: id(),
+        program_id: program_id.clone(),
+        session_id: session_id.clone(),
+        expected_revision,
+        content,
+    };
+    let pasted_code = "def step(x):\n    return x + 1\n".repeat(1_000);
+    assert!(pasted_code.chars().count() > 8_000);
+    let pasted = repository
+        .append_simulation_turn(&turn(0, pasted_code), &reply, "pasted")
+        .await;
+    assert!(pasted.is_ok(), "pasted code: {:?}", pasted.err());
+    let at_the_limit = repository
+        .append_simulation_turn(
+            &turn(1, "x".repeat(MAX_CHAT_MESSAGE_CHARS)),
+            &reply,
+            "at-the-limit",
+        )
+        .await;
+    assert!(
+        at_the_limit.is_ok(),
+        "at the limit: {:?}",
+        at_the_limit.err()
+    );
+    let over = repository
+        .append_simulation_turn(
+            &turn(2, "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1)),
+            &reply,
+            "over",
+        )
+        .await;
+    assert!(over.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_learners_long_practical_request_is_held_to_the_chat_limit() -> Result<()> {
+    use crate::features::learning::practical_generation::generate_activity;
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let program = crate::features::learning::tests::fixture();
+    let lesson = &program.modules[0].lessons[0];
+    let authored = activity_reply(
+        "Investigate",
+        "Write up the result.",
+        ("Reasoning", "Explains the relevant tradeoffs."),
+        serde_json::json!([]),
+    );
+    for (what, brief, accepted) in [
+        (
+            "pasted code",
+            "def step(x):\n    return x + 1\n".repeat(1_000),
+            true,
+        ),
+        ("the chat limit", "x".repeat(MAX_CHAT_MESSAGE_CHARS), true),
+        (
+            "past the chat limit",
+            "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1),
+            false,
+        ),
+        ("a blank request", "  ".to_string(), false),
+    ] {
+        let llm = Authors {
+            activity: authored.clone(),
+            checks: String::new(),
+        };
+        let made = generate_activity(
+            &llm,
+            LearningPracticalActivityKind::Custom,
+            &brief,
+            lesson,
+            &[],
+            None,
+            None,
+            &[],
+        )
+        .await;
+        assert_eq!(made.is_ok(), accepted, "{what}: {:?}", made.err());
+    }
+    Ok(())
+}

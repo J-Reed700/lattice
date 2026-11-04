@@ -633,3 +633,26 @@ fn a_tutor_response_is_stored_however_long_while_the_learners_prompt_stays_bound
     assert!(validate_tutor_bounds("Why does this step hold?", "  ").is_err());
     assert!(validate_tutor_bounds(&"x".repeat(2_001), "A reply.").is_err());
 }
+
+#[test]
+fn a_learners_pasted_tutor_prompt_is_held_to_the_chat_limit() {
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let pasted_code = "def step(x):\n    return x + 1\n".repeat(1_000);
+    assert!(pasted_code.chars().count() > 2_000);
+    for prompt in [pasted_code, "x".repeat(MAX_CHAT_MESSAGE_CHARS)] {
+        let checked = validate_tutor_bounds(&prompt, "A reply.");
+        assert!(
+            checked.is_ok(),
+            "{} characters: {:?}",
+            prompt.chars().count(),
+            checked.err()
+        );
+    }
+    let over = validate_tutor_bounds(&"x".repeat(MAX_CHAT_MESSAGE_CHARS + 1), "A reply.");
+    let message = over.expect_err("past the chat limit").to_string();
+    assert!(
+        message.contains(&MAX_CHAT_MESSAGE_CHARS.to_string()),
+        "{message}"
+    );
+    assert!(validate_tutor_bounds("  ", "A reply.").is_err());
+}
