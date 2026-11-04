@@ -154,9 +154,10 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
             &claim_ledger::Rewrites::default(),
         )
         .await?;
-        assert!(
-            model.extracted_sections.lock().unwrap().is_empty(),
-            "A changed section updates its saved inventory instead of re-extracting it"
+        assert_eq!(
+            *model.extracted_sections.lock().unwrap(),
+            vec![vec![1]],
+            "A changed section extracts only what was written in it"
         );
         assert_eq!(*model.audited_sections.lock().unwrap(), vec![vec![1]]);
         assert_eq!(inventory.units.len(), 5);

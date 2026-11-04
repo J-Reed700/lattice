@@ -307,18 +307,6 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
-    if prompt.starts_with("Update claims after a lesson edit.") {
-        let data = context(prompt);
-        let passages = data["revisedSection"]["passages"].as_array().unwrap();
-        let changes: Vec<_> = data["existingClaims"].as_array().unwrap().iter().map(|claim| {
-            let old = claim["statement"].as_str().unwrap();
-            let statement = if passages.iter().any(|p| p["text"].as_str().unwrap().contains(old)) { old }
-                else if passages.iter().any(|p| p["text"].as_str().unwrap().contains(BAD)) { BAD } else { GOOD };
-            let passage = passages.iter().find(|p| p["text"].as_str().unwrap().contains(statement)).unwrap();
-            json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":if old == statement {Value::Null} else {json!(statement)}})
-        }).collect();
-        return Some(json!({"changes":changes,"nonFactualReason":""}).to_string());
-    }
     if prompt.starts_with("You sort statements extracted from a lesson") {
         // The fixtures' statements are the ones the strict check was written
         // for.

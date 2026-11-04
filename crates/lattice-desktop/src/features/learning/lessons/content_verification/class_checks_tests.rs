@@ -168,29 +168,6 @@ impl Classes {
             let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
             return Ok(json!({"edits":[{"path":"/blocks/0/body","before":body,"after":body.replace(from, to)}]}).to_string());
         }
-        if prompt.starts_with("Update claims after a lesson edit.") {
-            let data = context(prompt);
-            let passages = data["revisedSection"]["passages"].as_array().unwrap();
-            let passage = passages
-                .iter()
-                .find(|p| p["field"] == "/body")
-                .unwrap_or(&passages[0]);
-            let text = passage["text"].as_str().unwrap();
-            let statement = self.statements.iter().find(|part| text.contains(**part));
-            let changes: Vec<Value> = data["existingClaims"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|claim| {
-                    let statement = match statement {
-                        Some(part) if claim["statement"] != json!(part) => json!(part),
-                        _ => Value::Null,
-                    };
-                    json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":statement})
-                })
-                .collect();
-            return Ok(json!({"changes":changes,"nonFactualReason":""}).to_string());
-        }
         self.inner.respond(prompt).await
     }
 }

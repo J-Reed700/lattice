@@ -93,29 +93,30 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
     let sources = references(175);
     let model = IncrementalModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        // Twenty-two neighbors share the same location passage, as in a real
-        // extracted paragraph. Editing one fact changes their surrounding quote.
+        // Twenty-two facts to a section, a sentence each, as in a real
+        // extracted paragraph. Editing one fact rewrites its sentence alone.
+        let sentence = |n: usize| format!("Mineral {n} is recorded.");
         let mut inventory = claims(175);
         let mut grouped = Vec::new();
         for (index, group) in inventory.units.chunks(22).enumerate() {
-            let quote = group.iter().map(|u| u.claims[0].statement.as_str()).collect::<Vec<_>>().join(". ");
-            grouped.push(UnitClaims { index, claims: group.iter().map(|u| Claim { quote: quote.clone(), statement: u.claims[0].statement.clone() }).collect(), non_factual_reason: String::new() });
+            let claims = group.iter().enumerate().map(|(offset, unit)| Claim { quote: sentence(index * 22 + offset), statement: unit.claims[0].statement.clone() }).collect();
+            grouped.push(UnitClaims { index, claims, non_factual_reason: String::new() });
         }
         inventory.units = grouped;
         let collection = ReferenceCollection::lexical(&sources)?;
         let initial = paged(&model, &collection, &inventory, &ClaimChecks::default()).await?;
         assert_eq!(initial.len(), 175);
         assert_eq!(model.calls.lock().unwrap().len(), 175);
-        let before: Vec<_> = inventory.units.iter().map(|u|json!({"kind":"teaching","body":u.claims[0].quote})).collect();
+        let before: Vec<_> = inventory.units.iter().map(|u|json!({"kind":"teaching","body":u.claims.iter().map(|claim| claim.quote.as_str()).collect::<Vec<_>>().join(" ")})).collect();
         for unit in &inventory.units { inventory::revisions::save(&model, &before, unit).await?; }
         // A real scalar-text patch, not a replacement section.
         let document = json!({"blocks":before,"questions":[]});
         let revised = crate::features::learning::lessons::text_edits::apply(&document,
-            &json!({"edits":[{"path":"/blocks/0/body","before":"mineral0 property0","after":"mineral0"}]}).to_string())?;
+            &json!({"edits":[{"path":"/blocks/0/body","before":sentence(0),"after":"Mineral 0 is catalogued."}]}).to_string())?;
         let content: Vec<Value> = serde_json::from_value(revised["blocks"].clone())?;
-        struct RevisionModel;
+        struct DeltaModel;
         #[async_trait::async_trait]
-        impl LLMPort for RevisionModel {
+        impl LLMPort for DeltaModel {
             async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
                 let mut replies = Vec::new();
                 for prompt in fixture_prompts(request) {
@@ -128,29 +129,33 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
             fn count_tokens(&self, text: &str) -> usize { text.len()/4 }
             async fn is_ready(&self) -> Result<bool> { Ok(true) }
         }
-        impl RevisionModel {
+        impl DeltaModel {
             async fn respond(&self, prompt: &str) -> Result<String> {
-                assert!(prompt.starts_with("Update claims after a lesson edit."));
+                assert!(prompt.starts_with("Extract lesson claims."));
                 let data = context(prompt);
-                let passage = data["revisedSection"]["passages"].as_array().unwrap().iter().find(|p|p["field"]=="/body").unwrap();
-                Ok(json!({"changes":[json!({"claimId":0,"passageId":passage["id"],"statement":"mineral0"})],"nonFactualReason":""}).to_string())
+                let passage = &data["units"][0]["passages"][0];
+                Ok(inventory::fixture_response(vec![json!({"index":0,"claims":[{"passageId":passage["id"],"statement":"mineral0"}],"nonFactualReason":""})]).to_string())
             }
         }
 
-        let updated = inventory::revisions::update(&RevisionModel, &content, 0).await?.unwrap();
+        let updated = inventory::revisions::update(&DeltaModel, &content, 0).await?.unwrap();
+        // The twenty-one sentences that stand keep their claims as they were,
+        // and the one that was rewritten has the claim read from its new words.
         assert_eq!(updated.claims.len(), 22);
-        for (old, new) in inventory.units[0].claims.iter().zip(&updated.claims).skip(1) {
+        for (old, new) in inventory.units[0].claims.iter().skip(1).zip(&updated.claims) {
             assert_eq!(old.statement, new.statement);
-            assert_ne!(old.quote, new.quote);
+            assert_eq!(old.quote, new.quote);
         }
+        assert_eq!(updated.claims[21].statement, "mineral0");
+        assert_eq!(updated.claims[21].quote, "Mineral 0 is catalogued.");
         inventory.units[0] = updated;
         let result = paged(&model, &collection, &inventory, &ClaimChecks::default()).await?;
         assert_eq!(result.iter().filter(|r| r.reused).count(), 174);
         assert_eq!(model.calls.lock().unwrap().len(), 176);
         assert_eq!(model.calls.lock().unwrap().last().unwrap(), "mineral0");
-        // Drop memory caches, restore from SQLite, and compare the saved revision.
-        let restored = inventory::revisions::update(&RevisionModel, &content, 0).await?.unwrap();
-        assert_eq!(restored.claims[0].statement, "mineral0");
+        // Drop memory caches, restore from SQLite, and compare the saved delta.
+        let restored = inventory::revisions::update(&DeltaModel, &content, 0).await?.unwrap();
+        assert_eq!(restored.claims[21].statement, "mineral0");
         let result = paged(&model, &collection, &inventory, &ClaimChecks::default()).await?;
         assert_eq!(result.iter().filter(|r| r.reused).count(), 175);
         assert_eq!(model.calls.lock().unwrap().len(), 176);
