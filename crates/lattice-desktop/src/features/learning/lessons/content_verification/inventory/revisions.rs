@@ -186,6 +186,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn update
         .await?
         .and_then(|v| serde_json::from_value::<UnitClaims>(v).ok())
     {
+        save(llm, content, &saved).await?;
         return Ok(Some(saved));
     }
     let mut input = inputs(content);
@@ -233,6 +234,9 @@ pub(in crate::features::learning::lessons::content_verification) async fn update
         serde_json::to_value(&updated)?,
     )
     .await?;
+    // The next edit is read against this text, so what this one wrote is read
+    // once.
+    save(llm, content, &updated).await?;
     Ok(Some(updated))
 }
 
