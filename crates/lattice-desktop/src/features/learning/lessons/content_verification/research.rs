@@ -243,11 +243,7 @@ fn selection(raw: &str, results: &[WebSearchResult]) -> Result<Vec<(WebSearchRes
         let result = index
             .filter(|i| choice.id == format!("result-{i}"))
             .and_then(|i| results.get(i));
-        if !seen.insert(choice.id)
-            || choice.reason.trim().is_empty()
-            || choice.reason.chars().count() > 600
-            || result.is_none()
-        {
+        if !seen.insert(choice.id) || choice.reason.trim().is_empty() || result.is_none() {
             return Err(AppError::InvalidInput(
                 "Reference selection returned invalid evidence candidates; no pages were saved."
                     .into(),

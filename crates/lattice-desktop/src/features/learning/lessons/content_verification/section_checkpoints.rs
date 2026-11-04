@@ -31,14 +31,12 @@ impl SectionCheckpoint {
         unit.index == index
             && self.coverage.index == index
             && self.coverage.complete == self.coverage.missing_assertions.is_empty()
-            && unit.non_factual_reason.chars().count() <= 500
             && (!unit.claims.is_empty() || !unit.non_factual_reason.trim().is_empty())
             && unit.claims.iter().all(|claim| {
                 !claim.quote.trim().is_empty()
                     && claim.quote.chars().count() <= MAX_CLAIM_QUOTE_CHARS
                     && contains_text(content, &claim.quote)
                     && !claim.statement.trim().is_empty()
-                    && claim.statement.chars().count() <= 2000
             })
     }
 }

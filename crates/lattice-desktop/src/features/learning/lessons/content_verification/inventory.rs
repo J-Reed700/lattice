@@ -182,9 +182,7 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
         .and_then(|v| v.get("passages"))
         .and_then(Value::as_array)
         .ok_or_else(|| format!("Unknown section {}", unit.index))?;
-    if unit.non_factual_reason.chars().count() > 500
-        || (unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty())
-    {
+    if unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty() {
         return Err(format!(
             "Section {} needs claims or an explicit nonfactual reason",
             unit.index
@@ -203,11 +201,8 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
                     unit.index, claim.passage_id
                 )
             })?;
-        if claim.statement.trim().is_empty() || claim.statement.chars().count() > 2000 {
-            return Err(format!(
-                "Section {} has an empty or excessive statement",
-                unit.index
-            ));
+        if claim.statement.trim().is_empty() {
+            return Err(format!("Section {} has an empty statement", unit.index));
         }
         claims.push(Claim {
             quote: claim_ledger::claim_quote(passage, &claim.statement).into(),

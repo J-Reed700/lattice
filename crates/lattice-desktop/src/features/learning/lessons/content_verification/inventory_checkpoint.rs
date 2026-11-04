@@ -63,9 +63,7 @@ pub(super) fn valid_saved_coverage(coverage: &Coverage, content: &[Value]) -> bo
         seen.insert(unit.index)
             && unit.complete == unit.missing_assertions.is_empty()
             && unit.missing_assertions.iter().all(|missing| {
-                ids.contains(missing.passage_id.as_str())
-                    && !missing.statement.trim().is_empty()
-                    && missing.statement.chars().count() <= 1000
+                ids.contains(missing.passage_id.as_str()) && !missing.statement.trim().is_empty()
             })
     })
 }

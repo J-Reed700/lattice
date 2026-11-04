@@ -429,14 +429,12 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
             .get(unit.index)
             .ok_or_else(|| invalid("Unknown verification section."))?;
         if !seen.insert(unit.index)
-            || unit.non_factual_reason.chars().count() > 500
             || (unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty())
             || unit.claims.iter().any(|c| {
                 c.quote.trim().is_empty()
                     || c.quote.chars().count() > MAX_CLAIM_QUOTE_CHARS
                     || !contains_text(value, &c.quote)
                     || c.statement.trim().is_empty()
-                    || c.statement.chars().count() > 2000
             })
         {
             return Err(invalid(

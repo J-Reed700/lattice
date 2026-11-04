@@ -34,11 +34,9 @@ pub(super) struct FidelityFinding {
 
 impl FidelityFinding {
     fn valid(&self) -> bool {
-        self.reason.chars().count() <= 500
-            && self
-                .missing_assertions
-                .iter()
-                .all(|statement| !statement.trim().is_empty() && statement.chars().count() <= 1000)
+        self.missing_assertions
+            .iter()
+            .all(|statement| !statement.trim().is_empty())
     }
 }
 
@@ -117,11 +115,7 @@ fn resolve(raw: &str, units: &[Value]) -> Result<Vec<CoverageUnit>> {
             let selected: HashSet<_> = check.claim_ids.iter().collect();
             if selected.len() != check.claim_ids.len()
                 || selected.iter().any(|id| !claims.contains(id.as_str()))
-                || check.non_factual_reason.chars().count() > 500
-                || check
-                    .missing_claims
-                    .iter()
-                    .any(|s| s.trim().is_empty() || s.chars().count() > 1000)
+                || check.missing_claims.iter().any(|s| s.trim().is_empty())
                 || (selected.is_empty()
                     && check.non_factual_reason.trim().is_empty()
                     && check.missing_claims.is_empty())
@@ -226,7 +220,9 @@ async fn judge(llm: &dyn LLMPort, request: &Value) -> Result<FidelityFinding> {
         |raw| {
             let finding: FidelityFinding = crate::features::learning::generation::parse_json(raw)?;
             if !finding.valid() {
-                return Err(invalid("Each missing assertion needs a nonempty statement of at most 1000 characters, and reason at most 500 characters."));
+                return Err(invalid(
+                    "Each missing assertion needs a nonempty statement.",
+                ));
             }
             Ok(finding)
         },
