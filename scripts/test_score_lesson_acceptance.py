@@ -151,6 +151,13 @@ class ScoreLessonAcceptance(unittest.TestCase):
         self.assertTrue(any("claim h" in f and "internal" in f for f in failures), failures)
         self.assertTrue(any("claim i" in f and "reasoning ended 'resolved_by_evidence'" in f for f in failures), failures)
 
+    def test_a_sourced_statement_whose_every_part_is_common_ends_in_the_common_class(self):
+        uncited = ("m", 3, "sourced", "writer", {"state": "general_knowledge", "at": 1},
+                   [checked(FAILED), classified("common", "evidence"), checked("known_common")])
+        failures = self.failures(claims=CLAIMS + [uncited])
+
+        self.assertFalse(any("claim m" in f for f in failures), failures)
+
     def test_a_statement_the_model_calls_internal_is_a_claim_and_ends_consistent_or_removed(self):
         passed = ("j", 3, "internal", "model", {"state": "consistent", "at": 1}, [checked("not_false")])
         cut = ("k", 3, "internal", "model", REMOVED, [checked(CONTRADICTED), repair("removed", 2)])
