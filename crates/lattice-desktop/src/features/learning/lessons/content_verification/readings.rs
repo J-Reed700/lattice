@@ -3,7 +3,8 @@
 //! reader asks what the pipeline asks of the same statement, restores and
 //! records the receipts it does, and leaves the finding it fills; what the
 //! answer comes to is interpreted in `lattice-core`, beside the judge. The
-//! pipeline does not call them yet: the reading driver does (build step 6b).
+//! reading driver asks them along the policy's graphs; the pipeline does not
+//! call it yet (build step 6b).
 use super::class_checks::finding_of;
 use super::classify::{states_a_specific_in, Case};
 use super::evidence_checks::{
@@ -18,6 +19,7 @@ use lattice_core::application::services::claim_verification::{
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};
 
 mod consistency;
+pub(super) mod driver;
 mod ground;
 mod knowledge;
 mod page;
@@ -86,6 +88,11 @@ pub(super) trait Reader: Send + Sync {
     async fn read(&self, at: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>>;
 }
 
+/// The reader of each reading, as the reading driver asks for them.
+pub(super) trait ReaderSet: Send + Sync {
+    fn get(&self, reading: Reading) -> &dyn Reader;
+}
+
 /// One reader of each reading.
 pub(super) struct Readers {
     parts: parts::Parts,
@@ -107,8 +114,10 @@ impl Readers {
             veto: knowledge::Knowledge::veto(),
         }
     }
+}
 
-    pub(super) fn get(&self, reading: Reading) -> &dyn Reader {
+impl ReaderSet for Readers {
+    fn get(&self, reading: Reading) -> &dyn Reader {
         match reading {
             Reading::Parts => &self.parts,
             Reading::Ground => &self.ground,

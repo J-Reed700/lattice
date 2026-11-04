@@ -27,11 +27,13 @@ describe('describeEvent', () => {
     expect(event({ kind: 'checked', check: check('local', { verdict: 'supported', supportingQuote: 'q' }, 'matches Livy') }))
       .toBe('Checker (herb-4b): supported · matches Livy');
     expect(event({ kind: 'checked', check: check('verifier', { verdict: 'supported_elsewhere', supportingQuote: 'q' }) }))
-      .toBe('Independent check (herb-4b): supported elsewhere, citation repaired');
+      .toBe('Independent check (herb-4b): supported by another source');
     expect(event({ kind: 'checked', check: check('local', { verdict: 'consistent' }, 'no passage says otherwise') }))
       .toBe('Checker (herb-4b): consistent with its sources · no passage says otherwise');
     expect(event({ kind: 'checked', check: check('local', { verdict: 'known_common' }) }))
       .toBe('Checker (herb-4b): common knowledge');
+    expect(event({ kind: 'checked', check: check('local', { verdict: 'not_false' }) }))
+      .toBe('Checker (herb-4b): not called false when asked alone');
   });
 
   it.each<[VerdictKindDto, string]>([

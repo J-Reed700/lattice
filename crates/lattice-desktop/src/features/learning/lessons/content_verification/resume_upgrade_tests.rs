@@ -5,7 +5,7 @@ use super::*;
 use lattice_core::domain::learning::claim_review::{ClaimEvent, SupportedBy, TrustAssessment};
 use lattice_core::domain::provenance::*;
 
-fn assessment(version: &str, quote: &str) -> TrustAssessment {
+pub(super) fn assessment(version: &str, quote: &str) -> TrustAssessment {
     let profile = ClaimProfile {
         kind: ClaimKind::Definition,
         subject: None,

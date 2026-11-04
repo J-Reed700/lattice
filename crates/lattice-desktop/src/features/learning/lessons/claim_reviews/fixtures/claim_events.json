@@ -380,5 +380,36 @@
         "windowTokens": 32768
       }
     }
+  },
+  {
+    "ordinal": 17,
+    "actor": "machine",
+    "at": 1760000000017,
+    "jobId": "job-1",
+    "appVersion": "1.0.0",
+    "checkerModel": "qwen3.5-27b",
+    "event": {
+      "kind": "checked",
+      "check": {
+        "checker": {
+          "role": "local",
+          "model": "qwen3.5-27b"
+        },
+        "result": {
+          "verdict": "not_false"
+        },
+        "reason": "The passage gives 99.97 °C at one atmosphere.",
+        "fingerprint": "fp-1",
+        "evidence": [
+          {
+            "sourceVersionId": "v1",
+            "startByte": 120,
+            "endByte": 184,
+            "textSha256": "4f2a"
+          }
+        ],
+        "windowTokens": 32768
+      }
+    }
   }
 ]

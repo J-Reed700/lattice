@@ -463,6 +463,11 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
             evidence: vec![],
             ..local_check(None, "v1")
         }),
+        ClaimEvent::Checked(Check {
+            result: CheckResult::NotFalse,
+            evidence: vec![],
+            ..local_check(None, "v1")
+        }),
         ClaimEvent::Stopped {
             reason: StopReason {
                 code: "model_rejected".into(),
@@ -523,6 +528,10 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
     assert_eq!(
         serde_json::to_value(CheckResult::KnownCommon).unwrap(),
         json!("known_common")
+    );
+    assert_eq!(
+        serde_json::to_value(CheckResult::NotFalse).unwrap(),
+        json!("not_false")
     );
     for (by, name) in [
         (ClassifiedBy::Model, "model"),

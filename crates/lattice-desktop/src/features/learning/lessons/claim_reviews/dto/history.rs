@@ -303,6 +303,7 @@ pub enum CheckResultDto {
     },
     Consistent,
     KnownCommon,
+    NotFalse,
     Failed {
         kind: VerdictKindDto,
     },
@@ -329,6 +330,7 @@ impl From<&CheckResult> for CheckResultDto {
             },
             CheckResult::Consistent => Self::Consistent,
             CheckResult::KnownCommon => Self::KnownCommon,
+            CheckResult::NotFalse => Self::NotFalse,
             CheckResult::Failed { kind } => Self::Failed { kind: kind.into() },
         }
     }

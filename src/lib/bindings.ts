@@ -4744,7 +4744,7 @@ export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; su
  * Supported by a passage of another course source than the ones its
  * section cites; the lesson's citation is repaired to it.
  */
-{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "consistent" } | { verdict: "known_common" } | { verdict: "failed"; kind: VerdictKindDto }
+{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "consistent" } | { verdict: "known_common" } | { verdict: "not_false" } | { verdict: "failed"; kind: VerdictKindDto }
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */

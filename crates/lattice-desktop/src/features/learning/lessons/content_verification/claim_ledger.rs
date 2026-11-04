@@ -12,6 +12,8 @@ mod held;
 mod located;
 mod observe;
 mod position;
+#[cfg_attr(not(test), allow(dead_code))]
+mod readings;
 mod receipts;
 mod successor;
 

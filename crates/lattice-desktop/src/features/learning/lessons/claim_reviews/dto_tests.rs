@@ -390,6 +390,12 @@ fn claim_events_mirror_the_domain() {
             },
             CheckResult::KnownCommon,
         )),
+        ClaimEvent::Checked(check(
+            Checker::Local {
+                model: "qwen3.5-27b".into(),
+            },
+            CheckResult::NotFalse,
+        )),
     ];
     let records: Vec<RecordedEvent> = events
         .into_iter()

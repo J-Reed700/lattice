@@ -491,6 +491,10 @@ pub enum CheckResult {
     /// A Common statement every sample of the knowledge judge called true and
     /// common: it rests on no passage at all (claim classes design §3.1).
     KnownCommon,
+    /// Asked alone, the model's samples did not call the statement false: a
+    /// passed falsity veto, which is not the unanimity `KnownCommon` records
+    /// (acceptance design §4).
+    NotFalse,
     Failed {
         kind: VerdictKind,
     },
@@ -524,7 +528,7 @@ impl CheckResult {
                 supporting_quote,
                 ..
             } => Some((source_version_id, supporting_quote)),
-            Self::Consistent | Self::KnownCommon | Self::Failed { .. } => None,
+            Self::Consistent | Self::KnownCommon | Self::NotFalse | Self::Failed { .. } => None,
         }
     }
 }

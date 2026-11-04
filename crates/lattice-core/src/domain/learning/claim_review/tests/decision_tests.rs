@@ -346,6 +346,7 @@ fn a_check_after_a_decision_is_what_was_observed_and_moves_nothing() {
         },
         CheckResult::Consistent,
         CheckResult::KnownCommon,
+        CheckResult::NotFalse,
         CheckResult::Failed {
             kind: VerdictKind::CouldNotJudge,
         },

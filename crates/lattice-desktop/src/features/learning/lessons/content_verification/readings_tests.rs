@@ -1,7 +1,7 @@
 //! The readers over scripted models: each reading's outcomes and findings from
 //! the judges' own fixtures, the receipts they restore and record, and an
 //! outage as an error.
-use super::super::readings::{Read, ReadContext, Reader, Readers, Statement};
+use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Readers, Statement};
 use super::bridge_tests::{
     citing, half_stated, parts_reply, sources, Reading as ScriptedBridge, STATED, STATEMENT,
 };

@@ -90,7 +90,8 @@ impl Judged {
             CheckResult::Supported { .. }
             | CheckResult::SupportedElsewhere { .. }
             | CheckResult::Consistent
-            | CheckResult::KnownCommon => 1,
+            | CheckResult::KnownCommon
+            | CheckResult::NotFalse => 1,
             CheckResult::Failed {
                 kind: VerdictKind::Unsupported,
             } => 2,

@@ -347,14 +347,15 @@ function describeUserAction(action: UserActionDto, note: string | null): string 
 }
 
 /** A check's verdict in words. A claim the course supports elsewhere than
- *  its section's citation stands, and its citation was moved to the passage
- *  found. */
+ *  its section's citation stands; moving the citation is a separate step with
+ *  its own event, so the check does not claim it. */
 function checkVerdict(result: CheckResultDto): string {
   switch (result.verdict) {
     case 'supported': return 'Supported';
-    case 'supported_elsewhere': return 'Supported elsewhere, citation repaired';
+    case 'supported_elsewhere': return 'Supported by another source';
     case 'consistent': return 'Consistent with its sources';
     case 'known_common': return 'Common knowledge';
+    case 'not_false': return 'Not called false when asked alone';
     case 'failed': return verdictWords(result.kind);
   }
 }

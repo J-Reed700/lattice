@@ -165,7 +165,8 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
         CheckResult::Supported { .. }
         | CheckResult::SupportedElsewhere { .. }
         | CheckResult::Consistent
-        | CheckResult::KnownCommon => None,
+        | CheckResult::KnownCommon
+        | CheckResult::NotFalse => None,
     };
     let model = match &check.checker {
         Checker::Verifier { .. } => {
@@ -207,7 +208,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at
             source_version_id: source_version_id.clone(),
             supporting_quote: supporting_quote.clone(),
         },
-        CheckResult::Consistent => ClaimState::Consistent { at },
+        CheckResult::Consistent | CheckResult::NotFalse => ClaimState::Consistent { at },
         CheckResult::KnownCommon => ClaimState::GeneralKnowledge { at },
         CheckResult::Failed { kind } => {
             let (kind, reason) = (kind.clone(), check.reason.clone());

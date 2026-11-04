@@ -1050,6 +1050,28 @@ fn a_reasoning_pass_ends_consistent_and_a_common_pass_ends_as_the_machines_gener
 }
 
 #[test]
+fn a_passed_veto_that_no_decision_follows_ends_consistent_and_clears_the_failure() {
+    let mut vetoed = claim("c1");
+    vetoed
+        .append(machine(2), checked(Some(VerdictKind::Contradicted), "v1"))
+        .unwrap();
+    assert_eq!(vetoed.latest_failure(), Some(&VerdictKind::Contradicted));
+    vetoed
+        .append(
+            machine(3),
+            ClaimEvent::Checked(Check {
+                result: CheckResult::NotFalse,
+                evidence: vec![],
+                ..local_check(None, "v1")
+            }),
+        )
+        .unwrap();
+    assert_eq!(vetoed.state(), &ClaimState::Consistent { at: 3 });
+    assert_eq!(vetoed.latest_failure(), None);
+    assert_eq!(CheckResult::NotFalse.support(), None);
+}
+
+#[test]
 fn a_claim_whose_sentence_goes_with_a_cut_is_removed_and_one_with_a_successor_is_edited() {
     let mut cut_with_another = verified_claim("c1");
     cut_with_another

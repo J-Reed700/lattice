@@ -101,7 +101,8 @@ pub(super) fn outcome_line(title: &str, outcome: &AttachOutcome) -> String {
             CheckResult::Supported { .. }
             | CheckResult::SupportedElsewhere { .. }
             | CheckResult::Consistent
-            | CheckResult::KnownCommon => {
+            | CheckResult::KnownCommon
+            | CheckResult::NotFalse => {
                 format!("Verified against {title}.")
             }
             CheckResult::Failed { kind } => {

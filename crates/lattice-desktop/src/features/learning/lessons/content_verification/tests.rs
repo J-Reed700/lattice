@@ -555,6 +555,12 @@ mod bridge_tests;
 #[path = "readings_tests.rs"]
 mod readings_tests;
 
+#[path = "reading_driver_tests.rs"]
+mod reading_driver_tests;
+
+#[path = "reading_record_tests.rs"]
+mod reading_record_tests;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
