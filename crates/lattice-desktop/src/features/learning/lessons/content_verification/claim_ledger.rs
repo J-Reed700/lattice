@@ -5,10 +5,12 @@
 //! allow (§3, §4, §6.1). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
 mod audit;
+mod checks;
 mod cotenancy;
 mod cuts;
 mod fields;
 mod held;
+mod identify;
 mod located;
 mod observe;
 mod position;
@@ -32,6 +34,7 @@ use crate::features::learning::lessons::claim_reviews::repository::{
     ClaimReviewRepository, ShownPassage,
 };
 use crate::features::learning::persistence::now;
+use identify::Carried;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::{
@@ -150,6 +153,9 @@ pub(super) struct ClaimLedger {
     unpublishable: HashSet<ClaimId>,
     /// The claim of each tracked example, by observation id.
     examples: HashMap<String, ClaimId>,
+    /// What `identify` left for `record_checks` of each claim it carried on,
+    /// until the checks are recorded.
+    carried: HashMap<ClaimId, Carried>,
     /// Claims whose user edit was just applied: re-extraction names their
     /// successors (§5.1 Edit).
     pub(super) edited_now: HashSet<ClaimId>,
@@ -191,6 +197,7 @@ impl ClaimLedger {
             findings: Vec::new(),
             unpublishable: HashSet::new(),
             examples: HashMap::new(),
+            carried: HashMap::new(),
             edited_now: HashSet::new(),
             cuts: Cuts::default(),
             gate: Box::new(ProvenanceGate),

@@ -708,6 +708,45 @@ fn what_a_check_found_decides_a_class_over_the_writers() {
 }
 
 #[test]
+fn what_a_check_found_moves_a_class_in_either_direction_and_its_latest_move_holds() {
+    let mut entry = claim("c1");
+    entry
+        .append(
+            machine(2),
+            classified(Class::Reasoning, ClassifiedBy::Model),
+        )
+        .unwrap();
+    entry
+        .append(
+            machine(3),
+            classified(Class::Sourced, ClassifiedBy::Evidence),
+        )
+        .unwrap();
+    assert_eq!(
+        entry.classified(),
+        Some((Class::Sourced, ClassifiedBy::Evidence))
+    );
+    // The same authority, a lighter class: the check read the rewrite.
+    entry
+        .append(
+            machine(4),
+            classified(Class::Common, ClassifiedBy::Evidence),
+        )
+        .unwrap();
+    assert_eq!(
+        entry.classified(),
+        Some((Class::Common, ClassifiedBy::Evidence))
+    );
+    assert_eq!(entry.class(), Some(Class::Common));
+
+    // The log replays to the class its latest move gave.
+    let replayed =
+        ClaimLedgerEntry::from_events(entry.claim_id().clone(), entry.events().to_vec()).unwrap();
+    assert_eq!(replayed.class(), Some(Class::Common));
+    assert_eq!(replayed, entry);
+}
+
+#[test]
 fn the_decisions_and_the_steps_of_a_claim_are_read_from_its_record() {
     let mut entry = claim("c1");
     assert_eq!(entry.decided(), None);

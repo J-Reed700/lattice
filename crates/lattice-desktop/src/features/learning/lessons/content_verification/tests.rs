@@ -525,6 +525,9 @@ mod claim_ledger_tests;
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
 
+#[path = "claim_identity_tests.rs"]
+mod claim_identity_tests;
+
 #[path = "class_checks_tests.rs"]
 mod class_checks_tests;
 

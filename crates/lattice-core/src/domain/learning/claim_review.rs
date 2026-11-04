@@ -172,10 +172,14 @@ impl Class {
     /// Whether this class, decided `by` an authority, takes the place of the
     /// one a statement holds: a stronger authority's always does, the same
     /// authority's only when it is stricter, so nothing makes a statement's
-    /// check lighter but an authority above the one that gave its class.
+    /// check lighter but an authority above the one that gave its class. What
+    /// a check found always does: the policy moves a statement by evidence in
+    /// either direction, and the latest move holds.
     pub fn prevails(self, by: ClassifiedBy, held: Option<(Class, ClassifiedBy)>) -> bool {
         held.is_none_or(|(class, held_by)| {
-            by > held_by || (by == held_by && self.strictness() > class.strictness())
+            by == ClassifiedBy::Evidence
+                || by > held_by
+                || (by == held_by && self.strictness() > class.strictness())
         })
     }
 }
@@ -185,7 +189,7 @@ impl Class {
 /// whatever anyone says later, so a class is never replaced by a weaker
 /// authority's (claim classes design §3.1). What a check found outranks them
 /// all: a statement that changes class because of it is the policy's to move
-/// (acceptance design §2.9).
+/// (acceptance design §2.9), either way, and its latest move holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClassifiedBy {
