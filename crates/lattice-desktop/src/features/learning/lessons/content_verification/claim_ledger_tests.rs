@@ -2125,3 +2125,54 @@ async fn a_lesson_is_not_published_with_a_sentence_a_claim_the_machine_ended_sto
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_claim_the_machine_ended_blocks_publication_while_its_sentence_stands_in_a_section_that_stays(
+) -> Result<()> {
+    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let atp = claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    assert!(
+        ledger.ended_but_standing(&lesson).is_none(),
+        "a claim that is not ended blocks nothing"
+    );
+    let ended = ClaimEvent::Superseded {
+        successor: None,
+        by: Actor::Machine,
+    };
+    assert!(ledger.append(&atp, ended).await?);
+
+    let (reason, claims) = ledger.ended_but_standing(&lesson).unwrap();
+    assert_eq!(claims, 1);
+    assert!(
+        reason.message.contains(ATP_SENTENCE) && reason.message.contains(ATP),
+        "{}",
+        reason.message
+    );
+    // The sentence is gone with a cut.
+    let cut = cell_lesson(&CELL.replace(&format!("{ATP_SENTENCE} "), ""));
+    assert!(ledger.ended_but_standing(&cut).is_none());
+    // Its section is taken out of the lesson before it is published.
+    ledger.cuts.go(0, "Mitochondria".into());
+    assert!(ledger.ended_but_standing(&lesson).is_none());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_code_examples_ended_claim_blocks_nothing() -> Result<()> {
+    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
+    let example = ClaimId("example".into());
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(0, UnitKind::Block, "body", ATP_SENTENCE, CELL),
+        statement: "The code example example-0 runs to completion with the output it shows.".into(),
+    };
+    assert!(ledger.append(&example, extracted).await?);
+    let ended = ClaimEvent::Superseded {
+        successor: None,
+        by: Actor::Machine,
+    };
+    assert!(ledger.append(&example, ended).await?);
+
+    assert!(ledger.ended_but_standing(&cell_lesson(CELL)).is_none());
+    Ok(())
+}

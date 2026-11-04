@@ -3,11 +3,12 @@
 //! what is wrong and what to do (acceptance design §2.10).
 
 use super::super::*;
-use super::{is_gone, ClaimLedger, Waiting};
+use super::fields::field_text;
+use super::{is_example, is_gone, ClaimLedger, Waiting};
 use crate::features::learning::persistence::now;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Step, Walked};
 use lattice_core::domain::learning::claim_review::{
-    ClaimEvent, ClaimLedgerEntry, LessonReviewState, StopReason,
+    Actor, ClaimEvent, ClaimLedgerEntry, ClaimState, LessonReviewState, StopReason,
 };
 
 /// What a statement waits for at a node of `step`, in words.
@@ -84,6 +85,52 @@ impl ClaimLedger {
             }
         }
         None
+    }
+
+    /// The stop for a lesson that would publish a sentence a claim the machine
+    /// ended stands on, and how many such claims there are: a claim ends only
+    /// with its sentence (acceptance design §2.9). A code example's claim ends
+    /// with its run, and the claims of a section that goes end with it.
+    pub(in crate::features::learning::lessons::content_verification) fn ended_but_standing(
+        &self,
+        candidate: &Value,
+    ) -> Option<(StopReason, usize)> {
+        let standing: Vec<&ClaimLedgerEntry> = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                let at = entry.location();
+                matches!(
+                    entry.state(),
+                    ClaimState::Removed {
+                        by: Actor::Machine,
+                        ..
+                    }
+                ) && !is_example(entry)
+                    && !self.cuts.going.contains_key(&at.unit_index)
+                    && !at.quote.trim().is_empty()
+                    && field_text(candidate, at.unit_index, &at.field)
+                        .is_some_and(|text| text.contains(&at.quote))
+            })
+            .collect();
+        let first = standing.first()?;
+        let more = match standing.len() {
+            1 => String::new(),
+            others => format!(
+                " ({} more claims the machine ended have their sentences in it too)",
+                others - 1
+            ),
+        };
+        let reason = self.stop_reason(
+            "ended_claim_stands",
+            format!(
+                "The lesson still holds \"{}\", which the claim \"{}\" stood on until the machine ended it{more}. A lesson is not published with a sentence no claim answers for.",
+                first.location().quote,
+                first.statement()
+            ),
+            "Open the lesson's claim review: undo the removal to check the sentence, or take the sentence out of the draft, then resume this lesson.",
+        );
+        Some((reason, standing.len()))
     }
 
     /// A stop with `code`, in the checker's name.

@@ -412,6 +412,11 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     sections::Settled::Stopped(error) => return Err(error),
                     sections::Settled::Done => {}
                 }
+                // The last guard (acceptance design §2.9): the lesson holds no
+                // sentence that a claim the machine ended stood on.
+                if let Some((reason, claims)) = ledger.ended_but_standing(&candidate) {
+                    return Err(hold(&mut ledger, &raw, claims, Some(reason)).await?);
+                }
                 (raw, candidate, report) =
                     sections::excise(llm, &mut ledger, raw, candidate, report).await?;
                 // Then the Verifier audit, when the course opted in (§14.3):
