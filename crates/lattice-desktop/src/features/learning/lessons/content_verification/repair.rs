@@ -10,7 +10,7 @@ use super::repair_work::{
 use super::*;
 use crate::features::learning::lessons::text_edits;
 use lattice_core::application::services::grounded_generation::{GroundedRequest, HistoryItem};
-use lattice_core::domain::learning::acceptance::AcceptancePolicy;
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
 use std::collections::{BTreeSet, VecDeque};
 
 mod citation;
@@ -161,8 +161,19 @@ fn section_context(context: &Value, unit: usize, failures: &[Value]) -> Result<V
     }))
 }
 
+/// What a correction toward `goal` is told its sentence must do: the reading
+/// that follows tests exactly that (acceptance design §2.4).
+pub(super) fn goal_words(goal: Goal) -> &'static str {
+    match goal {
+        Goal::WhatThePassageStates => "Say only what the claim's evidence passages state. Where no passage states a detail, keep the sentence's point and leave that detail out.",
+        Goal::AgreeWithThePassages => "Make the sentence agree with its evidence passages, correcting what the reason names.",
+        Goal::AsTheFieldHasIt => "State it as the field generally has it, correcting what the reason names.",
+        Goal::KeepTheOthers => "Take this claim out of the sentence and keep each statement in alsoStates, said as it is now.",
+    }
+}
+
 fn repair_system(schema: &Value) -> String {
-    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists claim variants rejected by earlier evidence checks; do not reintroduce those assertions or paraphrases of them. A failed claim's alsoStates lists other statements its sentence makes that the lesson keeps: write the corrected sentence so that each of them is still said, and true. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::rewrite_instructions(schema))
+    format!("Repair verified lesson defects. Correct the listed factual defects using the recorded evidence and execution results. Preserve valid teaching, practice demands and verbatim citations. Each failed claim references IDs in the evidence table. repairHistory lists sentences earlier corrections replaced or removed because a check failed them; do not reintroduce what they asserted, or paraphrases of it. A failed claim's alsoStates lists other statements its sentence makes that the lesson keeps: write the corrected sentence so that each of them is still said, and true. Each failed claim's goal says what its corrected sentence must do; the check that follows tests exactly that. A failed claim with notApplied was sent before and its correction could not be applied, for the reason given: correct it so that it can be. When evidence cannot support a detail, remove that detail cleanly instead of replacing it with another unsupported explanation. Label Markdown code/output fences. {} {} {}", confine::CONFINEMENT, lattice_core::shared::markdown_math::MATH_GUIDANCE, text_edits::rewrite_instructions(schema))
 }
 
 /// A repair request as the window sees it. Its answer is reserved twice: an

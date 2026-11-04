@@ -12,6 +12,7 @@ mod cotenancy;
 mod cuts;
 mod fields;
 mod held;
+mod history;
 mod identify;
 mod located;
 mod observe;

@@ -2,7 +2,7 @@
 use super::claim_ledger::{self, ClaimLedger, StepKind};
 use super::passes;
 use super::readings::Readers;
-use super::repair::Cited;
+use super::repair::{goal_words, Cited};
 use super::*;
 use lattice_core::domain::learning::acceptance::{
     AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
@@ -90,7 +90,6 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     repair::number_sources(&mut numbered_schema, numbered.len());
     let mut ledger = ClaimLedger::open(llm, &raw).await?;
     let mut expanded = None;
-    let mut repair_history = Vec::new();
     let mut resume_repair = true;
     let mut checks = ClaimChecks::default();
     let mut verified: Option<String> = None;
@@ -142,11 +141,6 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     crate::features::learning::lesson_progress::Phase::Repair,
                     "Resuming the saved evidence-based repair",
                 );
-                repair_history = context
-                    .get("repairHistory")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default();
                 raw = repair::candidate(
                     llm,
                     &policy,
@@ -450,7 +444,6 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 return Err(hold(&mut ledger, &raw, claims, None).await?);
             }
             claim_ledger::Decision::Repair(targets) => {
-                remember_failed_claims(&mut repair_history, &report);
                 let escalated = targets.iter().any(|id| ledger.cuts_next(&policy, id));
                 crate::features::learning::lesson_progress::phase(
                     crate::features::learning::lesson_progress::Phase::Repair,
@@ -464,7 +457,6 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     prompt,
                     &candidate,
                     &report,
-                    &repair_history,
                     (&ledger, &policy),
                     &targets,
                     active,
@@ -681,24 +673,6 @@ pub(super) struct PendingRepair {
     pub(super) context: Value,
 }
 
-fn remember_failed_claims(history: &mut Vec<Value>, report: &LessonVerificationReport) {
-    for finding in report
-        .findings
-        .iter()
-        .filter(|finding| !finding.publishable())
-    {
-        let rejected = json!({
-            "unit": finding.unit,
-            "statement": finding.statement,
-            "verdict": finding.verdict,
-            "reason": finding.reason,
-        });
-        if !history.contains(&rejected) {
-            history.push(rejected);
-        }
-    }
-}
-
 pub(in crate::features::learning) async fn has_pending_repair(
     llm: &dyn LLMPort,
     prompt: &str,
@@ -751,12 +725,14 @@ impl PendingRepair {
 /// source index is not read as evidence N. Only `targets` are sent, each with
 /// its claim id and, at a cut, `lastAttempt`: that attempt takes the sentence
 /// out in code, so the model never reads the flag. A claim whose sentence says
-/// more carries `alsoStates`, the other statements on it.
+/// more carries `alsoStates`, the other statements on it. A claim at a rewrite
+/// carries its node's `goal`, and at the retry of a rewrite `notApplied`, why
+/// its first correction could not be applied. `repairHistory` is what the
+/// ledger holds of the sentences earlier corrections replaced or removed.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,
     report: &LessonVerificationReport,
-    repair_history: &[Value],
     (ledger, policy): (&ClaimLedger, &dyn AcceptancePolicy),
     targets: &[ClaimId],
     references: &ReferenceCollection<'_>,
@@ -796,6 +772,14 @@ pub(super) fn repair_context(
                 if escalates(id) {
                     fields.insert("lastAttempt".into(), json!(true));
                 }
+                // What the corrected sentence must do, which the reading
+                // after it tests, and why the first could not be applied.
+                if let Some((goal, why)) = ledger.rewrite_ask(policy, id) {
+                    fields.insert("goal".into(), json!(goal_words(goal)));
+                    if let Some(reason) = why {
+                        fields.insert("notApplied".into(), json!(reason));
+                    }
+                }
                 // What the sentence says besides the failed claim, which the
                 // rewrite keeps (claim classes design §3.2).
                 let also: Vec<&str> = mates
@@ -832,6 +816,6 @@ pub(super) fn repair_context(
             }
             example
         }).collect::<Vec<_>>(),
-        "repairHistory":repair_history,
+        "repairHistory":ledger.repair_history(),
     }))
 }

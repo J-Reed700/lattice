@@ -1257,7 +1257,6 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
         "{}",
         &candidate,
         &report,
-        &[],
         (&ledger, &StandardPolicy::new()),
         &targets,
         &references,

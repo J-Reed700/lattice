@@ -1465,7 +1465,6 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_tells_its_rewri
         "{}",
         &before,
         &report,
-        &[],
         (&ledger, &StandardPolicy::new()),
         std::slice::from_ref(&shared),
         &references,

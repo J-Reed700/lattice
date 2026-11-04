@@ -975,3 +975,38 @@ async fn the_last_attempt_takes_out_the_sentence_that_states_the_claim_not_the_r
     );
     Ok(())
 }
+
+#[test]
+fn each_goal_of_a_rewrite_has_the_words_the_request_gives_it() {
+    assert_eq!(
+        goal_words(Goal::WhatThePassageStates),
+        "Say only what the claim's evidence passages state. Where no passage states a detail, keep the sentence's point and leave that detail out."
+    );
+    assert_eq!(
+        goal_words(Goal::AgreeWithThePassages),
+        "Make the sentence agree with its evidence passages, correcting what the reason names."
+    );
+    assert_eq!(
+        goal_words(Goal::AsTheFieldHasIt),
+        "State it as the field generally has it, correcting what the reason names."
+    );
+    assert_eq!(
+        goal_words(Goal::KeepTheOthers),
+        "Take this claim out of the sentence and keep each statement in alsoStates, said as it is now."
+    );
+}
+
+#[test]
+fn the_system_prompt_says_what_the_goal_the_retry_and_the_history_are() {
+    let system = repair_system(&json!({}));
+
+    let history = "repairHistory lists sentences earlier corrections replaced or removed because a check failed them; do not reintroduce what they asserted, or paraphrases of it.";
+    let goal = "Each failed claim's goal says what its corrected sentence must do; the check that follows tests exactly that. A failed claim with notApplied was sent before and its correction could not be applied, for the reason given: correct it so that it can be.";
+    assert!(system.contains(history), "{system}");
+    assert!(system.contains(goal), "{system}");
+    assert!(!system.contains("claim variants rejected"), "{system}");
+    // The goal is said after the sentence on `alsoStates`.
+    let also = system.find("A failed claim's alsoStates lists").unwrap();
+    let said = system.find(goal).unwrap();
+    assert!(also < said && said < system.find("When evidence cannot support").unwrap());
+}

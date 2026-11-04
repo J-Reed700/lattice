@@ -1704,7 +1704,6 @@ async fn a_claim_at_a_rewrite_whose_finding_was_lost_sends_the_repair_its_reason
             "{}",
             &lesson,
             &report,
-            &[],
             (&ledger, &policy),
             std::slice::from_ref(&id),
             &references,
@@ -1713,6 +1712,10 @@ async fn a_claim_at_a_rewrite_whose_finding_was_lost_sends_the_repair_its_reason
             panic!("one failed claim: {context}");
         };
         assert_eq!(failed["claimId"], "rewrite");
+        assert_eq!(
+            failed["goal"],
+            repair::goal_words(Goal::WhatThePassageStates)
+        );
         assert_eq!(failed["reason"], "No passage states it.");
         assert_eq!(failed["evidence"], json!(["evidence-0"]));
         assert_eq!(context["evidence"][0]["text"], SENTENCE);
