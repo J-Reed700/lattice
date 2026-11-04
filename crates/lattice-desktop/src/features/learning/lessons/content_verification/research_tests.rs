@@ -131,6 +131,15 @@ fn a_long_reason_for_a_reference_is_read_not_refused() {
     assert_eq!(selected.unwrap()[0].1, reason.trim());
 }
 
+#[test]
+fn the_selection_schema_bounds_no_text_but_a_blank() {
+    let ids = [json!("result-0"), json!("result-1")];
+    let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+        &selection_schema(&ids),
+    );
+    assert!(bounds.is_empty(), "{bounds:?}");
+}
+
 #[tokio::test]
 async fn reference_selection_accepts_all_valid_selected_results_past_four() -> Result<()> {
     let results: Vec<_> = (0..8)

@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
+use crate::features::learning::lessons::course_generation_tests::length_bounds;
 use serde_json::{json, Value};
 
 const EXCERPT: &str =
@@ -163,4 +164,68 @@ fn a_sourced_part_that_names_no_source_cannot_be_saved_and_is_not_called_invalid
         "{error:?}"
     );
     assert!(!error.to_string().contains("check your input"));
+}
+
+#[test]
+fn the_lesson_schema_bounds_no_text_but_a_blank() {
+    for sources in [0, 2] {
+        let bounds = length_bounds(&lesson_schema(sources));
+        assert!(bounds.is_empty(), "{sources} sources: {bounds:?}");
+    }
+}
+
+#[test]
+fn a_lessons_text_of_any_length_is_no_schema_finding() {
+    let schema = lesson_schema(1);
+    let kinds = [
+        "explanation",
+        "worked_example",
+        "contrast",
+        "check",
+        "explanation",
+        "worked_example",
+        "check",
+        "guided_practice",
+        "independent_practice",
+        "reflection",
+        "recap",
+    ];
+    let blocks: Vec<_> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            let body = "A substantive explanation. ".repeat(30);
+            block(kind, &format!("Part {i}"), &body, true)
+        })
+        .collect();
+    let questions: Vec<_> = ["practice", "practice", "quiz", "quiz", "test", "test"]
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| question(kind, &format!("Question {i}?"), true))
+        .collect();
+    let mut lesson = json!({"blocks":blocks,"questions":questions});
+    let schema_findings = |lesson: &Value| -> Vec<String> {
+        crate::features::learning::teaching::structural_findings(&schema, &lesson.to_string())
+            .unwrap()
+            .into_iter()
+            .map(|finding| finding.note)
+            .filter(|note| note.starts_with("Fix the schema violation"))
+            .collect()
+    };
+    let found = schema_findings(&lesson);
+    assert!(found.is_empty(), "the fixture is not a lesson: {found:?}");
+
+    lesson["blocks"][0]["title"] = json!("A title that runs on and on. ".repeat(10));
+    lesson["blocks"][1]["body"] = json!("Short.");
+    lesson["blocks"][2]["quote"] = json!(EXCERPT.repeat(20));
+    lesson["blocks"][3]["citations"] = json!([
+        {"sentence":"A cited sentence that runs on. ".repeat(30),"sourceIndex":0,"quote":EXCERPT},
+        {"sentence":"No","sourceIndex":0,"quote":EXCERPT}
+    ]);
+    lesson["questions"][0]["prompt"] = json!("Which choice follows from the premise? ".repeat(40));
+    lesson["questions"][0]["options"][0] = json!("A long answer choice. ".repeat(40));
+    lesson["questions"][1]["explanation"] =
+        json!("Because the premise fixes the outcome. ".repeat(60));
+    let found = schema_findings(&lesson);
+    assert!(found.is_empty(), "{found:?}");
 }

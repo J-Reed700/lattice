@@ -942,6 +942,15 @@ mod tests {
     }
 
     #[test]
+    fn the_inventory_schema_bounds_no_text_but_a_blank() {
+        let input = inputs(&[json!({"body":"The measurements describe individual samples."})]);
+        let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+            &schema(&[0], &input),
+        );
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
+    #[test]
     fn a_sentence_longer_than_the_inventory_keeps_is_quoted_by_its_first_1600_characters() {
         let long = format!("Alpha {}omega.", "beta gamma delta ".repeat(100));
         let content = vec![json!({"body":long})];

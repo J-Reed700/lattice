@@ -484,3 +484,52 @@ fn a_missing_citation_does_not_hold_up_the_content_review_but_other_structure_do
     let stopped = Passes::new(BTreeSet::from([shape.key()]));
     assert!(!holds_up_review(&[citation, shape], Some(&stopped)));
 }
+
+#[tokio::test]
+async fn a_short_review_issue_is_checked_and_repaired_not_dropped() -> Result<()> {
+    let mut brief: Value = serde_json::from_str(&review(None))?;
+    brief["issues"] = json!(["Wrong."]);
+    let model = model(vec![
+        brief.to_string(),
+        actionable(),
+        retitle("Corrected example"),
+        review(None),
+    ]);
+    let reviewed = run(&model, lesson(EXCERPT)).await?;
+    assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
+    let candidate: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert_eq!(candidate["blocks"][0]["title"], "Corrected example");
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 4);
+    assert!(prompts[2].contains("\"issuesToFix\":[\"Wrong.\"]"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_review_issue_is_repaired_where_a_review_fails_closed() -> Result<()> {
+    let long = format!(
+        "The example prints the result as a string: {}",
+        "it never states the number it returns. ".repeat(25)
+    );
+    assert!(long.chars().count() > 700);
+    let mut first: Value = serde_json::from_str(&review(None))?;
+    first["issues"] = json!([long]);
+    let model = model(vec![
+        first.to_string(),
+        retitle("Corrected example"),
+        review(None),
+    ]);
+    let repaired = review_and_repair(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object"}),
+        lesson(EXCERPT).to_string(),
+        4000,
+    )
+    .await?;
+    let repaired: Value = serde_json::from_str(&repaired)?;
+    assert_eq!(repaired["blocks"][0]["title"], "Corrected example");
+    assert!(model.prompts.lock().unwrap()[1].contains(&long));
+    Ok(())
+}

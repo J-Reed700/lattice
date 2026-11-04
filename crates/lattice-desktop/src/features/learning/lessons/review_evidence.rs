@@ -617,4 +617,34 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn a_short_or_long_reason_is_read_not_refused() -> Result<()> {
+        let issues = proposal("The two statements in the candidate are incompatible.");
+        let evidence = HashMap::from([("questions-0".into(), EvidenceKind::Candidate)]);
+        let long =
+            "The candidate gives incompatible descriptions of the same scenario. ".repeat(20);
+        assert!(long.trim().chars().count() > 700);
+        for reason in ["Yes.", long.as_str()] {
+            let response = json!({"issue-0":{
+                "verdict":"actionable","basis":"internal_conflict","evidenceIds":["questions-0"],
+                "requirementId":null,"reason":reason}})
+            .to_string();
+            assert_eq!(
+                placed(first(&response, &issues, &evidence)?),
+                vec![(issues[0].note.clone(), Some(FindingSite::Question(0)))]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_decision_schema_bounds_no_text_but_a_blank() {
+        let keys = ["issue-0".to_owned()];
+        let ids = ["blocks-0".to_owned(), "requirements".to_owned()];
+        let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+            &schema(&keys, &ids),
+        );
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
 }

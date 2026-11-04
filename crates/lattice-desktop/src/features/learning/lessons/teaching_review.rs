@@ -658,6 +658,79 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn a_long_issue_from_the_teaching_review_is_read_not_refused() -> Result<()> {
+        let long = format!(
+            "The worked example's stated result is wrong: {}",
+            "it contradicts the premise it was given. ".repeat(25)
+        );
+        assert!(long.chars().count() > 700);
+        let response =
+            json!({"issues":[long],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
+        for lengths in [LengthRule::Fail, LengthRule::DropShortKeepLong] {
+            let model = model(vec![response.clone()]);
+            let issues = review(
+                &model,
+                "Review instructional quality.",
+                json!({}),
+                &candidate(),
+                None,
+                lengths,
+            )
+            .await?;
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].note, long);
+            assert_eq!(model.prompts.lock().unwrap().len(), 1);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_section_finding_of_any_length_is_read_not_refused() -> Result<()> {
+        let long = format!(
+            "The stated boundary condition is contradicted: {}",
+            "the membrane passes what it should hold back. ".repeat(20)
+        );
+        assert!(long.chars().count() > 700);
+        let mut terse = check(1);
+        terse["hasDefect"] = json!(true);
+        terse["finding"] = json!("Wrong.");
+        let mut lengthy = check(2);
+        lengthy["hasDefect"] = json!(true);
+        lengthy["finding"] = json!(long);
+        let model = model(vec![
+            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),terse,lengthy])}),
+        ]);
+        let issues = review(
+            &model,
+            "Review instructional quality.",
+            json!({}),
+            &candidate(),
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
+        let notes: Vec<_> = issues.iter().map(|issue| issue.note.clone()).collect();
+        assert_eq!(
+            notes,
+            vec![
+                "Section 2 (candidate blocks-1): Wrong.".to_owned(),
+                format!("Section 3 (candidate blocks-2): {long}"),
+            ]
+        );
+        assert_eq!(model.prompts.lock().unwrap().len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn the_review_schema_bounds_no_text_but_a_blank() {
+        let (_, passages) = review_candidate(&candidate());
+        let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+            &schema(&[0, 1, 2], &passages),
+        );
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
     /// Opt-in provider acceptance check. No application data is written and
     /// credentials are never printed. Uses the same no-deadline request path.
     #[tokio::test]

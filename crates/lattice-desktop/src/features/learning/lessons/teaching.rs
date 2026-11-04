@@ -747,3 +747,107 @@ async fn review_material(
 mod citation_tests;
 #[cfg(test)]
 mod loop_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::learning::dto::LearningProjectMilestoneDto;
+    use crate::features::learning::lessons::course_generation_tests::length_bounds;
+
+    const TITLE: &str = "Experiment project milestone";
+    const BRIEF: &str = "Develop the next stage of the randomized experiment and revise it.";
+    const ITEM: &str = "A written protocol identifying the treatment and control groups.";
+
+    fn milestone(title: &str, brief: &str, item: &str) -> LearningProjectMilestoneDto {
+        serde_json::from_value(json!({"title":title,"brief":brief,
+            "deliverables":[item,item],"successCriteria":[item,item]}))
+        .unwrap()
+    }
+
+    fn criterion(title: &str, description: &str) -> GeneratedCriterion {
+        serde_json::from_value(
+            json!({"title":title,"description":description,"dimension":"recall"}),
+        )
+        .unwrap()
+    }
+
+    fn saved(title: &str, description: &str) -> LearningPracticeCriterionDto {
+        LearningPracticeCriterionDto {
+            id: uuid::Uuid::new_v4().to_string(),
+            dimension: LearningPracticeEvidenceDimension::Recall,
+            title: title.into(),
+            description: description.into(),
+            max_points: 4,
+        }
+    }
+
+    #[test]
+    fn a_project_milestone_of_any_length_is_read_not_refused() {
+        let cases = [
+            (
+                "a long title",
+                milestone(&"A project title that runs on. ".repeat(10), BRIEF, ITEM),
+            ),
+            ("a short title", milestone("Plan", BRIEF, ITEM)),
+            (
+                "a long brief",
+                milestone(TITLE, &"A brief that runs on and on. ".repeat(70), ITEM),
+            ),
+            ("a short brief", milestone(TITLE, "Build it.", ITEM)),
+            (
+                "a long item",
+                milestone(TITLE, BRIEF, &"A deliverable that runs on. ".repeat(30)),
+            ),
+            ("a short item", milestone(TITLE, BRIEF, "A report.")),
+        ];
+        for (what, project) in &cases {
+            let checked = validate_project(project);
+            assert!(checked.is_ok(), "{what}: {:?}", checked.as_ref().err());
+        }
+        for blank in [
+            milestone(" ", BRIEF, ITEM),
+            milestone(TITLE, " ", ITEM),
+            milestone(TITLE, BRIEF, " "),
+        ] {
+            assert!(validate_project(&blank).is_err());
+        }
+    }
+
+    #[test]
+    fn a_rubric_criterion_of_any_length_is_read_not_refused() {
+        let title = "A criterion title that runs on. ".repeat(10);
+        let description = "A description of observable work that runs on. ".repeat(40);
+        let made = rubric(
+            vec![criterion("Hi", "Short."), criterion(&title, &description)],
+            true,
+        );
+        assert!(made.is_ok(), "{:?}", made.as_ref().err());
+        assert_eq!(made.unwrap().len(), 2);
+        for blank in [criterion(" ", "A description."), criterion("Title", " ")] {
+            let other = criterion("Another", "Another description.");
+            assert!(rubric(vec![blank, other], true).is_err());
+        }
+    }
+
+    #[test]
+    fn a_saved_criterion_of_any_length_is_read_not_refused() {
+        let title = "A criterion title that runs on. ".repeat(10);
+        let description = "A description of observable work that runs on. ".repeat(40);
+        let checked = validate_saved_rubric(&[saved("Hi", "Short."), saved(&title, &description)]);
+        assert!(checked.is_ok(), "{:?}", checked.as_ref().err());
+        assert!(validate_saved_rubric(&[saved(" ", "A description.")]).is_err());
+        assert!(validate_saved_rubric(&[saved("Title", " ")]).is_err());
+    }
+
+    #[test]
+    fn the_project_schema_bounds_no_text_but_a_blank() {
+        let bounds = length_bounds(&project_schema());
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
+    #[test]
+    fn the_rubric_schema_bounds_no_text_but_a_blank() {
+        let bounds = length_bounds(&rubric_schema());
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+}

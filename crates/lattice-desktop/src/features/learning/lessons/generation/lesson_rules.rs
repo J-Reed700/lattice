@@ -728,4 +728,55 @@ mod tests {
         assert_eq!(findings.len(), 1);
         assert!(findings[0].note.ends_with("2 practice, 2 quiz, 1 test."));
     }
+
+    #[test]
+    fn a_question_prompt_longer_than_1200_characters_is_no_finding() {
+        let mut candidate = lesson();
+        candidate["questions"][1]["prompt"] =
+            json!("Which choice follows from the premise given here? ".repeat(30));
+        assert!(lesson_rules(&candidate).is_empty());
+        candidate["questions"][1]["prompt"] = json!("  ");
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].key().site, FindingSite::Question(1));
+    }
+
+    #[test]
+    fn an_answer_explanation_longer_than_1600_characters_is_no_finding() {
+        let mut candidate = lesson();
+        candidate["questions"][2]["explanation"] =
+            json!("Because the premise fixes the outcome. ".repeat(60));
+        assert!(lesson_rules(&candidate).is_empty());
+        candidate["questions"][2]["explanation"] = json!("");
+        assert_eq!(lesson_rules(&candidate).len(), 1);
+    }
+
+    #[test]
+    fn an_answer_choice_longer_than_500_characters_or_of_two_letters_is_no_finding() {
+        let mut candidate = lesson();
+        candidate["questions"][0]["options"] = json!(["Yes", "No", "Maybe", "Perhaps"]);
+        candidate["questions"][1]["options"] =
+            json!(["One", "Two", "Three", "A long answer choice. ".repeat(40)]);
+        assert!(lesson_rules(&candidate).is_empty());
+        candidate["questions"][2]["options"] = json!(["One", "Two", "Three", "  "]);
+        assert_eq!(lesson_rules(&candidate).len(), 1);
+    }
+
+    #[test]
+    fn a_section_longer_than_5000_characters_is_no_finding() {
+        let mut candidate = lesson();
+        candidate["blocks"][0]["body"] =
+            json!("A long explanation of the idea, with no figures in it. ".repeat(120));
+        assert!(lesson_rules(&candidate).is_empty());
+    }
+
+    #[test]
+    fn a_block_title_longer_than_160_characters_or_of_two_letters_is_no_finding() {
+        let mut candidate = lesson();
+        candidate["blocks"][2]["title"] = json!("A title that runs on and on. ".repeat(10));
+        candidate["blocks"][3]["title"] = json!("Go");
+        assert!(lesson_rules(&candidate).is_empty());
+        candidate["blocks"][3]["title"] = json!("   ");
+        assert_eq!(lesson_rules(&candidate).len(), 1);
+    }
 }

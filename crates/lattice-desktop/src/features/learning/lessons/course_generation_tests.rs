@@ -307,6 +307,34 @@ pub(in crate::features::learning) struct ScriptedModel {
     pub(in crate::features::learning) prompts: std::sync::Mutex<Vec<String>>,
 }
 
+/// Where `schema` bounds a string's length above a blank: each `maxLength`
+/// and each `minLength` over one, as `path: bound`.
+pub(in crate::features::learning) fn length_bounds(schema: &serde_json::Value) -> Vec<String> {
+    fn walk(value: &serde_json::Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, inner) in fields {
+                    let at = format!("{path}/{key}");
+                    let above_one = inner.as_u64().is_some_and(|bound| bound > 1);
+                    if key == "maxLength" || (key == "minLength" && above_one) {
+                        found.push(format!("{at}: {inner}"));
+                    }
+                    walk(inner, &at, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (position, inner) in items.iter().enumerate() {
+                    walk(inner, &format!("{path}/{position}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", &mut found);
+    found
+}
+
 #[tokio::test]
 async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishes() -> Result<()> {
     use crate::features::learning::{

@@ -565,6 +565,25 @@ mod tests {
         assert_eq!(checked.unwrap()[0].missing_assertions[0].statement, missing);
     }
 
+    #[test]
+    fn the_mapping_schema_bounds_no_text_but_a_blank() {
+        let units = [
+            json!({"index":0,"passages":[{"id":"a","text":"A fact."}],"claims":[{"id":"c","statement":"Another fact."}]}),
+        ];
+        let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+            &schema(&units),
+        );
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
+    #[test]
+    fn the_fidelity_schema_bounds_no_text_but_a_blank() {
+        let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+            &fidelity_schema(),
+        );
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
     #[tokio::test]
     async fn proposed_omissions_are_replaced_by_the_judges_own_list() {
         for (reply, complete) in [
