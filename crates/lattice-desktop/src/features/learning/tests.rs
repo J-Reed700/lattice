@@ -1188,6 +1188,37 @@ async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Res
 }
 
 #[tokio::test]
+async fn a_study_tangent_can_start_from_a_selection_of_any_length() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let program = fixture();
+    repo.create(&program).await?;
+    let selected_text = "A long passage of the lesson, quoted whole. ".repeat(300);
+    let selected_text = selected_text.trim().to_string();
+
+    let tangent = repo
+        .create_tangent(&CreateLearningTangentRequestDto {
+            program_id: program.summary.id.clone(),
+            module_id: program.modules[0].id.clone(),
+            lesson_id: program.modules[0].lessons[0].id.clone(),
+            section_index: None,
+            section_title: None,
+            selected_text: selected_text.clone(),
+        })
+        .await?;
+
+    assert_eq!(tangent.selected_text, selected_text);
+    let first: String =
+        sqlx::query_scalar("SELECT content FROM conversation_messages WHERE conversation_id = ?")
+            .bind(&tangent.conversation_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert!(first.contains(&format!("> {selected_text}")));
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_learning_tangents_lifecycle() -> Result<()> {
     let pool = pool().await?;
     let repo = LearningRepository::new(pool.clone());

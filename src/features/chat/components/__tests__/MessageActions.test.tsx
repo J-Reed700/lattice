@@ -145,6 +145,29 @@ describe('MessageActions', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('starts a tangent from a reply of any length, whole', () => {
+    const create = vi.fn();
+    const longReply = 'A long reply. '.repeat(2000);
+    const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => longReply };
+    render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
+      <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
+    </TangentSelectionContext.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
+    expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: longReply.trim() });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('starts nothing from a blank reply', () => {
+    const create = vi.fn();
+    const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => '  \n  ' };
+    render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
+      <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
+    </TangentSelectionContext.Provider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
+    expect(create).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('does not offer a tangent on a user message and waits for pending creation', () => {
     const create = vi.fn();
     const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => 'Reply' };

@@ -101,6 +101,16 @@ describe('the passage menu', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
+  it('starts a tangent from a passage of any length', () => {
+    const long = 'The Nile floods each summer. '.repeat(1000).trim();
+    const { create, passage } = renderPassage(long);
+    openMenu(passage);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ask in a tangent' }));
+    expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: long });
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
   it('focuses Copy while a tangent is already being created', () => {
     const { passage } = renderPassage(undefined, { creating: true });
     openMenu(passage);

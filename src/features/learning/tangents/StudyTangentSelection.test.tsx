@@ -149,6 +149,16 @@ describe('StudyTangentSelection', () => {
     expect(context!.startTangent).not.toHaveBeenCalled();
   });
 
+  it('starts a tangent from a passage of any length', () => {
+    const long = 'The Nile flooded every summer. '.repeat(1000).trim();
+    const { context } = renderSelection(contextValue(), long);
+    select(passageText());
+    expect(screen.getByRole('button', { name: 'Ask in a tangent' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Ask in a tangent' }));
+    expect(context!.startTangent).toHaveBeenCalledWith({ moduleId: 'm1', lessonId: 'l1', sectionIndex: 2, sectionTitle: 'Floods', selectedText: long });
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it('opens a menu on right-click with tangent and copy, moving focus with the arrows', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
@@ -251,6 +261,15 @@ describe('SectionTangentBar', () => {
     renderBar(idle, { sectionText: '   ', sectionIndex: 3 });
     fireEvent.click(screen.getByTestId('section-tangent-btn-3'));
     expect(idle.startTangent).not.toHaveBeenCalled();
+  });
+
+  it('starts a tangent from a section of any length, whole', () => {
+    const context = contextValue();
+    const long = 'The Nile flooded every summer. '.repeat(1000);
+    renderBar(context, { sectionText: `  ${long}  ` });
+    fireEvent.click(screen.getByTestId('section-tangent-btn-2'));
+    expect(context.startTangent).toHaveBeenCalledWith({ moduleId: 'm1', lessonId: 'l1', sectionIndex: 2, sectionTitle: 'Floods', selectedText: long.trim() });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('asks for a shorter passage from a long section', () => {
