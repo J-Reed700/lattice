@@ -684,6 +684,49 @@ async fn claims_on_two_sentences_of_a_section_at_recite_are_both_recited_in_one_
 }
 
 #[tokio::test]
+async fn a_recited_sentence_is_named_as_its_section_writes_it_not_as_the_extractor_quoted_it(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let at = sources[0].excerpt.find(GOOD).unwrap();
+    let mut ledger = open().await?;
+    let id = claim(&mut ledger, "worded", (GOOD, GOOD), GOOD, SOURCED).await?;
+    walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
+    let mut lesson = lesson_of(GOOD);
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(GOOD, GOOD)],
+        &sources,
+    )
+    .await?;
+    // The extractor quoted the sentence in words of its own; the ledger located
+    // the claim on the section's.
+    let report = pass_report(vec![Finding {
+        quote: format!("In short, {GOOD}"),
+        ..elsewhere(GOOD, &sources[0].id, at..at + GOOD.len())
+    }]);
+
+    super::super::repair_loop::recite(
+        &mut ledger,
+        &policy,
+        (&mut lesson, &report),
+        (&mut vec![sources[0].clone()], &mut HashSet::new()),
+        &references,
+    )
+    .await?;
+
+    assert_eq!(
+        lesson["blocks"][0]["citations"],
+        json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}]),
+        "the entry names the sentence as the section writes it"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_second_claim_on_a_sentence_at_recite_waits_a_round_then_is_done_on_the_citation_written(
 ) -> Result<()> {
     const WHITESPACE: &str = "DictReader preserves whitespace by default.";
