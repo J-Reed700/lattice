@@ -36,6 +36,7 @@ import random
 import re
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 WORD = re.compile(r"[a-z0-9][a-z0-9.+#-]*")
@@ -89,11 +90,12 @@ def verbatim(source, passage):
 
 
 def extract(args):
-    db = sqlite3.connect(f'file:{args.db}?mode=ro', uri=True)
-    known = sources(db)
+    with closing(sqlite3.connect(f'file:{args.db}?mode=ro', uri=True)) as db:
+        known = sources(db)
+        verifications = db.execute('select lesson_id, report_json from learning_lesson_verifications').fetchall()
     rng = random.Random(args.seed)
     approved, related, dropped = [], [], 0
-    for lesson_id, report in db.execute('select lesson_id, report_json from learning_lesson_verifications'):
+    for lesson_id, report in verifications:
         for finding in json.loads(report).get('findings', []):
             claim = clean(finding['statement'])
             cited = finding.get('supporting_quote')

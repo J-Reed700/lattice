@@ -847,6 +847,70 @@ test('conversation outline navigates long virtualized replies and tracks the rea
   expect(errors).toEqual([]);
 });
 
+test('conversation outline stays where the reader scrolls it right after it opens', async ({ page }) => {
+  await mockCommands(page, (settings) => {
+    const stamp = '2026-10-03T10:00:00Z';
+    const messages = Array.from({ length: 60 }, (_, index) => ({
+      id: `outline-${index}`, conversationId: 'outline-chat', role: index % 2 === 0 ? 'user' : 'assistant',
+      content: index % 2 === 0 ? `Question ${index / 2 + 1}: Explain this part of the project.`
+        : `Answer ${Math.ceil(index / 2)}.\n\n${'This paragraph explains the design in detail, including the choices we made and how they affect the project. '.repeat(12)}\n\n`.repeat(9),
+      tokens: 100, status: 'completed', createdAt: stamp,
+    }));
+    const conversation = { id: 'outline-chat', title: 'Long conversation', createdAt: stamp, updatedAt: stamp, messageCount: messages.length, totalTokens: 6000, spaceId: 'space_general', isArchived: false };
+    return {
+      get_settings: () => settings,
+      // Unanswered, the chat adds "Import status is unavailable" about 8 s after load, which shrinks the outline.
+      get_batch_history: () => ({ jobs: [] }),
+      list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
+      list_conversations_explorer: () => ({ conversations: [conversation], total: 1 }),
+      list_conversations: () => ({ conversations: [conversation], total: 1 }),
+      get_conversation: () => ({ conversation }),
+      get_conversation_messages: () => ({ messages, total: messages.length }),
+      list_message_bookmarks: () => ({ bookmarks: [], total: 0 }),
+      list_journals: () => [],
+      list_conversation_tangents: () => [],
+      list_conversation_linked_documents: () => [],
+      list_conversation_web_sources: () => [],
+      list_downloaded_models: () => [],
+      list_downloads: () => [],
+      activity_snapshot: () => ({ items: [], running: 0 }),
+      get_indexed_folders: () => [],
+    };
+  }, makeAppSettings());
+  await page.goto('/chat?conversationId=outline-chat');
+  const navigation = page.getByRole('navigation', { name: 'Conversation navigation' });
+  await expect(navigation.getByTitle('Message 60 of 60 · Assistant')).toBeVisible();
+
+  // Open and scroll in one task, so the scroll lands before the first frame however fast the browser draws.
+  // React draws the opened outline in a microtask, still within the task.
+  const outline = await page.evaluate(async () => {
+    document.querySelector<HTMLButtonElement>('button[aria-label="Expand conversation outline"]')?.click();
+    await Promise.resolve();
+    const list = document.querySelector<HTMLElement>('[aria-label="Message checkpoints"]');
+    if (!list) throw new Error('The outline did not open');
+    const opened = { scrollTop: list.scrollTop, end: list.scrollHeight - list.clientHeight };
+    list.scrollTop = 11 * 60;
+    const frames = (count: number) => new Promise<void>((resolve) => {
+      const next = (left: number): void => {
+        if (left === 0) resolve();
+        else requestAnimationFrame(() => next(left - 1));
+      };
+      next(count);
+    });
+    await frames(30);
+    let changes = 0;
+    const watch = new MutationObserver((records) => { changes += records.filter((record) => record.type === 'childList').length; });
+    watch.observe(list, { childList: true, subtree: true });
+    await frames(30);
+    watch.disconnect();
+    return { opened, scrollTop: list.scrollTop, changes };
+  });
+  expect(outline.opened.scrollTop).toBeGreaterThan(outline.opened.end - 2);
+  expect(outline.scrollTop).toBe(11 * 60);
+  expect(outline.changes).toBe(0);
+  await expect(navigation.getByRole('button', { name: /^Message 12, Assistant:/ })).toBeInViewport();
+});
+
 test('chat sidebar renames a conversation and opens the spaces editor', async ({ page }) => {
   await mockCommands(page, (settings) => {
     const stamp = new Date().toISOString();

@@ -1,5 +1,6 @@
 //! Tests for the backup adapter.
 use super::*;
+use lattice_core::shared::testing::links::{self, LinkKind};
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::tempdir;
 
@@ -278,34 +279,41 @@ async fn test_create_backup_allows_valid_path_in_backup_dir() {
     pool.close().await;
 }
 
-#[tokio::test]
-
-async fn test_create_backup_rejects_symlink_escape() {
+async fn create_backup_rejects_a_link_escape(kind: LinkKind) {
     let (pool, db_path, _dir) = create_test_pool().await;
     let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
+    let link_path = backup_dir.join("escape_link");
+    let target_path = db_path.parent().unwrap().parent().unwrap();
 
-        let symlink_path = backup_dir.join("escape_link");
-        let target_path = db_path.parent().unwrap().parent().unwrap();
+    if links::link_dir(kind, target_path, &link_path).unwrap() {
+        let malicious_path = link_path.join("evil.db");
 
-        if symlink(target_path, &symlink_path).is_ok() {
-            let malicious_path = symlink_path.join("evil.db");
+        let result = adapter.create_backup(Some(malicious_path)).await;
 
-            let result = adapter.create_backup(Some(malicious_path)).await;
+        assert!(
+            result.is_err(),
+            "a {kind} out of the backup folder must be refused"
+        );
 
-            assert!(result.is_err());
-
-            fs::remove_file(&symlink_path).ok();
-        }
+        fs::remove_file(&link_path).ok();
     }
 
     pool.close().await;
+}
+
+#[tokio::test]
+async fn test_create_backup_rejects_symlink_escape() {
+    create_backup_rejects_a_link_escape(LinkKind::Symlink).await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn test_create_backup_rejects_junction_escape() {
+    create_backup_rejects_a_link_escape(LinkKind::Junction).await;
 }
 
 #[tokio::test]

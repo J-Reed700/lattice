@@ -171,6 +171,25 @@ fn proposed_transition(item_id: &str, message_id: &str, quote: &str) -> serde_js
     })
 }
 
+fn proposed_supersession(
+    item_id: &str,
+    replacement: &str,
+    message_id: &str,
+    quote: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "item_id": item_id,
+        "state": "superseded",
+        "replacement_candidate_id": replacement,
+        "evidence": [{
+            "message_id": message_id,
+            "quote": quote,
+            "occurrence": null,
+            "purpose": "transition",
+        }],
+    })
+}
+
 fn verdict_response(pairs: &[(&str, &str)]) -> String {
     serde_json::json!({
         "verdicts": pairs
@@ -1588,6 +1607,101 @@ async fn an_unsupported_retirement_is_dropped_without_stalling_source_coverage()
     let old = port.item("item-old").expect("the restriction must survive");
     assert_eq!(old.state, MemoryState::Active);
     assert_eq!(old.superseded_by, None);
+}
+
+/// The one review call for a pass that replaces a constraint with a new item
+/// and ends another with nothing in its place.
+async fn reviewed_retirements() -> String {
+    let messages = four_turns();
+    let mut on_hold = committed_constraint("item-hold", &messages[0]);
+    on_hold.label = "Staging deploys are on hold".to_string();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![committed_constraint("item-old", &messages[0]), on_hold],
+        0,
+    );
+    let quote = "Actually you may deploy staging.";
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![proposed_constraint(
+                "c1",
+                "Staging deploys need no approval",
+                "m3",
+                quote,
+            )],
+            vec![
+                proposed_supersession("item-old", "c1", "m3", quote),
+                proposed_transition("item-hold", "m3", quote),
+            ],
+            &PREFIX_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[
+            ("addition:c1", "supported"),
+            ("transition:item-old", "supported"),
+            ("transition:item-hold", "supported"),
+        ]))],
+        vec![Ok("Staging may be deployed.".to_string())],
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    job.run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("the pass commits");
+
+    assert_eq!(llm.count(Task::Review), 1);
+    llm.prompts_for(Task::Review).remove(0)
+}
+
+fn review_of(prompt: &str, id: &str) -> serde_json::Value {
+    let payload: serde_json::Value = serde_json::from_str(prompt).expect("review prompt JSON");
+    payload["reviews"]
+        .as_array()
+        .expect("reviews")
+        .iter()
+        .find(|review| review["id"] == id)
+        .unwrap_or_else(|| panic!("no review for {id}: {prompt}"))
+        .clone()
+}
+
+#[tokio::test]
+async fn a_superseding_change_is_reviewed_as_proposing_its_replacement_not_the_item_it_retires() {
+    let prompt = reviewed_retirements().await;
+
+    let transition = review_of(&prompt, "transition:item-old");
+    assert_eq!(
+        transition["proposed_label"],
+        "Staging deploys need no approval"
+    );
+    assert_eq!(
+        transition["existing_item_label"],
+        "Deployment requires approval"
+    );
+    assert_eq!(
+        transition["existing_item_evidence"][0]["text"],
+        "Do not deploy until I approve."
+    );
+
+    let addition = review_of(&prompt, "addition:c1");
+    assert_eq!(
+        addition["proposed_label"],
+        "Staging deploys need no approval"
+    );
+    assert_eq!(addition["existing_item_label"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn a_retirement_with_no_replacement_is_reviewed_with_no_proposed_label() {
+    let prompt = reviewed_retirements().await;
+
+    let transition = review_of(&prompt, "transition:item-hold");
+    assert_eq!(
+        transition.get("proposed_label"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        transition["existing_item_label"],
+        "Staging deploys are on hold"
+    );
 }
 
 #[tokio::test]

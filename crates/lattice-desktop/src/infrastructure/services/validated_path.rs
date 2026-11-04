@@ -151,6 +151,7 @@ impl AsRef<Path> for ValidatedFilePath {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::testing::links::{self, LinkKind};
     use std::fs;
     use tempfile::TempDir;
 
@@ -162,18 +163,6 @@ mod tests {
         let file_path = dir.path().join(name);
         fs::write(&file_path, content).expect("Failed to create temp file");
         file_path
-    }
-
-    fn create_symlink(original: &Path, link: &Path) -> std::io::Result<()> {
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(original, link)
-        }
-
-        #[cfg(windows)]
-        {
-            std::os::windows::fs::symlink_file(original, link)
-        }
     }
 
     #[test]
@@ -291,8 +280,7 @@ mod tests {
         let real_file = create_temp_file(&temp_dir, "real.txt", "content");
         let link_file = temp_dir.path().join("link.txt");
 
-        if create_symlink(&real_file, &link_file).is_err() {
-            // Skip test if symlink creation fails (e.g., Windows without admin)
+        if !links::link_file(&real_file, &link_file).unwrap() {
             return;
         }
 
@@ -312,16 +300,14 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_canonicalize_detects_directory_symlink() {
+    fn canonicalize_allows_a_file_through_a_directory_link(kind: LinkKind) {
         let temp_dir = create_temp_dir();
         let real_dir = temp_dir.path().join("real_dir");
         fs::create_dir(&real_dir).unwrap();
         let _real_file = create_temp_file(&temp_dir, "real_dir/file.txt", "content");
 
         let link_dir = temp_dir.path().join("link_dir");
-        if create_symlink(&real_dir, &link_dir).is_err() {
-            // Skip test if symlink creation fails
+        if !links::link_dir(kind, &real_dir, &link_dir).unwrap() {
             return;
         }
 
@@ -329,7 +315,18 @@ mod tests {
 
         let result = ValidatedFilePath::validate_and_canonicalize(&file_via_link);
 
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "{kind}");
+    }
+
+    #[test]
+    fn test_canonicalize_detects_directory_symlink() {
+        canonicalize_allows_a_file_through_a_directory_link(LinkKind::Symlink);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_canonicalize_detects_directory_junction() {
+        canonicalize_allows_a_file_through_a_directory_link(LinkKind::Junction);
     }
 
     #[test]
