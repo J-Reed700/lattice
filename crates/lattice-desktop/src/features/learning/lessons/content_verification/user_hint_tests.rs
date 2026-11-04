@@ -121,13 +121,22 @@ type Scope<'a> = (&'a LearningCurriculumRepository, &'a str, &'a str);
 /// A lesson of one section whose statement waited for research when the user
 /// gave a hint on it: the claim is the user's now, and holds the hint. Gives
 /// the lesson.
-async fn hinted(
+async fn hinted(pool: &sqlx::SqlitePool, scope: Scope<'_>, statement: &str) -> Result<String> {
+    hinted_in(pool, scope, lesson_of(&section(statement)), statement).await
+}
+
+/// [`hinted`] in `lesson`, whose first section states `statement`.
+async fn hinted_in(
     pool: &sqlx::SqlitePool,
     (repo, job, lesson_id): Scope<'_>,
+    lesson: Value,
     statement: &str,
 ) -> Result<String> {
-    let body = section(statement);
-    let raw = lesson_of(&body).to_string();
+    let body = lesson["blocks"][0]["body"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let raw = lesson.to_string();
     lesson_drafts::run(repo, job, lesson_id, async {
         lesson_drafts::resume(INPUT.into()).await?;
         lesson_drafts::save(&raw).await?;
@@ -425,5 +434,34 @@ async fn a_hint_whose_round_reached_nothing_is_tried_again_by_the_next_run() -> 
         entry.state()
     );
     assert_eq!(after_the_hint(&entry).first(), Some(&"researched"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_hint_whose_page_verifies_the_claim_on_a_source_its_section_does_not_cite_leaves_the_published_section_citing_that_source(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let scope = (&repo, job.as_str(), lesson_id.as_str());
+    let model = Searching::new(&[CLAIM]);
+    model.plans(Some(one_search()));
+    // The section cites a page of the course; the hint finds another.
+    let mut lesson = lesson_of(&section(CLAIM));
+    lesson["blocks"][0]["sourceIndex"] = json!(0);
+    lesson["blocks"][0]["quote"] = json!(GOOD);
+    let raw = hinted_in(&pool, scope, lesson, CLAIM).await?;
+
+    let (published, _) = resumed(&pool, scope, &model, Some(raw)).await??;
+
+    let published: Value = serde_json::from_str(&published)?;
+    let block = &published["blocks"][0];
+    assert!(
+        block["quote"]
+            .as_str()
+            .is_some_and(|quote| quote.contains(CLAIM)),
+        "the section cites the page the hint found: {block}"
+    );
+    // The page the round saved is numbered after the course's own.
+    assert_eq!(block["sourceIndex"], 1);
     Ok(())
 }

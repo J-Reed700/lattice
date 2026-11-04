@@ -268,6 +268,28 @@ async fn a_statement_with_no_passage_is_unproven_and_nothing_is_asked() -> Resul
 }
 
 #[tokio::test]
+async fn a_statement_whose_section_cites_nothing_is_read_by_parts_on_the_courses_page_and_stands_where_the_page_states_it(
+) -> Result<()> {
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(32_000);
+
+    let read = read_one(
+        Reading::Parts,
+        &model,
+        &world_of(&references, Citations::default()),
+        CLAIM,
+    )
+    .await?;
+
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(read.finding.two_pass.pass, Some(Pass::Corroboration));
+    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_quotation_found_in_its_source_stands_in_code_without_a_call() -> Result<()> {
     let sources = vec![LearningSourceDto {
         id: "book".into(),
