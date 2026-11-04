@@ -7,8 +7,8 @@
 use super::class_checks::finding_of;
 use super::classify::{states_a_specific_in, Case};
 use super::evidence_checks::{
-    alone, compare, part_wise, AnswerSize, CheckedPart, Comparison, Labels, Pass, PendingClaim,
-    NO_PASSAGES,
+    alone, applies, bridge_checker, compare, group, labelled_passages, pack, part_wise, AnswerSize,
+    CheckedPart, Comparison, Labels, Pass, PendingClaim, NO_PASSAGES,
 };
 use super::*;
 use async_trait::async_trait;
@@ -128,6 +128,15 @@ fn specifics(at: &ReadContext<'_>, unit: usize) -> impl Fn(&str) -> bool {
     move |part| states_a_specific_in(part, &case)
 }
 
+/// Whether the part-wise judge holds a check of `claim` against `passages`
+/// beside its answer, as it is shown them: the test of the page `Parts` reads,
+/// that `Page` leaves out, and of the section's passages `Ground` reads.
+fn parts_fit<'a>(at: &'a ReadContext<'_>) -> impl Fn(&str, &[EvidencePassage]) -> bool + 'a {
+    move |claim, passages| {
+        bridge_checker(at.llm).bridge_fits(claim, &labelled_passages(passages, &at.labels))
+    }
+}
+
 /// `statement`'s comparison of `evidence` for `pass`, keyed as the pass keys
 /// its own: `checked` is the statement as the checker reads it.
 fn comparison(
@@ -167,8 +176,30 @@ async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restore
     }
 }
 
-/// The part-wise judge's finding on `evidence` for `statement`, restored from
-/// its receipt or asked for, which pass A records under the same key.
+/// Asks the strict judge about `pending`, packed into requests as the pass
+/// packs them, and gives each finding with its comparison's ordinal.
+async fn ask_strict(
+    at: &ReadContext<'_>,
+    pending: Vec<PendingClaim>,
+) -> Result<Vec<(usize, Finding)>> {
+    let mut asked = Vec::new();
+    for request in pack(at.llm, pending, &at.labels) {
+        let (results, answered) =
+            group(at.llm, request, &|_: Pass, _: &CheckedClaim| {}, &at.labels).await?;
+        tally(at.retained, answered);
+        asked.extend(
+            results
+                .into_iter()
+                .map(|(_, (ordinal, _, finding, _))| (ordinal, finding)),
+        );
+    }
+    Ok(asked)
+}
+
+/// The finding on `evidence` for `statement`, restored from its receipt or
+/// asked for, which pass A records under the same key: the part-wise judge's,
+/// or the strict judge's of a page that holds no source passage (an example's
+/// run is no source).
 async fn judge_parts(
     at: &ReadContext<'_>,
     ordinal: usize,
@@ -179,13 +210,21 @@ async fn judge_parts(
     let pending = comparison(at, ordinal, statement, checked, evidence, Pass::Attribution);
     let finding = match restored(at, pending).await? {
         Restored::Receipt(finding) => finding,
-        Restored::Ask(pending) => {
+        Restored::Ask(pending) if applies(&pending) => {
             let guard = specifics(at, statement.unit);
             let ((_, (_, _, finding, _)), answered) =
                 part_wise(at.llm, pending, &at.labels, guard).await?;
             tally(at.retained, answered);
             finding
         }
+        Restored::Ask(pending) => ask_strict(at, vec![pending])
+            .await?
+            .into_iter()
+            .next()
+            .map(|(_, finding)| finding)
+            .ok_or_else(|| {
+                AppError::InternalError("A comparison was asked without a finding".into())
+            })?,
     };
     Ok(alone(finding))
 }

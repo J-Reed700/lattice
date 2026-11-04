@@ -274,4 +274,18 @@ impl ClaimChecker<'_> {
             output_tokens,
         }
     }
+
+    /// Whether a part-wise check of `statement` against `passages` fits the
+    /// window beside its answer.
+    pub fn bridge_fits(&self, statement: &str, passages: &[String]) -> bool {
+        self.bridge_tokens(statement, passages)
+            .saturating_add(self.max_output_tokens as usize)
+            <= self.llm.max_context_tokens()
+    }
+
+    fn bridge_tokens(&self, statement: &str, passages: &[String]) -> usize {
+        self.llm
+            .count_tokens(BRIDGE_SYSTEM)
+            .saturating_add(self.llm.count_tokens(&bridge_prompt(statement, passages)))
+    }
 }

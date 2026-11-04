@@ -1,7 +1,7 @@
-//! `Ground`: the part-wise judge on the section's cited passages, asked only
-//! whether they ground a statement a closed-book reading called false. It is
-//! the same judge as `Parts` on other passages, read as another question.
-use super::super::class_checks::fitted;
+//! `Ground`: the part-wise judge on the section's cited passages, as many as it
+//! holds, asked only whether they ground a statement a closed-book reading
+//! called false. It is the same judge as `Parts` on other passages, read as
+//! another question.
 use super::super::evidence_checks::as_checked;
 use super::*;
 
@@ -22,7 +22,12 @@ impl Reader for Ground {
                 classed,
             } = *statement;
             let checked = as_checked(claim, at.citations, at.references);
-            let mut evidence = fitted(at.llm, &checked.statement, at.citations.of(unit));
+            let mut evidence = take_cited(
+                parts_fit(at),
+                &checked.statement,
+                &mut Vec::new(),
+                at.citations.of(unit),
+            );
             canonicalize_evidence(&mut evidence);
             let mut finding = if evidence.is_empty() {
                 no_passages(statement)

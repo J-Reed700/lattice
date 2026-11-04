@@ -21,7 +21,7 @@ mod requests;
 mod run;
 mod walk;
 
-pub(super) use bridge::part_wise;
+pub(super) use bridge::{applies, bridge_checker, part_wise};
 pub(super) use claims::{attribution_page, compare, Comparison, NO_PASSAGES};
 use claims::{Compared, Context, Prepared};
 #[cfg(test)]
@@ -35,7 +35,7 @@ pub(in crate::features::learning) use page_budget::{page_budget, AnswerSize};
 use requests::finish;
 #[cfg(test)]
 pub(super) use requests::{combined, packed};
-pub(super) use requests::{group, pack};
+pub(super) use requests::{group, labelled_passages, pack};
 use run::Run;
 #[cfg(test)]
 pub(super) use walk::first_page;

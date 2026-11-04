@@ -1,6 +1,7 @@
 //! `Parts`: the part-wise judge on a statement's own citation (pass A). A
-//! quotation found in the source it names is settled in code; otherwise the
-//! judge reads the passages its sentence cites, with the section's passed
+//! quotation found in the source it names, or a claim the user resolved with
+//! evidence of their own, is settled without a call; otherwise the judge reads
+//! the passages its sentence cites that it holds, with the section's passed
 //! example runs, and with no passage at all nothing is asked.
 use super::super::evidence_checks::{as_checked, attribution_page};
 use super::*;
@@ -28,20 +29,22 @@ async fn read_one(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_
         claim,
         classed,
     } = *statement;
-    if let Some(mut finding) = quote_claims::settle(at.references, at.citations, unit, claim)? {
+    let settled = quote_claims::settle(at.references, at.citations, unit, claim)?
+        .or_else(|| at.retained.settled_finding(unit, claim));
+    if let Some(mut finding) = settled {
         finding.class = Some(classed);
         return Ok(Read {
-            outcome: Outcome::Stands,
+            outcome: parts_outcome(&finding),
             finding,
         });
     }
     let checked = as_checked(claim, at.citations, at.references);
     let (evidence, _) = attribution_page(
-        at.llm,
         at.executions,
         at.citations,
         (unit, &claim.statement),
         &checked.statement,
+        parts_fit(at),
     );
     let mut finding = if evidence.is_empty() {
         no_passages(statement)

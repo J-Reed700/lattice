@@ -165,11 +165,11 @@ impl Context<'_, '_> {
         }
         let checked = as_checked(&claim, citations, references);
         let (attribution, shown_by_a) = attribution_page(
-            llm,
             self.executions,
             citations,
             (unit, &claim.statement),
             &checked.statement,
+            |text, passages| fits_window(llm, text, passages),
         );
         let a_key =
             (!attribution.is_empty()).then(|| ClaimChecks::key(unit, &checked, &attribution));
@@ -333,18 +333,19 @@ impl Context<'_, '_> {
 
 /// The page pass A reads for the claim `statement` of section `unit`: its
 /// passed example runs and the passages the claim's sentence cites (the
-/// section's when the writer cited none), while a check of `checked` alone
-/// fits the window, in canonical order. Also the source passages among them.
+/// section's when the writer cited none), while a check of `checked` against
+/// them `fits` the judge that reads them, in canonical order. Also the source
+/// passages among them.
 pub(in crate::features::learning::lessons::content_verification) fn attribution_page(
-    llm: &dyn LLMPort,
     executions: &[execution::Observation],
     citations: &Citations,
     (unit, statement): (usize, &str),
     checked: &str,
+    fits: impl Fn(&str, &[EvidencePassage]) -> bool,
 ) -> (Vec<EvidencePassage>, Vec<EvidencePassage>) {
     let mut attribution = example_runs(executions, unit);
     let shown_by_a = take_cited(
-        llm,
+        fits,
         checked,
         &mut attribution,
         &citations.of_claim(unit, statement),

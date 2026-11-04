@@ -84,8 +84,15 @@ pub(super) async fn finish(
 /// passage is never read as another one; the quotation must still come from
 /// the passage's own text.
 pub(super) fn labelled(pending: &PendingClaim, labels: &Labels) -> Vec<String> {
-    pending
-        .evidence
+    labelled_passages(&pending.evidence, labels)
+}
+
+/// [`labelled`], for a page not yet held by a comparison.
+pub(in crate::features::learning::lessons::content_verification) fn labelled_passages(
+    passages: &[EvidencePassage],
+    labels: &Labels,
+) -> Vec<String> {
+    passages
         .iter()
         .map(|p| match labels.get(&p.source_id) {
             Some(label) => format!("{label}\n{}", p.text),

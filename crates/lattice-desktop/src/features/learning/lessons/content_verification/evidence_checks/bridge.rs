@@ -20,7 +20,9 @@ const OUTPUT_TOKENS: u32 = 600;
 
 /// Whether `pending` is read part by part: it is pass A's and a source's
 /// passage is among those it cites (an example's run is no source).
-pub(super) fn applies(pending: &PendingClaim) -> bool {
+pub(in crate::features::learning::lessons::content_verification) fn applies(
+    pending: &PendingClaim,
+) -> bool {
     pending.pass == Pass::Attribution
         && pending
             .evidence
@@ -38,6 +40,18 @@ pub(super) async fn individual(
     part_wise(llm, pending, labels, states_a_specific).await
 }
 
+/// The part-wise judge, as it is asked and as a page is fitted to it.
+pub(in crate::features::learning::lessons::content_verification) fn bridge_checker(
+    llm: &dyn LLMPort,
+) -> ClaimChecker<'_> {
+    ClaimChecker::new(
+        llm,
+        SamplingOverride::deterministic(),
+        OUTPUT_TOKENS,
+        CheckPolicy::Bridge,
+    )
+}
+
 /// [`individual`], with `names_a_specific` deciding which of the parts the
 /// judge called common name a specific.
 pub(in crate::features::learning::lessons::content_verification) async fn part_wise(
@@ -47,15 +61,11 @@ pub(in crate::features::learning::lessons::content_verification) async fn part_w
     names_a_specific: impl Fn(&str) -> bool,
 ) -> Result<((Pass, CheckedClaim), AnswerSize)> {
     let texts = labelled(&pending, labels);
-    let checker = ClaimChecker::new(
-        llm,
-        SamplingOverride::deterministic(),
-        OUTPUT_TOKENS,
-        CheckPolicy::Bridge,
-    );
     let answered = {
         let _model_call = crate::features::learning::lesson_progress::model_call();
-        checker.check_bridge(&pending.checked, &texts).await
+        bridge_checker(llm)
+            .check_bridge(&pending.checked, &texts)
+            .await
     };
     let answer = AnswerSize::of(answered.output_tokens, 1);
     let (judgment, parts) = match answered.judgments {

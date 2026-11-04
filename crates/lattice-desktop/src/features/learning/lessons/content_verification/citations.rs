@@ -253,11 +253,11 @@ pub(super) fn source_mentions(text: &str) -> Vec<SourceMention> {
 }
 
 /// Add `cited` passages not overlapping `evidence` to it, in citation
-/// order, while a check of `claim` against them alone fits the window: pass
-/// A's page, which needs no budget. Return the reference passages it now
-/// holds.
+/// order, while the judge that reads them still `fits` a check of `claim`
+/// against them: pass A's page, which needs no budget. Return the reference
+/// passages it now holds.
 pub(super) fn take_cited(
-    llm: &dyn LLMPort,
+    fits: impl Fn(&str, &[EvidencePassage]) -> bool,
     claim: &str,
     evidence: &mut Vec<EvidencePassage>,
     cited: &[EvidencePassage],
@@ -266,10 +266,11 @@ pub(super) fn take_cited(
         if evidence.iter().any(|shown| overlaps(shown, passage)) {
             continue;
         }
-        if !fits_window(llm, claim, evidence.iter().chain(std::iter::once(passage))) {
+        evidence.push(passage.clone());
+        if !fits(claim, evidence.as_slice()) {
+            evidence.pop();
             break;
         }
-        evidence.push(passage.clone());
     }
     evidence
         .iter()

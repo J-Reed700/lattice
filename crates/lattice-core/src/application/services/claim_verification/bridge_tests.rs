@@ -418,3 +418,61 @@ fn a_common_part_that_names_a_specific_does_not_ground_a_statement_once_guarded(
     let (guarded, _) = outcome(parts).guarded(names_a_figure);
     assert_eq!(guarded.ground_outcome(), Outcome::Refuted);
 }
+
+/// The page of `words` words, as one passage.
+fn page_of(words: usize) -> Vec<String> {
+    vec!["word ".repeat(words)]
+}
+
+/// The most words of one passage that `fits` holds.
+fn edge(fits: impl Fn(&[String]) -> bool) -> usize {
+    let sizes: Vec<usize> = (0..40_000).collect();
+    sizes
+        .partition_point(|&words| fits(&page_of(words)))
+        .saturating_sub(1)
+}
+
+#[test]
+fn a_part_wise_check_fits_the_window_only_beside_its_answer() {
+    let llm = Scripted::new(vec![]);
+    let asked = |answer: u32| {
+        ClaimChecker::new(
+            &llm,
+            SamplingOverride::deterministic(),
+            answer,
+            CheckPolicy::Bridge,
+        )
+    };
+    let (short, long) = (asked(512), asked(600));
+    assert!(short.bridge_fits("S.", &passages()));
+    assert!(!short.bridge_fits("S.", &["word ".repeat(40_000)]));
+
+    // The page that just fits beside a 512-token answer is refused beside the
+    // 600 tokens the part-wise judge may write.
+    let words = edge(|page| short.bridge_fits("S.", page));
+    assert!(words > 0);
+    assert!(short.bridge_fits("S.", &page_of(words)));
+    assert!(!long.bridge_fits("S.", &page_of(words)));
+}
+
+#[test]
+fn the_part_wise_check_holds_less_than_the_consistency_check_and_more_than_the_strict_one() {
+    let llm = Scripted::new(vec![]);
+    let part_wise = ClaimChecker::new(
+        &llm,
+        SamplingOverride::deterministic(),
+        600,
+        CheckPolicy::Bridge,
+    );
+    let consistency = checker(&llm, CheckPolicy::Consistency);
+    let strict = checker(&llm, CheckPolicy::Strict);
+
+    let beside_part_wise = edge(|page| part_wise.bridge_fits("S.", page));
+    let beside_consistency = edge(|page| consistency.consistency_fits("S.", page));
+    let beside_strict = edge(|page| strict.located_fits("S.", page));
+
+    assert!(
+        beside_strict < beside_part_wise && beside_part_wise < beside_consistency,
+        "{beside_strict} < {beside_part_wise} < {beside_consistency}"
+    );
+}

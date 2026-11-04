@@ -5,7 +5,7 @@
 //! pass packs them; while the job has measured no answer, a page is asked
 //! about alone, so the next is sized by it.
 use super::super::evidence_checks::{
-    as_checked, attribution_page, combine, group, pack, PageBudget, Reach, Sizing,
+    as_checked, attribution_page, combine, PageBudget, Reach, Sizing,
 };
 use super::*;
 
@@ -59,11 +59,11 @@ async fn open(
     let Statement { unit, claim, .. } = *statement;
     let checked = as_checked(claim, at.citations, at.references);
     let (_, shown) = attribution_page(
-        at.llm,
         at.executions,
         at.citations,
         (unit, &claim.statement),
         &checked.statement,
+        parts_fit(at),
     );
     let sizing = Sizing::Sized(PageBudget::of(at.llm, answers(at.retained)));
     let Some(selected) = evidence_selection::select(
@@ -107,13 +107,8 @@ async fn ask(
     pending: Vec<PendingClaim>,
     found: &mut [Option<Finding>],
 ) -> Result<()> {
-    for request in pack(at.llm, pending, &at.labels) {
-        let (results, answered) =
-            group(at.llm, request, &|_: Pass, _: &CheckedClaim| {}, &at.labels).await?;
-        tally(at.retained, answered);
-        for (_, (ordinal, _, finding, _)) in results {
-            keep(found, ordinal, finding);
-        }
+    for (ordinal, finding) in ask_strict(at, pending).await? {
+        keep(found, ordinal, finding);
     }
     Ok(())
 }

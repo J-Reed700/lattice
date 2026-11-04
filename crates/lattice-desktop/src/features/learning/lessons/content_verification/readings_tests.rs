@@ -13,6 +13,7 @@ use super::*;
 use crate::features::learning::lesson_drafts;
 use lattice_core::application::services::claim_verification::PartKind;
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};
+use std::collections::VecDeque;
 
 const EVERY_READING: [Reading; 6] = [
     Reading::Parts,
@@ -42,12 +43,14 @@ impl LLMPort for Down {
     }
 }
 
-/// What the readers read: a lesson, the course it cites and its examples' runs.
+/// What the readers read: a lesson, the course it cites, its examples' runs
+/// and the claims the user settled with evidence of their own.
 struct World<'w> {
     lesson: Value,
     references: &'w ReferenceCollection<'w>,
     citations: Citations,
     runs: Vec<execution::Observation>,
+    settled: HashMap<(usize, String), Finding>,
 }
 
 /// A lesson whose one section is an explanation of `body`.
@@ -61,7 +64,21 @@ fn world_of<'w>(references: &'w ReferenceCollection<'w>, citations: Citations) -
         references,
         citations,
         runs: Vec::new(),
+        settled: HashMap::new(),
     }
+}
+
+/// The run of section 0's example, which passed and printed `stdout`.
+fn run_printing(stdout: &str) -> execution::Observation {
+    serde_json::from_value(json!({
+        "id": "example-0", "unit": 0, "runtime": "python", "code_sha256": "none",
+        "code": "print(len('abc'))",
+        "result": {
+            "status": "passed", "exitCode": 0, "stdout": stdout, "stderr": "",
+            "outputTruncated": false, "durationMs": 1
+        }
+    }))
+    .unwrap()
 }
 
 fn claim(text: &str) -> Claim {
@@ -85,7 +102,10 @@ async fn read_all(
     world: &World<'_>,
     claims: &[(usize, Claim)],
 ) -> Result<Vec<Read>> {
-    let retained = ClaimChecks::default();
+    let retained = ClaimChecks {
+        settled: world.settled.clone(),
+        ..ClaimChecks::default()
+    };
     let at = ReadContext::new(
         model,
         &world.lesson,
@@ -301,14 +321,7 @@ async fn the_sections_passed_example_runs_are_read_beside_its_citation() -> Resu
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
     let mut world = world_of(&references, citing(&references)?);
-    world.runs = vec![serde_json::from_value(json!({
-        "id": "example-0", "unit": 0, "runtime": "python", "code_sha256": "none",
-        "code": "print(len('abc'))",
-        "result": {
-            "status": "passed", "exitCode": 0, "stdout": "3\n", "stderr": "",
-            "outputTruncated": false, "durationMs": 1
-        }
-    }))?];
+    world.runs = vec![run_printing("3\n")];
     // The run is the second of two passages: only a judge shown it can say so.
     let model = ScriptedBridge::new(vec![parts_reply(
         json!([{"part": "len counts the characters", "kind": "stated", "passage": "passage-1"}]),
@@ -325,6 +338,84 @@ async fn the_sections_passed_example_runs_are_read_beside_its_citation() -> Resu
         .map(|passage| passage.retrieval_kind.as_str())
         .collect();
     assert_eq!(shown, vec!["cited", "execution"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_the_user_resolved_with_evidence_of_their_own_stands_without_a_call() -> Result<()>
+{
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut world = world_of(&references, citing(&references)?);
+    let attached = EvidencePassage {
+        source_id: "attached".into(),
+        text: STATED.into(),
+        start_byte: 0,
+        end_byte: STATED.len(),
+        retrieval_kind: "user_attached".into(),
+        score: 0.0,
+    };
+    world.settled = HashMap::from([(
+        (0, STATEMENT.to_owned()),
+        Finding {
+            unit: 0,
+            quote: STATEMENT.into(),
+            statement: STATEMENT.into(),
+            verdict: ClaimVerdict::Supported,
+            reason: "The source the user attached states it.".into(),
+            evidence: vec![attached],
+            supporting_quote: Some(STATED.into()),
+            resolution: None,
+            trust: None,
+            label: None,
+            class: None,
+            two_pass: Default::default(),
+        },
+    )]);
+    let model = ScriptedBridge::new(Vec::new());
+
+    let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
+
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(
+        read.finding.reason,
+        "The source the user attached states it."
+    );
+    assert_eq!(read.finding.evidence[0].retrieval_kind, "user_attached");
+    assert_eq!(read.finding.class, Some(classed()));
+    assert_eq!(model.requests(), (0, 0));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_page_of_example_runs_alone_is_asked_of_the_strict_judge_as_pass_a_asks_it() -> Result<()>
+{
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    // Nothing is cited, so the page is the section's passed run, and a run is
+    // no source for the part-wise judge to read.
+    let mut world = world_of(&references, Citations::default());
+
+    world.runs = vec![run_printing("3\n")];
+    let model = ScriptedBridge::new(Vec::new());
+    let read = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
+    assert_eq!(read.outcome, Outcome::Unproven);
+    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
+    assert!(read.finding.two_pass.parts.is_empty());
+    assert_eq!(
+        model.requests(),
+        (0, 1),
+        "one strict request, none part-wise"
+    );
+
+    // A run that states the claim stands it, by the strict judge's verdict.
+    world.runs = vec![run_printing(&format!("{MARKER}\n"))];
+    let model = PagingModel::new(32_000);
+    let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(read.finding.evidence[0].retrieval_kind, "execution");
+    assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
     Ok(())
 }
 
@@ -517,6 +608,155 @@ async fn ground_reads_the_sections_passages_and_parts_the_sentences() -> Result<
     assert_eq!(parts.outcome, Outcome::Stands);
     assert_eq!(sources_of(&parts.finding.evidence), vec!["beta"]);
     Ok(())
+}
+
+/// A model with a window of its own, which answers every request from a queue.
+struct Windowed {
+    window: usize,
+    replies: Mutex<VecDeque<String>>,
+}
+
+impl Windowed {
+    fn new(window: usize, replies: Vec<String>) -> Self {
+        Self {
+            window,
+            replies: Mutex::new(replies.into()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Windowed {
+    async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+        let reply = self.replies.lock().unwrap().pop_front().unwrap_or_default();
+        Ok(CompletionResponse::from_text(reply))
+    }
+    fn model_name(&self) -> &str {
+        "windowed-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len().div_ceil(4)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+const FEEDS: &str = "Quillet feeds a parser the tokens it lexes.";
+
+/// Three passages of a thousand characters, from three sources.
+fn three_passages() -> Vec<EvidencePassage> {
+    (0..3)
+        .map(|index| EvidencePassage {
+            source_id: format!("source-{index}"),
+            text: format!("{index}{}", "x".repeat(999)),
+            start_byte: 0,
+            end_byte: 1_000,
+            retrieval_kind: "cited".into(),
+            score: 0.0,
+        })
+        .collect()
+}
+
+fn texts_of(passages: &[EvidencePassage]) -> Vec<String> {
+    passages
+        .iter()
+        .map(|passage| passage.text.clone())
+        .collect()
+}
+
+/// The smallest window in which the part-wise judge holds `passages` beside
+/// `FEEDS`.
+fn window_for_part_wise(passages: &[EvidencePassage]) -> usize {
+    let texts = texts_of(passages);
+    (1..)
+        .find(|&window| {
+            evidence_checks::bridge_checker(&Windowed::new(window, Vec::new()))
+                .bridge_fits(FEEDS, &texts)
+        })
+        .unwrap_or_default()
+}
+
+/// The window in which the part-wise judge holds two of the three passages and
+/// not the third.
+fn two_of_three() -> usize {
+    let three = three_passages();
+    let window = window_for_part_wise(&three) - 1;
+    assert!(window_for_part_wise(&three[..2]) <= window);
+    window
+}
+
+fn stated_by_the_second() -> String {
+    parts_reply(
+        json!([{"part": FEEDS, "kind": "stated", "passage": "passage-1"}]),
+        "supported",
+    )
+}
+
+#[tokio::test]
+async fn ground_takes_the_passages_the_part_wise_judge_holds_not_the_consistency_judges(
+) -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let citations = Citations::new(HashMap::from([(0, three_passages())]), HashMap::new());
+    let world = world_of(&references, citations);
+    let model = Windowed::new(two_of_three(), vec![stated_by_the_second()]);
+    // The consistency judge's room takes all three, which overflow this
+    // judge's window.
+    assert_eq!(
+        class_checks::fitted(&model, FEEDS, &three_passages()).len(),
+        3
+    );
+
+    let read = read_one(Reading::Ground, &model, &world, FEEDS).await?;
+
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(
+        sources_of(&read.finding.evidence),
+        vec!["source-0", "source-1"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn parts_takes_the_cited_passages_the_part_wise_judge_holds() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let citations = Citations::new(HashMap::from([(0, three_passages())]), HashMap::new());
+    let world = world_of(&references, citations);
+    let model = Windowed::new(two_of_three(), vec![stated_by_the_second()]);
+
+    let read = read_one(Reading::Parts, &model, &world, FEEDS).await?;
+
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(
+        sources_of(&read.finding.evidence),
+        vec!["source-0", "source-1"]
+    );
+    Ok(())
+}
+
+#[test]
+fn pass_as_page_is_still_fitted_to_the_strict_judge() {
+    let three = three_passages();
+    let citations = Citations::new(HashMap::from([(0, three.clone())]), HashMap::new());
+    // The window in which the strict check holds two of the three passages.
+    let window = (1..)
+        .find(|&window| fits_window(&Windowed::new(window, Vec::new()), FEEDS, &three[..2]))
+        .unwrap_or_default();
+    let model = Windowed::new(window, Vec::new());
+
+    let (page, shown) =
+        evidence_checks::attribution_page(&[], &citations, (0, FEEDS), FEEDS, |text, passages| {
+            fits_window(&model, text, passages)
+        });
+
+    assert_eq!(sources_of(&page), vec!["source-0", "source-1"]);
+    assert_eq!(sources_of(&shown), vec!["source-0", "source-1"]);
+    // The part-wise judge holds all three in that window: its room is not the
+    // strict judge's, which is why a reader fits its page to its own.
+    assert!(evidence_checks::bridge_checker(&model).bridge_fits(FEEDS, &texts_of(&three)));
 }
 
 /// Unit 0 cites a related passage that does not state the claim, as source 0.
