@@ -477,9 +477,11 @@ fn from_ledger(
 }
 
 /// The findings of the statements that are claims: each one's latest
-/// reading's, in the inventory's order. A finding is kept in this job's memory;
-/// otherwise it is restored from its checkpoint, otherwise rebuilt from the
-/// ledger. It decides nothing: the policy has decided from the reading.
+/// reading's, in the inventory's order. A claim the user resolved with evidence
+/// of their own is reported with that check, whatever a reading left. Any other
+/// finding is kept in this job's memory; otherwise it is restored from its
+/// checkpoint, otherwise rebuilt from the ledger. It decides nothing: the policy
+/// has decided from the reading.
 pub(super) async fn latest_findings(
     ledger: &ClaimLedger,
     checks: &mut ClaimChecks,
@@ -487,7 +489,9 @@ pub(super) async fn latest_findings(
 ) -> Result<Vec<Finding>> {
     let mut lost = Vec::new();
     for known in &pass.statements {
-        if checks.latest.contains_key(&known.id) {
+        if checks.latest.contains_key(&known.id)
+            || checks.settled_finding(known.unit, &known.claim).is_some()
+        {
             continue;
         }
         match saved_finding(&known.id).await? {
@@ -507,12 +511,21 @@ pub(super) async fn latest_findings(
     }
     let mut findings = Vec::with_capacity(pass.statements.len());
     for known in &pass.statements {
-        let mut finding = checks.latest.get(&known.id).cloned().ok_or_else(|| {
-            AppError::InternalError(format!(
-                "The statement \"{}\" was left without a finding",
-                known.claim.statement
-            ))
-        })?;
+        let mut finding = match checks.settled_finding(known.unit, &known.claim) {
+            Some(mut settled) => {
+                settled.class = ledger
+                    .entry(&known.id)
+                    .and_then(ClaimLedgerEntry::classified)
+                    .map(|(class, by)| Classed { class, by });
+                settled
+            }
+            None => checks.latest.get(&known.id).cloned().ok_or_else(|| {
+                AppError::InternalError(format!(
+                    "The statement \"{}\" was left without a finding",
+                    known.claim.statement
+                ))
+            })?,
+        };
         finding.unit = known.unit;
         finding.quote = known.claim.quote.clone();
         finding.statement = known.claim.statement.clone();

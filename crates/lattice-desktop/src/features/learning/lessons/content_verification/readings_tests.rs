@@ -251,7 +251,8 @@ async fn a_part_a_passage_contradicts_refutes_the_statement() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_statement_with_no_passage_is_unproven_and_nothing_is_asked() -> Result<()> {
+async fn a_statement_with_no_passage_of_its_own_that_the_courses_page_does_not_state_is_unproven(
+) -> Result<()> {
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
     let world = world_of(&references, Citations::default());
@@ -261,9 +262,13 @@ async fn a_statement_with_no_passage_is_unproven_and_nothing_is_asked() -> Resul
 
     assert_eq!(read.outcome, Outcome::Unproven);
     assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
-    assert_eq!(read.finding.reason, evidence_checks::NO_PASSAGES);
+    assert_ne!(read.finding.reason, evidence_checks::NO_PASSAGES);
     assert_eq!(read.finding.class, Some(classed()));
-    assert_eq!(model.requests(), (0, 0));
+    assert_eq!(
+        model.requests(),
+        (0, 1),
+        "one strict request, none part-wise"
+    );
     Ok(())
 }
 
@@ -286,6 +291,42 @@ async fn a_statement_whose_section_cites_nothing_is_read_by_parts_on_the_courses
     assert_eq!(read.finding.two_pass.pass, Some(Pass::Corroboration));
     assert_eq!(read.finding.class, Some(classed()));
     assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn evidence_the_user_brought_settles_a_statement_whose_section_cites_nothing_with_no_page_read(
+) -> Result<()> {
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let mut world = world_of(&references, Citations::default());
+    world.settled = HashMap::from([(
+        (0, CLAIM.to_owned()),
+        Finding {
+            unit: 0,
+            quote: CLAIM.into(),
+            statement: CLAIM.into(),
+            verdict: ClaimVerdict::Supported,
+            reason: "The source the user attached states it.".into(),
+            evidence: Vec::new(),
+            supporting_quote: None,
+            resolution: None,
+            trust: None,
+            label: None,
+            class: None,
+            two_pass: Default::default(),
+        },
+    )]);
+    let model = PagingModel::new(32_000);
+
+    let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
+
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(
+        read.finding.reason,
+        "The source the user attached states it."
+    );
+    assert!(read.reused);
+    assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
     Ok(())
 }
 

@@ -288,7 +288,6 @@ pub(in crate::features::learning) fn calls_planned(
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.plan.is_none() {
-            let sorting = state.activity.model_calls;
             let count = |class: Class| {
                 let of_class = statements
                     .iter()
@@ -300,7 +299,7 @@ pub(in crate::features::learning) fn calls_planned(
                 reasoning: count(Class::Reasoning),
                 common: count(Class::Common),
             });
-            state.plan = Some(CallPlan::new(policy, sorting, statements, sections));
+            state.plan = Some(CallPlan::new(policy, statements, sections));
             publish_ceiling(&mut state);
         }
     });
@@ -313,6 +312,17 @@ pub(in crate::features::learning) fn cuts_known(sections: usize) {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(plan) = state.plan.as_mut() {
             plan.cuts_known(u32::try_from(sections).unwrap_or(u32::MAX));
+        }
+        publish_ceiling(&mut state);
+    });
+}
+
+/// A section's flow repair is done: it made the call held for it, or none.
+pub(in crate::features::learning) fn flow_repaired() {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(plan) = state.plan.as_mut() {
+            plan.flow_repaired();
         }
         publish_ceiling(&mut state);
     });
@@ -334,7 +344,8 @@ pub(in crate::features::learning) fn statements_moved(
 }
 
 fn publish_ceiling(state: &mut State) {
-    let ceiling = state.plan.as_ref().map(CallPlan::ceiling);
+    let made = state.activity.model_calls;
+    let ceiling = state.plan.as_ref().map(|plan| plan.ceiling(made));
     if let (Some(before), Some(now)) = (state.activity.model_calls_ceiling, ceiling) {
         state.activity.model_calls_ceiling_rises += u32::from(now > before);
     }
@@ -733,8 +744,13 @@ mod tests {
             at,
             sentence: None,
         };
+        // The sort made one call.
         let mut state = State {
-            plan: Some(CallPlan::new(&policy, 1, &[sourced(PlannedAt::Entry)], 1)),
+            plan: Some(CallPlan::new(&policy, &[sourced(PlannedAt::Entry)], 1)),
+            activity: LearningGenerationActivity {
+                model_calls: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         publish_ceiling(&mut state);
@@ -755,6 +771,46 @@ mod tests {
         state.activity.model_calls_ceiling = Some(1);
         publish_ceiling(&mut state);
         assert_eq!(state.activity.model_calls_ceiling_rises, 1);
+    }
+
+    #[tokio::test]
+    async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_without_brings_it_down(
+    ) {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                lesson("A lesson");
+                drop(model_call());
+                let policy = StandardPolicy::new();
+                let statement = |at| Planned {
+                    class: Class::Sourced,
+                    at,
+                    sentence: None,
+                };
+                let ceiling = || progress.snapshot().2.model_calls_ceiling;
+                calls_planned(&policy, &[statement(PlannedAt::Entry)], 2);
+                statements_moved(&policy, &[statement(PlannedAt::Ended)]);
+                cuts_known(2);
+                // The sorting call made (1) and the flow repair of each of the
+                // two sections that took a cut.
+                assert_eq!(ceiling(), Some(3));
+
+                // The first repair makes its call and marks its section mended.
+                drop(model_call());
+                flow_repaired();
+                assert_eq!(ceiling(), Some(3));
+                // The pass after the repairs does not raise it.
+                statements_moved(&policy, &[statement(PlannedAt::Ended)]);
+                assert_eq!(ceiling(), Some(3));
+
+                // The second finds no gap to mend: it makes no call, and the
+                // call held for it is not needed.
+                flow_repaired();
+                assert_eq!(ceiling(), Some(2));
+                assert_eq!(progress.snapshot().2.model_calls, 2);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling_rises, 0);
+            })
+            .await;
     }
 
     #[test]

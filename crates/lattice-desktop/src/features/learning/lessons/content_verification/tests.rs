@@ -1066,7 +1066,8 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     const SECOND: &str = "DictReader removes all whitespace from CSV values by default.";
     struct GradualRepair {
         inner: Model,
-        repairs: std::sync::atomic::AtomicUsize,
+        /// The context of each repair request.
+        asked: Mutex<Vec<Value>>,
     }
     #[async_trait::async_trait]
     impl LLMPort for GradualRepair {
@@ -1113,10 +1114,9 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
                 .to_string());
             }
             if prompt.starts_with("Repair verified lesson defects.") {
-                let repair = self
-                    .repairs
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                assert!(repair < 1, "A claim's last attempt is no request");
+                let mut asked = self.asked.lock().unwrap();
+                asked.push(self::context(prompt));
+                assert!(asked.len() <= 2, "A claim's last attempt is no request");
                 assert!(!prompt.contains("lastAttempt"));
                 // The correction drops the first sentence and leaves the
                 // second as it was.
@@ -1139,14 +1139,15 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
         }
     }
 
-    // The first repair corrects both claims; SECOND survives it on the same
-    // evidence, so the second attempt is its last: its sentence is taken out
-    // in code, the lesson keeps what was verified and publishes.
+    // The first repair corrects both claims and SECOND survives it, so it is
+    // asked for once more, as the claim it is alone; it survives that too, and
+    // the cut that follows is made in code: its sentence is taken out, the
+    // lesson keeps what was verified and publishes.
     let body = format!("{}{BAD} {SECOND}", format!("{GOOD} ").repeat(12));
     let lesson = json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":body,"rubric":[]}],"questions":[]});
     let model = GradualRepair {
         inner: Model::new(),
-        repairs: Default::default(),
+        asked: Default::default(),
     };
     let (raw, report) = verify_and_repair(
         &model,
@@ -1157,7 +1158,26 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
         3000,
     )
     .await?;
-    assert_eq!(model.repairs.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let asked = model.asked.lock().unwrap();
+    let named = |request: &Value| -> Vec<String> {
+        request["failedClaims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|claim| claim["statement"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(asked.len(), 2, "two requests, and the cut makes none");
+    let first = named(&asked[0]);
+    assert!(
+        first.iter().any(|statement| statement == BAD)
+            && first.iter().any(|statement| statement == SECOND),
+        "{first:?}"
+    );
+    assert_eq!(named(&asked[1]), [SECOND]);
+    let reason = asked[1]["failedClaims"][0]["reason"].as_str().unwrap();
+    assert!(reason.contains("preserves whitespace"), "{reason}");
+    assert!(!asked[1].to_string().contains("lastAttempt"));
     assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
     assert!(raw.contains(GOOD));
     assert!(report.issues.is_empty());

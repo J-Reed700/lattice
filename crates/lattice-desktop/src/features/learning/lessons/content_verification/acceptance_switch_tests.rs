@@ -7,7 +7,7 @@ use super::super::claim_ledger::{Decision, StepKind};
 use super::super::class_checks::{finding_of, unjudged_finding};
 use super::super::passes::{self, Extraction, Pass};
 use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Statement};
-use super::claim_ledger_tests::{pass_report, prepare, section, Figures};
+use super::claim_ledger_tests::{figure, pass_report, prepare, section, Figures};
 use super::class_checks_tests::Classes;
 use super::*;
 use crate::features::learning::lesson_drafts;
@@ -373,7 +373,10 @@ async fn a_pass_reads_only_statements_at_reading_nodes_and_a_claim_at_an_end_is_
     // for it and the one that ended is done.
     assert!(stopped.is_empty());
     assert_eq!(reader.asked(), [SENTENCE]);
-    assert_eq!(ledger.at(&policy, StepKind::Research), [waiting.clone()]);
+    assert_eq!(
+        ledger.at(&policy, StepKind::Research),
+        std::slice::from_ref(&waiting)
+    );
     assert!(matches!(
         ledger.entry(&fresh).unwrap().state(),
         ClaimState::ResolvedByEvidence { .. }
@@ -468,7 +471,9 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let program_id = repo.job(&job).await?.program_id;
-    let draft = lesson_of(&section(GOOD)).to_string();
+    // A statement the course's page does not state, so it waits for research.
+    let statement = figure(0);
+    let draft = lesson_of(&section(&statement)).to_string();
     // The fixture gives the research planner no answer it can use: the round
     // reaches nothing.
     let error = research::run(
@@ -494,7 +499,7 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     // node names.
     assert_eq!(
         error,
-        format!("Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{GOOD}\".")
+        format!("Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{statement}\".")
     );
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
@@ -983,7 +988,7 @@ async fn a_statement_at_a_rewrite_or_a_cut_is_repaired_and_one_at_any_other_node
 
     // The repair comes first, and takes only the statement at a rewrite.
     match ledger.decide(&policy, &[]) {
-        Decision::Repair(targets) => assert_eq!(targets, [rewriting.clone()]),
+        Decision::Repair(targets) => assert_eq!(targets, std::slice::from_ref(&rewriting)),
         _ => panic!("the statement at a rewrite is repaired"),
     }
     assert!(ledger.may_repair(&policy, &rewriting));
@@ -1100,7 +1105,7 @@ async fn a_run_stopped_on_a_second_unreadable_answer_is_resumed_by_the_next_run_
     let first = Says::new(&[Outcome::Unjudged]);
     let stopped = read_pass(&mut ledger, &first, &pass, &lesson).await?;
 
-    assert_eq!(stopped, [id.clone()]);
+    assert_eq!(stopped, std::slice::from_ref(&id));
     assert_eq!(first.asked().len(), 2);
     let Decision::Stop(reason) = ledger.decide(&policy, &stopped) else {
         panic!("the run stops");
@@ -1474,6 +1479,56 @@ async fn a_claim_at_recite_whose_finding_was_lost_is_recited_from_the_finding_re
         Ok(())
     })
     .await
+}
+
+#[tokio::test]
+async fn a_claim_the_user_resolved_with_evidence_of_their_own_is_reported_with_that_check_whatever_a_reading_left(
+) -> Result<()> {
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "attached",
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        SOURCED,
+    )
+    .await?;
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(SENTENCE),
+        &[(SENTENCE, SENTENCE)],
+        &[],
+    )
+    .await?;
+    let mut checks = ClaimChecks::default();
+    // What a reading of an earlier run left, and the check against the page
+    // the user attached.
+    let mut read = elsewhere(SENTENCE, "source-1", 0..SENTENCE.len());
+    read.reason = "A reading of the course.".into();
+    checks.latest.insert(id, read);
+    let mut attached = elsewhere(SENTENCE, "attached", 0..SENTENCE.len());
+    attached.reason = "The page the user attached states it.".into();
+    attached.two_pass = Default::default();
+    attached.evidence = vec![EvidencePassage {
+        retrieval_kind: "user_attached".into(),
+        ..passage("attached")
+    }];
+    checks.settled.insert((0, SENTENCE.to_owned()), attached);
+
+    let findings = passes::latest_findings(&ledger, &mut checks, &pass).await?;
+
+    let [finding] = findings.as_slice() else {
+        panic!("one finding: {findings:?}");
+    };
+    assert_eq!(finding.reason, "The page the user attached states it.");
+    assert_eq!(finding.evidence[0].retrieval_kind, "user_attached");
+    assert!(finding.two_pass.supported_by.is_none());
+    assert_eq!(
+        finding.class.map(|classed| classed.class),
+        Some(Class::Sourced)
+    );
+    Ok(())
 }
 
 #[tokio::test]

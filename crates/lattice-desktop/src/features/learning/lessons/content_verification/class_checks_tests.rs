@@ -1063,6 +1063,8 @@ async fn a_reasoning_statement_with_an_unfounded_specific_enters_sourced_by_evid
         entry.classified(),
         Some((Class::Sourced, ClassifiedBy::Evidence))
     );
+    // Its section cites nothing, and the course's page has nothing on its
+    // subject.
     assert_eq!(
         steps_of(entry),
         [
@@ -1128,6 +1130,8 @@ async fn a_common_statement_ends_as_general_knowledge_only_when_every_sample_agr
     );
     // A lone dissent forfeits the pass without failing the statement, as a
     // request for a source does: both enter Sourced, and are read by Parts.
+    // Their section cites nothing, so Parts reads them on the course's page,
+    // which states both.
     for entry in [lone, wants] {
         assert_eq!(
             entry.classified(),
@@ -1135,10 +1139,7 @@ async fn a_common_statement_ends_as_general_knowledge_only_when_every_sample_agr
         );
         assert_eq!(
             steps_of(entry),
-            [
-                (KNOWLEDGE, Outcome::NeedsSource),
-                (PARTS, Outcome::Unproven)
-            ]
+            [(KNOWLEDGE, Outcome::NeedsSource), (PARTS, Outcome::Stands)]
         );
     }
     Ok(())

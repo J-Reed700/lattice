@@ -63,7 +63,7 @@ async fn a_lesson_whose_bound_source_changed_is_prepared_again_once_and_not_a_th
     let mut sources = vec![source()];
     let lesson = staged(&model, "lesson", &sources).await?;
     let mut rounds = Rounds::default();
-    assert!(!rounds.again(&[lesson.clone()], &sources, &model)?);
+    assert!(!rounds.again(std::slice::from_ref(&lesson), &sources, &model)?);
 
     // A source the report is bound to changes: the lesson is prepared again.
     sources[0].excerpt.push_str(" Revised.");
@@ -71,7 +71,7 @@ async fn a_lesson_whose_bound_source_changed_is_prepared_again_once_and_not_a_th
 
     // The second preparation stands while the source stays as it is.
     let second = staged(&model, "lesson", &sources).await?;
-    assert!(!rounds.again(&[second.clone()], &sources, &model)?);
+    assert!(!rounds.again(std::slice::from_ref(&second), &sources, &model)?);
 
     // It changes a second time in the same job: no third preparation; the job
     // ends saying so.

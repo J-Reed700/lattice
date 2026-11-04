@@ -1,7 +1,9 @@
 //! The most calls a lesson's checks can make (acceptance design §2.4). The
 //! panel shows the calls made so far and this ceiling, never an expected
-//! count. Each statement's share is its longest path through its class's graph
-//! from where it is, so the ceiling comes down as statements move. A successor
+//! count. The ceiling is the calls made and the most still to come: the plan
+//! holds only what is ahead. Each statement's share is its longest path
+//! through its class's graph from where it is, so the calls a statement makes
+//! come out of its share as it moves and the ceiling does not rise. A successor
 //! that reads again is paid from its statement's reserve; a rise beyond the
 //! reserve is shown.
 use lattice_core::application::services::claim_verification::KNOWLEDGE_SAMPLES;
@@ -62,12 +64,11 @@ struct Slot {
     ended: bool,
 }
 
-/// The terms of the ceiling as the checks of one lesson leave them.
+/// What is still to come in the checks of one lesson.
 pub(crate) struct CallPlan {
-    /// The sorting calls, made before the statements had classes.
-    sorting: u32,
     slots: Vec<Slot>,
-    /// K: sections that can still take cuts.
+    /// K: flow repairs still to be made, one for each section that can take a
+    /// cut.
     flow_repairs: u32,
 }
 
@@ -127,11 +128,10 @@ fn class_at(sorted: Class, at: PlannedAt) -> Class {
 }
 
 impl CallPlan {
-    /// The plan once `statements` are sorted, after `sorting` calls, in
-    /// `sections` sections that could take cuts.
+    /// The plan once `statements` are sorted, in `sections` sections that
+    /// could take cuts.
     pub(crate) fn new(
         policy: &dyn AcceptancePolicy,
-        sorting: u32,
         statements: &[Planned],
         sections: u32,
     ) -> Self {
@@ -154,7 +154,6 @@ impl CallPlan {
             })
             .collect();
         let mut plan = Self {
-            sorting,
             slots,
             flow_repairs: sections,
         };
@@ -162,12 +161,20 @@ impl CallPlan {
         plan
     }
 
-    /// The most calls the checks can make in all.
-    pub(crate) fn ceiling(&self) -> u32 {
-        self.slots.iter().fold(
-            self.sorting.saturating_add(self.flow_repairs),
-            |total, slot| total.saturating_add(slot.most).saturating_add(slot.reserve),
-        )
+    /// The most calls the checks can make in all: the `made` so far and the
+    /// most still to come.
+    pub(crate) fn ceiling(&self, made: u32) -> u32 {
+        self.slots
+            .iter()
+            .fold(made.saturating_add(self.flow_repairs), |total, slot| {
+                total.saturating_add(slot.most).saturating_add(slot.reserve)
+            })
+    }
+
+    /// A section's flow repair is done: the call held for it is made, or was
+    /// not needed.
+    pub(crate) fn flow_repaired(&mut self) {
+        self.flow_repairs = self.flow_repairs.saturating_sub(1);
     }
 
     /// The cuts are known: only `sections` of the lesson's sections took one

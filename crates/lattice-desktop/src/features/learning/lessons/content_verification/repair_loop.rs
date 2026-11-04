@@ -7,7 +7,7 @@ use super::*;
 use lattice_core::domain::learning::acceptance::{
     AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
 };
-use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimId, StopReason};
+use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimId, ClaimState, StopReason};
 
 /// [`verify_and_repair_with_references`] over lexical references, for tests.
 #[cfg(test)]
@@ -514,7 +514,9 @@ async fn stop(ledger: &mut ClaimLedger, raw: &str, reason: StopReason) -> Result
 /// citation (§5.1). The statements at a recite node are the repair's, one claim
 /// of a section a call: a second waits for the next round with nothing
 /// recorded, and a claim that cannot be cited is done, the reading after it
-/// telling. Whether any statement took its step.
+/// telling. A claim the user resolved, on a page their section does not cite,
+/// is cited there too, as the call goes: it takes no step and is not read.
+/// Whether any statement took its step or was cited.
 pub(super) async fn recite(
     ledger: &mut ClaimLedger,
     policy: &dyn AcceptancePolicy,
@@ -523,16 +525,23 @@ pub(super) async fn recite(
     references: &ReferenceCollection<'_>,
 ) -> Result<bool> {
     let waiting = ledger.at(policy, StepKind::Recite);
-    if waiting.is_empty() {
-        return Ok(false);
-    }
+    let resolved = |id: &ClaimId, finding: &Finding| {
+        finding.two_pass.supported_by.is_some()
+            && matches!(
+                ledger.entry(id).map(|entry| entry.state()),
+                Some(ClaimState::ResolvedByEvidence { .. })
+            )
+    };
     let findings: Vec<(ClaimId, Finding)> = ledger
         .finding_claims()
         .iter()
         .zip(&report.findings)
-        .filter(|(id, _)| waiting.contains(id))
+        .filter(|(id, finding)| waiting.contains(id) || resolved(id, finding))
         .map(|(id, finding)| (id.clone(), finding.clone()))
         .collect();
+    if findings.is_empty() {
+        return Ok(false);
+    }
     let sent: Vec<Finding> = findings
         .iter()
         .map(|(_, finding)| finding.clone())
@@ -541,13 +550,18 @@ pub(super) async fn recite(
     let mut moved = false;
     for ((id, _), cited) in findings.iter().zip(cited) {
         match cited {
-            Cited::Recited(event) => ledger.append(id, *event).await?,
-            Cited::Cannot => true,
+            Cited::Recited(event) => {
+                ledger.append(id, *event).await?;
+                moved |= !waiting.contains(id);
+            }
+            Cited::Cannot => {}
             Cited::Deferred => continue,
-        };
-        moved |= ledger
-            .record_step(policy, id, Step::Recite, Outcome::Done)
-            .await?;
+        }
+        if waiting.contains(id) {
+            moved |= ledger
+                .record_step(policy, id, Step::Recite, Outcome::Done)
+                .await?;
+        }
     }
     if moved {
         crate::features::learning::lesson_progress::phase(

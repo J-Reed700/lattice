@@ -581,6 +581,7 @@ pub(super) async fn settle(
                 checked: unchanged,
             },
         );
+        crate::features::learning::lesson_progress::flow_repaired();
         ledger.save_cuts().await?;
     }
     if edited != lesson || !going.is_empty() {

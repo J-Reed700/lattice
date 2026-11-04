@@ -790,8 +790,8 @@ async fn a_statement_unreadable_once_and_readable_on_the_recheck_is_judged_norma
         ClaimState::ResolvedByEvidence { .. }
     ));
     assert_eq!(claim.unjudged(), 0);
-    // The statement cites nothing, so its first reading has no passage to
-    // read; its page is then asked twice: no answer, then the judgment.
+    // The statement cites nothing, so its first reading is of its page, asked
+    // twice: no answer, then the judgment.
     let unanswered: Vec<bool> = claim
         .events()
         .iter()
@@ -800,7 +800,7 @@ async fn a_statement_unreadable_once_and_readable_on_the_recheck_is_judged_norma
             _ => None,
         })
         .collect();
-    assert_eq!(unanswered, [false, true, false]);
+    assert_eq!(unanswered, [true, false]);
     assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
     Ok(())
 }

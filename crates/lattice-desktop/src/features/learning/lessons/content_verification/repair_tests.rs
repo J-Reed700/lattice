@@ -388,7 +388,11 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
     let mut ledger = failed_ledger(&llm, body, &[("last", "Cut this.", 1)]).await?;
     let last = ClaimId("last".into());
     ledger
-        .begin_repairs(&StandardPolicy::new(), &lesson_of(body), &[last.clone()])
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            std::slice::from_ref(&last),
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
@@ -483,7 +487,11 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
     .await?;
     let example = ClaimId("example".into());
     ledger
-        .begin_repairs(&StandardPolicy::new(), &lesson_of(body), &[example.clone()])
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            std::slice::from_ref(&example),
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
