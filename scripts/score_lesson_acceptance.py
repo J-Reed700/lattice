@@ -39,8 +39,9 @@ STATEMENT_LIMIT = 73
 SHORT_PAGE_WORDS = 400
 SORT_BATCH = 20
 # The authority of a class, weakest first (design 3.1): the ledger keeps the strongest authority's, and of one
-# authority's the strictest.
-AUTHORITY = {"model": 0, "rule": 1, "writer": 2}
+# authority's the strictest. What a check found (evidence) is the strongest, and its latest move holds in either
+# direction, as the ledger's `classified` decides.
+AUTHORITY = {"model": 0, "rule": 1, "writer": 2, "evidence": 3}
 STRICTNESS = {"internal": 0, "common": 1, "reasoning": 2, "sourced": 3}
 # What a class may end in (design 3.11); any class may also end removed by the machine. A statement the model sorts
 # Internal is a claim that ends not a claim, which the ledger records as consistent (acceptance design 2.3).
@@ -107,7 +108,8 @@ class Claim:
         for event in events:
             if event.get("kind") == "classified":
                 rank = (AUTHORITY.get(event.get("by"), -1), STRICTNESS.get(event.get("class"), -1))
-                if rank > held:
+                latest_found = event.get("by") == "evidence" and rank[0] == held[0]
+                if rank > held or latest_found:
                     self.cls, self.by, held = event.get("class"), event.get("by"), rank
 
     @property
