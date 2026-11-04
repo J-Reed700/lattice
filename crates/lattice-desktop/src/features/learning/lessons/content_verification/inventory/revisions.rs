@@ -601,6 +601,47 @@ mod revision_tests {
     }
 
     #[tokio::test]
+    async fn a_second_edit_is_read_from_the_text_it_wrote_and_the_first_edits_sentence_is_carried(
+    ) -> Result<()> {
+        let saved = [
+            (ALPHA, "Alpha is steady."),
+            (BRAVO, "Bravo is firm."),
+            (CHARLIE, "Charlie is at ease."),
+        ];
+        let before = vec![json!({"kind":"teaching","body":[ALPHA, BRAVO, CHARLIE].join(" ")})];
+        // A repair rewrites the first sentence, and a later one the third.
+        let (first, third) = ("Alpha gives ground at dawn.", "Charlie sits in the sun.");
+        let once = vec![json!({"kind":"teaching","body":format!("{first} {BRAVO} {CHARLIE}")})];
+        let twice = vec![json!({"kind":"teaching","body":format!("{first} {BRAVO} {third}")})];
+        let model = Answering {
+            reply: finds("A sentence the edit wrote states this."),
+            asked: Mutex::new(Vec::new()),
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            save(&model, &before, &holding(&saved)).await?;
+            update(&model, &once, 0).await?.unwrap();
+            update(&model, &twice, 0).await?.unwrap();
+
+            let asked = model.asked.lock().unwrap();
+            let [_, (prompt, _)] = asked.as_slice() else {
+                panic!("one request for each edit: {asked:?}");
+            };
+            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            // The first edit's sentence was read once, after the first edit;
+            // the second edit's request reads only what it wrote.
+            assert_eq!(texts(&shown["units"][0]["passages"]), [third]);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
     async fn an_inserted_sentence_is_extracted_alone_and_the_claims_beside_it_are_carried_with_no_request_about_them(
     ) -> Result<()> {
         let saved = [
