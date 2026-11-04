@@ -5,6 +5,7 @@
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
 use super::acceptance_switch_tests::{claim, local_check, stood, SOURCED};
+use super::class_checks_tests::Classes;
 use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::checker_examples::{
@@ -2010,5 +2011,106 @@ async fn a_lesson_is_not_published_with_a_sentence_that_no_live_claim_stands_on(
             "the lesson was not published, and is not held for review either: {error}"
         ),
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_full_extraction_that_misses_a_claim_whose_sentence_stands_carries_it_and_identification_continues_it(
+) -> Result<()> {
+    // §1 #16 (a) of the acceptance policy design
+    let policy = StandardPolicy::new();
+    let lesson = cell_lesson(CELL);
+    // The extractor names the sentence about twelve mitochondria, and not the
+    // one the ledger holds a claim on.
+    let model = Classes::new(&[TWELVE_SENTENCE]);
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let id = claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    let read = passage_finding(CELL, ATP, true, CELL_SOURCE);
+    stood(&mut ledger, &id, SOURCED.0, (Reading::Parts, read)).await?;
+    let checks = ClaimChecks {
+        rewrites: ledger.rewrites(&policy),
+        ..ClaimChecks::default()
+    };
+
+    let extraction =
+        passes::extract(&model, &BuiltinRuntimes::for_tests(), &lesson, &checks).await?;
+
+    let claims = &extraction.inventory.units[0].claims;
+    assert!(
+        claims
+            .iter()
+            .any(|claim| claim.quote == ATP_SENTENCE && claim.statement == ATP),
+        "the inventory leaves out a claim whose sentence the lesson still holds: {claims:?}"
+    );
+    let references = ReferenceCollection::lexical(&[])?;
+    let pass = passes::identify(
+        &model,
+        &policy,
+        &mut ledger,
+        (&lesson, &references),
+        extraction,
+        &checks,
+    )
+    .await?;
+    assert!(
+        pass.statements.iter().any(|known| known.id == id),
+        "no statement of the pass continues the claim"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_is_not_published_with_a_sentence_a_claim_the_machine_ended_stood_on() -> Result<()>
+{
+    // §1 #16 (b) of the acceptance policy design
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let raw = lesson(&[GOOD]).to_string();
+    // An earlier run ended a claim on this sentence, which the sentence
+    // outlived.
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&raw).await?;
+        let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), &raw).await?;
+        let ended = claim(&mut ledger, "ended", (GOOD, GOOD), &section(GOOD), SOURCED).await?;
+        let gone = ClaimEvent::Superseded {
+            successor: None,
+            by: Actor::Machine,
+        };
+        assert!(ledger.append(&ended, gone).await?);
+        Ok(())
+    })
+    .await?;
+
+    let published = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &Figures::new(),
+        Some(raw),
+        &[source()],
+    )
+    .await;
+
+    assert!(
+        published.is_err(),
+        "the lesson was published with {GOOD:?} in it, which a claim the machine ended stood on"
+    );
+    assert!(
+        held_for_review(&pool, &lesson_id, &job).await?.is_some(),
+        "the lesson is not held for review"
+    );
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let reason = ledger
+        .review
+        .and_then(|review| review.stop_reason)
+        .map(|stop| stop.message)
+        .unwrap_or_default();
+    assert!(
+        reason.contains(GOOD),
+        "the reason names no sentence: {reason}"
+    );
     Ok(())
 }

@@ -593,4 +593,200 @@ mod revision_tests {
         })
         .await
     }
+
+    const ALPHA: &str = "Alpha holds the line.";
+    const BRAVO: &str = "Bravo stands firm today.";
+    const CHARLIE: &str = "Charlie rests in the shade.";
+
+    /// A model that answers an extraction with `reply` (and a revision of
+    /// saved statements, which this code once asked for, with no change), and
+    /// keeps the prompt and the schema of each request.
+    struct Answering {
+        reply: String,
+        asked: Mutex<Vec<(String, Value)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for Answering {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let prompt = fixture_prompts(request).concat();
+            let reply = if prompt.starts_with("Update claims after a lesson edit.") {
+                json!({"changes":[],"nonFactualReason":""}).to_string()
+            } else {
+                self.reply.clone()
+            };
+            self.asked
+                .lock()
+                .unwrap()
+                .push((prompt, request.json_schema.clone().unwrap_or(Value::Null)));
+            Ok(fixture_completion(request, vec![reply]))
+        }
+        fn model_name(&self) -> &str {
+            "answering-fixture"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            128_000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// The reply of an extractor that finds `statement` in passage
+    /// `unit-0-change-0`.
+    fn finds(statement: &str) -> String {
+        fixture_response(vec![
+            json!({"index":0,"claims":[{"passageId":"unit-0-change-0","statement":statement}],"nonFactualReason":""}),
+        ])
+        .to_string()
+    }
+
+    /// The inventory of section 0 as it was saved: a claim for each of
+    /// `saved`, a sentence and what it states.
+    fn holding(saved: &[(&str, &str)]) -> UnitClaims {
+        UnitClaims {
+            index: 0,
+            non_factual_reason: String::new(),
+            claims: saved
+                .iter()
+                .map(|(sentence, statement)| Claim {
+                    quote: (*sentence).into(),
+                    statement: (*statement).into(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The quote and the statement of each claim of `unit`.
+    fn left(unit: &UnitClaims) -> Vec<(&str, &str)> {
+        unit.claims
+            .iter()
+            .map(|claim| (claim.quote.as_str(), claim.statement.as_str()))
+            .collect()
+    }
+
+    /// The texts of `parts`, the passages or the context of a unit.
+    fn texts(parts: &Value) -> Vec<&str> {
+        parts
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|part| part["text"].as_str())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_rewritten_sentence_is_read_afresh_from_its_own_text_beside_the_sentences_that_stand(
+    ) -> Result<()> {
+        let saved = [
+            (ALPHA, "Alpha is steady."),
+            (BRAVO, "Bravo is firm."),
+            (CHARLIE, "Charlie is at ease."),
+        ];
+        let before = vec![json!({"kind":"teaching","body":[ALPHA, BRAVO, CHARLIE].join(" ")})];
+        // The second sentence is rewritten.
+        let rewritten = "Bravo yields at noon.";
+        let after =
+            vec![json!({"kind":"teaching","body":format!("{ALPHA} {rewritten} {CHARLIE}")})];
+        let model = Answering {
+            reply: finds("Bravo gives way at noon."),
+            asked: Mutex::new(Vec::new()),
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            save(&model, &before, &holding(&saved)).await?;
+            let updated = update(&model, &after, 0).await?.unwrap();
+
+            let asked = model.asked.lock().unwrap();
+            let [(prompt, _)] = asked.as_slice() else {
+                panic!("one request: {asked:?}");
+            };
+            assert!(
+                prompt.starts_with("Extract lesson claims."),
+                "a rewritten sentence is extracted, not revised from its saved statement: {}",
+                prompt.chars().take(60).collect::<String>()
+            );
+            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let unit = &shown["units"][0];
+            // The request carries the rewritten sentence alone as a passage,
+            // and the two that stand as context.
+            assert_eq!(texts(&unit["passages"]), [rewritten]);
+            assert_eq!(unit["passages"][0]["id"], "unit-0-change-0");
+            assert_eq!(texts(&unit["context"]), [ALPHA, CHARLIE]);
+            for (_, statement) in saved {
+                assert!(!prompt.contains(statement), "{statement} was shown");
+            }
+            // The claims of the sentences that stand are as they were saved,
+            // and the sentence the edit wrote has the claim read from it.
+            assert_eq!(
+                left(&updated),
+                [
+                    (ALPHA, "Alpha is steady."),
+                    (CHARLIE, "Charlie is at ease."),
+                    (rewritten, "Bravo gives way at noon.")
+                ]
+            );
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn an_inserted_sentence_is_extracted_alone_and_the_claims_beside_it_are_carried_with_no_request_about_them(
+    ) -> Result<()> {
+        let saved = [
+            (ALPHA, "Alpha is steady."),
+            (CHARLIE, "Charlie is at ease."),
+        ];
+        let before = vec![json!({"kind":"teaching","body":[ALPHA, CHARLIE].join(" ")})];
+        let after = vec![json!({"kind":"teaching","body":format!("{ALPHA} {BRAVO} {CHARLIE}")})];
+        let model = Answering {
+            reply: finds("Bravo is firm."),
+            asked: Mutex::new(Vec::new()),
+        };
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson) =
+            crate::features::learning::content_verification::tests::batch_scheduler_tests::setup(
+                &pool,
+            )
+            .await?;
+        crate::features::learning::lesson_drafts::run(&repo, &job, &lesson, async {
+            save(&model, &before, &holding(&saved)).await?;
+            let updated = update(&model, &after, 0).await?.unwrap();
+
+            let asked = model.asked.lock().unwrap();
+            let [(prompt, _)] = asked.as_slice() else {
+                panic!("one request: {asked:?}");
+            };
+            for (_, statement) in saved {
+                assert!(
+                    !prompt.contains(statement),
+                    "the request is about {statement}, a claim that stands"
+                );
+            }
+            assert!(prompt.starts_with("Extract lesson claims."));
+            let shown: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap())?;
+            let unit = &shown["units"][0];
+            assert_eq!(texts(&unit["passages"]), [BRAVO]);
+            assert_eq!(texts(&unit["context"]), [ALPHA, CHARLIE]);
+            assert_eq!(
+                left(&updated),
+                [
+                    (ALPHA, "Alpha is steady."),
+                    (CHARLIE, "Charlie is at ease."),
+                    (BRAVO, "Bravo is firm.")
+                ]
+            );
+            Ok(())
+        })
+        .await
+    }
 }

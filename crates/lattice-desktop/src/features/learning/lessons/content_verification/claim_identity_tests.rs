@@ -1,6 +1,7 @@
 //! A pass identified with the ledger: `identify` records which claim each
 //! statement is and what is new about it, and records no check (acceptance
 //! design §2.10).
+use super::acceptance_switch_tests::{claim, SOURCED};
 use super::claim_ledger_tests::{
     check_findings, identify_findings, pass_report, passage_finding, CELL,
 };
@@ -206,6 +207,43 @@ async fn identifying_a_claim_no_statement_continues_records_that_it_is_gone_and_
                 by: Actor::Machine,
                 ..
             }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_no_statement_continues_whose_sentence_stands_is_a_fault_that_stops_the_run_not_a_removal(
+) -> Result<()> {
+    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
+    let lesson = cell_lesson(CELL);
+    let id = claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    let from = ledger.entry(&id).unwrap().events().len();
+
+    // The pass names no statement for a sentence the lesson still holds, and
+    // no repair awaits the claim.
+    let ids = identify_findings(&mut ledger, &lesson, &pass_report(vec![])).await?;
+
+    assert!(ids.is_empty());
+    let fault = ledger.fault(&StandardPolicy::new());
+    assert!(
+        fault
+            .as_ref()
+            .is_some_and(|stop| stop.message.contains(ATP)),
+        "the run does not stop on the statement the pass left out: {fault:?}"
+    );
+    let entry = ledger.entry(&id).unwrap();
+    assert!(
+        added(entry, from).is_empty(),
+        "the claim was not left as it was: {:?}",
+        added(entry, from)
+    );
+    assert!(
+        !matches!(
+            entry.state(),
+            ClaimState::Removed { .. } | ClaimState::Edited { .. }
         ),
         "{:?}",
         entry.state()

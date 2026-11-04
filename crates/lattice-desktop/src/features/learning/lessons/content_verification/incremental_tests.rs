@@ -159,8 +159,7 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
 }
 
 #[tokio::test]
-async fn prior_quote_bound_receipt_is_recovered_without_fuzzy_matching_or_new_approval(
-) -> Result<()> {
+async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let model = IncrementalModel::default();
@@ -174,6 +173,8 @@ async fn prior_quote_bound_receipt_is_recovered_without_fuzzy_matching_or_new_ap
         let passages: Vec<_> = evidence.iter().map(|p|(&p.source_id,&p.text,p.start_byte,p.end_byte)).collect();
         let comparison = digest(&json!({"unit":0,"claim":claim,"passages":passages}).to_string());
         lesson_drafts::record_checkpoint(&claim_receipt_key(&model,&comparison), json!({"verdict":"supported","reason":"Prior complete comparison","supporting_quote":claim.statement})).await?;
+        // The unit's saved inventory holds that claim on its quote: where the
+        // same statement on another quote of the unit used to look for it.
         lesson_drafts::record_checkpoint("inventory-section-v1:legacy-fixture",json!({"inventory":original.units[0]})).await?;
         let old_selection = format!("claim-evidence-v1:{}",digest(&json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":claim,"retrieval":collection.mode().label(),"embedding":collection.embedding_model()}).to_string()));
         lesson_drafts::record_checkpoint(&old_selection,json!({"sources":evidence_selection::sources(&collection),"passages":evidence.iter().map(|p|json!({"source_id":p.source_id,"start":p.start_byte,"end":p.end_byte,"sha256":digest(&p.text)})).collect::<Vec<_>>()})).await?;
@@ -185,13 +186,13 @@ async fn prior_quote_bound_receipt_is_recovered_without_fuzzy_matching_or_new_ap
         // displace the evidence of the completed comparison.
         lesson_drafts::record_checkpoint(&pending_selection,json!({"sources":evidence_selection::sources(&collection),"passages":[{"source_id":"source0","start":0,"end":8,"sha256":digest("mineral0")}]})).await?;
         let result = paged(&model,&collection,&revised,&ClaimChecks::default()).await?;
-        assert!(result[0].reused);
+        assert!(!result[0].reused, "A receipt saved for the statement on another quote was found for this one");
         assert_eq!(result[0].finding.quote,revised.units[0].claims[0].quote);
-        assert!(model.calls.lock().unwrap().is_empty());
+        assert_eq!(model.calls.lock().unwrap().len(),1);
         revised.units[0].claims[0].statement = "mineral0".into();
         let result = paged(&model,&collection,&revised,&ClaimChecks::default()).await?;
         assert!(!result[0].reused, "A changed assertion cannot inherit the old verdict");
-        assert_eq!(model.calls.lock().unwrap().len(),1);
+        assert_eq!(model.calls.lock().unwrap().len(),2);
         Ok(())
     }).await
 }
