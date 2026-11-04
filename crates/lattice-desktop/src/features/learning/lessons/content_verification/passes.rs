@@ -136,13 +136,30 @@ pub(super) async fn extract(
     })
 }
 
+/// The claims of `extraction` a pass identifies, each with its section's
+/// index: those of the sections that stay.
+pub(super) fn statements(extraction: &Extraction, checks: &ClaimChecks) -> Vec<(usize, Claim)> {
+    extraction
+        .inventory
+        .units
+        .iter()
+        .filter(|unit| !checks.removed.contains(unit.index))
+        .flat_map(|unit| {
+            unit.claims
+                .iter()
+                .cloned()
+                .map(move |claim| (unit.index, claim))
+        })
+        .collect()
+}
+
 /// Matches `extraction`'s statements to the claims the ledger holds and
 /// identifies them, before anything is read: each statement that continues a
-/// claim takes that claim's class, a repair's heir takes its parent's, and
-/// only a statement new to the ledger is sorted. A statement the rule layer
-/// makes Internal (`Classed::checked`) is left out of the claims; one the model
-/// sorts Internal is a claim, put to the falsity veto. The reopenings that
-/// need no check are made here, and a failed or tracked example is checked.
+/// claim, a repair's successor included, takes that claim's class, and only a
+/// statement new to the ledger is sorted. A statement the rule layer makes
+/// Internal (`Classed::checked`) is left out of the claims; one the model sorts
+/// Internal is a claim, put to the falsity veto. The reopenings that need no
+/// check are made here, and a failed or tracked example is checked.
 pub(super) async fn identify(
     llm: &dyn LLMPort,
     policy: &dyn AcceptancePolicy,
@@ -151,19 +168,7 @@ pub(super) async fn identify(
     extraction: Extraction,
     checks: &ClaimChecks,
 ) -> Result<Pass> {
-    let removed = &checks.removed;
-    let claims: Vec<(usize, Claim)> = extraction
-        .inventory
-        .units
-        .iter()
-        .filter(|unit| !removed.contains(unit.index))
-        .flat_map(|unit| {
-            unit.claims
-                .iter()
-                .cloned()
-                .map(move |claim| (unit.index, claim))
-        })
-        .collect();
+    let claims = statements(&extraction, checks);
     let citations = section_citations(candidate, references)?;
     let mut extracted = ledger.extracted(candidate, &claims, &extraction.executions);
     let matched = ledger.match_pass(candidate, &extracted);

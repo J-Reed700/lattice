@@ -21,6 +21,7 @@ mod readings;
 mod receipts;
 mod stops;
 mod successor;
+mod written;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};

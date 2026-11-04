@@ -245,9 +245,22 @@ impl Review for PreparationReview<'_, '_> {
         Ok(())
     }
 
-    async fn take_back(&mut self, _policy: &dyn AcceptancePolicy) -> Result<Option<String>> {
-        // Step 7b-2 takes such a repair back here.
-        Ok(None)
+    async fn take_back(&mut self, policy: &dyn AcceptancePolicy) -> Result<Option<String>> {
+        // A rewrite that wrote a statement is taken back before the pass
+        // records anything, as a flow repair is after the readings (acceptance
+        // design §2.6).
+        let extraction = self
+            .extraction
+            .as_ref()
+            .ok_or_else(|| out_of_order("extraction"))?;
+        let statements = passes::statements(extraction, &self.checks);
+        self.ledger
+            .unwrite(
+                policy,
+                &self.candidate,
+                (statements.as_slice(), extraction.executions.as_slice()),
+            )
+            .await
     }
 
     async fn identify(&mut self, policy: &dyn AcceptancePolicy) -> Result<()> {

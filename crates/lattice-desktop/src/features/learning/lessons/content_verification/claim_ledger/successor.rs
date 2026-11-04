@@ -1,28 +1,25 @@
 //! Which claim continues a repaired one (claim sources design §9). A
 //! repaired claim's id continues only in new text over the part of its
-//! field the repair changed, never in a sentence that was there before; the
-//! other claims that repair wrote are its children and start with what the
-//! parent had left, so a rewrite or a split sentence adds no attempts.
+//! field the repair changed, never in a sentence that was there before, and a
+//! narrowed claim's in nothing the narrowing wrote. No claim is born of a
+//! repair: what else it wrote is put back before the pass records anything
+//! (acceptance design §2.6).
 
 use super::fields::field_text;
 use super::RepairRecord;
 use crate::features::learning::reference_collection::shared_terms;
 use lattice_core::domain::learning::acceptance::Walked;
-use lattice_core::domain::learning::claim_review::{
-    ClaimId, ClaimLedgerEntry, ExtractedClaim, MACHINE_ATTEMPTS,
-};
+use lattice_core::domain::learning::claim_review::{ClaimId, ClaimLedgerEntry, ExtractedClaim};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
 
 /// What the repairs of one pass left: each orphaned target's successor (an
-/// index into the extracted claims), the children born of each repair, and
-/// the changed text of the fields whose repaired claim found no successor.
+/// index into the extracted claims), and the changed text of the fields
+/// whose repaired claim found no successor.
 #[derive(Debug, Default)]
 pub(super) struct Heirs {
     pub(super) successors: Vec<(ClaimId, usize)>,
-    /// Extracted claim index → its parent and the attempts it inherits.
-    pub(super) children: HashMap<usize, (ClaimId, u8)>,
     /// A target with no successor → the text its repair wrote in its field
     /// (`None` when the repair only took text out).
     pub(super) rewritten: HashMap<ClaimId, Option<String>>,
@@ -162,7 +159,8 @@ impl Rewrites {
 /// The heirs of `repairs` (claims orphaned by the identity rules): for each,
 /// the unowned extracted claims of its field whose quote is new text in the
 /// changed region (claim sources design §18.4 iv). The one sharing most words
-/// with the replaced sentence continues it; the rest are its children.
+/// with the replaced sentence continues it. A narrowing takes its claim out of
+/// its sentence, so nothing it wrote continues a narrowed claim.
 pub(super) fn heirs(
     repairs: &[RepairRecord],
     orphaned: &[ClaimId],
@@ -186,20 +184,19 @@ pub(super) fn heirs(
         let (start, end) = sentence_region(&after, region);
         let qualifies =
             |claim: &ExtractedClaim| written(claim, record.unit, &field, &before, (start, end));
-        let mut found: Vec<(usize, &ExtractedClaim)> = extracted
+        let successor = extracted
             .iter()
             .enumerate()
+            .filter(|_| !record.narrowing)
             .filter(|(index, claim)| taken.get(*index) == Some(&false) && qualifies(claim))
-            .collect();
-        found.sort_by_key(|(_, claim)| {
-            (
-                std::cmp::Reverse(shared_terms(&claim.statement, &record.before)),
-                claim.location.span.map_or(usize::MAX, |(from, _)| from),
-            )
-        });
-        let attempts_left = MACHINE_ATTEMPTS.saturating_sub(record.attempt);
-        let mut found = found.into_iter().map(|(index, _)| index);
-        match found.next() {
+            .min_by_key(|(_, claim)| {
+                (
+                    std::cmp::Reverse(shared_terms(&claim.statement, &record.before)),
+                    claim.location.span.map_or(usize::MAX, |(from, _)| from),
+                )
+            })
+            .map(|(index, _)| index);
+        match successor {
             Some(successor) => {
                 if let Some(slot) = taken.get_mut(successor) {
                     *slot = true;
@@ -213,14 +210,6 @@ pub(super) fn heirs(
                     written.map(|text| text.trim().to_owned()),
                 );
             }
-        }
-        for child in found {
-            if let Some(slot) = taken.get_mut(child) {
-                *slot = true;
-            }
-            heirs
-                .children
-                .insert(child, (record.claim_id.clone(), attempts_left));
         }
     }
     heirs
@@ -284,7 +273,6 @@ mod tests {
             field_text,
         );
         assert_eq!(kept.successors, vec![(ClaimId("quoted".into()), 0)]);
-        assert!(kept.children.is_empty(), "the old sentence is no child");
 
         // The repair took the sentence out and wrote nothing: removed.
         let claims = [extracted(REQUIRED, REQUIRED)];
@@ -344,14 +332,13 @@ mod tests {
             )
         };
         // Even unowned, the verified sentences stood before the repair: they
-        // are neither its successor nor its children.
+        // are not its successor.
         let kept = found(&[
             extracted(&after, V1),
             extracted(&after, fixed),
             extracted(&after, V2),
         ]);
         assert_eq!(kept.successors, vec![(ClaimId("f".into()), 1)]);
-        assert!(kept.children.is_empty(), "{:?}", kept.children);
 
         // A successor the locator could not narrow, located by its whole new
         // passage, reaches past the rewritten sentence and still continues it.
@@ -361,7 +348,6 @@ mod tests {
         };
         let kept = found(&[extracted(&after, V1), by_passage, extracted(&after, V2)]);
         assert_eq!(kept.successors, vec![(ClaimId("f".into()), 1)]);
-        assert!(kept.children.is_empty(), "{:?}", kept.children);
     }
 
     #[test]

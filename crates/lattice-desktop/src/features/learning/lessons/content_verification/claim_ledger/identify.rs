@@ -4,7 +4,6 @@
 
 use super::super::*;
 use super::fields::{field_text, locate};
-use super::position::sorted_as;
 use super::{is_example, is_gone, successor, ClaimLedger, RepairRecord};
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome, Step};
 use lattice_core::domain::learning::claim_review::{
@@ -42,9 +41,6 @@ pub(in super::super) struct Matched {
     continues: Vec<Option<ClaimId>>,
     /// The claims no statement continues.
     orphaned: Vec<ClaimId>,
-    /// A statement a repair wrote beside its parent's successor → the parent
-    /// and the attempts the child inherits.
-    children: HashMap<usize, (ClaimId, u8)>,
     /// A repaired claim with no successor → the text its repair wrote in its
     /// field (`None` when the repair only took text out).
     rewritten: HashMap<ClaimId, Option<String>>,
@@ -56,21 +52,10 @@ impl Matched {
         self.continues.get(index)?.as_ref()
     }
 
-    /// The claim whose repair wrote statement `index` beside its own
-    /// successor.
-    fn parent(&self, index: usize) -> Option<&ClaimId> {
-        self.children.get(&index).map(|(parent, _)| parent)
-    }
-
     /// The match of the statements `keep` holds, in their order, the others
     /// taken out of it. A statement beyond `keep` is kept.
     pub(in super::super) fn keep(self, keep: &[bool]) -> Self {
         let kept = |index: &usize| keep.get(*index).copied().unwrap_or(true);
-        let moved: HashMap<usize, usize> = (0..self.continues.len())
-            .filter(kept)
-            .enumerate()
-            .map(|(new, old)| (old, new))
-            .collect();
         Self {
             continues: self
                 .continues
@@ -80,11 +65,6 @@ impl Matched {
                 .map(|(_, claim)| claim)
                 .collect(),
             orphaned: self.orphaned,
-            children: self
-                .children
-                .into_iter()
-                .filter_map(|(index, child)| Some((*moved.get(&index)?, child)))
-                .collect(),
             rewritten: self.rewritten,
         }
     }
@@ -157,9 +137,9 @@ impl ClaimLedger {
     }
 
     /// The class of each of a pass's first `statements` statements when the
-    /// match gives one: that of the claim it continues as the ledger holds
-    /// it, or the class the parent of the repair it is the heir of was sorted
-    /// into. None for a statement new to the ledger, which is sorted.
+    /// match gives one: that of the claim it continues, a repair's successor
+    /// included, as the ledger holds it. None for a statement new to the
+    /// ledger, which is sorted.
     pub(in super::super) fn classes_given(
         &self,
         matched: &Matched,
@@ -167,11 +147,8 @@ impl ClaimLedger {
     ) -> Vec<Option<Classed>> {
         (0..statements)
             .map(|index| {
-                if let Some(entry) = matched.continues(index).and_then(|id| self.entry(id)) {
-                    return entry.classified().map(|(class, by)| Classed { class, by });
-                }
-                let parent = matched.parent(index).and_then(|id| self.entry(id))?;
-                sorted_as(parent).map(|(class, by)| Classed { class, by })
+                let entry = matched.continues(index).and_then(|id| self.entry(id))?;
+                entry.classified().map(|(class, by)| Classed { class, by })
             })
             .collect()
     }
@@ -215,10 +192,9 @@ impl ClaimLedger {
         // A repaired sentence the matching rules lost (a rewrite that changed
         // its statement where no single span can be named) continues as the
         // new text its repair wrote in the same field, never as a sentence
-        // that was there before; the other claims that repair wrote are its
-        // children. Both keep the claim's attempts, so a claim the machine
-        // keeps rewriting still reaches the user (§4 "Bounded"; claim
-        // sources design §9).
+        // that was there before, and keeps the claim's place in its graph
+        // (claim sources design §9). Nothing else a repair wrote is a claim
+        // of it (acceptance design §2.6).
         let owned: Vec<bool> = assigned.assigned.iter().map(Option::is_some).collect();
         let heirs = successor::heirs(
             &self.pending.repairs,
@@ -238,7 +214,6 @@ impl ClaimLedger {
         Matched {
             continues: assigned.assigned,
             orphaned: assigned.orphaned,
-            children: heirs.children,
             rewritten: heirs.rewritten,
         }
     }
@@ -260,7 +235,6 @@ impl ClaimLedger {
         let Matched {
             continues,
             orphaned,
-            children,
             rewritten,
         } = matched;
         let records: HashMap<ClaimId, RepairRecord> = std::mem::take(&mut self.pending.repairs)
@@ -272,7 +246,7 @@ impl ClaimLedger {
         let mut claim_ids = Vec::with_capacity(extracted.len());
         let mut findings = Vec::new();
         let mut examples = HashMap::new();
-        for (index, (statement, prior)) in extracted.into_iter().zip(continues).enumerate() {
+        for (statement, prior) in extracted.into_iter().zip(continues) {
             let Extracted {
                 claim,
                 class,
@@ -290,7 +264,7 @@ impl ClaimLedger {
                         },
                     )
                     .await?;
-                    self.start(&successor, claim, class, None).await?;
+                    self.start(&successor, claim, class).await?;
                     successor
                 }
                 Some(id) if self.takes_successor(candidate, &id, records.get(&id)) => {
@@ -310,7 +284,7 @@ impl ClaimLedger {
                         },
                     )
                     .await?;
-                    self.start(&successor, claim, held, None).await?;
+                    self.start(&successor, claim, held).await?;
                     successor
                 }
                 Some(id) => {
@@ -320,8 +294,7 @@ impl ClaimLedger {
                 }
                 None => {
                     let id = ClaimId::generate();
-                    let born = children.get(&index).cloned();
-                    self.start(&id, claim, class, born).await?;
+                    self.start(&id, claim, class).await?;
                     id
                 }
             };
@@ -405,15 +378,13 @@ impl ClaimLedger {
         !standing
     }
 
-    /// A claim seen for the first time: extracted, then classified, and born
-    /// of a repair when one wrote it beside its parent's successor (`born`:
-    /// the parent and the attempts it left, claim sources design §9.1).
+    /// A claim seen for the first time: extracted, then classified. None is
+    /// born of a repair (acceptance design §2.6).
     async fn start(
         &mut self,
         id: &ClaimId,
         claim: ExtractedClaim,
         class: Option<Classed>,
-        born: Option<(ClaimId, u8)>,
     ) -> Result<()> {
         self.append(
             id,
@@ -423,18 +394,7 @@ impl ClaimLedger {
             },
         )
         .await?;
-        self.classify_claim(id, class).await?;
-        if let Some((parent, attempts_left)) = born {
-            self.append(
-                id,
-                ClaimEvent::BornOfRepair {
-                    parent,
-                    attempts_left,
-                },
-            )
-            .await?;
-        }
-        Ok(())
+        self.classify_claim(id, class).await
     }
 
     /// Records the class a claim was sorted into. A claim the ledger holds a
@@ -465,7 +425,7 @@ impl ClaimLedger {
         repair: Option<&RepairRecord>,
     ) -> Result<()> {
         let Some(before) = self.entry(id).cloned() else {
-            return self.start(id, claim, class, None).await;
+            return self.start(id, claim, class).await;
         };
         let quote = claim.location.quote.clone();
         if claim.location != *before.location() || claim.statement != before.statement() {
