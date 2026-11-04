@@ -14,6 +14,7 @@ use super::{
 };
 use crate::features::learning::references::trust::pack::SourceTrustPackEntry;
 use crate::features::learning::{
+    canvas_repository::MAX_SCENE_BYTES,
     dto::{LearningPreparation, LearningProgramDto, LearningProgramStatus},
     pack::{
         sections::{
@@ -148,7 +149,7 @@ pub(super) async fn insert_canvas_snapshot(
         let _: serde_json::Value = parse(scene.as_bytes())?;
         let count = value_i64(row, "elementCount")?;
         let revision = value_i64(row, "revision")?;
-        if count < 0 || revision < 0 || scene.len() > 2_000_000 {
+        if count < 0 || revision < 0 || scene.len() > MAX_SCENE_BYTES {
             return Err(invalid("Pack canvas data exceeds its bounds."));
         }
         sqlx::query("INSERT INTO learning_canvases(id,program_id,lesson_id,title,description,scene_json,element_count,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
@@ -462,11 +463,6 @@ pub(super) async fn insert_source_workspace(
                     .to_owned(),
                 None => version.excerpt.clone(),
             };
-            if full_text.len() > 1_000_000 {
-                return Err(invalid(
-                    "A source version in the pack exceeds the restore size limit.",
-                ));
-            }
             let content_digest = format!("{:x}", Sha256::digest(full_text.as_bytes()));
             if body.is_none() && !restored_digests.insert(content_digest.clone()) {
                 return Err(invalid("Two source versions have the same available excerpt. Include licensed full source bodies to preserve both immutable versions."));

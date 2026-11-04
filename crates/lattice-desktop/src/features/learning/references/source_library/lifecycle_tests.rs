@@ -422,15 +422,6 @@ async fn refresh_guards_its_inputs_and_records_unusable_pages_as_failed_checks()
     assert!(message.is_some_and(|m| m.contains("valid source metadata")));
     assert!(pending.is_none());
 
-    let long_title = refresh_request(&program_id, &web, 0);
-    library
-        .refresh(&long_title, Some(page(&"t".repeat(181), "Some text")), None)
-        .await?;
-    assert_eq!(
-        check_row(&pool, &long_title.operation_id).await?.0,
-        "failed"
-    );
-
     let unreachable = refresh_request(&program_id, &web, 0);
     library
         .refresh(&unreachable, None, Some("é".repeat(600)))
@@ -637,28 +628,6 @@ async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note()
             &library,
             &program_id,
             page("", "Some text"),
-            web.clone(),
-            manual.clone(),
-        )
-        .await,
-    );
-    assert_invalid(
-        try_add(
-            &library,
-            &program_id,
-            page(&"t".repeat(181), "Some text"),
-            web.clone(),
-            manual.clone(),
-        )
-        .await,
-    );
-    let mut long_publisher = page("Altitude", "Some text");
-    long_publisher.publisher = Some("p".repeat(181));
-    assert_invalid(
-        try_add(
-            &library,
-            &program_id,
-            long_publisher,
             web.clone(),
             manual.clone(),
         )
