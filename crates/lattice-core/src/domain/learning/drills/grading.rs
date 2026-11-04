@@ -189,7 +189,8 @@ pub struct Score {
     /// The share of findings that match an issue or are a valid extra: none
     /// when there are no findings.
     pub precision: Option<f64>,
-    /// The first finding matches an issue of the key's highest severity.
+    /// The first finding found an issue of the key's highest severity: a half
+    /// find, or a find credited to a later finding, is not leading with it.
     pub led_with_the_most_severe: bool,
 }
 
@@ -292,7 +293,8 @@ fn tally(severity: Severity, key: &[KeyIssue], outcomes: &[IssueOutcome]) -> Opt
     (counts.total > 0).then_some(counts)
 }
 
-/// Whether the first finding matches an issue of the key's highest severity.
+/// Whether an issue of the key's highest severity was found by the first
+/// finding.
 fn led_with_the_most_severe(
     key: &[KeyIssue],
     findings: &[Finding],
@@ -304,11 +306,9 @@ fn led_with_the_most_severe(
     if findings.is_empty() {
         return false;
     }
-    match assessment.findings.first() {
-        Some((FindingOutcome::Matches { issues }, _)) => issues.iter().any(|&issue| {
-            key.get(issue)
-                .is_some_and(|known| known.severity == highest)
-        }),
-        _ => false,
-    }
+    key.iter()
+        .zip(&assessment.issues)
+        .any(|(issue, (outcome, _))| {
+            issue.severity == highest && matches!(outcome, IssueOutcome::Found { finding: 0 })
+        })
 }
