@@ -205,6 +205,78 @@ fn complete_code_question_can_exceed_the_old_grammar_limit_but_remains_bounded()
     Ok(())
 }
 
+#[test]
+fn a_long_interview_plan_is_read_not_refused() {
+    let target = LearningInterviewTargetDto::default();
+    let valid = plan_json(LearningInterviewRoundKind::FullLoop);
+    let question = format!(
+        "{}?",
+        "Walk through the failure and say what you would check next ".repeat(100)
+    );
+    for (pointer, text) in [
+        (
+            "/companySummary",
+            "The company runs a regional logistics platform. ".repeat(100),
+        ),
+        ("/companyName", "A".repeat(200)),
+        ("/targetRole", "R".repeat(200)),
+        ("/questions/3/question", question),
+        (
+            "/questions/3/companyRationale",
+            "It ties the question to the role's stated constraints. ".repeat(25),
+        ),
+        (
+            "/questions/3/followUpProbes/0",
+            "Explain the tradeoff you accepted and why. ".repeat(15),
+        ),
+        (
+            "/questions/3/evaluationSignals/0",
+            "Names the condition and checks the outcome. ".repeat(15),
+        ),
+    ] {
+        let mut plan = valid.clone();
+        *plan.pointer_mut(pointer).expect(pointer) = json!(text);
+        let checked = checked_interview_plan(&plan.to_string(), &target, &[]);
+        assert!(checked.is_ok(), "{pointer}: {:?}", checked.err());
+    }
+    let padded = format!("{valid}{}", " ".repeat(80_001));
+    let checked = checked_interview_plan(&padded, &target, &[]);
+    assert!(
+        checked.is_ok(),
+        "whitespace around the reply: {:?}",
+        checked.err()
+    );
+}
+
+#[test]
+fn the_interview_plan_schema_holds_no_text_length_cap() {
+    use crate::features::learning::practice::practice_tests::text_length_rules;
+    for round in [
+        LearningInterviewRoundKind::FullLoop,
+        LearningInterviewRoundKind::Behavioral,
+    ] {
+        let rules = text_length_rules(&interview_plan_schema(round));
+        assert!(rules.is_empty(), "{rules:?}");
+    }
+}
+
+#[test]
+fn a_long_company_and_role_keep_the_interview_title_whole() -> Result<()> {
+    let mut plan = checked_interview_plan(
+        &plan_json(LearningInterviewRoundKind::FullLoop).to_string(),
+        &LearningInterviewTargetDto::default(),
+        &[],
+    )?;
+    plan.company_name = "C".repeat(150);
+    plan.target_role = "R".repeat(150);
+    let activity = public_interview_activity(&plan, &[]);
+    assert_eq!(
+        activity.title,
+        format!("{} · {} interview", plan.company_name, plan.target_role)
+    );
+    Ok(())
+}
+
 #[derive(Default)]
 struct InterviewLlm {
     requests: Mutex<Vec<String>>,

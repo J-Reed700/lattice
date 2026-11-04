@@ -414,4 +414,71 @@ mod tests {
                 .is_err());
         }
     }
+    #[tokio::test]
+    async fn a_solvers_reason_is_read_at_any_length() -> Result<()> {
+        let long =
+            "The literal question follows from its premises and the option fits. ".repeat(40);
+        let issues = check(
+            &model(vec![json!({"answers":[
+                json!({"index":0,"correctIndices":[1],"reason":long}),
+                json!({"index":1,"correctIndices":[0],"reason":"Option A."}),
+                answer(2, 0),
+            ]})]),
+            &candidate(),
+        )
+        .await?;
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].note.contains(long.trim()));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn a_bank_solvers_reason_reaches_the_repair_whole() -> Result<()> {
+        let long =
+            "The literal question follows from its premises and the option fits. ".repeat(40);
+        let item = LearningAssessmentCandidate {
+            id: uuid::Uuid::new_v4().to_string(),
+            outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+            format: engine::LearningItemFormat::SingleChoice,
+            difficulty: 3,
+            prompt: "Which option follows from the premises?".into(),
+            options: vec![
+                "Alpha".into(),
+                "Bravo".into(),
+                "Charlie".into(),
+                "Delta".into(),
+            ],
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: engine::LearningAssessmentKey::Choice(0),
+            explanation: "Alpha follows.".into(),
+            distractor_rationales: vec![],
+        };
+        let solved = json!({"answers":[{
+            "index":0,"reason":long,"correctIndices":[1],"answer":"",
+            "blankAnswers":[],"matches":[],"orderedValues":[]
+        }]});
+        let verdicts =
+            review_bank_items(&model(vec![solved]), &[(&item, "Reference quote.")]).await?;
+        match &verdicts[0] {
+            KeyVerdict::Disputed(reason) => assert!(reason.contains(long.trim())),
+            other => panic!("expected a dispute, got {other:?}"),
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn the_key_checks_ask_for_no_text_length() -> Result<()> {
+        use crate::features::learning::practice::practice_tests::{text_length_rules, Reply};
+        let llm =
+            Reply::new(json!({"answers":[answer(0, 0), answer(1, 0), answer(2, 0)]}).to_string());
+        check(&llm, &candidate()).await?;
+        let mut schemas = llm.schemas.lock().unwrap().clone();
+        schemas.push(bank_schema(&[0, 1]));
+        assert!(schemas.len() >= 2);
+        for schema in &schemas {
+            let rules = text_length_rules(schema);
+            assert!(rules.is_empty(), "{rules:?}");
+        }
+        Ok(())
+    }
 }
