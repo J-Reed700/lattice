@@ -181,7 +181,7 @@ The part-wise reading's specifics guard asks the rule layer's own test with the 
 A remedy is one existing mechanism behind one step:
 
 - `Research`: `research::expand`, with the per-statement page count.
-- `Recite`: `repair::cite_where_supported`, writing the sentence's own `citations` entry; it never overwrites the section's quote, which other statements are read against (§1 #10).
+- `Recite`: `repair::cite_where_supported`, writing the sentence's own `citations` entry: it moves the entry the sentence has, and adds one where the sentence has none or where its entry is another live statement's citation too. It never overwrites the section's quote, which other statements are read against (§1 #10), and it cites one claim of a sentence per call, so that two cannot write one entry.
 - `Uncite`: removes the sentence's own `citations` entry (new, beside it); a sentence that carries none has nothing to remove.
 - `Rewrite`: `repair::candidate` for a section's targets, each told its goal and the reading that failed it; the history it may not reintroduce is the statements that failed a reading and were rewritten or cut, nothing unjudged (§1 #14). Confinement is per target: a hunk that touches a protected sentence is put back and only the targets in that hunk are `NotApplied`; the section's other targets keep their rewrites and nothing else is charged (§1 #7). No repair writes a new statement: what a rewrite wrote is extracted again, and a statement there that continues neither a target nor a statement that shared its sentence takes that target's rewrite back (`NotApplied`), the rule the flow repair already keeps (classes design §3.10). So a rewrite has one successor per statement it touched, born of nothing, and the ceiling counts every check a rewrite can cause; today's children of a split sentence (`BornOfRepair`) cost checks no ceiling counted.
 - `Cut`: `repair/cut.rs`, on the sentence that states the claim. A quote that spans a passage is first narrowed to that sentence (`shared::text::claim_sentence`), so its other sentences stay (§1 #8); every copy of the sentence in the field still goes, each asserting what failed (`every_place_a_sentence_is_written_goes_with_it` stays true). A statement that draws on several sentences, which `claim_sentence` declines to name, and a sentence that carries other live statements are narrowed by the rewrite of §2.3 instead, and cut whole only when that rewrite cannot be applied.
@@ -259,7 +259,7 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
   - A sentence with no entry of its own keeps what it has: that is the section's quote, which others are read against.
   - An entry another live statement on the same sentence restates also stays, since it is that statement's citation.
   - Either way the statement no longer stands on a citation. It records `CitationDropped { cited }` (empty when nothing went), the outcome `Done`, and `Classified { by: Evidence }` for the class the edge enters.
-- **Recite, once per section per call.** The recite repairs one claim of a section per call, so that two cannot overwrite the section's quote. A second claim of that section at a `Recite` node waits for the next round, with nothing recorded. A claim the recite cannot cite at all (no run of the passage's whole sentences can be a citation) is still `Done`, and the reading after it tells.
+- **Recite, once per section per call.** The recite repairs one claim of a section per call, so that two cannot overwrite the section's quote. A second claim of that section at a `Recite` node waits for the next round, with nothing recorded. A claim the recite cannot cite at all (no run of the passage's whole sentences can be a citation) is still `Done`, and the reading after it tells. From step 7a the recite writes the sentence's own entry (§2.6), and the rule is one claim of a sentence per call.
 - **Rewrite and Cut** are one repair, as now:
   - The statements at `Rewrite` nodes are its targets, each with its node's goal on `RepairAttempted`.
   - The statements at `Cut` nodes go on their last attempt (`lastAttempt`, which the code cuts).
@@ -276,7 +276,7 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
 - Nothing else follows: the claim is not rewritten or cut, because the user holds it. Where the page that verifies it is a source its section does not cite, the section cites it, as for the user's own evidence (below).
 - A round that saved nothing answers the hint with its `Researched` alone, which found nothing. A round that reached nothing records nothing, so the hint is tried again on the next run.
 
-**Where the user's evidence is, the lesson cites it.** A claim the user resolved, with evidence of their own or by a hint's reading, whose support is on a source its section does not cite has its section's citation moved there by the recite, as a statement at a `Recite` node does, with no step and no reading after it: the user's evidence is its check (the claim review design's §5.4). The recite still repairs one claim of a section per call, and a citation it wrote is never written again. Today's pass recites every finding supported elsewhere; the switch keeps that for the user's claims, not only the machine's.
+**Where the user's evidence is, the lesson cites it.** A claim the user resolved, with evidence of their own or by a hint's reading, whose support is on a source its section does not cite has its section's citation moved there by the recite, as a statement at a `Recite` node does, with no step and no reading after it: the user's evidence is its check (the claim review design's §5.4). The recite still cites one claim at a time where two would write one citation, and a citation it wrote is never written again. Today's pass recites every finding supported elsewhere; the switch keeps that for the user's claims, not only the machine's.
 
 Today's hint path re-checked the whole pass, which re-asked only what the new evidence changed. A Sourced claim was read against the new page, and a Reasoning or Common claim met its own check again, restored from its receipt. So a hint helped a Sourced claim alone; read by the page, it helps any claim it can find a source for.
 
@@ -314,11 +314,12 @@ Both are recorded at identification, from the claim's quote and the active sourc
 - the sort of statements the ledger already holds.
 
 **What stays as it is:**
-- **For step 7, what each remedy does:**
+- **For step 7a, what each remedy does:**
   - the recite writes the section's citation;
   - a refused hunk refuses its section's targets;
   - the cut takes every sentence its quote touches;
   - the goal is recorded but not yet in the prompt.
+- **For step 7b:** a sentence that carries other live statements, and a statement no single sentence states, are cut whole; a rewrite may write a new statement.
 - **For step 8:**
   - a rewritten sentence is extracted with its saved statements;
   - a claim no extraction continues is Removed.
@@ -460,8 +461,9 @@ Each step is a builder's (`model: sonnet`), on branch `lesson/acceptance-policy`
 | 6b-2 | The switch (§2.10): identity before reading, the sort once, readings and remedies by node, `decide` by node, the report from the policy | `passes.rs`, `repair_loop.rs`, `claim_ledger/{observe,claim_ledger}.rs`, `class_checks.rs`, `evidence_checks*` | §1 #1, #4, #5 go green; the no-progress stop; every machine-owned claim's state read from its `then` |
 | 6b-3 | Retire the A/B pass: its tests of what a reader still runs (paging, packing, receipts, the page budget) move to that reader; its tests of the A/B decision go with `check_with_citations`, `prepare`, `corroborate`, `remember` and `combine` | `evidence_checks*`, `two_pass_tests.rs`, `evidence_paging_tests.rs`, `readings_tests.rs` | the moved tests pass on the readers; nothing outside tests called what goes |
 | 6b-4 | Built before the first change to a graph a recorded walk has crossed; until then a change of policy stops with `policy_changed`, and steps 7 to 11 change no such graph, so it waits until a step needs it. A walk across a change of policy: a claim's recorded steps are walked again under the new graphs, and it continues where they fit, or else starts again at its class's entry (a rewrite's successor at its post-rewrite node, so it is never rewritten twice), with research spent where it was spent | core `acceptance/walk.rs`, `claim_review/ledger/decisions.rs`, `claim_ledger/position.rs` | a record under v1 continues under a v2 that keeps its nodes; one under a v2 that drops them starts again, never rewritten twice and never researched twice |
-| 7 | Remedies done as §2.6 says: recite on the sentence's own entry, the goal in the rewrite's prompt, per-target confinement with its retry, the cut on the stating sentence and its narrowing, no repair writing a new statement | `repair/*`, `claim_ledger/successor.rs` | §1 #7, #8, #10 go green |
+| 7a | The remedies that need no fresh extraction (§2.6): the recite on the sentence's own entry, one claim of a sentence per call; the rewrite asked its goal, told why on its retry, and kept only from what failed and was repaired (§1 #14); confinement per target; the cut on the sentence that states the claim | `repair/*`, `repair_loop.rs` | §1 #7, #8 b, #10, #14 go green |
 | 8 | Fresh extraction of rewritten sentences; Removed only when the sentence is gone, and every standing sentence on a live claim at publication | `inventory/revisions*`, `claim_reuse.rs`, `claim_ledger/observe.rs`, `report.rs` | §1 #6, #16 go green |
+| 7b | Built after 8, since both read the fresh extraction of what a rewrite wrote: the narrowing rewrite of a cut whose sentence carries other live statements or that no single sentence states, its outcome read when the next pass extracts the sentence; no repair writing a new statement | `repair/cut.rs`, `claim_ledger/{successor,identify}.rs` | §1 #8 a goes green |
 | 9 | The round (Template Method) with a scripted review | `repair_loop.rs` → `round.rs` | termination and the no-progress stop on the scripted review |
 | 10 | The veto for a model-Internal statement | the graph, `class_checks.rs`, the ledger's content rule | §1 #15 |
 | 11 | Measure §3 on the 27B, then the acceptance run | scratchpad replay; `acceptance_run.sh` | — |
