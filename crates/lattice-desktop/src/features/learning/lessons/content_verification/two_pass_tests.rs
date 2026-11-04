@@ -9,6 +9,25 @@ use super::*;
 use crate::features::learning::lesson_drafts;
 use std::sync::atomic::Ordering;
 
+/// The citation events `cite_where_supported` made, one for each finding it
+/// rewrote the citation of.
+fn recited(
+    candidate: &mut Value,
+    findings: &[Finding],
+    numbered: &mut Vec<LearningSourceDto>,
+    references: &ReferenceCollection<'_>,
+    tried: &mut HashSet<(usize, String)>,
+) -> Result<Vec<lattice_core::domain::learning::claim_review::ClaimEvent>> {
+    let cited = repair::cite_where_supported(candidate, findings, numbered, references, tried)?;
+    Ok(cited
+        .into_iter()
+        .filter_map(|cited| match cited {
+            repair::Cited::Recited(event) => Some(event),
+            _ => None,
+        })
+        .collect())
+}
+
 /// Unit 0 cites the passage holding `quote`.
 fn citing(references: &ReferenceCollection<'_>, quote: &str) -> Result<Citations> {
     Ok(Citations::new(
@@ -214,7 +233,7 @@ async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
     let mut numbered = vec![source("related-3"), source("marker")];
     let mut candidate = wrongly_cited();
     let mut tried = HashSet::new();
-    let repairs = repair::cite_where_supported(
+    let repairs = recited(
         &mut candidate,
         std::slice::from_ref(&finding),
         &mut numbered,
@@ -240,9 +259,9 @@ async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
         source_version_id,
         added_source,
         ..
-    } = &repairs[0].1
+    } = &repairs[0]
     else {
-        panic!("{:?}", repairs[0].1);
+        panic!("{:?}", repairs[0]);
     };
     assert_eq!(cited, &vec!["related-3".to_owned()]);
     assert_eq!(source_version_id, "marker");
@@ -256,7 +275,7 @@ async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
         .any(|passage| passage.source_id == "marker" && passage.text.contains(MARKER)));
     assert_eq!(next.source_at(1), Some("marker"));
     // Written once: the same citation is not written again.
-    assert!(repair::cite_where_supported(
+    assert!(recited(
         &mut candidate,
         std::slice::from_ref(&finding),
         &mut numbered,
@@ -279,7 +298,7 @@ async fn a_source_the_lesson_does_not_number_is_added_and_cited() -> Result<()> 
         .unwrap();
     let mut numbered = vec![related.clone()];
     let mut candidate = wrongly_cited();
-    let repairs = repair::cite_where_supported(
+    let repairs = recited(
         &mut candidate,
         &[finding],
         &mut numbered,
@@ -293,7 +312,7 @@ async fn a_source_the_lesson_does_not_number_is_added_and_cited() -> Result<()> 
     assert_eq!(numbered[1].title, "Reference marker");
     assert_eq!(candidate["blocks"][0]["sourceIndex"], 1);
     assert!(matches!(
-        repairs[0].1,
+        repairs[0],
         lattice_core::domain::learning::claim_review::ClaimEvent::CitationRepaired {
             added_source: true,
             ..
@@ -704,25 +723,10 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
             )
             .await?;
     }
-    let report = LessonVerificationReport {
-        policy: String::new(),
-        lesson_id: String::new(),
-        content_sha256: String::new(),
-        checker_model: String::new(),
-        checked_at: 0,
-        sources: vec![],
-        coverage: vec![],
-        coverage_audit: vec![],
-        findings,
-        executions: vec![],
-        confirmed_examples: None,
-        issues: vec![],
-        retrieval_mode: String::new(),
-        embedding_model: None,
-        page_budget: None,
-        unexecuted_languages: vec![],
-    };
-    ledger.record_research(&ids, &searched, &report).await?;
+    let round: Vec<(ClaimId, usize)> = ids.iter().map(|id| (id.clone(), 0)).collect();
+    ledger
+        .record_research(&StandardPolicy::new(), &round, &searched, false)
+        .await?;
     // Every claim the round researched carries its share of the round.
     for id in &ids {
         let costs: Vec<Option<u64>> = ledger
@@ -906,7 +910,7 @@ async fn a_claim_supported_elsewhere_has_the_citation_of_its_own_sentence_repair
     let wrong = candidate["blocks"][0]["quote"].clone();
     candidate["blocks"][0]["citations"] = json!([{"sentence":CLAIM,"sourceIndex":0,"quote":wrong}]);
 
-    let repairs = repair::cite_where_supported(
+    let repairs = recited(
         &mut candidate,
         std::slice::from_ref(&finding),
         &mut numbered,

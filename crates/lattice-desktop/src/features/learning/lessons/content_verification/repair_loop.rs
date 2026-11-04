@@ -1,8 +1,13 @@
 //! The verify-and-repair loop and its resumable pending-repair checkpoint.
-use super::claim_ledger::{self, ClaimLedger};
+use super::claim_ledger::{self, ClaimLedger, StepKind};
+use super::passes;
+use super::readings::Readers;
+use super::repair::Cited;
 use super::*;
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, StandardPolicy};
-use lattice_core::domain::learning::claim_review::ClaimId;
+use lattice_core::domain::learning::acceptance::{
+    AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
+};
+use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimId, StopReason};
 
 /// [`verify_and_repair_with_references`] over lexical references, for tests.
 #[cfg(test)]
@@ -58,9 +63,12 @@ async fn renumber(
 
 /// Verifies, researches and repairs until nothing is left for the machine
 /// (§4), then publishes if every claim is resolved and otherwise saves the
-/// draft for the user's review (§6.1). Sync points before each pass and repair
-/// group pick up what the user did (§9). Operational checker errors propagate
-/// rather than asking the author to rewrite valid content.
+/// draft for the user's review (§6.1). Each pass reads the statements that
+/// wait for a reading, and the acceptance policy decides the step of each
+/// (acceptance design §2.10): research, a citation moved or dropped, a rewrite
+/// or a cut. Sync points before each pass and repair group pick up what the
+/// user did (§9). Operational checker errors propagate rather than asking the
+/// author to rewrite valid content.
 ///
 /// `numbered` is the lesson's numbered sources, what its `sourceIndex`es
 /// name; the lesson is parsed against it and `writer_schema`'s indices are
@@ -75,6 +83,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     (output_tokens, numbered): (usize, &mut Vec<LearningSourceDto>),
 ) -> Result<(String, LessonVerificationReport)> {
     let policy = StandardPolicy::new();
+    let readers = Readers::standard();
     let writers = numbered.len();
     renumber(numbered, references).await?;
     let mut numbered_schema = writer_schema.clone();
@@ -116,14 +125,14 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             candidate = crate::features::learning::generation::parse_json(&raw)?;
         }
         // A failed rewrite can resume from its saved defects. This only skips
-        // repeating the diagnosis; it never skips checking the rewritten text.
+        // repeating the diagnosis; it never skips reading the rewritten text.
         if std::mem::take(&mut resume_repair) {
             let saved =
                 crate::features::learning::lesson_drafts::pending_repair(&candidate.to_string())
                     .await?
                     .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
                     .filter(|saved| saved.matches(llm, prompt, schema, &candidate, active));
-            let left = saved.map(|saved| still_repairable(&ledger, saved.context));
+            let left = saved.map(|saved| still_repairable(&ledger, &policy, saved.context));
             if matches!(left, Some(None)) {
                 // Everything the saved repair was for was resolved meanwhile.
                 crate::features::learning::lesson_drafts::save_repair(&raw, None).await?;
@@ -140,6 +149,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     .unwrap_or_default();
                 raw = repair::candidate(
                     llm,
+                    &policy,
                     prompt,
                     schema,
                     context,
@@ -155,9 +165,36 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             crate::features::learning::lesson_progress::new_pass();
             verified = Some(raw.clone());
         }
-        let mut report =
-            verify_with_references(llm, &policy, runtimes, &candidate, active, &mut checks).await?;
-        ledger.observe(&candidate, &report).await?;
+        // What this iteration starts from, to know whether it moved anything.
+        let (stepped, draft) = (ledger.stepped(), raw.clone());
+        let extraction = passes::extract(llm, runtimes, &candidate, &checks).await?;
+        let pass = passes::identify(
+            llm,
+            &policy,
+            &mut ledger,
+            (&candidate, active),
+            extraction,
+            &checks,
+        )
+        .await?;
+        if let Some(reason) = ledger.fault(&policy) {
+            return Err(stop(&mut ledger, &raw, reason).await?);
+        }
+        let due = ledger.due(&policy);
+        let readings = passes::read_steps(
+            llm,
+            &policy,
+            &readers,
+            &ledger,
+            &checks,
+            (&candidate, active),
+            (&pass, &due),
+        )
+        .await?;
+        let mut stopped =
+            passes::record_readings(&policy, &mut ledger, &mut checks, readings).await?;
+        let findings = passes::latest_findings(&ledger, &mut checks, &pass).await?;
+        let mut report = passes::report(llm, active, &candidate, &pass, findings, &checks);
         plan_moved(&policy, &ledger, &mut planned);
         // A flow repair that wrote a statement is taken back (claim classes
         // design §3.10).
@@ -166,10 +203,12 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             crate::features::learning::lesson_drafts::save(&raw).await?;
             continue;
         }
-        // Research once per claim: what it saves is checked at once; what it
-        // does not find is recorded as tried (§4).
-        loop {
-            let (claims, findings, hints) = ledger.research_targets(&report);
+        // Research for the statements at a research node and the claims a hint
+        // names, once per claim: what it saves is read at once, and what it
+        // does not find is recorded as tried (§4). A round that reaches
+        // nothing records nothing, and the claims stay where they are.
+        while stopped.is_empty() {
+            let (claims, findings, hints) = ledger.research_targets(&policy, &report);
             if claims.is_empty() {
                 break;
             }
@@ -177,135 +216,153 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             let expansion = research::expand(llm, active, &findings, &hints, &checks)
                 .boxed()
                 .await?;
-            // Whether the round is the claims' own, and whether it saved
-            // anything.
-            let (searched, round, saved) = match expansion {
+            let (searched, saved) = match expansion {
                 research::Expansion::Saved(additional, searched) => {
                     expanded = Some(*additional);
-                    (searched, true, true)
+                    (searched, true)
                 }
-                research::Expansion::Unchanged(searched) => {
-                    // A round that reached no search engine and no page is
-                    // not the claims' research: they keep their round.
-                    if searched.unreached {
-                        tracing::info!(
-                            "claim.state: research reached nothing; the claims keep their round"
-                        );
-                    }
-                    let round = !searched.unreached;
-                    (searched, round, false)
+                research::Expansion::Unchanged(searched) if searched.unreached => {
+                    tracing::info!(
+                        "claim.state: research reached nothing; the claims stay at their node"
+                    );
+                    break;
                 }
+                research::Expansion::Unchanged(searched) => (searched, false),
                 research::Expansion::Exhausted(exhausted, searched) => {
                     tracing::info!(%exhausted, "claim.state: research found nothing new for these claims");
-                    (searched, true, false)
+                    (searched, false)
                 }
             };
-            // What research saved is checked at once; and the page of a
-            // statement whose section cites a passage is read, once, now: the
-            // re-check against what research found, if it found anything
-            // (design §3.2).
-            let waiting = checks.unread_of(&findings);
-            let rechecked = saved || !waiting.is_empty();
-            if rechecked {
-                let active = expanded.as_ref().unwrap_or(references);
-                if saved {
-                    crate::features::learning::lesson_progress::new_references(Some(
-                        searched.sources_added.len(),
-                    ));
-                }
-                checks.corroborate = waiting;
-                let evidence = check_evidence(
-                    llm,
-                    &policy,
-                    &candidate,
-                    active,
-                    Inventory {
-                        units: report.coverage,
-                    },
-                    Coverage {
-                        units: report.coverage_audit,
-                    },
-                    report.executions,
-                    &mut checks,
-                )
-                .await;
-                checks.corroborate.clear();
-                crate::features::learning::lesson_progress::new_references(None);
-                report = evidence?;
+            // What the round found is read at once, from the node each
+            // statement's research step leads to: before the step is recorded,
+            // so that the round records what it found for each statement.
+            let outcome = if saved {
+                Outcome::Saved
+            } else {
+                Outcome::FoundNothing
+            };
+            let active = expanded.as_ref().unwrap_or(references);
+            let due: Vec<(ClaimId, Position)> = ledger
+                .at(&policy, StepKind::Research)
+                .into_iter()
+                .filter_map(|id| {
+                    let step = Step::Research;
+                    let next = ledger.after(&policy, &id, Taken { step, outcome })?;
+                    let node = policy.graph(next.class).node(next.node)?;
+                    matches!(node.step, Step::Read(_)).then_some((id, next))
+                })
+                .collect();
+            if saved {
+                crate::features::learning::lesson_progress::new_references(Some(
+                    searched.sources_added.len(),
+                ));
             }
-            // The round is recorded first: it was each claim's one.
-            if round {
-                ledger.record_research(&claims, &searched, &report).await?;
-            }
-            if rechecked {
-                ledger.observe(&candidate, &report).await?;
-                plan_moved(&policy, &ledger, &mut planned);
-            }
+            let readings = passes::read_steps(
+                llm,
+                &policy,
+                &readers,
+                &ledger,
+                &checks,
+                (&candidate, active),
+                (&pass, &due),
+            )
+            .await;
+            crate::features::learning::lesson_progress::new_references(None);
+            let readings = readings?;
+            let found = |id: &ClaimId| {
+                readings
+                    .iter()
+                    .find(|(read, _)| read == id)
+                    .and_then(|(_, walk)| walk.steps.first())
+                    .map_or(0, |step| {
+                        step.read
+                            .finding
+                            .evidence
+                            .iter()
+                            .filter(|passage| searched.sources_added.contains(&passage.source_id))
+                            .count()
+                    })
+            };
+            let round: Vec<(ClaimId, usize)> =
+                claims.iter().map(|id| (id.clone(), found(id))).collect();
+            ledger
+                .record_research(&policy, &round, &searched, saved)
+                .await?;
+            stopped.extend(
+                passes::record_readings(&policy, &mut ledger, &mut checks, readings).await?,
+            );
+            let findings = passes::latest_findings(&ledger, &mut checks, &pass).await?;
+            report = passes::report(llm, active, &candidate, &pass, findings, &checks);
+            plan_moved(&policy, &ledger, &mut planned);
             if !saved {
                 break;
             }
         }
-        // A claim supported elsewhere in the course keeps its text; its
-        // section's citation moves to the passage found, and the next pass
-        // checks it as the section's own citation (§5.1).
-        let active = expanded.as_ref().unwrap_or(references);
-        let repaired = repair::cite_where_supported(
-            &mut candidate,
-            &report.findings,
-            numbered,
-            active,
-            &mut cited_where_supported,
-        )?;
-        if !repaired.is_empty() {
-            crate::features::learning::lesson_progress::phase(
-                crate::features::learning::lesson_progress::Phase::Repair,
-                "Citing the passages that support claims their sections cited elsewhere",
-            );
-            // The added sources are saved before the draft that cites them.
-            let added: Vec<&str> = numbered
-                .iter()
-                .skip(writers)
-                .map(|source| source.id.as_str())
-                .collect();
-            crate::features::learning::lesson_drafts::record_checkpoint(NUMBERED_KEY, json!(added))
+        if stopped.is_empty() {
+            let active = expanded.as_ref().unwrap_or(references);
+            let recited = recite(
+                &mut ledger,
+                &policy,
+                (&mut candidate, &report),
+                (&mut *numbered, &mut cited_where_supported),
+                active,
+            )
+            .await?;
+            if recited {
+                // The added sources are saved before the draft that cites them.
+                let added: Vec<&str> = numbered
+                    .iter()
+                    .skip(writers)
+                    .map(|source| source.id.as_str())
+                    .collect();
+                crate::features::learning::lesson_drafts::record_checkpoint(
+                    NUMBERED_KEY,
+                    json!(added),
+                )
                 .await?;
-            repair::number_sources(&mut numbered_schema, numbered.len());
-            for (finding, event) in repaired {
-                if let Some(claim) = ledger.finding_claims().get(finding).cloned() {
-                    ledger.append(&claim, event).await?;
-                }
-            }
-            raw = candidate.to_string();
-            crate::features::learning::lesson_drafts::save(&raw).await?;
-            continue;
-        }
-        match ledger.decide() {
-            claim_ledger::Decision::Recheck => {
-                crate::features::learning::lesson_progress::phase(
-                    crate::features::learning::lesson_progress::Phase::Evidence,
-                    "Asking again for the answers that could not be read",
-                );
-                continue;
-            }
-            claim_ledger::Decision::Stop(claims) => {
+                repair::number_sources(&mut numbered_schema, numbered.len());
+                raw = candidate.to_string();
                 crate::features::learning::lesson_drafts::save(&raw).await?;
-                let error = ledger.stop_unreadable(&raw, claims).await?;
+                continue;
+            }
+            if uncite(&mut ledger, &policy, &mut candidate, active).await? {
+                raw = candidate.to_string();
+                crate::features::learning::lesson_drafts::save(&raw).await?;
+                continue;
+            }
+        }
+        let active = expanded.as_ref().unwrap_or(references);
+        match ledger.decide(&policy, &stopped) {
+            claim_ledger::Decision::Continue(waiting) => {
+                // A pass that moved no statement and changed nothing would go
+                // round again as it was.
+                if ledger.stepped() == stepped && raw == draft {
+                    let error = ledger.stop_no_progress(&raw, &waiting).await?;
+                    crate::features::learning::lesson_progress::phase(
+                        crate::features::learning::lesson_progress::Phase::Evidence,
+                        error.to_string(),
+                    );
+                    return Err(error);
+                }
                 crate::features::learning::lesson_progress::phase(
                     crate::features::learning::lesson_progress::Phase::Evidence,
-                    error.to_string(),
+                    if waiting.iter().any(|waits| waits.step == Step::Research) {
+                        "Searching again for the claims the last round of research could not reach"
+                    } else {
+                        "Reading the statements the last pass left waiting"
+                    },
                 );
-                return Err(error);
-            }
-            claim_ledger::Decision::Reconcile(claims) => {
-                ledger.reconcile(&report, &claims).await?;
                 continue;
+            }
+            claim_ledger::Decision::Stop(reason) => {
+                return Err(stop(&mut ledger, &raw, *reason).await?);
             }
             claim_ledger::Decision::Publish => {
                 // The last sync point: an edit made during this pass is
                 // applied and verified before anything publishes.
                 ledger.sync().await?;
                 if review_pass::has_user_changes(&ledger, &candidate)
-                    || !matches!(ledger.decide(), claim_ledger::Decision::Publish)
+                    || !matches!(ledger.decide(&policy, &[]), claim_ledger::Decision::Publish)
                 {
                     continue;
                 }
@@ -339,7 +396,10 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                     claim_ledger::Audited::Agreed => {
                         ledger.sync().await?;
                         if review_pass::has_user_changes(&ledger, &candidate)
-                            || !matches!(ledger.decide(), claim_ledger::Decision::Publish)
+                            || !matches!(
+                                ledger.decide(&policy, &[]),
+                                claim_ledger::Decision::Publish
+                            )
                         {
                             continue;
                         }
@@ -359,7 +419,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             }
             claim_ledger::Decision::Repair(targets) => {
                 remember_failed_claims(&mut repair_history, &report);
-                let escalated = targets.iter().any(|id| ledger.cuts_next(id));
+                let escalated = targets.iter().any(|id| ledger.cuts_next(&policy, id));
                 crate::features::learning::lesson_progress::phase(
                     crate::features::learning::lesson_progress::Phase::Repair,
                     if escalated {
@@ -368,18 +428,17 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                         "Correcting defects found by evidence checks"
                     },
                 );
-                let active = expanded.as_ref().unwrap_or(references);
                 let mut context = repair_context(
                     prompt,
                     &candidate,
                     &report,
                     &repair_history,
-                    &ledger,
+                    (&ledger, &policy),
                     &targets,
                     active,
                 )?;
                 repair::number_evidence(&mut context, numbered);
-                ledger.begin_repairs(&candidate, &targets).await?;
+                ledger.begin_repairs(&policy, &candidate, &targets).await?;
                 let pending = PendingRepair {
                     fingerprint: repair_fingerprint(llm, prompt, schema, &candidate, active),
                     defects: targets.len(),
@@ -392,6 +451,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
                 .await?;
                 raw = repair::candidate(
                     llm,
+                    &policy,
                     prompt,
                     schema,
                     context,
@@ -403,6 +463,103 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
             }
         }
     }
+}
+
+/// The lesson stops for `reason`: the draft is saved, the review row says so,
+/// and the returned error unwinds the preparation.
+async fn stop(ledger: &mut ClaimLedger, raw: &str, reason: StopReason) -> Result<AppError> {
+    crate::features::learning::lesson_drafts::save(raw).await?;
+    let error = ledger.stop(raw, reason).await?;
+    crate::features::learning::lesson_progress::phase(
+        crate::features::learning::lesson_progress::Phase::Evidence,
+        error.to_string(),
+    );
+    Ok(error)
+}
+
+/// A claim supported elsewhere in the course keeps its text; its section's
+/// citation moves to the passage found, and the next pass reads it against the
+/// citation (§5.1). The statements at a recite node are the repair's, one claim
+/// of a section a call: a second waits for the next round with nothing
+/// recorded, and a claim that cannot be cited is done, the reading after it
+/// telling. Whether any statement took its step.
+pub(super) async fn recite(
+    ledger: &mut ClaimLedger,
+    policy: &dyn AcceptancePolicy,
+    (candidate, report): (&mut Value, &LessonVerificationReport),
+    (numbered, tried): (&mut Vec<LearningSourceDto>, &mut HashSet<(usize, String)>),
+    references: &ReferenceCollection<'_>,
+) -> Result<bool> {
+    let waiting = ledger.at(policy, StepKind::Recite);
+    if waiting.is_empty() {
+        return Ok(false);
+    }
+    let findings: Vec<(ClaimId, Finding)> = ledger
+        .finding_claims()
+        .iter()
+        .zip(&report.findings)
+        .filter(|(id, _)| waiting.contains(id))
+        .map(|(id, finding)| (id.clone(), finding.clone()))
+        .collect();
+    let sent: Vec<Finding> = findings
+        .iter()
+        .map(|(_, finding)| finding.clone())
+        .collect();
+    let cited = repair::cite_where_supported(candidate, &sent, numbered, references, tried)?;
+    let mut moved = false;
+    for ((id, _), cited) in findings.iter().zip(cited) {
+        match cited {
+            Cited::Recited(event) => ledger.append(id, event).await?,
+            Cited::Cannot => true,
+            Cited::Deferred => continue,
+        };
+        moved |= ledger
+            .record_step(policy, id, Step::Recite, Outcome::Done)
+            .await?;
+    }
+    if moved {
+        crate::features::learning::lesson_progress::phase(
+            crate::features::learning::lesson_progress::Phase::Repair,
+            "Citing the passages that support claims their sections cited elsewhere",
+        );
+    }
+    Ok(moved)
+}
+
+/// The statements at an uncite node lose the citation of their sentence: every
+/// part of them is common knowledge, so the citation was the fault, not the
+/// statement. Whether any statement took its step.
+async fn uncite(
+    ledger: &mut ClaimLedger,
+    policy: &dyn AcceptancePolicy,
+    candidate: &mut Value,
+    references: &ReferenceCollection<'_>,
+) -> Result<bool> {
+    let waiting = ledger.at(policy, StepKind::Uncite);
+    if waiting.is_empty() {
+        return Ok(false);
+    }
+    let statements: Vec<(usize, String)> = waiting
+        .iter()
+        .filter_map(|id| ledger.entry(id))
+        .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
+        .collect();
+    let kept = ledger.live_statements_but(&waiting);
+    crate::features::learning::lesson_progress::phase(
+        crate::features::learning::lesson_progress::Phase::Repair,
+        "Dropping the citation of statements whose every part is common knowledge",
+    );
+    let dropped = repair::uncite(candidate, &statements, &kept, references)?;
+    let mut moved = false;
+    for (id, cited) in waiting.iter().zip(dropped) {
+        ledger
+            .append(id, ClaimEvent::CitationDropped { cited })
+            .await?;
+        moved |= ledger
+            .record_step(policy, id, Step::Uncite, Outcome::Done)
+            .await?;
+    }
+    Ok(moved)
 }
 
 /// Tells the call plan where the ledger has its statements now. They are the
@@ -449,11 +606,15 @@ async fn hold(
 
 /// A saved repair's work, less the claims the user resolved while the job
 /// was away (§9 Restart); `None` when nothing of it is left to send.
-fn still_repairable(ledger: &ClaimLedger, mut context: Value) -> Option<Value> {
+fn still_repairable(
+    ledger: &ClaimLedger,
+    policy: &dyn AcceptancePolicy,
+    mut context: Value,
+) -> Option<Value> {
     let keep = |item: &Value| {
         item.get("claimId")
             .and_then(Value::as_str)
-            .is_some_and(|id| ledger.may_repair(&ClaimId(id.to_owned())))
+            .is_some_and(|id| ledger.may_repair(policy, &ClaimId(id.to_owned())))
     };
     let examples = context
         .get("exampleClaims")
@@ -539,19 +700,19 @@ impl PendingRepair {
 /// The repair context, with each exact passage sent once rather than per
 /// finding; nothing is discarded. Passages carry their source titles so a
 /// source index is not read as evidence N. Only `targets` are sent, each with
-/// its claim id and, on its last attempt, `lastAttempt`: that attempt takes
-/// the sentence out in code, so the model never reads the flag. A claim whose
-/// sentence says more carries `alsoStates`, the other statements on it.
+/// its claim id and, at a cut, `lastAttempt`: that attempt takes the sentence
+/// out in code, so the model never reads the flag. A claim whose sentence says
+/// more carries `alsoStates`, the other statements on it.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,
     report: &LessonVerificationReport,
     repair_history: &[Value],
-    ledger: &ClaimLedger,
+    (ledger, policy): (&ClaimLedger, &dyn AcceptancePolicy),
     targets: &[ClaimId],
     references: &ReferenceCollection<'_>,
 ) -> Result<Value> {
-    let escalates = |id: &ClaimId| ledger.cuts_next(id);
+    let escalates = |id: &ClaimId| ledger.cuts_next(policy, id);
     let mates: HashMap<ClaimId, Vec<ClaimId>> = targets
         .iter()
         .map(|id| (id.clone(), ledger.cotenants(id)))

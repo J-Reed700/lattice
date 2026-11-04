@@ -146,8 +146,15 @@ fn parts_fit<'a>(at: &'a ReadContext<'_>) -> impl Fn(&str, &[EvidencePassage]) -
     }
 }
 
+/// What a part-wise comparison's key carries beside the claim and its
+/// evidence: the guard it asks the specifics test with, the rule layer's own
+/// with the section's givens. Pass A asked it with no givens, so a receipt it
+/// wrote is never restored for a reading.
+const GUARD: &str = "|guard:rule-layer";
+
 /// `statement`'s comparison of `evidence` for `pass`, keyed as the pass keys
-/// its own: `checked` is the statement as the checker reads it.
+/// its own, the part-wise judge's with its guard: `checked` is the statement as
+/// the checker reads it.
 fn comparison(
     at: &ReadContext<'_>,
     ordinal: usize,
@@ -157,16 +164,21 @@ fn comparison(
     pass: Pass,
 ) -> PendingClaim {
     let key = ClaimChecks::key(statement.unit, checked, &evidence);
-    PendingClaim {
+    let mut pending = PendingClaim {
         ordinal,
-        receipt_key: claim_receipt_key(at.llm, &key),
+        receipt_key: String::new(),
         key,
         unit: statement.unit,
         claim: statement.claim.clone(),
         checked: checked.statement.clone(),
         evidence,
         pass,
+    };
+    if applies(&pending) {
+        pending.key.push_str(GUARD);
     }
+    pending.receipt_key = claim_receipt_key(at.llm, &pending.key);
+    pending
 }
 
 /// A comparison restored from its receipt, or what is left to ask.
@@ -179,6 +191,7 @@ async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restore
     match compare(at.llm, at.retained, pending).await? {
         Comparison::Done(finding, _) => Ok(Restored::Receipt(finding)),
         Comparison::Pending(pending) => Ok(Restored::Ask(pending)),
+        #[cfg(test)]
         Comparison::Sent => Err(AppError::InternalError(
             "A comparison was sent before it was read".into(),
         )),

@@ -5,6 +5,7 @@ use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::domain::learning::acceptance::StandardPolicy;
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation, ClaimState,
     EvidenceFingerprint, RepairOutcome, UnitKind, VerdictKind,
@@ -211,11 +212,12 @@ async fn a_section_too_large_for_one_request_is_repaired_in_several_that_fit() -
             window_tokens: 4_000,
         };
         ledger.append(&id, ClaimEvent::Checked(check)).await?;
-        assert!(ledger.may_repair(&id));
+        assert!(ledger.may_repair(&StandardPolicy::new(), &id));
     }
 
     let repaired = repair_sections(
         &llm,
+        &StandardPolicy::new(),
         "{}",
         &schema,
         context,
@@ -328,7 +330,11 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
     .await?;
     let (last, first) = (ClaimId("last".into()), ClaimId("first".into()));
     ledger
-        .begin_repairs(&lesson_of(body), &[last.clone(), first.clone()])
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            &[last.clone(), first.clone()],
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
@@ -339,7 +345,10 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
         ],
     });
 
-    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+    assert_eq!(
+        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        1
+    );
 
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],
@@ -379,7 +388,7 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
     let mut ledger = failed_ledger(&llm, body, &[("last", "Cut this.", 1)]).await?;
     let last = ClaimId("last".into());
     ledger
-        .begin_repairs(&lesson_of(body), &[last.clone()])
+        .begin_repairs(&StandardPolicy::new(), &lesson_of(body), &[last.clone()])
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
@@ -389,7 +398,10 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
         ],
     });
 
-    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+    assert_eq!(
+        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        1
+    );
 
     // The sentence stays where it is; its section is the one that goes.
     assert_eq!(context["candidate"]["blocks"][0]["body"], body);
@@ -430,7 +442,11 @@ async fn the_other_claims_of_a_section_that_goes_are_no_work_for_the_model() -> 
     .await?;
     let (last, other) = (ClaimId("last".into()), ClaimId("other".into()));
     ledger
-        .begin_repairs(&lesson_of(body), &[last.clone(), other.clone()])
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            &[last.clone(), other.clone()],
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
@@ -441,7 +457,7 @@ async fn the_other_claims_of_a_section_that_goes_are_no_work_for_the_model() -> 
         ],
     });
 
-    cut::last_attempts(&mut context, &mut ledger).await?;
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
     assert!(
         section_failures(&context, 0).is_empty(),
@@ -467,7 +483,7 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
     .await?;
     let example = ClaimId("example".into());
     ledger
-        .begin_repairs(&lesson_of(body), &[example.clone()])
+        .begin_repairs(&StandardPolicy::new(), &lesson_of(body), &[example.clone()])
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
@@ -475,7 +491,10 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
         "exampleClaims": [{"unit":0,"claimId":"example","lastAttempt":true}],
     });
 
-    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+    assert_eq!(
+        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        1
+    );
 
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],
@@ -504,7 +523,11 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
     .await?;
     let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
     ledger
-        .begin_repairs(&lesson_of(body), &[last.clone(), mate.clone()])
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            &[last.clone(), mate.clone()],
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
@@ -515,7 +538,10 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
         ],
     });
 
-    assert_eq!(cut::last_attempts(&mut context, &mut ledger).await?, 1);
+    assert_eq!(
+        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        1
+    );
 
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],
@@ -552,7 +578,11 @@ async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_clai
     .await?;
     let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
     ledger
-        .begin_repairs(&lesson_of(body), &[last.clone(), mate.clone()])
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(body),
+            &[last.clone(), mate.clone()],
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(body), "requirements": {}, "evidence": [],
@@ -563,7 +593,7 @@ async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_clai
         ],
     });
 
-    let error = cut::last_attempts(&mut context, &mut ledger)
+    let error = cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger)
         .await
         .unwrap_err();
 
@@ -768,7 +798,11 @@ async fn a_hunk_that_mixes_a_target_with_a_passed_sentence_costs_only_that_targe
     passed(&mut ledger, &llm, "passed", (PASSED, PASSED), &body).await?;
     let (first, third) = (ClaimId("first".into()), ClaimId("third".into()));
     ledger
-        .begin_repairs(&lesson_of(&body), &[first.clone(), third])
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(&body),
+            &[first.clone(), third],
+        )
         .await?;
     let context = json!({
         "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
@@ -783,6 +817,7 @@ async fn a_hunk_that_mixes_a_target_with_a_passed_sentence_costs_only_that_targe
 
     let repaired = repair_sections(
         &llm,
+        &StandardPolicy::new(),
         "{}",
         &schema,
         context,
@@ -848,7 +883,11 @@ async fn the_last_attempt_on_a_sentence_that_also_states_a_passed_claim_leaves_w
     .await?;
     let failed = ClaimId("failed".into());
     ledger
-        .begin_repairs(&lesson_of(&body), std::slice::from_ref(&failed))
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(&body),
+            std::slice::from_ref(&failed),
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
@@ -858,7 +897,7 @@ async fn the_last_attempt_on_a_sentence_that_also_states_a_passed_claim_leaves_w
         ],
     });
 
-    cut::last_attempts(&mut context, &mut ledger).await?;
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
     let after = context["candidate"]["blocks"][0]["body"].as_str().unwrap();
     assert!(
@@ -906,7 +945,11 @@ async fn the_last_attempt_takes_out_the_sentence_that_states_the_claim_not_the_r
         Some(STATING)
     );
     ledger
-        .begin_repairs(&lesson_of(&body), std::slice::from_ref(&stating))
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &lesson_of(&body),
+            std::slice::from_ref(&stating),
+        )
         .await?;
     let mut context = json!({
         "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
@@ -916,7 +959,7 @@ async fn the_last_attempt_takes_out_the_sentence_that_states_the_claim_not_the_r
         ],
     });
 
-    cut::last_attempts(&mut context, &mut ledger).await?;
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],

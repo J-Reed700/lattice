@@ -11,6 +11,7 @@ use lattice_core::application::services::claim_verification::{
 };
 use lattice_core::domain::learning::acceptance::{
     decide, rewrite_ahead, AcceptancePolicy, End, Outcome, Position, Reading, Step, Taken, Then,
+    Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
@@ -499,7 +500,7 @@ async fn the_gates_weighing_is_recorded_between_the_check_and_the_decision() -> 
 }
 
 #[tokio::test]
-async fn a_second_unreadable_answer_is_recorded_as_a_stop_that_leaves_the_state_where_it_was(
+async fn a_second_unreadable_answer_is_recorded_as_its_check_alone_so_the_claim_stays_at_its_node_with_its_re_ask_spent(
 ) -> Result<()> {
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
@@ -532,9 +533,26 @@ async fn a_second_unreadable_answer_is_recorded_as_a_stop_that_leaves_the_state_
     assert_eq!(second.then, Then::Stop);
     ledger.record_reading(&policy, &id, &second).await?;
 
+    // A stop belongs to its run: its check is recorded and its decision is
+    // not, so the claim is where its first answer left it, with its re-ask
+    // spent, and a resumed run reads it once more.
     let held = ledger.entry(&id).unwrap();
-    assert_eq!(held.decided(), Some(&Then::Stop));
+    assert_eq!(
+        held.decided(),
+        Some(&node("s.read", Step::Read(Reading::Parts)))
+    );
     assert_eq!(held.state(), &ClaimState::Unchecked);
+    assert_eq!(
+        kinds(held),
+        ["extracted", "classified", "checked", "stepped", "checked"]
+    );
+    assert_eq!(
+        ledger.position(&policy, &id),
+        Some(Walked::At(Position {
+            reasked: true,
+            ..entry(&policy, Class::Sourced)
+        }))
+    );
     let could_not_judge = CheckResult::Failed {
         kind: VerdictKind::CouldNotJudge,
     };

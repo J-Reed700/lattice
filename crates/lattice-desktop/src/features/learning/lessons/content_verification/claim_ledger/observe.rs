@@ -1,6 +1,5 @@
-//! Observing a pass: the checks a finding or a failed example records, and
-//! what research found for a claim (§3, §4 `ledger.observe`). `observe` is
-//! `identify` and then `record_checks`.
+//! What a reading or a research round leaves in the ledger: the check a
+//! reading observed, what research found for a claim (§3, §4).
 
 use super::super::provenance_gate::gate_reason;
 use super::super::support_gate::{Sufficiency, Support};
@@ -10,7 +9,9 @@ use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::application::services::claim_verification::{
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
-use lattice_core::domain::learning::acceptance::Reading;
+#[cfg(test)]
+use lattice_core::domain::learning::acceptance::StandardPolicy;
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
     EvidenceFingerprint, EvidenceSeen, SourceChange, TrustAssessment, VerdictKind,
@@ -59,7 +60,10 @@ fn failed_check(finding: &Finding, verdict: ClaimVerdict) -> (CheckResult, Strin
 impl ClaimLedger {
     /// The check a finding records, through the support gate (P4's seam),
     /// with the gate's assessment when the gate decided the check (a
-    /// supported claim whose support it weighed).
+    /// supported claim whose support it weighed), as the class the finding
+    /// was checked as maps it. For the tests that put a ledger in a state from
+    /// a report they build; step 6b-3 retires it with them.
+    #[cfg(test)]
     pub(super) fn check_of(&self, finding: &Finding) -> (Check, Option<TrustAssessment>) {
         let evidence: Vec<EvidenceSeen> = finding.evidence.iter().map(seen).collect();
         let class = finding.class.map(|classed| classed.class);
@@ -247,53 +251,35 @@ impl ClaimLedger {
             .collect()
     }
 
-    /// Records one pass: which claim each finding and failed example is, what
-    /// is new about it, and what the pass checked (§4 `ledger.observe`).
+    /// Records one pass of a hand-made report: which claim each finding and
+    /// failed example is, what is new about it, and what was checked (§4
+    /// `ledger.observe`). For the tests that put a ledger in a state from a
+    /// report they build; step 6b-3 retires it with them.
+    #[cfg(test)]
     pub(in crate::features::learning::lessons::content_verification) async fn observe(
         &mut self,
         candidate: &Value,
         report: &LessonVerificationReport,
     ) -> Result<()> {
-        let extracted = self.extracted(candidate, report);
+        let policy = StandardPolicy::new();
+        let extracted = self.extracted_report(candidate, report);
         let matched = self.match_pass(candidate, &extracted);
-        let ids = self.identify(candidate, extracted, matched).await?;
+        let ids = self
+            .identify(&policy, candidate, extracted, matched)
+            .await?;
         self.record_checks(candidate, report, &ids).await
     }
 
-    /// Records the checks `report` made of `claims`, which the ledger holds
-    /// verified and that pass could not support: the report a lesson
-    /// publishes and its ledger say the same of every claim (§4 `decide`).
-    pub(in crate::features::learning::lessons::content_verification) async fn reconcile(
-        &mut self,
-        report: &LessonVerificationReport,
-        claims: &[ClaimId],
-    ) -> Result<()> {
-        let checks: Vec<(ClaimId, Check, Option<TrustAssessment>)> = report
-            .findings
-            .iter()
-            .zip(&self.findings)
-            .filter(|(_, id)| claims.contains(id))
-            .map(|(finding, id)| {
-                let (check, trust) = self.check_of(finding);
-                (id.clone(), check, trust)
-            })
-            .collect();
-        for (id, check, trust) in checks {
-            tracing::warn!(claim = %id.0, reason = %check.reason, "claim.state: the last pass could not support a verified claim; its check applies before the lesson publishes");
-            self.append(&id, ClaimEvent::Checked(check)).await?;
-            if let Some(trust) = trust {
-                self.append(&id, assessed(trust)).await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// The claims research may look for evidence for, with the hints the user
-    /// gave: once per claim for its life (§4), and a hint once (§5.1).
+    /// The claims research looks for evidence for, with the hints the user
+    /// gave: the statements at a `Research` node, which the policy sends once
+    /// in a statement's life, and a hint once (§5.1). Each with its latest
+    /// finding in `report`.
     pub(in crate::features::learning::lessons::content_verification) fn research_targets(
         &self,
+        policy: &dyn AcceptancePolicy,
         report: &LessonVerificationReport,
     ) -> (Vec<ClaimId>, Vec<Finding>, Vec<String>) {
+        let at_research = self.at(policy, super::position::StepKind::Research);
         let mut claims = Vec::new();
         let mut findings = Vec::new();
         let mut hints = Vec::new();
@@ -302,9 +288,7 @@ impl ClaimLedger {
                 continue;
             };
             let hint = super::super::review_pass::pending_hint(entry);
-            // Only a statement that needs a source is looked up on the web.
-            let sourced = entry.class().is_none_or(|class| class == Class::Sourced);
-            if (sourced && entry.may_research()) || hint.is_some() {
+            if at_research.contains(id) || hint.is_some() {
                 claims.push(id.clone());
                 findings.push(finding.clone());
                 hints.extend(hint);
@@ -314,39 +298,39 @@ impl ClaimLedger {
     }
 
     /// Records a research round for each claim it looked for (§3
-    /// `Researched`): "found nothing new" is an attempt with no passages.
-    /// Each claim's event carries what the round cost per claim (D5).
+    /// `Researched`): "found nothing new" is an attempt with no passages. Each
+    /// claim's event carries what the round cost per claim (D5) and the
+    /// passages `found` for it, from the sources the round saved. Then, for a
+    /// claim at a `Research` node, the policy's step: `Saved` when the round
+    /// saved a source, `FoundNothing` otherwise. A claim a hint named has no
+    /// node to step.
     pub(in crate::features::learning::lessons::content_verification) async fn record_research(
         &mut self,
-        claims: &[ClaimId],
+        policy: &dyn AcceptancePolicy,
+        claims: &[(ClaimId, usize)],
         searched: &research::Searched,
-        report: &LessonVerificationReport,
+        saved: bool,
     ) -> Result<()> {
-        for id in claims {
-            let passages_found = report
-                .findings
-                .iter()
-                .zip(&self.findings)
-                .find(|(_, claim)| *claim == id)
-                .map_or(0, |(finding, _)| {
-                    finding
-                        .evidence
-                        .iter()
-                        .filter(|passage| searched.sources_added.contains(&passage.source_id))
-                        .count()
-                });
+        let outcome = if saved {
+            Outcome::Saved
+        } else {
+            Outcome::FoundNothing
+        };
+        for (id, passages_found) in claims {
             self.append(
                 id,
                 ClaimEvent::Researched {
                     queries: searched.queries.clone(),
                     sources_added: searched.sources_added.clone(),
-                    passages_found,
+                    passages_found: *passages_found,
                     round_ms_per_claim: searched
                         .per_claim
                         .map(|cost| u64::try_from(cost.as_millis()).unwrap_or(u64::MAX)),
                 },
             )
             .await?;
+            self.record_step(policy, id, Step::Research, outcome)
+                .await?;
         }
         Ok(())
     }

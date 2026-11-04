@@ -5,6 +5,7 @@ use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger};
 use super::super::repair_work::{withdraw, withdraw_resolved};
 use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label};
 use super::super::*;
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome};
 use lattice_core::domain::learning::claim_review::ClaimId;
 use lattice_core::shared::text::sentences;
 
@@ -143,14 +144,19 @@ fn last(context: &Value, key: &str) -> Vec<ClaimId> {
 /// Takes out of `context`'s lesson the text of every claim sent on its last
 /// attempt, and those claims out of the work that remains: the code makes
 /// the cut, so the model is never asked to. The ledger keeps the sentences
-/// left beside each cut for the section's flow repair. A claim whose text
-/// cannot be taken out, because it is the whole of its field or sits in a code
-/// block, ends removed with its section, which goes out of the lesson (claim
-/// classes design §3.10). Returns how many claims it dealt with, or the error
-/// that stops the lesson when the cuts leave no claim of it standing.
-pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger) -> Result<usize> {
+/// left beside each cut for the section's flow repair, and records the
+/// statements' cuts as the policy's step. A claim whose text cannot be taken
+/// out, because it is the whole of its field or sits in a code block, ends
+/// removed with its section, which goes out of the lesson (claim classes
+/// design §3.10). Returns how many claims it dealt with, or the error that
+/// stops the lesson when the cuts leave no claim of it standing.
+pub(super) async fn last_attempts(
+    policy: &dyn AcceptancePolicy,
+    context: &mut Value,
+    ledger: &mut ClaimLedger,
+) -> Result<usize> {
     ledger.sync().await?;
-    let dropped = withdraw_resolved(context, ledger);
+    let dropped = withdraw_resolved(context, ledger, policy);
     if !dropped.is_empty() {
         ledger.supersede(&dropped).await?;
     }
@@ -234,8 +240,27 @@ pub(super) async fn last_attempts(context: &mut Value, ledger: &mut ClaimLedger)
     if let Some(slot) = context.get_mut("candidate") {
         *slot = lesson;
     }
-    if !refused.is_empty() {
-        ledger.remove(&refused).await?;
+    // A statement's cut, taken or refused, is the policy's step, which ends it
+    // removed; an example's refused cut ends it removed with its section, and
+    // its cut is found by the pass after.
+    let (cut_statements, _): (Vec<ClaimId>, Vec<ClaimId>) = taken
+        .iter()
+        .cloned()
+        .partition(|id| ledger.is_statement(id));
+    let (refused_statements, examples): (Vec<ClaimId>, Vec<ClaimId>) = refused
+        .iter()
+        .cloned()
+        .partition(|id| ledger.is_statement(id));
+    if !examples.is_empty() {
+        ledger.remove(&examples).await?;
+    }
+    if !refused_statements.is_empty() {
+        ledger
+            .cut(policy, &refused_statements, Outcome::CannotCut)
+            .await?;
+    }
+    if !cut_statements.is_empty() {
+        ledger.cut(policy, &cut_statements, Outcome::Cut).await?;
     }
     if !taken.is_empty() || !refused.is_empty() {
         ledger.save_cuts().await?;

@@ -4,7 +4,6 @@
 //! other claims that repair wrote are its children and start with what the
 //! parent had left, so a rewrite or a split sentence adds no attempts.
 
-use super::super::Classed;
 use super::fields::field_text;
 use super::RepairRecord;
 use crate::features::learning::reference_collection::shared_terms;
@@ -78,17 +77,14 @@ fn written(
             .is_some_and(|(from, to)| from < end && to > start)
 }
 
-/// What the last step leaves for the pass that checks the lesson: whether
+/// What the last step leaves for the pass that reads the lesson: whether
 /// that pass comes after another, the lesson as it was before the repairs or
-/// edits, each repaired claim with the field its sentence stood in and the
-/// class it was checked as, and the class and the place in its graph of each
-/// statement the ledger holds, by section and statement.
+/// edits, and the place in its graph of each statement the ledger holds, by
+/// section and statement.
 #[derive(Default)]
 pub(in crate::features::learning::lessons::content_verification) struct Rewrites {
     later: bool,
     previous: Option<Value>,
-    parents: Vec<(RepairRecord, String, Classed)>,
-    held: HashMap<(usize, String), Classed>,
     walked: HashMap<(usize, String), Walked>,
 }
 
@@ -96,15 +92,11 @@ impl Rewrites {
     pub(in crate::features::learning::lessons::content_verification) fn new(
         later: bool,
         previous: Option<Value>,
-        parents: Vec<(RepairRecord, String, Classed)>,
-        held: HashMap<(usize, String), Classed>,
         walked: HashMap<(usize, String), Walked>,
     ) -> Self {
         Self {
             later,
             previous,
-            parents,
-            held,
             walked,
         }
     }
@@ -117,17 +109,6 @@ impl Rewrites {
         statement: &str,
     ) -> Option<Walked> {
         self.walked.get(&(unit, statement.to_owned())).copied()
-    }
-
-    /// The class the ledger holds for `statement` of section `unit`, which a
-    /// later pass keeps: the model sorts in the first pass alone (claim
-    /// classes design §3.1).
-    pub(in crate::features::learning::lessons::content_verification) fn held(
-        &self,
-        unit: usize,
-        statement: &str,
-    ) -> Option<Classed> {
-        self.held.get(&(unit, statement.to_owned())).copied()
     }
 
     /// Whether this pass is the first to read `claim`: the first pass reads
@@ -154,45 +135,6 @@ impl Rewrites {
         };
         let region = sentence_region(&after, changed_region(&before, &after));
         written(claim, unit, field, &before, region)
-    }
-
-    /// For each of `extracted`, taken from `current`, the class of the
-    /// repaired claim whose rewrite wrote it: a statement that is new text in
-    /// the sentences a repair changed in its field. Several repairs in one
-    /// field give the strictest of their classes, so nothing is lighter than
-    /// any claim it may descend from.
-    pub(in crate::features::learning::lessons::content_verification) fn classes(
-        &self,
-        current: &Value,
-        extracted: &[ExtractedClaim],
-    ) -> Vec<Option<Classed>> {
-        let regions: Vec<Option<(String, (usize, usize))>> = self
-            .parents
-            .iter()
-            .map(|(record, field, _)| {
-                let before = field_text(self.previous.as_ref()?, record.unit, field)?;
-                let after = field_text(current, record.unit, field)?;
-                let region = sentence_region(&after, changed_region(&before, &after));
-                Some((before, region))
-            })
-            .collect();
-        extracted
-            .iter()
-            .map(|claim| {
-                let mut found: Option<Classed> = None;
-                for ((record, field, classed), region) in self.parents.iter().zip(&regions) {
-                    let Some((before, span)) = region else {
-                        continue;
-                    };
-                    let lighter = found
-                        .is_some_and(|held| held.class.strictness() >= classed.class.strictness());
-                    if !lighter && written(claim, record.unit, field, before, *span) {
-                        found = Some(*classed);
-                    }
-                }
-                found
-            })
-            .collect()
     }
 }
 
@@ -295,6 +237,7 @@ mod tests {
             escalated: false,
             before: before.into(),
             rides_on: None,
+            step: None,
         }
     }
 

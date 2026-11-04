@@ -525,6 +525,9 @@ mod claim_ledger_tests;
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
 
+#[path = "acceptance_switch_tests.rs"]
+mod acceptance_switch_tests;
+
 #[path = "claim_identity_tests.rs"]
 mod claim_identity_tests;
 
@@ -1216,7 +1219,7 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
         &candidate,
         &report,
         &[],
-        &ledger,
+        (&ledger, &StandardPolicy::new()),
         &targets,
         &references,
     )?;

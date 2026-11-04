@@ -1,99 +1,71 @@
-//! The checks of the claim classes (claim classes design §3.1). The
-//! statements of an inventory are sorted; the lesson's own are left out of
-//! its claims; a Reasoning statement is read for consistency against the
-//! passages its section cites and a Common one is put to the model alone,
-//! and both meet the falsity veto, the knowledge judge's three samples. What
-//! a lighter check cannot pass on its own goes to the strict check as
-//! Sourced. Every judgment is saved as a receipt, so a resumed pass asks
-//! nothing twice.
+//! The statements of a lesson sorted into the claim classes (claim classes
+//! design §3.1) and the judges the readings ask: the consistency judge on the
+//! passages a section cites, the knowledge judge's three samples. What each
+//! statement is asked next is the acceptance policy's; the readings in
+//! `readings` ask these judges along its graphs. Every judgment is saved as a
+//! receipt, so a resumed pass asks nothing twice.
 use super::claim_ledger::{sentences, Place, Rewrites};
 use super::classify::{classify, rule_class, Case, ToSort};
 use super::*;
 use crate::features::learning::lessons::call_plan::{Planned, PlannedAt, SAMPLES};
 use lattice_core::application::services::claim_verification::{
-    ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
-    KnowledgeVerdict, CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
+    ClassJudgment, ConsistencyOutcome, KnowledgeOutcome, KnowledgeSample, KnowledgeVerdict,
+    CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
-use lattice_core::domain::learning::claim_review::ExtractedClaim;
-
-/// What becomes of a statement once it is sorted and has met its lighter
-/// check.
-pub(super) enum Route {
-    /// Not a claim about the world: left out of the lesson's claims.
-    Left,
-    /// To be checked against its sources by the strict check, as this class.
-    Strict(Classed),
-    /// Checked: its finding.
-    Done(Box<Finding>),
-}
 
 /// Tokens a passage costs beside its text in the consistency check: its
 /// label and the blank line after it.
 const LABEL_TOKENS: usize = 12;
 
-/// The class of each of `claims`, in order: that of the statement it
-/// replaces when a repair wrote it, otherwise the one the ledger holds for
-/// it, otherwise Sourced when the writer cited its sentence, otherwise the
-/// rule layer's where it decides, otherwise the model's, which is asked once
-/// per statement.
+/// The class of each of `claims`, in order: the one `given` holds for it,
+/// which the match of the pass gave (that of the claim it continues, or of the
+/// parent of the repair it is the heir of), otherwise Sourced when the writer
+/// cited its sentence, otherwise the rule layer's where it decides, otherwise
+/// the model's, which is asked once per statement. A statement is sorted once
+/// in its lineage, so only a statement new to the ledger is sorted.
 pub(super) async fn sort(
     llm: &dyn LLMPort,
     policy: &dyn AcceptancePolicy,
     candidate: &Value,
     claims: &[(usize, Claim)],
+    given: &[Option<Classed>],
     rewrites: &Rewrites,
     citations: &Citations,
 ) -> Result<Vec<Classed>> {
-    let extracted: Vec<ExtractedClaim> = claims
+    let fields: Vec<String> = claims
         .iter()
-        .map(|(unit, claim)| ExtractedClaim {
-            location: claim_ledger::locate(candidate, *unit, &claim.quote, Some(&claim.statement)),
-            statement: claim.statement.clone(),
+        .map(|(unit, claim)| {
+            claim_ledger::locate(candidate, *unit, &claim.quote, Some(&claim.statement)).field
         })
-        .collect();
-    let fields: Vec<String> = extracted
-        .iter()
-        .map(|claim| claim.location.field.clone())
         .collect();
     let cases: Vec<Case> = claims
         .iter()
         .map(|(unit, _)| Case::of(candidate, *unit))
         .collect();
-    let parents = rewrites.classes(candidate, &extracted);
     let mut sorted: Vec<Option<Classed>> = Vec::with_capacity(claims.len());
-    for ((((unit, claim), field), case), parent) in
-        claims.iter().zip(&fields).zip(&cases).zip(parents)
+    for (index, (((unit, claim), field), case)) in
+        claims.iter().zip(&fields).zip(&cases).enumerate()
     {
-        let rule = rule_class(&claim.statement, field, case);
-        let held = rewrites.held(*unit, &claim.statement);
-        sorted.push(match (parent, held, rule) {
-            (Some(parent), held, rule) => {
-                let parent = held
-                    .filter(|held| held.class.strictness() > parent.class.strictness())
-                    .unwrap_or(parent);
-                let inherited = carried(parent, rule);
-                // A resumed pass finds the class again without its parent.
-                if rule != Some(inherited.class) {
-                    save_class(llm, &claim.statement, inherited.class).await?;
-                }
-                Some(inherited)
-            }
-            (None, Some(held), rule) => Some(carried(held, rule)),
-            (None, None, _) if citations.is_cited(*unit, &claim.statement) => Some(Classed {
+        let held = given.get(index).copied().flatten();
+        sorted.push(match held {
+            Some(held) => Some(held),
+            None if citations.is_cited(*unit, &claim.statement) => Some(Classed {
                 class: Class::Sourced,
                 by: ClassifiedBy::Writer,
             }),
-            (None, None, Some(class)) => Some(Classed {
-                class,
-                by: ClassifiedBy::Rule,
-            }),
-            (None, None, None) => saved_class(llm, &claim.statement)
-                .await?
-                .map(|class| Classed {
+            None => match rule_class(&claim.statement, field, case) {
+                Some(class) => Some(Classed {
                     class,
-                    by: ClassifiedBy::Model,
+                    by: ClassifiedBy::Rule,
                 }),
+                None => saved_class(llm, &claim.statement)
+                    .await?
+                    .map(|class| Classed {
+                        class,
+                        by: ClassifiedBy::Model,
+                    }),
+            },
         });
     }
     {
@@ -127,23 +99,6 @@ pub(super) async fn sort(
         .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))?;
     plan_calls(policy, rewrites, &classes, claims, &fields);
     Ok(classes)
-}
-
-/// The class a statement a repair wrote takes: its parent's, which the rule
-/// layer can only make stricter (a digit, a quotation or an attribution the
-/// rewrite introduced makes it Sourced). A rewrite is held to what the
-/// passage states or the same point without the specific, so it keeps the
-/// nature of what it replaces, and a rule that would leave a statement out of
-/// the claims does not apply to one: that would cut the check from a rewrite
-/// (claim classes design §3.1).
-fn carried(parent: Classed, rule: Option<Class>) -> Classed {
-    match rule {
-        Some(Class::Sourced) if parent.class != Class::Sourced => Classed {
-            class: Class::Sourced,
-            by: ClassifiedBy::Rule,
-        },
-        _ => parent,
-    }
 }
 
 /// The calls the statements' checks can make, now that each has a class: where
@@ -190,125 +145,7 @@ fn plan_calls(
     );
 }
 
-/// Each of `claims` met with the check its class names, in order. A claim
-/// the lighter checks cannot pass is the strict check's, as Sourced.
-pub(super) async fn check(
-    llm: &dyn LLMPort,
-    claims: &[(usize, Claim)],
-    classes: Vec<Classed>,
-    citations: &Citations,
-) -> Result<Vec<Route>> {
-    let mut routes = Vec::with_capacity(claims.len());
-    for ((unit, claim), classed) in claims.iter().zip(classes) {
-        let route = match classed.class {
-            Class::Internal => Route::Left,
-            Class::Sourced => Route::Strict(classed),
-            Class::Reasoning => reasoning(llm, *unit, claim, classed, citations).await?,
-            Class::Common => common(llm, *unit, claim, classed).await?,
-        };
-        routes.push(route);
-    }
-    Ok(routes)
-}
-
-/// The class a statement the lighter checks cannot pass is checked as.
-fn sourced() -> Classed {
-    Classed {
-        class: Class::Sourced,
-        by: ClassifiedBy::Model,
-    }
-}
-
-/// A Reasoning statement: contradicted by the passages its section cites, or
-/// asserting a specific they lack (which makes it Sourced), or consistent
-/// with them. A consistent one is still put to the knowledge judge: a
-/// majority that calls it false fails it unless the passages state it
-/// outright, so the sources outrank the model.
-async fn reasoning(
-    llm: &dyn LLMPort,
-    unit: usize,
-    claim: &Claim,
-    classed: Classed,
-    citations: &Citations,
-) -> Result<Route> {
-    let shown = fitted(llm, &claim.statement, citations.of(unit));
-    let Some(consistency) = consistency_of(llm, &claim.statement, &shown).await? else {
-        return Ok(unjudged(unit, claim, classed, &shown));
-    };
-    Ok(match consistency.verdict {
-        ConsistencyVerdict::UnfoundedSpecific => Route::Strict(sourced()),
-        ConsistencyVerdict::Contradicted => done(
-            (unit, claim, classed),
-            ClaimVerdict::Contradicted,
-            consistency.reason,
-            &shown,
-            None,
-        ),
-        ConsistencyVerdict::Consistent => {
-            let Some(knowledge) = knowledge_of(llm, &claim.statement).await? else {
-                return Ok(unjudged(unit, claim, classed, &shown));
-            };
-            if !knowledge.is_false() {
-                return Ok(done(
-                    (unit, claim, classed),
-                    ClaimVerdict::Supported,
-                    consistency.reason,
-                    &shown,
-                    None,
-                ));
-            }
-            match stated_by(llm, &claim.statement, &shown).await? {
-                Some((quote, reason)) => done(
-                    (unit, claim, classed),
-                    ClaimVerdict::Supported,
-                    reason,
-                    &shown,
-                    Some(quote),
-                ),
-                None => done(
-                    (unit, claim, classed),
-                    ClaimVerdict::Contradicted,
-                    vetoed(&knowledge),
-                    &shown,
-                    None,
-                ),
-            }
-        }
-    })
-}
-
-/// A Common statement: it passes when all three samples call it true and
-/// common, fails when most call it false, and is Sourced otherwise, a lone
-/// dissent forfeiting the pass without failing the statement.
-async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed) -> Result<Route> {
-    let Some(knowledge) = knowledge_of(llm, &claim.statement).await? else {
-        return Ok(unjudged(unit, claim, classed, &[]));
-    };
-    Ok(if knowledge.is_common() {
-        done(
-            (unit, claim, classed),
-            ClaimVerdict::Supported,
-            standard(&knowledge),
-            &[],
-            None,
-        )
-    } else if knowledge.is_false() {
-        done(
-            (unit, claim, classed),
-            ClaimVerdict::Contradicted,
-            vetoed(&knowledge),
-            &[],
-            None,
-        )
-    } else {
-        if !knowledge.needs_source() {
-            tracing::info!(statement = %claim.statement, "claim.class: a lone dissent sent a Common statement to its source check");
-        }
-        Route::Strict(sourced())
-    })
-}
-
-/// The finding of a statement a lighter check decided.
+/// The finding of a statement a reading decided.
 pub(super) fn finding_of(
     (unit, claim, classed): (usize, &Claim, Classed),
     verdict: ClaimVerdict,
@@ -332,23 +169,6 @@ pub(super) fn finding_of(
     }
 }
 
-/// [`finding_of`], as the route of a statement a lighter check decided.
-fn done(
-    decided: (usize, &Claim, Classed),
-    verdict: ClaimVerdict,
-    reason: String,
-    evidence: &[EvidencePassage],
-    supporting_quote: Option<String>,
-) -> Route {
-    Route::Done(Box::new(finding_of(
-        decided,
-        verdict,
-        reason,
-        evidence,
-        supporting_quote,
-    )))
-}
-
 /// The finding of a statement whose check's answer could not be read.
 pub(super) fn unjudged_finding(
     unit: usize,
@@ -363,11 +183,6 @@ pub(super) fn unjudged_finding(
         evidence,
         None,
     )
-}
-
-/// A statement whose check's answer could not be read.
-fn unjudged(unit: usize, claim: &Claim, classed: Classed, evidence: &[EvidencePassage]) -> Route {
-    Route::Done(Box::new(unjudged_finding(unit, claim, classed, evidence)))
 }
 
 /// Why a statement the model called false fails.
@@ -529,36 +344,6 @@ pub(super) async fn knowledge_of(
         }
         ClassJudgment::Unusable => Ok(None),
         ClassJudgment::Failed(error) => Err(error),
-    }
-}
-
-/// The quote with which `passages` state `statement` outright, and the
-/// judge's reason, when the strict judge finds that they do.
-async fn stated_by(
-    llm: &dyn LLMPort,
-    statement: &str,
-    passages: &[EvidencePassage],
-) -> Result<Option<(String, String)>> {
-    if passages.is_empty() {
-        return Ok(None);
-    }
-    let texts: Vec<String> = passages
-        .iter()
-        .map(|passage| passage.text.clone())
-        .collect();
-    let judged = judge_for_publication(llm, statement, &texts, &ranking(passages)).await;
-    match judged.judgment {
-        ClaimJudgment::Judged(outcome) if outcome.verdict == ClaimVerdict::Supported => {
-            let Some(quote) = outcome.quote else {
-                return Ok(None);
-            };
-            Ok(texts
-                .iter()
-                .any(|text| text.contains(&quote))
-                .then(|| (quote, outcome.reason.unwrap_or_default())))
-        }
-        ClaimJudgment::Failed(error) => Err(error),
-        _ => Ok(None),
     }
 }
 

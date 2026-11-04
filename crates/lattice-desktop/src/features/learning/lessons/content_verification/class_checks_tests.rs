@@ -8,7 +8,7 @@ use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
-use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimState, VerdictKind};
+use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimState};
 
 const COMMON: &str = "A page number identifies the page of a document that a value appears on.";
 const REASONED: &str =
@@ -16,7 +16,6 @@ const REASONED: &str =
 const OWN: &str = "The sources name two trade-offs between the designs.";
 const REWRITTEN: &str =
     "The reader hands over one row at a time, so it never holds the whole file in memory.";
-const WITH_A_FIGURE: &str = "The reader hands over one row at a time, so a file of 10 million rows costs no more memory than one of 10.";
 
 /// A model that sorts, judges consistency and answers for knowledge as
 /// scripted by statement, extracts the statements it is given from a lesson,
@@ -46,7 +45,7 @@ impl Classes {
         }
     }
 
-    fn classed(mut self, classes: &[(&'static str, &'static str)]) -> Self {
+    pub(super) fn classed(mut self, classes: &[(&'static str, &'static str)]) -> Self {
         self.classes = classes.to_vec();
         self
     }
@@ -62,7 +61,7 @@ impl Classes {
     }
 
     /// A repair writes `to` where the section's body says `from`.
-    fn rewrites(mut self, from: &'static str, to: &'static str) -> Self {
+    pub(super) fn rewrites(mut self, from: &'static str, to: &'static str) -> Self {
         self.rewrite = Some((from, to));
         self
     }
@@ -239,7 +238,15 @@ async fn each_statement_meets_the_check_its_class_names_and_the_lessons_own_is_l
         .classed(&[(COMMON, "common"), (REASONED, "reasoning")]);
     let body = format!("{COMMON} {REASONED} {OWN} {GOOD}");
 
-    let report = verify(&model, &lesson(&body), &[source()]).await?;
+    let (_, report) = verify_and_repair(
+        &model,
+        "{}",
+        &json!({}),
+        lesson(&body).to_string(),
+        &[source()],
+        3000,
+    )
+    .await?;
 
     assert_eq!(
         outcomes(&report),
@@ -276,218 +283,6 @@ async fn each_statement_meets_the_check_its_class_names_and_the_lessons_own_is_l
     Ok(())
 }
 
-#[tokio::test]
-async fn a_reasoning_statement_a_passage_contradicts_fails_without_the_veto() -> Result<()> {
-    let model = Classes::new(&[REASONED])
-        .classed(&[(REASONED, "reasoning")])
-        .consistent(&[(REASONED, "contradicted")]);
-
-    let report = verify(&model, &lesson(REASONED), &[source()]).await?;
-
-    assert_eq!(
-        outcomes(&report),
-        vec![(REASONED, ClaimVerdict::Contradicted, Some(Class::Reasoning))]
-    );
-    assert_eq!(report.findings[0].reason, "The passages say otherwise.");
-    assert_eq!(model.calls("knowledge"), 0);
-    assert!(!report.issues.is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_reasoning_statement_with_an_unfounded_specific_is_checked_against_its_sources(
-) -> Result<()> {
-    let model = Classes::new(&[REASONED])
-        .classed(&[(REASONED, "reasoning")])
-        .consistent(&[(REASONED, "unfounded_specific")]);
-
-    let report = verify(&model, &lesson(REASONED), &[source()]).await?;
-
-    let [finding] = report.findings.as_slice() else {
-        panic!("one finding: {:?}", outcomes(&report));
-    };
-    assert_eq!(
-        finding.class.map(|classed| classed.class),
-        Some(Class::Sourced)
-    );
-    assert_eq!(model.calls("knowledge"), 0);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_consistent_statement_most_samples_call_false_fails_unless_the_passages_state_it(
-) -> Result<()> {
-    let model = Classes::new(&[REASONED])
-        .classed(&[(REASONED, "reasoning")])
-        .knows(&[(REASONED, ["false", "false", "true_common"])]);
-
-    let report = verify(&model, &lesson(REASONED), &[source()]).await?;
-
-    assert_eq!(
-        outcomes(&report),
-        vec![(REASONED, ClaimVerdict::Contradicted, Some(Class::Reasoning))]
-    );
-    assert!(
-        report.findings[0].reason.contains("(2 of 3)"),
-        "{}",
-        report.findings[0].reason
-    );
-    assert_eq!(model.strict_calls(), 0, "the section cites nothing to ask");
-
-    // The sources outrank the model: this section cites a passage that
-    // states the statement outright.
-    let model = Classes::new(&[GOOD])
-        .classed(&[(GOOD, "reasoning")])
-        .knows(&[(GOOD, ["false", "false", "false"])]);
-    let mut cited = lesson(GOOD);
-    cited["blocks"][0]["quote"] = json!(GOOD);
-    cited["blocks"][0]["sourceIndex"] = json!(0);
-
-    let report = verify(&model, &cited, &[source()]).await?;
-
-    assert_eq!(
-        outcomes(&report),
-        vec![(GOOD, ClaimVerdict::Supported, Some(Class::Reasoning))]
-    );
-    assert!(report.findings[0].supporting_quote.is_some());
-    assert_eq!(model.strict_calls(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_common_statement_passes_only_when_every_sample_agrees() -> Result<()> {
-    const FALSE: &str = "A header row names the columns of a CSV file after its data.";
-    const LONE: &str = "DictReader keeps whitespace in field names.";
-    const WANTS: &str = "Missing values in nonblank rows default to None.";
-    let model = Classes::new(&[COMMON, FALSE, LONE, WANTS])
-        .classed(&[
-            (COMMON, "common"),
-            (FALSE, "common"),
-            (LONE, "common"),
-            (WANTS, "common"),
-        ])
-        .knows(&[
-            (FALSE, ["false", "false", "true_common"]),
-            (LONE, ["true_common", "true_common", "false"]),
-            (WANTS, ["needs_source", "true_common", "true_common"]),
-        ]);
-    let body = format!("{COMMON} {FALSE} {LONE} {WANTS}");
-
-    let report = verify(&model, &lesson(&body), &[source()]).await?;
-
-    let classes: Vec<(&str, Option<Class>)> = outcomes(&report)
-        .into_iter()
-        .map(|(statement, _, class)| (statement, class))
-        .collect();
-    assert_eq!(
-        classes,
-        vec![
-            (COMMON, Some(Class::Common)),
-            (FALSE, Some(Class::Common)),
-            // A lone dissent forfeits the pass without failing the statement,
-            // as a request for a source does: both go to the strict check.
-            (LONE, Some(Class::Sourced)),
-            (WANTS, Some(Class::Sourced)),
-        ]
-    );
-    assert_eq!(report.findings[0].verdict, ClaimVerdict::Supported);
-    assert_eq!(report.findings[1].verdict, ClaimVerdict::Contradicted);
-    assert!(
-        report.findings[1].reason.contains("(2 of 3)"),
-        "{}",
-        report.findings[1].reason
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_calls_ceiling_only_comes_down_while_a_pass_checks_a_mix_of_classes() -> Result<()> {
-    const FALSE: &str = "A header row names the columns of a CSV file after its data.";
-    const LONE: &str = "DictReader keeps whitespace in field names.";
-    const WANTS: &str = "Missing values in nonblank rows default to None.";
-    let model = Classes::new(&[COMMON, FALSE, LONE, WANTS, REASONED, GOOD])
-        .classed(&[
-            (COMMON, "common"),
-            (FALSE, "common"),
-            (LONE, "common"),
-            (WANTS, "common"),
-            (REASONED, "reasoning"),
-        ])
-        .knows(&[
-            (FALSE, ["false", "false", "true_common"]),
-            (LONE, ["true_common", "true_common", "false"]),
-            (WANTS, ["needs_source", "true_common", "true_common"]),
-        ]);
-    let body = format!("{COMMON} {FALSE} {LONE} {WANTS} {REASONED} {GOOD}");
-
-    let (report, trace) = crate::features::learning::lesson_progress::traced(verify(
-        &model,
-        &lesson(&body),
-        &[source()],
-    ))
-    .await;
-    report?;
-
-    // The statements sorted: the plan's one event. A pass alone moves none of
-    // them through its graph, so its checks leave the ceiling where the sort
-    // set it, two Common statements sent on to their source check among them.
-    assert_eq!(trace.ceilings.len(), 1, "{:?}", trace.ceilings);
-    assert!(trace.only_came_down(), "{:?}", trace.ceilings);
-    // The sort, the knowledge samples of five statements, the consistency
-    // call and the strict checks.
-    assert!(trace.calls >= 1 + 5 * 3 + 1 + 1, "{} calls", trace.calls);
-    assert!(
-        trace.within_the_ceiling(),
-        "{} calls, ceilings {:?}",
-        trace.calls,
-        trace.ceilings
-    );
-    Ok(())
-}
-
-/// The rewrites a repair of `statement` leaves for the next pass, when the
-/// statement was checked as `classed` and failed.
-async fn rewrites_after_repair(
-    statement: &str,
-    classed: Classed,
-) -> Result<claim_ledger::Rewrites> {
-    let model = Classes::new(&[]);
-    let before = lesson(statement);
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let mut failed = passage_finding(statement, statement, false, SOURCE);
-    failed.verdict = ClaimVerdict::Contradicted;
-    failed.evidence.clear();
-    failed.class = Some(classed);
-    ledger.observe(&before, &pass_report(vec![failed])).await?;
-    let claim = ledger.finding_claims()[0].clone();
-    ledger.begin_repairs(&before, &[claim]).await?;
-    Ok(ledger.rewrites(&StandardPolicy::new()))
-}
-
-/// What the sort makes of `statement`, which a repair wrote into the lesson.
-async fn sorted_after(
-    model: &Classes,
-    rewrites: &claim_ledger::Rewrites,
-    statement: &str,
-) -> Result<Vec<Classed>> {
-    let claims = vec![(
-        0,
-        Claim {
-            quote: statement.to_owned(),
-            statement: statement.to_owned(),
-        },
-    )];
-    class_checks::sort(
-        model,
-        &StandardPolicy::new(),
-        &lesson(statement),
-        &claims,
-        rewrites,
-        &Citations::default(),
-    )
-    .await
-}
-
 /// A lesson whose one section cites `sentence`, as its writer lists it.
 fn cited(sentence: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":sentence,"rubric":[],
@@ -516,6 +311,7 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
         &StandardPolicy::new(),
         &candidate,
         &claims,
+        &[None],
         &nothing,
         &citations,
     )
@@ -535,6 +331,7 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
         &StandardPolicy::new(),
         &lesson(REASONED),
         &claims,
+        &[None],
         &nothing,
         &Citations::default(),
     )
@@ -581,6 +378,7 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_attributions_t
         &StandardPolicy::new(),
         &example,
         &claims,
+        &[None, None],
         &nothing,
         &Citations::default(),
     )
@@ -605,6 +403,7 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_attributions_t
         &StandardPolicy::new(),
         &lesson(CASE),
         &claims[..1],
+        &[None],
         &nothing,
         &Citations::default(),
     )
@@ -652,6 +451,7 @@ async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific()
         &StandardPolicy::new(),
         &candidate,
         &claims,
+        &[None, None],
         &nothing,
         &Citations::default(),
     )
@@ -679,7 +479,15 @@ async fn a_cited_statement_meets_the_strict_check_whatever_the_model_would_have_
     // Sorted, it would be Reasoning and meet the consistency check and the veto.
     let model = Classes::new(&[GOOD]).classed(&[(GOOD, "reasoning")]);
 
-    let report = verify(&model, &cited(GOOD), &[source()]).await?;
+    let (_, report) = verify_and_repair(
+        &model,
+        "{}",
+        &json!({}),
+        cited(GOOD).to_string(),
+        &[source()],
+        3000,
+    )
+    .await?;
 
     assert_eq!(
         outcomes(&report),
@@ -699,50 +507,6 @@ async fn a_cited_statement_meets_the_strict_check_whatever_the_model_would_have_
     Ok(())
 }
 
-#[tokio::test]
-async fn a_statement_a_repair_wrote_keeps_the_class_of_the_one_it_replaced_and_is_not_sorted_again(
-) -> Result<()> {
-    // Sorted, the model would call it Common.
-    let model = Classes::new(&[]).classed(&[(REWRITTEN, "common")]);
-    let parent = Classed {
-        class: Class::Reasoning,
-        by: ClassifiedBy::Model,
-    };
-    let rewrites = rewrites_after_repair(REASONED, parent).await?;
-
-    let classes = sorted_after(&model, &rewrites, REWRITTEN).await?;
-
-    assert_eq!(classes, [parent]);
-    assert_eq!(model.calls("sort"), 0);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_rewrite_that_brings_in_a_figure_is_sourced_by_the_rule_layer_with_no_sort_call(
-) -> Result<()> {
-    let model = Classes::new(&[]).classed(&[(WITH_A_FIGURE, "common")]);
-    let rewrites = rewrites_after_repair(
-        REASONED,
-        Classed {
-            class: Class::Reasoning,
-            by: ClassifiedBy::Model,
-        },
-    )
-    .await?;
-
-    let classes = sorted_after(&model, &rewrites, WITH_A_FIGURE).await?;
-
-    assert_eq!(
-        classes,
-        [Classed {
-            class: Class::Sourced,
-            by: ClassifiedBy::Rule
-        }]
-    );
-    assert_eq!(model.calls("sort"), 0);
-    Ok(())
-}
-
 /// The ledger after a pass found `statement` supported, checked as `classed`.
 async fn ledger_holding(
     model: &Classes,
@@ -756,23 +520,6 @@ async fn ledger_holding(
         .observe(&lesson(statement), &pass_report(vec![finding]))
         .await?;
     Ok(ledger)
-}
-
-#[tokio::test]
-async fn a_statement_the_ledger_holds_keeps_its_class_and_is_not_sorted_again() -> Result<()> {
-    // Sorted again, the model would lighten it to Reasoning.
-    let model = Classes::new(&[]).classed(&[(REASONED, "reasoning")]);
-    let held = Classed {
-        class: Class::Sourced,
-        by: ClassifiedBy::Model,
-    };
-    let ledger = ledger_holding(&model, REASONED, held).await?;
-
-    let classes = sorted_after(&model, &ledger.rewrites(&StandardPolicy::new()), REASONED).await?;
-
-    assert_eq!(classes, [held]);
-    assert_eq!(model.calls("sort"), 0);
-    Ok(())
 }
 
 #[tokio::test]
@@ -809,49 +556,6 @@ async fn a_class_a_later_pass_gives_a_held_statement_is_recorded_only_when_it_pr
         Some((Class::Sourced, ClassifiedBy::Writer))
     );
     Ok(())
-}
-
-#[tokio::test]
-async fn a_rule_that_leaves_a_statement_out_does_not_apply_to_a_rewrite() -> Result<()> {
-    // Alone, a remark about the lesson's sources is left out of its claims; a
-    // rewrite of a checked statement keeps its check.
-    let model = Classes::new(&[]);
-    let parent = Classed {
-        class: Class::Common,
-        by: ClassifiedBy::Model,
-    };
-    let rewrites = rewrites_after_repair(COMMON, parent).await?;
-
-    let classes = sorted_after(&model, &rewrites, OWN).await?;
-
-    assert_eq!(classes, [parent]);
-    assert_eq!(model.calls("sort"), 0);
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_class_a_rewrite_took_is_found_again_by_a_resumed_pass_without_its_parent() -> Result<()>
-{
-    let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
-    let model = Classes::new(&[]).classed(&[(REWRITTEN, "common")]);
-    let parent = Classed {
-        class: Class::Reasoning,
-        by: ClassifiedBy::Model,
-    };
-    let rewrites = rewrites_after_repair(REASONED, parent).await?;
-
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        lesson_drafts::resume("class-fixture".into()).await?;
-        let first = sorted_after(&model, &rewrites, REWRITTEN).await?;
-        // After a restart the repair's record is gone.
-        let resumed = sorted_after(&model, &claim_ledger::Rewrites::default(), REWRITTEN).await?;
-        assert_eq!(first, [parent]);
-        assert_eq!(resumed, [parent]);
-        assert_eq!(model.calls("sort"), 0);
-        Ok(())
-    })
-    .await
 }
 
 #[tokio::test]
@@ -924,14 +628,30 @@ async fn a_judgment_is_asked_once_and_a_resumed_pass_restores_it() -> Result<()>
 
     lesson_drafts::run(&repo, &job, &lesson_id, async {
         lesson_drafts::resume("class-fixture".into()).await?;
-        verify(&model, &lesson(&body), &sources).await?;
+        verify_and_repair(
+            &model,
+            "{}",
+            &json!({}),
+            lesson(&body).to_string(),
+            &sources,
+            3000,
+        )
+        .await?;
         let asked = (
             model.calls("sort"),
             model.calls("consistency"),
             model.calls("knowledge"),
         );
         assert_eq!(asked, (1, 1, 6));
-        verify(&model, &lesson(&body), &sources).await?;
+        verify_and_repair(
+            &model,
+            "{}",
+            &json!({}),
+            lesson(&body).to_string(),
+            &sources,
+            3000,
+        )
+        .await?;
         assert_eq!(
             (
                 model.calls("sort"),
@@ -944,63 +664,6 @@ async fn a_judgment_is_asked_once_and_a_resumed_pass_restores_it() -> Result<()>
         Ok(())
     })
     .await
-}
-
-#[tokio::test]
-async fn the_ledger_records_each_class_and_the_state_its_check_ends_in() -> Result<()> {
-    let model = Classes::new(&[]);
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let body = format!("{COMMON} {REASONED} {GOOD} {FALSE_COMMON}");
-    const FALSE_COMMON: &str = "A header row names the columns of a CSV file after its data.";
-    let classed = |class, by| Some(Classed { class, by });
-    let mut common = passage_finding(&body, COMMON, true, SOURCE);
-    common.evidence.clear();
-    common.supporting_quote = None;
-    common.class = classed(Class::Common, ClassifiedBy::Model);
-    let mut reasoning = passage_finding(&body, REASONED, true, SOURCE);
-    reasoning.supporting_quote = None;
-    reasoning.class = classed(Class::Reasoning, ClassifiedBy::Model);
-    let mut sourced = passage_finding(&body, GOOD, true, SOURCE);
-    sourced.class = classed(Class::Sourced, ClassifiedBy::Rule);
-    let mut false_common = passage_finding(&body, FALSE_COMMON, false, SOURCE);
-    false_common.verdict = ClaimVerdict::Contradicted;
-    false_common.evidence.clear();
-    false_common.class = classed(Class::Common, ClassifiedBy::Model);
-
-    ledger
-        .observe(
-            &lesson(&body),
-            &pass_report(vec![common, reasoning, sourced, false_common]),
-        )
-        .await?;
-
-    let ids = ledger.finding_claims().to_vec();
-    let state = |index: usize| ledger.entry(&ids[index]).unwrap().state().clone();
-    let class = |index: usize| ledger.entry(&ids[index]).unwrap().class();
-    assert!(matches!(state(0), ClaimState::GeneralKnowledge { .. }));
-    assert!(matches!(state(1), ClaimState::Consistent { .. }));
-    assert!(matches!(state(2), ClaimState::ResolvedByEvidence { .. }));
-    assert!(matches!(
-        state(3),
-        ClaimState::Open {
-            kind: VerdictKind::Contradicted,
-            ..
-        }
-    ));
-    assert_eq!(
-        (class(0), class(1), class(2), class(3)),
-        (
-            Some(Class::Common),
-            Some(Class::Reasoning),
-            Some(Class::Sourced),
-            Some(Class::Common)
-        )
-    );
-    // A Common statement the model called false has no rewrite: its first
-    // repair takes its sentence out. One that passed is not repaired at all.
-    assert!(ledger.cuts_next(&ids[3]));
-    assert!(!ledger.cuts_next(&ids[2]));
-    Ok(())
 }
 
 /// A resolution is the user's: the machine's pass of a Common statement is

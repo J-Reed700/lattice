@@ -11,6 +11,7 @@
 //! cites decides the rest alone (claim classes design §3.2).
 use super::*;
 use lattice_core::application::services::claim_verification::LocatedClaim;
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 mod bridge;
@@ -18,15 +19,18 @@ mod claims;
 mod outcome;
 mod page_budget;
 mod requests;
+#[cfg(test)]
 mod run;
 mod walk;
 
 pub(super) use bridge::{applies, bridge_checker, part_wise};
 pub(super) use claims::{attribution_page, compare, Comparison, NO_PASSAGES};
+#[cfg(test)]
 use claims::{Compared, Context, Prepared};
 #[cfg(test)]
 pub(in crate::features::learning) use outcome::ContraryPassage;
 pub(super) use outcome::{alone, combine};
+#[cfg(test)]
 use outcome::{alone_key, decision_key};
 pub(in crate::features::learning) use outcome::{
     same_passage, CheckedPart, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
@@ -36,9 +40,11 @@ use requests::finish;
 #[cfg(test)]
 pub(super) use requests::{combined, packed};
 pub(super) use requests::{group, labelled_passages, pack};
+#[cfg(test)]
 use run::Run;
 #[cfg(test)]
 pub(super) use walk::first_page;
+#[cfg(test)]
 use walk::log_page;
 pub(in crate::features::learning) use walk::Reach;
 pub(super) use walk::{page_of, page_one, within_page, PageBudget, PageNote, Sizing};
@@ -118,7 +124,9 @@ pub(super) async fn check(
 /// own section cites (`citations`, by unit), and against the course's first
 /// page for it. Pages are sized by the job's measured answers (§5.3), so the
 /// first request carries pass A only and every later one packs pass A and
-/// pass B together.
+/// pass B together. For the tests of the two passes; step 6b-3 retires it with
+/// them.
+#[cfg(test)]
 pub(super) async fn check_with_citations(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,

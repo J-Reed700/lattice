@@ -94,11 +94,13 @@ pub(in crate::features::learning) struct TwoPass {
 /// The key of a claim's whole decision: its pass A comparison, when it has
 /// one, and pass B's first page. A later pass whose two comparisons are the
 /// same restores the decision without reading them.
+#[cfg(test)]
 pub(super) fn decision_key(attribution: Option<&str>, corroboration: &str) -> String {
     digest(&json!({"attribution": attribution, "corroboration": corroboration}).to_string())
 }
 
 /// The key of a claim's decision when only its pass A comparison was asked.
+#[cfg(test)]
 pub(super) fn alone_key(attribution: &str) -> String {
     digest(&json!({"attribution": attribution, "corroboration": Value::Null}).to_string())
 }

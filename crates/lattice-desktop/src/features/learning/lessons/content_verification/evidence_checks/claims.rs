@@ -9,9 +9,11 @@ pub(in crate::features::learning::lessons::content_verification) enum Comparison
     Done(Finding, bool),
     Pending(PendingClaim),
     /// Sent to the model; its finding is on the way.
+    #[cfg(test)]
     Sent,
 }
 
+#[cfg(test)]
 impl Comparison {
     pub(super) fn done(&self) -> Option<(&Finding, bool)> {
         match self {
@@ -43,6 +45,7 @@ impl Comparison {
 }
 
 /// A claim whose two passes are compared in this pass.
+#[cfg(test)]
 pub(super) struct Compared {
     pub(super) ordinal: usize,
     pub(super) unit: usize,
@@ -66,6 +69,7 @@ pub(super) struct Compared {
     pub(super) corroborates: bool,
 }
 
+#[cfg(test)]
 impl Compared {
     /// The claim's finding once every comparison is done, and whether all
     /// of them were restored.
@@ -118,6 +122,7 @@ impl Compared {
     }
 }
 
+#[cfg(test)]
 pub(super) enum Prepared {
     /// A finished decision: `true` when it is a retained final decision,
     /// `false` for one decided on the spot.
@@ -126,6 +131,7 @@ pub(super) enum Prepared {
 }
 
 /// What preparing a claim reads beside the claim itself.
+#[cfg(test)]
 pub(super) struct Context<'c, 'r> {
     pub(super) llm: &'c dyn LLMPort,
     pub(super) references: &'c ReferenceCollection<'r>,
@@ -135,6 +141,7 @@ pub(super) struct Context<'c, 'r> {
     pub(super) citations: &'c Citations,
 }
 
+#[cfg(test)]
 impl Context<'_, '_> {
     /// The claim's comparisons: pass A's prepared, pass B's first page as
     /// [`Self::corroborate`] can have it at `sizing`. A claim settled by its
@@ -355,6 +362,7 @@ pub(in crate::features::learning::lessons::content_verification) fn attribution_
 }
 
 /// `claim`'s comparison of `evidence` for `pass`, keyed by `key`.
+#[cfg(test)]
 fn pending(
     llm: &dyn LLMPort,
     claim: &Compared,

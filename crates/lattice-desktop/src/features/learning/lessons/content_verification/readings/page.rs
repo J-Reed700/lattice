@@ -121,14 +121,16 @@ fn keep(found: &mut [Option<Finding>], ordinal: usize, finding: Finding) {
 
 /// What the judge's finding on a statement's page comes to: it stands when the
 /// passage that supports it is of a source its sentence cites, and otherwise
-/// the support is elsewhere, which the finding names.
+/// the support is elsewhere, which the finding names. A sentence whose section
+/// cites nothing has no citation to move: a passage that supports it stands.
 fn read_of(statement: &Statement<'_>, page: Paged, finding: Finding) -> Read {
     let mut finding = combine(None, finding, (page.reach, 1), &page.cited);
-    let on_cited = finding
-        .two_pass
-        .supported_by
-        .as_ref()
-        .is_some_and(|found| page.cited.contains(&found.source_id));
+    let on_cited = page.cited.is_empty()
+        || finding
+            .two_pass
+            .supported_by
+            .as_ref()
+            .is_some_and(|found| page.cited.contains(&found.source_id));
     let outcome = page_outcome(finding.verdict, on_cited);
     if outcome == Outcome::Stands {
         finding.two_pass.supported_by = None;

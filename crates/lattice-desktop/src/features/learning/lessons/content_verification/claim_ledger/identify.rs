@@ -4,11 +4,16 @@
 
 use super::super::*;
 use super::fields::{field_text, locate};
+use super::position::sorted_as;
 use super::{is_gone, successor, ClaimLedger, RepairRecord};
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Step};
 use lattice_core::domain::learning::claim_review::{
     identities, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ExtractedClaim, RepairOutcome,
 };
 use lattice_core::shared::text::sentences;
+
+/// Why a rewrite that left the sentence as it was is recorded as not used.
+const UNCHANGED: &str = "The repair left the sentence as it was.";
 
 /// The statement a code example's claim makes (§2.1: an example that cannot
 /// run is a claim like any other).
@@ -44,43 +49,72 @@ pub(in super::super) struct Matched {
 
 impl Matched {
     /// The claim statement `index` continues; `None` when it is new.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(in super::super) fn continues(&self, index: usize) -> Option<&ClaimId> {
         self.continues.get(index)?.as_ref()
     }
+
+    /// The claim whose repair wrote statement `index` beside its own
+    /// successor.
+    fn parent(&self, index: usize) -> Option<&ClaimId> {
+        self.children.get(&index).map(|(parent, _)| parent)
+    }
+
+    /// The match of the statements `keep` holds, in their order, the others
+    /// taken out of it. A statement beyond `keep` is kept.
+    pub(in super::super) fn keep(self, keep: &[bool]) -> Self {
+        let kept = |index: &usize| keep.get(*index).copied().unwrap_or(true);
+        let moved: HashMap<usize, usize> = (0..self.continues.len())
+            .filter(kept)
+            .enumerate()
+            .map(|(new, old)| (old, new))
+            .collect();
+        Self {
+            continues: self
+                .continues
+                .into_iter()
+                .enumerate()
+                .filter(|(index, _)| kept(index))
+                .map(|(_, claim)| claim)
+                .collect(),
+            orphaned: self.orphaned,
+            children: self
+                .children
+                .into_iter()
+                .filter_map(|(index, child)| Some((*moved.get(&index)?, child)))
+                .collect(),
+            rewritten: self.rewritten,
+        }
+    }
 }
 
-/// A claim `identify` carried on, as `record_checks` weighs it: its entry as
-/// it stood before the pass, and whether the pass decided a repair that
-/// awaited it.
+/// A claim `identify` carried on, as the reopenings and an example's check
+/// weigh it: its entry as it stood before the pass, whether the pass decided
+/// a repair that awaited it, and the quote the pass extracted it from.
 pub(super) struct Carried {
     pub(super) before: ClaimLedgerEntry,
     pub(super) decided: bool,
+    pub(super) quote: String,
 }
 
 impl ClaimLedger {
-    /// The statements `report` found, as `match_pass` and `identify` take
-    /// them: each finding, then each code example that failed or that the
-    /// ledger tracks.
+    /// The statements of a pass, as `match_pass` and `identify` take them: each
+    /// of `claims`, a section's index and what it states, then each code
+    /// example that failed or that the ledger tracks. A statement has no class
+    /// yet.
     pub(in super::super) fn extracted(
         &self,
         candidate: &Value,
-        report: &LessonVerificationReport,
+        claims: &[(usize, Claim)],
+        executions: &[execution::Observation],
     ) -> Vec<Extracted> {
-        let mut extracted: Vec<Extracted> = report
-            .findings
+        let mut extracted: Vec<Extracted> = claims
             .iter()
-            .map(|finding| Extracted {
+            .map(|(unit, claim)| Extracted {
                 claim: ExtractedClaim {
-                    location: locate(
-                        candidate,
-                        finding.unit,
-                        &finding.quote,
-                        Some(&finding.statement),
-                    ),
-                    statement: finding.statement.clone(),
+                    location: locate(candidate, *unit, &claim.quote, Some(&claim.statement)),
+                    statement: claim.statement.clone(),
                 },
-                class: finding.class,
+                class: None,
                 example: None,
             })
             .collect();
@@ -93,7 +127,7 @@ impl ClaimLedger {
             extracted.len(),
             extracted.len() - located
         );
-        for observation in &report.executions {
+        for observation in executions {
             let statement = example_statement(&observation.id);
             let tracked = self
                 .entries
@@ -117,6 +151,54 @@ impl ClaimLedger {
             });
         }
         extracted
+    }
+
+    /// The statements `report` found, as `extracted` takes them, with the
+    /// class each finding was checked as.
+    #[cfg(test)]
+    pub(in super::super) fn extracted_report(
+        &self,
+        candidate: &Value,
+        report: &LessonVerificationReport,
+    ) -> Vec<Extracted> {
+        let claims: Vec<(usize, Claim)> = report
+            .findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.unit,
+                    Claim {
+                        quote: finding.quote.clone(),
+                        statement: finding.statement.clone(),
+                    },
+                )
+            })
+            .collect();
+        let mut extracted = self.extracted(candidate, &claims, &report.executions);
+        for (found, finding) in extracted.iter_mut().zip(&report.findings) {
+            found.class = finding.class;
+        }
+        extracted
+    }
+
+    /// The class of each of a pass's first `statements` statements when the
+    /// match gives one: that of the claim it continues as the ledger holds
+    /// it, or the class the parent of the repair it is the heir of was sorted
+    /// into. None for a statement new to the ledger, which is sorted.
+    pub(in super::super) fn classes_given(
+        &self,
+        matched: &Matched,
+        statements: usize,
+    ) -> Vec<Option<Classed>> {
+        (0..statements)
+            .map(|index| {
+                if let Some(entry) = matched.continues(index).and_then(|id| self.entry(id)) {
+                    return entry.classified().map(|(class, by)| Classed { class, by });
+                }
+                let parent = matched.parent(index).and_then(|id| self.entry(id))?;
+                sorted_as(parent).map(|(class, by)| Classed { class, by })
+            })
+            .collect()
     }
 
     /// Which claim each extracted statement (and failed example) of a pass
@@ -189,11 +271,12 @@ impl ClaimLedger {
     /// Records what `matched` found: which claim each statement is, and what
     /// is new about it that needs no check. Returns the claims, in the order
     /// of `extracted`. The outcome of a repair that awaited this pass is
-    /// recorded here, and `record_checks` is left what it weighs of each
-    /// claim carried on.
+    /// recorded here, and what the reopenings and an example's check weigh of
+    /// each claim carried on is kept for them.
     pub(in super::super) async fn identify(
         &mut self,
-        _candidate: &Value,
+        policy: &dyn AcceptancePolicy,
+        candidate: &Value,
         extracted: Vec<Extracted>,
         matched: Matched,
     ) -> Result<Vec<ClaimId>> {
@@ -232,8 +315,29 @@ impl ClaimLedger {
                     self.start(&successor, claim, class, None).await?;
                     successor
                 }
+                Some(id) if self.takes_successor(candidate, &id, records.get(&id)) => {
+                    // A statement on a sentence another claim's rewrite
+                    // changed is read again as a successor, at the post-rewrite
+                    // node of the class it holds.
+                    let successor = ClaimId::generate();
+                    let held = self
+                        .entry(&id)
+                        .and_then(ClaimLedgerEntry::classified)
+                        .map(|(class, by)| Classed { class, by });
+                    self.append(
+                        &id,
+                        ClaimEvent::Superseded {
+                            successor: Some(successor.clone()),
+                            by: Actor::Machine,
+                        },
+                    )
+                    .await?;
+                    self.start(&successor, claim, held, None).await?;
+                    successor
+                }
                 Some(id) => {
-                    self.carry_on(&id, claim, class, records.get(&id)).await?;
+                    self.carry_on(policy, candidate, &id, claim, class, records.get(&id))
+                        .await?;
                     id
                 }
                 None => {
@@ -278,6 +382,32 @@ impl ClaimLedger {
         Ok(claim_ids)
     }
 
+    /// Whether the claim `id`, which a repair of another claim sent for as a
+    /// neighbour on its sentence, now stands on a changed sentence: a statement
+    /// of the machine's own, or one it has ended, not the user's, which stays
+    /// theirs, nor a code example.
+    fn takes_successor(
+        &self,
+        candidate: &Value,
+        id: &ClaimId,
+        repair: Option<&RepairRecord>,
+    ) -> bool {
+        let Some(record) = repair.filter(|record| record.rides_on.is_some()) else {
+            return false;
+        };
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        if entry.state().is_settled() || entry.state().awaits_user() || entry.classified().is_none()
+        {
+            return false;
+        }
+        let location = entry.location();
+        let standing = field_text(candidate, location.unit_index, &location.field)
+            .is_some_and(|text| text.contains(&record.before));
+        !standing
+    }
+
     /// A claim seen for the first time: extracted, then classified, and born
     /// of a repair when one wrote it beside its parent's successor (`born`:
     /// the parent and the attempts it left, claim sources design §9.1).
@@ -310,8 +440,9 @@ impl ClaimLedger {
         Ok(())
     }
 
-    /// Records the class a claim was checked as, when it takes the place of
-    /// the one the ledger holds (claim classes design §3.1).
+    /// Records the class a claim was sorted into. A claim the ledger holds a
+    /// class for is not sorted again: its class changes only when the evidence
+    /// moves it (acceptance design §2.9).
     async fn classify_claim(&mut self, id: &ClaimId, class: Option<Classed>) -> Result<()> {
         let Some(Classed { class, by }) = class else {
             return Ok(());
@@ -324,11 +455,13 @@ impl ClaimLedger {
         Ok(())
     }
 
-    /// A claim seen before: record where it stands now, its class, and the
-    /// outcome of a repair that awaited this pass, and keep what
-    /// `record_checks` weighs of it.
+    /// A claim seen before: record where it stands now, its class when it has
+    /// none, and the outcome of a repair that awaited this pass, and keep what
+    /// the reopenings and an example's check weigh of it.
     async fn carry_on(
         &mut self,
+        policy: &dyn AcceptancePolicy,
+        candidate: &Value,
         id: &ClaimId,
         claim: ExtractedClaim,
         class: Option<Classed>,
@@ -348,25 +481,84 @@ impl ClaimLedger {
             )
             .await?;
         }
-        self.classify_claim(id, class).await?;
-        let mut decided = false;
-        if let Some(record) = repair {
-            decided = self
-                .append(
-                    id,
-                    ClaimEvent::RepairAttempted {
-                        attempt: record.attempt,
-                        escalated: record.escalated,
-                        before: record.before.clone(),
-                        after: Some(quote),
-                        outcome: RepairOutcome::Rewritten,
-                        goal: None,
-                    },
-                )
+        if before.classified().is_none() {
+            self.classify_claim(id, class).await?;
+        }
+        // A statement that rode on another's repair, and whose sentence stands,
+        // has no outcome of its own to record.
+        let decided = match repair {
+            Some(record) if record.rides_on.is_none() || before.classified().is_none() => {
+                self.record_repair(policy, candidate, id, record, &quote)
+                    .await?
+            }
+            _ => false,
+        };
+        self.carried.insert(
+            id.clone(),
+            Carried {
+                before,
+                decided,
+                quote,
+            },
+        );
+        Ok(())
+    }
+
+    /// The outcome of the repair that awaited this pass, for a claim that
+    /// continues: what the repair did to its sentence, and for a rewrite the
+    /// policy's step. Whether the ledger took the repair's event.
+    async fn record_repair(
+        &mut self,
+        policy: &dyn AcceptancePolicy,
+        candidate: &Value,
+        id: &ClaimId,
+        record: &RepairRecord,
+        quote: &str,
+    ) -> Result<bool> {
+        let rewrite = match record.step {
+            Some(Step::Rewrite(goal)) => Some(goal),
+            Some(_) => return Ok(false),
+            None => None,
+        };
+        let changed = self.entry(id).is_none_or(|entry| {
+            let location = entry.location();
+            field_text(candidate, location.unit_index, &location.field)
+                .is_none_or(|text| !text.contains(&record.before))
+        });
+        let applied = rewrite.is_none() || changed;
+        let (after, outcome) = if applied {
+            (Some(quote.to_owned()), RepairOutcome::Rewritten)
+        } else {
+            (
+                None,
+                RepairOutcome::Rejected {
+                    reason: UNCHANGED.into(),
+                },
+            )
+        };
+        let taken = self
+            .append(
+                id,
+                ClaimEvent::RepairAttempted {
+                    attempt: record.attempt,
+                    escalated: record.escalated,
+                    before: record.before.clone(),
+                    after,
+                    outcome,
+                    goal: rewrite,
+                },
+            )
+            .await?;
+        if let (true, Some(goal)) = (taken, rewrite) {
+            let outcome = if applied {
+                Outcome::Rewritten
+            } else {
+                Outcome::NotApplied
+            };
+            self.record_step(policy, id, Step::Rewrite(goal), outcome)
                 .await?;
         }
-        self.carried.insert(id.clone(), Carried { before, decided });
-        Ok(())
+        Ok(taken)
     }
 
     /// A claim no statement continues, with the outcome of the repair that
@@ -397,7 +589,7 @@ impl ClaimLedger {
                     before: record.before.clone(),
                     after: Some(after),
                     outcome: RepairOutcome::Rewritten,
-                    goal: None,
+                    goal: record.goal(),
                 };
                 self.append(id, event).await?;
                 self.append(id, gone).await?;
@@ -409,7 +601,7 @@ impl ClaimLedger {
                     before: record.before.clone(),
                     after: None,
                     outcome: RepairOutcome::Removed,
-                    goal: None,
+                    goal: record.goal(),
                 };
                 // A claim that passed on the sentence has no repair to
                 // record: it went with the sentence.

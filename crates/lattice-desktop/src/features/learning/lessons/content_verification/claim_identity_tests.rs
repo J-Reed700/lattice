@@ -47,7 +47,11 @@ async fn repair_sent() -> Result<(claim_ledger::ClaimLedger, ClaimId, ClaimId)> 
     let claims = ledger.finding_claims().to_vec();
     let (verified, failed) = (claims[0].clone(), claims[1].clone());
     ledger
-        .begin_repairs(&before, std::slice::from_ref(&failed))
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &before,
+            std::slice::from_ref(&failed),
+        )
         .await?;
     Ok((ledger, verified, failed))
 }
@@ -67,7 +71,7 @@ fn after_the_rewrite() -> (Value, LessonVerificationReport) {
 async fn a_pass_is_matched_without_recording_anything_and_matched_the_same_again() -> Result<()> {
     let (ledger, verified, failed) = repair_sent().await?;
     let (lesson, report) = after_the_rewrite();
-    let extracted = ledger.extracted(&lesson, &report);
+    let extracted = ledger.extracted_report(&lesson, &report);
     let entries = ledger.entries().to_vec();
     let findings = ledger.finding_claims().to_vec();
     let pending = serde_json::to_value(&ledger.pending)?;
@@ -98,9 +102,11 @@ async fn identifying_a_new_claim_records_where_it_stands_and_its_class_and_no_ch
     });
     let report = pass_report(vec![finding]);
 
-    let extracted = ledger.extracted(&lesson, &report);
+    let extracted = ledger.extracted_report(&lesson, &report);
     let matched = ledger.match_pass(&lesson, &extracted);
-    let ids = ledger.identify(&lesson, extracted, matched).await?;
+    let ids = ledger
+        .identify(&StandardPolicy::new(), &lesson, extracted, matched)
+        .await?;
 
     assert_eq!(ids.len(), 1);
     assert_eq!(ledger.finding_claims(), ids.as_slice());
@@ -133,9 +139,11 @@ async fn identifying_a_repaired_claim_that_continues_records_its_repair_and_no_c
         .map(|id| ledger.entry(id).unwrap().events().len())
         .collect();
 
-    let extracted = ledger.extracted(&lesson, &report);
+    let extracted = ledger.extracted_report(&lesson, &report);
     let matched = ledger.match_pass(&lesson, &extracted);
-    let ids = ledger.identify(&lesson, extracted, matched).await?;
+    let ids = ledger
+        .identify(&StandardPolicy::new(), &lesson, extracted, matched)
+        .await?;
 
     assert_eq!(ids, vec![verified.clone(), failed.clone()]);
     assert_eq!(ledger.finding_claims(), ids.as_slice());
@@ -175,9 +183,11 @@ async fn identifying_a_claim_no_statement_continues_records_that_it_is_gone_and_
 
     let cut = cell_lesson(&CELL.replace(&format!("{ATP_SENTENCE} "), ""));
     let report = pass_report(vec![]);
-    let extracted = ledger.extracted(&cut, &report);
+    let extracted = ledger.extracted_report(&cut, &report);
     let matched = ledger.match_pass(&cut, &extracted);
-    let ids = ledger.identify(&cut, extracted, matched).await?;
+    let ids = ledger
+        .identify(&StandardPolicy::new(), &cut, extracted, matched)
+        .await?;
 
     assert!(ids.is_empty());
     assert!(ledger.finding_claims().is_empty());
@@ -221,7 +231,11 @@ async fn four_claims_and_a_repair_sent() -> Result<claim_ledger::ClaimLedger> {
     ledger.observe(&before, &report).await?;
     let failed = ledger.finding_claims()[1].clone();
     ledger
-        .begin_repairs(&before, std::slice::from_ref(&failed))
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &before,
+            std::slice::from_ref(&failed),
+        )
         .await?;
     Ok(ledger)
 }
@@ -259,9 +273,11 @@ async fn identifying_then_recording_the_checks_gives_the_events_observing_gives(
     observed.observe(&lesson, &report).await?;
 
     let mut split = four_claims_and_a_repair_sent().await?;
-    let extracted = split.extracted(&lesson, &report);
+    let extracted = split.extracted_report(&lesson, &report);
     let matched = split.match_pass(&lesson, &extracted);
-    let ids = split.identify(&lesson, extracted, matched).await?;
+    let ids = split
+        .identify(&StandardPolicy::new(), &lesson, extracted, matched)
+        .await?;
     split.record_checks(&lesson, &report, &ids).await?;
 
     assert_eq!(events_of(&split), events_of(&observed));

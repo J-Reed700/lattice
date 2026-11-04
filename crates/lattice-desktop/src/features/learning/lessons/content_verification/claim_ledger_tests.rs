@@ -790,7 +790,8 @@ async fn a_statement_unreadable_once_and_readable_on_the_recheck_is_judged_norma
         ClaimState::ResolvedByEvidence { .. }
     ));
     assert_eq!(claim.unjudged(), 0);
-    // Asked twice: no answer, then the judgment.
+    // The statement cites nothing, so its first reading has no passage to
+    // read; its page is then asked twice: no answer, then the judgment.
     let unanswered: Vec<bool> = claim
         .events()
         .iter()
@@ -799,32 +800,8 @@ async fn a_statement_unreadable_once_and_readable_on_the_recheck_is_judged_norma
             _ => None,
         })
         .collect();
-    assert_eq!(unanswered, [true, false]);
+    assert_eq!(unanswered, [false, true, false]);
     assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_claim_the_checker_did_not_answer_for_is_asked_again_once_and_then_stops_the_lesson(
-) -> Result<()> {
-    let model = Model::new();
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let lesson = cell_lesson(CELL);
-    let mut unanswered = passage_finding(CELL, ATP, true, CELL_SOURCE);
-    unanswered.verdict = ClaimVerdict::Unverified;
-    unanswered.supporting_quote = None;
-    let report = pass_report(vec![unanswered]);
-
-    ledger.observe(&lesson, &report).await?;
-    assert!(matches!(ledger.decide(), claim_ledger::Decision::Recheck));
-    ledger.observe(&lesson, &report).await?;
-    assert!(matches!(ledger.decide(), claim_ledger::Decision::Stop(1)));
-
-    let id = ledger.finding_claims()[0].clone();
-    let entry = ledger.entry(&id).unwrap();
-    assert_eq!(entry.state(), &ClaimState::Unchecked);
-    assert_eq!(entry.unjudged(), 2);
-    assert!(repairs(entry).is_empty());
     Ok(())
 }
 
@@ -1497,61 +1474,9 @@ async fn a_verified_claim_whose_citation_was_repaired_is_decided_by_the_next_pas
         "{:?}",
         entry.state()
     );
-    assert!(matches!(ledger.decide(), claim_ledger::Decision::Repair(_)));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_lesson_is_not_published_with_a_claim_its_last_pass_could_not_support() -> Result<()> {
-    let model = Model::new();
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let lesson = cell_lesson(CELL);
-    ledger
-        .observe(
-            &lesson,
-            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
-        )
-        .await?;
-    let id = ledger.finding_claims()[0].clone();
-    // The last pass compares other passages and cannot support it. While
-    // the lesson is prepared that leaves the verified claim alone (claim
-    // sources design §18.4 ii), but the report it would publish says the
-    // claim is unsupported.
-    let other = "Glycolysis in the cytoplasm also yields a little ATP.";
-    let last = pass_report(vec![passage_finding(CELL, ATP, false, other)]);
-    ledger.observe(&lesson, &last).await?;
     assert!(matches!(
-        ledger.entry(&id).unwrap().state(),
-        ClaimState::ResolvedByEvidence { .. }
-    ));
-
-    assert!(
-        !matches!(ledger.decide(), claim_ledger::Decision::Publish),
-        "the report would carry {:?}",
-        ledger.bind(last.clone()).issues
-    );
-
-    // The last pass's check applies, and the claim goes to the repairs.
-    let claim_ledger::Decision::Reconcile(claims) = ledger.decide() else {
-        panic!("the claims to reconcile");
-    };
-    assert_eq!(claims, vec![id.clone()]);
-    ledger.reconcile(&last, &claims).await?;
-    assert!(
-        matches!(ledger.entry(&id).unwrap().state(), ClaimState::Open { .. }),
-        "{:?}",
-        ledger.entry(&id).unwrap().state()
-    );
-    assert!(matches!(ledger.decide(), claim_ledger::Decision::Repair(_)));
-
-    // A claim its last pass supports publishes as it is.
-    let mut supported = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let pass = pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]);
-    supported.observe(&lesson, &pass).await?;
-    supported.observe(&lesson, &pass).await?;
-    assert!(matches!(
-        supported.decide(),
-        claim_ledger::Decision::Publish
+        ledger.decide(&StandardPolicy::new(), &[]),
+        claim_ledger::Decision::Repair(_)
     ));
     Ok(())
 }
@@ -1580,7 +1505,7 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_rewritten_an
         &before,
         &report,
         &[],
-        &ledger,
+        (&ledger, &StandardPolicy::new()),
         std::slice::from_ref(&shared),
         &references,
     )?;
@@ -1589,7 +1514,11 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_rewritten_an
 
     // The repair is the failed claim's; the claim that passed rides on it.
     ledger
-        .begin_repairs(&before, std::slice::from_ref(&shared))
+        .begin_repairs(
+            &StandardPolicy::new(),
+            &before,
+            std::slice::from_ref(&shared),
+        )
         .await?;
     assert_eq!(ledger.pending.repairs.len(), 2);
     let rider = ledger
@@ -1687,7 +1616,7 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
             },
         )
         .await?;
-    let claim_ledger::Decision::Repair(targets) = ledger.decide() else {
+    let claim_ledger::Decision::Repair(targets) = ledger.decide(&StandardPolicy::new(), &[]) else {
         panic!("the failed claim is repaired");
     };
     assert_eq!(targets, std::slice::from_ref(&shared));
@@ -1695,7 +1624,9 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
 
     // Its last attempt cuts the sentence: no repair record rides on it, and
     // the claim that passed goes with the sentence.
-    ledger.begin_repairs(&before, &targets).await?;
+    ledger
+        .begin_repairs(&StandardPolicy::new(), &before, &targets)
+        .await?;
     assert_eq!(ledger.pending.repairs.len(), 1);
     let cut = CELL.replace(&format!("{ATP_SENTENCE} "), "");
     ledger

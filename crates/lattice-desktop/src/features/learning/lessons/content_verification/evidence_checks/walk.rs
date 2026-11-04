@@ -139,6 +139,7 @@ pub(in crate::features::learning::lessons::content_verification) struct PageNote
 /// which page, the passages, their exact tokens, the budget, the fused
 /// scores of the page's first and last passage, whether the list's end was
 /// reached and whether a counter query's branches were fused.
+#[cfg(test)]
 pub(super) async fn log_page(
     llm: &dyn LLMPort,
     (ordinal, round): (usize, usize),

@@ -1,17 +1,60 @@
-//! One verification pass over a candidate lesson: its claim inventory and
-//! coverage audit (reused per unchanged section), its executed examples, and
-//! the evidence check of every claim.
+//! One verification pass over a candidate lesson (acceptance design §2.10):
+//! what it extracts (the claim inventory and coverage audit, reused per
+//! unchanged section, and the runs of the executed examples), which claim of
+//! the ledger each statement is, the reading of each statement that waits for
+//! one along its graph, and the report of what the latest readings found.
+use super::claim_ledger::ClaimLedger;
+use super::readings::driver::{read_until_remedy, ReadSteps};
+use super::readings::{ReadContext, ReaderSet, Statement};
 use super::*;
-use lattice_core::domain::learning::acceptance::AcceptancePolicy;
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Position, Walked};
+use lattice_core::domain::learning::claim_review::{
+    ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
+};
 
-pub(super) async fn verify_with_references(
+/// What a pass extracts from a candidate lesson before anything is read.
+pub(super) struct Extraction {
+    pub(super) inventory: Inventory,
+    pub(super) coverage: Coverage,
+    pub(super) executions: Vec<execution::Observation>,
+}
+
+/// A statement of the lesson that is a claim of the ledger.
+pub(super) struct Identified {
+    pub(super) id: ClaimId,
+    /// The section it stands in.
+    pub(super) unit: usize,
+    pub(super) claim: Claim,
+}
+
+/// A pass identified with the ledger: what it extracted and which of its
+/// statements are claims.
+pub(super) struct Pass {
+    pub(super) extraction: Extraction,
+    /// The statements of the sections that stay, in the inventory's order,
+    /// and whether the lesson itself makes each: such a statement is left out
+    /// of its claims.
+    left: Vec<bool>,
+    /// The claims of the lesson's statements, in the inventory's order.
+    pub(super) statements: Vec<Identified>,
+}
+
+/// What the readings of a round made of the statements: the steps of each.
+pub(super) type Readings = Vec<(ClaimId, ReadSteps)>;
+
+/// The checkpoint holding a statement's latest reading's finding, by claim.
+fn finding_key(id: &ClaimId) -> String {
+    format!("claim-finding-v1:{}", id.0)
+}
+
+/// The claim inventory and coverage audit of `candidate` and the runs of its
+/// examples: extraction alone, before any statement is read.
+pub(super) async fn extract(
     llm: &dyn LLMPort,
-    policy: &dyn AcceptancePolicy,
     runtimes: &BuiltinRuntimes,
     candidate: &Value,
-    references: &ReferenceCollection<'_>,
-    checks: &mut ClaimChecks,
-) -> Result<LessonVerificationReport> {
+    checks: &ClaimChecks,
+) -> Result<Extraction> {
     let candidate_text = candidate.to_string();
     let content = units(candidate)?;
     let checkpoint = crate::features::learning::lesson_drafts::claim_inventory(&candidate_text)
@@ -69,51 +112,46 @@ pub(super) async fn verify_with_references(
         serde_json::to_string(&checkpoint)?,
     )
     .await?;
-    let (inventory, coverage) = (checkpoint.inventory, checkpoint.coverage);
     crate::features::learning::lesson_progress::phase(
         crate::features::learning::lesson_progress::Phase::Examples,
         "Checking executable examples",
     );
-    let executions = execution::observe(runtimes, candidate).await?;
-    check_evidence(
-        llm, policy, candidate, references, inventory, coverage, executions, checks,
-    )
-    .await
-}
-
-pub(super) async fn check_evidence(
-    llm: &dyn LLMPort,
-    policy: &dyn AcceptancePolicy,
-    candidate: &Value,
-    references: &ReferenceCollection<'_>,
-    inventory: Inventory,
-    coverage: Coverage,
-    executions: Vec<execution::Observation>,
-    completed: &mut ClaimChecks,
-) -> Result<LessonVerificationReport> {
-    let removed = completed.removed.clone();
-    let executions: Vec<_> = executions
+    let removed = checks.removed.clone();
+    let executions: Vec<_> = execution::observe(runtimes, candidate)
+        .await?
         .into_iter()
         .filter(|run| run.unit.is_none_or(|unit| !removed.contains(unit)))
         .collect();
-    let mut issues = Vec::new();
     if executions
         .iter()
         .any(|observation| observation.unavailable())
     {
         return Err(AppError::ServiceNotAvailable("An example runtime is unavailable or cancelled. No lesson was published; retry when the runtime is available.".into()));
     }
-    for observation in &executions {
-        if !observation.passed() {
-            issues.push(format!(
-                "Example {} did not complete: {}",
-                observation.id,
-                observation.evidence()
-            ));
-        }
-    }
-    let citations = section_citations(candidate, references)?;
-    let claims: Vec<(usize, Claim)> = inventory
+    Ok(Extraction {
+        inventory: checkpoint.inventory,
+        coverage: checkpoint.coverage,
+        executions,
+    })
+}
+
+/// Matches `extraction`'s statements to the claims the ledger holds and
+/// identifies them, before anything is read: each statement that continues a
+/// claim takes that claim's class, a repair's heir takes its parent's, and
+/// only a statement new to the ledger is sorted. A statement the lesson itself
+/// makes (class `Internal`) is left out of the claims. The reopenings that
+/// need no check are made here, and a failed or tracked example is checked.
+pub(super) async fn identify(
+    llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
+    ledger: &mut ClaimLedger,
+    (candidate, references): (&Value, &ReferenceCollection<'_>),
+    extraction: Extraction,
+    checks: &ClaimChecks,
+) -> Result<Pass> {
+    let removed = &checks.removed;
+    let claims: Vec<(usize, Claim)> = extraction
+        .inventory
         .units
         .iter()
         .filter(|unit| !removed.contains(unit.index))
@@ -124,62 +162,313 @@ pub(super) async fn check_evidence(
                 .map(move |claim| (unit.index, claim))
         })
         .collect();
+    let citations = section_citations(candidate, references)?;
+    let mut extracted = ledger.extracted(candidate, &claims, &extraction.executions);
+    let matched = ledger.match_pass(candidate, &extracted);
+    let given = ledger.classes_given(&matched, claims.len());
     let classes = class_checks::sort(
         llm,
         policy,
         candidate,
         &claims,
-        &completed.rewrites,
+        &given,
+        &checks.rewrites,
         &citations,
     )
     .await?;
-    let routes = class_checks::check(llm, &claims, classes, &citations).await?;
-    // The strict check is asked about the statements that need a source, a
-    // section at a time in the inventory's order.
-    let mut needs_source: Vec<UnitClaims> = Vec::new();
-    let mut strict_at: Vec<usize> = Vec::new();
-    for (at, ((unit, claim), route)) in claims.iter().zip(&routes).enumerate() {
-        if !matches!(route, class_checks::Route::Strict(_)) {
+    let left: Vec<bool> = classes
+        .iter()
+        .map(|classed| classed.class == Class::Internal)
+        .collect();
+    for (found, classed) in extracted.iter_mut().zip(&classes) {
+        found.class = Some(*classed);
+    }
+    let kept: Vec<bool> = left.iter().map(|left| !left).collect();
+    let matched = matched.keep(&kept);
+    let extracted: Vec<_> = extracted
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| kept.get(*index).copied().unwrap_or(true))
+        .map(|(_, found)| found)
+        .collect();
+    ledger
+        .identify(policy, candidate, extracted, matched)
+        .await?;
+    let active: HashSet<&str> = references
+        .sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect();
+    let identified = ledger.finding_claims().to_vec();
+    ledger
+        .reopen_changed(candidate, &active, &identified)
+        .await?;
+    ledger
+        .record_example_checks(candidate, &extraction.executions, &active)
+        .await?;
+    let mut ids = identified.iter();
+    let mut statements = Vec::with_capacity(identified.len());
+    for ((unit, claim), left) in claims.iter().zip(&left) {
+        if *left {
             continue;
         }
-        strict_at.push(at);
-        match needs_source.last_mut() {
-            Some(last) if last.index == *unit => last.claims.push(claim.clone()),
-            _ => needs_source.push(UnitClaims {
-                index: *unit,
-                claims: vec![claim.clone()],
-                non_factual_reason: String::new(),
-            }),
-        }
+        let id = ids.next().ok_or_else(|| {
+            AppError::InternalError("A statement was left without a claim".into())
+        })?;
+        statements.push(Identified {
+            id: id.clone(),
+            unit: *unit,
+            claim: claim.clone(),
+        });
     }
-    let checked = evidence_checks::check_with_citations(
+    crate::features::learning::lesson_progress::claims(ledger.tally());
+    Ok(Pass {
+        extraction,
+        left,
+        statements,
+    })
+}
+
+/// Reads each of the statements `due` from the position it waits at, along its
+/// graph until its node is a remedy or an end. Nothing is recorded: a reader's
+/// outage is the `Err`, and the readings are recorded by [`record_readings`].
+pub(super) async fn read_steps(
+    llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
+    readers: &dyn ReaderSet,
+    ledger: &ClaimLedger,
+    checks: &ClaimChecks,
+    (candidate, references): (&Value, &ReferenceCollection<'_>),
+    (pass, due): (&Pass, &[(ClaimId, Position)]),
+) -> Result<Readings> {
+    let mut statements: Vec<(Statement<'_>, Position)> = Vec::with_capacity(due.len());
+    let mut ids = Vec::with_capacity(due.len());
+    for (id, position) in due {
+        let Some(known) = pass.statements.iter().find(|known| known.id == *id) else {
+            continue;
+        };
+        let held = ledger.entry(id).and_then(ClaimLedgerEntry::classified);
+        let by = held
+            .filter(|(class, _)| *class == position.class)
+            .map_or(ClassifiedBy::Evidence, |(_, by)| by);
+        statements.push((
+            Statement {
+                unit: known.unit,
+                claim: &known.claim,
+                classed: Classed {
+                    class: position.class,
+                    by,
+                },
+            },
+            *position,
+        ));
+        ids.push(id.clone());
+    }
+    if statements.is_empty() {
+        return Ok(Vec::new());
+    }
+    crate::features::learning::lesson_progress::phase(
+        crate::features::learning::lesson_progress::Phase::Evidence,
+        format!(
+            "Reading {} statement{} along {} checks",
+            statements.len(),
+            if statements.len() == 1 { "" } else { "s" },
+            if statements.len() == 1 {
+                "its"
+            } else {
+                "their"
+            }
+        ),
+    );
+    crate::features::learning::lesson_progress::begin_checks(statements.len());
+    let citations = section_citations(candidate, references)?;
+    let context = ReadContext::new(
         llm,
+        candidate,
         references,
-        &Inventory {
-            units: needs_source,
-        },
-        &executions,
-        completed,
         &citations,
+        &pass.extraction.executions,
+        checks,
     )
     .await?;
-    let mut strict: HashMap<usize, (String, Finding)> = HashMap::new();
-    for (ordinal, key, mut finding, _) in checked {
-        let at = strict_at.get(ordinal).copied();
-        if let Some(class_checks::Route::Strict(classed)) = at.and_then(|at| routes.get(at)) {
-            finding.class = Some(*classed);
+    let steps = read_until_remedy(policy, readers, &context, &statements).await?;
+    Ok(ids.into_iter().zip(steps).collect())
+}
+
+/// Records `readings`: each statement's latest reading's finding is kept (in
+/// memory and in a checkpoint, before the ledger records the decisions that
+/// lead to it), then each reading is recorded with the policy's decision on
+/// it. Gives the statements this run stopped on: a second unreadable answer.
+pub(super) async fn record_readings(
+    policy: &dyn AcceptancePolicy,
+    ledger: &mut ClaimLedger,
+    checks: &mut ClaimChecks,
+    readings: Readings,
+) -> Result<Vec<ClaimId>> {
+    for (id, read) in &readings {
+        if let Some(last) = read.steps.last() {
+            let finding = last.read.finding.clone();
+            crate::features::learning::lesson_drafts::record_checkpoint(
+                &finding_key(id),
+                serde_json::to_value(&finding)?,
+            )
+            .await?;
+            checks.latest.insert(id.clone(), finding);
         }
-        if let Some(at) = at {
-            strict.insert(at, (key, finding));
+    }
+    let mut stopped = Vec::new();
+    for (id, read) in &readings {
+        for step in &read.steps {
+            ledger.record_reading(policy, id, step).await?;
+        }
+        // The card keeps the passages the last reading that compared some
+        // showed.
+        let compared = read
+            .steps
+            .iter()
+            .rev()
+            .find(|step| !step.read.finding.evidence.is_empty());
+        if let Some(step) = compared {
+            ledger
+                .show_evidence(id, &step.read.finding.evidence)
+                .await?;
+        }
+        if matches!(read.walked, Walked::Stopped) {
+            stopped.push(id.clone());
+        }
+        crate::features::learning::lesson_progress::checked(false);
+    }
+    crate::features::learning::lesson_progress::claims(ledger.tally());
+    Ok(stopped)
+}
+
+/// The finding of the statement `known`, its latest reading's: kept in this
+/// job's memory, otherwise restored from its checkpoint, otherwise rebuilt from
+/// the ledger for a statement no decision has been made about. A statement with
+/// a decision and no finding is a fault; it is never read again for it.
+async fn latest_finding(
+    ledger: &ClaimLedger,
+    checks: &mut ClaimChecks,
+    known: &Identified,
+) -> Result<Finding> {
+    let mut finding = match checks.latest.get(&known.id) {
+        Some(finding) => finding.clone(),
+        None => {
+            let saved =
+                crate::features::learning::lesson_drafts::checkpoint(&finding_key(&known.id))
+                    .await?
+                    .and_then(|value| serde_json::from_value::<Finding>(value).ok());
+            let finding = match saved {
+                Some(saved) => saved,
+                None => from_ledger(ledger, known)?,
+            };
+            checks.latest.insert(known.id.clone(), finding.clone());
+            finding
+        }
+    };
+    finding.unit = known.unit;
+    finding.quote = known.claim.quote.clone();
+    finding.statement = known.claim.statement.clone();
+    Ok(finding)
+}
+
+/// The finding of a statement no reading of this job has made, rebuilt from the
+/// ledger: its latest check's reason, passing when the claim has. A statement
+/// the machine still owns and has a decision about is the exception: its
+/// finding is what the remedy that follows is sent, so its loss is a fault.
+fn from_ledger(ledger: &ClaimLedger, known: &Identified) -> Result<Finding> {
+    let fault = || {
+        AppError::InternalError(format!(
+            "The statement \"{}\" was left without a finding",
+            known.claim.statement
+        ))
+    };
+    let entry = ledger.entry(&known.id).ok_or_else(fault)?;
+    if entry.decided().is_some() && entry.state().is_machine_owned() {
+        return Err(fault());
+    }
+    let passed = matches!(
+        entry.state(),
+        ClaimState::ResolvedByEvidence { .. }
+            | ClaimState::Consistent { .. }
+            | ClaimState::GeneralKnowledge { .. }
+    );
+    let supporting_quote = match entry.state() {
+        ClaimState::ResolvedByEvidence {
+            supporting_quote, ..
+        } => Some(supporting_quote.clone()),
+        _ => None,
+    };
+    let reason = entry
+        .events()
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            ClaimEvent::Checked(check) => Some(check.reason.clone()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    Ok(Finding {
+        unit: known.unit,
+        quote: known.claim.quote.clone(),
+        statement: known.claim.statement.clone(),
+        verdict: if passed {
+            ClaimVerdict::Supported
+        } else {
+            ClaimVerdict::Unsupported
+        },
+        reason,
+        evidence: Vec::new(),
+        supporting_quote,
+        resolution: None,
+        trust: None,
+        label: None,
+        class: entry.classified().map(|(class, by)| Classed { class, by }),
+        two_pass: Default::default(),
+    })
+}
+
+/// The findings of the statements that are claims: each one's latest
+/// reading's, in the inventory's order.
+pub(super) async fn latest_findings(
+    ledger: &ClaimLedger,
+    checks: &mut ClaimChecks,
+    pass: &Pass,
+) -> Result<Vec<Finding>> {
+    let mut findings = Vec::with_capacity(pass.statements.len());
+    for known in &pass.statements {
+        findings.push(latest_finding(ledger, checks, known).await?);
+    }
+    Ok(findings)
+}
+
+/// The report of a pass: one finding for each statement that is a claim, in
+/// the inventory's order, with the coverage accounting, the examples' runs and
+/// the issues the findings leave open.
+pub(super) fn report(
+    llm: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    candidate: &Value,
+    pass: &Pass,
+    findings: Vec<Finding>,
+    checks: &ClaimChecks,
+) -> LessonVerificationReport {
+    let removed = &checks.removed;
+    let mut issues = Vec::new();
+    for observation in &pass.extraction.executions {
+        if !observation.passed() {
+            issues.push(format!(
+                "Example {} did not complete: {}",
+                observation.id,
+                observation.evidence()
+            ));
         }
     }
     // The statements left out of the lesson's claims are not in its coverage
     // either: the report accounts for each claim by one finding.
-    let mut left = routes
-        .iter()
-        .map(|route| matches!(route, class_checks::Route::Left));
+    let mut left = pass.left.iter().copied();
     let mut accounted: Vec<UnitClaims> = Vec::new();
-    for unit in &inventory.units {
+    for unit in &pass.extraction.inventory.units {
         if removed.contains(unit.index) {
             accounted.push(UnitClaims {
                 index: unit.index,
@@ -206,20 +495,6 @@ pub(super) async fn check_evidence(
             non_factual_reason,
         });
     }
-    let mut findings = Vec::with_capacity(claims.len());
-    for (at, route) in routes.into_iter().enumerate() {
-        match route {
-            class_checks::Route::Left => {}
-            class_checks::Route::Done(finding) => findings.push(*finding),
-            class_checks::Route::Strict(_) => {
-                let (key, finding) = strict.remove(&at).ok_or_else(|| {
-                    AppError::InternalError("A statement was left without a check".into())
-                })?;
-                completed.record(key, &finding);
-                findings.push(finding);
-            }
-        }
-    }
     // Every claim a passage does not support is an issue until the claim
     // ledger closes it.
     for finding in &findings {
@@ -232,7 +507,7 @@ pub(super) async fn check_evidence(
             ));
         }
     }
-    Ok(LessonVerificationReport {
+    LessonVerificationReport {
         policy: POLICY.into(),
         lesson_id: String::new(),
         content_sha256: String::new(),
@@ -247,14 +522,152 @@ pub(super) async fn check_evidence(
             })
             .collect(),
         coverage: accounted,
-        coverage_audit: coverage.units,
+        coverage_audit: pass.extraction.coverage.units.clone(),
         findings,
-        executions,
+        executions: pass.extraction.executions.clone(),
         confirmed_examples: None,
         issues,
         retrieval_mode: references.mode().label().into(),
         embedding_model: references.embedding_model(),
-        page_budget: Some(evidence_checks::page_budget_note(llm, completed)),
+        page_budget: Some(evidence_checks::page_budget_note(llm, checks)),
         unexecuted_languages: execution::unexecuted_languages(candidate),
-    })
+    }
+}
+
+/// [`extract`], then every statement checked by the two passes of the course
+/// evidence index, as the pass checked them before the policy decided. For the
+/// tests of those passes; step 6b-3 retires it with them.
+#[cfg(test)]
+pub(super) async fn verify_with_references(
+    llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
+    runtimes: &BuiltinRuntimes,
+    candidate: &Value,
+    references: &ReferenceCollection<'_>,
+    checks: &mut ClaimChecks,
+) -> Result<LessonVerificationReport> {
+    let extraction = extract(llm, runtimes, candidate, checks).await?;
+    check_evidence(
+        llm,
+        policy,
+        candidate,
+        references,
+        extraction.inventory,
+        extraction.coverage,
+        extraction.executions,
+        checks,
+    )
+    .await
+}
+
+/// Every statement of `inventory` that is a claim checked by the strict check
+/// of the two passes, a section at a time in the inventory's order, and the
+/// report of what it found. For the tests of those passes; step 6b-3 retires
+/// it with them.
+#[cfg(test)]
+pub(super) async fn check_evidence(
+    llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
+    candidate: &Value,
+    references: &ReferenceCollection<'_>,
+    inventory: Inventory,
+    coverage: Coverage,
+    executions: Vec<execution::Observation>,
+    completed: &mut ClaimChecks,
+) -> Result<LessonVerificationReport> {
+    let removed = completed.removed.clone();
+    let executions: Vec<_> = executions
+        .into_iter()
+        .filter(|run| run.unit.is_none_or(|unit| !removed.contains(unit)))
+        .collect();
+    if executions
+        .iter()
+        .any(|observation| observation.unavailable())
+    {
+        return Err(AppError::ServiceNotAvailable("An example runtime is unavailable or cancelled. No lesson was published; retry when the runtime is available.".into()));
+    }
+    let citations = section_citations(candidate, references)?;
+    let claims: Vec<(usize, Claim)> = inventory
+        .units
+        .iter()
+        .filter(|unit| !removed.contains(unit.index))
+        .flat_map(|unit| {
+            unit.claims
+                .iter()
+                .cloned()
+                .map(move |claim| (unit.index, claim))
+        })
+        .collect();
+    let given = vec![None; claims.len()];
+    let classes = class_checks::sort(
+        llm,
+        policy,
+        candidate,
+        &claims,
+        &given,
+        &completed.rewrites,
+        &citations,
+    )
+    .await?;
+    let left: Vec<bool> = classes
+        .iter()
+        .map(|classed| classed.class == Class::Internal)
+        .collect();
+    let mut needs_source: Vec<UnitClaims> = Vec::new();
+    let mut strict_at: Vec<usize> = Vec::new();
+    for (at, ((unit, claim), left)) in claims.iter().zip(&left).enumerate() {
+        if *left {
+            continue;
+        }
+        strict_at.push(at);
+        match needs_source.last_mut() {
+            Some(last) if last.index == *unit => last.claims.push(claim.clone()),
+            _ => needs_source.push(UnitClaims {
+                index: *unit,
+                claims: vec![claim.clone()],
+                non_factual_reason: String::new(),
+            }),
+        }
+    }
+    let checked = evidence_checks::check_with_citations(
+        llm,
+        references,
+        &Inventory {
+            units: needs_source,
+        },
+        &executions,
+        completed,
+        &citations,
+    )
+    .await?;
+    let mut strict: HashMap<usize, (String, Finding)> = HashMap::new();
+    for (ordinal, key, mut finding, _) in checked {
+        if let Some(at) = strict_at.get(ordinal).copied() {
+            finding.class = classes.get(at).copied();
+            strict.insert(at, (key, finding));
+        }
+    }
+    let mut findings = Vec::with_capacity(claims.len());
+    for (at, left) in left.iter().enumerate() {
+        if *left {
+            continue;
+        }
+        let (key, finding) = strict.remove(&at).ok_or_else(|| {
+            AppError::InternalError("A statement was left without a check".into())
+        })?;
+        completed.record(key, &finding);
+        findings.push(finding);
+    }
+    let pass = Pass {
+        extraction: Extraction {
+            inventory,
+            coverage,
+            executions,
+        },
+        left,
+        statements: Vec::new(),
+    };
+    Ok(report(
+        llm, references, candidate, &pass, findings, completed,
+    ))
 }

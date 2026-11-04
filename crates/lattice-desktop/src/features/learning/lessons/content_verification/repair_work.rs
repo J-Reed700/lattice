@@ -2,6 +2,7 @@
 //! for, which the user resolved meanwhile, and what is left after a request.
 use super::claim_ledger::ClaimLedger;
 use super::*;
+use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::ClaimId;
 
 /// The claim ids of `items` (failed claims or example claims).
@@ -62,8 +63,12 @@ pub(super) fn drop_group(context: &mut Value, unit: usize, sent: usize, first: b
 
 /// Withdraws from the remaining work every claim the ledger no longer lets
 /// the machine repair, and returns them (§9).
-pub(super) fn withdraw_resolved(context: &mut Value, ledger: &ClaimLedger) -> Vec<ClaimId> {
-    withdraw(context, |id| !ledger.may_repair(id))
+pub(super) fn withdraw_resolved(
+    context: &mut Value,
+    ledger: &ClaimLedger,
+    policy: &dyn AcceptancePolicy,
+) -> Vec<ClaimId> {
+    withdraw(context, |id| !ledger.may_repair(policy, id))
 }
 
 /// Withdraws from the remaining work every claim `gone` names, and the

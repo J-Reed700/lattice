@@ -721,11 +721,14 @@ mod loop_bound {
             .collect();
         assert_eq!(quotes, [VERIFIED, ALSO_VERIFIED, FAILED]);
         let target = ids[2].clone();
-        let claim_ledger::Decision::Repair(targets) = ledger.decide() else {
+        let claim_ledger::Decision::Repair(targets) = ledger.decide(&StandardPolicy::new(), &[])
+        else {
             panic!("the failed claim is repaired");
         };
         assert_eq!(targets, std::slice::from_ref(&target));
-        ledger.begin_repairs(&before, &targets).await?;
+        ledger
+            .begin_repairs(&StandardPolicy::new(), &before, &targets)
+            .await?;
         let verified: Vec<ClaimLedgerEntry> = ids[..2]
             .iter()
             .map(|id| ledger.entry(id).unwrap().clone())

@@ -10,6 +10,7 @@ use super::repair_work::{
 use super::*;
 use crate::features::learning::lessons::text_edits;
 use lattice_core::application::services::grounded_generation::{GroundedRequest, HistoryItem};
+use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use std::collections::{BTreeSet, VecDeque};
 
 mod citation;
@@ -17,7 +18,7 @@ mod confine;
 mod cut;
 #[cfg(test)]
 pub(super) use citation::quotation;
-pub(super) use citation::{cite_where_supported, number_evidence, number_sources};
+pub(super) use citation::{cite_where_supported, number_evidence, number_sources, uncite, Cited};
 pub(in crate::features::learning) use confine::{confine, Protected};
 
 fn location(candidate: &Value, unit: usize) -> Result<(&'static str, usize)> {
@@ -393,6 +394,7 @@ async fn apply_or_replace_section(
 
 pub(in crate::features::learning) async fn candidate(
     llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
     prompt: &str,
     schema: &Value,
     mut context: Value,
@@ -403,7 +405,7 @@ pub(in crate::features::learning) async fn candidate(
     let sent = context_claims(&context);
     // A claim on its last attempt has its sentence taken out in code; the
     // model is asked only for the others.
-    let handled = cut::last_attempts(&mut context, ledger).await?;
+    let handled = cut::last_attempts(policy, &mut context, ledger).await?;
     let candidate = if handled > 0 && targets(&context)?.is_empty() {
         let candidate = context
             .get("candidate")
@@ -414,6 +416,7 @@ pub(in crate::features::learning) async fn candidate(
     } else {
         repair_sections(
             llm,
+            policy,
             prompt,
             schema,
             context,
@@ -445,6 +448,7 @@ pub(in crate::features::learning) async fn candidate(
 /// claims an attempt and leaves the section as it was.
 async fn repair_sections(
     llm: &dyn LLMPort,
+    policy: &dyn AcceptancePolicy,
     prompt: &str,
     schema: &Value,
     mut context: Value,
@@ -468,7 +472,7 @@ async fn repair_sections(
     for (position, unit) in pending.iter().copied().enumerate() {
         let (field, _) = location(&candidate, unit)?;
         ledger.sync().await?;
-        let dropped = withdraw_resolved(&mut context, ledger);
+        let dropped = withdraw_resolved(&mut context, ledger, policy);
         if !dropped.is_empty() {
             ledger.supersede(&dropped).await?;
         }
@@ -482,7 +486,7 @@ async fn repair_sections(
                 Err(error) if rejected(&error) => {
                     let mut claims = claim_ids(&section_failures(&context, unit));
                     claims.extend(examples);
-                    ledger.reject(&claims, &error.to_string()).await?;
+                    ledger.reject(policy, &claims, &error.to_string()).await?;
                     continue;
                 }
                 Err(error) => return Err(error),
@@ -508,7 +512,7 @@ async fn repair_sections(
                 if kept.is_empty() {
                     // Nothing to repair it from: the attempt is used, and the claim goes on to its last, which cuts it.
                     let reason = "A failed claim's evidence passage does not fit in this model's context window.";
-                    ledger.reject(&claim_ids(&group), reason).await?;
+                    ledger.reject(policy, &claim_ids(&group), reason).await?;
                     drop_group(&mut context, unit, group.len(), false);
                     continue;
                 }
@@ -580,7 +584,7 @@ async fn repair_sections(
                 if part == 1 {
                     claims.extend(claim_ids(&section_examples(&context, unit)));
                 }
-                ledger.reject(&claims, &error.to_string()).await?;
+                ledger.reject(policy, &claims, &error.to_string()).await?;
             }
             let saved = candidate.to_string();
             drop_group(&mut context, unit, group.len(), part == 1);

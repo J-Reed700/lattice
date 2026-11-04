@@ -53,6 +53,20 @@ impl ClaimLedger {
             .collect()
     }
 
+    /// The statements of the claims still standing, each with its section,
+    /// but `claims`: what the lesson keeps of its sentences when these claims
+    /// lose theirs.
+    pub(in crate::features::learning::lessons::content_verification) fn live_statements_but(
+        &self,
+        claims: &[ClaimId],
+    ) -> Vec<(usize, String)> {
+        self.entries
+            .iter()
+            .filter(|entry| !is_gone(entry.state()) && !claims.contains(entry.claim_id()))
+            .map(|entry| (entry.location().unit_index, entry.statement().to_owned()))
+            .collect()
+    }
+
     /// `claims` and the claims standing on their sentences.
     pub(in crate::features::learning::lessons::content_verification) fn with_cotenants(
         &self,

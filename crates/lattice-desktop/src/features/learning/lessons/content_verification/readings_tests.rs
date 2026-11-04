@@ -474,7 +474,7 @@ async fn the_guard_asks_the_rule_layers_test_with_the_sections_givens() -> Resul
 }
 
 #[tokio::test]
-async fn a_second_reading_restores_the_receipt_pass_a_keys_and_asks_nothing() -> Result<()> {
+async fn a_second_reading_restores_its_own_receipt_and_never_one_pass_a_wrote() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let sources = sources();
@@ -484,16 +484,33 @@ async fn a_second_reading_restores_the_receipt_pass_a_keys_and_asks_nothing() ->
     lesson_drafts::run(&repo, &job, &lesson, async {
         let mut page = citations.of(0).to_vec();
         canonicalize_evidence(&mut page);
-        let key = claim_receipt_key(&model, &ClaimChecks::key(0, &claim(STATEMENT), &page));
+        // Pass A asked the specifics guard with no givens, the reader asks it
+        // with the section's: the reader's key carries the guard.
+        let compared = ClaimChecks::key(0, &claim(STATEMENT), &page);
+        let pass_a_key = claim_receipt_key(&model, &compared);
+        let key = claim_receipt_key(&model, &format!("{compared}|guard:rule-layer"));
         assert!(lesson_drafts::checkpoint(&key).await?.is_none());
+        // A part-wise receipt pass A wrote for the same statement and page.
+        let written = serde_json::to_value(ClaimReceipt {
+            verdict: ClaimVerdict::Supported,
+            reason: "Pass A's.".into(),
+            supporting_quote: Some(STATED.into()),
+            interpretation_policy: None,
+            shown: None,
+        })?;
+        lesson_drafts::record_checkpoint(&pass_a_key, written).await?;
         let world = world_of(&references, citing(&references)?);
 
         let first = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
 
-        assert_eq!(model.requests().0, 1);
+        assert_eq!(
+            model.requests().0,
+            1,
+            "pass A's receipt was not restored: the statement was asked"
+        );
         assert!(
             lesson_drafts::checkpoint(&key).await?.is_some(),
-            "recorded under the key the pass records its own under"
+            "recorded under the key that carries the guard"
         );
         let again = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
         assert_eq!(model.requests().0, 1, "restored, not asked");

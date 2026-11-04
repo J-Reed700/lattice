@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use super::ClaimLedger;
 use crate::features::learning::lessons::call_plan::{Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
-    walk_from, AcceptancePolicy, Position, Taken, Walked,
+    decide, walk_from, AcceptancePolicy, Position, Step, Taken, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, Class, ClassifiedBy,
@@ -19,9 +19,34 @@ struct Course {
     last: Position,
 }
 
-/// The class `entry` was sorted into: the strongest authority's before its
-/// first decision, never the evidence's, which the decisions record after.
-fn sorted_class(entry: &ClaimLedgerEntry) -> Option<Class> {
+/// A kind of step, whatever its reading or goal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::features::learning::lessons::content_verification) enum StepKind {
+    Read,
+    Research,
+    Recite,
+    Uncite,
+    Rewrite,
+    Cut,
+}
+
+impl StepKind {
+    fn of(step: Step) -> Self {
+        match step {
+            Step::Read(_) => Self::Read,
+            Step::Research => Self::Research,
+            Step::Recite => Self::Recite,
+            Step::Uncite => Self::Uncite,
+            Step::Rewrite(_) => Self::Rewrite,
+            Step::Cut => Self::Cut,
+        }
+    }
+}
+
+/// The class `entry` was sorted into and who sorted it: the strongest
+/// authority's before its first decision, never the evidence's, which the
+/// decisions record after.
+pub(super) fn sorted_as(entry: &ClaimLedgerEntry) -> Option<(Class, ClassifiedBy)> {
     let mut held: Option<(Class, ClassifiedBy)> = None;
     for record in entry.events() {
         match &record.event {
@@ -34,7 +59,12 @@ fn sorted_class(entry: &ClaimLedgerEntry) -> Option<Class> {
             _ => {}
         }
     }
-    held.map(|(class, _)| class)
+    held
+}
+
+/// The class `entry` was sorted into.
+fn sorted_class(entry: &ClaimLedgerEntry) -> Option<Class> {
+    sorted_as(entry).map(|(class, _)| class)
 }
 
 /// The claims a machine rewrite or narrowing of `entry`'s sentence made its
@@ -64,6 +94,79 @@ impl ClaimLedger {
     ) -> Option<Walked> {
         self.course(policy, id, self.entries.len())
             .map(|course| course.walked)
+    }
+
+    /// Where the machine's statement `id` waits: its position and the step of
+    /// its node. None for a claim the user holds, one that has ended, one with
+    /// no class and one whose record does not fit its graph.
+    pub(in crate::features::learning::lessons::content_verification) fn waits_at(
+        &self,
+        policy: &dyn AcceptancePolicy,
+        id: &ClaimId,
+    ) -> Option<(Position, Step)> {
+        if !self.entry(id)?.state().is_machine_owned() {
+            return None;
+        }
+        let Some(Walked::At(at)) = self.position(policy, id) else {
+            return None;
+        };
+        let step = policy.graph(at.class).node(at.node)?.step;
+        Some((at, step))
+    }
+
+    /// The machine's statements of the latest pass that stand at a node of
+    /// their graph, in the pass's order, each with its position and the step of
+    /// its node.
+    pub(super) fn at_nodes(&self, policy: &dyn AcceptancePolicy) -> Vec<(ClaimId, Position, Step)> {
+        self.findings
+            .iter()
+            .filter_map(|id| {
+                let (at, step) = self.waits_at(policy, id)?;
+                Some((id.clone(), at, step))
+            })
+            .collect()
+    }
+
+    /// The live machine-owned statements whose position is at a node of a step
+    /// of `kind`.
+    pub(in crate::features::learning::lessons::content_verification) fn at(
+        &self,
+        policy: &dyn AcceptancePolicy,
+        kind: StepKind,
+    ) -> Vec<ClaimId> {
+        self.at_nodes(policy)
+            .into_iter()
+            .filter(|(_, _, step)| StepKind::of(*step) == kind)
+            .map(|(id, _, _)| id)
+            .collect()
+    }
+
+    /// The statements waiting for a reading, each at the position it is read
+    /// from.
+    pub(in crate::features::learning::lessons::content_verification) fn due(
+        &self,
+        policy: &dyn AcceptancePolicy,
+    ) -> Vec<(ClaimId, Position)> {
+        self.at_nodes(policy)
+            .into_iter()
+            .filter(|(_, _, step)| StepKind::of(*step) == StepKind::Read)
+            .map(|(id, at, _)| (id, at))
+            .collect()
+    }
+
+    /// Where `id` would stand after `taken`, from where it stands now; none
+    /// when it is not at a node, the step is not the node's, or the step ends
+    /// it.
+    pub(in crate::features::learning::lessons::content_verification) fn after(
+        &self,
+        policy: &dyn AcceptancePolicy,
+        id: &ClaimId,
+        taken: Taken,
+    ) -> Option<Position> {
+        let Some(Walked::At(at)) = self.position(policy, id) else {
+            return None;
+        };
+        decide(policy, at, taken)?.1
     }
 
     /// The plan's statements as the ledger has them now: each of `claims`

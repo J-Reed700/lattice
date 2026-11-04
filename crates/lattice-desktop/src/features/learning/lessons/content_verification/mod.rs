@@ -11,7 +11,7 @@ use lattice_core::application::services::claim_verification::ClaimEvidence;
 use lattice_core::application::services::claim_verification::{
     CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome,
 };
-use lattice_core::domain::learning::claim_review::{Class, ClassifiedBy};
+use lattice_core::domain::learning::claim_review::{ClaimId, Class, ClassifiedBy};
 use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,6 @@ mod inventory_checkpoint;
 mod learner_view;
 mod portability;
 mod quote_claims;
-#[cfg_attr(not(test), allow(dead_code))]
 mod readings;
 mod resolution;
 #[cfg(test)]
@@ -83,6 +82,7 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
     .await
 }
 mod passes;
+#[cfg(test)]
 use passes::{check_evidence, verify_with_references};
 mod provenance_gate;
 pub(in crate::features::learning) use provenance_gate::{
@@ -244,9 +244,14 @@ struct ClaimChecks {
     /// Claims the ledger holds as resolved by evidence the user brought, by
     /// unit and statement: that check is their receipt (`claim_ledger`).
     settled: HashMap<(usize, String), Finding>,
-    /// What the repairs the next pass checks replaced: what they wrote takes
-    /// the class of the claim they rewrote (`claim_ledger`).
+    /// What the ledger keeps for the next pass: where the lesson's statements
+    /// stand in their graphs, and the lesson before the repairs
+    /// (`claim_ledger`).
     rewrites: claim_ledger::Rewrites,
+    /// The finding of each statement's latest reading, by claim: what the
+    /// report carries for a statement a pass does not read. Each is also saved
+    /// as a checkpoint, so a restarted job carries it still.
+    latest: HashMap<ClaimId, Finding>,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
     research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
     prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
@@ -260,16 +265,20 @@ struct ClaimChecks {
     removed: sections::Going,
     /// The statements whose research round has just ended: pass B reads a
     /// page for them though their section cites a passage, the re-check
-    /// against what research found (design §3.2).
+    /// against what research found (design §3.2). For the tests of the two
+    /// passes; step 6b-3 retires it with them.
+    #[cfg(test)]
     corroborate: HashSet<(usize, String)>,
     /// The statements whose section cites a passage and whose page pass B has
     /// not read: each waits for its research round.
+    #[cfg(test)]
     unread: std::sync::Mutex<HashSet<(usize, String)>>,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 
 impl ClaimChecks {
     /// Which of `findings` are statements whose page pass B has not read.
+    #[cfg(test)]
     fn unread_of(&self, findings: &[Finding]) -> HashSet<(usize, String)> {
         let unread = self
             .unread
