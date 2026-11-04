@@ -1,5 +1,6 @@
+use super::super::readings::Read;
 use super::bridge_tests::{citing, STATED};
-use super::readings_tests::{claim, driven, paged, read_all, world_of};
+use super::readings_tests::{claim, driven, paged, read_observed, world_of};
 use super::*;
 use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
@@ -561,7 +562,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
 /// `reading` over a batch whose first statement waits on a model that never
 /// answers, and whose other two have receipts saved under the earlier key: a
 /// reader restores one by saving it again under the current key, which it must
-/// have done for both by the time the first call is made.
+/// have done for both, and told of both, by the time the first call is made.
 async fn restores_the_receipts_behind_a_slow_call(reading: Reading) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = setup(&pool).await?;
@@ -597,7 +598,9 @@ async fn restores_the_receipts_behind_a_slow_call(reading: Reading) -> Result<()
             .await?;
         }
         let claims = [(0, slow), (0, saved[0].clone()), (0, saved[1].clone())];
-        let work = read_all(reading, &blocked, &world, &claims);
+        let told = Mutex::new(Vec::new());
+        let record = |ordinal: usize, _: &Read| told.lock().unwrap().push(ordinal);
+        let work = read_observed(reading, &blocked, &world, &claims, &record);
         tokio::select! {
             result = work => panic!("The slow call should still be waiting: {result:?}"),
             result = tokio::time::timeout(Duration::from_secs(5), async {
@@ -614,6 +617,11 @@ async fn restores_the_receipts_behind_a_slow_call(reading: Reading) -> Result<()
                 "A receipt behind a slow call must be restored before the call is made"
             );
         }
+        assert_eq!(
+            *told.lock().unwrap(),
+            vec![1, 2],
+            "The receipts behind a slow call are told of before it returns"
+        );
         Ok(())
     })
     .await

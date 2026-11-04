@@ -18,6 +18,7 @@ use lattice_core::application::services::claim_verification::{
     page_outcome, BridgeOutcome, BridgePart,
 };
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};
+use std::borrow::Cow;
 
 mod consistency;
 pub(super) mod driver;
@@ -44,8 +45,13 @@ pub(super) struct Read {
     pub(super) reused: bool,
 }
 
+/// Told of a statement's reading as soon as its reader knows it: the place of
+/// the statement in the batch being read, and the reading the reader will
+/// return for it. Once for each statement of a batch.
+pub(super) type Observer<'o> = dyn Fn(usize, &Read) + Sync + 'o;
+
 /// What the readers read with: the model, the lesson and the course it cites,
-/// and the job's saved checks.
+/// and the job's saved checks; and who is told of each reading as it is made.
 pub(super) struct ReadContext<'c> {
     pub(super) llm: &'c dyn LLMPort,
     pub(super) candidate: &'c Value,
@@ -53,8 +59,10 @@ pub(super) struct ReadContext<'c> {
     pub(super) citations: &'c Citations,
     pub(super) executions: &'c [execution::Observation],
     pub(super) retained: &'c ClaimChecks,
-    sources: Vec<SourceBinding>,
-    labels: Labels,
+    sources: Cow<'c, [SourceBinding]>,
+    labels: Cow<'c, Labels>,
+    /// Nobody, unless a caller asks to be told.
+    observer: Option<&'c Observer<'c>>,
 }
 
 impl<'c> ReadContext<'c> {
@@ -75,9 +83,34 @@ impl<'c> ReadContext<'c> {
             citations,
             executions,
             retained,
-            sources: evidence_selection::sources(references),
-            labels: provenance_gate::passage_labels(references).await?,
+            sources: Cow::Owned(evidence_selection::sources(references)),
+            labels: Cow::Owned(provenance_gate::passage_labels(references).await?),
+            observer: None,
         })
+    }
+
+    /// This context, which tells `observer` of each reading as a reader makes
+    /// it. It shares the sources and labels, and replaces any observer.
+    pub(super) fn observed<'o>(&'o self, observer: &'o Observer<'o>) -> ReadContext<'o> {
+        ReadContext {
+            llm: self.llm,
+            candidate: self.candidate,
+            references: self.references,
+            citations: self.citations,
+            executions: self.executions,
+            retained: self.retained,
+            sources: Cow::Borrowed(&*self.sources),
+            labels: Cow::Borrowed(&*self.labels),
+            observer: Some(observer),
+        }
+    }
+
+    /// Tells the observer that `read` is the reading of the statement at
+    /// `ordinal` of the batch being read.
+    pub(super) fn report(&self, ordinal: usize, read: &Read) {
+        if let Some(observer) = self.observer {
+            observer(ordinal, read);
+        }
     }
 }
 
@@ -200,15 +233,17 @@ async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restore
 }
 
 /// Asks the strict judge about `pending`, packed into requests by section, and
-/// gives each finding with its comparison's ordinal.
+/// gives each finding with its comparison's ordinal. `tell` hears of each
+/// comparison the moment it is finished, even while the others of its request
+/// are pending.
 async fn ask_strict(
     at: &ReadContext<'_>,
     pending: Vec<PendingClaim>,
+    tell: &(dyn Fn(Pass, &CheckedClaim) + Sync),
 ) -> Result<Vec<(usize, Finding)>> {
     let mut asked = Vec::new();
     for request in pack(at.llm, pending, &at.labels) {
-        let (results, answered) =
-            group(at.llm, request, &|_: Pass, _: &CheckedClaim| {}, &at.labels).await?;
+        let (results, answered) = group(at.llm, request, tell, &at.labels).await?;
         tally(at.retained, answered);
         asked.extend(
             results
@@ -248,7 +283,7 @@ async fn ask_parts(at: &ReadContext<'_>, unit: usize, pending: PendingClaim) -> 
         tally(at.retained, answered);
         finding
     } else {
-        ask_strict(at, vec![pending])
+        ask_strict(at, vec![pending], &|_: Pass, _: &CheckedClaim| {})
             .await?
             .into_iter()
             .next()
@@ -268,6 +303,13 @@ impl Made {
         Self((0..len).map(|_| None).collect())
     }
 
+    /// Tells the observer of `read`, the reading at `ordinal`, and keeps it.
+    fn put(&mut self, at: &ReadContext<'_>, ordinal: usize, read: Read) {
+        at.report(ordinal, &read);
+        self.keep(ordinal, read);
+    }
+
+    /// Keeps `read`, which the observer has heard of.
     fn keep(&mut self, ordinal: usize, read: Read) {
         if let Some(slot) = self.0.get_mut(ordinal) {
             *slot = Some(read);

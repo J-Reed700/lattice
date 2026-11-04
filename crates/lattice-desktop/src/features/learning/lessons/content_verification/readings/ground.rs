@@ -29,19 +29,23 @@ impl Reader for Ground {
             );
             canonicalize_evidence(&mut evidence);
             if evidence.is_empty() {
-                made.keep(ordinal, read_of(statement, no_passages(statement), false));
+                made.put(
+                    at,
+                    ordinal,
+                    read_of(statement, no_passages(statement), false),
+                );
                 continue;
             }
             match restore_parts(at, ordinal, statement, &checked, evidence).await? {
                 Restored::Receipt(finding, reused) => {
-                    made.keep(ordinal, read_of(statement, finding, reused));
+                    made.put(at, ordinal, read_of(statement, finding, reused));
                 }
                 Restored::Ask(pending) => asks.push((ordinal, *statement, pending)),
             }
         }
         for (ordinal, statement, pending) in asks {
             let finding = ask_parts(at, statement.unit, pending).await?;
-            made.keep(ordinal, read_of(&statement, finding, false));
+            made.put(at, ordinal, read_of(&statement, finding, false));
         }
         made.all()
     }

@@ -2,7 +2,7 @@
 //! the judges' own fixtures, the receipts they restore and record, and an
 //! outage as an error.
 use super::super::readings::driver::{read_until_remedy, ReadSteps};
-use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Readers, Statement};
+use super::super::readings::{Observer, Read, ReadContext, Reader, ReaderSet, Readers, Statement};
 use super::bridge_tests::{
     citing, half_stated, parts_reply, sources, Reading as ScriptedBridge, STATED, STATEMENT,
 };
@@ -133,6 +133,42 @@ pub(super) async fn read_with(
         retained,
     )
     .await?;
+    let statements: Vec<Statement<'_>> = claims
+        .iter()
+        .map(|(unit, claim)| Statement {
+            unit: *unit,
+            claim,
+            classed: classed(),
+        })
+        .collect();
+    let readers = Readers::standard();
+    let reader: &dyn Reader = readers.get(reading);
+    reader.read(&at, &statements).await
+}
+
+/// What the reader of `reading` makes of `claims`, each with its section, with
+/// `observer` told of each reading as the reader makes it.
+pub(super) async fn read_observed(
+    reading: Reading,
+    model: &dyn LLMPort,
+    world: &World<'_>,
+    claims: &[(usize, Claim)],
+    observer: &Observer<'_>,
+) -> Result<Vec<Read>> {
+    let retained = ClaimChecks {
+        settled: world.settled.clone(),
+        ..ClaimChecks::default()
+    };
+    let at = ReadContext::new(
+        model,
+        &world.lesson,
+        world.references,
+        &world.citations,
+        &world.runs,
+        &retained,
+    )
+    .await?;
+    let at = at.observed(observer);
     let statements: Vec<Statement<'_>> = claims
         .iter()
         .map(|(unit, claim)| Statement {
@@ -1510,4 +1546,130 @@ async fn a_statement_is_read_against_the_passage_its_own_sentence_cites() -> Res
         "the sentence's passage was read, not the section's"
     );
     Ok(())
+}
+
+/// Reads `asked` and the two `saved` statements of section 0 by `reading`, the
+/// two having been read before and their receipts saved, and tells, for each
+/// reading the reader reports, its place in the batch, whether a saved check
+/// gave it, and how many requests `requests` counts the model was sent since.
+async fn told_after(
+    reading: Reading,
+    model: &dyn LLMPort,
+    requests: &(dyn Fn() -> usize + Sync),
+    world: &World<'_>,
+    (asked, saved): (&str, [&str; 2]),
+) -> Result<Vec<(usize, bool, usize)>> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let saved = [(0, claim(saved[0])), (0, claim(saved[1]))];
+        read_all(reading, model, world, &saved).await?;
+        let before = requests();
+        let told = Mutex::new(Vec::new());
+        let record = |ordinal: usize, read: &Read| {
+            told.lock()
+                .unwrap()
+                .push((ordinal, read.reused, requests() - before));
+        };
+        let claims = [(0, claim(asked)), saved[0].clone(), saved[1].clone()];
+        read_observed(reading, model, world, &claims, &record).await?;
+        Ok(told.into_inner().unwrap())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn consistency_tells_the_receipts_of_its_batch_before_its_first_request() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, citing(&references)?);
+    let model = Classes::new(&[]);
+
+    let told = told_after(
+        Reading::Consistency,
+        &model,
+        &|| model.calls("consistency"),
+        &world,
+        (UNFOUNDED, [CONSISTENT, CONTRADICTED]),
+    )
+    .await?;
+
+    assert_eq!(told, vec![(1, true, 0), (2, true, 0), (0, false, 1)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn knowledge_tells_the_receipts_of_its_batch_before_its_first_request() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, Citations::default());
+    let model = Classes::new(&[]);
+
+    let told = told_after(
+        Reading::Knowledge,
+        &model,
+        &|| model.calls("knowledge"),
+        &world,
+        (UNSURE, [TRUE_COMMON, WANTS_A_SOURCE]),
+    )
+    .await?;
+
+    // The three samples of the one statement asked.
+    assert_eq!(told, vec![(1, true, 0), (2, true, 0), (0, false, 3)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ground_tells_the_receipts_of_its_batch_before_its_first_request() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, citing(&references)?);
+    let model = ScriptedBridge::new(vec![half_stated(), half_stated(), half_stated()]);
+
+    let told = told_after(
+        Reading::Ground,
+        &model,
+        &|| model.requests().0,
+        &world,
+        (UNREADABLE, [CONSISTENT, CONTRADICTED]),
+    )
+    .await?;
+
+    assert_eq!(told, vec![(1, true, 0), (2, true, 0), (0, false, 1)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn parts_tells_of_each_statement_of_its_batch_once_at_its_own_place_whoever_reads_it(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let references = ReferenceCollection::lexical(&sources())?;
+    // Section 0 cites a passage that Parts reads; section 1 cites nothing, so
+    // Parts hands its statements to the page.
+    let world = world_of(&references, citing(&references)?);
+    let model = ScriptedBridge::new(vec![half_stated(), half_stated()]);
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let before = [
+            (0, claim("Quillet is a lexer that reads characters.")),
+            (1, claim("Quillet is a lexer that emits tokens.")),
+        ];
+        read_all(Reading::Parts, &model, &world, &before).await?;
+        let told = Mutex::new(Vec::new());
+        let record = |ordinal: usize, read: &Read| {
+            told.lock().unwrap().push((ordinal, read.reused));
+        };
+        let claims = [
+            before[0].clone(),
+            before[1].clone(),
+            (0, claim("Quillet is a lexer that skips blanks.")),
+            (1, claim("Quillet is a lexer that tracks lines.")),
+        ];
+
+        read_observed(Reading::Parts, &model, &world, &claims, &record).await?;
+
+        assert_eq!(
+            *told.lock().unwrap(),
+            vec![(0, true), (1, true), (2, false), (3, false)]
+        );
+        Ok(())
+    })
+    .await
 }

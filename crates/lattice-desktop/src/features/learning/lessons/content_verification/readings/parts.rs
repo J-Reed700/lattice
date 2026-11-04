@@ -35,20 +35,28 @@ impl Reader for Parts {
         let mut bare = Vec::new();
         for (ordinal, statement) in statements.iter().enumerate() {
             match restore(at, ordinal, statement).await? {
-                Own::Read(read) => made.keep(ordinal, read),
+                Own::Read(read) => made.put(at, ordinal, read),
                 Own::Ask(pending) => asks.push((ordinal, *statement, pending)),
                 Own::Bare => bare.push((ordinal, *statement)),
             }
         }
+        // The page tells of the statements it reads by their place among
+        // those it was handed, which are not the places in this batch.
         let (ordinals, those): (Vec<usize>, Vec<Statement<'_>>) = bare.into_iter().unzip();
-        let mut page = Batch::restore(at, &those, false).await?;
+        let forward = |inner: usize, read: &Read| {
+            if let Some(ordinal) = ordinals.get(inner) {
+                at.report(*ordinal, read);
+            }
+        };
+        let handed = at.observed(&forward);
+        let mut page = Batch::restore(&handed, &those, false).await?;
         for (ordinal, statement, pending) in asks {
             let finding = ask_parts(at, statement.unit, pending).await?;
-            made.keep(ordinal, read_of(&statement, finding, false));
+            made.put(at, ordinal, read_of(&statement, finding, false));
         }
-        page.ask(at).await?;
-        for (ordinal, read) in ordinals.into_iter().zip(page.reads()?) {
-            made.keep(ordinal, read);
+        page.ask(&handed).await?;
+        for (ordinal, read) in ordinals.iter().zip(page.reads()?) {
+            made.keep(*ordinal, read);
         }
         made.all()
     }

@@ -47,14 +47,16 @@ impl Reader for Knowledge {
         for (ordinal, statement) in statements.iter().enumerate() {
             let key = knowledge_key(at.llm, &statement.claim.statement);
             match saved_knowledge(&key).await? {
-                Some(saved) => made.keep(ordinal, self.read_of(statement, Some((saved, true)))),
+                Some(saved) => {
+                    made.put(at, ordinal, self.read_of(statement, Some((saved, true))));
+                }
                 None => asks.push((ordinal, *statement, key)),
             }
         }
         for (ordinal, statement, key) in asks {
             let judged = knowledge_of(at.llm, &key, &statement.claim.statement).await?;
             let read = self.read_of(&statement, judged.map(|knowledge| (knowledge, false)));
-            made.keep(ordinal, read);
+            made.put(at, ordinal, read);
         }
         made.all()
     }

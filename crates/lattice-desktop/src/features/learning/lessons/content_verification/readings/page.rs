@@ -114,9 +114,22 @@ impl<'s> Batch<'s> {
     }
 
     /// Asks the strict judge about `pending`, packed into requests by section,
-    /// and keeps each answer under its statement.
+    /// and keeps each answer under its statement. The observer hears of each
+    /// as soon as its comparison is finished, before the next request is sent.
     async fn answer(&mut self, at: &ReadContext<'_>, pending: Vec<PendingClaim>) -> Result<()> {
-        for (ordinal, finding) in ask_strict(at, pending).await? {
+        let held = &self.held;
+        let tell = |_: Pass, finished: &CheckedClaim| {
+            let (ordinal, _, finding, _) = finished;
+            let Some(one) = held.get(*ordinal) else {
+                return;
+            };
+            if let Some(page) = &one.paged {
+                let read = read_of(&one.statement, page, finding.clone(), false);
+                at.report(*ordinal, &read);
+            }
+        };
+        let answered = ask_strict(at, pending, &tell).await?;
+        for (ordinal, finding) in answered {
             if let Some(one) = self.held.get_mut(ordinal) {
                 one.settle(finding)?;
             }
@@ -132,7 +145,9 @@ impl Held<'_> {
         let (page, opened) = open(at, ordinal, &self.statement).await?;
         match opened {
             Restored::Receipt(finding, reused) => {
-                self.read = Some(read_of(&self.statement, &page, finding, reused));
+                let read = read_of(&self.statement, &page, finding, reused);
+                at.report(ordinal, &read);
+                self.read = Some(read);
             }
             Restored::Ask(pending) => self.pending = Some(pending),
         }

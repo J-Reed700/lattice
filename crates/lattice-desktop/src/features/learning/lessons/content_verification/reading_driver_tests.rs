@@ -33,8 +33,11 @@ struct Scripted {
     down: bool,
     /// Answers for one statement fewer than it is given.
     short: bool,
-    /// Never answers, as a model that does not reply.
+    /// Never answers, as a model that does not reply: before it has read,
+    /// or after it has told of its readings when it tells.
     held: bool,
+    /// Tells the context of each reading it makes before it returns.
+    tells: bool,
 }
 
 fn verdict_of(outcome: Outcome) -> ClaimVerdict {
@@ -52,7 +55,7 @@ impl Reader for Scripted {
         self.reading
     }
 
-    async fn read(&self, _: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>> {
+    async fn read(&self, at: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>> {
         if self.down {
             return Err(AppError::ServiceNotAvailable("the model is down".into()));
         }
@@ -61,7 +64,7 @@ impl Reader for Scripted {
             .lock()
             .unwrap()
             .push((self.reading, classes.collect()));
-        if self.held {
+        if self.held && !self.tells {
             std::future::pending::<()>().await;
         }
         let mut outcomes = self.outcomes.lock().unwrap();
@@ -82,8 +85,17 @@ impl Reader for Scripted {
                 }
             })
             .collect();
+        drop(outcomes);
         if self.short {
             reads.pop();
+        }
+        if self.tells {
+            for (ordinal, read) in reads.iter().enumerate() {
+                at.report(ordinal, read);
+            }
+            if self.held {
+                std::future::pending::<()>().await;
+            }
         }
         Ok(reads)
     }
@@ -107,6 +119,7 @@ impl Script {
                 down: false,
                 short: false,
                 held: false,
+                tells: false,
             })
             .collect();
         Self { readers, log }
@@ -138,6 +151,11 @@ impl Script {
 
     fn held(mut self, reading: Reading) -> Self {
         self.reader(reading).held = true;
+        self
+    }
+
+    fn tells(mut self, reading: Reading) -> Self {
+        self.reader(reading).tells = true;
         self
     }
 
@@ -810,5 +828,81 @@ async fn a_statement_that_goes_to_a_remedy_is_counted_when_it_gets_there() -> Re
         (1, 0),
         "The statement that went to research is counted when it gets there"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_handed_in_at_a_remedy_is_counted_once_when_the_walk_starts() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let script = Script::new();
+    let cited = claim("Quillet was written in 2004.");
+    let given = [(
+        statement(&cited, Class::Sourced, ClassifiedBy::Writer),
+        at(&policy, Class::Sourced, false, "s.research"),
+    )];
+    let retained = ClaimChecks::default();
+
+    let (read, trace) = crate::features::learning::lesson_progress::traced(async {
+        crate::features::learning::lesson_progress::begin_checks(given.len());
+        drive(&script, &retained, &given).await
+    })
+    .await;
+
+    read?;
+    assert_eq!((trace.checked, trace.reused), (1, 0));
+    assert!(script.calls().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_a_reader_has_told_of_is_counted_before_the_reader_returns() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let script = Script::new()
+        .says(Reading::Parts, &[Outcome::Stands])
+        .tells(Reading::Parts)
+        .held(Reading::Parts);
+    let cited = claim("Quillet is a lexer.");
+    let given = [(
+        statement(&cited, Class::Sourced, ClassifiedBy::Writer),
+        entry(&policy, Class::Sourced),
+    )];
+
+    let counted = counted_while_held(&script, Reading::Parts, &given).await;
+
+    assert_eq!(
+        counted,
+        (1, 0),
+        "A reading the reader told of counts before the reader returns"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_is_counted_once_whether_or_not_its_reader_told_of_it() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let (lexer, cli) = (claim("Quillet is a lexer."), claim("Quillet has a CLI."));
+    let sourced = |claim| {
+        (
+            statement(claim, Class::Sourced, ClassifiedBy::Writer),
+            entry(&policy, Class::Sourced),
+        )
+    };
+    let given = [sourced(&lexer), sourced(&cli)];
+    let retained = ClaimChecks::default();
+    for script in [
+        Script::new().says(Reading::Parts, &[Outcome::Stands, Outcome::Stands]),
+        Script::new()
+            .says(Reading::Parts, &[Outcome::Stands, Outcome::Stands])
+            .tells(Reading::Parts),
+    ] {
+        let (read, trace) = crate::features::learning::lesson_progress::traced(async {
+            crate::features::learning::lesson_progress::begin_checks(given.len());
+            drive(&script, &retained, &given).await
+        })
+        .await;
+
+        read?;
+        assert_eq!((trace.checked, trace.reused), (2, 0));
+    }
     Ok(())
 }

@@ -1,7 +1,9 @@
 //! The reading driver (acceptance design §4): reads each statement along its
 //! class's graph until its node is a remedy or an end, one batch per reading
 //! a wave, and gives every reading it made with the policy's decision on it.
-//! It records nothing; `ClaimLedger::record_reading` takes each step.
+//! It records nothing; `ClaimLedger::record_reading` takes each step. It
+//! counts a statement into the pass's progress when no reading of it is left,
+//! as its last reading lands.
 use super::*;
 use lattice_core::domain::learning::acceptance::{
     decide, rewrite_ahead, AcceptancePolicy, Position, Step, Taken, Then, Walked,
@@ -42,19 +44,7 @@ impl Course<'_> {
         if self.ended.is_some() {
             return Ok(None);
         }
-        let node = policy
-            .graph(self.at.class)
-            .node(self.at.node)
-            .ok_or_else(|| {
-                AppError::InternalError(format!(
-                    "The acceptance policy's {:?} graph has no node {}",
-                    self.at.class, self.at.node.0
-                ))
-            })?;
-        Ok(match node.step {
-            Step::Read(reading) => Some(reading),
-            _ => None,
-        })
+        reading_at(policy, self.at)
     }
 
     /// Takes `read`, the `reading` it was made by, to where the policy sends
@@ -102,6 +92,78 @@ impl Course<'_> {
     }
 }
 
+/// The reading a statement at `at` waits for; none at a remedy.
+fn reading_at(policy: &dyn AcceptancePolicy, at: Position) -> Result<Option<Reading>> {
+    let node = policy.graph(at.class).node(at.node).ok_or_else(|| {
+        AppError::InternalError(format!(
+            "The acceptance policy's {:?} graph has no node {}",
+            at.class, at.node.0
+        ))
+    })?;
+    Ok(match node.step {
+        Step::Read(reading) => Some(reading),
+        _ => None,
+    })
+}
+
+/// Counts the statements of one wave into the pass's progress, each when its
+/// reading leaves it at a remedy, an end or a stop, as reused when every
+/// reading of it was.
+struct Counting<'p> {
+    policy: &'p dyn AcceptancePolicy,
+    reading: Reading,
+    /// Where each statement of the wave stands, and whether every reading of
+    /// it so far came from a saved check.
+    standing: Vec<(Position, bool)>,
+    /// The statements told of, by place in the wave.
+    told: std::sync::Mutex<Vec<bool>>,
+}
+
+impl<'p> Counting<'p> {
+    fn new(
+        policy: &'p dyn AcceptancePolicy,
+        reading: Reading,
+        members: &[&mut Course<'_>],
+    ) -> Self {
+        Self {
+            policy,
+            reading,
+            standing: members
+                .iter()
+                .map(|course| (course.at, course.steps.iter().all(|step| step.read.reused)))
+                .collect(),
+            told: std::sync::Mutex::new(vec![false; members.len()]),
+        }
+    }
+
+    /// Takes `read` as the reading of the statement at `ordinal` of the wave.
+    /// Only the first reading told of a statement counts.
+    fn tell(&self, ordinal: usize, read: &Read) {
+        {
+            let mut told = self.told.lock().unwrap_or_else(|error| error.into_inner());
+            match told.get_mut(ordinal) {
+                Some(slot) if !*slot => *slot = true,
+                _ => return,
+            }
+        }
+        let Some(&(at, reused)) = self.standing.get(ordinal) else {
+            return;
+        };
+        let taken = Taken {
+            step: Step::Read(self.reading),
+            outcome: read.outcome,
+        };
+        let leaves = match decide(self.policy, at, taken) {
+            Some((_, None)) => true,
+            Some((_, Some(next))) => matches!(reading_at(self.policy, next), Ok(None)),
+            None => false,
+        };
+        if leaves {
+            crate::features::learning::lesson_progress::checked(reused && read.reused);
+        }
+    }
+}
+
 /// Where a reading falls in a wave: the order a run asks them in, so that its
 /// calls are the same every time.
 fn place(reading: Reading) -> usize {
@@ -119,7 +181,10 @@ fn place(reading: Reading) -> usize {
 /// node is a remedy or an end: each wave gives every reading the statements
 /// that wait for it in one call, so statements at the same reading are read
 /// together. Gives one `ReadSteps` per statement, in order. A reader's outage
-/// is the `Err`; nothing is recorded here, so nothing is half-recorded.
+/// is the `Err`; nothing is recorded here, so nothing is half-recorded. The
+/// progress counts each statement once, as the reading that leaves it at a
+/// remedy, an end or a stop lands; one handed in at a remedy is counted at
+/// the start, not reused.
 pub(in super::super) async fn read_until_remedy(
     policy: &dyn AcceptancePolicy,
     readers: &dyn ReaderSet,
@@ -135,6 +200,11 @@ pub(in super::super) async fn read_until_remedy(
             ended: None,
         })
         .collect();
+    for course in &courses {
+        if course.wants(policy)?.is_none() {
+            crate::features::learning::lesson_progress::checked(false);
+        }
+    }
     loop {
         let mut waves: Vec<(Reading, Vec<&mut Course<'_>>)> = Vec::new();
         for course in courses.iter_mut() {
@@ -152,8 +222,12 @@ pub(in super::super) async fn read_until_remedy(
         waves.sort_by_key(|(reading, _)| place(*reading));
         for (reading, members) in waves {
             let batch: Vec<Statement<'_>> = members.iter().map(|course| course.statement).collect();
-            let reads = ask(readers, at, reading, &batch).await?;
-            for (course, read) in members.into_iter().zip(reads) {
+            let counting = Counting::new(policy, reading, &members);
+            let tell = |ordinal: usize, read: &Read| counting.tell(ordinal, read);
+            let watched = at.observed(&tell);
+            let reads = ask(readers, &watched, reading, &batch).await?;
+            for (ordinal, (course, read)) in members.into_iter().zip(reads).enumerate() {
+                counting.tell(ordinal, &read);
                 course.take(policy, reading, read)?;
             }
         }

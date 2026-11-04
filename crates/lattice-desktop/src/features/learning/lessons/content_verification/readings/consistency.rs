@@ -26,14 +26,16 @@ impl Reader for Consistency {
             let shown = fitted(at.llm, &claim.statement, at.citations.of(unit));
             let key = consistency_key(at.llm, &claim.statement, &shown);
             match saved_consistency(&key).await? {
-                Some(saved) => made.keep(ordinal, read_of(statement, &shown, Some((saved, true)))),
+                Some(saved) => {
+                    made.put(at, ordinal, read_of(statement, &shown, Some((saved, true))));
+                }
                 None => asks.push((ordinal, *statement, shown, key)),
             }
         }
         for (ordinal, statement, shown, key) in asks {
             let judged = consistency_of(at.llm, &key, &statement.claim.statement, &shown).await?;
             let read = read_of(&statement, &shown, judged.map(|outcome| (outcome, false)));
-            made.keep(ordinal, read);
+            made.put(at, ordinal, read);
         }
         made.all()
     }

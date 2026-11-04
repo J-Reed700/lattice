@@ -233,6 +233,7 @@ pub(super) async fn identify(
 /// Reads each of the statements `due` from the position it waits at, along its
 /// graph until its node is a remedy or an end. Nothing is recorded: a reader's
 /// outage is the `Err`, and the readings are recorded by [`record_readings`].
+/// The progress counts a statement as the reading that ends its walk lands.
 pub(super) async fn read_steps(
     llm: &dyn LLMPort,
     policy: &dyn AcceptancePolicy,
@@ -332,10 +333,6 @@ pub(super) async fn record_readings(
         if matches!(read.walked, Walked::Stopped) {
             stopped.push(id.clone());
         }
-        // A statement's checks are reused when every reading of it was.
-        crate::features::learning::lesson_progress::checked(
-            !read.steps.is_empty() && read.steps.iter().all(|step| step.read.reused),
-        );
     }
     crate::features::learning::lesson_progress::claims(ledger.tally());
     Ok(stopped)
