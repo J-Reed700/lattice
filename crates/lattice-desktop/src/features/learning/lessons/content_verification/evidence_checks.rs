@@ -21,17 +21,21 @@ mod requests;
 mod run;
 mod walk;
 
-use claims::{Compared, Comparison, Context, Prepared};
+pub(super) use bridge::part_wise;
+pub(super) use claims::{attribution_page, compare, Comparison, NO_PASSAGES};
+use claims::{Compared, Context, Prepared};
 #[cfg(test)]
 pub(in crate::features::learning) use outcome::ContraryPassage;
-use outcome::{alone, alone_key, combine, decision_key};
+pub(super) use outcome::{alone, combine};
+use outcome::{alone_key, decision_key};
 pub(in crate::features::learning) use outcome::{
     same_passage, CheckedPart, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
 };
 pub(in crate::features::learning) use page_budget::{page_budget, AnswerSize};
+use requests::finish;
 #[cfg(test)]
 pub(super) use requests::{combined, packed};
-use requests::{finish, group, pack};
+pub(super) use requests::{group, pack};
 use run::Run;
 #[cfg(test)]
 pub(super) use walk::first_page;
@@ -58,29 +62,33 @@ pub(super) fn page_budget_note(llm: &dyn LLMPort, retained: &ClaimChecks) -> Str
 }
 
 /// Each passage's label, by source version (`provenance_gate::passage_labels`).
-type Labels = HashMap<String, String>;
+pub(super) type Labels = HashMap<String, String>;
 
 /// Tells a pass's bookkeeping that one comparison finished, so a claim is
 /// counted the moment its last comparison is done, even while its request's
 /// other comparisons are pending.
 type Answered<'a> = dyn Fn(Pass, &CheckedClaim) + Sync + 'a;
 
-struct PendingClaim {
-    ordinal: usize,
-    key: String,
-    receipt_key: String,
-    unit: usize,
-    claim: Claim,
+pub(super) struct PendingClaim {
+    pub(super) ordinal: usize,
+    pub(super) key: String,
+    pub(super) receipt_key: String,
+    pub(super) unit: usize,
+    pub(super) claim: Claim,
     /// The claim's statement as the checker reads it (see [`as_checked`]).
-    checked: String,
-    evidence: Vec<EvidencePassage>,
-    pass: Pass,
+    pub(super) checked: String,
+    pub(super) evidence: Vec<EvidencePassage>,
+    pub(super) pass: Pass,
 }
 
 /// `claim` as the checker reads it: each "Source N" of the lesson's text
 /// written as that source's title, so the index cannot be read as passage N.
 /// Its key names this text, so a check of the bare index is not restored.
-fn as_checked(claim: &Claim, citations: &Citations, references: &ReferenceCollection<'_>) -> Claim {
+pub(super) fn as_checked(
+    claim: &Claim,
+    citations: &Citations,
+    references: &ReferenceCollection<'_>,
+) -> Claim {
     Claim {
         quote: claim.quote.clone(),
         statement: citations.label(&claim.statement, references),

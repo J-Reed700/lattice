@@ -10,19 +10,19 @@ use std::collections::VecDeque;
 /// A statement of the shape the design's third section takes from a real
 /// lesson: its source states the first half, and what a lexer does is common
 /// knowledge.
-const STATEMENT: &str = "Quillet is a lexer that turns characters into tokens.";
-const STATED: &str = "Quillet is a lexer shipped with the toolchain.";
+pub(super) const STATEMENT: &str = "Quillet is a lexer that turns characters into tokens.";
+pub(super) const STATED: &str = "Quillet is a lexer shipped with the toolchain.";
 
 /// Answers a part-wise check with the next of its replies and any other check
 /// as the strict judge that finds nothing, and records the system prompt of
 /// every request.
-struct Reading {
+pub(super) struct Reading {
     replies: Mutex<VecDeque<String>>,
     systems: Mutex<Vec<String>>,
 }
 
 impl Reading {
-    fn new(replies: Vec<String>) -> Self {
+    pub(super) fn new(replies: Vec<String>) -> Self {
         Self {
             replies: Mutex::new(replies.into()),
             systems: Mutex::new(Vec::new()),
@@ -30,7 +30,7 @@ impl Reading {
     }
 
     /// How many requests were part-wise checks, and how many were not.
-    fn requests(&self) -> (usize, usize) {
+    pub(super) fn requests(&self) -> (usize, usize) {
         let systems = self.systems.lock().unwrap();
         let part_wise = systems
             .iter()
@@ -68,24 +68,24 @@ impl LLMPort for Reading {
 }
 
 /// The one source the statement cites: nothing is left for a second page.
-fn sources() -> Vec<LearningSourceDto> {
+pub(super) fn sources() -> Vec<LearningSourceDto> {
     vec![reference("quillet".into(), STATED.into())]
 }
 
 /// Unit 0 cites the passage that states half of the statement.
-fn citing(references: &ReferenceCollection<'_>) -> Result<Citations> {
+pub(super) fn citing(references: &ReferenceCollection<'_>) -> Result<Citations> {
     Ok(Citations::new(
         HashMap::from([(0, references.cited_passages(&[STATED])?)]),
         HashMap::new(),
     ))
 }
 
-fn parts_reply(parts: Value, verdict: &str) -> String {
+pub(super) fn parts_reply(parts: Value, verdict: &str) -> String {
     json!({"parts": parts, "verdict": verdict, "reason": "The passage says Quillet is a lexer."})
         .to_string()
 }
 
-fn half_stated() -> String {
+pub(super) fn half_stated() -> String {
     parts_reply(
         json!([
             {"part": "Quillet is a lexer", "kind": "stated", "passage": "passage-0"},

@@ -309,14 +309,14 @@ async fn common(llm: &dyn LLMPort, unit: usize, claim: &Claim, classed: Classed)
 }
 
 /// The finding of a statement a lighter check decided.
-fn done(
+pub(super) fn finding_of(
     (unit, claim, classed): (usize, &Claim, Classed),
     verdict: ClaimVerdict,
     reason: String,
     evidence: &[EvidencePassage],
     supporting_quote: Option<String>,
-) -> Route {
-    Route::Done(Box::new(Finding {
+) -> Finding {
+    Finding {
         unit,
         quote: claim.quote.clone(),
         statement: claim.statement.clone(),
@@ -329,12 +329,34 @@ fn done(
         label: None,
         class: Some(classed),
         two_pass: Default::default(),
-    }))
+    }
 }
 
-/// A statement whose check's answer could not be read.
-fn unjudged(unit: usize, claim: &Claim, classed: Classed, evidence: &[EvidencePassage]) -> Route {
-    done(
+/// [`finding_of`], as the route of a statement a lighter check decided.
+fn done(
+    decided: (usize, &Claim, Classed),
+    verdict: ClaimVerdict,
+    reason: String,
+    evidence: &[EvidencePassage],
+    supporting_quote: Option<String>,
+) -> Route {
+    Route::Done(Box::new(finding_of(
+        decided,
+        verdict,
+        reason,
+        evidence,
+        supporting_quote,
+    )))
+}
+
+/// The finding of a statement whose check's answer could not be read.
+pub(super) fn unjudged_finding(
+    unit: usize,
+    claim: &Claim,
+    classed: Classed,
+    evidence: &[EvidencePassage],
+) -> Finding {
+    finding_of(
         (unit, claim, classed),
         ClaimVerdict::Unverified,
         "The answer to this statement's check could not be read.".into(),
@@ -343,8 +365,13 @@ fn unjudged(unit: usize, claim: &Claim, classed: Classed, evidence: &[EvidencePa
     )
 }
 
+/// A statement whose check's answer could not be read.
+fn unjudged(unit: usize, claim: &Claim, classed: Classed, evidence: &[EvidencePassage]) -> Route {
+    Route::Done(Box::new(unjudged_finding(unit, claim, classed, evidence)))
+}
+
 /// Why a statement the model called false fails.
-fn vetoed(knowledge: &KnowledgeOutcome) -> String {
+pub(super) fn vetoed(knowledge: &KnowledgeOutcome) -> String {
     let says_false = |sample: &&KnowledgeSample| sample.verdict == KnowledgeVerdict::False;
     let reason = knowledge
         .samples
@@ -360,7 +387,7 @@ fn vetoed(knowledge: &KnowledgeOutcome) -> String {
 }
 
 /// Why a statement every sample called standard knowledge passes.
-fn standard(knowledge: &KnowledgeOutcome) -> String {
+pub(super) fn standard(knowledge: &KnowledgeOutcome) -> String {
     let reason = knowledge
         .samples
         .first()
@@ -371,7 +398,7 @@ fn standard(knowledge: &KnowledgeOutcome) -> String {
 
 /// The passages of a section, as many as the consistency check of
 /// `statement` holds beside its answer.
-fn fitted(
+pub(super) fn fitted(
     llm: &dyn LLMPort,
     statement: &str,
     passages: &[EvidencePassage],
@@ -400,7 +427,7 @@ fn consistency_checker(llm: &dyn LLMPort) -> ClaimChecker<'_> {
 
 /// The consistency judge's answer on `statement` and `passages`: restored
 /// from its receipt or asked for. `None` when its reply could not be read.
-async fn consistency_of(
+pub(super) async fn consistency_of(
     llm: &dyn LLMPort,
     statement: &str,
     passages: &[EvidencePassage],
@@ -460,7 +487,10 @@ async fn consistency_of(
 
 /// The knowledge judge's three samples on `statement`: restored from their
 /// receipt or asked for. `None` when a reply could not be read.
-async fn knowledge_of(llm: &dyn LLMPort, statement: &str) -> Result<Option<KnowledgeOutcome>> {
+pub(super) async fn knowledge_of(
+    llm: &dyn LLMPort,
+    statement: &str,
+) -> Result<Option<KnowledgeOutcome>> {
     let key = format!(
         "{KNOWLEDGE_POLICY}:{}",
         digest(

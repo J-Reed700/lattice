@@ -130,11 +130,17 @@ pub(super) fn rule_class(statement: &str, field: &str, case: &Case) -> Option<Cl
     if about_the_lesson {
         return Some(Class::Internal);
     }
-    let sourced = match case {
-        Case::Stated(givens) => needs_citation(statement, givens) || says(statement),
-        Case::Hypothetical => quotes_or_attributes(statement) || says(statement),
-    };
-    sourced.then_some(Class::Sourced)
+    states_a_specific_in(statement, case).then_some(Class::Sourced)
+}
+
+/// Whether a text states a specific in `case`: a figure its part's givens do
+/// not state, quoted wording or an attribution, or a verb of saying; in a
+/// hypothetical case, whose figures are its own, only the last two.
+pub(super) fn states_a_specific_in(text: &str, case: &Case) -> bool {
+    match case {
+        Case::Stated(givens) => needs_citation(text, givens) || says(text),
+        Case::Hypothetical => quotes_or_attributes(text) || says(text),
+    }
 }
 
 /// Whether a text names what a source must hold: a figure its part's
@@ -163,10 +169,10 @@ fn says(text: &str) -> bool {
         .is_match(text)
 }
 
-/// Whether a text states a specific: what needs a citation, or a verb of
-/// saying.
+/// Whether a text states a specific, whatever its part gives: what needs a
+/// citation, or a verb of saying.
 pub(super) fn states_a_specific(text: &str) -> bool {
-    needs_citation(text, &Givens::NONE) || says(text)
+    states_a_specific_in(text, &Case::Stated(Givens::NONE))
 }
 
 /// A class for every statement, in order: the rule layer's where it decides,

@@ -20,7 +20,7 @@ const WITH_A_FIGURE: &str = "The reader hands over one row at a time, so a file 
 /// A model that sorts, judges consistency and answers for knowledge as
 /// scripted by statement, extracts the statements it is given from a lesson,
 /// and answers everything else as the evidence fixture does.
-struct Classes {
+pub(super) struct Classes {
     inner: Model,
     statements: Vec<&'static str>,
     classes: Vec<(&'static str, &'static str)>,
@@ -32,7 +32,7 @@ struct Classes {
 }
 
 impl Classes {
-    fn new(statements: &[&'static str]) -> Self {
+    pub(super) fn new(statements: &[&'static str]) -> Self {
         Self {
             inner: Model::new(),
             statements: statements.to_vec(),
@@ -50,12 +50,12 @@ impl Classes {
         self
     }
 
-    fn consistent(mut self, verdicts: &[(&'static str, &'static str)]) -> Self {
+    pub(super) fn consistent(mut self, verdicts: &[(&'static str, &'static str)]) -> Self {
         self.consistency = verdicts.to_vec();
         self
     }
 
-    fn knows(mut self, samples: &[(&'static str, [&'static str; 3])]) -> Self {
+    pub(super) fn knows(mut self, samples: &[(&'static str, [&'static str; 3])]) -> Self {
         self.knowledge = samples.to_vec();
         self
     }
@@ -67,7 +67,7 @@ impl Classes {
     }
 
     /// How many requests of this kind the model has been sent.
-    fn calls(&self, kind: &str) -> usize {
+    pub(super) fn calls(&self, kind: &str) -> usize {
         self.asked
             .lock()
             .unwrap()

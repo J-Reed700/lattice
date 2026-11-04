@@ -56,6 +56,8 @@ mod inventory_checkpoint;
 mod learner_view;
 mod portability;
 mod quote_claims;
+#[cfg_attr(not(test), allow(dead_code))]
+mod readings;
 mod resolution;
 #[cfg(test)]
 pub(in crate::features::learning) use inventory::revisions::live_revision_fixture;

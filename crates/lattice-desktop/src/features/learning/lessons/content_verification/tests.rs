@@ -552,6 +552,9 @@ mod rounds_tests;
 #[path = "bridge_tests.rs"]
 mod bridge_tests;
 
+#[path = "readings_tests.rs"]
+mod readings_tests;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {

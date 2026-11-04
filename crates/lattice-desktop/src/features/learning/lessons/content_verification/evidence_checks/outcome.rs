@@ -105,7 +105,9 @@ pub(super) fn alone_key(attribution: &str) -> String {
 
 /// A claim's finding when pass B read no page for it: the passages its section
 /// cites decided it alone.
-pub(super) fn alone(mut finding: Finding) -> Finding {
+pub(in crate::features::learning::lessons::content_verification) fn alone(
+    mut finding: Finding,
+) -> Finding {
     if matches!(
         finding.verdict,
         ClaimVerdict::Supported | ClaimVerdict::Contradicted
@@ -174,7 +176,7 @@ pub(in crate::features::learning) fn same_passage(
 /// when its section cites anything, and `corroboration`, the pass B page
 /// that decided it or the last one read, `at` that page (where B read, and
 /// which page). `cited` is what the section cites.
-pub(super) fn combine(
+pub(in crate::features::learning::lessons::content_verification) fn combine(
     attribution: Option<Finding>,
     corroboration: Finding,
     at: (Option<Reach>, usize),

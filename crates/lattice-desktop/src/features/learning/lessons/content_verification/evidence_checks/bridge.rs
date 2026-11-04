@@ -7,6 +7,7 @@
 //! against a page retrieved from the course, or one research found, stays the
 //! plain strict judge, which finds fault with a study quoted against an
 //! off-subject page less readily.
+use super::super::classify::states_a_specific;
 use super::requests::{finish, labelled, unlabelled};
 use super::*;
 use lattice_core::application::services::claim_verification::{
@@ -27,11 +28,23 @@ pub(super) fn applies(pending: &PendingClaim) -> bool {
             .any(|passage| passage.retrieval_kind != "execution")
 }
 
-/// `pending` judged part by part, with what the answer cost.
+/// `pending` judged part by part, with what the answer cost, a common part
+/// that names a specific counted as one by [`states_a_specific`].
 pub(super) async fn individual(
     llm: &dyn LLMPort,
     pending: PendingClaim,
     labels: &Labels,
+) -> Result<((Pass, CheckedClaim), AnswerSize)> {
+    part_wise(llm, pending, labels, states_a_specific).await
+}
+
+/// [`individual`], with `names_a_specific` deciding which of the parts the
+/// judge called common name a specific.
+pub(in crate::features::learning::lessons::content_verification) async fn part_wise(
+    llm: &dyn LLMPort,
+    pending: PendingClaim,
+    labels: &Labels,
+    names_a_specific: impl Fn(&str) -> bool,
 ) -> Result<((Pass, CheckedClaim), AnswerSize)> {
     let texts = labelled(&pending, labels);
     let checker = ClaimChecker::new(
@@ -46,7 +59,7 @@ pub(super) async fn individual(
     };
     let answer = AnswerSize::of(answered.output_tokens, 1);
     let (judgment, parts) = match answered.judgments {
-        ClassJudgment::Judged(outcome) => weigh(outcome, &pending, &texts),
+        ClassJudgment::Judged(outcome) => weigh(outcome, &pending, &texts, names_a_specific),
         ClassJudgment::Failed(error) => (ClaimJudgment::Failed(error), Vec::new()),
         ClassJudgment::Unusable => (ClaimJudgment::Unusable, Vec::new()),
     };
@@ -60,13 +73,15 @@ pub(super) async fn individual(
 
 /// What the judge's parts come to for the statement: the strict judge's
 /// judgment of it, with the parts as the finding records them. `texts` are the
-/// passages as the judge was shown them.
+/// passages as the judge was shown them; `names_a_specific` guards what may
+/// count as common.
 pub(super) fn weigh(
     outcome: BridgeOutcome,
     pending: &PendingClaim,
     texts: &[String],
+    names_a_specific: impl Fn(&str) -> bool,
 ) -> (ClaimJudgment, Vec<CheckedPart>) {
-    let (outcome, smuggled) = outcome.guarded(super::super::classify::states_a_specific);
+    let (outcome, smuggled) = outcome.guarded(names_a_specific);
     let parts: Vec<CheckedPart> = outcome
         .parts
         .iter()
@@ -240,7 +255,7 @@ mod tests {
         else {
             panic!("the reply was not read");
         };
-        match weigh(outcome, &pending(statement), &texts) {
+        match weigh(outcome, &pending(statement), &texts, states_a_specific) {
             (ClaimJudgment::Judged(judged), parts) => (judged, parts),
             (other, _) => panic!("{other:?}"),
         }

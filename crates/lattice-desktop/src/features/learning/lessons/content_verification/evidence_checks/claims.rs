@@ -4,7 +4,7 @@
 use super::*;
 
 /// One of a claim's comparisons in this pass.
-pub(super) enum Comparison {
+pub(in crate::features::learning::lessons::content_verification) enum Comparison {
     /// Its finding, and whether a saved check gave it.
     Done(Finding, bool),
     Pending(PendingClaim),
@@ -164,17 +164,13 @@ impl Context<'_, '_> {
             ));
         }
         let checked = as_checked(&claim, citations, references);
-        // Pass A: the section's passed example runs and the passages the
-        // claim's sentence cites (the section's when the writer cited none),
-        // while a check of them alone fits the window.
-        let mut attribution = example_runs(self.executions, unit);
-        let shown_by_a = take_cited(
+        let (attribution, shown_by_a) = attribution_page(
             llm,
+            self.executions,
+            citations,
+            (unit, &claim.statement),
             &checked.statement,
-            &mut attribution,
-            &citations.of_claim(unit, &claim.statement),
         );
-        canonicalize_evidence(&mut attribution);
         let a_key =
             (!attribution.is_empty()).then(|| ClaimChecks::key(unit, &checked, &attribution));
         let mut cited: Vec<String> = shown_by_a
@@ -335,6 +331,28 @@ impl Context<'_, '_> {
     }
 }
 
+/// The page pass A reads for the claim `statement` of section `unit`: its
+/// passed example runs and the passages the claim's sentence cites (the
+/// section's when the writer cited none), while a check of `checked` alone
+/// fits the window, in canonical order. Also the source passages among them.
+pub(in crate::features::learning::lessons::content_verification) fn attribution_page(
+    llm: &dyn LLMPort,
+    executions: &[execution::Observation],
+    citations: &Citations,
+    (unit, statement): (usize, &str),
+    checked: &str,
+) -> (Vec<EvidencePassage>, Vec<EvidencePassage>) {
+    let mut attribution = example_runs(executions, unit);
+    let shown_by_a = take_cited(
+        llm,
+        checked,
+        &mut attribution,
+        &citations.of_claim(unit, statement),
+    );
+    canonicalize_evidence(&mut attribution);
+    (attribution, shown_by_a)
+}
+
 /// `claim`'s comparison of `evidence` for `pass`, keyed by `key`.
 fn pending(
     llm: &dyn LLMPort,
@@ -355,10 +373,14 @@ fn pending(
     }
 }
 
+/// Why a comparison with no passage to read fails.
+pub(in crate::features::learning::lessons::content_verification) const NO_PASSAGES: &str =
+    "No relevant saved passages were found for this claim.";
+
 /// One comparison: restored from its receipt (or a receipt saved under an
 /// earlier key for the same claim and evidence), decided on the spot when it
 /// has nothing to compare, or left for the model.
-async fn compare(
+pub(in crate::features::learning::lessons::content_verification) async fn compare(
     llm: &dyn LLMPort,
     retained: &ClaimChecks,
     pending: PendingClaim,
@@ -391,7 +413,7 @@ async fn compare(
     if evidence.is_empty() {
         let judgment = ClaimJudgment::Judged(JudgeOutcome {
             verdict: ClaimVerdict::Unsupported,
-            reason: Some("No relevant saved passages were found for this claim.".into()),
+            reason: Some(NO_PASSAGES.into()),
             quote: None,
             confidence: None,
         });

@@ -189,7 +189,7 @@ pub(super) fn completed(
 /// Check `pending`'s comparisons, with what the judge's answers to them
 /// cost. A comparison against the passages a claim's sentence cites is read
 /// part by part, alone (`bridge`); the others are packed.
-pub(super) async fn group(
+pub(in crate::features::learning::lessons::content_verification) async fn group(
     llm: &dyn LLMPort,
     pending: Vec<PendingClaim>,
     tell: &Answered<'_>,
@@ -325,7 +325,7 @@ pub(super) async fn group(
 /// holds them with their answers. A comparison too big alone is checked in
 /// halves. The same pages always pack the same way, so a restart finds its
 /// split checkpoints.
-pub(super) fn pack(
+pub(in crate::features::learning::lessons::content_verification) fn pack(
     llm: &dyn LLMPort,
     mut pending: Vec<PendingClaim>,
     labels: &Labels,
