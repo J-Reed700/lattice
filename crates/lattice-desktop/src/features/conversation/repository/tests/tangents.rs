@@ -170,10 +170,6 @@ async fn invalid_tangent_requests_cannot_create_orphan_conversations() {
             selected_text: "  ".into(),
             ..request(&parent, "m2")
         },
-        CreateTangentRequestDto {
-            selected_text: "🪴".repeat(8001),
-            ..request(&parent, "m2")
-        },
     ];
     for case in cases {
         assert!(repo.create_tangent(case).await.is_err());

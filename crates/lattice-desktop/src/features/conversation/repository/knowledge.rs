@@ -237,10 +237,8 @@ impl ConversationRepository {
                 .text
                 .as_deref()
                 .map(str::trim)
-                .filter(|s| !s.is_empty() && s.len() <= 8000)
-                .ok_or_else(|| {
-                    AppError::InvalidInput("Memory must contain 1–8000 bytes of text".into())
-                })?;
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| AppError::InvalidInput("Memory needs some text".into()))?;
             let sequence = Self::allocate_sequence(&mut tx, &r.conversation_id).await?;
             let message = uuid::Uuid::new_v4().to_string();
             let id = uuid::Uuid::new_v4().to_string();
