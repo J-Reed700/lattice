@@ -300,6 +300,21 @@ fn a_decision_to_resolve_without_a_supported_check_is_refused() {
 }
 
 #[test]
+fn the_end_of_a_statement_that_is_not_a_claim_is_a_pass_the_machine_made() {
+    let veto = Step::Read(Reading::Veto);
+    let mut entry = decided_open("c1");
+
+    let recorded = entry.append(
+        machine(7),
+        stepped(veto, Outcome::Stands, Then::End(End::NotAClaim)),
+    );
+
+    assert!(recorded.is_ok(), "{recorded:?}");
+    assert_eq!(entry.state(), &ClaimState::Consistent { at: 7 });
+    assert_eq!(entry.decided(), Some(&Then::End(End::NotAClaim)));
+}
+
+#[test]
 fn the_end_of_a_statement_that_is_not_a_claim_has_no_state_yet() {
     let mut entry = claim("c1");
     assert_eq!(

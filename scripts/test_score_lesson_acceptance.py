@@ -151,6 +151,16 @@ class ScoreLessonAcceptance(unittest.TestCase):
         self.assertTrue(any("claim h" in f and "internal" in f for f in failures), failures)
         self.assertTrue(any("claim i" in f and "reasoning ended 'resolved_by_evidence'" in f for f in failures), failures)
 
+    def test_a_statement_the_model_calls_internal_is_a_claim_and_ends_consistent_or_removed(self):
+        passed = ("j", 3, "internal", "model", {"state": "consistent", "at": 1}, [checked("not_false")])
+        cut = ("k", 3, "internal", "model", REMOVED, [checked(CONTRADICTED), repair("removed", 2)])
+        queued = ("l", 3, "internal", "model", {"state": "queued", "kind": "unsupported", "reason": "r"},
+                  [checked(FAILED)])
+        failures = self.failures(claims=CLAIMS + [passed, cut, queued])
+
+        self.assertFalse(any("claim j" in f or "claim k" in f for f in failures), failures)
+        self.assertTrue(any("claim l" in f and "queued" in f for f in failures), failures)
+
     def test_a_removal_by_the_user_is_not_the_machines_to_claim(self):
         by_you = ("g", 3, "sourced", "writer", {"state": "removed", "at": 1, "by": "user"}, [])
         failures = self.failures(claims=CLAIMS + [by_you])
@@ -235,6 +245,16 @@ class ScoreLessonAcceptance(unittest.TestCase):
         made = sla.score(self.path)["calls"]
 
         self.assertEqual(made["bound_with_every_term_at_most"], 1 + (16 + 15 + 16 + 13) + 0 + 1)
+
+    def test_the_ledgers_internal_statements_are_counted_when_the_plan_does_not_count_them(self):
+        internal = ("j", 3, "internal", "model", {"state": "consistent", "at": 1}, [checked("not_false")])
+        build(self.path, claims=CLAIMS + [internal])
+
+        made = sla.score(self.path)["calls"]
+
+        # The activity's plan counts sourced, reasoning and common statements; the ledger holds one more, and its
+        # graph is 13 calls long from its entry.
+        self.assertEqual(made["bound_with_every_term_at_most"], 1 + (2 * 16 + 2 * 15 + 2 * 16) + 13 + 0 + 1)
 
     def test_the_planted_statement_is_reported_with_its_class_and_how_it_ended(self):
         planted = ("p", 4, "sourced", "rule", REMOVED, [checked(CONTRADICTED), repair("removed")])
