@@ -13,6 +13,7 @@ use crate::features::learning::{
         LearningSimulationSessionDto, LearningSimulationSpeaker,
     },
 };
+use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -296,7 +297,7 @@ pub(in crate::features::learning) async fn generate_activity_with_plan(
     researched_source_version_ids: &[String],
     prepared_plan: Option<LearningInterviewPlanDto>,
 ) -> Result<GeneratedPracticalActivity> {
-    bounded(learner_brief, "Practical request", 4_000)?;
+    bounded(learner_brief, "Practical request", MAX_CHAT_MESSAGE_CHARS)?;
     let available = sources
         .iter()
         .map(|source| source.version.id.as_str())

@@ -5,6 +5,7 @@ use super::{
 };
 use crate::features::learning::persistence::{db, hash, now};
 use crate::features::learning::practical_dto::*;
+use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
@@ -200,8 +201,12 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.session_id, "simulation")?;
-        if request.content.trim().is_empty() || request.content.chars().count() > 8_000 {
-            return Err(invalid("Simulation turns must contain 1–8000 characters."));
+        if request.content.trim().is_empty()
+            || request.content.chars().count() > MAX_CHAT_MESSAGE_CHARS
+        {
+            return Err(invalid(format!(
+                "Simulation turns must contain 1–{MAX_CHAT_MESSAGE_CHARS} characters."
+            )));
         }
         if reply.content.trim().is_empty() {
             return Err(invalid("Simulation reply must not be blank."));

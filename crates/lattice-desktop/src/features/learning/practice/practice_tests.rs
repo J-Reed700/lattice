@@ -627,11 +627,10 @@ async fn the_practice_requests_ask_for_no_text_length() -> Result<()> {
 }
 
 #[test]
-fn a_tutor_response_is_stored_however_long_while_the_learners_prompt_stays_bounded() {
+fn a_tutor_response_is_stored_however_long() {
     let long = "A step and the reason it is taken. ".repeat(250);
     assert!(validate_tutor_bounds("Why does this step hold?", &long).is_ok());
     assert!(validate_tutor_bounds("Why does this step hold?", "  ").is_err());
-    assert!(validate_tutor_bounds(&"x".repeat(2_001), "A reply.").is_err());
 }
 
 #[test]

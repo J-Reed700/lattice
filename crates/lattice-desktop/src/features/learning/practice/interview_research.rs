@@ -13,6 +13,7 @@ use crate::features::learning::{
         web_research::{self, Candidate, PlannedNeed, Room, NEED_GUIDE},
     },
 };
+use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::{
     application::ports::{LLMPort, WebServiceTrait},
     domain::learning::claim_review::SourceAddedBy,
@@ -67,7 +68,11 @@ pub fn validate_target(target: &LearningInterviewTargetDto) -> Result<LearningIn
         company_name: field(&target.company_name, "Company name", 160)?,
         company_url,
         target_role: field(&target.target_role, "Target role", 160)?,
-        company_context: field(&target.company_context, "Company context", 16_000)?,
+        company_context: field(
+            &target.company_context,
+            "Company context",
+            MAX_CHAT_MESSAGE_CHARS,
+        )?,
         round_kind: target.round_kind,
     })
 }
