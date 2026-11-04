@@ -40,6 +40,14 @@ fn test_tag_name_max_length() {
 }
 
 #[test]
+fn a_tag_name_of_any_length_is_a_tag_name() {
+    let long_name = ["a-tag-named-at-length"; 12].join("-");
+    assert!(long_name.len() > 100);
+    let tag_name = TagName::new(long_name.clone()).unwrap();
+    assert_eq!(tag_name.as_str(), long_name);
+}
+
+#[test]
 fn test_ids_are_different_types() {
     let doc_id = DocumentId::new();
     let tag_id = TagId::new();

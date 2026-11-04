@@ -166,6 +166,13 @@ mod tests {
     }
 
     #[test]
+    fn a_query_past_a_thousand_characters_is_accepted() {
+        let long_query = ["a long query"; 300].join(" ");
+        let query = SearchQuery::new(long_query.clone()).unwrap();
+        assert_eq!(query.as_str(), long_query);
+    }
+
+    #[test]
     fn test_word_count() {
         let query = SearchQuery::new("machine learning algorithms").unwrap();
         assert_eq!(query.word_count(), 3);

@@ -93,3 +93,27 @@ pub async fn remove_tag_from_document_ddd(
 ) -> Result<()> {
     remove_tag_from_document_impl(container.inner(), request).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_tag_named_at_length_is_not_refused_for_its_length() {
+        let container = crate::tests::common::setup_test_container().await.unwrap();
+        let name = ["a-tag-named-at-length"; 12].join("-");
+
+        let result = apply_tags_impl(
+            &container,
+            ApplyTagsRequestDto {
+                document_id: "no-such-document".to_string(),
+                tag_names: vec![name],
+            },
+        )
+        .await;
+
+        if let Err(AppError::InvalidInput(message)) = result {
+            assert!(!message.contains("characters"), "{message}");
+        }
+    }
+}

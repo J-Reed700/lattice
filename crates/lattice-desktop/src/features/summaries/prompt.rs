@@ -328,6 +328,18 @@ mod tests {
     }
 
     #[test]
+    fn a_long_summary_and_a_long_topic_are_kept_whole() {
+        let summary = "A sentence the model wrote at length. ".repeat(100);
+        let summary = summary.trim().to_string();
+        let topic = "a topic named at some length ".repeat(10);
+        let topic = topic.trim().to_string();
+        let raw = format!(r#"{{"summary":"{summary}","topics":["{topic}"]}}"#);
+        let draft = parse_summary_response(&raw).unwrap();
+        assert_eq!(draft.summary, summary);
+        assert_eq!(draft.topics, vec![topic]);
+    }
+
+    #[test]
     fn summary_text_appends_topics_once() {
         let text = SummaryDraft {
             summary: "S.".into(),

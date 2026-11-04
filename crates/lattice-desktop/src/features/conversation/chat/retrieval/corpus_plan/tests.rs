@@ -327,6 +327,30 @@ fn plan_cannot_invent_documents_or_escape_scope() {
     .is_err());
 }
 
+#[test]
+fn a_planner_query_of_any_length_is_searched_whole() {
+    let catalog = vec![CorpusDocument {
+        sections: Vec::new(),
+        source_context: None,
+        id: "allowed".into(),
+        name: "Guide".into(),
+        opening: "Introduction".into(),
+        chapter_number: None,
+    }];
+    let long = (0..40)
+        .map(|n| format!("term{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let plan = CorpusSearchPlan {
+        queries: vec![long.clone()],
+        opening_document_ids: vec![],
+        start_at_beginning: false,
+    }
+    .validate(&catalog)
+    .unwrap();
+    assert_eq!(plan.queries, [long]);
+}
+
 #[tokio::test]
 async fn catalog_and_openings_are_scoped_ordered_and_bounded() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()

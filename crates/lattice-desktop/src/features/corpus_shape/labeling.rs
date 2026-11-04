@@ -356,6 +356,25 @@ mod tests {
         assert!(label.label.chars().count() <= MAX_LABEL_CHARS);
     }
 
+    #[test]
+    fn a_long_label_from_the_model_is_kept_whole() {
+        let reps = vec![RepresentativeDoc {
+            title: "t".to_string(),
+            content_preview: String::new(),
+        }];
+        let long = "the same long subject ".repeat(20);
+        let long = long.trim().to_string();
+        let label = sanitize(
+            ClusterLabel {
+                label: long.clone(),
+                description: None,
+            },
+            &reps,
+            1,
+        );
+        assert_eq!(label.label, long);
+    }
+
     /// The preview is sized by the port from the call's room, so the prompt
     /// carries it as given rather than cutting it again at 500 characters.
     #[test]

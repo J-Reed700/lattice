@@ -660,6 +660,18 @@ mod tests {
         assert_eq!(parsed[1].question, "Other");
     }
 
+    #[test]
+    fn a_long_starter_question_is_kept_not_dropped() {
+        let long = "What do my notes say about the same subject, asked at some length? ".repeat(3);
+        let long = long.trim().to_string();
+        let parsed = parse_starters(&format!(
+            r#"[{{"question":"{long}"}},{{"question":"short"}}]"#
+        ));
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].question, long);
+        assert_eq!(parsed[1].question, "short");
+    }
+
     /// The anti-fabrication guard: with no LLM, the payload carries no questions.
     ///
     /// `generate_chat_starters_impl` needs a `ChatRuntime`, which cannot be
