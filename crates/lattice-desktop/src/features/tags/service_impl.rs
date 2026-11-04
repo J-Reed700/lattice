@@ -78,10 +78,8 @@ impl TagServiceImpl {
 #[async_trait]
 impl TagServiceTrait for TagServiceImpl {
     async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<Tag> {
-        if name.is_empty() || name.len() > 100 {
-            return Err(AppError::InvalidInput(
-                "Tag name must be 1-100 characters".into(),
-            ));
+        if name.is_empty() {
+            return Err(AppError::InvalidInput("A tag needs a name".into()));
         }
 
         let normalized_name = name.trim().to_lowercase();
@@ -100,10 +98,8 @@ impl TagServiceTrait for TagServiceImpl {
         color: Option<&str>,
     ) -> Result<Tag> {
         if let Some(n) = name {
-            if n.is_empty() || n.len() > 100 {
-                return Err(AppError::InvalidInput(
-                    "Tag name must be 1-100 characters".into(),
-                ));
+            if n.is_empty() {
+                return Err(AppError::InvalidInput("A tag needs a name".into()));
             }
         }
 
@@ -183,7 +179,7 @@ impl TagServiceTrait for TagServiceImpl {
         let normalized_tags: Vec<String> = tag_names
             .into_iter()
             .map(|t| t.trim().to_lowercase())
-            .filter(|t| !t.is_empty() && t.len() <= 100)
+            .filter(|t| !t.is_empty())
             .collect();
 
         // Merge with existing tags
@@ -268,7 +264,7 @@ impl TagServiceTrait for TagServiceImpl {
 
         let tags = TagGenerator::parse_tags(&response, max_tags)
             .into_iter()
-            .filter(|tag| !tag.is_empty() && tag.len() <= 100)
+            .filter(|tag| !tag.is_empty())
             .collect();
 
         Ok(tags)

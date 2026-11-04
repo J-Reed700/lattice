@@ -6,7 +6,4 @@ pub enum DomainTypeError {
 
     #[error("Empty value not allowed")]
     EmptyValue,
-
-    #[error("Value too long: {0} (max: {1})")]
-    ValueTooLong(usize, usize),
 }

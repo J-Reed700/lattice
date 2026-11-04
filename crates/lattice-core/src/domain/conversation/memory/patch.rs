@@ -1,8 +1,7 @@
 //! Untrusted patch proposals (§6.1) and the validated outcome they become.
 use super::{
     EvidencePurpose, EvidenceSpan, MemoryId, MemoryKind, MemoryState, SourceRole,
-    MAX_EVIDENCE_PER_ITEM, MAX_LABEL_CHARS, MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES,
-    MAX_QUOTE_BYTES,
+    MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
 };
 use serde::{Deserialize, Serialize};
 
@@ -96,8 +95,6 @@ pub enum MemoryValidationError {
     NoEvidence(String),
     #[error("quote in '{0}' is {1} bytes, limit is {MAX_QUOTE_BYTES}")]
     QuoteTooLong(String, usize),
-    #[error("label in '{0}' exceeds {MAX_LABEL_CHARS} characters")]
-    LabelTooLong(String),
     #[error("duplicate candidate_id '{0}'")]
     DuplicateCandidate(String),
     #[error("candidates '{0}' and '{1}' propose the same memory item")]
@@ -157,7 +154,6 @@ impl MemoryValidationError {
             Self::TooMuchEvidence(_, _) => "too_much_evidence",
             Self::NoEvidence(_) => "no_evidence",
             Self::QuoteTooLong(_, _) => "quote_too_long",
-            Self::LabelTooLong(_) => "label_too_long",
             Self::DuplicateCandidate(_) => "duplicate_candidate",
             Self::DuplicateAddition(_, _) => "duplicate_addition",
             Self::UnknownSource(_) => "unknown_source",

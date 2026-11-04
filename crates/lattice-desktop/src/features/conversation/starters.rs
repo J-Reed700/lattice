@@ -39,9 +39,6 @@ const DEFAULT_SPACE_ID: &str = "space_general";
 /// aggregates are merged here rather than in SQL.
 const ID_BIND_BATCH: usize = 900;
 
-/// Hard ceiling on a starter question, enforced after generation.
-const MAX_QUESTION_CHARS: usize = 90;
-
 /// How many questions the empty state shows.
 const MAX_STARTERS: usize = 3;
 
@@ -341,7 +338,7 @@ pub fn parse_starters(raw: &str) -> Vec<ChatStarterDto> {
     let mut out: Vec<ChatStarterDto> = Vec::new();
     for candidate in parsed {
         let question = candidate.question.trim().to_string();
-        if question.is_empty() || question.chars().count() > MAX_QUESTION_CHARS {
+        if question.is_empty() {
             continue;
         }
         let folded = question.to_lowercase();
@@ -632,14 +629,6 @@ mod tests {
         let wrapped = parse_starters("Sure! [{\"question\":\"a\"}] hope that helps");
         assert_eq!(wrapped.len(), 1);
         assert_eq!(wrapped[0].question, "a");
-
-        let long = "x".repeat(91);
-        let with_long = parse_starters(&format!(
-            "[{{\"question\":\"{}\"}},{{\"question\":\"short\"}}]",
-            long
-        ));
-        assert_eq!(with_long.len(), 1);
-        assert_eq!(with_long[0].question, "short");
 
         let capped = parse_starters(
             r#"[{"question":"a"},{"question":"b"},{"question":"c"},{"question":"d"}]"#,

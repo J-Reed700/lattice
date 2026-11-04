@@ -6,8 +6,8 @@
 //! validation in `domain::conversation::memory`.
 
 use lattice_core::domain::conversation::memory::{
-    MemoryItem, MAX_EVIDENCE_PER_ITEM, MAX_LABEL_CHARS, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_QUOTE_BYTES, MEMORY_SCHEMA_VERSION,
+    MemoryItem, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_QUOTE_BYTES,
+    MEMORY_SCHEMA_VERSION,
 };
 
 use super::segment::SourceSegment;
@@ -53,14 +53,14 @@ pub(crate) fn largest_repetition_bound(schema: &serde_json::Value) -> (u64, Stri
 }
 
 /// Identity of the extractor contract, stored in `extractor_prompt_version`.
-pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-10-21.14";
+pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-11-04.15";
 /// Identity of the semantic-review contract.
-pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-11-02.11";
+pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-11-04.12";
 /// Identity of the summariser contract.
 pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-22.3";
 /// Stored in `validator_version`: the deterministic rules plus the review step
 /// that together decided what a commit was allowed to contain.
-pub const VALIDATOR_VERSION: &str = "memory-validator/6+memory-verifier/2026-11-02.11";
+pub const VALIDATOR_VERSION: &str = "memory-validator/7+memory-verifier/2026-11-04.12";
 
 /// Instructions for the extractor (§15, "Extractor must be told").
 ///
@@ -120,7 +120,7 @@ pub fn patch_schema() -> serde_json::Value {
                             "type": "string",
                             "enum": ["constraint", "goal", "decision", "user_fact", "preference", "open_question", "established_fact"]
                         },
-                        "label": { "type": "string", "maxLength": MAX_LABEL_CHARS },
+                        "label": { "type": "string" },
                         "evidence": evidence(&["assertion", "antecedent"])
                     },
                     "required": ["candidate_id", "kind", "label", "evidence"]
@@ -162,7 +162,7 @@ pub fn verdict_schema() -> serde_json::Value {
                     "properties": {
                         "id": { "type": "string" },
                         "verdict": { "type": "string", "enum": ["supported", "ambiguous", "unsupported"] },
-                        "reason": { "type": "string", "maxLength": 512 }
+                        "reason": { "type": "string" }
                     },
                     "required": ["id", "verdict", "reason"]
                 }

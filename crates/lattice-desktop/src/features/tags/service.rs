@@ -117,9 +117,9 @@ impl TagServiceTrait for TagService {
     ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
-        if name.is_empty() || name.len() > 100 {
+        if name.is_empty() {
             return Err(lattice_core::shared::error::AppError::InvalidInput(
-                "Tag name must be 1-100 characters".into(),
+                "A tag needs a name".into(),
             ));
         }
 
@@ -140,9 +140,9 @@ impl TagServiceTrait for TagService {
         use crate::features::tags::repository::TagRepository;
 
         if let Some(n) = name {
-            if n.is_empty() || n.len() > 100 {
+            if n.is_empty() {
                 return Err(lattice_core::shared::error::AppError::InvalidInput(
-                    "Tag name must be 1-100 characters".into(),
+                    "A tag needs a name".into(),
                 ));
             }
         }
@@ -261,7 +261,7 @@ impl TagServiceTrait for TagService {
         let normalized_tags: Vec<String> = tag_names
             .into_iter()
             .map(|t| t.trim().to_lowercase())
-            .filter(|t| !t.is_empty() && t.len() <= 100)
+            .filter(|t| !t.is_empty())
             .collect();
 
         // Merge with existing tags
@@ -381,9 +381,9 @@ impl TagServiceTrait for TagService {
     ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
-        if name.is_empty() || name.len() > 100 {
+        if name.is_empty() {
             return Err(lattice_core::shared::error::AppError::InvalidInput(
-                "Tag name must be 1-100 characters".into(),
+                "A tag needs a name".into(),
             ));
         }
 

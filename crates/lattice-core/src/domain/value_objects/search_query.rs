@@ -5,7 +5,6 @@
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
-const MAX_QUERY_LENGTH: usize = 1000;
 const MIN_QUERY_LENGTH: usize = 1;
 
 /// Validated search query value object.
@@ -15,7 +14,6 @@ const MIN_QUERY_LENGTH: usize = 1;
 /// ## Invariants
 ///
 /// - Query is non-empty after trimming whitespace
-/// - Query length is between 1 and 1000 characters
 /// - Query is normalized (trimmed, no excessive whitespace)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SearchQuery(String);
@@ -27,7 +25,6 @@ impl SearchQuery {
     ///
     /// Returns an error if:
     /// - Query is empty after trimming
-    /// - Query is too long (> 1000 characters)
     pub fn new(query: impl Into<String>) -> Result<Self> {
         let normalized = Self::normalize(query.into())?;
         Ok(Self(normalized))
@@ -52,14 +49,6 @@ impl SearchQuery {
             return Err(AppError::InvalidInput(format!(
                 "Search query must be at least {} character(s)",
                 MIN_QUERY_LENGTH
-            )));
-        }
-
-        if trimmed.len() > MAX_QUERY_LENGTH {
-            return Err(AppError::InvalidInput(format!(
-                "Search query too long: {} characters (max: {})",
-                trimmed.len(),
-                MAX_QUERY_LENGTH
             )));
         }
 
@@ -150,19 +139,6 @@ mod tests {
         assert!(SearchQuery::new("").is_err());
         assert!(SearchQuery::new("   ").is_err());
         assert!(SearchQuery::new("\n\t  ").is_err());
-    }
-
-    #[test]
-    fn test_query_too_long_rejected() {
-        let long_query = "a".repeat(MAX_QUERY_LENGTH + 1);
-        assert!(SearchQuery::new(long_query).is_err());
-    }
-
-    #[test]
-    fn test_max_length_accepted() {
-        let max_query = "a".repeat(MAX_QUERY_LENGTH);
-        let query = SearchQuery::new(max_query.clone()).unwrap();
-        assert_eq!(query.len(), MAX_QUERY_LENGTH);
     }
 
     #[test]
