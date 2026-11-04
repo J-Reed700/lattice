@@ -109,6 +109,16 @@ mod tests {
     }
 
     #[test]
+    fn metadata_of_any_size_is_valid() {
+        let large_json = format!(r#"{{"data": "{}"}}"#, "x".repeat(200_000));
+
+        let validated = ValidatedMetadata::new(large_json.clone()).unwrap();
+
+        assert_eq!(validated.as_str(), large_json);
+        assert_eq!(validated.size_bytes(), large_json.len());
+    }
+
+    #[test]
     fn test_invalid_json() {
         let invalid = "{not valid json}".to_string();
         let result = ValidatedMetadata::new(invalid);

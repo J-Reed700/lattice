@@ -123,6 +123,34 @@ async fn explicit_scope_is_enforced_and_shared_reads_do_not_grant_edits() {
     );
 }
 #[tokio::test]
+async fn a_remembered_or_corrected_text_is_kept_whole_at_any_length() {
+    let (_, repo) = setup().await;
+    let long = "The project budget is $120 and it covers every phase of the work. ".repeat(200);
+    let long = long.trim().to_string();
+    let mut r = request("one", "remember");
+    r.text = Some(long.clone());
+    r.scope = Some("conversation".into());
+    let remembered = repo.knowledge(&r).await.unwrap();
+    assert_eq!(remembered.items[0].label, long);
+    assert_eq!(
+        remembered.items[0].evidence[0].text.as_deref(),
+        Some(long.as_str())
+    );
+
+    let corrected = format!("Correction: {long}");
+    let mut r = request("one", "correct");
+    r.item_id = Some(remembered.items[0].id.clone());
+    r.text = Some(corrected.clone());
+    let response = repo.knowledge(&r).await.unwrap();
+    let active = response
+        .items
+        .iter()
+        .find(|item| item.state == "active")
+        .unwrap();
+    assert_eq!(active.label, corrected);
+    assert_eq!(active.evidence[0].text.as_deref(), Some(corrected.as_str()));
+}
+#[tokio::test]
 async fn corrections_preserve_exact_evidence_and_inherit_scope() {
     let (_, repo) = setup().await;
     let old = remember(&repo, "personal").await;
