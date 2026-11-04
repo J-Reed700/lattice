@@ -42,7 +42,6 @@ pub(in crate::features::learning::lessons::content_verification) const NO_PASSAG
 /// has nothing to compare, or left for the model.
 pub(in crate::features::learning::lessons::content_verification) async fn compare(
     llm: &dyn LLMPort,
-    retained: &ClaimChecks,
     pending: PendingClaim,
 ) -> Result<Comparison> {
     let (unit, claim, evidence) = (pending.unit, &pending.claim, &pending.evidence);
@@ -58,8 +57,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn compar
             return Ok(Comparison::Done(finding, true));
         }
     }
-    if let Some(receipt) = claim_reuse::legacy_receipt(llm, retained, unit, claim, evidence).await?
-    {
+    if let Some(receipt) = claim_reuse::legacy_receipt(llm, unit, claim, evidence).await? {
         let saved = serde_json::to_value(&receipt)?;
         if let Some(finding) = receipt.finding(unit, claim, evidence) {
             crate::features::learning::lesson_drafts::record_checkpoint(

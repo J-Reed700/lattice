@@ -252,7 +252,6 @@ struct ClaimChecks {
     latest: HashMap<ClaimId, Finding>,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
     research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
-    prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
     /// What the judge's answers have cost this job, per claim, across its
     /// readings: the answer size a page of the course is budgeted by
     /// (`evidence_checks::page_budget`).

@@ -58,7 +58,7 @@ pub(super) struct ReadContext<'c> {
 
 impl<'c> ReadContext<'c> {
     /// The context of a pass over `candidate`, which has the bindings and
-    /// labels of the course's sources and the receipts a pass reuses by claim.
+    /// labels of the course's sources.
     pub(super) async fn new(
         llm: &'c dyn LLMPort,
         candidate: &'c Value,
@@ -67,7 +67,6 @@ impl<'c> ReadContext<'c> {
         executions: &'c [execution::Observation],
         retained: &'c ClaimChecks,
     ) -> Result<Self> {
-        claim_reuse::load_prior_claims(retained).await?;
         Ok(Self {
             llm,
             candidate,
@@ -193,7 +192,7 @@ enum Restored {
 }
 
 async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restored> {
-    match compare(at.llm, at.retained, pending).await? {
+    match compare(at.llm, pending).await? {
         Comparison::Done(finding, reused) => Ok(Restored::Receipt(finding, reused)),
         Comparison::Pending(pending) => Ok(Restored::Ask(pending)),
     }
