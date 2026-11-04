@@ -19,6 +19,7 @@ mod cut;
 #[cfg(test)]
 pub(super) use citation::quotation;
 pub(super) use citation::{cite_where_supported, number_evidence, number_sources, uncite, Cited};
+use confine::PutBack;
 pub(in crate::features::learning) use confine::{confine, Protected};
 #[cfg(test)]
 pub(super) use cut::last_attempts;
@@ -458,7 +459,9 @@ pub(in crate::features::learning) async fn candidate(
 /// Repairs every affected section in turn, in as many requests as fit, each
 /// on the section as the previous left it, saving every patch. A claim the
 /// user resolved meanwhile is not sent (§9); an unusable answer costs its
-/// claims an attempt and leaves the section as it was.
+/// claims an attempt and leaves the section as it was. A correction that
+/// shared a change with a sentence that passed is put back and costs its own
+/// claim alone, which is asked again, told why.
 async fn repair_sections(
     llm: &dyn LLMPort,
     policy: &dyn AcceptancePolicy,
@@ -563,11 +566,11 @@ async fn repair_sections(
                 .ok_or_else(|| invalid("Missing repair candidate."))?;
             // The group's failed sentences may change; every other sentence
             // of the section a claim stands on comes back as it was (§10).
-            let mut sent = claim_ids(&group);
+            let mut claims = claim_ids(&group);
             if part == 1 {
-                sent.extend(claim_ids(&section_examples(&context, unit)));
+                claims.extend(claim_ids(&section_examples(&context, unit)));
             }
-            let sent = ledger.with_cotenants(&sent);
+            let sent = ledger.with_cotenants(&claims);
             let of_unit = |set: Vec<Protected>| -> Vec<Protected> {
                 set.into_iter().filter(|item| item.unit == unit).collect()
             };
@@ -575,7 +578,7 @@ async fn repair_sections(
                 of_unit(Protected::of_claims(ledger, &sent)),
                 of_unit(Protected::of_ledger(ledger, &sent_claims)),
             );
-            let repaired = match repair_group(
+            let (repaired, put_back) = match repair_group(
                 llm,
                 &system,
                 (&local, original),
@@ -586,18 +589,27 @@ async fn repair_sections(
             )
             .await
             {
-                Ok(repaired) => merge(&mut candidate, repaired, unit),
-                Err(error) => Err(error),
+                Ok((repaired, put_back)) => (merge(&mut candidate, repaired, unit), put_back),
+                Err(error) => (Err(error), Vec::new()),
             };
             if let Err(error) = repaired {
                 if !rejected(&error) {
                     return Err(error);
                 }
-                let mut claims = claim_ids(&group);
-                if part == 1 {
-                    claims.extend(claim_ids(&section_examples(&context, unit)));
-                }
                 ledger.reject(policy, &claims, &error.to_string()).await?;
+            }
+            // A target whose correction shared a change with a sentence that
+            // passed was put back: it alone is charged and told why, and the
+            // group's other targets keep their rewrites.
+            for back in &put_back {
+                for id in &claims {
+                    let own = Protected::of_claims(ledger, std::slice::from_ref(id));
+                    if own.first() == Some(&back.target) {
+                        ledger
+                            .reject(policy, std::slice::from_ref(id), &back.reason)
+                            .await?;
+                    }
+                }
             }
             let saved = candidate.to_string();
             drop_group(&mut context, unit, group.len(), part == 1);
@@ -623,7 +635,9 @@ async fn repair_sections(
 
 /// One request's edit of one section, confined to the failed sentences
 /// (`targets`; `protected` must come back byte-identical) and validated
-/// against the lesson schema.
+/// against the lesson schema. Gives the section and the targets whose
+/// correction was put back, because it shared a change with a protected
+/// sentence.
 async fn repair_group(
     llm: &dyn LLMPort,
     system: &str,
@@ -632,7 +646,7 @@ async fn repair_group(
     field: &str,
     output_tokens: usize,
     (targets, protected): (&[Protected], &[Protected]),
-) -> Result<Value> {
+) -> Result<(Value, Vec<PutBack>)> {
     let raw = {
         let _model_call = crate::features::learning::lesson_progress::model_call();
         crate::features::learning::generation::complete_json(
@@ -655,6 +669,7 @@ async fn repair_group(
     )
     .await?;
     let pointer = format!("/{field}/0");
+    let mut put_back = Vec::new();
     if let (Some(before), Some(after)) =
         (original.pointer(&pointer), repaired.pointer_mut(&pointer))
     {
@@ -662,7 +677,9 @@ async fn repair_group(
         // a citation the rewrite appended among it; the ones whose sentence
         // stands in the confined text are put back.
         let appended = citation::appended(before, after);
-        *after = confine(before, after, targets, protected)?;
+        let confined = confine(before, after, targets, protected)?;
+        *after = confined.section;
+        put_back = confined.put_back;
         citation::restore_appended(after, appended, field);
     }
     let validator = jsonschema::JSONSchema::compile(&section_schema(schema, field))
@@ -672,7 +689,7 @@ async fn repair_group(
             "The edited section does not match the lesson schema. Its prior draft is saved.",
         ));
     }
-    Ok(repaired)
+    Ok((repaired, put_back))
 }
 
 #[cfg(test)]

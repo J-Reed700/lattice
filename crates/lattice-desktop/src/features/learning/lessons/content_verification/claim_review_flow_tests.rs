@@ -745,7 +745,8 @@ mod loop_bound {
             &Protected::of_claims(&ledger, &targets),
             &Protected::of_ledger(&ledger, &targets),
         )
-        .unwrap();
+        .unwrap()
+        .section;
         let after = confined["body"].as_str().unwrap().to_owned();
         assert_eq!(after, format!("{VERIFIED} {ALSO_VERIFIED} {FIXED}"));
 

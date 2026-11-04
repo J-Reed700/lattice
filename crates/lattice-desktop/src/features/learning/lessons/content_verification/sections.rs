@@ -457,7 +457,7 @@ async fn mend_section(
     else {
         return Ok(None);
     };
-    let confined = confine(before, after, &targets, protected)?;
+    let confined = confine(before, after, &targets, protected)?.section;
     Ok((confined != *before).then_some(confined))
 }
 

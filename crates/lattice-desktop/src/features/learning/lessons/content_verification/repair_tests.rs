@@ -5,10 +5,10 @@ use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
-use lattice_core::domain::learning::acceptance::StandardPolicy;
+use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy, Step};
 use lattice_core::domain::learning::claim_review::{
-    Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation, ClaimState,
-    EvidenceFingerprint, RepairOutcome, UnitKind, VerdictKind,
+    Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
+    ClaimState, Class, ClassifiedBy, EvidenceFingerprint, RepairOutcome, UnitKind, VerdictKind,
 };
 use std::sync::Mutex;
 #[test]
@@ -101,7 +101,7 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conver
         quote: "Keep that.".into(),
     };
 
-    let repaired = repair_group(
+    let (repaired, put_back) = repair_group(
         &model,
         "Repair the section.",
         (&local, &original),
@@ -113,6 +113,7 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conver
     .await?;
 
     assert_eq!(repaired, replacement);
+    assert!(put_back.is_empty());
     let sent = model.sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 2, "the edits, then the section");
     let (edits, section) = (messages(&sent[0]), messages(&sent[1]));
@@ -678,7 +679,7 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
         quote: "Keep this.".into(),
     };
 
-    let repaired = repair_group(
+    let (repaired, _) = repair_group(
         &model,
         "system",
         (&local, &original),
@@ -861,6 +862,116 @@ async fn a_hunk_that_mixes_a_target_with_a_passed_sentence_costs_only_that_targe
         !charged,
         "the rewrite that was applied costs its claim no attempt"
     );
+    Ok(())
+}
+
+/// The node of the statement `id` in its class's graph.
+fn node_of(ledger: &ClaimLedger, id: &ClaimId) -> Option<&'static str> {
+    let policy = StandardPolicy::new();
+    let (at, _) = ledger.waits_at(&policy, id)?;
+    policy.graph(at.class).node(at.node).map(|node| node.name)
+}
+
+/// The reasons the corrections of a claim could not be applied, in order.
+fn rejections(entry: &ClaimLedgerEntry) -> Vec<String> {
+    entry
+        .events()
+        .iter()
+        .filter_map(|record| match &record.event {
+            ClaimEvent::RepairAttempted {
+                outcome: RepairOutcome::Rejected { reason },
+                ..
+            } => Some(reason.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_target_whose_correction_was_put_back_goes_to_its_retry_and_the_groups_other_rewrite_stands(
+) -> Result<()> {
+    let body = format!("{FIRST_OLD} {STEADY} {PASSED} {THIRD_OLD} {CLOSING}");
+    let merging = json!({"edits":[
+        {"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW},
+        {"path":"/blocks/0/body","before":format!("{PASSED} {THIRD_OLD}"),"after":MERGED},
+    ]});
+    let llm = Recording {
+        answers: Mutex::new([merging.to_string()].into()),
+        sent: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        &body,
+        &[("first", FIRST_OLD, 0), ("third", THIRD_OLD, 0)],
+    )
+    .await?;
+    passed(&mut ledger, &llm, "passed", (PASSED, PASSED), &body).await?;
+    let policy = StandardPolicy::new();
+    let (first, third) = (ClaimId("first".into()), ClaimId("third".into()));
+    // Both are Sourced statements the policy has brought to a rewrite.
+    for id in [&first, &third] {
+        let sorted = ClaimEvent::Classified {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        };
+        ledger.append(id, sorted).await?;
+        for (step, outcome) in [
+            (Step::Read(Reading::Parts), Outcome::Unproven),
+            (Step::Research, Outcome::FoundNothing),
+            (Step::Read(Reading::Page), Outcome::Unproven),
+        ] {
+            assert!(ledger.record_step(&policy, id, step, outcome).await?);
+        }
+        assert_eq!(node_of(&ledger, id), Some("s.rewrite"));
+    }
+    ledger
+        .begin_repairs(&policy, &lesson_of(&body), &[first.clone(), third.clone()])
+        .await?;
+    let context = json!({
+        "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"first","sentence":FIRST_OLD,"evidence":[]},
+            {"unit":0,"claimId":"third","sentence":THIRD_OLD,"evidence":[]},
+        ],
+    });
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let references = ReferenceCollection::lexical(&[])?;
+
+    let repaired = repair_sections(
+        &llm,
+        &policy,
+        "{}",
+        &schema,
+        context,
+        4_000,
+        &references,
+        &mut ledger,
+    )
+    .await?;
+
+    let after = repaired["blocks"][0]["body"].as_str().unwrap();
+    assert!(
+        after.contains(FIRST_NEW) && after.contains(PASSED) && !after.contains(MERGED),
+        "{after}"
+    );
+    // The put-back correction is charged to its claim alone, which goes on to
+    // its retry, told why.
+    assert_eq!(node_of(&ledger, &third), Some("s.rewrite.again"));
+    let reasons = rejections(ledger.entry(&third).unwrap());
+    assert!(
+        matches!(reasons.as_slice(), [reason] if reason.contains(PASSED) && reason.contains("put back")),
+        "{reasons:?}"
+    );
+    // The other target's rewrite stands: nothing is charged to it, and the
+    // pass that reads the sentence decides it.
+    assert_eq!(node_of(&ledger, &first), Some("s.rewrite"));
+    assert!(rejections(ledger.entry(&first).unwrap()).is_empty());
+    assert!(ledger
+        .pending
+        .repairs
+        .iter()
+        .any(|record| record.claim_id == first));
     Ok(())
 }
 

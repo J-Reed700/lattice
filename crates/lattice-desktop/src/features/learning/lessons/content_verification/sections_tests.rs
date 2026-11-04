@@ -676,9 +676,9 @@ async fn a_flow_repair_that_rewrites_a_sentence_a_claim_stands_on_is_no_repair()
         {"path":"/blocks/0/body","before":"Kept claim.","after":"Changed claim."}
     ]})]);
 
-    let error = mend(&llm, &taken, &protected).await.unwrap_err();
-
-    assert!(rejected(&error), "{error}");
+    // The change is put back, and nothing is recorded for it: the section
+    // keeps the text as cut.
+    assert_eq!(mend(&llm, &taken, &protected).await?, None);
     Ok(())
 }
 
