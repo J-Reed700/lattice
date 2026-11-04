@@ -1,4 +1,4 @@
-//! Pass B's first page for a claim, kept stable as research grows (course
+//! The course's first page for a claim, kept stable as research grows (course
 //! evidence index §5.6): saved before its check and restored while the
 //! course's sources are unchanged. For a research target, what research found
 //! leads its page.
@@ -9,9 +9,9 @@ use crate::features::learning::reference_collection::Scope;
 pub(super) const RESEARCHED: &str = "researched";
 
 const RESEARCH_SCOPE_POLICY: &str = "claim-research-scope-v1";
-/// How pass B's first page is ranked: one hybrid list over the course,
-/// without what pass A shows, sliced by the page budget. A selection saved
-/// under another ranking is retrieved anew, once.
+/// How the first page of the course is ranked: one hybrid list over the
+/// course, without what the claim's citation shows, sliced by the page budget.
+/// A selection saved under another ranking is retrieved anew, once.
 const RANKING: &str = "two-pass-hybrid-v1";
 
 /// Automatic research is requested for specific failed comparisons. Bind the
@@ -43,14 +43,10 @@ pub(super) struct Selection {
     reach: Option<Reach>,
 }
 
-/// Pass B's first page for a claim, and where it was read from.
+/// The first page of the course for a claim, and where it was read from.
 pub(super) struct Selected {
     pub(super) evidence: Vec<EvidencePassage>,
     pub(super) reach: Option<Reach>,
-    /// What the page's list said, when it was read now rather than restored:
-    /// for the log of the tests of the two passes.
-    #[cfg(test)]
-    pub(super) note: Option<evidence_checks::PageNote>,
 }
 
 /// The saved form of a first page of `evidence` over `sources`.
@@ -258,10 +254,10 @@ impl Selection {
     }
 }
 
-/// Pass B's first page for `claim`: restored when saved under this ranking
-/// with every source unchanged, otherwise read from the course's list, and
-/// never overlapping `attribution`. Saved before any model work; `None`,
-/// saving nothing, while `sizing` is unmeasured.
+/// The first page of the course for `claim`: restored when saved under this
+/// ranking with every source unchanged, otherwise read from the course's list,
+/// and never overlapping `attribution`, the passages its citation shows. Saved
+/// before any model work.
 pub(super) async fn select(
     llm: &dyn LLMPort,
     (claim, checked, unit): (&Claim, &str, usize),
@@ -269,12 +265,8 @@ pub(super) async fn select(
     current: &[SourceBinding],
     retained: &ClaimChecks,
     (attribution, sizing): (&[EvidencePassage], &evidence_checks::Sizing),
-) -> Result<Option<Selected>> {
-    let budget = match sizing {
-        evidence_checks::Sizing::Sized(budget) => Some(budget),
-        #[cfg(test)]
-        evidence_checks::Sizing::Unmeasured => None,
-    };
+) -> Result<Selected> {
+    let evidence_checks::Sizing::Sized(budget) = sizing;
     let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING);
     let memory = retained
         .selections
@@ -292,8 +284,6 @@ pub(super) async fn select(
         .as_ref()
         .and_then(|saved| saved.restore(references, current));
     let research_scope = research_scope(current, retained).await?;
-    #[cfg(test)]
-    let mut note = None;
     let (mut evidence, reach, changed) =
         if let (Some(saved), Some(evidence)) = (saved.as_ref(), restored) {
             let added: HashSet<String> = current
@@ -305,9 +295,6 @@ pub(super) async fn select(
                 .as_ref()
                 .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
             let led = if !added.is_empty() && claim_is_research_target {
-                let Some(budget) = budget else {
-                    return Ok(None);
-                };
                 research_led(
                     llm,
                     (claim, checked),
@@ -326,10 +313,7 @@ pub(super) async fn select(
                 None => (evidence, saved.reach, saved.sources != current),
             }
         } else {
-            let Some(budget) = budget else {
-                return Ok(None);
-            };
-            let (page, read) = evidence_checks::page_one(
+            let (page, reach) = evidence_checks::page_one(
                 llm,
                 references,
                 &claim.statement,
@@ -338,15 +322,10 @@ pub(super) async fn select(
                 budget,
             )
             .await?;
-            let reach = read.as_ref().map(|note| note.reach);
-            #[cfg(test)]
-            {
-                note = read;
-            }
             (page, reach, true)
         };
-    // Pass B never shows what pass A does, even when the section's citation
-    // moved onto a passage the saved page holds.
+    // The page never shows what the citation does, even when the section's
+    // citation moved onto a passage the saved page holds.
     evidence.retain(|passage| !attribution.iter().any(|shown| overlaps(shown, passage)));
     evidence.sort_by(|a, b| {
         (&a.source_id, a.start_byte, a.end_byte).cmp(&(&b.source_id, b.start_byte, b.end_byte))
@@ -374,12 +353,7 @@ pub(super) async fn select(
             .insert(selection_key, selection);
     }
     canonicalize_evidence(&mut evidence);
-    Ok(Some(Selected {
-        evidence,
-        reach,
-        #[cfg(test)]
-        note,
-    }))
+    Ok(Selected { evidence, reach })
 }
 
 /// The first page of a claim research was asked for, once research saved

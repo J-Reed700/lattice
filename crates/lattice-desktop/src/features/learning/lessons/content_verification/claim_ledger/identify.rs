@@ -153,34 +153,6 @@ impl ClaimLedger {
         extracted
     }
 
-    /// The statements `report` found, as `extracted` takes them, with the
-    /// class each finding was checked as.
-    #[cfg(test)]
-    pub(in super::super) fn extracted_report(
-        &self,
-        candidate: &Value,
-        report: &LessonVerificationReport,
-    ) -> Vec<Extracted> {
-        let claims: Vec<(usize, Claim)> = report
-            .findings
-            .iter()
-            .map(|finding| {
-                (
-                    finding.unit,
-                    Claim {
-                        quote: finding.quote.clone(),
-                        statement: finding.statement.clone(),
-                    },
-                )
-            })
-            .collect();
-        let mut extracted = self.extracted(candidate, &claims, &report.executions);
-        for (found, finding) in extracted.iter_mut().zip(&report.findings) {
-            found.class = finding.class;
-        }
-        extracted
-    }
-
     /// The class of each of a pass's first `statements` statements when the
     /// match gives one: that of the claim it continues as the ledger holds
     /// it, or the class the parent of the repair it is the heir of was sorted

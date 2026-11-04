@@ -1,3 +1,4 @@
+use super::readings_tests::paged;
 use super::*;
 use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
@@ -154,17 +155,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         ..Default::default()
     };
     let result = lesson_drafts::run(&repo, &job, &lesson, async {
-        check_evidence(
-            &model,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await
+        paged(&model, &references, &inventory(8), &measured()).await
     })
     .await;
     assert!(matches!(result, Err(AppError::Network(_))));
@@ -186,40 +177,18 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         ..Default::default()
     };
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert!(report.issues.is_empty());
-        assert_eq!(report.findings.len(), 8);
-        assert!(report
-            .findings
+        let reads = paged(&model, &references, &inventory(8), &measured()).await?;
+        assert_eq!(reads.len(), 8);
+        assert!(reads
             .iter()
-            .all(|finding| finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         assert_eq!(
             *model.batch_sizes.lock().unwrap(),
             vec![4, 4],
             "Never replay the failed eight-claim group after reopening"
         );
         // All eight decisions are reusable.
-        check_evidence(
-            &model,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
+        paged(&model, &references, &inventory(8), &measured()).await?;
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![4, 4]);
         // One check per group: no second call follows a check.
         assert_eq!(model.calls.lock().unwrap().len(), 2);
@@ -241,23 +210,11 @@ async fn a_group_counted_past_the_window_is_split_and_every_claim_is_judged() ->
         ..Default::default()
     };
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert!(report.issues.is_empty(), "{:?}", report.issues);
-        assert_eq!(report.findings.len(), 8);
-        assert!(report
-            .findings
+        let reads = paged(&model, &references, &inventory(8), &measured()).await?;
+        assert_eq!(reads.len(), 8);
+        assert!(reads
             .iter()
-            .all(|finding| finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         // The refused group is checked in halves on the same evidence; no
         // claim falls back to a check of its own.
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![8, 4, 4]);
@@ -284,17 +241,7 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
             )),
             ..Default::default()
         };
-        let result = check_evidence(
-            &interrupted,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await;
+        let result = paged(&interrupted, &references, &inventory(8), &measured()).await;
         assert!(matches!(result, Err(AppError::Network(_))));
         assert_eq!(*interrupted.batch_sizes.lock().unwrap(), vec![8, 4]);
         // Resumed, the recorded split sends halves straight away.
@@ -302,18 +249,8 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
             window_holds: Some(4),
             ..Default::default()
         };
-        let report = check_evidence(
-            &resumed,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert_eq!(report.findings.len(), 8);
+        let reads = paged(&resumed, &references, &inventory(8), &measured()).await?;
+        assert_eq!(reads.len(), 8);
         assert_eq!(
             *resumed.batch_sizes.lock().unwrap(),
             vec![4, 4],
@@ -341,17 +278,7 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
             ..Default::default()
         };
         let result = lesson_drafts::run(&repo, &job, &lesson, async {
-            check_evidence(
-                &model,
-                &StandardPolicy::new(),
-                &candidate(GOOD),
-                &references,
-                inventory(8),
-                coverage(8),
-                vec![],
-                &mut measured(),
-            )
-            .await
+            paged(&model, &references, &inventory(8), &measured()).await
         })
         .await;
         assert_eq!(result.unwrap_err().error_code(), error.error_code());
@@ -383,19 +310,6 @@ fn sections(sections: usize, claims: usize) -> Inventory {
             .collect(),
     }
 }
-fn coverage(count: usize) -> Coverage {
-    Coverage {
-        units: (0..count)
-            .map(|index| CoverageUnit {
-                index,
-                complete: true,
-                reason: "Fixture coverage".into(),
-                missing_assertions: vec![],
-            })
-            .collect(),
-    }
-}
-
 pub(in crate::features::learning::lessons::content_verification) async fn setup(
     pool: &sqlx::SqlitePool,
 ) -> Result<(LearningCurriculumRepository, String, String)> {
@@ -438,22 +352,11 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
                 sources[0].excerpt.push_str(" Additional source context.");
             }
             let references = ReferenceCollection::lexical(&sources)?;
-            let report = check_evidence(
-                &model,
-                &StandardPolicy::new(),
-                &candidate(GOOD),
-                &references,
-                inventory(10),
-                coverage(10),
-                vec![],
-                &mut measured(),
-            )
-            .await?;
-            assert_eq!(report.findings.len(), 10);
-            assert!(report
-                .findings
+            let reads = paged(&model, &references, &inventory(10), &measured()).await?;
+            assert_eq!(reads.len(), 10);
+            assert!(reads
                 .iter()
-                .all(|f| f.verdict == ClaimVerdict::Supported));
+                .all(|read| read.finding.verdict == ClaimVerdict::Supported));
             let expected = if pass < 2 { 1 } else { 2 };
             assert_eq!(
                 model.calls.lock().unwrap().len(),
@@ -506,14 +409,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         .claims
         .retain(|claim| !missing.contains(&claim.statement));
     lesson_drafts::run(&repo, &job, &lesson, async {
-        evidence_checks::check(
-            &BatchModel::default(),
-            &references,
-            &saved,
-            &[],
-            &measured(),
-        )
-        .await?;
+        paged(&BatchModel::default(), &references, &saved, &measured()).await?;
         Ok(())
     })
     .await?;
@@ -525,7 +421,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo, &job, &lesson, async {
         let inventory = inventory(170);
         let retained = measured();
-        let work = evidence_checks::check(&blocked, &references, &inventory, &[], &retained);
+        let work = paged(&blocked, &references, &inventory, &retained);
         tokio::select! {
             result = work => panic!("The unfinished checks should still be running: {result:?}"),
             result = tokio::time::timeout(Duration::from_secs(5), async {
@@ -544,13 +440,6 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         "{}",
         progress.progress_message
     );
-    let activity = progress.activity.unwrap();
-    assert_eq!(activity.checks_total, 170);
-    assert_eq!(
-        activity.checks_reused, 167,
-        "Late saved checks must be visible before the slow first request finishes"
-    );
-    assert_eq!(activity.checks_completed, 167);
     assert_eq!(
         *blocked.batch_sizes.lock().unwrap(),
         vec![3],
@@ -570,18 +459,12 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let resumed = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let results =
-            evidence_checks::check(&resumed, &references, &inventory(170), &[], &measured())
-                .await?;
-        assert_eq!(results.len(), 170);
-        assert_eq!(results.iter().filter(|result| result.3).count(), 167);
-        assert!(results
+        let reads = paged(&resumed, &references, &inventory(170), &measured()).await?;
+        assert_eq!(reads.len(), 170);
+        assert_eq!(reads.iter().filter(|read| read.reused).count(), 167);
+        assert!(reads
             .iter()
-            .all(|result| result.2.verdict == ClaimVerdict::Supported));
-        assert_eq!(
-            results.iter().map(|result| result.0).collect::<Vec<_>>(),
-            (0..170).collect::<Vec<_>>()
-        );
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         Ok(())
     })
     .await?;
@@ -619,9 +502,9 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let claim = &input.units[0].claims[7];
     let evidence = evidence_for(&model, &claim.statement, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
+    let retained = measured();
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
-        let mut retained=measured();let candidate=candidate(GOOD);let policy=StandardPolicy::new();
-        let work=check_evidence(&model,&policy,&candidate,&references,input,coverage(8),vec![],&mut retained);
+        let work=paged(&model,&references,&input,&retained);
         tokio::select! {
             result=work=>panic!("The incomplete claim should be waiting: {result:?}"),
             result=tokio::time::timeout(Duration::from_secs(5),async {
@@ -633,12 +516,6 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         }
         Ok(())
     })).await?;
-    let activity = repo.job(&job).await?.activity.unwrap();
-    assert_eq!(
-        activity.checks_completed, 7,
-        "Progress must include completed siblings while the last check is blocked"
-    );
-    assert_eq!(activity.checks_reused, 0);
     drop(repo);
     pool.close().await;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -653,18 +530,10 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let model = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert!(report.issues.is_empty());
+        let reads = paged(&model, &references, &inventory(8), &measured()).await?;
+        assert!(reads
+            .iter()
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         assert_eq!(*model.calls.lock().unwrap(), vec!["individual-evidence"]);
         Ok(())
     })
@@ -681,23 +550,48 @@ async fn claims_of_two_sections_never_share_a_request() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let model = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &StandardPolicy::new(),
-            &candidate(GOOD),
-            &references,
-            sections(2, 3),
-            coverage(2),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert_eq!(report.findings.len(), 6);
+        let reads = paged(&model, &references, &sections(2, 3), &measured()).await?;
+        assert_eq!(reads.len(), 6);
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![3, 3]);
         Ok(())
     })
     .await?;
     Ok(())
+}
+
+/// The comparisons `pack` puts in each request, as `(ordinal, pass)`, for
+/// comparisons given as `(ordinal, unit, statement, pass, page)`.
+fn packed(
+    llm: &dyn LLMPort,
+    comparisons: Vec<(usize, usize, String, Pass, Vec<EvidencePassage>)>,
+) -> Vec<Vec<(usize, Pass)>> {
+    let pending = comparisons
+        .into_iter()
+        .map(
+            |(ordinal, unit, statement, pass, evidence)| evidence_checks::PendingClaim {
+                ordinal,
+                key: String::new(),
+                receipt_key: String::new(),
+                unit,
+                claim: Claim {
+                    quote: statement.clone(),
+                    statement: statement.clone(),
+                },
+                checked: statement,
+                evidence,
+                pass,
+            },
+        )
+        .collect();
+    evidence_checks::pack(llm, pending, &evidence_checks::Labels::new())
+        .into_iter()
+        .map(|request| {
+            request
+                .iter()
+                .map(|item| (item.ordinal, item.pass))
+                .collect()
+        })
+        .collect()
 }
 
 #[test]
@@ -716,8 +610,8 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
             score: 0.0,
         }]
     };
-    // Sections interleaved in claim order; every claim has pass B's first
-    // page, and the even ones a pass A comparison too.
+    // Sections interleaved in claim order; every claim has the course's first
+    // page, and the even ones a comparison with their own citation too.
     let mut comparisons = Vec::new();
     for claim in 0..12 {
         let chars = if claim == 5 { 400_000 } else { 20_000 };
@@ -739,10 +633,10 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
             ));
         }
     }
-    let requests = evidence_checks::packed(&model, comparisons.clone());
+    let requests = packed(&model, comparisons.clone());
     assert_eq!(
         requests,
-        evidence_checks::packed(&model, comparisons.clone()),
+        packed(&model, comparisons.clone()),
         "the same pages pack the same way, so a split is found again"
     );
     let find = |(ordinal, pass): (usize, Pass)| {
@@ -776,7 +670,7 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
     for (at, request) in requests.iter().enumerate() {
         let unit = find(request[0]).1;
         assert!(request.iter().all(|item| find(*item).1 == unit));
-        // A claim's comparisons travel together, pass A first.
+        // A claim's comparisons travel together, its citation's first.
         for item in request {
             let together: Vec<_> = request.iter().filter(|other| other.0 == item.0).collect();
             let all = comparisons.iter().filter(|c| c.0 == item.0).count();

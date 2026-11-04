@@ -1,7 +1,9 @@
-//! A pass recorded in two steps: `identify` records which claim each statement
-//! is and what is new about it, `record_checks` what was checked, and the two
-//! give what `observe` gives (acceptance design §2.10).
-use super::claim_ledger_tests::{pass_report, passage_finding, CELL};
+//! A pass identified with the ledger: `identify` records which claim each
+//! statement is and what is new about it, and records no check (acceptance
+//! design §2.10).
+use super::claim_ledger_tests::{
+    check_findings, identify_findings, pass_report, passage_finding, CELL,
+};
 use super::*;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, RepairOutcome,
@@ -12,9 +14,6 @@ const ATP_SENTENCE: &str =
 const CELL_SOURCE: &str = "Mitochondria generate most cellular ATP by oxidative phosphorylation; the cristae of their inner membrane enlarge its surface.";
 const ATP: &str = "Mitochondria make most of a cell's ATP by oxidative phosphorylation.";
 const OVERSTATED: &str = "Mitochondria produce all of a cell's ATP.";
-const DNA: &str = "Mitochondria carry their own circular DNA, passed down from the mother.";
-const TWELVE: &str = "A typical human cell contains exactly twelve mitochondria.";
-const CRISTAE: &str = "The inner membrane folds into cristae that enlarge its surface.";
 /// The first sentence of `CELL` as its rewrite words it, and the statement
 /// that sentence then states beside the first.
 const REWRITTEN: &str =
@@ -43,8 +42,8 @@ async fn repair_sent() -> Result<(claim_ledger::ClaimLedger, ClaimId, ClaimId)> 
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, OVERSTATED, false, CELL_SOURCE),
     ]);
-    ledger.observe(&before, &report).await?;
-    let claims = ledger.finding_claims().to_vec();
+    let claims = identify_findings(&mut ledger, &before, &report).await?;
+    check_findings(&mut ledger, &claims, &report.findings).await?;
     let (verified, failed) = (claims[0].clone(), claims[1].clone());
     ledger
         .begin_repairs(
@@ -71,7 +70,15 @@ fn after_the_rewrite() -> (Value, LessonVerificationReport) {
 async fn a_pass_is_matched_without_recording_anything_and_matched_the_same_again() -> Result<()> {
     let (ledger, verified, failed) = repair_sent().await?;
     let (lesson, report) = after_the_rewrite();
-    let extracted = ledger.extracted_report(&lesson, &report);
+    let claims: Vec<(usize, Claim)> = report
+        .findings
+        .iter()
+        .map(|finding| {
+            let (quote, statement) = (finding.quote.clone(), finding.statement.clone());
+            (finding.unit, Claim { quote, statement })
+        })
+        .collect();
+    let extracted = ledger.extracted(&lesson, &claims, &[]);
     let entries = ledger.entries().to_vec();
     let findings = ledger.finding_claims().to_vec();
     let pending = serde_json::to_value(&ledger.pending)?;
@@ -102,11 +109,7 @@ async fn identifying_a_new_claim_records_where_it_stands_and_its_class_and_no_ch
     });
     let report = pass_report(vec![finding]);
 
-    let extracted = ledger.extracted_report(&lesson, &report);
-    let matched = ledger.match_pass(&lesson, &extracted);
-    let ids = ledger
-        .identify(&StandardPolicy::new(), &lesson, extracted, matched)
-        .await?;
+    let ids = identify_findings(&mut ledger, &lesson, &report).await?;
 
     assert_eq!(ids.len(), 1);
     assert_eq!(ledger.finding_claims(), ids.as_slice());
@@ -139,11 +142,7 @@ async fn identifying_a_repaired_claim_that_continues_records_its_repair_and_no_c
         .map(|id| ledger.entry(id).unwrap().events().len())
         .collect();
 
-    let extracted = ledger.extracted_report(&lesson, &report);
-    let matched = ledger.match_pass(&lesson, &extracted);
-    let ids = ledger
-        .identify(&StandardPolicy::new(), &lesson, extracted, matched)
-        .await?;
+    let ids = identify_findings(&mut ledger, &lesson, &report).await?;
 
     assert_eq!(ids, vec![verified.clone(), failed.clone()]);
     assert_eq!(ledger.finding_claims(), ids.as_slice());
@@ -177,17 +176,14 @@ async fn identifying_a_claim_no_statement_continues_records_that_it_is_gone_and_
     let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
     let before = cell_lesson(CELL);
     let supported = pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]);
-    ledger.observe(&before, &supported).await?;
-    let id = ledger.finding_claims()[0].clone();
+    let ids = identify_findings(&mut ledger, &before, &supported).await?;
+    check_findings(&mut ledger, &ids, &supported.findings).await?;
+    let id = ids[0].clone();
     let from = ledger.entry(&id).unwrap().events().len();
 
     let cut = cell_lesson(&CELL.replace(&format!("{ATP_SENTENCE} "), ""));
     let report = pass_report(vec![]);
-    let extracted = ledger.extracted_report(&cut, &report);
-    let matched = ledger.match_pass(&cut, &extracted);
-    let ids = ledger
-        .identify(&StandardPolicy::new(), &cut, extracted, matched)
-        .await?;
+    let ids = identify_findings(&mut ledger, &cut, &report).await?;
 
     assert!(ids.is_empty());
     assert!(ledger.finding_claims().is_empty());
@@ -213,95 +209,6 @@ async fn identifying_a_claim_no_statement_continues_records_that_it_is_gone_and_
         ),
         "{:?}",
         entry.state()
-    );
-    Ok(())
-}
-
-/// A ledger that found four claims in `CELL` (the first sentence's two among
-/// them) and has had a repair of the failed one sent.
-async fn four_claims_and_a_repair_sent() -> Result<claim_ledger::ClaimLedger> {
-    let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), "{}").await?;
-    let before = cell_lesson(CELL);
-    let report = pass_report(vec![
-        passage_finding(CELL, ATP, true, CELL_SOURCE),
-        passage_finding(CELL, OVERSTATED, false, CELL_SOURCE),
-        passage_finding(CELL, DNA, true, CELL_SOURCE),
-        passage_finding(CELL, TWELVE, true, CELL_SOURCE),
-    ]);
-    ledger.observe(&before, &report).await?;
-    let failed = ledger.finding_claims()[1].clone();
-    ledger
-        .begin_repairs(
-            &StandardPolicy::new(),
-            &before,
-            std::slice::from_ref(&failed),
-        )
-        .await?;
-    Ok(ledger)
-}
-
-/// Each claim's events, in the order the ledger holds its claims.
-fn events_of(ledger: &claim_ledger::ClaimLedger) -> Vec<Vec<ClaimEvent>> {
-    ledger
-        .entries()
-        .iter()
-        .map(|entry| {
-            entry
-                .events()
-                .iter()
-                .map(|record| record.event.clone())
-                .collect()
-        })
-        .collect()
-}
-
-#[tokio::test]
-async fn identifying_then_recording_the_checks_gives_the_events_observing_gives() -> Result<()> {
-    // The pass that follows the rewrite finds the two statements of the first
-    // sentence again, the twelve-mitochondria claim unchanged, a claim new to
-    // the ledger, and none for the DNA sentence.
-    let body = CELL.replace(ATP_SENTENCE, REWRITTEN);
-    let lesson = cell_lesson(&body);
-    let report = pass_report(vec![
-        passage_finding(&body, ATP, false, CELL_SOURCE),
-        passage_finding(&body, BOTH, false, CELL_SOURCE),
-        passage_finding(&body, TWELVE, true, CELL_SOURCE),
-        passage_finding(&body, CRISTAE, true, CELL_SOURCE),
-    ]);
-
-    let mut observed = four_claims_and_a_repair_sent().await?;
-    observed.observe(&lesson, &report).await?;
-
-    let mut split = four_claims_and_a_repair_sent().await?;
-    let extracted = split.extracted_report(&lesson, &report);
-    let matched = split.match_pass(&lesson, &extracted);
-    let ids = split
-        .identify(&StandardPolicy::new(), &lesson, extracted, matched)
-        .await?;
-    split.record_checks(&lesson, &report, &ids).await?;
-
-    assert_eq!(events_of(&split), events_of(&observed));
-    let kinds: HashSet<&str> = split
-        .entries()
-        .iter()
-        .flat_map(ClaimLedgerEntry::events)
-        .map(|record| record.event.kind_name())
-        .collect();
-    for kind in ["extracted", "checked", "repair_attempted", "superseded"] {
-        assert!(kinds.contains(kind), "no {kind} among {kinds:?}");
-    }
-    assert_eq!(split.entries().len(), 5);
-    assert_eq!(
-        split.finding_claims().len(),
-        observed.finding_claims().len()
-    );
-    assert_eq!(
-        serde_json::to_value(&split.pending)?,
-        serde_json::to_value(&observed.pending)?
-    );
-    assert_eq!(
-        split.bind(report.clone()).issues,
-        observed.bind(report.clone()).issues
     );
     Ok(())
 }

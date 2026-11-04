@@ -1,4 +1,4 @@
-//! `Parts`: the part-wise judge on a statement's own citation (pass A). A
+//! `Parts`: the part-wise judge on a statement's own citation. A
 //! quotation found in the source it names, or a claim the user resolved with
 //! evidence of their own, is settled without a call; otherwise the judge reads
 //! the passages its sentence cites that it holds, with the section's passed

@@ -6,8 +6,9 @@
 )]
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-use lattice_core::domain::learning::acceptance::StandardPolicy;
+use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy};
 use lattice_core::shared::runtime::jobs::JobStore;
+use readings_tests::{claim, read_all, read_one, world_of};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -510,6 +511,67 @@ fn source() -> LearningSourceDto {
     }
 }
 
+/// One pass over `candidate` as the loop makes it before any remedy: what it
+/// extracts, the statements waiting for a reading read along their graphs, and
+/// the report of what the latest readings found. For tests that need a report
+/// without the loop.
+async fn verify_with(
+    llm: &dyn LLMPort,
+    candidate: &Value,
+    references: &ReferenceCollection<'_>,
+    checks: &mut ClaimChecks,
+) -> Result<LessonVerificationReport> {
+    let extraction = passes::extract(llm, &BuiltinRuntimes::for_tests(), candidate, checks).await?;
+    verified(llm, candidate, references, extraction, checks).await
+}
+
+/// [`verify_with`] from an extraction already made.
+async fn verified(
+    llm: &dyn LLMPort,
+    candidate: &Value,
+    references: &ReferenceCollection<'_>,
+    extraction: passes::Extraction,
+    checks: &mut ClaimChecks,
+) -> Result<LessonVerificationReport> {
+    let policy = StandardPolicy::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(llm, &candidate.to_string()).await?;
+    let pass = passes::identify(
+        llm,
+        &policy,
+        &mut ledger,
+        (candidate, references),
+        extraction,
+        checks,
+    )
+    .await?;
+    let due = ledger.due(&policy);
+    let readings = passes::read_steps(
+        llm,
+        &policy,
+        &readings::Readers::standard(),
+        &ledger,
+        checks,
+        (candidate, references),
+        (&pass, &due),
+    )
+    .await?;
+    passes::record_readings(&policy, &mut ledger, checks, readings).await?;
+    let findings = passes::latest_findings(&ledger, checks, &pass).await?;
+    Ok(passes::report(
+        llm, references, candidate, &pass, findings, checks,
+    ))
+}
+
+/// [`verify_with`] over lexical references and no saved choices.
+async fn verify(
+    llm: &dyn LLMPort,
+    candidate: &Value,
+    sources: &[LearningSourceDto],
+) -> Result<LessonVerificationReport> {
+    let references = ReferenceCollection::lexical(sources)?;
+    verify_with(llm, candidate, &references, &mut ClaimChecks::default()).await
+}
+
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
 
@@ -540,8 +602,8 @@ mod class_checks_tests;
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
 
-#[path = "two_pass_tests.rs"]
-mod two_pass_tests;
+#[path = "recite_tests.rs"]
+mod recite_tests;
 
 #[path = "review_resume_tests.rs"]
 mod review_resume_tests;
@@ -573,93 +635,63 @@ mod reading_record_tests;
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
+    use crate::features::learning::lesson_drafts;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let mut model = Model::new();
-    let runtimes = BuiltinRuntimes::for_tests();
-    let lesson = candidate(GOOD);
     let mut sources = vec![source()];
-    let mut checks = ClaimChecks::default();
-    let first = verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert!(first.issues.is_empty());
-    assert_eq!(*model.judge_calls.lock().unwrap(), 1);
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, Citations::default());
+        let first = read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert_eq!(first.outcome, Outcome::Stands);
+        assert!(first.finding.publishable());
+        assert_eq!(*model.judge_calls.lock().unwrap(), 1);
 
-    let mut unrelated = source();
-    unrelated.excerpt = "Galaxies orbit stars.".into();
-    sources.push(unrelated);
-    let expanded = verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(expanded.sources.len(), 2);
-    assert!(expanded.issues.is_empty());
-    assert_eq!(*model.judge_calls.lock().unwrap(), 1, "Adding an unrelated source should still retrieve current evidence without repeating an identical judgment");
+        let mut unrelated = source();
+        unrelated.excerpt = "Galaxies orbit stars.".into();
+        sources.push(unrelated);
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, Citations::default());
+        let expanded = read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert!(expanded.reused);
+        assert!(expanded.finding.publishable());
+        assert_eq!(*model.judge_calls.lock().unwrap(), 1, "Adding an unrelated source should still retrieve current evidence without repeating an identical judgment");
 
-    let mut changed = source();
-    changed.excerpt = BAD.into();
-    sources.push(changed);
-    model.failing_judge = true;
-    let failed = verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(failed.findings[0].verdict, ClaimVerdict::Unverified);
-    assert!(
-        !failed.issues.is_empty(),
-        "New evidence cannot inherit an earlier approval"
-    );
-    assert_eq!(*model.judge_calls.lock().unwrap(), 2);
-    model.failing_judge = false;
-    verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(
-        *model.judge_calls.lock().unwrap(),
-        3,
-        "Failed checks must be attempted again"
-    );
+        let mut changed = source();
+        changed.excerpt = BAD.into();
+        sources.push(changed);
+        model.failing_judge = true;
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, Citations::default());
+        let failed = read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert_eq!(failed.outcome, Outcome::Unjudged);
+        assert_eq!(failed.finding.verdict, ClaimVerdict::Unverified);
+        assert!(
+            !failed.finding.publishable(),
+            "New evidence cannot inherit an earlier approval"
+        );
+        assert_eq!(*model.judge_calls.lock().unwrap(), 2);
+        model.failing_judge = false;
+        read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert_eq!(
+            *model.judge_calls.lock().unwrap(),
+            3,
+            "Failed checks must be attempted again"
+        );
 
-    let edited = verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &candidate(BAD),
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(edited.findings[0].verdict, ClaimVerdict::Contradicted);
-    assert_eq!(*model.judge_calls.lock().unwrap(), 4);
-    Ok(())
+        let edited = read_one(Reading::Page, &model, &world, BAD).await?;
+        assert_eq!(edited.finding.verdict, ClaimVerdict::Contradicted);
+        assert_eq!(*model.judge_calls.lock().unwrap(), 4);
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
 async fn a_section_that_goes_is_not_checked_and_its_statements_are_not_in_the_report() -> Result<()>
 {
     let model = Model::new();
-    let runtimes = BuiltinRuntimes::for_tests();
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let mut lesson = candidate(GOOD);
@@ -672,15 +704,7 @@ async fn a_section_that_goes_is_not_checked_and_its_statements_are_not_in_the_re
         ..ClaimChecks::default()
     };
 
-    let report = verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &references,
-        &mut checks,
-    )
-    .await?;
+    let report = verify_with(&model, &lesson, &references, &mut checks).await?;
 
     // The section that goes holds a statement the references contradict; it
     // is neither judged nor an issue, and the report still accounts for the
@@ -697,110 +721,99 @@ async fn a_section_that_goes_is_not_checked_and_its_statements_are_not_in_the_re
 
 #[tokio::test]
 async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
+    use crate::features::learning::lesson_drafts;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let model = Model::new();
-    let runtimes = BuiltinRuntimes::for_tests();
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
-    let mut lesson = candidate(GOOD);
-    lesson["blocks"]
-        .as_array_mut()
-        .unwrap()
-        .push(candidate(BAD)["blocks"][0].clone());
-    let mut checks = ClaimChecks::default();
-    let first = verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &references,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(*model.judge_calls.lock().unwrap(), 2);
-    assert_eq!(first.findings[1].verdict, ClaimVerdict::Contradicted);
-    lesson["blocks"][1] = candidate(GOOD)["blocks"][0].clone();
-    let repaired = verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &references,
-        &mut checks,
-    )
-    .await?;
-    assert!(repaired.issues.is_empty());
-    assert_eq!(
-        *model.judge_calls.lock().unwrap(),
-        3,
-        "Repairing one section must not repeat the other section's identical comparison"
-    );
-    // Changed neighboring wording still needs coverage review, but an identical
-    // standalone factual statement keeps its completed evidence comparison.
-    lesson["blocks"][0]["body"] = json!(format!(
-        "{} Additional wording.",
-        lesson["blocks"][0]["body"].as_str().unwrap()
-    ));
-    verify_with_references(
-        &model,
-        &StandardPolicy::new(),
-        &runtimes,
-        &lesson,
-        &references,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(*model.judge_calls.lock().unwrap(), 3);
-    Ok(())
+    let world = world_of(&references, Citations::default());
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        let first = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, claim(GOOD)), (1, claim(BAD))],
+        )
+        .await?;
+        assert_eq!(*model.judge_calls.lock().unwrap(), 2);
+        assert_eq!(first[1].finding.verdict, ClaimVerdict::Contradicted);
+        // The second section is repaired.
+        let repaired = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, claim(GOOD)), (1, claim(GOOD))],
+        )
+        .await?;
+        assert!(repaired.iter().all(|read| read.finding.publishable()));
+        assert_eq!(
+            *model.judge_calls.lock().unwrap(),
+            3,
+            "Repairing one section must not repeat the other section's identical comparison"
+        );
+        // Changed neighboring wording still needs coverage review, but an
+        // identical standalone factual statement keeps its completed evidence
+        // comparison.
+        let reworded = Claim {
+            quote: format!("{GOOD} Additional wording."),
+            statement: GOOD.into(),
+        };
+        let again = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, reworded), (1, claim(GOOD))],
+        )
+        .await?;
+        assert!(again.iter().all(|read| read.reused));
+        assert_eq!(*model.judge_calls.lock().unwrap(), 3);
+        Ok(())
+    })
+    .await
 }
 
-#[tokio::test]
-async fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_identity() -> Result<()>
-{
-    let model = Model::new();
-    let lesson = candidate(GOOD);
-    let report = verify(&model, &lesson, &[source()]).await?;
-    let finding = &report.findings[0];
+#[test]
+fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_identity() {
     let claim = Claim {
-        quote: finding.quote.clone(),
-        statement: finding.statement.clone(),
+        quote: GOOD.into(),
+        statement: GOOD.into(),
     };
-    let key = ClaimChecks::key(finding.unit, &claim, &finding.evidence);
-    let mut checks = ClaimChecks::default();
-    checks.record(key.clone(), finding);
-    let mut evidence = finding.evidence.clone();
-    evidence[0].score += 1.0;
-    assert_eq!(key, ClaimChecks::key(finding.unit, &claim, &evidence));
-    assert_eq!(
-        checks
-            .get(&key, finding.unit, &claim, &evidence)
-            .unwrap()
-            .evidence[0]
-            .score,
-        evidence[0].score
-    );
-    evidence[0].source_id.push_str("-new-version");
-    assert!(checks
-        .get(
-            &ClaimChecks::key(finding.unit, &claim, &evidence),
-            finding.unit,
-            &claim,
-            &evidence
-        )
-        .is_none());
-    evidence = finding.evidence.clone();
-    evidence[0].text.push(' ');
-    assert_ne!(key, ClaimChecks::key(finding.unit, &claim, &evidence));
-    assert_ne!(
-        key,
-        ClaimChecks::key(finding.unit + 1, &claim, &finding.evidence)
-    );
-    assert!(
-        ClaimChecks::default()
-            .get(&key, finding.unit, &claim, &finding.evidence)
-            .is_none(),
-        "Judgments are not inherited across preparation operations"
-    );
-    Ok(())
+    let evidence = vec![EvidencePassage {
+        source_id: "source-1".into(),
+        text: SOURCE.into(),
+        start_byte: 0,
+        end_byte: SOURCE.len(),
+        retrieval_kind: "lexical".into(),
+        score: 1.0,
+    }];
+    let key = ClaimChecks::key(0, &claim, &evidence);
+    // A score is retrieval metadata, no input of the judge: the comparison is
+    // the same, and its receipt restores with the passages retrieved now.
+    let mut rescored = evidence.clone();
+    rescored[0].score += 1.0;
+    assert_eq!(key, ClaimChecks::key(0, &claim, &rescored));
+    let receipt = ClaimReceipt {
+        verdict: ClaimVerdict::Supported,
+        reason: "The passage states it.".into(),
+        supporting_quote: Some(GOOD.into()),
+        interpretation_policy: Some(
+            lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                .into(),
+        ),
+        shown: None,
+    };
+    let restored = receipt.finding(0, &claim, &rescored).unwrap();
+    assert_eq!(restored.evidence[0].score, rescored[0].score);
+    // Another version of the source, other text and another section are
+    // other comparisons.
+    let mut renamed = evidence.clone();
+    renamed[0].source_id.push_str("-new-version");
+    assert_ne!(key, ClaimChecks::key(0, &claim, &renamed));
+    let mut edited = evidence.clone();
+    edited[0].text.push(' ');
+    assert_ne!(key, ClaimChecks::key(0, &claim, &edited));
+    assert_ne!(key, ClaimChecks::key(1, &claim, &evidence));
 }
 
 #[test]
@@ -1235,7 +1248,7 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
         .collect();
     let references = ReferenceCollection::lexical(std::slice::from_ref(&reference))?;
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    ledger.observe(&candidate, &report).await?;
+    claim_ledger_tests::identify_findings(&mut ledger, &candidate, &report).await?;
     let targets = ledger.finding_claims().to_vec();
     let payload = repair_context(
         "{}",

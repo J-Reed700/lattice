@@ -9,8 +9,6 @@ use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::application::services::claim_verification::{
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
-#[cfg(test)]
-use lattice_core::domain::learning::acceptance::StandardPolicy;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
@@ -72,42 +70,12 @@ fn failed_check(finding: &Finding, verdict: ClaimVerdict) -> (CheckResult, Strin
 }
 
 impl ClaimLedger {
-    /// The check a finding records, through the support gate (P4's seam),
-    /// with the gate's assessment when the gate decided the check (a
-    /// supported claim whose support it weighed), as the class the finding
-    /// was checked as maps it. For the tests that put a ledger in a state from
-    /// a report they build; step 6b-3 retires it with them.
-    #[cfg(test)]
-    pub(super) fn check_of(&self, finding: &Finding) -> (Check, Option<TrustAssessment>) {
-        let evidence: Vec<EvidenceSeen> = finding.evidence.iter().map(seen).collect();
-        let class = finding.class.map(|classed| classed.class);
-        let ((result, reason), trust) = match finding.verdict {
-            // A statement the lighter checks passed rests on no quotation.
-            ClaimVerdict::Supported if class == Some(Class::Common) => {
-                ((CheckResult::KnownCommon, finding.reason.clone()), None)
-            }
-            ClaimVerdict::Supported
-                if class == Some(Class::Reasoning) && finding.supporting_quote.is_none() =>
-            {
-                ((CheckResult::Consistent, finding.reason.clone()), None)
-            }
-            ClaimVerdict::Supported => self.supported_check(finding),
-            verdict => (failed_check(finding, verdict), None),
-        };
-        let policy = match class {
-            Some(Class::Reasoning) => CONSISTENCY_POLICY,
-            Some(Class::Common) => KNOWLEDGE_POLICY,
-            _ => POLICY,
-        };
-        (self.check(policy, result, reason, evidence), trust)
-    }
-
     /// The check a reading records, named by the reading and not by the
     /// class that was read: a finding that stands passes as its reading
     /// passes a statement (a veto that stands is `NotFalse`, never the
-    /// unanimity `KnownCommon` records), any other fails as `check_of` fails
-    /// it, and its fingerprint follows the reading's policy. With the gate's
-    /// assessment when the gate decided the check.
+    /// unanimity `KnownCommon` records), any other fails with the kind its
+    /// verdict names, and its fingerprint follows the reading's policy. With
+    /// the gate's assessment when the gate decided the check.
     pub(super) fn check_of_reading(
         &self,
         reading: Reading,
@@ -162,9 +130,9 @@ impl ClaimLedger {
             .trust
             .as_ref()
             .map(|trust| trust.assessment(&source, &quote));
-        // Support found in pass B when the section's citations gave
-        // none: the claim stands on the found passage, and the
-        // ledger says its citation was elsewhere.
+        // Support found on a page of the course when the section's
+        // citations gave none: the claim stands on the found passage, and
+        // the ledger says its citation was elsewhere.
         let result = match &finding.two_pass.supported_by {
             Some(found) => CheckResult::SupportedElsewhere {
                 cited: found.cited.clone(),
@@ -263,25 +231,6 @@ impl ClaimLedger {
             .filter(|id| !id.starts_with("execution:") && !active.contains(id.as_str()))
             .map(SourceChange::Deleted)
             .collect()
-    }
-
-    /// Records one pass of a hand-made report: which claim each finding and
-    /// failed example is, what is new about it, and what was checked (§4
-    /// `ledger.observe`). For the tests that put a ledger in a state from a
-    /// report they build; step 6b-3 retires it with them.
-    #[cfg(test)]
-    pub(in crate::features::learning::lessons::content_verification) async fn observe(
-        &mut self,
-        candidate: &Value,
-        report: &LessonVerificationReport,
-    ) -> Result<()> {
-        let policy = StandardPolicy::new();
-        let extracted = self.extracted_report(candidate, report);
-        let matched = self.match_pass(candidate, &extracted);
-        let ids = self
-            .identify(&policy, candidate, extracted, matched)
-            .await?;
-        self.record_checks(candidate, report, &ids).await
     }
 
     /// The claims research looks for evidence for, with the hints the user

@@ -45,9 +45,9 @@ pub(in crate::features::learning) struct FindingTrust {
     pub(super) profile: ClaimProfile,
     pub(super) supports: Vec<Support>,
     /// Contrary passages for the same claim, levelled the same way: what one
-    /// of the claim's two passes found saying otherwise when the other
-    /// supported it (course evidence index §5.1). The overturn rule weighs
-    /// them against the supports.
+    /// reading of the claim found saying otherwise when another supported it
+    /// (course evidence index §5.1). The overturn rule weighs them against the
+    /// supports.
     #[serde(default)]
     pub(super) contrary: Vec<Contrary>,
     pub(super) decision: Decision,

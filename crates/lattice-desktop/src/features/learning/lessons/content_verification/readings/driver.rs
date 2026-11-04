@@ -224,8 +224,7 @@ pub(in super::super) async fn read_page(
 }
 
 /// The ordinals of the `statements` a quotation found in its source settles,
-/// or evidence the user brought: pass A and B leave them out of the gate's
-/// weighing, as it does here.
+/// or evidence the user brought: the gate leaves them out of its weighing.
 pub(in super::super) fn settled(
     at: &ReadContext<'_>,
     statements: &[Statement<'_>],

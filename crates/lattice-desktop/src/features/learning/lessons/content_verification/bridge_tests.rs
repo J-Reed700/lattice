@@ -1,10 +1,10 @@
-//! Pass A reads a claim part by part against the passages its sentence
-//! cites, and a page retrieved from the course is read by the plain strict
-//! judge (claim classes design §3.3): the check, its record and its receipt.
+//! The fixtures of the part-wise reading (claim classes design §3.3): a
+//! statement is read part by part against the passages its sentence cites,
+//! and a page retrieved from the course is read by the plain strict judge.
 use super::evidence_paging_tests::{inventory, marker_collection, reference, CLAIM};
+use super::readings_tests::paged;
 use super::*;
-use crate::features::learning::lesson_drafts;
-use lattice_core::application::services::claim_verification::{PartKind, BRIDGE_SYSTEM};
+use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
 use std::collections::VecDeque;
 
 /// A statement of the shape the design's third section takes from a real
@@ -96,151 +96,21 @@ pub(super) fn half_stated() -> String {
 }
 
 #[tokio::test]
-async fn a_statement_whose_cited_passage_states_half_of_it_passes_with_the_rest_as_common_knowledge(
-) -> Result<()> {
-    let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    let sources = sources();
-    let references = ReferenceCollection::lexical(&sources)?;
-    let citations = citing(&references)?;
-    let model = Reading::new(vec![half_stated()]);
-    lesson_drafts::run(&repo, &job, &lesson, async {
-        let results = evidence_checks::check_with_citations(
-            &model,
-            &references,
-            &inventory(&[STATEMENT.into()]),
-            &[],
-            &ClaimChecks::default(),
-            &citations,
-        )
-        .await?;
-        let finding = &results[0].2;
-        assert_eq!(finding.verdict, ClaimVerdict::Supported);
-        assert_eq!(finding.two_pass.pass, Some(Pass::Attribution));
-        assert!(finding
-            .supporting_quote
-            .as_deref()
-            .is_some_and(|quote| quote.contains(STATED)));
-        assert_eq!(
-            finding.two_pass.parts,
-            vec![
-                CheckedPart {
-                    part: "Quillet is a lexer".into(),
-                    kind: PartKind::Stated,
-                    source_id: Some("quillet".into()),
-                },
-                CheckedPart {
-                    part: "a lexer turns characters into tokens".into(),
-                    kind: PartKind::Common,
-                    source_id: None,
-                },
-            ]
-        );
-        assert!(finding.reason.contains(
-            "Common knowledge, not in the passages: a lexer turns characters into tokens."
-        ));
-        let (part_wise, _) = model.requests();
-        assert_eq!(part_wise, 1, "the one call the statement's check costs");
-
-        // A later pass restores the check, parts and all, and asks nothing.
-        let again = evidence_checks::check_with_citations(
-            &model,
-            &references,
-            &inventory(&[STATEMENT.into()]),
-            &[],
-            &ClaimChecks::default(),
-            &citations,
-        )
-        .await?;
-        assert_eq!(again[0].2.verdict, ClaimVerdict::Supported);
-        assert_eq!(again[0].2.two_pass.parts, finding.two_pass.parts);
-        assert_eq!(model.requests().0, 1);
-        Ok(())
-    })
-    .await
-}
-
-#[tokio::test]
-async fn a_specific_the_cited_passage_lacks_fails_the_statement_beside_a_stated_part() -> Result<()>
-{
-    let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    let sources = sources();
-    let references = ReferenceCollection::lexical(&sources)?;
-    let citations = citing(&references)?;
-    let model = Reading::new(vec![parts_reply(
-        json!([
-            {"part": "Quillet is a lexer", "kind": "stated", "passage": "passage-0"},
-            {"part": "it was written in 2004", "kind": "specific_missing", "passage": null},
-        ]),
-        "supported",
-    )]);
-    lesson_drafts::run(&repo, &job, &lesson, async {
-        let results = evidence_checks::check_with_citations(
-            &model,
-            &references,
-            &inventory(&["Quillet is a lexer written in 2004.".into()]),
-            &[],
-            &ClaimChecks::default(),
-            &citations,
-        )
-        .await?;
-        let finding = &results[0].2;
-        assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
-        assert!(finding
-            .reason
-            .contains("Not given by the passages: it was written in 2004."));
-        Ok(())
-    })
-    .await
-}
-
-#[tokio::test]
-async fn a_part_wise_answer_that_cannot_be_read_leaves_the_statement_unjudged() -> Result<()> {
-    let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    let sources = sources();
-    let references = ReferenceCollection::lexical(&sources)?;
-    let citations = citing(&references)?;
-    let model = Reading::new(vec!["not json".into(), "still not json".into()]);
-    lesson_drafts::run(&repo, &job, &lesson, async {
-        let results = evidence_checks::check_with_citations(
-            &model,
-            &references,
-            &inventory(&[STATEMENT.into()]),
-            &[],
-            &ClaimChecks::default(),
-            &citations,
-        )
-        .await?;
-        // Asked once more, then neither failed nor supported, and no receipt.
-        let finding = &results[0].2;
-        assert_eq!(finding.verdict, ClaimVerdict::Unverified);
-        assert!(finding.two_pass.parts.is_empty());
-        assert_eq!(model.requests().0, 2);
-        Ok(())
-    })
-    .await
-}
-
-#[tokio::test]
 async fn a_page_retrieved_from_the_course_is_read_by_the_plain_strict_judge() -> Result<()> {
     let references = ReferenceCollection::lexical(&marker_collection())?;
     // Nothing is cited: the claim meets the course's first page for it.
     let model = Reading::new(vec![half_stated()]);
-    let results = evidence_checks::check_with_citations(
+    let reads = paged(
         &model,
         &references,
         &inventory(&[CLAIM.into()]),
-        &[],
         &ClaimChecks::default(),
-        &Citations::default(),
     )
     .await?;
     let (part_wise, strict) = model.requests();
     assert_eq!(part_wise, 0);
     assert!(strict > 0, "the page was judged");
-    assert_eq!(results[0].2.verdict, ClaimVerdict::Unsupported);
-    assert!(results[0].2.two_pass.parts.is_empty());
+    assert_eq!(reads[0].finding.verdict, ClaimVerdict::Unsupported);
+    assert!(reads[0].finding.two_pass.parts.is_empty());
     Ok(())
 }

@@ -6,12 +6,12 @@
 use super::super::*;
 use super::fields::{field_text, locate};
 use super::identify::Carried;
-use super::observe::{assessed, shown};
+use super::observe::shown;
 use super::ClaimLedger;
 use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
 use lattice_core::domain::learning::claim_review::{
     new_information, reopen_cause, Check, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
-    EvidenceFingerprint, Observation, TrustAssessment,
+    EvidenceFingerprint, Observation,
 };
 
 impl ClaimLedger {
@@ -88,7 +88,7 @@ impl ClaimLedger {
     }
 
     /// What a pass found for the code examples `identify` named: the check of
-    /// each (§4 `ledger.observe`), and what it shows to be new about it.
+    /// each (§4), and what it shows to be new about it.
     pub(in super::super) async fn record_example_checks(
         &mut self,
         candidate: &Value,
@@ -114,66 +114,31 @@ impl ClaimLedger {
                 text: check.reason.clone(),
                 retrieval_kind: "execution".into(),
             }];
-            self.check_claim(&id, candidate, quote, (check, None), active)
+            self.check_claim(&id, candidate, quote, check, active)
                 .await?;
             self.show(&id, &passages).await?;
         }
         Ok(())
     }
 
-    /// What a pass found for the claims `identify` named, checked the way the
-    /// pass checked them before the policy decided: the check of each
-    /// finding and failed example, through the support gate, and what the
-    /// check shows to be new. For the tests that put a ledger in a state from
-    /// a report they build; step 6b-3 retires it with them.
-    #[cfg(test)]
-    pub(in super::super) async fn record_checks(
-        &mut self,
-        candidate: &Value,
-        report: &LessonVerificationReport,
-        ids: &[ClaimId],
-    ) -> Result<()> {
-        let active: HashSet<&str> = report
-            .sources
-            .iter()
-            .map(|source| source.id.as_str())
-            .collect();
-        for (finding, id) in report.findings.iter().zip(ids) {
-            let quote = locate(
-                candidate,
-                finding.unit,
-                &finding.quote,
-                Some(&finding.statement),
-            )
-            .quote;
-            let (check, trust) = self.check_of(finding);
-            self.check_claim(id, candidate, quote, (check, trust), &active)
-                .await?;
-            self.show_evidence(id, &finding.evidence).await?;
-        }
-        self.record_example_checks(candidate, &report.executions, &active)
-            .await?;
-        crate::features::learning::lesson_progress::claims(self.tally());
-        Ok(())
-    }
-
     /// The check of one claim, `quote` being where it was extracted: its
     /// first when the claim is new to the ledger. For a claim seen before, a
-    /// check only when something about it is new (a different decision of the
-    /// gate counts, source provenance §18.7) or a repair awaited its verdict.
+    /// check only when something about it is new or a repair awaited its
+    /// verdict.
     async fn check_claim(
         &mut self,
         id: &ClaimId,
         candidate: &Value,
         quote: String,
-        (check, trust): (Check, Option<TrustAssessment>),
+        check: Check,
         active: &HashSet<&str>,
     ) -> Result<()> {
         let Some(Carried {
             before, decided, ..
         }) = self.carried.remove(id)
         else {
-            return self.append_check(id, check, trust).await;
+            self.append(id, ClaimEvent::Checked(check)).await?;
+            return Ok(());
         };
         // A claim stands on its sentence, not on the quote an extraction
         // picked: while the stored quote is still in its field, its sentence
@@ -199,7 +164,7 @@ impl ClaimLedger {
             source_changes: Self::source_changes(&before, active),
             hint: None,
             attached_source_version_id: None,
-            gate: trust.as_ref().map(TrustAssessment::verdict),
+            gate: None,
         };
         let information = new_information(&before, &observation);
         if let Some(change) = &information {
@@ -214,33 +179,7 @@ impl ClaimLedger {
         // A claim the checker could not answer for is asked again.
         let unanswered = before.unjudged() > 0;
         if unchecked || unanswered || decided || information.is_some() {
-            self.append_check(id, check, trust).await?;
-        } else if !before.state().is_settled()
-            && before
-                .basis()
-                .is_some_and(|basis| basis.fingerprint == check.fingerprint)
-        {
-            // A new standing policy/reach can leave the verdict unchanged.
-            // Persist its assessment anyway, or a held legacy claim keeps
-            // looking unprocessed and Resume remains enabled forever.
-            // Never transplant an assessment from reselected evidence.
-            if let Some(trust) = trust.filter(|trust| before.trust() != Some(trust)) {
-                self.append(id, assessed(trust)).await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// A check, then the gate's assessment of it when the gate decided it.
-    async fn append_check(
-        &mut self,
-        id: &ClaimId,
-        check: Check,
-        trust: Option<TrustAssessment>,
-    ) -> Result<()> {
-        self.append(id, ClaimEvent::Checked(check)).await?;
-        if let Some(trust) = trust {
-            self.append(id, assessed(trust)).await?;
+            self.append(id, ClaimEvent::Checked(check)).await?;
         }
         Ok(())
     }

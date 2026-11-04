@@ -1,6 +1,6 @@
-//! The model requests a pass sends: comparisons packed by section, a
-//! claim's two together, judged in one batch while the window holds them,
-//! in halves when the backend counts a batch past it, and alone when one
+//! The model requests the readers send: comparisons packed by section, a
+//! claim's together, judged in one batch while the window holds them, in
+//! halves when the backend counts a batch past it, and alone when one
 //! comparison is all a request holds; each judgment finished into a finding
 //! and its receipt.
 use super::*;
@@ -101,9 +101,9 @@ pub(in crate::features::learning::lessons::content_verification) fn labelled_pas
         .collect()
 }
 
-/// The order the judge reads `pending`'s page in: a pass B page by need,
-/// the most relevant at the edges (`reading_order`); pass A's short page in
-/// its canonical order.
+/// The order the judge reads `pending`'s page in: a page of the course by
+/// need, the most relevant at the edges (`reading_order`); the short page of a
+/// statement's citation in its canonical order.
 pub(super) fn reading(pending: &PendingClaim) -> Vec<usize> {
     match pending.pass {
         Pass::Attribution => (0..pending.evidence.len()).collect(),
@@ -377,49 +377,4 @@ pub(in crate::features::learning::lessons::content_verification) fn pack(
         }
     }
     requests
-}
-
-/// [`outcome::combine`], for tests of what two passes decide together.
-#[cfg(test)]
-pub(in crate::features::learning::lessons::content_verification) fn combined(
-    attribution: Option<Finding>,
-    corroboration: Finding,
-    at: (Option<Reach>, usize),
-    cited: &[String],
-) -> Finding {
-    combine(attribution, corroboration, at, cited)
-}
-
-/// The comparisons [`pack`] puts in each request, as `(ordinal, pass)`, for
-/// comparisons given as `(ordinal, unit, statement, pass, page)`.
-#[cfg(test)]
-pub(in crate::features::learning::lessons::content_verification) fn packed(
-    llm: &dyn LLMPort,
-    comparisons: Vec<(usize, usize, String, Pass, Vec<EvidencePassage>)>,
-) -> Vec<Vec<(usize, Pass)>> {
-    let pending = comparisons
-        .into_iter()
-        .map(|(ordinal, unit, statement, pass, evidence)| PendingClaim {
-            ordinal,
-            key: String::new(),
-            receipt_key: String::new(),
-            unit,
-            claim: Claim {
-                quote: statement.clone(),
-                statement: statement.clone(),
-            },
-            checked: statement,
-            evidence,
-            pass,
-        })
-        .collect();
-    pack(llm, pending, &Labels::new())
-        .into_iter()
-        .map(|request| {
-            request
-                .iter()
-                .map(|item| (item.ordinal, item.pass))
-                .collect()
-        })
-        .collect()
 }

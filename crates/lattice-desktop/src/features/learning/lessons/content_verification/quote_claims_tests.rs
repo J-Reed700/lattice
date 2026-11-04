@@ -1,6 +1,8 @@
 #![allow(clippy::unwrap_used)]
+use super::readings_tests::{read_one, world_of};
 use super::*;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+use lattice_core::domain::learning::acceptance::{Outcome, Reading};
 use std::sync::Mutex;
 
 const TABLE: &str = "| Practice | Effect |\n|---|---|\n| Keep descriptions action-oriented (\"Retrieve X given Y\") | Guides the model's call-or-not decision |\n| List all enum values explicitly | Prevents the model from inventing invalid values |\n";
@@ -134,23 +136,12 @@ async fn a_quoted_claim_is_settled_without_a_model_call() -> Result<()> {
         prompts: Mutex::new(vec![]),
     };
     let statement = "The LLM Stack Book states: \"List all enum values explicitly | Prevents the model from inventing invalid values\"";
-    let inventory = Inventory {
-        units: vec![UnitClaims {
-            index: 0,
-            claims: vec![claim(statement)],
-            non_factual_reason: String::new(),
-        }],
-    };
-    let results = evidence_checks::check_with_citations(
-        &offline,
-        &references,
-        &inventory,
-        &[],
-        &ClaimChecks::default(),
-        &citations(&references),
-    )
-    .await?;
-    assert_eq!(results[0].2.verdict, ClaimVerdict::Supported);
+    let world = world_of(&references, citations(&references));
+
+    let read = read_one(Reading::Parts, &offline, &world, statement).await?;
+
+    assert_eq!(read.outcome, Outcome::Stands);
+    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
     assert!(offline.prompts.lock().unwrap().is_empty());
     Ok(())
 }

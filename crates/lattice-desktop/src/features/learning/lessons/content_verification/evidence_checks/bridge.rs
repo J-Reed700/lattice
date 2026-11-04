@@ -1,12 +1,12 @@
-//! Pass A's check, part by part (claim classes design §3.3). A statement
-//! against the passages its sentence cites is read by the part-wise judge in
-//! the one call its check costs: one whose source states what is specific in
-//! it and leaves its common mechanism unsaid passes, and one that carries a
-//! specific no passage gives does not. The judge reads the parts; what may
-//! count as common knowledge is guarded here, by the rule layer. A check
-//! against a page retrieved from the course, or one research found, stays the
-//! plain strict judge, which finds fault with a study quoted against an
-//! off-subject page less readily.
+//! A statement's check against its own citation, part by part (claim classes
+//! design §3.3). A statement against the passages its sentence cites is read
+//! by the part-wise judge in the one call its check costs: one whose source
+//! states what is specific in it and leaves its common mechanism unsaid
+//! passes, and one that carries a specific no passage gives does not. The judge
+//! reads the parts; what may count as common knowledge is guarded here, by the
+//! rule layer. A check against a page retrieved from the course, or one
+//! research found, stays the plain strict judge, which finds fault with a
+//! study quoted against an off-subject page less readily.
 use super::super::classify::states_a_specific;
 use super::requests::{finish, labelled, unlabelled};
 use super::*;
@@ -18,8 +18,9 @@ use serde_json::Value;
 /// The most a part-wise answer may take: what the replay allowed it.
 const OUTPUT_TOKENS: u32 = 600;
 
-/// Whether `pending` is read part by part: it is pass A's and a source's
-/// passage is among those it cites (an example's run is no source).
+/// Whether `pending` is read part by part: it is a comparison with the
+/// statement's own citation and a source's passage is among those it cites (an
+/// example's run is no source).
 pub(in crate::features::learning::lessons::content_verification) fn applies(
     pending: &PendingClaim,
 ) -> bool {

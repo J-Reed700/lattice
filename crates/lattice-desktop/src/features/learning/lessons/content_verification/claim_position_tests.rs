@@ -1,7 +1,7 @@
 //! Where the ledger has a claim in its class's graph: read from the steps it
 //! records for it, from the entry of the class it was sorted into or from the
 //! post-rewrite node of the claim it succeeds (acceptance design §2.9).
-use super::claim_ledger_tests::{pass_report, passage_finding, CELL};
+use super::claim_ledger_tests::{identify_findings, pass_report, passage_finding, CELL};
 use super::*;
 use crate::features::learning::lessons::call_plan::{Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
@@ -558,9 +558,8 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
             &[statement, statement],
             1,
         );
-        ledger
-            .observe(&lesson, &pass_report(vec![finding(FIRST), finding(SECOND)]))
-            .await?;
+        let report = pass_report(vec![finding(FIRST), finding(SECOND)]);
+        identify_findings(&mut ledger, &lesson, &report).await?;
         let mut planned = Vec::new();
         repair_loop::plan_moved(&policy, &ledger, &mut planned);
         assert_eq!(planned, ledger.finding_claims());
@@ -581,8 +580,8 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
     done?;
 
     // The sort's ceiling (0 sorting calls, 15 for each statement, 1 flow
-    // repair), the same once the claims were observed with nothing done, then
-    // 15 less as each ends.
+    // repair), the same once the claims were identified with nothing done,
+    // then 15 less as each ends.
     assert_eq!(trace.ceilings, [31, 31, 16, 1]);
     assert!(trace.only_came_down(), "{:?}", trace.ceilings);
     Ok(())

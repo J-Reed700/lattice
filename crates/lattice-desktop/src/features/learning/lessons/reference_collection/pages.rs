@@ -98,7 +98,7 @@ pub(in crate::features::learning) struct ClaimList {
     /// the claim was shown, up to the last passage on the claim's subject.
     pub passages: Vec<ReferencePassage>,
     /// Whether a counter query's branches were fused into the ranking: for the
-    /// tests, and the log of the tests of the two passes.
+    /// tests.
     #[cfg(test)]
     pub counter: bool,
     /// Whether the scope had passages past the depth the list was found at:

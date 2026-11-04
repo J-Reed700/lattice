@@ -1,6 +1,6 @@
 //! Rewrites only affected sections, each in as many requests as its failed
-//! claims and evidence need to fit the model, every patch durable. A claim
-//! pass B found supported elsewhere needs only its citation rewritten
+//! claims and evidence need to fit the model, every patch durable. A claim a
+//! page of the course supported elsewhere needs only its citation rewritten
 //! (`citation::cite_where_supported`), with no model call.
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::{

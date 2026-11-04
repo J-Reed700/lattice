@@ -1,10 +1,10 @@
 //! The readers of the acceptance policy (design §2.6): one adapter per
 //! reading, each turning an existing judge path into the policy's outcomes. A
-//! reader asks what the pipeline asks of the same statement, restores and
-//! records the receipts it does, and leaves the finding it fills; what the
-//! answer comes to is interpreted in `lattice-core`, beside the judge. The
-//! reading driver asks them along the policy's graphs; the pipeline does not
-//! call it yet (build step 6b).
+//! reader restores and records the receipts of the comparisons it makes, and
+//! leaves the finding it fills; what the answer comes to is interpreted in
+//! `lattice-core`, beside the judge. The reading driver asks them along the
+//! policy's graphs, and the pass reads the statements that wait for a reading
+//! through it.
 use super::class_checks::finding_of;
 use super::classify::{states_a_specific_in, Case};
 use super::evidence_checks::{
@@ -81,7 +81,7 @@ impl<'c> ReadContext<'c> {
     }
 }
 
-/// A kind of reading. It reads each statement as the pipeline reads it today.
+/// A kind of reading.
 #[async_trait]
 pub(super) trait Reader: Send + Sync {
     #[cfg(test)]
@@ -151,13 +151,13 @@ fn parts_fit<'a>(at: &'a ReadContext<'_>) -> impl Fn(&str, &[EvidencePassage]) -
 
 /// What a part-wise comparison's key carries beside the claim and its
 /// evidence: the guard it asks the specifics test with, the rule layer's own
-/// with the section's givens. Pass A asked it with no givens, so a receipt it
-/// wrote is never restored for a reading.
+/// with the section's givens. The earlier part-wise comparison asked it with
+/// no givens, so a receipt it wrote is never restored for a reading.
 const GUARD: &str = "|guard:rule-layer";
 
-/// `statement`'s comparison of `evidence` for `pass`, keyed as the pass keys
-/// its own, the part-wise judge's with its guard: `checked` is the statement as
-/// the checker reads it.
+/// `statement`'s comparison of `evidence` for `pass`, keyed by the claim and its
+/// evidence, the part-wise judge's with its guard: `checked` is the statement
+/// as the checker reads it.
 fn comparison(
     at: &ReadContext<'_>,
     ordinal: usize,
@@ -196,15 +196,11 @@ async fn restored(at: &ReadContext<'_>, pending: PendingClaim) -> Result<Restore
     match compare(at.llm, at.retained, pending).await? {
         Comparison::Done(finding, reused) => Ok(Restored::Receipt(finding, reused)),
         Comparison::Pending(pending) => Ok(Restored::Ask(pending)),
-        #[cfg(test)]
-        Comparison::Sent => Err(AppError::InternalError(
-            "A comparison was sent before it was read".into(),
-        )),
     }
 }
 
-/// Asks the strict judge about `pending`, packed into requests as the pass
-/// packs them, and gives each finding with its comparison's ordinal.
+/// Asks the strict judge about `pending`, packed into requests by section, and
+/// gives each finding with its comparison's ordinal.
 async fn ask_strict(
     at: &ReadContext<'_>,
     pending: Vec<PendingClaim>,
@@ -224,9 +220,8 @@ async fn ask_strict(
 }
 
 /// The finding on `evidence` for `statement`, restored from its receipt or
-/// asked for, which pass A records under the same key: the part-wise judge's,
-/// or the strict judge's of a page that holds no source passage (an example's
-/// run is no source). Whether it was restored.
+/// asked for: the part-wise judge's, or the strict judge's of a page that holds
+/// no source passage (an example's run is no source). Whether it was restored.
 async fn judge_parts(
     at: &ReadContext<'_>,
     ordinal: usize,

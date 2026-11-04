@@ -1,5 +1,5 @@
-//! The citation repair (course evidence index §5.1): a claim pass B found
-//! support for elsewhere in the course keeps its text, and the citation of its
+//! The citation repair (course evidence index §5.1): a claim a page of the
+//! course gave support for elsewhere keeps its text, and the citation of its
 //! sentence (its section's when the writer cited none) moves to the passage
 //! found. No model writes it: the found passage is the citation. A source the
 //! lesson does not number yet is added to the lesson's numbered sources, as

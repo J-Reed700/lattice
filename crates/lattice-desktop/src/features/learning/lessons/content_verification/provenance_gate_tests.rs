@@ -487,12 +487,13 @@ fn a_contrary_that_outranks_the_support_is_recorded_and_the_claim_stands() {
 }
 
 #[test]
-fn a_contradiction_the_other_pass_found_is_weighed_as_a_contrary() {
+fn a_contradiction_another_reading_found_is_weighed_as_a_contrary() {
     let text = "The current stable Python is 3.13.";
     let newer = "The current stable release is Python 3.14.";
     let mut current = profile(ClaimKind::VersionBound, Some("Python"));
     current.temporal = TemporalScope::Current;
-    // Pass A supported the claim; pass B found a passage saying otherwise.
+    // The citation supported the claim; a page of the course found a passage
+    // saying otherwise.
     let mut claim = finding(text, text, vec![passage("blog", text)]);
     claim.two_pass.contrary.push(ContraryPassage {
         passage: passage("python-org", newer),
@@ -525,6 +526,52 @@ fn a_contradiction_the_other_pass_found_is_weighed_as_a_contrary() {
         )]),
     );
     assert!(unweighed.contrary.is_empty());
+}
+
+#[test]
+fn both_supports_of_a_claim_are_weighed_and_the_strongest_names_it() {
+    const CITED: &str = "Laboratory records confirm the beta behaviour of the sample.";
+    const FOUND: &str = "The owner's manual documents the beta behaviour of the sample.";
+    // The citation (established) and a page of the course (primary) both
+    // support the claim: the page's support is kept beside the citation's,
+    // not dropped.
+    let mut claim = finding(
+        "The sample shows the beta behaviour.",
+        CITED,
+        vec![passage("book", CITED)],
+    );
+    claim.two_pass.also_supported.push(SupportingPassage {
+        passage: passage("owner", FOUND),
+        quote: FOUND.into(),
+    });
+    let weighed: Vec<&str> = supporting_passages(&claim)
+        .iter()
+        .map(|passage| passage.source_id.as_str())
+        .collect();
+    assert_eq!(weighed, ["book", "owner"], "both are weighed");
+    // The gate met the bar with the owner's page first: it names the claim.
+    claim.trust = Some(Box::new(FindingTrust {
+        profile: profile(ClaimKind::Specification, None),
+        supports: Vec::new(),
+        contrary: Vec::new(),
+        decision: Decision::Sufficient {
+            met_by: vec!["owner".to_owned(), "book".to_owned()],
+            label: None,
+            reasons: Vec::new(),
+        },
+        available: None,
+    }));
+    name_strongest(&mut claim);
+    assert_eq!(claim.supporting_quote.as_deref(), Some(FOUND));
+    assert_eq!(
+        claim.two_pass.supported_by.as_ref().unwrap().source_id,
+        "owner"
+    );
+    assert_eq!(claim.two_pass.also_supported[0].passage.source_id, "book");
+    assert!(claim
+        .evidence
+        .iter()
+        .any(|passage| passage.source_id == "owner" && passage.text.contains(FOUND)));
 }
 
 #[test]

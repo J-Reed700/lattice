@@ -7,7 +7,7 @@ use super::bridge_tests::{
 };
 use super::class_checks_tests::Classes;
 use super::evidence_paging_tests::{
-    marker_collection, reference, PagingModel, CLAIM, CONTRARY, MARKER,
+    marker_collection, reference, related, PagingModel, CLAIM, CONTRARY, MARKER,
 };
 use super::*;
 use crate::features::learning::lesson_drafts;
@@ -45,12 +45,12 @@ impl LLMPort for Down {
 
 /// What the readers read: a lesson, the course it cites, its examples' runs
 /// and the claims the user settled with evidence of their own.
-struct World<'w> {
-    lesson: Value,
-    references: &'w ReferenceCollection<'w>,
-    citations: Citations,
-    runs: Vec<execution::Observation>,
-    settled: HashMap<(usize, String), Finding>,
+pub(super) struct World<'w> {
+    pub(super) lesson: Value,
+    pub(super) references: &'w ReferenceCollection<'w>,
+    pub(super) citations: Citations,
+    pub(super) runs: Vec<execution::Observation>,
+    pub(super) settled: HashMap<(usize, String), Finding>,
 }
 
 /// A lesson whose one section is an explanation of `body`.
@@ -58,7 +58,10 @@ fn explanation(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Quillet","body":body,"rubric":[]}],"questions":[]})
 }
 
-fn world_of<'w>(references: &'w ReferenceCollection<'w>, citations: Citations) -> World<'w> {
+pub(super) fn world_of<'w>(
+    references: &'w ReferenceCollection<'w>,
+    citations: Citations,
+) -> World<'w> {
     World {
         lesson: explanation(STATEMENT),
         references,
@@ -81,14 +84,14 @@ fn run_printing(stdout: &str) -> execution::Observation {
     .unwrap()
 }
 
-fn claim(text: &str) -> Claim {
+pub(super) fn claim(text: &str) -> Claim {
     Claim {
         quote: text.into(),
         statement: text.into(),
     }
 }
 
-fn classed() -> Classed {
+pub(super) fn classed() -> Classed {
     Classed {
         class: Class::Sourced,
         by: ClassifiedBy::Writer,
@@ -96,7 +99,7 @@ fn classed() -> Classed {
 }
 
 /// What the reader of `reading` makes of `claims`, each with its section.
-async fn read_all(
+pub(super) async fn read_all(
     reading: Reading,
     model: &dyn LLMPort,
     world: &World<'_>,
@@ -106,13 +109,25 @@ async fn read_all(
         settled: world.settled.clone(),
         ..ClaimChecks::default()
     };
+    read_with(reading, model, world, &retained, claims).await
+}
+
+/// What the reader of `reading` makes of `claims`, each with its section, with
+/// the choices `retained` holds.
+pub(super) async fn read_with(
+    reading: Reading,
+    model: &dyn LLMPort,
+    world: &World<'_>,
+    retained: &ClaimChecks,
+    claims: &[(usize, Claim)],
+) -> Result<Vec<Read>> {
     let at = ReadContext::new(
         model,
         &world.lesson,
         world.references,
         &world.citations,
         &world.runs,
-        &retained,
+        retained,
     )
     .await?;
     let statements: Vec<Statement<'_>> = claims
@@ -129,7 +144,7 @@ async fn read_all(
 }
 
 /// What the reader of `reading` makes of `text` in section 0.
-async fn read_one(
+pub(super) async fn read_one(
     reading: Reading,
     model: &dyn LLMPort,
     world: &World<'_>,
@@ -149,6 +164,52 @@ fn sources_of(passages: &[EvidencePassage]) -> Vec<&str> {
         .iter()
         .map(|passage| passage.source_id.as_str())
         .collect()
+}
+
+/// Unit 0 cites the passage holding `MARKER`.
+fn citing_marker(references: &ReferenceCollection<'_>) -> Result<Citations> {
+    Ok(Citations::new(
+        HashMap::from([(0, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    ))
+}
+
+/// Whether a comparison read the marker's passage.
+fn read_marker(check: &[String]) -> bool {
+    check.iter().any(|text| text.contains(MARKER))
+}
+
+/// The claims of `inventory`, each with its section.
+fn claims_of(inventory: &Inventory) -> Vec<(usize, Claim)> {
+    inventory
+        .units
+        .iter()
+        .flat_map(|unit| {
+            unit.claims
+                .iter()
+                .map(move |claim| (unit.index, claim.clone()))
+        })
+        .collect()
+}
+
+/// What the page reader makes of each claim of `inventory` in the course
+/// `references`, with the choices `retained` holds: the first page of the
+/// course for each, as a pass reads it.
+pub(super) async fn paged(
+    model: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    inventory: &Inventory,
+    retained: &ClaimChecks,
+) -> Result<Vec<Read>> {
+    let world = world_of(references, Citations::default());
+    read_with(
+        Reading::Page,
+        model,
+        &world,
+        retained,
+        &claims_of(inventory),
+    )
+    .await
 }
 
 #[test]
@@ -172,6 +233,7 @@ async fn a_statement_its_citation_states_in_part_stands_with_the_rest_as_common_
     assert_eq!(read.outcome, Outcome::Stands);
     let finding = &read.finding;
     assert_eq!(finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(finding.two_pass.pass, Some(Pass::Attribution));
     assert!(finding
         .supporting_quote
         .as_deref()
@@ -180,6 +242,14 @@ async fn a_statement_its_citation_states_in_part_stands_with_the_rest_as_common_
         kinds(&finding.two_pass.parts),
         vec![PartKind::Stated, PartKind::Common]
     );
+    assert_eq!(
+        finding.two_pass.parts[0].source_id.as_deref(),
+        Some("quillet")
+    );
+    assert_eq!(finding.two_pass.parts[1].source_id, None);
+    assert!(finding
+        .reason
+        .contains("Common knowledge, not in the passages: a lexer turns characters into tokens."));
     assert_eq!(finding.class, Some(classed()));
     assert_eq!(model.requests(), (1, 0));
     Ok(())
@@ -451,8 +521,7 @@ async fn a_claim_the_user_resolved_with_evidence_of_their_own_stands_without_a_c
 }
 
 #[tokio::test]
-async fn a_page_of_example_runs_alone_is_asked_of_the_strict_judge_as_pass_a_asks_it() -> Result<()>
-{
+async fn a_page_of_example_runs_alone_is_asked_of_the_strict_judge() -> Result<()> {
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources)?;
     // Nothing is cited, so the page is the section's passed run, and a run is
@@ -537,7 +606,8 @@ async fn the_guard_asks_the_rule_layers_test_with_the_sections_givens() -> Resul
 }
 
 #[tokio::test]
-async fn a_second_reading_restores_its_own_receipt_and_never_one_pass_a_wrote() -> Result<()> {
+async fn a_second_reading_restores_its_own_receipt_and_never_one_an_earlier_comparison_wrote(
+) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let sources = sources();
@@ -547,21 +617,23 @@ async fn a_second_reading_restores_its_own_receipt_and_never_one_pass_a_wrote() 
     lesson_drafts::run(&repo, &job, &lesson, async {
         let mut page = citations.of(0).to_vec();
         canonicalize_evidence(&mut page);
-        // Pass A asked the specifics guard with no givens, the reader asks it
-        // with the section's: the reader's key carries the guard.
+        // The earlier part-wise comparison asked the specifics guard with no
+        // givens, the reader asks it with the section's: the reader's key
+        // carries the guard.
         let compared = ClaimChecks::key(0, &claim(STATEMENT), &page);
-        let pass_a_key = claim_receipt_key(&model, &compared);
+        let earlier_key = claim_receipt_key(&model, &compared);
         let key = claim_receipt_key(&model, &format!("{compared}|guard:rule-layer"));
         assert!(lesson_drafts::checkpoint(&key).await?.is_none());
-        // A part-wise receipt pass A wrote for the same statement and page.
+        // A part-wise receipt the earlier comparison wrote for the same
+        // statement and page.
         let written = serde_json::to_value(ClaimReceipt {
             verdict: ClaimVerdict::Supported,
-            reason: "Pass A's.".into(),
+            reason: "The earlier comparison's.".into(),
             supporting_quote: Some(STATED.into()),
             interpretation_policy: None,
             shown: None,
         })?;
-        lesson_drafts::record_checkpoint(&pass_a_key, written).await?;
+        lesson_drafts::record_checkpoint(&earlier_key, written).await?;
         let world = world_of(&references, citing(&references)?);
 
         let first = read_one(Reading::Parts, &model, &world, STATEMENT).await?;
@@ -569,7 +641,7 @@ async fn a_second_reading_restores_its_own_receipt_and_never_one_pass_a_wrote() 
         assert_eq!(
             model.requests().0,
             1,
-            "pass A's receipt was not restored: the statement was asked"
+            "the earlier comparison's receipt was not restored: the statement was asked"
         );
         assert!(
             lesson_drafts::checkpoint(&key).await?.is_some(),
@@ -818,7 +890,7 @@ async fn parts_takes_the_cited_passages_the_part_wise_judge_holds() -> Result<()
 }
 
 #[test]
-fn pass_as_page_is_still_fitted_to_the_strict_judge() {
+fn a_citations_page_is_still_fitted_to_the_strict_judge() {
     let three = three_passages();
     let citations = Citations::new(HashMap::from([(0, three.clone())]), HashMap::new());
     // The window in which the strict check holds two of the three passages.
@@ -840,12 +912,21 @@ fn pass_as_page_is_still_fitted_to_the_strict_judge() {
 }
 
 /// Unit 0 cites a related passage that does not state the claim, as source 0.
-fn citing_the_wrong_passage(references: &ReferenceCollection<'_>) -> Result<Citations> {
+pub(super) fn citing_the_wrong_passage(references: &ReferenceCollection<'_>) -> Result<Citations> {
     let quote = "Mineral alpha notes 3: property beta was measured, pressure varied.";
     Ok(Citations::new(
         HashMap::from([(0, references.cited_passages(&[quote])?)]),
         HashMap::from([(0, "related-3".to_owned())]),
     ))
+}
+
+/// A lesson section citing the related passage, as source 0.
+pub(super) fn wrongly_cited() -> Value {
+    json!({"blocks":[{
+        "kind":"explanation","title":"Alpha","body":CLAIM,"rubric":[],
+        "quote":"Mineral alpha notes 3: property beta was measured, pressure varied.",
+        "sourceIndex":0
+    }],"questions":[]})
 }
 
 #[tokio::test]
@@ -921,7 +1002,12 @@ async fn a_page_that_does_not_state_the_claim_leaves_it_unproven() -> Result<()>
 
     assert_eq!(read.outcome, Outcome::Unproven);
     assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
-    assert_eq!(model.checks.lock().unwrap().len(), 1, "the first page only");
+    assert!(read.finding.wants_research());
+    assert_eq!(
+        model.checks.lock().unwrap().len(),
+        1,
+        "the first page only, though the support is on a later one"
+    );
     Ok(())
 }
 
@@ -953,7 +1039,8 @@ async fn a_page_that_contradicts_the_claim_refutes_it() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_page_read_twice_is_asked_once_and_its_receipt_is_the_pass_b_key() -> Result<()> {
+async fn a_page_read_twice_is_asked_once_and_its_receipt_is_keyed_by_the_claim_and_its_page(
+) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let references = ReferenceCollection::lexical(&marker_collection())?;
@@ -972,6 +1059,10 @@ async fn a_page_read_twice_is_asked_once_and_its_receipt_is_the_pass_b_key() -> 
         let again = read_one(Reading::Page, &model, &world, CLAIM).await?;
         assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(again.outcome, first.outcome);
+        assert_eq!(
+            again.finding.two_pass.supported_by,
+            first.finding.two_pass.supported_by
+        );
         Ok(())
     })
     .await
@@ -1132,5 +1223,245 @@ async fn an_outage_is_an_error_from_every_reader_and_never_an_outcome() -> Resul
             "{reading:?}: {reads:?}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn parts_reads_only_what_its_section_cites_and_keys_its_receipt_by_the_claim_and_those_passages(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(6_000);
+    let world = world_of(&references, citing_marker(&references)?);
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
+
+        assert_eq!(read.outcome, Outcome::Stands);
+        assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+        assert_eq!(read.finding.two_pass.pass, Some(Pass::Attribution));
+        assert!(read.finding.two_pass.supported_by.is_none());
+        // It compared the cited passage and nothing else, in one request.
+        let checks = model.checks.lock().unwrap().clone();
+        assert_eq!(checks.len(), 1);
+        assert!(read_marker(&checks[0]));
+        assert_eq!(checks[0].len(), world.citations.of(0).len());
+        assert_eq!(model.requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Its receipt is keyed by the claim and those passages alone, beside
+        // the guard it asks with: no selection, no ranking.
+        let mut page = world.citations.of(0).to_vec();
+        canonicalize_evidence(&mut page);
+        let compared = ClaimChecks::key(0, &claim(CLAIM), &page);
+        let key = claim_receipt_key(&model, &format!("{compared}|guard:rule-layer"));
+        assert!(lesson_drafts::checkpoint(&key).await?.is_some());
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_page_never_shows_what_the_citation_shows() -> Result<()> {
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    // A window large enough for the whole course on one page.
+    let model = PagingModel::new(32_000);
+    let world = world_of(&references, citing_marker(&references)?);
+
+    read_one(Reading::Page, &model, &world, CLAIM).await?;
+
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(
+        checks.len(),
+        1,
+        "the page alone: the citation is read at its own node"
+    );
+    assert!(!read_marker(&checks[0]));
+    assert_eq!(
+        checks[0].len(),
+        12,
+        "every related source, and not the cited one"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_first_page_of_a_job_is_bounded_by_the_window_alone_and_the_pages_after_it_by_its_answers(
+) -> Result<()> {
+    use lattice_core::application::ports::llm_port::Pace;
+    let sources: Vec<_> = (0..12).map(related).collect();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let pace = Pace {
+        prompt_tokens_per_second: 1_000.0,
+        output_tokens_per_second: 100.0,
+    };
+    let model = PagingModel::paced(32_000, pace, 130);
+    let claims = [
+        (0, claim(CLAIM)),
+        (0, claim("Mineral alpha shows property beta under heat.")),
+        (0, claim("Mineral alpha shows property beta when cold.")),
+    ];
+    // No section cites anything: no answer is measured before the first page.
+    let world = world_of(&references, Citations::default());
+
+    read_all(Reading::Page, &model, &world, &claims).await?;
+
+    let sizes = model.request_sizes.lock().unwrap().clone();
+    let checks = model.checks.lock().unwrap().clone();
+    assert_eq!(sizes[0], 1, "the first claim alone");
+    assert_eq!(checks[0].len(), 12, "its page bounded by the window alone");
+    let budget = page_budget(Some(pace), Some(130.0)).unwrap();
+    for check in &checks[1..] {
+        let tokens: usize = check.iter().map(|text| bank_tokens(&model, text)).sum();
+        assert!(tokens <= budget, "{tokens} > {budget}");
+    }
+    assert!(checks.len() > 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_answers_the_parts_reading_measured_size_the_pages_the_page_reading_reads() -> Result<()>
+{
+    use lattice_core::application::ports::llm_port::Pace;
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    // 130 output tokens an answer, reading ten times faster than writing: a
+    // page reads 1,300 tokens, two related passages.
+    let pace = Pace {
+        prompt_tokens_per_second: 1_000.0,
+        output_tokens_per_second: 100.0,
+    };
+    let model = PagingModel::paced(32_000, pace, 130);
+    let world = world_of(&references, citing_marker(&references)?);
+    let claims = [
+        (0, claim(CLAIM)),
+        (0, claim(&format!("{CLAIM} It holds in the lab."))),
+    ];
+    let retained = ClaimChecks::default();
+
+    read_with(Reading::Parts, &model, &world, &retained, &claims).await?;
+
+    let sizes = model.request_sizes.lock().unwrap().clone();
+    assert_eq!(
+        sizes,
+        [1, 1],
+        "each citation is read part by part in a call of its own"
+    );
+    assert!(model
+        .checks
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|check| read_marker(check)));
+
+    read_with(Reading::Page, &model, &world, &retained, &claims).await?;
+
+    // Every page is sized by the measured answers, not by the most an answer
+    // could be.
+    let budget = page_budget(Some(pace), Some(130.0)).unwrap();
+    assert_eq!(budget, 1_300);
+    let checks = model.checks.lock().unwrap().clone();
+    assert!(checks.len() > 2);
+    for check in &checks[2..] {
+        assert!(!read_marker(check));
+        let tokens: usize = check.iter().map(|text| bank_tokens(&model, text)).sum();
+        assert!(tokens <= budget, "{tokens} > {budget}");
+        assert!(!check.is_empty());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_parts_receipt_survives_a_change_in_the_course_ranking_and_the_page_is_compared_again(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
+    let mut sources = marker_collection();
+    let model = PagingModel::new(32_000);
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, citing_marker(&references)?);
+        read_one(Reading::Parts, &model, &world, CLAIM).await?;
+        read_one(Reading::Page, &model, &world, CLAIM).await?;
+        assert_eq!(model.checks.lock().unwrap().len(), 2);
+        // A new source joins the course and ranks into the page's list.
+        sources.push(related(50));
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, citing_marker(&references)?);
+
+        let parts = read_one(Reading::Parts, &model, &world, CLAIM).await?;
+        let page = read_one(Reading::Page, &model, &world, CLAIM).await?;
+
+        assert_eq!(parts.outcome, Outcome::Stands);
+        assert!(parts.reused, "the citation's comparison was restored");
+        assert_eq!(page.finding.verdict, ClaimVerdict::Supported);
+        let checks = model.checks.lock().unwrap().clone();
+        assert_eq!(checks.len(), 3, "the page alone is compared again");
+        assert!(!read_marker(&checks[2]));
+        assert!(checks[2].iter().any(|text| text.contains("notes 50")));
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn another_sections_citations_are_not_the_statements_own() -> Result<()> {
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(6_000);
+    // Section 1 cites the support; the claim belongs to section 0.
+    let citations = Citations::new(
+        HashMap::from([(1, references.cited_passages(&[MARKER])?)]),
+        HashMap::new(),
+    );
+    let world = world_of(&references, citations);
+
+    let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
+
+    let checks = model.checks.lock().unwrap();
+    assert_eq!(
+        checks.len(),
+        1,
+        "no citation of its own: section 0 cites nothing"
+    );
+    assert!(!read_marker(&checks[0]));
+    assert_eq!(read.finding.verdict, ClaimVerdict::Unsupported);
+    Ok(())
+}
+
+/// The section cites the wrong passage; the sentence of the claim cites the
+/// marker's, as source 1.
+fn sentence_cited() -> Value {
+    let mut lesson = wrongly_cited();
+    lesson["blocks"][0]["citations"] = json!([{"sentence":CLAIM,"sourceIndex":1,"quote":MARKER}]);
+    lesson
+}
+
+#[tokio::test]
+async fn a_statement_is_read_against_the_passage_its_own_sentence_cites() -> Result<()> {
+    const OTHER: &str = "Tides rise twice a day on most coasts.";
+    let references = ReferenceCollection::lexical(&marker_collection())?;
+    let model = PagingModel::new(6_000);
+    let lesson = sentence_cited();
+    let citations = section_citations(&lesson, &references)?;
+
+    let own = citations.of_claim(0, CLAIM);
+    assert!(!own.is_empty() && own.iter().all(|passage| passage.source_id == "marker"));
+    // A statement of no cited sentence reads the section's: the passage its
+    // own quote cites, and the sentence's.
+    let section = citations.of_claim(0, OTHER);
+    assert!(section
+        .iter()
+        .any(|passage| passage.source_id == "related-3"));
+    assert!(section.iter().any(|passage| passage.source_id == "marker"));
+    assert!(citations.is_cited(0, CLAIM) && !citations.is_cited(0, OTHER));
+    assert_eq!(citations.source_at(1), Some("marker"));
+    let mut world = world_of(&references, citations);
+    world.lesson = lesson;
+
+    let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
+
+    assert_eq!(read.finding.verdict, ClaimVerdict::Supported);
+    assert_eq!(
+        read.finding.two_pass.pass,
+        Some(Pass::Attribution),
+        "the sentence's passage was read, not the section's"
+    );
     Ok(())
 }

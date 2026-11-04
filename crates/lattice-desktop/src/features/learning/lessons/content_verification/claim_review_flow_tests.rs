@@ -687,7 +687,9 @@ mod loop_bound {
 
     #[tokio::test]
     async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
-        use super::super::claim_ledger_tests::{only_passage, pass_report, passage_finding};
+        use super::super::claim_ledger_tests::{
+            check_findings, identify_findings, only_passage, pass_report, passage_finding,
+        };
         const SOURCE: &str = "Pure water boils at 100 °C at sea level; ice melts at 0 °C.";
         const BOILS: &str = "At sea level, water boils at 100 °C.";
         let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
@@ -699,22 +701,18 @@ mod loop_bound {
         let model = Model::new();
         let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
         let before = lesson(&body);
-        ledger
-            .observe(
-                &before,
-                &pass_report(vec![
-                    passage_finding(&body, BOILS, true, SOURCE),
-                    passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
-                    passage_finding(
-                        &body,
-                        "Salt lowers water's boiling point a lot.",
-                        false,
-                        SOURCE,
-                    ),
-                ]),
-            )
-            .await?;
-        let ids = ledger.finding_claims().to_vec();
+        let report = pass_report(vec![
+            passage_finding(&body, BOILS, true, SOURCE),
+            passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
+            passage_finding(
+                &body,
+                "Salt lowers water's boiling point a lot.",
+                false,
+                SOURCE,
+            ),
+        ]);
+        let ids = identify_findings(&mut ledger, &before, &report).await?;
+        check_findings(&mut ledger, &ids, &report.findings).await?;
         let quotes: Vec<String> = ids
             .iter()
             .map(|id| ledger.entry(id).unwrap().location().quote.clone())
@@ -766,21 +764,19 @@ mod loop_bound {
                 .sum()
         };
         let checked = checks(&ledger);
-        ledger
-            .observe(
-                &lesson(&after),
-                &pass_report(vec![
-                    passage_finding(&after, BOILS, true, SOURCE),
-                    passage_finding(&after, ALSO_VERIFIED, true, SOURCE),
-                    passage_finding(
-                        &after,
-                        "Salt raises water's boiling point slightly.",
-                        false,
-                        SOURCE,
-                    ),
-                ]),
-            )
-            .await?;
+        let report = pass_report(vec![
+            passage_finding(&after, BOILS, true, SOURCE),
+            passage_finding(&after, ALSO_VERIFIED, true, SOURCE),
+            passage_finding(
+                &after,
+                "Salt raises water's boiling point slightly.",
+                false,
+                SOURCE,
+            ),
+        ]);
+        let ids_after = identify_findings(&mut ledger, &lesson(&after), &report).await?;
+        // The pass checks the target alone.
+        check_findings(&mut ledger, &ids_after[2..], &report.findings[2..]).await?;
 
         // The verified claims keep their ids, states and bases, and nothing
         // is recorded for them; the target continues with one attempt fewer,

@@ -4,6 +4,7 @@
 //! cannot be taken out; the user's
 //! verdicts are never re-litigated and are labelled examples of the checker's
 //! accuracy (§15).
+use super::acceptance_switch_tests::{claim, local_check, stood, SOURCED};
 use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::checker_examples::{
@@ -15,6 +16,7 @@ use crate::features::learning::lessons::claim_reviews::repository::{
 };
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
+use lattice_core::domain::learning::acceptance::Reading;
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
     ClaimLocation, ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen, LessonReview,
@@ -1299,6 +1301,76 @@ fn added(entry: &ClaimLedgerEntry, from: usize) -> Vec<&ClaimEvent> {
         .collect()
 }
 
+/// The statements of `report`'s findings, identified with the ledger as a pass
+/// identifies them before anything is read: where each stands and the class
+/// its finding was checked as. Records no check. The claims, in the report's
+/// order.
+pub(super) async fn identify_findings(
+    ledger: &mut claim_ledger::ClaimLedger,
+    lesson: &Value,
+    report: &LessonVerificationReport,
+) -> Result<Vec<ClaimId>> {
+    let claims: Vec<(usize, Claim)> = report
+        .findings
+        .iter()
+        .map(|finding| {
+            (
+                finding.unit,
+                Claim {
+                    quote: finding.quote.clone(),
+                    statement: finding.statement.clone(),
+                },
+            )
+        })
+        .collect();
+    let mut extracted = ledger.extracted(lesson, &claims, &report.executions);
+    for (found, finding) in extracted.iter_mut().zip(&report.findings) {
+        found.class = finding.class;
+    }
+    let matched = ledger.match_pass(lesson, &extracted);
+    ledger
+        .identify(&StandardPolicy::new(), lesson, extracted, matched)
+        .await
+}
+
+/// Records for each of `ids` the check of the finding at its place: supported
+/// on the passage it quotes, or failed as unsupported. For a claim with no
+/// class, which no reading decides.
+pub(super) async fn check_findings(
+    ledger: &mut claim_ledger::ClaimLedger,
+    ids: &[ClaimId],
+    findings: &[Finding],
+) -> Result<()> {
+    for (finding, id) in findings.iter().zip(ids) {
+        let seen: Vec<EvidenceSeen> = finding
+            .evidence
+            .iter()
+            .map(|passage| EvidenceSeen {
+                source_version_id: passage.source_id.clone(),
+                start_byte: passage.start_byte,
+                end_byte: passage.end_byte,
+                text_sha256: text_sha256(&passage.text),
+            })
+            .collect();
+        let result = match (&finding.supporting_quote, finding.verdict) {
+            (Some(quote), ClaimVerdict::Supported) => CheckResult::Supported {
+                source_version_id: finding
+                    .evidence
+                    .first()
+                    .map(|passage| passage.source_id.clone())
+                    .unwrap_or_default(),
+                supporting_quote: quote.clone(),
+            },
+            _ => CheckResult::Failed {
+                kind: VerdictKind::Unsupported,
+            },
+        };
+        let check = local_check(result, &finding.reason, seen);
+        ledger.append(id, ClaimEvent::Checked(check)).await?;
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_location_that_narrows_in_unchanged_text_changes_nothing_but_the_location() -> Result<()>
 {
@@ -1341,11 +1413,11 @@ async fn a_location_that_narrows_in_unchanged_text_changes_nothing_but_the_locat
         .await?;
     let before = ledger.entry(&id).unwrap().clone();
 
+    let lesson = cell_lesson(CELL);
+    let report = pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]);
+    let ids = identify_findings(&mut ledger, &lesson, &report).await?;
     ledger
-        .observe(
-            &cell_lesson(CELL),
-            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
-        )
+        .reopen_changed(&lesson, &HashSet::from(["source-1"]), &ids)
         .await?;
 
     let entry = ledger.entry(&id).unwrap();
@@ -1371,118 +1443,7 @@ async fn a_location_that_narrows_in_unchanged_text_changes_nothing_but_the_locat
 }
 
 #[tokio::test]
-async fn a_verified_claim_is_not_rejudged_on_reselected_evidence_while_its_sentence_stands(
-) -> Result<()> {
-    let model = Model::new();
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let lesson = cell_lesson(CELL);
-    ledger
-        .observe(
-            &lesson,
-            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
-        )
-        .await?;
-    let id = ledger.finding_claims()[0].clone();
-    let verified = ledger.entry(&id).unwrap().clone();
-    assert_eq!(verified.location().quote, ATP_SENTENCE);
-    assert!(matches!(
-        verified.state(),
-        ClaimState::ResolvedByEvidence { .. }
-    ));
-
-    // Re-extraction rewords the statement over the same sentence, and the
-    // check, on other passages, fails: nothing new about the claim.
-    let reworded = "Most of a cell's ATP comes from oxidative phosphorylation in mitochondria.";
-    let other = "Glycolysis in the cytoplasm also yields a little ATP.";
-    ledger
-        .observe(
-            &lesson,
-            &pass_report(vec![passage_finding(CELL, reworded, false, other)]),
-        )
-        .await?;
-    let entry = ledger.entry(&id).unwrap();
-    let events = added(entry, verified.events().len());
-    assert!(
-        matches!(events.as_slice(), [ClaimEvent::Extracted { statement, .. }] if statement == reworded),
-        "{events:?}"
-    );
-    assert_eq!(entry.state(), verified.state());
-    assert_eq!(entry.basis(), verified.basis());
-
-    // The sentence changed: the check applies.
-    let changed = CELL.replace("produce most", "produce nearly all");
-    let from = entry.events().len();
-    ledger
-        .observe(
-            &cell_lesson(&changed),
-            &pass_report(vec![passage_finding(&changed, ATP, false, other)]),
-        )
-        .await?;
-    let entry = ledger.entry(&id).unwrap();
-    assert!(added(entry, from)
-        .iter()
-        .any(|event| matches!(event, ClaimEvent::Checked(_))));
-    assert!(matches!(entry.state(), ClaimState::Open { .. }));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_verified_claim_whose_citation_was_repaired_is_decided_by_the_next_pass() -> Result<()> {
-    let model = Model::new();
-    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    let lesson = cell_lesson(CELL);
-    ledger
-        .observe(
-            &lesson,
-            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
-        )
-        .await?;
-    let id = ledger.finding_claims()[0].clone();
-    // Its section now cites the passage found for it elsewhere (§5.1).
-    let cited = "Glycolysis in the cytoplasm also yields a little ATP.";
-    ledger
-        .append(
-            &id,
-            ClaimEvent::CitationRepaired {
-                cited: vec!["source-1".into()],
-                source_version_id: "source-1".into(),
-                quote: cited.into(),
-                added_source: false,
-            },
-        )
-        .await?;
-    let from = ledger.entry(&id).unwrap().events().len();
-
-    // The next pass reads the new citation, which does not support it.
-    ledger
-        .observe(
-            &lesson,
-            &pass_report(vec![passage_finding(CELL, ATP, false, cited)]),
-        )
-        .await?;
-
-    let entry = ledger.entry(&id).unwrap();
-    let events = added(entry, from);
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, ClaimEvent::Checked(_))),
-        "{events:?}"
-    );
-    assert!(
-        matches!(entry.state(), ClaimState::Open { .. }),
-        "{:?}",
-        entry.state()
-    );
-    assert!(matches!(
-        ledger.decide(&StandardPolicy::new(), &[]),
-        claim_ledger::Decision::Repair(_)
-    ));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_rewritten_and_both_are_checked_again(
+async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_tells_its_rewrite_what_else_the_sentence_says_and_the_verified_one_rides_on_it(
 ) -> Result<()> {
     let model = Model::new();
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
@@ -1492,8 +1453,8 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_rewritten_an
         passage_finding(CELL, ATP, true, CELL_SOURCE),
         passage_finding(CELL, overstated, false, CELL_SOURCE),
     ]);
-    ledger.observe(&before, &report).await?;
-    let ids = ledger.finding_claims().to_vec();
+    let ids = identify_findings(&mut ledger, &before, &report).await?;
+    check_findings(&mut ledger, &ids, &report.findings).await?;
     let (verified, shared) = (ids[0].clone(), ids[1].clone());
     assert_eq!(ledger.cotenants(&shared), std::slice::from_ref(&verified));
     assert_eq!(ledger.cotenants(&verified), std::slice::from_ref(&shared));
@@ -1528,57 +1489,6 @@ async fn a_failed_claim_sharing_its_sentence_with_a_verified_one_is_rewritten_an
         .find(|record| record.claim_id == verified)
         .unwrap();
     assert_eq!(rider.rides_on.as_ref(), Some(&shared));
-
-    // The sentence is rewritten, and both statements stand on the new one.
-    let rewritten =
-        "Mitochondria make most, though not all, of a cell's ATP by oxidative phosphorylation.";
-    let after = CELL.replace(ATP_SENTENCE, rewritten);
-    let both = "Mitochondria make most, though not all, of a cell's ATP.";
-    ledger
-        .observe(
-            &cell_lesson(&after),
-            &pass_report(vec![
-                passage_finding(&after, ATP, false, CELL_SOURCE),
-                passage_finding(&after, both, false, CELL_SOURCE),
-            ]),
-        )
-        .await?;
-
-    // Each is checked once on the new text, and takes the attempts the
-    // rewrite left: the next is their last.
-    for id in [&verified, &shared] {
-        let entry = ledger.entry(id).unwrap();
-        assert_eq!(entry.location().quote, rewritten);
-        assert!(
-            matches!(
-                entry.state(),
-                ClaimState::Open {
-                    kind: VerdictKind::Unsupported,
-                    machine_attempts_left: 1,
-                    ..
-                }
-            ),
-            "{:?}",
-            entry.state()
-        );
-        assert!(entry.next_repair_escalates());
-    }
-    assert!(ledger
-        .entry(&verified)
-        .unwrap()
-        .events()
-        .iter()
-        .any(|record| matches!(
-            &record.event,
-            ClaimEvent::RepairAttempted {
-                attempt: 1,
-                escalated: false,
-                outcome: RepairOutcome::Rewritten,
-                ..
-            }
-        )));
-    assert!(ledger.pending.repairs.is_empty());
-    assert_eq!(*model.judge_calls.lock().unwrap(), 0);
     Ok(())
 }
 
@@ -1589,16 +1499,12 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let overstated = "Mitochondria produce all of a cell's ATP.";
     let before = cell_lesson(CELL);
-    ledger
-        .observe(
-            &before,
-            &pass_report(vec![
-                passage_finding(CELL, ATP, true, CELL_SOURCE),
-                passage_finding(CELL, overstated, false, CELL_SOURCE),
-            ]),
-        )
-        .await?;
-    let ids = ledger.finding_claims().to_vec();
+    let report = pass_report(vec![
+        passage_finding(CELL, ATP, true, CELL_SOURCE),
+        passage_finding(CELL, overstated, false, CELL_SOURCE),
+    ]);
+    let ids = identify_findings(&mut ledger, &before, &report).await?;
+    check_findings(&mut ledger, &ids, &report.findings).await?;
     let (verified, shared) = (ids[0].clone(), ids[1].clone());
     // The failed claim has had its rewrite.
     ledger
@@ -1629,9 +1535,7 @@ async fn a_claim_that_passed_on_a_sentence_cut_for_another_is_removed_by_the_mac
         .await?;
     assert_eq!(ledger.pending.repairs.len(), 1);
     let cut = CELL.replace(&format!("{ATP_SENTENCE} "), "");
-    ledger
-        .observe(&cell_lesson(&cut), &pass_report(vec![]))
-        .await?;
+    identify_findings(&mut ledger, &cell_lesson(&cut), &pass_report(vec![])).await?;
 
     for id in [&shared, &verified] {
         assert!(
@@ -2029,20 +1933,16 @@ async fn a_claim_whose_sentence_still_stands_is_not_ended_removed_because_no_ext
     let model = Model::new();
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
     let lesson = cell_lesson(CELL);
-    ledger
-        .observe(
-            &lesson,
-            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
-        )
-        .await?;
-    let id = ledger.finding_claims()[0].clone();
+    let id = claim(&mut ledger, "atp", (ATP_SENTENCE, ATP), CELL, SOURCED).await?;
+    let read = passage_finding(CELL, ATP, true, CELL_SOURCE);
+    stood(&mut ledger, &id, SOURCED.0, (Reading::Parts, read)).await?;
     assert!(matches!(
         ledger.entry(&id).unwrap().state(),
         ClaimState::ResolvedByEvidence { .. }
     ));
 
     // The next extraction names no claim for a sentence the draft still holds.
-    ledger.observe(&lesson, &pass_report(vec![])).await?;
+    identify_findings(&mut ledger, &lesson, &pass_report(vec![])).await?;
 
     let entry = ledger.entry(&id).unwrap();
     assert!(

@@ -1,11 +1,11 @@
-//! Pass B, corroboration (course evidence index §5.2–§5.4): the claim read
-//! against the course by relevance, its first page only. A page is a slice of
-//! the claim's ranked list, sized by the page budget and the window; a claim
-//! it leaves unsupported goes to web research.
+//! The course's first page for a claim (course evidence index §5.2–§5.4): the
+//! claim read against the course by relevance, its first page only. A page is a
+//! slice of the claim's ranked list, sized by the page budget and the window; a
+//! claim it leaves unsupported goes to web research.
 use super::*;
 use crate::features::learning::reference_collection::Scope;
 
-/// Where pass B read a page.
+/// Where a page of the course was read from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(in crate::features::learning) enum Reach {
@@ -15,8 +15,8 @@ pub(in crate::features::learning) enum Reach {
     Researched,
 }
 
-/// The tokens a pass B page holds (§5.3), or why it has no budget and the
-/// window alone bounds it.
+/// The tokens a page of the course holds (§5.3), or why it has no budget and
+/// the window alone bounds it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(in crate::features::learning::lessons::content_verification) struct PageBudget {
     pub(in crate::features::learning::lessons::content_verification) tokens: Option<usize>,
@@ -61,14 +61,9 @@ impl PageBudget {
     }
 }
 
-/// How a first page that must be read now can be sized.
+/// How a first page that must be read now is sized.
 #[derive(Clone, Debug)]
 pub(in crate::features::learning::lessons::content_verification) enum Sizing {
-    /// Before the job has measured an answer: a page that must be sized
-    /// waits for the answers of the job's first request. For the tests of the
-    /// two passes; step 6b-3 retires it with them.
-    #[cfg(test)]
-    Unmeasured,
     /// Sized by this budget.
     Sized(PageBudget),
 }
@@ -126,83 +121,10 @@ pub(in crate::features::learning::lessons::content_verification) fn page_of(
     (page, passed_over)
 }
 
-/// What a pass B page held, for its log line, which the tests of the two
-/// passes read; step 6b-3 retires the rest of it with them.
-pub(in crate::features::learning::lessons::content_verification) struct PageNote {
-    pub(in crate::features::learning::lessons::content_verification) reach: Reach,
-    #[cfg(test)]
-    pub(in crate::features::learning::lessons::content_verification) page: usize,
-    #[cfg(test)]
-    pub(in crate::features::learning::lessons::content_verification) budget: PageBudget,
-    /// The page's last passage is its list's last.
-    #[cfg(test)]
-    pub(in crate::features::learning::lessons::content_verification) list_end: bool,
-    #[cfg(test)]
-    pub(in crate::features::learning::lessons::content_verification) counter: bool,
-    #[cfg(test)]
-    pub(in crate::features::learning::lessons::content_verification) passed_over: usize,
-}
-
-/// One round's log line for one claim (§5.6): the pass, where B read and
-/// which page, the passages, their exact tokens, the budget, the fused
-/// scores of the page's first and last passage, whether the list's end was
-/// reached and whether a counter query's branches were fused.
-#[cfg(test)]
-pub(super) async fn log_page(
-    llm: &dyn LLMPort,
-    (ordinal, round): (usize, usize),
-    pass: Pass,
-    page: &[EvidencePassage],
-    note: Option<&PageNote>,
-    judged: bool,
-) {
-    let text = page
-        .iter()
-        .map(|passage| passage.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    // The log's measure only, asked of the backend for a page sent to the
-    // judge: a restored page, or a backend that cannot count, leaves the
-    // estimate.
-    let counted = if judged {
-        llm.count_tokens_exact(&text).await.map_err(|error| {
-            tracing::debug!(%error, "The backend could not count a claim's page; logging the estimate");
-        })
-    } else {
-        Err(())
-    };
-    let (tokens, exact) = match counted {
-        Ok(tokens) => (tokens, llm.counts_tokens_exactly()),
-        Err(()) => (llm.count_tokens(&text), false),
-    };
-    let scores: Vec<f64> = page
-        .iter()
-        .filter(|passage| passage.retrieval_kind != CITED)
-        .map(|passage| passage.score)
-        .collect();
-    tracing::info!(
-        claim = ordinal,
-        round,
-        ?pass,
-        reach = ?note.map(|note| note.reach),
-        page = note.map(|note| note.page),
-        passages = page.len(),
-        tokens,
-        exact,
-        budget = %note.map_or_else(|| "none needed".to_string(), |note| note.budget.text()),
-        first_fused = ?scores.first(),
-        last_fused = ?scores.last(),
-        list_end = note.map(|note| note.list_end),
-        counter = note.map(|note| note.counter),
-        passed_over = note.map(|note| note.passed_over),
-        "Claim page"
-    );
-}
-
-/// Pass B's first page for `statement`, as a claim with no saved selection
-/// starts it: the course's list for it, without what `shown` holds, sliced by
-/// `budget` and the window. The note is `None` when the course has nothing on
-/// the claim's subject.
+/// The first page of the course for `statement`, as a claim with no saved
+/// selection starts it: the course's list for it, without what `shown` holds,
+/// sliced by `budget` and the window. The reach is `None` when the course has
+/// nothing on the claim's subject.
 pub(in crate::features::learning::lessons::content_verification) async fn page_one(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'_>,
@@ -210,7 +132,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn page_o
     checked: &str,
     shown: &[EvidencePassage],
     budget: &PageBudget,
-) -> Result<(Vec<EvidencePassage>, Option<PageNote>)> {
+) -> Result<(Vec<EvidencePassage>, Option<Reach>)> {
     let list = references.claim_list(statement, &Scope::All, shown).await?;
     let (page, passed_over) = page_of(llm, checked, &list.passages, shown, budget.tokens);
     if page.is_empty() {
@@ -221,48 +143,5 @@ pub(in crate::features::learning::lessons::content_verification) async fn page_o
         );
         return Ok((Vec::new(), None));
     }
-    #[cfg(test)]
-    let list_end = !list.passages.iter().any(|passage| {
-        !shown
-            .iter()
-            .chain(&page)
-            .any(|seen| overlaps(seen, passage))
-    });
-    let note = PageNote {
-        reach: Reach::Course,
-        #[cfg(test)]
-        page: 1,
-        #[cfg(test)]
-        budget: budget.clone(),
-        #[cfg(test)]
-        list_end,
-        #[cfg(test)]
-        counter: list.counter,
-        #[cfg(test)]
-        passed_over,
-    };
-    Ok((page, Some(note)))
-}
-
-/// [`page_one`] for a claim of a section that cites nothing, its pages sized
-/// as at the start of a job: what a fresh check selects.
-#[cfg(test)]
-pub(in crate::features::learning::lessons::content_verification) async fn first_page(
-    llm: &dyn LLMPort,
-    references: &ReferenceCollection<'_>,
-    statement: &str,
-    shown: &[EvidencePassage],
-) -> Result<Vec<EvidencePassage>> {
-    let mut page = page_one(
-        llm,
-        references,
-        statement,
-        statement,
-        shown,
-        &PageBudget::of(llm, AnswerSize::default()),
-    )
-    .await?
-    .0;
-    canonicalize_evidence(&mut page);
-    Ok(page)
+    Ok((page, Some(Reach::Course)))
 }

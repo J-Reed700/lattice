@@ -6,6 +6,7 @@
 use super::super::claim_ledger::{Decision, StepKind};
 use super::super::class_checks::{finding_of, unjudged_finding};
 use super::super::passes::{self, Extraction, Pass};
+use super::super::readings::driver::ReadStep;
 use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Statement};
 use super::claim_ledger_tests::{figure, pass_report, prepare, section, Figures};
 use super::class_checks_tests::Classes;
@@ -123,6 +124,42 @@ pub(super) async fn walk(
         ledger.append(id, stepped).await?;
     }
     Ok(())
+}
+
+/// Records the first reading of `id`, a statement of `class`, which stood: the
+/// check it observed, and the decision the policy makes of it.
+pub(super) async fn stood(
+    ledger: &mut claim_ledger::ClaimLedger,
+    id: &ClaimId,
+    class: Class,
+    (reading, finding): (Reading, Finding),
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let at = Position {
+        class,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(class).entry(),
+    };
+    let taken = Taken {
+        step: Step::Read(reading),
+        outcome: Outcome::Stands,
+    };
+    let (then, next) = decide(&policy, at, taken).expect("an edge");
+    let step = ReadStep {
+        reading,
+        read: Read {
+            outcome: Outcome::Stands,
+            finding,
+            reused: false,
+        },
+        then,
+        rewrite_ahead: next.is_some_and(|next| rewrite_ahead(&policy, next)),
+        class: next
+            .map(|next| next.class)
+            .filter(|changed| *changed != class),
+    };
+    ledger.record_reading(&policy, id, &step).await
 }
 
 /// The statements of section 0 as an extraction holds them: a quote and what

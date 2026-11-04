@@ -167,7 +167,7 @@ pub(super) struct ClaimLedger {
     checker_model: String,
     window_tokens: usize,
     pub(super) pending: Pending,
-    /// The claim of each finding of the latest observed report, in order.
+    /// The claim of each finding of the latest pass, in order.
     findings: Vec<ClaimId>,
     /// The claim of each tracked example, by observation id.
     examples: HashMap<String, ClaimId>,

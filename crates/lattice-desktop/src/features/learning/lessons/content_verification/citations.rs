@@ -1,6 +1,6 @@
-//! The passages a lesson section cites, which pass A checks a claim of that
-//! section against and nothing else (course evidence index §5.1), and the
-//! sources the lesson cites anywhere. A sentence the writer cited has its own,
+//! The passages a lesson section cites, which a claim of that section is
+//! checked against by its own citation and nothing else (course evidence index
+//! §5.1), and the sources the lesson cites anywhere. A sentence the writer cited has its own,
 //! which the claim that restates it is read against instead (claim classes
 //! design §3.5).
 use super::*;
@@ -19,8 +19,8 @@ struct CitedSentence {
 /// What a lesson cites. Per section (unit), the source passages it cites:
 /// each block's and question's quote, and the quote of each sentence listed in
 /// its citations, resolved to its span in the saved references and widened
-/// like a retrieved passage. A claim's pass A reads those of the sentence it
-/// restates when the writer cited one, otherwise its section's.
+/// like a retrieved passage. A claim's own citation reads those of the
+/// sentence it restates when the writer cited one, otherwise its section's.
 #[derive(Default)]
 pub(super) struct Citations {
     by_unit: HashMap<usize, Vec<EvidencePassage>>,
@@ -254,8 +254,8 @@ pub(super) fn source_mentions(text: &str) -> Vec<SourceMention> {
 
 /// Add `cited` passages not overlapping `evidence` to it, in citation
 /// order, while the judge that reads them still `fits` a check of `claim`
-/// against them: pass A's page, which needs no budget. Return the reference
-/// passages it now holds.
+/// against them: the page of a claim's own citation, which needs no budget.
+/// Return the reference passages it now holds.
 pub(super) fn take_cited(
     fits: impl Fn(&str, &[EvidencePassage]) -> bool,
     claim: &str,

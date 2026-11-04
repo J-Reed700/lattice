@@ -1176,3 +1176,104 @@ async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not
     )
     .await
 }
+
+#[tokio::test]
+async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_event() -> Result<()>
+{
+    use lattice_core::domain::learning::claim_review::{
+        ClaimEvent, ClaimId, ClaimLocation, UnitKind,
+    };
+    const CLAIM: &str = "Mineral alpha shows property beta under pressure.";
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let statements = [CLAIM.to_owned(), format!("{CLAIM} It holds in the lab.")];
+    let findings: Vec<Finding> = statements
+        .iter()
+        .map(|statement| Finding {
+            unit: 0,
+            quote: statement.clone(),
+            statement: statement.clone(),
+            verdict: ClaimVerdict::Unsupported,
+            reason: "No passage states this.".into(),
+            evidence: vec![],
+            supporting_quote: None,
+            resolution: None,
+            trust: None,
+            two_pass: Default::default(),
+            label: None,
+            class: None,
+        })
+        .collect();
+    // A planner that finds nothing public to search: the round ends
+    // exhausted, and is timed all the same.
+    let llm = ScriptedModel {
+        outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    let expansion = run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web(false)),
+        expand(&llm, &references, &findings, &[], &ClaimChecks::default()),
+    )
+    .await?;
+    let Expansion::Exhausted(_, searched) = expansion else {
+        panic!("an empty plan exhausts the round");
+    };
+    let per_claim = searched.per_claim.expect("a round that ran is timed");
+    let ms = u64::try_from(per_claim.as_millis()).unwrap();
+
+    let mut ledger = claim_ledger::ClaimLedger::open(&llm, "{}").await?;
+    let ids: Vec<ClaimId> = (0..statements.len())
+        .map(|index| ClaimId(format!("claim-{index}")))
+        .collect();
+    for (id, statement) in ids.iter().zip(&statements) {
+        ledger
+            .append(
+                id,
+                ClaimEvent::Extracted {
+                    location: ClaimLocation::locate(
+                        0,
+                        UnitKind::Block,
+                        "body",
+                        statement,
+                        statement,
+                    ),
+                    statement: statement.clone(),
+                },
+            )
+            .await?;
+    }
+    let round: Vec<(ClaimId, usize)> = ids.iter().map(|id| (id.clone(), 0)).collect();
+    ledger
+        .record_research(
+            &lattice_core::domain::learning::acceptance::StandardPolicy::new(),
+            &round,
+            &searched,
+            false,
+        )
+        .await?;
+    // Every claim the round researched carries its share of the round.
+    for id in &ids {
+        let costs: Vec<Option<u64>> = ledger
+            .entry(id)
+            .unwrap()
+            .events()
+            .iter()
+            .filter_map(|record| match &record.event {
+                ClaimEvent::Researched {
+                    round_ms_per_claim, ..
+                } => Some(*round_ms_per_claim),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(costs, vec![Some(ms)]);
+    }
+    Ok(())
+}

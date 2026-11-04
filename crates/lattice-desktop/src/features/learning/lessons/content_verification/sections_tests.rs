@@ -394,7 +394,20 @@ async fn the_ledger_pairs_the_findings_a_lesson_keeps_with_their_own_claims() ->
         finding.quote = sentence.into();
         finding.statement = sentence.into();
     }
-    ledger.observe(&lesson, &pass).await?;
+    let statements: Vec<(usize, Claim)> = pass
+        .findings
+        .iter()
+        .map(|finding| {
+            let (quote, statement) = (finding.quote.clone(), finding.statement.clone());
+            (finding.unit, Claim { quote, statement })
+        })
+        .collect();
+    let extracted = ledger.extracted(&lesson, &statements, &[]);
+    let matched = ledger.match_pass(&lesson, &extracted);
+    let policy = lattice_core::domain::learning::acceptance::StandardPolicy::new();
+    ledger
+        .identify(&policy, &lesson, extracted, matched)
+        .await?;
     let claims = ledger.finding_claims().to_vec();
     ledger.cuts.go(1, "Example".into());
 

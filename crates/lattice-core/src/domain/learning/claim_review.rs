@@ -480,9 +480,9 @@ pub enum CheckResult {
     },
     /// The claim stands, but not on what its section cites: none of the
     /// `cited` source versions supports it, and a passage of another
-    /// course source does (two-pass claim pages, course evidence index
-    /// §5.1). The claim is verified by the found passage; the lesson's
-    /// citation is repaired to it.
+    /// course source does, found on a page of the course (course evidence
+    /// index §5.1). The claim is verified by the found passage; the
+    /// lesson's citation is repaired to it.
     SupportedElsewhere {
         cited: Vec<String>,
         source_version_id: String,
@@ -658,10 +658,10 @@ pub enum ClaimEvent {
         sources_added: Vec<String>,
         passages_found: usize,
         /// What the round cost per claim it researched, in milliseconds:
-        /// its time from start to result over its claims. Pass B weighs it
-        /// as the cost of researching one claim on the web (course evidence
-        /// index D5). `None` when no round ran, and on events written before
-        /// rounds were timed.
+        /// its time from start to result over its claims: the cost of
+        /// researching one claim on the web (course evidence index D5).
+        /// `None` when no round ran, and on events written before rounds were
+        /// timed.
         #[serde(default)]
         round_ms_per_claim: Option<u64>,
     },

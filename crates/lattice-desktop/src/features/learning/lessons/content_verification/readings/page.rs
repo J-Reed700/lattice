@@ -1,11 +1,10 @@
-//! `Page`: the strict judge on the course's first page for a statement (pass
-//! B), without the passages its own citation shows. The page is the one
-//! `corroborate` reads: restored from its saved selection or read now, sized
-//! by what the job's answers have cost. Pages are packed into requests as the
-//! pass packs them; while the job has measured no answer, a page is asked
-//! about alone, so the next is sized by it.
+//! `Page`: the strict judge on the course's first page for a statement,
+//! without the passages its own citation shows. The page is restored from its
+//! saved selection or read now, sized by what the job's answers have cost.
+//! Pages are packed into requests by section; while the job has measured no
+//! answer, a page is asked about alone, so the next is sized by it.
 use super::super::evidence_checks::{
-    as_checked, attribution_page, combine, PageBudget, Reach, Sizing,
+    as_checked, attribution_page, page_finding, PageBudget, Reach, Sizing,
 };
 use super::*;
 
@@ -75,7 +74,7 @@ async fn open(
         parts_fit(at),
     );
     let sizing = Sizing::Sized(PageBudget::of(at.llm, answers(at.retained)));
-    let Some(selected) = evidence_selection::select(
+    let selected = evidence_selection::select(
         at.llm,
         (claim, &checked.statement, unit),
         at.references,
@@ -83,10 +82,7 @@ async fn open(
         at.retained,
         (&shown, &sizing),
     )
-    .await?
-    else {
-        return Err(AppError::InternalError("A page was not sized".into()));
-    };
+    .await?;
     let mut cited: Vec<String> = at
         .citations
         .of_claim(unit, &claim.statement)
@@ -133,7 +129,7 @@ fn keep(found: &mut [Option<Finding>], ordinal: usize, finding: Finding) {
 /// the support is elsewhere, which the finding names. A sentence whose section
 /// cites nothing has no citation to move: a passage that supports it stands.
 fn read_of(statement: &Statement<'_>, page: Paged, finding: Finding, reused: bool) -> Read {
-    let mut finding = combine(None, finding, (page.reach, 1), &page.cited);
+    let mut finding = page_finding(finding, (page.reach, 1), &page.cited);
     let on_cited = page.cited.is_empty()
         || finding
             .two_pass

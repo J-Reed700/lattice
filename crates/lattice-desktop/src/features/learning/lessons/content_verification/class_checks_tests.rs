@@ -2,8 +2,10 @@
 //! own left out, a Reasoning statement read for consistency and put to the
 //! falsity veto, a Common one put to the model alone, and what neither can
 //! pass sent to the strict check as Sourced.
-use super::acceptance_switch_tests::{claim, events_of, identified, node_of, open, walk};
-use super::claim_ledger_tests::{pass_report, passage_finding, prepare, section};
+use super::acceptance_switch_tests::{claim, events_of, identified, node_of, open, stood, walk};
+use super::claim_ledger_tests::{
+    identify_findings, pass_report, passage_finding, prepare, section,
+};
 use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
@@ -511,7 +513,7 @@ async fn a_cited_statement_meets_the_strict_check_whatever_the_model_would_have_
     Ok(())
 }
 
-/// The ledger after a pass found `statement` supported, checked as `classed`.
+/// The ledger after a pass identified `statement`, sorted as `classed`.
 async fn ledger_holding(
     model: &Classes,
     statement: &str,
@@ -520,9 +522,7 @@ async fn ledger_holding(
     let mut ledger = claim_ledger::ClaimLedger::open(model, "{}").await?;
     let mut finding = passage_finding(statement, statement, true, SOURCE);
     finding.class = Some(classed);
-    ledger
-        .observe(&lesson(statement), &pass_report(vec![finding]))
-        .await?;
+    identify_findings(&mut ledger, &lesson(statement), &pass_report(vec![finding])).await?;
     Ok(ledger)
 }
 
@@ -543,9 +543,7 @@ async fn a_class_a_later_pass_gives_a_held_statement_is_recorded_only_when_it_pr
             class: lighter,
             by: ClassifiedBy::Model,
         });
-        ledger
-            .observe(&lesson(GOOD), &pass_report(vec![finding]))
-            .await?;
+        identify_findings(&mut ledger, &lesson(GOOD), &pass_report(vec![finding])).await?;
     }
 
     let entry = ledger.entry(&id).unwrap();
@@ -690,8 +688,11 @@ async fn the_report_records_no_resolution_for_a_statement_the_machine_passed() -
         by: ClassifiedBy::Rule,
     });
     let report = pass_report(vec![common, sourced]);
-    ledger.observe(&lesson(&body), &report).await?;
-    let ids = ledger.finding_claims().to_vec();
+    let ids = identify_findings(&mut ledger, &lesson(&body), &report).await?;
+    let read = (Reading::Knowledge, report.findings[0].clone());
+    stood(&mut ledger, &ids[0], Class::Common, read).await?;
+    let read = (Reading::Parts, report.findings[1].clone());
+    stood(&mut ledger, &ids[1], Class::Sourced, read).await?;
     assert!(matches!(
         ledger.entry(&ids[0]).unwrap().state(),
         ClaimState::GeneralKnowledge { .. }

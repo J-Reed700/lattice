@@ -1,3 +1,4 @@
+use super::readings_tests::paged;
 use super::*;
 use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
@@ -62,15 +63,12 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         fail_coverage_at: Some(1),
         ..Model::new()
     };
-    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         lesson_drafts::resume("section-fixture".into()).await?;
         lesson_drafts::save(&candidate.to_string()).await?;
         let sources = vec![source()];
-        let result = verify_with_references(
+        let result = verify_with(
             &model,
-            &StandardPolicy::new(),
-            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -101,10 +99,8 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         lesson_drafts::resume("section-fixture".into()).await?;
         let sources = vec![source()];
-        verify_with_references(
+        verify_with(
             &resumed_model,
-            &StandardPolicy::new(),
-            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -128,10 +124,8 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
         lesson_drafts::resume("section-fixture".into()).await?;
         let sources = vec![source()];
-        verify_with_references(
+        verify_with(
             &changed_model,
-            &StandardPolicy::new(),
-            &runtimes,
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
             &mut ClaimChecks::default(),
@@ -168,14 +162,15 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         assert_eq!(inventory.units.len(), 5);
         assert!(coverage.units.iter().all(|unit| unit.complete));
         let sources = vec![source()];
-        let report = check_evidence(
+        let report = verified(
             &model,
-            &StandardPolicy::new(),
             &candidate,
             &ReferenceCollection::lexical(&sources)?,
-            inventory,
-            coverage,
-            vec![],
+            passes::Extraction {
+                inventory,
+                coverage,
+                executions: vec![],
+            },
             &mut ClaimChecks::default(),
         )
         .await?;
@@ -405,24 +400,13 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
     let claim = &inventory.units[0].claims[0];
     let evidence = evidence_for(&model, GOOD, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
-    let candidate = candidate(GOOD);
     // The server cannot finish the group, so the claims are checked one at a
     // time, and the second never finishes. The first must still be
     // checkpointed; work held until the whole group finished would be lost
     // on interruption here.
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
-        let mut checks = ClaimChecks::default();
-        let policy = StandardPolicy::new();
-        let work = check_evidence(
-            &model,
-            &policy,
-            &candidate,
-            &references,
-            inventory.clone(),
-            Coverage { units: vec![] },
-            vec![],
-            &mut checks,
-        );
+        let checks = ClaimChecks::default();
+        let work = paged(&model, &references, &inventory, &checks);
         tokio::select! {
             result = work => panic!("The deliberately blocked claim finished: {result:?}"),
             result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -486,37 +470,23 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
     }
     let model = Model::new();
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
-        let report = check_evidence(
-            &model,
-            &StandardPolicy::new(),
-            &candidate,
-            &references,
-            inventory.clone(),
-            Coverage { units: vec![] },
-            vec![],
-            &mut ClaimChecks::default(),
-        )
-        .await?;
+        let reads = paged(&model, &references, &inventory, &ClaimChecks::default()).await?;
         assert_eq!(
             *model.judge_calls.lock().unwrap(),
             1,
             "Only the interrupted comparison should repeat"
         );
-        assert_eq!(report.findings[0].verdict, ClaimVerdict::Supported);
-        assert_eq!(report.findings[1].verdict, ClaimVerdict::Contradicted);
+        assert_eq!(reads[0].finding.verdict, ClaimVerdict::Supported);
+        assert_eq!(reads[1].finding.verdict, ClaimVerdict::Contradicted);
         let mut changed = sources.clone();
         changed[0]
             .excerpt
             .push_str(" Additional evidence changes the judgment input.");
-        check_evidence(
+        paged(
             &model,
-            &StandardPolicy::new(),
-            &candidate,
             &ReferenceCollection::lexical(&changed)?,
-            inventory,
-            Coverage { units: vec![] },
-            vec![],
-            &mut ClaimChecks::default(),
+            &inventory,
+            &ClaimChecks::default(),
         )
         .await?;
         assert_eq!(
@@ -528,12 +498,10 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
             name: "different-checker",
             ..Model::new()
         };
-        check_evidence(
+        paged(
             &changed_model,
-            &StandardPolicy::new(),
-            &candidate,
             &references,
-            Inventory {
+            &Inventory {
                 units: vec![UnitClaims {
                     index: 0,
                     claims: vec![Claim {
@@ -543,9 +511,7 @@ async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_e
                     non_factual_reason: String::new(),
                 }],
             },
-            Coverage { units: vec![] },
-            vec![],
-            &mut ClaimChecks::default(),
+            &ClaimChecks::default(),
         )
         .await?;
         assert_eq!(

@@ -4,8 +4,6 @@ use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::dto::PreparedLearningLesson;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
-#[cfg(test)]
-use futures::TryStreamExt;
 use futures::{FutureExt, StreamExt};
 use lattice_core::application::ports::{llm_port::SamplingOverride, LLMPort};
 #[cfg(test)]
@@ -84,8 +82,6 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
     .await
 }
 mod passes;
-#[cfg(test)]
-use passes::{check_evidence, verify_with_references};
 mod provenance_gate;
 pub(in crate::features::learning) use provenance_gate::{
     gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
@@ -225,10 +221,11 @@ struct Finding {
     /// record of the claim's class.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     class: Option<Classed>,
-    /// What the two passes made of the claim (course evidence index §5.1):
-    /// the pass and page that decided it, where pass B read, the passage it
-    /// found when the section's citations gave no support, and a passage
-    /// either pass found saying otherwise about a supported claim.
+    /// How the claim was read (course evidence index §5.1): whether its own
+    /// citation or the course's page decided it, which page and where it was
+    /// read, the passage found when the section's citations gave no support,
+    /// the parts its citation was read as, and a passage found saying
+    /// otherwise about a supported claim.
     #[serde(flatten)]
     two_pass: TwoPass,
 }
@@ -242,10 +239,6 @@ struct Classed {
 /// both across restarts; a selection is never itself a factual approval.
 #[derive(Default)]
 struct ClaimChecks {
-    /// The decisions of the two passes, by key: for the tests of those passes;
-    /// step 6b-3 retires it with them.
-    #[cfg(test)]
-    findings: HashMap<String, Finding>,
     /// Claims the ledger holds as resolved by evidence the user brought, by
     /// unit and statement: that check is their receipt (`claim_ledger`).
     settled: HashMap<(usize, String), Finding>,
@@ -261,41 +254,17 @@ struct ClaimChecks {
     research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
     prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
     /// What the judge's answers have cost this job, per claim, across its
-    /// passes: the answer size a pass B page is budgeted by
+    /// readings: the answer size a page of the course is budgeted by
     /// (`evidence_checks::page_budget`).
     answers: std::sync::Mutex<evidence_checks::AnswerSize>,
     /// The sections that go out of the lesson (claim classes design §3.10):
     /// their statements are not sorted or judged and their examples not
     /// reported.
     removed: sections::Going,
-    /// The statements whose research round has just ended: pass B reads a
-    /// page for them though their section cites a passage, the re-check
-    /// against what research found (design §3.2). For the tests of the two
-    /// passes; step 6b-3 retires it with them.
-    #[cfg(test)]
-    corroborate: HashSet<(usize, String)>,
-    /// The statements whose section cites a passage and whose page pass B has
-    /// not read: each waits for its research round.
-    #[cfg(test)]
-    unread: std::sync::Mutex<HashSet<(usize, String)>>,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 
 impl ClaimChecks {
-    /// Which of `findings` are statements whose page pass B has not read.
-    #[cfg(test)]
-    fn unread_of(&self, findings: &[Finding]) -> HashSet<(usize, String)> {
-        let unread = self
-            .unread
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        findings
-            .iter()
-            .map(|finding| (finding.unit, finding.statement.clone()))
-            .filter(|key| unread.contains(key))
-            .collect()
-    }
-
     fn key(unit: usize, claim: &Claim, evidence: &[EvidencePassage]) -> String {
         // Ranking scores may change when the corpus grows. They are not judge
         // inputs; preserve the freshly retrieved metadata in the new report.
@@ -307,48 +276,6 @@ impl ClaimChecks {
         // including when requests share a bank of passages. Other targets are
         // never evidence. Fresh coverage and final content binding still run.
         digest(&json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
-    }
-
-    #[cfg(test)]
-    fn get(
-        &self,
-        key: &str,
-        unit: usize,
-        claim: &Claim,
-        evidence: &[EvidencePassage],
-    ) -> Option<Finding> {
-        self.findings.get(key).cloned().map(|mut finding| {
-            finding.unit = unit;
-            finding.quote = claim.quote.clone();
-            finding.statement = claim.statement.clone();
-            // A decision on this evidence takes its fresh retrieval metadata;
-            // one asked for with none keeps its own passages.
-            let identity = |p: &EvidencePassage| {
-                (
-                    p.source_id.clone(),
-                    p.start_byte,
-                    p.end_byte,
-                    p.text.clone(),
-                )
-            };
-            if finding
-                .evidence
-                .iter()
-                .map(identity)
-                .eq(evidence.iter().map(identity))
-            {
-                finding.evidence = evidence.to_vec();
-            }
-            finding
-        })
-    }
-
-    #[cfg(test)]
-    fn record(&mut self, key: String, finding: &Finding) {
-        // A failed/incomplete call is never a reusable decision.
-        if finding.verdict != ClaimVerdict::Unverified {
-            self.findings.insert(key, finding.clone());
-        }
     }
 }
 
@@ -446,8 +373,8 @@ pub struct LessonVerificationReport {
     issues: Vec<String>,
     retrieval_mode: String,
     embedding_model: Option<String>,
-    /// The tokens a pass B page held at the end of the pass, or why it had
-    /// no budget (course evidence index §5.3).
+    /// The tokens a page of the course held at the end of the pass, or why it
+    /// had no budget (course evidence index §5.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     page_budget: Option<String>,
     unexecuted_languages: Vec<String>,
@@ -582,7 +509,7 @@ pub(in crate::features::learning) fn fits_window<'p>(
 }
 
 /// The passed example runs of section `unit`, as evidence: the section's
-/// own, so pass A reads them beside its citations.
+/// own, which a statement's citation is read beside.
 fn example_runs(observations: &[execution::Observation], unit: usize) -> Vec<EvidencePassage> {
     observations
         .iter()
@@ -599,9 +526,9 @@ fn example_runs(observations: &[execution::Observation], unit: usize) -> Vec<Evi
 }
 
 /// A claim's evidence when its section cites nothing: its section's passed
-/// example runs (pass A) and then pass B's first page, as a fresh check
-/// would select it (`evidence_checks`). For tests that bind a receipt to
-/// exactly what a check compares.
+/// example runs and then the course's first page for it, as the readers
+/// select it at the start of a job (`evidence_checks`). For tests that bind a
+/// receipt to exactly what a reading compares.
 #[cfg(test)]
 async fn evidence_for(
     llm: &dyn LLMPort,
@@ -611,13 +538,17 @@ async fn evidence_for(
     observations: &[execution::Observation],
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = example_runs(observations, unit);
-    evidence.extend(evidence_checks::first_page(llm, references, claim, &[]).await?);
+    let budget = evidence_checks::PageBudget::of(llm, evidence_checks::AnswerSize::default());
+    let (mut page, _) =
+        evidence_checks::page_one(llm, references, claim, claim, &[], &budget).await?;
+    canonicalize_evidence(&mut page);
+    evidence.extend(page);
     Ok(evidence)
 }
 
-/// The order the judge reads a pass B `page` in: most needed first, the next
-/// last, the rest inward, so the most relevant passages sit at the edges of a
-/// long prompt. The page's canonical order still keys the comparison.
+/// The order the judge reads a page of the course in: most needed first, the
+/// next last, the rest inward, so the most relevant passages sit at the edges
+/// of a long prompt. The page's canonical order still keys the comparison.
 fn reading_order(page: &[EvidencePassage]) -> Vec<usize> {
     let (mut front, mut back) = (Vec::new(), Vec::new());
     for (need, position) in ranking(page).into_iter().enumerate() {
@@ -664,24 +595,6 @@ pub(in crate::features::learning) async fn live_retrieved_passages(
         .into_iter()
         .map(|passage| passage.text)
         .collect())
-}
-
-#[cfg(test)]
-async fn verify(
-    llm: &dyn LLMPort,
-    candidate: &Value,
-    sources: &[LearningSourceDto],
-) -> Result<LessonVerificationReport> {
-    let references = ReferenceCollection::lexical(sources)?;
-    verify_with_references(
-        llm,
-        &lattice_core::domain::learning::acceptance::StandardPolicy::new(),
-        &BuiltinRuntimes::for_tests(),
-        candidate,
-        &references,
-        &mut ClaimChecks::default(),
-    )
-    .await
 }
 
 pub(in crate::features::learning) async fn judge_batch_for_publication(
