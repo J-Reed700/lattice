@@ -260,3 +260,75 @@ async fn a_claim_supported_elsewhere_has_the_citation_of_its_own_sentence_repair
     assert!(!read.is_empty() && read.iter().all(|passage| passage.source_id == "marker"));
     Ok(())
 }
+
+/// The lesson's numbered sources: the related one the section cites, as 0,
+/// and the marker's, as 1.
+fn numbered(sources: &[LearningSourceDto]) -> Vec<LearningSourceDto> {
+    ["related-3", "marker"]
+        .iter()
+        .filter_map(|id| sources.iter().find(|source| source.id == *id).cloned())
+        .collect()
+}
+
+/// The entry the recite writes for the claim's sentence: the marker's passage.
+fn marker_entry() -> Value {
+    json!({
+        "sentence": CLAIM,
+        "sourceIndex": 1,
+        "quote": "Mineral alpha notes 99: property was logged.",
+    })
+}
+
+#[tokio::test]
+async fn a_statement_with_no_entry_of_its_own_leaves_its_sections_citation_and_gains_an_entry_for_its_sentence(
+) -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let finding = supported_elsewhere(&references).await?;
+    let mut candidate = wrongly_cited();
+    let section = candidate["blocks"][0].clone();
+
+    let repairs = recited(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &mut numbered(&sources),
+        &references,
+        &mut HashSet::new(),
+    )?;
+
+    assert_eq!(repairs.len(), 1);
+    let block = &candidate["blocks"][0];
+    assert_eq!(
+        block["quote"], section["quote"],
+        "the quotation every other statement of the section is read against stands"
+    );
+    assert_eq!(block["sourceIndex"], section["sourceIndex"]);
+    assert_eq!(block["citations"], json!([marker_entry()]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_section_with_no_quotation_of_its_own_can_be_cited() -> Result<()> {
+    let sources = marker_collection();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let finding = supported_elsewhere(&references).await?;
+    let mut candidate = json!({"blocks":[{"kind":"explanation","title":"Alpha","body":CLAIM,"rubric":[]}],"questions":[]});
+
+    let repairs = recited(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &mut numbered(&sources),
+        &references,
+        &mut HashSet::new(),
+    )?;
+
+    assert_eq!(
+        repairs.len(),
+        1,
+        "the sentence is cited though its section has no quotation"
+    );
+    let block = &candidate["blocks"][0];
+    assert_eq!(block["citations"], json!([marker_entry()]));
+    assert!(block.get("quote").is_none(), "no quotation is written");
+    Ok(())
+}

@@ -632,6 +632,9 @@ mod reading_driver_tests;
 #[path = "reading_record_tests.rs"]
 mod reading_record_tests;
 
+#[path = "repair_request_tests.rs"]
+mod repair_request_tests;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
