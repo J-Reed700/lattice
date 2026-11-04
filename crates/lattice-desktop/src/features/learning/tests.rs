@@ -1294,22 +1294,7 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
         Err(lattice_core::shared::error::AppError::InvalidInput(_))
     ));
 
-    // Test 2: Validation error on selection > 8000 chars
-    let huge_req = CreateLearningTangentRequestDto {
-        program_id: p1_id.clone(),
-        module_id: m1_id.clone(),
-        lesson_id: l1_id.clone(),
-        section_index: Some(0),
-        section_title: None,
-        selected_text: "x".repeat(8001),
-    };
-    let huge_err = repo.create_tangent(&huge_req).await;
-    assert!(matches!(
-        huge_err,
-        Err(lattice_core::shared::error::AppError::InvalidInput(_))
-    ));
-
-    // Test 3: Create tangent with section_index = Some(0) and section_title = None (resolves to block title)
+    // Test 2: Create tangent with section_index = Some(0) and section_title = None (resolves to block title)
     let selected_text = "Why is &mut T invariant over T while &T is covariant?";
     let req1 = CreateLearningTangentRequestDto {
         program_id: p1_id.clone(),

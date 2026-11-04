@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -120,29 +120,6 @@ describe('MessageActions', () => {
     expect(button).toHaveTextContent('Tangent');
     fireEvent.click(button);
     expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: 'The whole reply.' });
-  });
-
-  it('lets a long reply be narrowed without requiring text selection or silently truncating it', async () => {
-    const create = vi.fn();
-    const longReply = 'A long reply. '.repeat(700);
-    const tangentSource = { conversationId: 'parent', messageId: 'reply', getText: () => longReply };
-    render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
-      <MessageActions {...baseProps} role="assistant" isLastTurn tangentSource={tangentSource} />
-    </TangentSelectionContext.Provider>);
-    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
-    expect(create).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog', { name: 'Choose a starting passage' })).toBeVisible();
-    const passage = screen.getByRole('textbox', { name: 'Passage to explore' });
-    expect(passage).toHaveValue(longReply.trim());
-    expect(screen.getByRole('button', { name: 'Start tangent' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Start a tangent from this reply' })).toHaveFocus());
-    expect(create).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Start a tangent from this reply' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Passage to explore' }), { target: { value: 'The part I want to discuss.' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Start tangent' }));
-    expect(create).toHaveBeenCalledWith({ conversationId: 'parent', messageId: 'reply', selectedText: 'The part I want to discuss.' });
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('starts a tangent from a reply of any length, whole', () => {

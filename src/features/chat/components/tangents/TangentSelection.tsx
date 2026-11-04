@@ -17,8 +17,6 @@ export const TangentSelectionContext = createContext<{
   creating: boolean;
 } | null>(null);
 
-export const MAX_TANGENT_PASSAGE_LENGTH = 8000;
-
 type PassageAction = { text: string; x: number; y: number; mode: 'selection' | 'menu' };
 
 /** Shared by every assistant transcript, including the tangent itself. */
@@ -133,12 +131,8 @@ export function TangentSelection({ conversationId, messageId, enabled, children 
             }
           }}>
           <button type="button" role={selection.mode === 'menu' ? 'menuitem' : undefined} disabled={tangents.creating} className="tangent-menu-item" onClick={() => {
-            if (Array.from(selection.text).length > MAX_TANGENT_PASSAGE_LENGTH) {
-              toast.error('Choose a shorter passage', { message: 'A tangent can start from up to 8,000 characters.' });
-            } else {
-              tangents.create({ conversationId, messageId, selectedText: selection.text });
-              window.getSelection()?.removeAllRanges();
-            }
+            tangents.create({ conversationId, messageId, selectedText: selection.text });
+            window.getSelection()?.removeAllRanges();
             setSelection(null);
           }}><GitBranch aria-hidden="true" className="h-4 w-4" />Ask in a tangent</button>
           {selection.mode === 'menu' && <button type="button" role="menuitem" className="tangent-menu-item" onClick={() => {

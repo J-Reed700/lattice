@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MAX_TANGENT_PASSAGE_LENGTH, TangentSelection, TangentSelectionContext } from './TangentSelection';
+import { TangentSelection, TangentSelectionContext } from './TangentSelection';
 
 const toast = vi.hoisted(() => ({ error: vi.fn() }));
 vi.mock('@/stores/toastStore', () => ({ toast }));
@@ -90,15 +90,6 @@ describe('the passage menu', () => {
     openMenu(passage);
     await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' })); });
     expect(toast.error).toHaveBeenCalledWith("Couldn't copy the passage");
-  });
-
-  it('refuses a passage longer than a tangent can start from', () => {
-    const { create, passage } = renderPassage('a'.repeat(MAX_TANGENT_PASSAGE_LENGTH + 1));
-    openMenu(passage);
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Ask in a tangent' }));
-    expect(toast.error).toHaveBeenCalledWith('Choose a shorter passage', { message: 'A tangent can start from up to 8,000 characters.' });
-    expect(create).not.toHaveBeenCalled();
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
   });
 
   it('starts a tangent from a passage of any length', () => {
