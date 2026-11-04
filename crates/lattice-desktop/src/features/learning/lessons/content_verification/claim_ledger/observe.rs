@@ -51,8 +51,9 @@ pub(in crate::features::learning::lessons::content_verification) struct Targets 
     pub(in crate::features::learning::lessons::content_verification) claims: Vec<ClaimId>,
     /// Each claim's latest finding.
     pub(in crate::features::learning::lessons::content_verification) findings: Vec<Finding>,
-    /// The hints the user gave, searched verbatim.
-    pub(in crate::features::learning::lessons::content_verification) hints: Vec<String>,
+    /// The hints the user gave, searched verbatim, each with the place in
+    /// `findings` of the claim it names.
+    pub(in crate::features::learning::lessons::content_verification) hints: Vec<(usize, String)>,
     /// The claims a hint names. They are the user's: they take no step, and
     /// the round's page reading answers the hint.
     pub(in crate::features::learning::lessons::content_verification) hinted: Vec<ClaimId>,
@@ -305,12 +306,12 @@ impl ClaimLedger {
             };
             let hint = super::super::review_pass::pending_hint(entry);
             if at_research.contains(id) || hint.is_some() {
-                targets.claims.push(id.clone());
-                targets.findings.push(finding.clone());
-                if hint.is_some() {
+                if let Some(hint) = hint {
+                    targets.hints.push((targets.findings.len(), hint));
                     targets.hinted.push(id.clone());
                 }
-                targets.hints.extend(hint);
+                targets.claims.push(id.clone());
+                targets.findings.push(finding.clone());
             }
         }
         targets

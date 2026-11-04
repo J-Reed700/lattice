@@ -374,14 +374,16 @@ impl Finding {
 
 /// Research for `findings`, the claims the ledger allows to be researched
 /// (once per claim, for its life), with the user's `hints` searched verbatim
-/// before the planned queries (§5.1 "Research again with a hint"). A round
-/// whose planning or selection gives no usable answer, or does not fit the
-/// window, is [`Expansion::Unchanged`]: the claims stay held for review.
+/// before the planned queries (§5.1 "Research again with a hint"). Each hint
+/// comes with the finding of the claim it names, which is looked for whatever
+/// its latest check found: the user asked for a source. A round whose
+/// planning or selection gives no usable answer, or does not fit the window,
+/// is [`Expansion::Unchanged`]: the claims stay held for review.
 pub(super) async fn expand<'a>(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'a>,
     findings: &[Finding],
-    hints: &[String],
+    hints: &[(usize, String)],
     checks: &ClaimChecks,
 ) -> Result<Expansion<'a>> {
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
@@ -391,17 +393,30 @@ pub(super) async fn expand<'a>(
     // searches that failed and the pages that could not be read are part of
     // what researching a claim costs.
     let started = Instant::now();
-    let gaps: Vec<_> = findings
+    let looked_for: Vec<Finding> = findings
         .iter()
-        .filter(|f| f.wants_research())
-        .map(|f| json!({"claim":f.statement,"missingEvidence":f.reason}))
+        .enumerate()
+        .filter(|(index, f)| f.wants_research() || hints.iter().any(|(at, _)| at == index))
+        .map(|(_, f)| f.clone())
+        .collect();
+    let gaps: Vec<_> = looked_for
+        .iter()
+        .map(|f| {
+            let missing = if f.wants_research() {
+                f.reason.as_str()
+            } else {
+                HINTED
+            };
+            json!({"claim":f.statement,"missingEvidence":missing})
+        })
         .collect();
     if gaps.is_empty() {
         return Ok(Expansion::Unchanged(Searched::default()));
     }
+    let queries: Vec<String> = hints.iter().map(|(_, hint)| hint.clone()).collect();
     let round = Round {
         gaps: &gaps,
-        hints,
+        hints: &queries,
         kind: Gaps::Claims,
     };
     let claims = u32::try_from(findings.len()).unwrap_or(u32::MAX);
@@ -432,9 +447,12 @@ pub(super) async fn expand<'a>(
     // Persist the claim-to-source scope before returning. If the app exits
     // between research and rechecking, recovery still reopens only the failed
     // comparisons that requested these automatically captured references.
-    evidence_selection::record_research_scope(&expanded, findings, checks).await?;
+    evidence_selection::record_research_scope(&expanded, &looked_for, checks).await?;
     Ok(Expansion::Saved(Box::new(expanded), searched).timed(started.elapsed().checked_div(claims)))
 }
+
+/// What a claim a hint names lacks when its latest check found it supported.
+const HINTED: &str = "The user asked for a source that states it.";
 
 /// Before a lesson is written, search for references on its topics that no
 /// saved reference covers. Without web research the topics simply stay

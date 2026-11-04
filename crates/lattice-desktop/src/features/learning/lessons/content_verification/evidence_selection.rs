@@ -131,6 +131,8 @@ fn research_scope_key(current: &[SourceBinding]) -> String {
     )
 }
 
+/// Saves that what research added to `references` is for the claims of
+/// `findings`, the ones the round looked for.
 pub(super) async fn record_research_scope(
     references: &ReferenceCollection<'_>,
     findings: &[Finding],
@@ -139,7 +141,6 @@ pub(super) async fn record_research_scope(
     let current = sources(references);
     let mut targets: Vec<_> = findings
         .iter()
-        .filter(|finding| finding.wants_research())
         .map(|finding| ResearchTarget {
             unit: finding.unit,
             statement: finding.statement.clone(),

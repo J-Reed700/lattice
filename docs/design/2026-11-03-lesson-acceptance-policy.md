@@ -269,7 +269,7 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
     - A refused cut, its section going → `CannotCut`.
 
 **A user's hint.** A claim the user holds may carry a hint, what to search for (`ResearchWithHint`). The claim is the user's, so the policy does not walk it. The hint is the user's request for one research round and one reading of what that round found:
-- The hint goes to `research::expand` with the round's other targets and records `Researched`. The claim takes no `Stepped` for it: a step is the machine's decision, and the claim is not the machine's.
+- The hint goes to `research::expand` with the round's other targets and records `Researched`. The claim it names is looked for whatever its latest check found, since a reopened claim's last check may have passed, and what the round saves is in its scope. The claim takes no `Stepped` for it: a step is the machine's decision, and the claim is not the machine's.
 - When the round saved a source, the claim is read once by the `Page` reader over the expanded references, whatever its class, since the user asked for a source. An unreadable answer is asked once more.
 - The reading answers the hint. The first judged local check after a `ResearchWithHint` is not an observation (§2.9): a reading that stands verifies the claim, and any other leaves it the user's, with the reading's reason on its card. Every other local check of a decided claim stays an observation.
 - Nothing else follows. The claim is not recited, rewritten or cut, because the user holds it.
