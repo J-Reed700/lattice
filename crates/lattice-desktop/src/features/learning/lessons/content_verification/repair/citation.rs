@@ -1,15 +1,17 @@
 //! The citation repair (course evidence index §5.1): a claim a page of the
-//! course gave support for elsewhere keeps its text, and the citation of its
-//! sentence (its section's when the writer cited none) moves to the passage
-//! found. No model writes it: the found passage is the citation. A source the
-//! lesson does not number yet is added to the lesson's numbered sources, as
-//! the writer's are, so the citation can name it.
+//! course gave support for elsewhere keeps its text, and the citation of the
+//! sentence that states it moves to the passage found, or is added where the
+//! sentence has none of its own. No model writes it: the found passage is the
+//! citation. A source the lesson does not number yet is added to the lesson's
+//! numbered sources, as the writer's are, so the citation can name it.
 use super::super::classify::figures;
 use super::super::*;
-use crate::features::learning::generation::{validate_excerpt_quote, MAX_QUOTE_CHARS};
+use crate::features::learning::generation::{
+    validate_excerpt_quote, MAX_CITATIONS, MAX_QUOTE_CHARS,
+};
 use crate::features::learning::reference_collection::{checked_span, shared_terms};
 use lattice_core::domain::learning::claim_review::ClaimEvent;
-use lattice_core::shared::text::sentences;
+use lattice_core::shared::text::{claim_sentence, sentences};
 use std::collections::BTreeSet;
 use std::ops::Range;
 
@@ -194,33 +196,48 @@ pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field
 
 /// What the citation repair did for one finding.
 pub(in crate::features::learning::lessons::content_verification) enum Cited {
-    /// The citation moved to the passage found: the event the ledger records.
+    /// The sentence's citation moved to the passage found, or the sentence
+    /// was given an entry for it: the event the ledger records.
     Recited(Box<ClaimEvent>),
-    /// Its section was repaired already in this call, which repairs one claim
-    /// of a section so that two cannot overwrite its quote: the claim waits
-    /// for the next round.
+    /// Another claim of its sentence was cited already in this call, which
+    /// cites one claim of a sentence so that two cannot write one entry: the
+    /// claim waits for the next round.
     Deferred,
-    /// No citation can be written for it: no run of the passage's whole
-    /// sentences can be one, it was written before, the section already cites
-    /// the passage, or the section has no quote to move.
+    /// No citation can be written for it: the locator names no sentence of its
+    /// quote, no run of the passage's whole sentences can be one, it was
+    /// written before, the section already cites the passage, or the section
+    /// lists as many citations as the lesson schema allows.
     Cannot,
 }
 
-/// Rewrites the citation of each section one of whose claims a page found
-/// support for elsewhere to the passage found, the citation of the claim's
-/// sentence when the writer cited it: `quote` becomes the best-matching run of
-/// its sentences ([`quotation`]) and `sourceIndex` its source, numbered if
-/// new. Only sections with a citation and undoubted support; `tried`
-/// citations are never written again, so two passages cannot trade places.
-/// Gives what became of each of `findings`, in their order.
+/// The sentence of `quote`, a claim's passage, that `statement` restates.
+fn stating<'q>(quote: &'q str, statement: &str) -> Option<&'q str> {
+    let (start, end) = claim_sentence(quote, (0, quote.len()), statement)?;
+    quote.get(start..end)
+}
+
+/// Cites the sentence that states each claim a page found support for
+/// elsewhere at the passage found: `quote` becomes the best-matching run of
+/// the passage's sentences ([`quotation`]) and `sourceIndex` its source,
+/// numbered if new. The entry of the section's `citations` that restates the
+/// claim moves there. Where the sentence has no entry, or its entry is also the
+/// citation of a statement of `kept` (the live statements not being cited), an
+/// entry is added instead and the shared one stays, unless the section lists as
+/// many as the lesson schema allows. The section's own `quote` and
+/// `sourceIndex`, which its other statements are read against, are never
+/// written. One claim of a sentence is cited in a call, so that two cannot
+/// write one entry; `tried` citations are never written again, so two passages
+/// cannot trade places. Gives what became of each of `findings`, in their
+/// order.
 pub(in crate::features::learning::lessons::content_verification) fn cite_where_supported(
     candidate: &mut Value,
     findings: &[Finding],
+    kept: &[(usize, String)],
     numbered: &mut Vec<LearningSourceDto>,
     references: &ReferenceCollection<'_>,
     tried: &mut HashSet<(usize, String)>,
 ) -> Result<Vec<Cited>> {
-    let mut rewritten = BTreeSet::new();
+    let mut written = BTreeSet::new();
     let mut repairs = Vec::with_capacity(findings.len());
     for finding in findings {
         let Some(found) = finding
@@ -232,7 +249,11 @@ pub(in crate::features::learning::lessons::content_verification) fn cite_where_s
             repairs.push(Cited::Cannot);
             continue;
         };
-        if rewritten.contains(&finding.unit) {
+        let Some(sentence) = stating(&finding.quote, &finding.statement) else {
+            repairs.push(Cited::Cannot);
+            continue;
+        };
+        if written.contains(&(finding.unit, sentence.to_owned())) {
             repairs.push(Cited::Deferred);
             continue;
         }
@@ -262,61 +283,82 @@ pub(in crate::features::learning::lessons::content_verification) fn cite_where_s
             continue;
         }
         let (field, item) = super::location(candidate, finding.unit)?;
-        // Only a section that carries a citation has one to repair: the
-        // lesson's own sections always do; one without any is not given one.
         let Some(section) = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)
             .and_then(|items| items.get_mut(item))
             .and_then(Value::as_object_mut)
-            .filter(|section| section.contains_key("quote"))
         else {
-            repairs.push(Cited::Cannot);
-            continue;
-        };
-        let entry = section
-            .get("citations")
-            .and_then(Value::as_array)
-            .and_then(|cited| {
-                cited.iter().position(|entry| {
-                    entry
-                        .get("sentence")
-                        .and_then(Value::as_str)
-                        .is_some_and(|sentence| restates(sentence, &finding.statement))
-                })
-            });
-        let target = match entry {
-            Some(at) => section
-                .get_mut("citations")
-                .and_then(Value::as_array_mut)
-                .and_then(|cited| cited.get_mut(at))
-                .and_then(Value::as_object_mut),
-            None => Some(section),
-        };
-        let Some(target) = target else {
             repairs.push(Cited::Cannot);
             continue;
         };
         let numbered_at = numbered.iter().position(|known| known.id == source.id);
         let index = numbered_at.unwrap_or(numbered.len());
-        if target.get("quote").and_then(Value::as_str) == Some(quote)
-            && target.get("sourceIndex").and_then(Value::as_u64) == Some(index as u64)
-        {
+        let listed = section.get("citations").and_then(Value::as_array);
+        let own = listed.and_then(|listed| {
+            listed.iter().position(|entry| {
+                entry
+                    .get("sentence")
+                    .and_then(Value::as_str)
+                    .is_some_and(|cited| restates(cited, &finding.statement))
+            })
+        });
+        let entry = own.and_then(|at| listed.and_then(|listed| listed.get(at)));
+        let shared = entry
+            .and_then(|entry| entry.get("sentence"))
+            .and_then(Value::as_str)
+            .is_some_and(|cited| {
+                kept.iter()
+                    .any(|(unit, other)| *unit == finding.unit && restates(cited, other))
+            });
+        let moves = own.filter(|_| !shared);
+        let cites = |quoted: Option<&Value>, indexed: Option<&Value>| {
+            quoted.and_then(Value::as_str) == Some(quote)
+                && indexed.and_then(Value::as_u64) == Some(index as u64)
+        };
+        let already = match entry {
+            Some(entry) => cites(entry.get("quote"), entry.get("sourceIndex")),
+            None => cites(section.get("quote"), section.get("sourceIndex")),
+        };
+        let full = listed.map_or(0, Vec::len) >= MAX_CITATIONS;
+        if already || (moves.is_none() && full) {
+            repairs.push(Cited::Cannot);
+            continue;
+        }
+        let wrote = match moves {
+            Some(at) => section
+                .get_mut("citations")
+                .and_then(Value::as_array_mut)
+                .and_then(|listed| listed.get_mut(at))
+                .and_then(Value::as_object_mut)
+                .map(|entry| {
+                    entry.insert("quote".into(), json!(quote));
+                    entry.insert("sourceIndex".into(), json!(index));
+                }),
+            None => section
+                .entry("citations")
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .map(|listed| {
+                    listed
+                        .push(json!({"sentence": sentence, "sourceIndex": index, "quote": quote}));
+                }),
+        };
+        if wrote.is_none() {
             repairs.push(Cited::Cannot);
             continue;
         }
         if numbered_at.is_none() {
             numbered.push(source.clone());
         }
-        target.insert("quote".into(), json!(quote));
-        target.insert("sourceIndex".into(), json!(index));
-        rewritten.insert(finding.unit);
+        written.insert((finding.unit, sentence.to_owned()));
         tracing::info!(
             unit = finding.unit,
             source = %found.source_id,
             cited = ?found.cited,
             added_source = numbered_at.is_none(),
-            "Repaired a section's citation to the passage that supports its claim"
+            moved = moves.is_some(),
+            "Cited the sentence that states a claim at the passage that supports it"
         );
         repairs.push(Cited::Recited(Box::new(ClaimEvent::CitationRepaired {
             cited: found.cited.clone(),

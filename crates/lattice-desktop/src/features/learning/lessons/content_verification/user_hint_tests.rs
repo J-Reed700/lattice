@@ -455,13 +455,25 @@ async fn a_hint_whose_page_verifies_the_claim_on_a_source_its_section_does_not_c
 
     let published: Value = serde_json::from_str(&published)?;
     let block = &published["blocks"][0];
-    assert!(
-        block["quote"]
-            .as_str()
-            .is_some_and(|quote| quote.contains(CLAIM)),
-        "the section cites the page the hint found: {block}"
+    assert_eq!(block["quote"], GOOD, "the section's own citation stands");
+    // The claim is read against the page the hint found: the sentence it
+    // states cites it, as the source the round saved after the course's own.
+    let program_id = repo.job(&job).await?.program_id;
+    let mut sources = vec![source()];
+    sources.extend(
+        crate::features::learning::repository::LearningRepository::new(pool.clone())
+            .verification_sources(&program_id)
+            .await?,
     );
-    // The page the round saved is numbered after the course's own.
-    assert_eq!(block["sourceIndex"], 1);
+    let references = ReferenceCollection::lexical(&sources)?;
+    let citations = section_citations(&published, &references)?;
+    let read = citations.of_claim(0, CLAIM);
+    assert!(
+        read.iter().any(|passage| {
+            passage.text.contains(CLAIM)
+                && Some(passage.source_id.as_str()) == citations.source_at(1)
+        }),
+        "{read:?}"
+    );
     Ok(())
 }

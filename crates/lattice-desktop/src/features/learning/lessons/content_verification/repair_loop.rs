@@ -509,14 +509,15 @@ async fn stop(ledger: &mut ClaimLedger, raw: &str, reason: StopReason) -> Result
     Ok(error)
 }
 
-/// A claim supported elsewhere in the course keeps its text; its section's
-/// citation moves to the passage found, and the next pass reads it against the
-/// citation (§5.1). The statements at a recite node are the repair's, one claim
-/// of a section a call: a second waits for the next round with nothing
-/// recorded, and a claim that cannot be cited is done, the reading after it
-/// telling. A claim the user resolved, on a page their section does not cite,
-/// is cited there too, as the call goes: it takes no step and is not read.
-/// Whether any statement took its step or was cited.
+/// A claim supported elsewhere in the course keeps its text; the citation of
+/// its sentence moves to the passage found, or is added where the sentence has
+/// none of its own or shares it with a live statement, and the next pass reads
+/// it against that citation (§5.1). The statements at a recite node are the
+/// repair's, one claim of a sentence a call: a second waits for the next round
+/// with nothing recorded, and a claim that cannot be cited is done, the reading
+/// after it telling. A claim the user resolved, on a page their section does
+/// not cite, is cited there too, as the call goes: it takes no step and is not
+/// read. Whether any statement took its step or was cited.
 pub(super) async fn recite(
     ledger: &mut ClaimLedger,
     policy: &dyn AcceptancePolicy,
@@ -546,7 +547,9 @@ pub(super) async fn recite(
         .iter()
         .map(|(_, finding)| finding.clone())
         .collect();
-    let cited = repair::cite_where_supported(candidate, &sent, numbered, references, tried)?;
+    let reciting: Vec<ClaimId> = findings.iter().map(|(id, _)| id.clone()).collect();
+    let kept = ledger.live_statements_but(&reciting);
+    let cited = repair::cite_where_supported(candidate, &sent, &kept, numbered, references, tried)?;
     let mut moved = false;
     for ((id, _), cited) in findings.iter().zip(cited) {
         match cited {

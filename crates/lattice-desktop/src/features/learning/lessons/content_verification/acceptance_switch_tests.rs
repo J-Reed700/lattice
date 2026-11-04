@@ -625,7 +625,8 @@ async fn a_research_round_records_researched_then_its_step() -> Result<()> {
 }
 
 #[tokio::test]
-async fn a_second_claim_of_a_section_at_recite_waits_a_round_then_is_recited() -> Result<()> {
+async fn claims_on_two_sentences_of_a_section_at_recite_are_both_recited_in_one_call() -> Result<()>
+{
     const NONE: &str = "Missing values in nonblank rows default to None.";
     let policy = StandardPolicy::new();
     let sources = [source()];
@@ -652,6 +653,69 @@ async fn a_second_claim_of_a_section_at_recite_waits_a_round_then_is_recited() -
     let report = pass_report(found);
     let (first, second) = (ClaimId("first".into()), ClaimId("second".into()));
     let mut numbered = vec![sources[0].clone()];
+
+    let moved = super::super::repair_loop::recite(
+        &mut ledger,
+        &policy,
+        (&mut lesson, &report),
+        (&mut numbered, &mut HashSet::new()),
+        &references,
+    )
+    .await?;
+
+    // Each claim is on a sentence of its own, so both are cited in the call,
+    // each by an entry of its own; the section's quotation stands.
+    assert!(moved);
+    for id in [&first, &second] {
+        assert_eq!(node_of(&ledger, id), Some("s.citeread"));
+        assert!(events_of(ledger.entry(id).unwrap())
+            .iter()
+            .any(|event| matches!(event, ClaimEvent::CitationRepaired { .. })));
+    }
+    assert_eq!(lesson["blocks"][0]["quote"], "An unrelated quotation.");
+    assert_eq!(
+        lesson["blocks"][0]["citations"],
+        json!([
+            {"sentence":GOOD,"sourceIndex":0,"quote":GOOD},
+            {"sentence":NONE,"sourceIndex":0,"quote":NONE},
+        ])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_second_claim_on_a_sentence_at_recite_waits_a_round_then_is_done_on_the_citation_written(
+) -> Result<()> {
+    const WHITESPACE: &str = "DictReader preserves whitespace by default.";
+    let policy = StandardPolicy::new();
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let at = sources[0].excerpt.find(GOOD).unwrap();
+    let mut ledger = open().await?;
+    let mut found = Vec::new();
+    for (name, statement) in [("first", GOOD), ("second", WHITESPACE)] {
+        let id = claim(&mut ledger, name, (GOOD, statement), GOOD, SOURCED).await?;
+        walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
+        // Both state their sentence, the same one, and a page supports both
+        // on the same passage.
+        found.push(Finding {
+            quote: GOOD.into(),
+            ..elsewhere(statement, &sources[0].id, at..at + GOOD.len())
+        });
+    }
+    let mut lesson = json!({"blocks":[{"kind":"explanation","title":"Rows","body":GOOD,"rubric":[],
+        "sourceIndex":0,"quote":"An unrelated quotation."}],"questions":[]});
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(GOOD, GOOD), (GOOD, WHITESPACE)],
+        &sources,
+    )
+    .await?;
+    let report = pass_report(found);
+    let (first, second) = (ClaimId("first".into()), ClaimId("second".into()));
+    let mut numbered = vec![sources[0].clone()];
     let mut tried = HashSet::new();
     let before = ledger.entry(&second).unwrap().events().len();
 
@@ -664,7 +728,7 @@ async fn a_second_claim_of_a_section_at_recite_waits_a_round_then_is_recited() -
     )
     .await?;
 
-    // One claim of the section is recited in a call; the other waits, with
+    // One claim of a sentence is recited in a call; the other waits, with
     // nothing recorded.
     assert!(moved);
     assert_eq!(node_of(&ledger, &first), Some("s.citeread"));
@@ -673,9 +737,11 @@ async fn a_second_claim_of_a_section_at_recite_waits_a_round_then_is_recited() -
         .any(|event| matches!(event, ClaimEvent::CitationRepaired { .. })));
     assert_eq!(node_of(&ledger, &second), Some("s.recite"));
     assert_eq!(ledger.entry(&second).unwrap().events().len(), before);
-    assert_eq!(lesson["blocks"][0]["quote"], GOOD);
+    let entry = json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}]);
+    assert_eq!(lesson["blocks"][0]["citations"], entry);
 
-    // The next round recites it.
+    // The next round finds the passage written already: the claim is done,
+    // and the reading after it is of the citation that was written.
     let moved = super::super::repair_loop::recite(
         &mut ledger,
         &policy,
@@ -687,7 +753,10 @@ async fn a_second_claim_of_a_section_at_recite_waits_a_round_then_is_recited() -
 
     assert!(moved);
     assert_eq!(node_of(&ledger, &second), Some("s.citeread"));
-    assert_eq!(lesson["blocks"][0]["quote"], NONE);
+    assert!(events_of(ledger.entry(&second).unwrap())
+        .iter()
+        .all(|event| !matches!(event, ClaimEvent::CitationRepaired { .. })));
+    assert_eq!(lesson["blocks"][0]["citations"], entry);
     Ok(())
 }
 
@@ -699,8 +768,15 @@ async fn a_claim_that_cannot_be_cited_is_done_and_the_reading_after_it_tells() -
     let mut ledger = open().await?;
     let id = claim(&mut ledger, "bare", (GOOD, GOOD), GOOD, SOURCED).await?;
     walk(&mut ledger, &id, Class::Sourced, &RECITING).await?;
-    // The section carries no quotation to move.
+    // The section lists as many citations as the lesson schema allows, none
+    // of them the claim's: it can take no other.
+    let entries: Vec<Value> = (0..crate::features::learning::generation::MAX_CITATIONS)
+        .map(|n| {
+            json!({"sentence":format!("Entry {n} says nothing of it."),"sourceIndex":0,"quote":GOOD})
+        })
+        .collect();
     let mut lesson = lesson_of(GOOD);
+    lesson["blocks"][0]["citations"] = json!(entries);
     identified(
         &mut ledger,
         &Model::new(),
@@ -1512,7 +1588,11 @@ async fn a_claim_at_recite_whose_finding_was_lost_is_recited_from_the_finding_re
         .await?;
         assert!(moved, "the claim is recited");
         assert_eq!(node_of(&ledger, &id), Some("s.citeread"));
-        assert_eq!(lesson["blocks"][0]["quote"], GOOD);
+        assert_eq!(lesson["blocks"][0]["quote"], "An unrelated quotation.");
+        assert_eq!(
+            lesson["blocks"][0]["citations"],
+            json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}])
+        );
         Ok(())
     })
     .await

@@ -121,13 +121,16 @@ pub fn lesson_schema(source_count: usize) -> serde_json::Value {
     })
 }
 
+/// The most sentences a block or question lists in its citations.
+pub(in crate::features::learning) const MAX_CITATIONS: usize = 24;
+
 /// The sentences of a block or question the writer cites, each with its own
 /// source and the words of that source that contain what it states (claim
 /// classes design §3.5): a sentence that states a specific is listed, and no
 /// other. The array is bounded, as llama.cpp drops a grammar whose repetition
 /// bounds run high, and empty for a course without sources.
 fn citations_schema(source_count: usize) -> serde_json::Value {
-    let most = if source_count == 0 { 0 } else { 24 };
+    let most = if source_count == 0 { 0 } else { MAX_CITATIONS };
     json!({"type":"array","maxItems":most,"items":{
         "type":"object","additionalProperties":false,"required":["sentence","sourceIndex","quote"],"properties":{
             "sentence":{"type":"string","minLength":3,"maxLength":600},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string","maxLength":1200}

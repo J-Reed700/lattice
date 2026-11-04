@@ -7,15 +7,17 @@ use super::*;
 use lattice_core::domain::learning::acceptance::Reading;
 
 /// The citation events `cite_where_supported` made, one for each finding it
-/// rewrote the citation of.
+/// cited, with `kept` the live statements that are not being cited.
 fn recited(
     candidate: &mut Value,
     findings: &[Finding],
+    kept: &[(usize, String)],
     numbered: &mut Vec<LearningSourceDto>,
     references: &ReferenceCollection<'_>,
     tried: &mut HashSet<(usize, String)>,
 ) -> Result<Vec<lattice_core::domain::learning::claim_review::ClaimEvent>> {
-    let cited = repair::cite_where_supported(candidate, findings, numbered, references, tried)?;
+    let cited =
+        repair::cite_where_supported(candidate, findings, kept, numbered, references, tried)?;
     Ok(cited
         .into_iter()
         .filter_map(|cited| match cited {
@@ -61,19 +63,23 @@ async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
     let repairs = recited(
         &mut candidate,
         std::slice::from_ref(&finding),
+        &[],
         &mut numbered,
         &references,
         &mut tried,
     )?;
     assert_eq!(repairs.len(), 1);
     let block = &candidate["blocks"][0];
-    assert_eq!(block["sourceIndex"], 1);
+    assert_eq!(block["sourceIndex"], 0, "the section's own citation stands");
     assert_eq!(
         numbered.len(),
         2,
         "the marker's source was numbered already"
     );
-    let quote = block["quote"].as_str().unwrap();
+    // The sentence is cited by an entry of its own, at the marker's source.
+    assert_eq!(block["citations"][0]["sentence"], CLAIM);
+    assert_eq!(block["citations"][0]["sourceIndex"], 1);
+    let quote = block["citations"][0]["quote"].as_str().unwrap();
     assert!(source("marker").excerpt.contains(quote));
     assert_eq!(
         quote, "Mineral alpha notes 99: property was logged.",
@@ -103,6 +109,7 @@ async fn a_claim_supported_elsewhere_has_its_citation_repaired() -> Result<()> {
     assert!(recited(
         &mut candidate,
         std::slice::from_ref(&finding),
+        &[],
         &mut numbered,
         &references,
         &mut tried,
@@ -126,16 +133,17 @@ async fn a_source_the_lesson_does_not_number_is_added_and_cited() -> Result<()> 
     let repairs = recited(
         &mut candidate,
         &[finding],
+        &[],
         &mut numbered,
         &references,
         &mut HashSet::new(),
     )?;
     // The marker's source joins the lesson's sources, with its title and
-    // URL as the writer's are, and the section cites it.
+    // URL as the writer's are, and the section cites it for the sentence.
     assert_eq!(numbered.len(), 2);
     assert_eq!(numbered[1].id, "marker");
     assert_eq!(numbered[1].title, "Reference marker");
-    assert_eq!(candidate["blocks"][0]["sourceIndex"], 1);
+    assert_eq!(candidate["blocks"][0]["citations"][0]["sourceIndex"], 1);
     assert!(matches!(
         repairs[0],
         lattice_core::domain::learning::claim_review::ClaimEvent::CitationRepaired {
@@ -240,6 +248,7 @@ async fn a_claim_supported_elsewhere_has_the_citation_of_its_own_sentence_repair
     let repairs = recited(
         &mut candidate,
         std::slice::from_ref(&finding),
+        &[],
         &mut numbered,
         &references,
         &mut HashSet::new(),
@@ -291,6 +300,7 @@ async fn a_statement_with_no_entry_of_its_own_leaves_its_sections_citation_and_g
     let repairs = recited(
         &mut candidate,
         std::slice::from_ref(&finding),
+        &[],
         &mut numbered(&sources),
         &references,
         &mut HashSet::new(),
@@ -317,6 +327,7 @@ async fn a_section_with_no_quotation_of_its_own_can_be_cited() -> Result<()> {
     let repairs = recited(
         &mut candidate,
         std::slice::from_ref(&finding),
+        &[],
         &mut numbered(&sources),
         &references,
         &mut HashSet::new(),
@@ -330,5 +341,238 @@ async fn a_section_with_no_quotation_of_its_own_can_be_cited() -> Result<()> {
     let block = &candidate["blocks"][0];
     assert_eq!(block["citations"], json!([marker_entry()]));
     assert!(block.get("quote").is_none(), "no quotation is written");
+    Ok(())
+}
+
+const NONE: &str = "Missing values in nonblank rows default to None.";
+
+/// A lesson of one section that says `body` and cites an unrelated quotation.
+fn csv_lesson(body: &str) -> Value {
+    json!({"blocks":[{"kind":"explanation","title":"Rows","body":body,"rubric":[],
+        "sourceIndex":0,"quote":"An unrelated quotation."}],"questions":[]})
+}
+
+/// A finding that a page of the course supports `statement`, which the
+/// section says in `quote`, on `sentence` of `source`.
+fn found_in(
+    source: &LearningSourceDto,
+    sentence: &str,
+    (quote, statement): (&str, &str),
+) -> Finding {
+    let at = source.excerpt.find(sentence).unwrap();
+    Finding {
+        unit: 0,
+        quote: quote.into(),
+        statement: statement.into(),
+        verdict: ClaimVerdict::Supported,
+        reason: "Stated elsewhere.".into(),
+        evidence: vec![],
+        supporting_quote: None,
+        resolution: None,
+        trust: None,
+        label: None,
+        class: None,
+        two_pass: TwoPass {
+            supported_by: Some(SupportedElsewhere {
+                source_id: source.id.clone(),
+                start_byte: at,
+                end_byte: at + sentence.len(),
+                cited: vec![],
+            }),
+            ..Default::default()
+        },
+    }
+}
+
+#[test]
+fn an_entry_a_live_statement_shares_stays_and_a_second_entry_for_the_sentence_is_appended(
+) -> Result<()> {
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let finding = found_in(&sources[0], GOOD, (GOOD, GOOD));
+    let shared = json!({"sentence":GOOD,"sourceIndex":0,"quote":NONE});
+    let own = json!({"sentence":GOOD,"sourceIndex":0,"quote":GOOD});
+    let lesson = {
+        let mut lesson = csv_lesson(GOOD);
+        lesson["blocks"][0]["citations"] = json!([shared]);
+        lesson
+    };
+    // Another live statement of the sentence reads against that entry too.
+    let kept = [(0, "DictReader preserves field-name whitespace.".to_owned())];
+
+    let mut candidate = lesson.clone();
+    let cited = recited(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &kept,
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+    assert_eq!(cited.len(), 1);
+    assert_eq!(
+        candidate["blocks"][0]["citations"],
+        json!([shared, own]),
+        "the shared entry stays as it was, and the sentence gains one of its own"
+    );
+
+    // With no live statement beside it, the same entry moves.
+    let mut candidate = lesson;
+    recited(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &[],
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+    assert_eq!(candidate["blocks"][0]["citations"], json!([own]));
+    Ok(())
+}
+
+#[test]
+fn claims_on_two_sentences_of_a_section_are_both_cited_in_one_call() -> Result<()> {
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let body = format!("{GOOD} {NONE}");
+    let findings = [
+        found_in(&sources[0], GOOD, (body.as_str(), GOOD)),
+        found_in(&sources[0], NONE, (body.as_str(), NONE)),
+    ];
+    let mut candidate = csv_lesson(&body);
+
+    let cited = repair::cite_where_supported(
+        &mut candidate,
+        &findings,
+        &[],
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+
+    assert!(
+        matches!(
+            cited.as_slice(),
+            [repair::Cited::Recited(_), repair::Cited::Recited(_)]
+        ),
+        "both are cited"
+    );
+    let block = &candidate["blocks"][0];
+    assert_eq!(block["quote"], "An unrelated quotation.");
+    assert_eq!(
+        block["citations"],
+        json!([
+            {"sentence":GOOD,"sourceIndex":0,"quote":GOOD},
+            {"sentence":NONE,"sourceIndex":0,"quote":NONE},
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_claim_on_a_sentence_cited_in_the_call_is_deferred() -> Result<()> {
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let findings = [
+        found_in(&sources[0], GOOD, (GOOD, GOOD)),
+        found_in(
+            &sources[0],
+            GOOD,
+            (GOOD, "DictReader preserves whitespace by default."),
+        ),
+    ];
+    let mut candidate = csv_lesson(GOOD);
+
+    let cited = repair::cite_where_supported(
+        &mut candidate,
+        &findings,
+        &[],
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+
+    assert!(
+        matches!(
+            cited.as_slice(),
+            [repair::Cited::Recited(_), repair::Cited::Deferred]
+        ),
+        "the second waits for the next round"
+    );
+    assert_eq!(
+        candidate["blocks"][0]["citations"],
+        json!([{"sentence":GOOD,"sourceIndex":0,"quote":GOOD}])
+    );
+    Ok(())
+}
+
+#[test]
+fn a_section_that_lists_as_many_citations_as_the_schema_allows_takes_no_other_but_moves_its_own(
+) -> Result<()> {
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let finding = found_in(&sources[0], GOOD, (GOOD, GOOD));
+    let unrelated: Vec<Value> = (0..crate::features::learning::generation::MAX_CITATIONS)
+        .map(|n| json!({"sentence":format!("Entry {n} says nothing of it."),"sourceIndex":0,"quote":NONE}))
+        .collect();
+    let mut candidate = csv_lesson(GOOD);
+    candidate["blocks"][0]["citations"] = json!(unrelated);
+    let full = candidate.clone();
+
+    let cited = repair::cite_where_supported(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &[],
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+
+    assert!(matches!(cited.as_slice(), [repair::Cited::Cannot]));
+    assert_eq!(candidate, full, "nothing is written");
+
+    // Its own entry needs no room: it moves.
+    let mut entries = unrelated;
+    entries[0] = json!({"sentence":GOOD,"sourceIndex":0,"quote":NONE});
+    let mut candidate = csv_lesson(GOOD);
+    candidate["blocks"][0]["citations"] = json!(entries);
+    let cited = repair::cite_where_supported(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &[],
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+    assert!(matches!(cited.as_slice(), [repair::Cited::Recited(_)]));
+    assert_eq!(
+        candidate["blocks"][0]["citations"][0],
+        json!({"sentence":GOOD,"sourceIndex":0,"quote":GOOD})
+    );
+    Ok(())
+}
+
+#[test]
+fn a_claim_that_draws_on_several_sentences_of_its_quote_cannot_be_cited() -> Result<()> {
+    let sources = [source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    // No sentence holds the greater part of this statement's words.
+    let passage = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
+    let statement = "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.";
+    let finding = found_in(&sources[0], GOOD, (passage, statement));
+    let mut candidate = csv_lesson(passage);
+    let before = candidate.clone();
+
+    let cited = repair::cite_where_supported(
+        &mut candidate,
+        std::slice::from_ref(&finding),
+        &[],
+        &mut sources.to_vec(),
+        &references,
+        &mut HashSet::new(),
+    )?;
+
+    assert!(matches!(cited.as_slice(), [repair::Cited::Cannot]));
+    assert_eq!(candidate, before);
     Ok(())
 }

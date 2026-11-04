@@ -23,6 +23,7 @@ mod lesson_rules;
 mod outline;
 mod recall;
 
+pub(in crate::features::learning) use lesson::MAX_CITATIONS;
 pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
 pub use lesson_rules::lesson_rule_notes;
 pub(in crate::features::learning) use lesson_rules::{
