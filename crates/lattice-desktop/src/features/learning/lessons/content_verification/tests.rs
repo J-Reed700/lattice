@@ -612,7 +612,7 @@ mod rounds_tests;
 mod bridge_tests;
 
 #[path = "readings_tests.rs"]
-mod readings_tests;
+pub(super) mod readings_tests;
 
 #[path = "reading_driver_tests.rs"]
 mod reading_driver_tests;

@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used)]
-use super::readings_tests::{read_one, world_of};
+use super::super::tests::readings_tests::{read_one, world_of};
 use super::*;
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};

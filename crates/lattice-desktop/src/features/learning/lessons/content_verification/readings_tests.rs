@@ -48,7 +48,7 @@ impl LLMPort for Down {
 
 /// What the readers read: a lesson, the course it cites, its examples' runs
 /// and the claims the user settled with evidence of their own.
-pub(super) struct World<'w> {
+pub(in crate::features::learning::lessons::content_verification) struct World<'w> {
     pub(super) lesson: Value,
     pub(super) references: &'w ReferenceCollection<'w>,
     pub(super) citations: Citations,
@@ -61,7 +61,7 @@ fn explanation(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Quillet","body":body,"rubric":[]}],"questions":[]})
 }
 
-pub(super) fn world_of<'w>(
+pub(in crate::features::learning::lessons::content_verification) fn world_of<'w>(
     references: &'w ReferenceCollection<'w>,
     citations: Citations,
 ) -> World<'w> {
@@ -183,7 +183,7 @@ pub(super) async fn read_observed(
 }
 
 /// What the reader of `reading` makes of `text` in section 0.
-pub(super) async fn read_one(
+pub(in crate::features::learning::lessons::content_verification) async fn read_one(
     reading: Reading,
     model: &dyn LLMPort,
     world: &World<'_>,
