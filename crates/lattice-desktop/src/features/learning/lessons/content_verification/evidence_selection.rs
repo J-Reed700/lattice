@@ -254,6 +254,48 @@ impl Selection {
     }
 }
 
+/// The first page saved under `key`, in the job's memory or else in its
+/// checkpoints.
+async fn saved_selection(retained: &ClaimChecks, key: &str) -> Result<Option<Selection>> {
+    let memory = retained
+        .selections
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(key)
+        .cloned();
+    match memory {
+        Some(saved) => Ok(Some(saved)),
+        None => Ok(crate::features::learning::lesson_drafts::checkpoint(key)
+            .await?
+            .and_then(|value| serde_json::from_value::<Selection>(value).ok())),
+    }
+}
+
+/// Whether the first page of `claim` is saved and restores whatever the page
+/// budget is: no source research added since is for this claim.
+pub(super) async fn is_saved(
+    llm: &dyn LLMPort,
+    (claim, unit): (&Claim, usize),
+    references: &ReferenceCollection<'_>,
+    current: &[SourceBinding],
+    retained: &ClaimChecks,
+) -> Result<bool> {
+    let key = selection_key(llm, references, (unit, &claim.statement), RANKING);
+    let Some(saved) = saved_selection(retained, &key).await? else {
+        return Ok(false);
+    };
+    if saved.restore(references, current).is_none() {
+        return Ok(false);
+    }
+    if current.iter().all(|source| saved.sources.contains(source)) {
+        return Ok(true);
+    }
+    let for_research = research_scope(current, retained)
+        .await?
+        .is_none_or(|targets| targets.contains(&(unit, claim.statement.clone())));
+    Ok(!for_research)
+}
+
 /// The first page of the course for `claim`: restored when saved under this
 /// ranking with every source unchanged, otherwise read from the course's list,
 /// and never overlapping `attribution`, the passages its citation shows. Saved
@@ -268,18 +310,7 @@ pub(super) async fn select(
 ) -> Result<Selected> {
     let evidence_checks::Sizing::Sized(budget) = sizing;
     let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING);
-    let memory = retained
-        .selections
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&selection_key)
-        .cloned();
-    let saved = match memory {
-        Some(saved) => Some(saved),
-        None => crate::features::learning::lesson_drafts::checkpoint(&selection_key)
-            .await?
-            .and_then(|value| serde_json::from_value::<Selection>(value).ok()),
-    };
+    let saved = saved_selection(retained, &selection_key).await?;
     let restored = saved
         .as_ref()
         .and_then(|saved| saved.restore(references, current));

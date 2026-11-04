@@ -2,14 +2,25 @@
 //! quotation found in the source it names, or a claim the user resolved with
 //! evidence of their own, is settled without a call; otherwise the judge reads
 //! the passages its sentence cites that it holds, with the section's passed
-//! example runs. A statement with no passage at all is read on the course's
+//! example runs. Every reading a settle or a receipt gives is made before the
+//! first call. A statement with no passage at all is read on the course's
 //! page, as `Page` reads it: nothing it cites is there to be read, so the page
 //! is the only place its support can be.
 use super::super::evidence_checks::{as_checked, attribution_page};
-use super::page::Page;
+use super::page::Batch;
 use super::*;
 
 pub(super) struct Parts;
+
+/// What a statement's own passages give without a call.
+enum Own {
+    /// Its reading: settled, or restored from its receipt.
+    Read(Read),
+    /// A comparison with its passages that no receipt restored.
+    Ask(PendingClaim),
+    /// It has no passage of its own.
+    Bare,
+}
 
 #[async_trait]
 impl Reader for Parts {
@@ -19,45 +30,35 @@ impl Reader for Parts {
     }
 
     async fn read(&self, at: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>> {
-        let mut reads = Vec::with_capacity(statements.len());
+        let mut made = Made::new(statements.len());
+        let mut asks = Vec::new();
         let mut bare = Vec::new();
         for (ordinal, statement) in statements.iter().enumerate() {
-            let read = read_one(at, ordinal, statement).await?;
-            if read.is_none() {
-                bare.push((ordinal, *statement));
-            }
-            reads.push(read);
-        }
-        if !bare.is_empty() {
-            let (ordinals, those): (Vec<usize>, Vec<Statement<'_>>) = bare.into_iter().unzip();
-            for (ordinal, read) in ordinals.into_iter().zip(Page.read(at, &those).await?) {
-                if let Some(slot) = reads.get_mut(ordinal) {
-                    *slot = Some(read);
-                }
+            match restore(at, ordinal, statement).await? {
+                Own::Read(read) => made.keep(ordinal, read),
+                Own::Ask(pending) => asks.push((ordinal, *statement, pending)),
+                Own::Bare => bare.push((ordinal, *statement)),
             }
         }
-        reads
-            .into_iter()
-            .map(|read| {
-                read.ok_or_else(|| {
-                    AppError::InternalError("A statement was read without a reading".into())
-                })
-            })
-            .collect()
+        let (ordinals, those): (Vec<usize>, Vec<Statement<'_>>) = bare.into_iter().unzip();
+        let mut page = Batch::restore(at, &those, false).await?;
+        for (ordinal, statement, pending) in asks {
+            let finding = ask_parts(at, statement.unit, pending).await?;
+            made.keep(ordinal, read_of(&statement, finding, false));
+        }
+        page.ask(at).await?;
+        for (ordinal, read) in ordinals.into_iter().zip(page.reads()?) {
+            made.keep(ordinal, read);
+        }
+        made.all()
     }
 }
 
-/// `statement`'s reading on its own passages, or `None` when it has none.
-async fn read_one(
-    at: &ReadContext<'_>,
-    ordinal: usize,
-    statement: &Statement<'_>,
-) -> Result<Option<Read>> {
-    let Statement {
-        unit,
-        claim,
-        classed,
-    } = *statement;
+/// What `statement`'s own passages give without a call: its reading when a
+/// quotation or the user's evidence settles it or its receipt is saved, the
+/// comparison to ask otherwise, or that it has no passage of its own.
+async fn restore(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_>) -> Result<Own> {
+    let Statement { unit, claim, .. } = *statement;
     // A quotation found in its source is settled by the match; evidence the
     // user brought is a saved check.
     let settled = match quote_claims::settle(at.references, at.citations, unit, claim)? {
@@ -67,13 +68,8 @@ async fn read_one(
             .settled_finding(unit, claim)
             .map(|finding| (finding, true)),
     };
-    if let Some((mut finding, reused)) = settled {
-        finding.class = Some(classed);
-        return Ok(Some(Read {
-            outcome: parts_outcome(&finding),
-            finding,
-            reused,
-        }));
+    if let Some((finding, reused)) = settled {
+        return Ok(Own::Read(read_of(statement, finding, reused)));
     }
     let checked = as_checked(claim, at.citations, at.references);
     let (evidence, _) = attribution_page(
@@ -84,13 +80,22 @@ async fn read_one(
         parts_fit(at),
     );
     if evidence.is_empty() {
-        return Ok(None);
+        return Ok(Own::Bare);
     }
-    let (mut finding, reused) = judge_parts(at, ordinal, statement, &checked, evidence).await?;
-    finding.class = Some(classed);
-    Ok(Some(Read {
+    Ok(
+        match restore_parts(at, ordinal, statement, &checked, evidence).await? {
+            Restored::Receipt(finding, reused) => Own::Read(read_of(statement, finding, reused)),
+            Restored::Ask(pending) => Own::Ask(pending),
+        },
+    )
+}
+
+/// The reading of `statement` that `finding` on its own passages makes.
+fn read_of(statement: &Statement<'_>, mut finding: Finding, reused: bool) -> Read {
+    finding.class = Some(statement.classed);
+    Read {
         outcome: parts_outcome(&finding),
         finding,
         reused,
-    }))
+    }
 }

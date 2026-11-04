@@ -1,7 +1,8 @@
 //! The readers of the acceptance policy (design §2.6): one adapter per
 //! reading, each turning an existing judge path into the policy's outcomes. A
-//! reader restores and records the receipts of the comparisons it makes, and
-//! leaves the finding it fills; what the answer comes to is interpreted in
+//! reader restores the receipts of its whole batch before its first call,
+//! records the receipts of the comparisons it then asks, and leaves the
+//! finding it fills; what the answer comes to is interpreted in
 //! `lattice-core`, beside the judge. The reading driver asks them along the
 //! policy's graphs, and the pass reads the statements that wait for a reading
 //! through it.
@@ -218,39 +219,72 @@ async fn ask_strict(
     Ok(asked)
 }
 
-/// The finding on `evidence` for `statement`, restored from its receipt or
-/// asked for: the part-wise judge's, or the strict judge's of a page that holds
-/// no source passage (an example's run is no source). Whether it was restored.
-async fn judge_parts(
+/// The finding on `evidence`, the passages of `statement`'s own, that its
+/// receipt restores, and whether a saved check gave it; otherwise the
+/// comparison that is left to ask.
+async fn restore_parts(
     at: &ReadContext<'_>,
     ordinal: usize,
     statement: &Statement<'_>,
     checked: &Claim,
     evidence: Vec<EvidencePassage>,
-) -> Result<(Finding, bool)> {
+) -> Result<Restored> {
     let pending = comparison(at, ordinal, statement, checked, evidence, Pass::Attribution);
-    let (finding, reused) = match restored(at, pending).await? {
-        Restored::Receipt(finding, reused) => (finding, reused),
-        Restored::Ask(pending) if applies(&pending) => {
-            let guard = specifics(at, statement.unit);
-            let ((_, (_, _, finding, _)), answered) =
-                part_wise(at.llm, pending, &at.labels, guard).await?;
-            tally(at.retained, answered);
-            (finding, false)
-        }
-        Restored::Ask(pending) => {
-            let finding = ask_strict(at, vec![pending])
-                .await?
-                .into_iter()
-                .next()
-                .map(|(_, finding)| finding)
-                .ok_or_else(|| {
-                    AppError::InternalError("A comparison was asked without a finding".into())
-                })?;
-            (finding, false)
-        }
+    Ok(match restored(at, pending).await? {
+        Restored::Receipt(finding, reused) => Restored::Receipt(alone(finding), reused),
+        asked => asked,
+    })
+}
+
+/// The finding on `pending`, a comparison with the passages of a statement of
+/// section `unit` that no receipt restored: the part-wise judge's, or the
+/// strict judge's of a page that holds no source passage (an example's run is
+/// no source).
+async fn ask_parts(at: &ReadContext<'_>, unit: usize, pending: PendingClaim) -> Result<Finding> {
+    let finding = if applies(&pending) {
+        let guard = specifics(at, unit);
+        let ((_, (_, _, finding, _)), answered) =
+            part_wise(at.llm, pending, &at.labels, guard).await?;
+        tally(at.retained, answered);
+        finding
+    } else {
+        ask_strict(at, vec![pending])
+            .await?
+            .into_iter()
+            .next()
+            .map(|(_, finding)| finding)
+            .ok_or_else(|| {
+                AppError::InternalError("A comparison was asked without a finding".into())
+            })?
     };
-    Ok((alone(finding), reused))
+    Ok(alone(finding))
+}
+
+/// The readings of a batch as they are made, each at its statement's place.
+struct Made(Vec<Option<Read>>);
+
+impl Made {
+    fn new(len: usize) -> Self {
+        Self((0..len).map(|_| None).collect())
+    }
+
+    fn keep(&mut self, ordinal: usize, read: Read) {
+        if let Some(slot) = self.0.get_mut(ordinal) {
+            *slot = Some(read);
+        }
+    }
+
+    /// Every reading, in the batch's order.
+    fn all(self) -> Result<Vec<Read>> {
+        self.0
+            .into_iter()
+            .map(|read| {
+                read.ok_or_else(|| {
+                    AppError::InternalError("A statement was read without a reading".into())
+                })
+            })
+            .collect()
+    }
 }
 
 /// The finding of a statement with no passage to read, which no judge is

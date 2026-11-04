@@ -240,14 +240,12 @@ fn consistency_checker(llm: &dyn LLMPort) -> ClaimChecker<'_> {
     )
 }
 
-/// The consistency judge's answer on `statement` and `passages`: restored
-/// from its receipt or asked for, and whether it was restored. `None` when its
-/// reply could not be read.
-pub(super) async fn consistency_of(
+/// Where the consistency judge's answer on `statement` and `passages` is saved.
+pub(super) fn consistency_key(
     llm: &dyn LLMPort,
     statement: &str,
     passages: &[EvidencePassage],
-) -> Result<Option<(ConsistencyOutcome, bool)>> {
+) -> String {
     let shown: Vec<(&String, usize, usize, &String)> = passages
         .iter()
         .map(|passage| {
@@ -259,7 +257,7 @@ pub(super) async fn consistency_of(
             )
         })
         .collect();
-    let key = format!(
+    format!(
         "{CONSISTENCY_POLICY}:{}",
         digest(
             &json!({
@@ -270,13 +268,24 @@ pub(super) async fn consistency_of(
             })
             .to_string()
         )
-    );
-    if let Some(saved) = crate::features::learning::lesson_drafts::checkpoint(&key)
+    )
+}
+
+/// The consistency judge's answer saved under `key`, when it was asked before.
+pub(super) async fn saved_consistency(key: &str) -> Result<Option<ConsistencyOutcome>> {
+    Ok(crate::features::learning::lesson_drafts::checkpoint(key)
         .await?
-        .and_then(|value| serde_json::from_value::<ConsistencyOutcome>(value).ok())
-    {
-        return Ok(Some((saved, true)));
-    }
+        .and_then(|value| serde_json::from_value::<ConsistencyOutcome>(value).ok()))
+}
+
+/// The consistency judge's answer on `statement` and `passages`, asked for and
+/// saved under `key`. `None` when its reply could not be read.
+pub(super) async fn consistency_of(
+    llm: &dyn LLMPort,
+    key: &str,
+    statement: &str,
+    passages: &[EvidencePassage],
+) -> Result<Option<ConsistencyOutcome>> {
     let texts: Vec<String> = passages
         .iter()
         .map(|passage| passage.text.clone())
@@ -290,25 +299,20 @@ pub(super) async fn consistency_of(
     match judged {
         ClassJudgment::Judged(outcome) => {
             crate::features::learning::lesson_drafts::record_checkpoint(
-                &key,
+                key,
                 serde_json::to_value(&outcome)?,
             )
             .await?;
-            Ok(Some((outcome, false)))
+            Ok(Some(outcome))
         }
         ClassJudgment::Unusable => Ok(None),
         ClassJudgment::Failed(error) => Err(error),
     }
 }
 
-/// The knowledge judge's three samples on `statement`: restored from their
-/// receipt or asked for, and whether they were restored. `None` when a reply
-/// could not be read.
-pub(super) async fn knowledge_of(
-    llm: &dyn LLMPort,
-    statement: &str,
-) -> Result<Option<(KnowledgeOutcome, bool)>> {
-    let key = format!(
+/// Where the knowledge judge's three samples on `statement` are saved.
+pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
+    format!(
         "{KNOWLEDGE_POLICY}:{}",
         digest(
             &json!({
@@ -318,13 +322,24 @@ pub(super) async fn knowledge_of(
             })
             .to_string()
         )
-    );
-    if let Some(saved) = crate::features::learning::lesson_drafts::checkpoint(&key)
+    )
+}
+
+/// The knowledge judge's three samples saved under `key`, when they were asked
+/// before.
+pub(super) async fn saved_knowledge(key: &str) -> Result<Option<KnowledgeOutcome>> {
+    Ok(crate::features::learning::lesson_drafts::checkpoint(key)
         .await?
-        .and_then(|value| serde_json::from_value::<KnowledgeOutcome>(value).ok())
-    {
-        return Ok(Some((saved, true)));
-    }
+        .and_then(|value| serde_json::from_value::<KnowledgeOutcome>(value).ok()))
+}
+
+/// The knowledge judge's three samples on `statement`, asked for and saved
+/// under `key`. `None` when a reply could not be read.
+pub(super) async fn knowledge_of(
+    llm: &dyn LLMPort,
+    key: &str,
+    statement: &str,
+) -> Result<Option<KnowledgeOutcome>> {
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),
@@ -338,11 +353,11 @@ pub(super) async fn knowledge_of(
     match judged {
         ClassJudgment::Judged(outcome) => {
             crate::features::learning::lesson_drafts::record_checkpoint(
-                &key,
+                key,
                 serde_json::to_value(&outcome)?,
             )
             .await?;
-            Ok(Some((outcome, false)))
+            Ok(Some(outcome))
         }
         ClassJudgment::Unusable => Ok(None),
         ClassJudgment::Failed(error) => Err(error),

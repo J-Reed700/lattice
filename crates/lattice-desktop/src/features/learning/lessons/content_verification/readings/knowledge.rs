@@ -1,7 +1,10 @@
 //! `Knowledge` and `Veto`: the knowledge judge's closed-book samples, read by
 //! one of two rules. Knowledge passes a statement on unanimity; the veto fails
-//! it only on a majority that calls it false.
-use super::super::class_checks::{finding_of, knowledge_of, standard, unjudged_finding, vetoed};
+//! it only on a majority that calls it false. Every receipt of a batch is
+//! restored before its first call.
+use super::super::class_checks::{
+    finding_of, knowledge_key, knowledge_of, saved_knowledge, standard, unjudged_finding, vetoed,
+};
 use super::*;
 use lattice_core::application::services::claim_verification::{KnowledgeOutcome, KnowledgeVerdict};
 
@@ -39,44 +42,61 @@ impl Reader for Knowledge {
     }
 
     async fn read(&self, at: &ReadContext<'_>, statements: &[Statement<'_>]) -> Result<Vec<Read>> {
-        let mut reads = Vec::with_capacity(statements.len());
-        for statement in statements {
-            let Statement {
-                unit,
-                claim,
-                classed,
-            } = *statement;
-            let read = match knowledge_of(at.llm, &claim.statement).await? {
-                None => Read {
-                    outcome: Outcome::Unjudged,
-                    finding: unjudged_finding(unit, claim, classed, &[]),
-                    reused: false,
-                },
-                Some((knowledge, reused)) => {
-                    let outcome = match self.rule {
-                        Rule::Knowledge => knowledge.knowledge_outcome(),
-                        Rule::Veto => knowledge.veto_outcome(),
-                    };
-                    let (verdict, reason) = match (outcome, self.rule) {
-                        (Outcome::Refuted, _) => (ClaimVerdict::Contradicted, vetoed(&knowledge)),
-                        (Outcome::Stands, Rule::Knowledge) => {
-                            (ClaimVerdict::Supported, standard(&knowledge))
-                        }
-                        (Outcome::Stands, Rule::Veto) => {
-                            (ClaimVerdict::Supported, not_false(&knowledge))
-                        }
-                        _ => (ClaimVerdict::Unsupported, not_common(&knowledge)),
-                    };
-                    Read {
-                        outcome,
-                        finding: finding_of((unit, claim, classed), verdict, reason, &[], None),
-                        reused,
-                    }
-                }
-            };
-            reads.push(read);
+        let mut made = Made::new(statements.len());
+        let mut asks = Vec::new();
+        for (ordinal, statement) in statements.iter().enumerate() {
+            let key = knowledge_key(at.llm, &statement.claim.statement);
+            match saved_knowledge(&key).await? {
+                Some(saved) => made.keep(ordinal, self.read_of(statement, Some((saved, true)))),
+                None => asks.push((ordinal, *statement, key)),
+            }
         }
-        Ok(reads)
+        for (ordinal, statement, key) in asks {
+            let judged = knowledge_of(at.llm, &key, &statement.claim.statement).await?;
+            let read = self.read_of(&statement, judged.map(|knowledge| (knowledge, false)));
+            made.keep(ordinal, read);
+        }
+        made.all()
+    }
+}
+
+impl Knowledge {
+    /// The reading of `statement` that the knowledge judge's samples make by
+    /// this rule; `None` when a reply could not be read.
+    fn read_of(&self, statement: &Statement<'_>, judged: Option<(KnowledgeOutcome, bool)>) -> Read {
+        let Statement {
+            unit,
+            claim,
+            classed,
+        } = *statement;
+        match judged {
+            None => Read {
+                outcome: Outcome::Unjudged,
+                finding: unjudged_finding(unit, claim, classed, &[]),
+                reused: false,
+            },
+            Some((knowledge, reused)) => {
+                let outcome = match self.rule {
+                    Rule::Knowledge => knowledge.knowledge_outcome(),
+                    Rule::Veto => knowledge.veto_outcome(),
+                };
+                let (verdict, reason) = match (outcome, self.rule) {
+                    (Outcome::Refuted, _) => (ClaimVerdict::Contradicted, vetoed(&knowledge)),
+                    (Outcome::Stands, Rule::Knowledge) => {
+                        (ClaimVerdict::Supported, standard(&knowledge))
+                    }
+                    (Outcome::Stands, Rule::Veto) => {
+                        (ClaimVerdict::Supported, not_false(&knowledge))
+                    }
+                    _ => (ClaimVerdict::Unsupported, not_common(&knowledge)),
+                };
+                Read {
+                    outcome,
+                    finding: finding_of((unit, claim, classed), verdict, reason, &[], None),
+                    reused,
+                }
+            }
+        }
     }
 }
 

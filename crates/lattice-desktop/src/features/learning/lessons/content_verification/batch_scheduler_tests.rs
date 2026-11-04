@@ -558,8 +558,11 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     Ok(())
 }
 
-#[tokio::test]
-async fn parts_restores_the_receipts_behind_a_slow_call_before_making_the_call() -> Result<()> {
+/// `reading` over a batch whose first statement waits on a model that never
+/// answers, and whose other two have receipts saved under the earlier key: a
+/// reader restores one by saving it again under the current key, which it must
+/// have done for both by the time the first call is made.
+async fn restores_the_receipts_behind_a_slow_call(reading: Reading) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson) = setup(&pool).await?;
     let sources = super::bridge_tests::sources();
@@ -579,8 +582,6 @@ async fn parts_restores_the_receipts_behind_a_slow_call_before_making_the_call()
         claim("Quillet is a lexer that emits tokens."),
     ];
     lesson_drafts::run(&repo, &job, &lesson, async {
-        // Receipts saved under the earlier key: a reader restores one by
-        // saving it again under the current key.
         for one in &saved {
             let receipt = ClaimReceipt {
                 verdict: ClaimVerdict::Supported,
@@ -596,7 +597,7 @@ async fn parts_restores_the_receipts_behind_a_slow_call_before_making_the_call()
             .await?;
         }
         let claims = [(0, slow), (0, saved[0].clone()), (0, saved[1].clone())];
-        let work = read_all(Reading::Parts, &blocked, &world, &claims);
+        let work = read_all(reading, &blocked, &world, &claims);
         tokio::select! {
             result = work => panic!("The slow call should still be waiting: {result:?}"),
             result = tokio::time::timeout(Duration::from_secs(5), async {
@@ -611,6 +612,81 @@ async fn parts_restores_the_receipts_behind_a_slow_call_before_making_the_call()
             assert!(
                 lesson_drafts::checkpoint(&key).await?.is_some(),
                 "A receipt behind a slow call must be restored before the call is made"
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn parts_restores_the_receipts_behind_a_slow_call_before_making_the_call() -> Result<()> {
+    restores_the_receipts_behind_a_slow_call(Reading::Parts).await
+}
+
+#[tokio::test]
+async fn ground_restores_the_receipts_behind_a_slow_call_before_making_the_call() -> Result<()> {
+    restores_the_receipts_behind_a_slow_call(Reading::Ground).await
+}
+
+#[tokio::test]
+async fn a_page_batch_restores_the_pages_it_has_saved_before_it_asks_what_an_answer_costs(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    // The first statement has no page saved; the others do, and a receipt each
+    // under the earlier key.
+    let everything = inventory(3);
+    let mut saved = everything.clone();
+    saved.units[0].claims.remove(0);
+    let blocked = BatchModel {
+        block_batch: true,
+        block_individual: true,
+        ..Default::default()
+    };
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        // A run that read their pages and went down before it asked about them.
+        let down = BatchModel {
+            batch_error: Some(AppError::Network("down".into())),
+            ..Default::default()
+        };
+        let failed = paged(&down, &references, &saved, &measured()).await;
+        assert!(matches!(failed, Err(AppError::Network(_))));
+        for one in &saved.units[0].claims {
+            let page = evidence_for(&blocked, &one.statement, 0, &references, &[]).await?;
+            let receipt = ClaimReceipt {
+                verdict: ClaimVerdict::Supported,
+                reason: "The earlier key's receipt.".into(),
+                supporting_quote: page.first().map(|passage| passage.text.clone()),
+                interpretation_policy: None,
+                shown: None,
+            };
+            lesson_drafts::record_checkpoint(
+                &claim_reuse::legacy_key(&blocked, 0, one, &page),
+                serde_json::to_value(&receipt)?,
+            )
+            .await?;
+        }
+        // No answer is measured: the first statement's page is read now, and
+        // the request about it is alone.
+        let retained = ClaimChecks::default();
+        let work = paged(&blocked, &references, &everything, &retained);
+        tokio::select! {
+            result = work => panic!("The first request should still be waiting: {result:?}"),
+            result = tokio::time::timeout(Duration::from_secs(5), async {
+                while blocked.calls.lock().unwrap().is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("The first request never started"),
+        }
+        for one in &saved.units[0].claims {
+            let page = evidence_for(&blocked, &one.statement, 0, &references, &[]).await?;
+            let key = claim_receipt_key(&blocked, &ClaimChecks::key(0, one, &page));
+            assert!(
+                lesson_drafts::checkpoint(&key).await?.is_some(),
+                "A saved page's receipt must be restored before the request that measures an answer"
             );
         }
         Ok(())
