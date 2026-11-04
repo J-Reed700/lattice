@@ -1,13 +1,16 @@
 //! The machine's last attempt on a claim takes its text out of the lesson
 //! (claim classes design §3.2): the sentence-level edit a repair makes, made
-//! here, whole, in no request to the model.
-use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger};
+//! here, whole, in no request to the model, unless the claim's sentence says
+//! more than it: then the model is asked to take the claim out of it (acceptance
+//! design §2.3, §2.6).
+use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger, CutOf};
 use super::super::repair_work::{withdraw, withdraw_resolved};
 use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label};
 use super::super::*;
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome};
-use lattice_core::domain::learning::claim_review::{span_of, ClaimId, ClaimLocation};
-use lattice_core::shared::text::{claim_sentence, sentences};
+use super::goal_words;
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
+use lattice_core::domain::learning::claim_review::ClaimId;
+use lattice_core::shared::text::sentences;
 
 /// What taking a claim's text out of its field comes to.
 enum Cut {
@@ -128,24 +131,6 @@ fn out(example: bool, text: &str, quote: &str) -> Cut {
     }
 }
 
-/// The sentence of `text`, the text of the field `place` is in, that states the
-/// statement of claim `id`, which its cut takes out in place of everything its
-/// quote touches: the one `claim_sentence` names in the quote's place in the
-/// field, where the quote occurs once or else where it was stored. None when it
-/// names none, and when another live statement stands on that sentence, whose
-/// words a cut of the sentence would take out too.
-fn stating<'t>(
-    ledger: &ClaimLedger,
-    id: &ClaimId,
-    place: &ClaimLocation,
-    text: &'t str,
-) -> Option<&'t str> {
-    let within = span_of(text, &place.quote).or(place.span)?;
-    let (start, end) = claim_sentence(text, within, ledger.entry(id)?.statement())?;
-    let sentence = text.get(start..end)?;
-    (!ledger.shares_sentence(id, text, sentence)).then_some(sentence)
-}
-
 /// The claims of `context`'s `key` sent on their last attempt.
 fn last(context: &Value, key: &str) -> Vec<ClaimId> {
     context
@@ -159,12 +144,38 @@ fn last(context: &Value, key: &str) -> Vec<ClaimId> {
         .collect()
 }
 
+/// Tells the failed claims of `context` that are `narrowed` what the model is
+/// asked of them: no last attempt for the code to take, and the narrowing goal.
+fn ask_narrowing(context: &mut Value, narrowed: &[ClaimId]) {
+    let Some(items) = context
+        .get_mut("failedClaims")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for item in items {
+        let named = item
+            .get("claimId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| narrowed.iter().any(|claim| claim.0 == id));
+        let Some(fields) = item.as_object_mut().filter(|_| named) else {
+            continue;
+        };
+        fields.remove("lastAttempt");
+        fields.insert("goal".into(), json!(goal_words(Goal::KeepTheOthers)));
+    }
+}
+
 /// Takes out of `context`'s lesson the text of every claim sent on its last
 /// attempt, and those claims out of the work that remains: the code makes
-/// the cut, so the model is never asked to. A statement's text is the sentence
-/// that states it, wherever the lesson writes that sentence, unless none is
-/// named for it or another live statement stands on it: then it is everything
-/// its quote touches. The ledger keeps the sentences
+/// the cut, so the model is never asked to. What a statement's cut takes is
+/// the ledger's decision (`ClaimLedger::cut_of`), not the flag the request
+/// carried: the sentence that states it, wherever the lesson writes that
+/// sentence, when no other live statement stands on it; everything its quote
+/// touches once a narrowing of it was not applied. Otherwise nothing is cut: the
+/// statement stays among the claims sent, without `lastAttempt` and with the
+/// narrowing goal, for the model to take it out of its sentence, and its
+/// pending repair is marked so. The ledger keeps the sentences
 /// left beside each cut for the section's flow repair, and records the
 /// statements' cuts as the policy's step. A claim whose text cannot be taken
 /// out, because it is the whole of its field or sits in a code block, ends
@@ -186,7 +197,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
         .cloned()
         .ok_or_else(|| invalid("Missing repair candidate."))?;
     let before = lesson.clone();
-    let (mut taken, mut refused) = (Vec::new(), Vec::new());
+    let (mut taken, mut refused, mut narrowed) = (Vec::new(), Vec::new(), Vec::new());
     for (key, example) in [("failedClaims", false), ("exampleClaims", true)] {
         for id in last(context, key) {
             let Some(place) = ledger.entry(&id).map(|entry| entry.location().clone()) else {
@@ -198,11 +209,18 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
                 .and_then(|pointer| lesson.pointer(pointer))
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            let decision = text
+                .as_deref()
+                .filter(|_| !example)
+                .map(|text| ledger.cut_of(&id, text));
+            if matches!(decision, Some(CutOf::Narrow)) {
+                narrowed.push(id);
+                continue;
+            }
             let cut = text.as_deref().map_or(Cut::Absent, |text| {
-                let stated = if example {
-                    None
-                } else {
-                    stating(ledger, &id, &place, text)
+                let stated = match decision {
+                    Some(CutOf::Sentence(sentence)) => Some(sentence),
+                    _ => None,
                 };
                 out(example, text, stated.unwrap_or(&place.quote))
             });
@@ -235,6 +253,12 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
                 }
             }
         }
+    }
+    // A narrowed statement is not cut: the model takes it out of its sentence
+    // in this repair, and the pass after it records what became of it.
+    if !narrowed.is_empty() {
+        ledger.mark_narrowing(&narrowed).await?;
+        ask_narrowing(context, &narrowed);
     }
     // A claim whose text went with a cut sentence is no work any more: the
     // pass after the repair finds it gone.

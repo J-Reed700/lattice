@@ -418,7 +418,8 @@ pub(in crate::features::learning) async fn candidate(
 ) -> Result<String> {
     let sent = context_claims(&context);
     // A claim on its last attempt has its sentence taken out in code; the
-    // model is asked only for the others.
+    // model is asked only for the others, and for a statement whose cut is a
+    // narrowing (`ClaimLedger::cut_of`).
     let handled = cut::last_attempts(policy, &mut context, ledger).await?;
     let candidate = if handled > 0 && targets(&context)?.is_empty() {
         let candidate = context

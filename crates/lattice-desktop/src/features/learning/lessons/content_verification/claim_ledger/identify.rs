@@ -6,7 +6,7 @@ use super::super::*;
 use super::fields::{field_text, locate};
 use super::position::sorted_as;
 use super::{is_example, is_gone, successor, ClaimLedger, RepairRecord};
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Step};
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome, Step};
 use lattice_core::domain::learning::claim_review::{
     identities, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ExtractedClaim, RepairOutcome,
 };
@@ -14,6 +14,9 @@ use lattice_core::shared::text::sentences;
 
 /// Why a rewrite that left the sentence as it was is recorded as not used.
 const UNCHANGED: &str = "The repair left the sentence as it was.";
+/// Why a narrowing whose new sentence still states its claim is recorded as
+/// not used.
+const STILL_STATED: &str = "The narrowed sentence still states it.";
 
 /// The statement a code example's claim makes (§2.1: an example that cannot
 /// run is a claim like any other).
@@ -339,7 +342,8 @@ impl ClaimLedger {
                 continue;
             }
             let after = rewritten.get(&id).cloned().flatten();
-            self.orphan(&id, records.get(&id), after).await?;
+            self.orphan(policy, candidate, &id, records.get(&id), after)
+                .await?;
         }
         // An edited claim no re-extracted claim continues: removed by the edit.
         for id in std::mem::take(&mut self.edited_now) {
@@ -497,6 +501,15 @@ impl ClaimLedger {
         Ok(())
     }
 
+    /// Whether the sentence a repair was sent for is no longer in its field.
+    fn left(&self, candidate: &Value, id: &ClaimId, record: &RepairRecord) -> bool {
+        self.entry(id).is_none_or(|entry| {
+            let location = entry.location();
+            field_text(candidate, location.unit_index, &location.field)
+                .is_none_or(|text| !text.contains(&record.before))
+        })
+    }
+
     /// The outcome of the repair that awaited this pass, for a claim that
     /// continues: what the repair did to its sentence, and for a rewrite the
     /// policy's step. Whether the ledger took the repair's event.
@@ -508,16 +521,15 @@ impl ClaimLedger {
         record: &RepairRecord,
         quote: &str,
     ) -> Result<bool> {
+        if record.narrowing {
+            return self.record_narrowing(candidate, id, record).await;
+        }
         let rewrite = match record.step {
             Some(Step::Rewrite(goal)) => Some(goal),
             Some(_) => return Ok(false),
             None => None,
         };
-        let changed = self.entry(id).is_none_or(|entry| {
-            let location = entry.location();
-            field_text(candidate, location.unit_index, &location.field)
-                .is_none_or(|text| !text.contains(&record.before))
-        });
+        let changed = self.left(candidate, id, record);
         let applied = rewrite.is_none() || changed;
         let (after, outcome) = if applied {
             (Some(quote.to_owned()), RepairOutcome::Rewritten)
@@ -554,10 +566,44 @@ impl ClaimLedger {
         Ok(taken)
     }
 
+    /// The outcome of a narrowing that awaited this pass, for a claim a
+    /// statement still continues: not applied. The sentence stands as it was,
+    /// or it changed and still states the claim. Either way the claim takes no
+    /// step: it stays at its cut with its narrowing spent, and the next round
+    /// cuts the sentence whole. Whether the ledger took the event.
+    async fn record_narrowing(
+        &mut self,
+        candidate: &Value,
+        id: &ClaimId,
+        record: &RepairRecord,
+    ) -> Result<bool> {
+        let reason = if self.left(candidate, id, record) {
+            STILL_STATED
+        } else {
+            UNCHANGED
+        };
+        self.append(
+            id,
+            ClaimEvent::RepairAttempted {
+                attempt: record.attempt,
+                escalated: record.escalated,
+                before: record.before.clone(),
+                after: None,
+                outcome: RepairOutcome::Rejected {
+                    reason: reason.into(),
+                },
+                goal: Some(Goal::KeepTheOthers),
+            },
+        )
+        .await
+    }
+
     /// A claim no statement continues, with the outcome of the repair that
     /// awaited this pass (`rewritten`: the text it wrote).
     async fn orphan(
         &mut self,
+        policy: &dyn AcceptancePolicy,
+        candidate: &Value,
         id: &ClaimId,
         repair: Option<&RepairRecord>,
         rewritten: Option<String>,
@@ -570,6 +616,11 @@ impl ClaimLedger {
             self.append(id, gone).await?;
             return Ok(());
         };
+        if record.narrowing {
+            return self
+                .orphan_narrowed(policy, candidate, id, record, rewritten)
+                .await;
+        }
         // The repair rewrote the claim's part of its field and nothing it
         // wrote continues the claim: rewritten, its sentence gone with
         // the rewrite; it took text out only: removed (§4: undo restores
@@ -602,6 +653,57 @@ impl ClaimLedger {
                     self.append(id, gone).await?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// A claim no statement continues, whose narrowing awaited this pass
+    /// (`rewritten`: the text it wrote). The sentence changed: the narrowing
+    /// took the claim out of it, removed with the text written and the
+    /// policy's cut, so the claim ends by its graph. The sentence stands as it
+    /// was: not applied. A claim in a section that goes goes with it.
+    async fn orphan_narrowed(
+        &mut self,
+        policy: &dyn AcceptancePolicy,
+        candidate: &Value,
+        id: &ClaimId,
+        record: &RepairRecord,
+        rewritten: Option<String>,
+    ) -> Result<()> {
+        let gone = ClaimEvent::Superseded {
+            successor: None,
+            by: Actor::Machine,
+        };
+        if self.cuts.going.contains_key(&record.unit) {
+            self.append(id, gone).await?;
+            return Ok(());
+        }
+        let changed = self.left(candidate, id, record);
+        let outcome = if changed {
+            RepairOutcome::Removed
+        } else {
+            RepairOutcome::Rejected {
+                reason: UNCHANGED.into(),
+            }
+        };
+        let event = ClaimEvent::RepairAttempted {
+            attempt: record.attempt,
+            escalated: record.escalated,
+            before: record.before.clone(),
+            after: rewritten.filter(|_| changed),
+            outcome,
+            goal: Some(Goal::KeepTheOthers),
+        };
+        let taken = self.append(id, event).await?;
+        if !changed {
+            return Ok(());
+        }
+        let stepped = taken
+            && self
+                .record_step(policy, id, Step::Cut, Outcome::Cut)
+                .await?;
+        if !stepped && self.entry(id).is_some_and(|entry| !is_gone(entry.state())) {
+            self.append(id, gone).await?;
         }
         Ok(())
     }

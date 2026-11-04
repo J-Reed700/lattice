@@ -5,7 +5,7 @@ use super::readings::Readers;
 use super::repair::{goal_words, Cited};
 use super::*;
 use lattice_core::domain::learning::acceptance::{
-    AcceptancePolicy, Outcome, Position, StandardPolicy, Step, Taken,
+    AcceptancePolicy, Goal, Outcome, Position, StandardPolicy, Step, Taken,
 };
 use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimId, ClaimState, StopReason};
 
@@ -737,11 +737,14 @@ impl PendingRepair {
 /// finding; nothing is discarded. Passages carry their source titles so a
 /// source index is not read as evidence N. Only `targets` are sent, each with
 /// its claim id and, at a cut, `lastAttempt`: that attempt takes the sentence
-/// out in code, so the model never reads the flag. A claim whose sentence says
-/// more carries `alsoStates`, the other statements on it. A claim at a rewrite
-/// carries its node's `goal`, and at the retry of a rewrite `notApplied`, why
-/// its first correction could not be applied. `repairHistory` is what the
-/// ledger holds of the sentences earlier corrections replaced or removed.
+/// out in code, so the model never reads the flag. A cut whose sentence also
+/// states another live statement, or that no single sentence states, is
+/// asked of the model instead (`ClaimLedger::cut_of`): no `lastAttempt`, and
+/// the narrowing `goal`. A claim whose sentence says more carries
+/// `alsoStates`, the other statements on it. A claim at a rewrite carries its
+/// node's `goal`, and at the retry of a rewrite `notApplied`, why its first
+/// correction could not be applied. `repairHistory` is what the ledger holds
+/// of the sentences earlier corrections replaced or removed.
 pub(super) fn repair_context(
     prompt: &str,
     candidate: &Value,
@@ -783,7 +786,11 @@ pub(super) fn repair_context(
             let mut claim = json!({"unit":finding.unit,"claimId":id.0,"statement":citations.label(&finding.statement, references),"sentence":sentence,"verdict":finding.verdict,"reason":finding.reason,"evidence":evidence});
             if let Some(fields) = claim.as_object_mut() {
                 if escalates(id) {
-                    fields.insert("lastAttempt".into(), json!(true));
+                    if ledger.narrows(candidate, id) {
+                        fields.insert("goal".into(), json!(goal_words(Goal::KeepTheOthers)));
+                    } else {
+                        fields.insert("lastAttempt".into(), json!(true));
+                    }
                 }
                 // What the corrected sentence must do, which the reading
                 // after it tests, and why the first could not be applied.

@@ -442,9 +442,11 @@ async fn the_other_claims_of_a_section_that_goes_are_no_work_for_the_model() -> 
     let mut ledger = failed_ledger(
         &llm,
         body,
-        &[("last", "Cut this.", 1), ("other", "Cut this.", 0)],
+        &[("last", "Cut this.", 0), ("other", "Cut this.", 0)],
     )
     .await?;
+    // The narrowing that would keep what `other` says was asked and not applied.
+    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
     let (last, other) = (ClaimId("last".into()), ClaimId("other".into()));
     ledger
         .begin_repairs(
@@ -524,12 +526,14 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
         &llm,
         body,
         &[
-            ("last", "Cut this.", 1),
+            ("last", "Cut this.", 0),
             ("mate", "Cut this.", 0),
             ("kept", "Keep this.", 0),
         ],
     )
     .await?;
+    // The narrowing that would keep what `mate` says was asked and not applied.
+    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
     let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
     ledger
         .begin_repairs(
@@ -582,9 +586,11 @@ async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_clai
     let mut ledger = failed_ledger(
         &llm,
         body,
-        &[("last", "Cut this.", 1), ("mate", "Cut this.", 0)],
+        &[("last", "Cut this.", 0), ("mate", "Cut this.", 0)],
     )
     .await?;
+    // The narrowing that would keep what `mate` says was asked and not applied.
+    narrowing_spent(&mut ledger, "last", "Cut this.").await?;
     let (last, mate) = (ClaimId("last".into()), ClaimId("mate".into()));
     ledger
         .begin_repairs(
@@ -1131,14 +1137,31 @@ const BISQUE: &str = "A bisque firing reaches cone 04.";
 async fn passage_wide(
     llm: &dyn LLMPort,
     body: &str,
+    stated: (&str, &str),
+) -> Result<(ClaimLedger, Value)> {
+    passage_wide_with(llm, body, stated, false).await
+}
+
+/// [`passage_wide`], the last attempt being the one after a narrowing of the
+/// claim was asked and not applied when `spent`.
+async fn passage_wide_with(
+    llm: &dyn LLMPort,
+    body: &str,
     (passage, statement): (&str, &str),
+    spent: bool,
 ) -> Result<(ClaimLedger, Value)> {
     let mut ledger = failed_ledger(
         llm,
         body,
-        &[("stating", passage, 1), ("kept", "Closing line.", 0)],
+        &[
+            ("stating", passage, u8::from(!spent)),
+            ("kept", "Closing line.", 0),
+        ],
     )
     .await?;
+    if spent {
+        narrowing_spent(&mut ledger, "stating", passage).await?;
+    }
     let stating = ClaimId("stating".into());
     let location = ClaimLocation::locate(0, UnitKind::Block, "body", passage, body);
     let extracted = ClaimEvent::Extracted {
@@ -1200,10 +1223,11 @@ async fn a_cut_whose_sentence_another_live_statement_stands_on_takes_everything_
     };
     let body = format!("{COLD} {BISQUE} Closing line.");
     let passage = format!("{COLD} {BISQUE}");
-    let (mut ledger, mut context) = passage_wide(
+    let (mut ledger, mut context) = passage_wide_with(
         &llm,
         &body,
         (passage.as_str(), "A bisque firing reaches cone 04"),
+        true,
     )
     .await?;
     // A statement of the ledger's states the same sentence.
@@ -1221,7 +1245,7 @@ async fn a_cut_whose_sentence_another_live_statement_stands_on_takes_everything_
 
     cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    // Until the narrowing rewrite, the quote is cut whole, as before.
+    // Once its narrowing was not applied, the quote is cut whole.
     assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
     Ok(())
 }
@@ -1237,10 +1261,12 @@ async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_cut_with_everyt
     let passage = "The Peace of Westphalia was signed in 1648 in the cities of Osnabrück and Münster. It ended the Thirty Years' War in the Holy Roman Empire. It also closed the Eighty Years' War between Spain and the Dutch Republic. Historians often date the modern order of sovereign states from these treaties.";
     let statement = "Signed in 1648, the Peace of Westphalia ended the Thirty Years' War and is often seen by historians as the start of the order of sovereign states.";
     let body = format!("{passage} Closing line.");
-    let (mut ledger, mut context) = passage_wide(&llm, &body, (passage, statement)).await?;
+    let (mut ledger, mut context) =
+        passage_wide_with(&llm, &body, (passage, statement), true).await?;
 
     cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
+    // Once its narrowing was not applied, the whole quote goes.
     assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
     Ok(())
 }

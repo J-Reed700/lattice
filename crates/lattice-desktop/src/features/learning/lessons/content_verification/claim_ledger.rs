@@ -23,7 +23,7 @@ mod stops;
 mod successor;
 
 pub(super) use audit::Audited;
-pub(super) use cotenancy::sentences;
+pub(super) use cotenancy::{sentences, CutOf};
 pub(super) use position::StepKind;
 pub(super) use successor::Rewrites;
 
@@ -107,11 +107,20 @@ pub(super) struct RepairRecord {
     /// cut. None for a code example, which keeps its own rule.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) step: Option<Step>,
+    /// The cut is a narrowing rewrite by the model: the sentence also states
+    /// another live statement, or no single sentence states this one
+    /// (`ClaimLedger::cut_of`). The statements standing on its sentence ride
+    /// on it, as on a rewrite.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) narrowing: bool,
 }
 
 impl RepairRecord {
     /// What the repair was asked to achieve.
     pub(super) fn goal(&self) -> Option<Goal> {
+        if self.narrowing {
+            return Some(Goal::KeepTheOthers);
+        }
         match self.step {
             Some(Step::Rewrite(goal)) => Some(goal),
             _ => None,
@@ -530,7 +539,9 @@ impl ClaimLedger {
     /// the lesson as it stood so the pass after it records the outcome even
     /// after a restart. A statement takes the step of the node it stands at:
     /// a rewrite toward its goal (the first, or the retry told why the first
-    /// was not applied) or the cut; a failed example, its own attempt.
+    /// was not applied) or the cut, which is a narrowing rewrite when its
+    /// sentence also states another live statement (`cut_of`); a failed
+    /// example, its own attempt.
     pub(super) async fn begin_repairs(
         &mut self,
         policy: &dyn AcceptancePolicy,
@@ -539,34 +550,18 @@ impl ClaimLedger {
     ) -> Result<()> {
         let mut records: Vec<RepairRecord> = claims
             .iter()
-            .filter_map(|id| self.repair_record(policy, id))
+            .filter_map(|id| self.repair_record(policy, candidate, id))
             .collect();
-        // The claims standing on a sentence a rewrite changes are read again
-        // as successors with it (claim classes design §3.2); a last attempt
-        // cuts the sentence and takes them with it.
+        // The claims standing on a sentence a rewrite or a narrowing changes
+        // are read again as successors with it (claim classes design §3.2); a
+        // last attempt cuts the sentence and takes them with it.
         let rewritten: Vec<(ClaimId, u8)> = records
             .iter()
-            .filter(|record| !self.cuts_next(policy, &record.claim_id))
+            .filter(|record| record.narrowing || !self.cuts_next(policy, &record.claim_id))
             .map(|record| (record.claim_id.clone(), record.attempt))
             .collect();
         for (target, attempt) in rewritten {
-            for mate in self.cotenants(&target) {
-                if claims.contains(&mate) || records.iter().any(|record| record.claim_id == mate) {
-                    continue;
-                }
-                let Some(entry) = self.entry(&mate) else {
-                    continue;
-                };
-                records.push(RepairRecord {
-                    unit: entry.location().unit_index,
-                    attempt,
-                    escalated: false,
-                    before: entry.location().quote.clone(),
-                    rides_on: Some(target.clone()),
-                    step: None,
-                    claim_id: mate,
-                });
-            }
+            self.ride(&target, attempt, claims, &mut records);
         }
         self.pending.repairs.extend(records);
         self.pending
@@ -575,9 +570,66 @@ impl ClaimLedger {
         self.save_pending().await
     }
 
+    /// Pushes to `records` the record of each claim standing on `target`'s
+    /// sentence, which rides on its repair: not one sent for repair itself
+    /// (`sent`), nor one `records` holds already.
+    fn ride(
+        &self,
+        target: &ClaimId,
+        attempt: u8,
+        sent: &[ClaimId],
+        records: &mut Vec<RepairRecord>,
+    ) {
+        for mate in self.cotenants(target) {
+            if sent.contains(&mate) || records.iter().any(|record| record.claim_id == mate) {
+                continue;
+            }
+            let Some(entry) = self.entry(&mate) else {
+                continue;
+            };
+            records.push(RepairRecord {
+                unit: entry.location().unit_index,
+                attempt,
+                escalated: false,
+                before: entry.location().quote.clone(),
+                rides_on: Some(target.clone()),
+                step: None,
+                narrowing: false,
+                claim_id: mate,
+            });
+        }
+    }
+
+    /// These statements' cuts are narrowing rewrites (`cut_of`), whatever
+    /// `begin_repairs` made of them: their pending records are marked so, and
+    /// the claims standing on their sentences ride on them.
+    pub(super) async fn mark_narrowing(&mut self, claims: &[ClaimId]) -> Result<()> {
+        let mut records = std::mem::take(&mut self.pending.repairs);
+        let marked: Vec<(ClaimId, u8)> = records
+            .iter_mut()
+            .filter(|record| {
+                record.rides_on.is_none() && !record.narrowing && claims.contains(&record.claim_id)
+            })
+            .map(|record| {
+                record.narrowing = true;
+                (record.claim_id.clone(), record.attempt)
+            })
+            .collect();
+        for (target, attempt) in marked {
+            self.ride(&target, attempt, claims, &mut records);
+        }
+        self.pending.repairs = records;
+        self.save_pending().await
+    }
+
     /// The repair of `id` the loop sends next: a statement's is the step of
     /// the node it stands at, a failed example's its own attempt.
-    fn repair_record(&self, policy: &dyn AcceptancePolicy, id: &ClaimId) -> Option<RepairRecord> {
+    fn repair_record(
+        &self,
+        policy: &dyn AcceptancePolicy,
+        candidate: &Value,
+        id: &ClaimId,
+    ) -> Option<RepairRecord> {
         let entry = self.entry(id)?;
         let unit = entry.location().unit_index;
         let before = entry.location().quote.clone();
@@ -597,6 +649,7 @@ impl ClaimLedger {
                 before,
                 rides_on: None,
                 step: None,
+                narrowing: false,
             });
         }
         let (at, step) = self.waits_at(policy, id)?;
@@ -614,11 +667,13 @@ impl ClaimLedger {
             before,
             rides_on: None,
             step: Some(step),
+            narrowing: step == Step::Cut && self.narrows(candidate, id),
         })
     }
 
-    /// Whether the next repair of `claim_id` takes its sentence out: a
-    /// statement at a `Cut` node, a failed example on its last attempt.
+    /// Whether the next repair of `claim_id` is its cut: a statement at a
+    /// `Cut` node, a failed example on its last attempt. What the cut of a
+    /// statement takes out is `cut_of`'s.
     pub(super) fn cuts_next(&self, policy: &dyn AcceptancePolicy, claim_id: &ClaimId) -> bool {
         match self.entry(claim_id) {
             Some(entry) if is_example(entry) => entry.next_repair_escalates(),
@@ -629,7 +684,9 @@ impl ClaimLedger {
 
     /// The repair of these claims produced nothing usable. A failed example
     /// uses its attempt at once; a statement's rewrite was not applied, and the
-    /// policy sends it to its retry or its cut.
+    /// policy sends it to its retry or its cut. A narrowing is closed as not
+    /// applied with its goal and takes no step: the statement stays at its cut
+    /// with its narrowing spent.
     pub(super) async fn reject(
         &mut self,
         policy: &dyn AcceptancePolicy,
@@ -860,6 +917,31 @@ pub(super) fn claim_tally(entries: &[ClaimLedgerEntry]) -> LearningClaimTally {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_saved_repair_from_before_narrowing_loads_as_not_narrowing() {
+        let saved = serde_json::json!({
+            "repairs": [{"claim_id": "c", "unit": 0, "attempt": 2, "escalated": true, "before": "A sentence."}],
+        });
+
+        let pending: Pending = serde_json::from_value(saved).unwrap();
+
+        let record = &pending.repairs[0];
+        assert!(!record.narrowing);
+        assert_eq!(record.goal(), None);
+        // Only a narrowing writes the flag, and it reads back as one.
+        let written = serde_json::to_value(record).unwrap();
+        assert!(written.get("narrowing").is_none(), "{written}");
+        let narrowing = RepairRecord {
+            narrowing: true,
+            ..record.clone()
+        };
+        let written = serde_json::to_value(&narrowing).unwrap();
+        assert_eq!(written["narrowing"], true);
+        let read: RepairRecord = serde_json::from_value(written).unwrap();
+        assert!(read.narrowing);
+        assert_eq!(read.goal(), Some(Goal::KeepTheOthers));
+    }
 
     #[test]
     fn a_reference_change_found_at_publication_is_verified_again_not_an_error() {

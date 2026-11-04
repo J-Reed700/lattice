@@ -259,6 +259,7 @@ mod tests {
             before: before.into(),
             rides_on: None,
             step: None,
+            narrowing: false,
         }
     }
 
