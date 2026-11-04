@@ -242,9 +242,9 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
 
 **A pass.**
 1. Extraction runs as now.
-2. Before anything is read, the ledger identifies what was extracted. This is observe's identity half: `identities`, a repair's heirs, the orphans and the user's edits.
-   - It records `Extracted`, a class for a statement new to the ledger, and the outcome of a repair that awaited this pass (below). No check is recorded here.
-   - Only a statement new to its lineage is sorted. Every other keeps its lineage's class (§2.9, §1 #17), so the sort runs on new statements only.
+2. Before anything is read, the ledger matches what was extracted to the claims it holds (`identities` and a repair's heirs), recording nothing.
+   - A statement that continues a claim takes that claim's class, so only the statements the match finds new are sorted (§2.9, §1 #17). Today the sort finds a held class by the statement's words, so a claim re-extracted in other words is sorted again.
+   - Then the ledger records the identities: `Extracted`, a class for a statement new to the ledger, the user's edits, the orphans, and the outcome of a repair that awaited this pass (below). No check is recorded here.
 3. Every live machine-owned statement then has a position (`ClaimLedger::position`):
    - At a reading node, `read_until_remedy` reads it on to a remedy or an end, and each reading is recorded with its decision (`record_reading`).
    - At any other node, nothing is read. The report carries its latest reading's finding, which the job keeps. After a restart that finding is rebuilt from the ledger (the latest check and the passages it showed), never asked for again. Either way it decides nothing.
