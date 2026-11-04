@@ -7,6 +7,7 @@ use super::*;
 use crate::features::learning::lesson_drafts;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
+use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
 use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimState, VerdictKind};
 
 const COMMON: &str = "A page number identifies the page of a document that a value appears on.";
@@ -1035,5 +1036,260 @@ async fn the_report_records_no_resolution_for_a_statement_the_machine_passed() -
         .findings
         .iter()
         .all(|finding| finding.resolution.is_none()));
+    Ok(())
+}
+
+const REWORDED: &str = "A page number tells a reader which page of a document a value appears on.";
+const SKIPPED: &str =
+    "The skipinitialspace setting makes the reader ignore spaces that follow a delimiter.";
+const SKIPPED_PASSAGE: &str =
+    "The optional skipinitialspace setting ignores spaces immediately after delimiters; it defaults to false.";
+
+/// A `Classes` model whose part-wise judge reads every statement as the parts
+/// `kinds` name, and whose strict judge finds none of the `unstated`
+/// statements stated.
+struct Reads {
+    inner: Classes,
+    kinds: Vec<&'static str>,
+    unstated: Vec<&'static str>,
+}
+
+impl Reads {
+    fn new(inner: Classes, kinds: &[&'static str]) -> Self {
+        Self {
+            inner,
+            kinds: kinds.to_vec(),
+            unstated: Vec::new(),
+        }
+    }
+
+    fn finds_unstated(mut self, statements: &[&'static str]) -> Self {
+        self.unstated = statements.to_vec();
+        self
+    }
+
+    /// The part-wise judge's reply: a stated part rests on the first passage.
+    fn parts(&self) -> String {
+        let parts: Vec<Value> = self
+            .kinds
+            .iter()
+            .map(|kind| {
+                let passage = if *kind == "stated" {
+                    json!("passage-0")
+                } else {
+                    Value::Null
+                };
+                json!({"part": format!("the {kind} part of the claim"), "kind": kind, "passage": passage})
+            })
+            .collect();
+        json!({"parts": parts, "verdict": "supported_with_common", "reason": "Each part was read."})
+            .to_string()
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Reads {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (system, user) = fixture_messages(request);
+        if system == BRIDGE_SYSTEM {
+            return Ok(CompletionResponse::from_text(self.parts()));
+        }
+        let strict =
+            user.starts_with("Source passages:") && !user.contains("\n\nExplanatory statement: ");
+        if strict
+            && self
+                .unstated
+                .iter()
+                .any(|statement| user.contains(*statement))
+        {
+            return Ok(CompletionResponse::from_text(
+                "Reason: No passage states it outright.\nSource passage: none\nVerdict: unsupported",
+            ));
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A lesson of two sections: the first states `first` and cites `quote` for
+/// the section, and for the sentence itself when `of_sentence`; the second
+/// states what the source says and cites nothing.
+fn two_sections(first: &str, quote: &str, of_sentence: bool) -> Value {
+    let mut block = json!({"kind":"explanation","title":"Section 0","body":section(first),
+        "rubric":[],"sourceIndex":0,"quote":quote});
+    if of_sentence {
+        block["citations"] = json!([{"sentence":first,"sourceIndex":0,"quote":quote}]);
+    }
+    json!({"blocks":[block,{"kind":"explanation","title":"Section 1","body":section(GOOD),"rubric":[]}],"questions":[]})
+}
+
+#[tokio::test]
+async fn a_cited_sentence_whose_every_part_is_common_stays_loses_its_own_citation_and_ends_as_general_knowledge(
+) -> Result<()> {
+    // §1 #1 of the acceptance policy design
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = Reads::new(
+        Classes::new(&[COMMON, REWORDED, GOOD])
+            .knows(&[(COMMON, ["true_common"; 3])])
+            .rewrites(COMMON, REWORDED),
+        &["common", "common"],
+    )
+    .finds_unstated(&[COMMON]);
+
+    let (raw, _) = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(two_sections(COMMON, GOOD, true).to_string()),
+        &[source()],
+    )
+    .await?;
+
+    let written: Value = serde_json::from_str(&raw)?;
+    let block = &written["blocks"][0];
+    assert!(
+        block["body"]
+            .as_str()
+            .is_some_and(|body| body.contains(COMMON)),
+        "the sentence stays in the lesson, but its section now reads: {}",
+        block["body"]
+    );
+    assert!(
+        !block["citations"]
+            .as_array()
+            .is_some_and(|entries| entries.iter().any(|entry| entry["sentence"] == COMMON)),
+        "the sentence loses its own citation entry: {}",
+        block["citations"]
+    );
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let claim = ledger
+        .claims
+        .iter()
+        .find(|claim| claim.statement() == COMMON);
+    assert!(
+        matches!(
+            claim.map(|claim| claim.state()),
+            Some(ClaimState::GeneralKnowledge { .. })
+        ),
+        "{:?}",
+        claim.map(|claim| claim.state())
+    );
+    assert_eq!(model.inner.calls("repair"), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_common_statement_most_samples_call_false_stays_and_passes_when_its_sections_passages_state_it(
+) -> Result<()> {
+    // §1 #5 of the acceptance policy design
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = Reads::new(
+        Classes::new(&[SKIPPED, GOOD])
+            .classed(&[(SKIPPED, "common")])
+            .knows(&[(SKIPPED, ["false", "false", "true_common"])]),
+        &["stated"],
+    );
+
+    let (raw, _) = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(two_sections(SKIPPED, SKIPPED_PASSAGE, false).to_string()),
+        &[source()],
+    )
+    .await?;
+
+    let written: Value = serde_json::from_str(&raw)?;
+    assert!(
+        written["blocks"][0]["body"]
+            .as_str()
+            .is_some_and(|body| body.contains(SKIPPED)),
+        "the statement stays in the lesson, but its section now reads: {}",
+        written["blocks"][0]["body"]
+    );
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let claim = ledger
+        .claims
+        .iter()
+        .find(|claim| claim.statement() == SKIPPED);
+    assert!(
+        matches!(
+            claim.map(|claim| claim.state()),
+            Some(ClaimState::GeneralKnowledge { .. })
+        ),
+        "{:?}",
+        claim.map(|claim| claim.state())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_consistent_statement_most_samples_call_false_stays_and_passes_when_its_sections_passages_ground_it_part_by_part(
+) -> Result<()> {
+    // §1 #4 of the acceptance policy design
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = Reads::new(
+        Classes::new(&[REASONED, REWRITTEN, GOOD])
+            .classed(&[(REASONED, "reasoning")])
+            .knows(&[(REASONED, ["false", "false", "true_common"])])
+            .rewrites(REASONED, REWRITTEN),
+        &["stated", "common"],
+    )
+    .finds_unstated(&[REASONED]);
+
+    let (raw, _) = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(two_sections(REASONED, GOOD, false).to_string()),
+        &[source()],
+    )
+    .await?;
+
+    let written: Value = serde_json::from_str(&raw)?;
+    assert!(
+        written["blocks"][0]["body"]
+            .as_str()
+            .is_some_and(|body| body.contains(REASONED)),
+        "the statement stays in the lesson, but its section now reads: {}",
+        written["blocks"][0]["body"]
+    );
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let claim = ledger
+        .claims
+        .iter()
+        .find(|claim| claim.statement() == REASONED);
+    assert!(
+        matches!(
+            claim.map(|claim| claim.state()),
+            Some(ClaimState::Consistent { .. })
+        ),
+        "{:?}",
+        claim.map(|claim| claim.state())
+    );
+    assert_eq!(model.inner.calls("repair"), 0);
     Ok(())
 }

@@ -699,3 +699,228 @@ fn a_section_given_back_no_citation_gets_no_citations_field() {
         assert_eq!(confined, section);
     }
 }
+
+/// A claim that passed its check, standing on `quote` of unit 0's `body`, as a
+/// pass leaves it.
+async fn passed(
+    ledger: &mut ClaimLedger,
+    llm: &dyn LLMPort,
+    id: &str,
+    (quote, statement): (&str, &str),
+    body: &str,
+) -> Result<()> {
+    let id = ClaimId(id.to_owned());
+    let location = ClaimLocation::locate(0, UnitKind::Block, "body", quote, body);
+    let extracted = ClaimEvent::Extracted {
+        location,
+        statement: statement.to_owned(),
+    };
+    ledger.append(&id, extracted).await?;
+    let check = Check {
+        checker: Checker::Local {
+            model: llm.model_name().into(),
+        },
+        result: CheckResult::Supported {
+            source_version_id: "source".into(),
+            supporting_quote: statement.to_owned(),
+        },
+        reason: "Stated.".into(),
+        fingerprint: EvidenceFingerprint::of("fixture-v1", llm.model_name(), &[]),
+        evidence: Vec::new(),
+        window_tokens: 4_000,
+    };
+    ledger.append(&id, ClaimEvent::Checked(check)).await?;
+    Ok(())
+}
+
+const FIRST_OLD: &str = "The first stage dries the clay.";
+const FIRST_NEW: &str = "The first stage drives the water out of the clay.";
+const STEADY: &str = "A steady ramp avoids cracks.";
+const PASSED: &str = "The second stage burns off the binder.";
+const THIRD_OLD: &str = "The third stage vitrifies the body.";
+const THIRD_NEW: &str = "The third stage turns the body to glass.";
+const MERGED: &str = "The second and third stages burn off the binder and vitrify the body.";
+const CLOSING: &str = "Cooling ends the cycle.";
+
+#[tokio::test]
+async fn a_hunk_that_mixes_a_target_with_a_passed_sentence_costs_only_that_target_and_the_other_targets_rewrite_stands(
+) -> Result<()> {
+    // §1 #7 of the acceptance policy design
+    let body = format!("{FIRST_OLD} {STEADY} {PASSED} {THIRD_OLD} {CLOSING}");
+    // The first target is rewritten cleanly; the third stage is merged with the
+    // passed sentence before it, in one hunk. If the refused target is asked
+    // again, the answer rewrites the third stage alone.
+    let merging = json!({"edits":[
+        {"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW},
+        {"path":"/blocks/0/body","before":format!("{PASSED} {THIRD_OLD}"),"after":MERGED},
+    ]});
+    let alone = json!({"edits":[{"path":"/blocks/0/body","before":THIRD_OLD,"after":THIRD_NEW}]});
+    let llm = Recording {
+        answers: Mutex::new([merging.to_string(), alone.to_string()].into()),
+        sent: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        &body,
+        &[("first", FIRST_OLD, 0), ("third", THIRD_OLD, 0)],
+    )
+    .await?;
+    passed(&mut ledger, &llm, "passed", (PASSED, PASSED), &body).await?;
+    let (first, third) = (ClaimId("first".into()), ClaimId("third".into()));
+    ledger
+        .begin_repairs(&lesson_of(&body), &[first.clone(), third])
+        .await?;
+    let context = json!({
+        "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"first","sentence":FIRST_OLD,"evidence":[]},
+            {"unit":0,"claimId":"third","sentence":THIRD_OLD,"evidence":[]},
+        ],
+    });
+    let schema = json!({"type":"object","properties":{"blocks":{"type":"array","items":{"type":"object"}},"questions":{"type":"array","items":{"type":"object"}}}});
+    let references = ReferenceCollection::lexical(&[])?;
+
+    let repaired = repair_sections(
+        &llm,
+        "{}",
+        &schema,
+        context,
+        4_000,
+        &references,
+        &mut ledger,
+    )
+    .await?;
+
+    let after = repaired["blocks"][0]["body"].as_str().unwrap();
+    assert!(
+        after.contains(FIRST_NEW) && !after.contains(FIRST_OLD),
+        "the clean rewrite of the first target stands: {after}"
+    );
+    assert!(
+        after.contains(PASSED),
+        "the passed sentence stands as it was: {after}"
+    );
+    assert!(
+        !after.contains(MERGED),
+        "the merged hunk is not applied: {after}"
+    );
+    let charged = ledger.entry(&first).unwrap().events().iter().any(|record| {
+        matches!(
+            &record.event,
+            ClaimEvent::RepairAttempted {
+                outcome: RepairOutcome::Rejected { .. },
+                ..
+            }
+        )
+    });
+    assert!(
+        !charged,
+        "the rewrite that was applied costs its claim no attempt"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_last_attempt_on_a_sentence_that_also_states_a_passed_claim_leaves_what_the_passed_claim_says(
+) -> Result<()> {
+    // §1 #8 (a) of the acceptance policy design
+    const SHARED: &str = "Glaze needs a clean surface, so a bisque firing comes first.";
+    const PASSED_STATEMENT: &str = "Glaze needs a clean surface";
+    let body = format!("Intro line. {SHARED} Closing line.");
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        &body,
+        &[("failed", SHARED, 1), ("intro", "Intro line.", 0)],
+    )
+    .await?;
+    passed(
+        &mut ledger,
+        &llm,
+        "passed",
+        (SHARED, PASSED_STATEMENT),
+        &body,
+    )
+    .await?;
+    let failed = ClaimId("failed".into());
+    ledger
+        .begin_repairs(&lesson_of(&body), std::slice::from_ref(&failed))
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"failed","sentence":SHARED,"evidence":[],"lastAttempt":true,"alsoStates":[PASSED_STATEMENT]},
+        ],
+    });
+
+    cut::last_attempts(&mut context, &mut ledger).await?;
+
+    let after = context["candidate"]["blocks"][0]["body"].as_str().unwrap();
+    assert!(
+        after.contains(PASSED_STATEMENT),
+        "the words of the claim that passed stay: {after}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_last_attempt_takes_out_the_sentence_that_states_the_claim_not_the_rest_of_a_passage_wide_quote(
+) -> Result<()> {
+    // §1 #8 (b) of the acceptance policy design
+    const OTHER: &str = "The kiln is loaded while cold.";
+    const STATING: &str = "A bisque firing reaches cone 04.";
+    const STATEMENT: &str = "A bisque firing reaches cone 04";
+    let passage = format!("{OTHER} {STATING}");
+    let body = format!("{passage} Closing line.");
+    // The claim's quote is the passage of both sentences, as an older pass
+    // stored it; no claim stands on the first.
+    let llm = SmallWindow {
+        window: 4_000,
+        requests: Mutex::new(Vec::new()),
+    };
+    let mut ledger = failed_ledger(
+        &llm,
+        &body,
+        &[
+            ("stating", passage.as_str(), 1),
+            ("kept", "Closing line.", 0),
+        ],
+    )
+    .await?;
+    let stating = ClaimId("stating".into());
+    let location = ClaimLocation::locate(0, UnitKind::Block, "body", passage.as_str(), &body);
+    let extracted = ClaimEvent::Extracted {
+        location,
+        statement: STATEMENT.to_owned(),
+    };
+    ledger.append(&stating, extracted).await?;
+    // The locator reads the statement as the passage's second sentence.
+    let located = lattice_core::shared::text::claim_sentence(&body, (0, passage.len()), STATEMENT);
+    assert_eq!(
+        located.and_then(|(start, end)| body.get(start..end)),
+        Some(STATING)
+    );
+    ledger
+        .begin_repairs(&lesson_of(&body), std::slice::from_ref(&stating))
+        .await?;
+    let mut context = json!({
+        "candidate": lesson_of(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":0,"claimId":"stating","sentence":passage,"evidence":[],"lastAttempt":true},
+        ],
+    });
+
+    cut::last_attempts(&mut context, &mut ledger).await?;
+
+    assert_eq!(
+        context["candidate"]["blocks"][0]["body"],
+        format!("{OTHER} Closing line.")
+    );
+    Ok(())
+}

@@ -75,6 +75,12 @@ pub(super) struct Figures {
     /// The claim inventory's revision never takes a claim out, though the
     /// section no longer states it.
     revision_keeps_claims: bool,
+    /// The claim inventory's revision leaves every saved statement as it is,
+    /// whatever a repair has written over its sentence.
+    revision_keeps_statements: bool,
+    /// The claim inventory's revision takes every claim of the section out,
+    /// though the section still states it.
+    revision_drops_claims: bool,
     fail_repair_at: Option<usize>,
     /// The first asks for a strict judgment, each with the correction the
     /// checker sends after an answer it cannot read, whose answers come back
@@ -92,6 +98,8 @@ impl Figures {
             inner: Model::new(),
             repair_to_good: false,
             revision_keeps_claims: false,
+            revision_keeps_statements: false,
+            revision_drops_claims: false,
             fail_repair_at: None,
             unusable_asks: 0,
             asks: AtomicUsize::new(0),
@@ -138,6 +146,18 @@ impl Figures {
                 .unwrap_or(&passages[0]);
             let statement = statement_in(passage["text"].as_str().unwrap());
             let existing = data["existingClaims"].as_array().unwrap();
+            if self.revision_keeps_statements {
+                return Ok(json!({"changes":[],"nonFactualReason":""}).to_string());
+            }
+            if self.revision_drops_claims {
+                let changes: Vec<_> = existing
+                    .iter()
+                    .map(|claim| json!({"claimId":claim["claimId"],"passageId":Value::Null,"statement":Value::Null}))
+                    .collect();
+                return Ok(
+                    json!({"changes":changes,"nonFactualReason":NOTHING_TO_CHECK}).to_string(),
+                );
+            }
             let keeps = statement.is_none() && self.revision_keeps_claims;
             let changes: Vec<_> = existing
                 .iter()
@@ -2036,5 +2056,129 @@ async fn a_statement_that_cites_nothing_is_checked_against_a_page_alone() -> Res
     within_the_plan(&model, &trace);
     assert_eq!(model.part_wise.load(Ordering::Relaxed), 2);
     assert_eq!(model.strict.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_a_repair_rewrote_is_read_afresh_so_its_re_check_judges_the_words_it_now_has(
+) -> Result<()> {
+    // §1 #6 of the acceptance policy design
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    // The revision after the repair keeps the statement it saved for the
+    // sentence, as the 27B's did when a repair changed what a sentence asserts.
+    let model = Figures {
+        revision_keeps_statements: true,
+        ..Figures::new()
+    };
+
+    prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&[GOOD, BAD]).to_string()),
+        &sources,
+    )
+    .await?;
+
+    let judged = model.judged.lock().unwrap().clone();
+    assert!(
+        judged.contains(&figure(0)),
+        "the rewritten sentence was never judged as it now reads; judged: {judged:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_whose_sentence_still_stands_is_not_ended_removed_because_no_extraction_continued_it(
+) -> Result<()> {
+    // §1 #16 (a) of the acceptance policy design
+    let model = Model::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
+    let lesson = cell_lesson(CELL);
+    ledger
+        .observe(
+            &lesson,
+            &pass_report(vec![passage_finding(CELL, ATP, true, CELL_SOURCE)]),
+        )
+        .await?;
+    let id = ledger.finding_claims()[0].clone();
+    assert!(matches!(
+        ledger.entry(&id).unwrap().state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+
+    // The next extraction names no claim for a sentence the draft still holds.
+    ledger.observe(&lesson, &pass_report(vec![])).await?;
+
+    let entry = ledger.entry(&id).unwrap();
+    assert!(
+        !matches!(
+            entry.state(),
+            ClaimState::Removed { .. } | ClaimState::Edited { .. }
+        ),
+        "the draft still holds {ATP_SENTENCE:?}, yet its claim is {:?}",
+        entry.state()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_is_not_published_with_a_sentence_that_no_live_claim_stands_on() -> Result<()> {
+    // §1 #16 (b) of the acceptance policy design
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let sources = [source()];
+    // The revision after the repair takes the repaired claim out, though the
+    // sentence the repair wrote is in the section.
+    let model = Figures {
+        revision_drops_claims: true,
+        ..Figures::new()
+    };
+
+    let published = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(lesson(&[GOOD, BAD]).to_string()),
+        &sources,
+    )
+    .await;
+
+    assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
+    match published {
+        Ok((raw, _)) => {
+            let sentence = figure(0);
+            let draft: Value = serde_json::from_str(&raw)?;
+            let stands = draft["blocks"][1]["body"]
+                .as_str()
+                .is_some_and(|body| body.contains(&sentence));
+            let ledger = ClaimReviewRepository::new(pool.clone())
+                .load(&lesson_id)
+                .await?;
+            let claimed = ledger.claims.iter().any(|claim| {
+                !matches!(
+                    claim.state(),
+                    ClaimState::Removed { .. } | ClaimState::Edited { .. }
+                ) && claim.location().quote.contains(&sentence)
+            });
+            let held: Vec<_> = ledger
+                .claims
+                .iter()
+                .map(|claim| (claim.statement(), claim.state()))
+                .collect();
+            assert!(
+                !stands || claimed,
+                "the lesson was published with {sentence:?} in it and no live claim on it: {held:?}"
+            );
+        }
+        Err(error) => assert!(
+            held_for_review(&pool, &lesson_id, &job).await?.is_some(),
+            "the lesson was not published, and is not held for review either: {error}"
+        ),
+    }
     Ok(())
 }
