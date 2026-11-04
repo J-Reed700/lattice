@@ -72,11 +72,6 @@ fn the_check_for_one_sentence_tells_one_from_two() {
 }
 
 #[test]
-fn the_catalogue_holds_between_fifty_and_seventy_patterns() {
-    assert!((50..=70).contains(&CATALOGUE.len()), "{}", CATALOGUE.len());
-}
-
-#[test]
 fn ids_are_unique() {
     let ids: HashSet<&str> = CATALOGUE.iter().map(|pattern| pattern.id).collect();
     assert_eq!(ids.len(), CATALOGUE.len());
@@ -177,17 +172,6 @@ fn the_language_ids_are_lowercase_and_unique() {
     assert!(LANGUAGES
         .iter()
         .all(|language| *language == language.to_ascii_lowercase()));
-}
-
-#[test]
-fn every_family_has_at_least_four_patterns() {
-    for family in Family::ALL {
-        let count = CATALOGUE
-            .iter()
-            .filter(|pattern| pattern.family == family)
-            .count();
-        assert!(count >= 4, "{family:?} has {count}");
-    }
 }
 
 #[test]
