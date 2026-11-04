@@ -140,9 +140,10 @@ def payload(scenario, questions):
          "surrounding_original_text": around[:1]},
         {**addition, "id": "addition:c2", "proposed_evidence": [new], "proposed_label": scenario["later_label"],
          "surrounding_original_text": around[1:]},
+        # The transition replaces c1 with c2, so verify.rs proposes c2's label and shows c1's as the existing item.
         {"change": "supersede_item", "existing_item_evidence": [old], "existing_item_label": scenario["earlier_label"],
          "id": "transition:c1", "kind": scenario["kind"], "proposed_evidence": [new],
-         "proposed_label": scenario["earlier_label"], "surrounding_original_text": around},
+         "proposed_label": scenario["later_label"], "surrounding_original_text": around},
     ]
     body = {"questions": questions, "reviews": reviews, "task": "review_memory_changes",
             "verdicts_required_for_every_id": True}
