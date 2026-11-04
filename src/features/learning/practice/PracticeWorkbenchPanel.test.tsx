@@ -5,6 +5,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningLessonDto, LearningPracticeSessionDto, LearningProgramDto } from '@/lib/bindings';
@@ -189,6 +190,11 @@ describe('Learning Studio grounded practice workbench', () => {
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
     expect(mocks.save.mock.calls[1][0]).toEqual(first);
     expect(screen.getByRole('textbox', { name: 'Your response' })).toHaveValue(first.text);
+  });
+
+  it('lets a response run as long as a chat message may', async () => {
+    renderWorkbench();
+    expect(await screen.findByRole('textbox', { name: 'Your response' })).toHaveAttribute('maxlength', String(LEARNER_TEXT_MAX_CHARS));
   });
 
   it('enforces the Demonstrate aid contract and opens only frozen versions after submission', async () => {
