@@ -53,8 +53,8 @@ const NOTHING_TO_CHECK: &str = "The fixture's section holds only practice.";
 /// Practice that states nothing to check, so each section holds one claim.
 const PRACTICE: &str = " Try it yourself: open the sample file, read its first row, and compare each header name with the one you expected to see.";
 
-/// A section's body: its one claim, then enough practice to be a section
-/// the teaching review accepts (600 characters), as a real lesson's is.
+/// A section's body: its one claim, then enough practice to be as long as a
+/// real lesson's sections are.
 pub(super) fn section(statement: &str) -> String {
     format!("{statement}{}", PRACTICE.repeat(5))
 }

@@ -28,7 +28,7 @@ fn question(kind: &str, prompt: &str, cited: bool) -> Value {
         "quote":if cited { EXCERPT } else { "" },"citations":[]})
 }
 
-/// Seven sections, two sharing a title, one too short, no reflection; five
+/// Seven sections, two sharing a title, one with no body, no reflection; five
 /// questions, one of them practice.
 fn off_shape_value(cited: bool) -> Value {
     let long = "A substantive explanation. ".repeat(30);
@@ -45,7 +45,7 @@ fn off_shape_value(cited: bool) -> Value {
     .map(|(i, kind)| block(kind, &format!("Part {i}"), &long, cited))
     .collect();
     blocks[1]["title"] = json!("Part 0");
-    blocks.push(block("recap", "Recap", "Too short.", cited));
+    blocks.push(block("recap", "Recap", "", cited));
     let questions: Vec<_> = ["practice", "quiz", "quiz", "test", "test"]
         .iter()
         .enumerate()

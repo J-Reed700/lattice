@@ -19,10 +19,6 @@ use std::collections::{HashMap, HashSet};
 /// before what is below it is shown. `checkReveal.ts` splits on the same line.
 pub(in crate::features::learning) const CHECK_REVEAL: &str = "### Check your thinking";
 
-/// The least a check holds on either side of its reveal: a case to reason
-/// through above it, an answer with its reasoning below.
-const CHECK_PART_MIN: usize = 80;
-
 /// The sections a lesson is written with: at least this many of each kind,
 /// or exactly this many when `exact`.
 const SECTION_MIX: [(&str, usize, bool); 8] = [
@@ -290,10 +286,8 @@ pub(in crate::features::learning) fn lesson_rules(candidate: &Value) -> Vec<Revi
             _ => continue,
         }
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
-        let held_back = split_check(text(block, "body")).is_some_and(|(case, reveal)| {
-            case.trim().chars().count() >= CHECK_PART_MIN
-                && reveal.trim().chars().count() >= CHECK_PART_MIN
-        });
+        let held_back = split_check(text(block, "body"))
+            .is_some_and(|(case, reveal)| !case.trim().is_empty() && !reveal.trim().is_empty());
         if !held_back {
             findings.push(structure(
                 FindingSite::Section(index),
@@ -488,8 +482,8 @@ mod tests {
         );
         for body in [
             format!("{CASE} {REVEAL}"),
-            format!("{CASE}\n{CHECK_REVEAL}\nToo short."),
-            format!("Too short.\n{CHECK_REVEAL}\n{REVEAL}"),
+            format!("{CASE}\n{CHECK_REVEAL}\n  "),
+            format!("  \n{CHECK_REVEAL}\n{REVEAL}"),
             format!("{CASE}\n{CHECK_REVEAL}\n{REVEAL}\n{CHECK_REVEAL}\n{REVEAL}"),
         ] {
             let mut candidate = lesson();

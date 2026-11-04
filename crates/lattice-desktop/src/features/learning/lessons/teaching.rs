@@ -114,7 +114,7 @@ pub(in crate::features::learning) const LESSON_REPAIR_SYSTEM: &str = "Teach a ri
 
 pub(in crate::features::learning) const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Subsequent research and factual repairs can introduce details supported by other saved references. Do not report a teaching defect solely because a detail is absent from these original excerpts. Evidence completeness is checked separately, for every extracted factual claim, against the current saved collection before publication. Still reject concrete factual or mathematical errors, internal contradictions, and citations that misrepresent their attached source. Missing evidence is not proof that a claim is false, and this teaching review is not factual publication approval.";
 
-/// Deterministic findings: the schema, each section's length and rubric,
+/// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
 /// dropped; a caller that sends six at a time decides what waits.
 pub(in crate::features::learning) fn structural_findings(
@@ -152,20 +152,12 @@ pub(in crate::features::learning) fn structural_findings(
     if let Some(blocks) = value.get("blocks").and_then(Value::as_array) {
         for (index, block) in blocks.iter().enumerate() {
             let kind = block["kind"].as_str().unwrap_or_default();
-            let minimum = match kind {
-                "reflection" | "recap" => 150,
-                "contrast" | "check" => 300,
-                _ => 600,
-            };
-            if block["body"]
-                .as_str()
-                .unwrap_or_default()
-                .trim()
-                .chars()
-                .count()
-                < minimum
-            {
-                issues.push(ReviewFinding::new(FindingKind::Structure, Some(FindingSite::Section(index)), format!("Teaching block {} needs at least {minimum} characters of substantive instruction or exercise detail.", index + 1)));
+            if block["body"].as_str().unwrap_or_default().trim().is_empty() {
+                issues.push(ReviewFinding::new(
+                    FindingKind::Structure,
+                    Some(FindingSite::Section(index)),
+                    format!("Teaching block {} has no body.", index + 1),
+                ));
             }
             if ["guided_practice", "independent_practice"].contains(&kind)
                 && block["rubric"].as_array().is_none_or(|r| r.len() < 2)

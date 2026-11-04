@@ -432,6 +432,7 @@ async fn a_lesson_whose_sentences_stand_on_checked_claims_is_never_written_again
     // in one job of 2026-11-03. What its shape asks waits for the user.
     let sentence = "The function returns the number 4 for the sum of two and two.";
     let mut candidate = lesson(EXCERPT);
+    candidate["blocks"][0]["kind"] = json!("guided_practice");
     candidate["blocks"][0]["body"] = json!(sentence);
     let protected = [
         crate::features::learning::lessons::content_verification::Protected {
