@@ -147,7 +147,7 @@ impl ClaimLedger {
     /// `id`'s walk, its start following at most `hops` predecessors.
     fn course(&self, policy: &dyn AcceptancePolicy, id: &ClaimId, hops: usize) -> Option<Course> {
         let entry = self.entry(id)?;
-        let start = self.start(policy, entry, hops)?;
+        let start = self.begins(policy, entry, hops)?;
         let taken: Vec<Taken> = entry.steps().into_iter().map(|(taken, _)| taken).collect();
         let walked = walk_from(policy, start, &taken);
         let last = match walked {
@@ -166,7 +166,7 @@ impl ClaimLedger {
     /// Where `entry` begins: after the rewrite of the claim it succeeds, with
     /// that claim's class and what it had spent; otherwise at the entry of the
     /// class it was sorted into.
-    fn start(
+    fn begins(
         &self,
         policy: &dyn AcceptancePolicy,
         entry: &ClaimLedgerEntry,
