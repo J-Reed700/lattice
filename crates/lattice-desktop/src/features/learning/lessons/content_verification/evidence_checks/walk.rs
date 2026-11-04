@@ -61,13 +61,6 @@ impl PageBudget {
     }
 }
 
-/// How a first page that must be read now is sized.
-#[derive(Clone, Debug)]
-pub(in crate::features::learning::lessons::content_verification) enum Sizing {
-    /// Sized by this budget.
-    Sized(PageBudget),
-}
-
 /// The tokens `page` holds as a passage bank: what its budget counts.
 fn page_tokens(llm: &dyn LLMPort, page: &[EvidencePassage]) -> usize {
     page.iter()

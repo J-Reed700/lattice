@@ -306,9 +306,8 @@ pub(super) async fn select(
     references: &ReferenceCollection<'_>,
     current: &[SourceBinding],
     retained: &ClaimChecks,
-    (attribution, sizing): (&[EvidencePassage], &evidence_checks::Sizing),
+    (attribution, budget): (&[EvidencePassage], &evidence_checks::PageBudget),
 ) -> Result<Selected> {
-    let evidence_checks::Sizing::Sized(budget) = sizing;
     let selection_key = selection_key(llm, references, (unit, &claim.statement), RANKING);
     let saved = saved_selection(retained, &selection_key).await?;
     let restored = saved

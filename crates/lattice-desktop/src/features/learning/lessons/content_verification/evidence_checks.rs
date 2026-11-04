@@ -28,7 +28,7 @@ pub(in crate::features::learning) use page_budget::{page_budget, AnswerSize};
 use requests::finish;
 pub(super) use requests::{group, labelled_passages, pack};
 pub(in crate::features::learning) use walk::Reach;
-pub(super) use walk::{page_of, page_one, within_page, PageBudget, Sizing};
+pub(super) use walk::{page_of, page_one, within_page, PageBudget};
 
 /// The most output a claim check may write, which the checker is built
 /// with: the largest an answer can be.

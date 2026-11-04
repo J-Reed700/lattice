@@ -6,7 +6,7 @@
 //! the job has measured no answer, a page is asked about alone, so the next is
 //! sized by it.
 use super::super::evidence_checks::{
-    as_checked, attribution_page, page_finding, PageBudget, Reach, Sizing,
+    as_checked, attribution_page, page_finding, PageBudget, Reach,
 };
 use super::*;
 
@@ -194,14 +194,14 @@ async fn open(
         &checked.statement,
         parts_fit(at),
     );
-    let sizing = Sizing::Sized(PageBudget::of(at.llm, answers(at.retained)));
+    let budget = PageBudget::of(at.llm, answers(at.retained));
     let selected = evidence_selection::select(
         at.llm,
         (claim, &checked.statement, unit),
         at.references,
         &at.sources,
         at.retained,
-        (&shown, &sizing),
+        (&shown, &budget),
     )
     .await?;
     let mut cited: Vec<String> = at
