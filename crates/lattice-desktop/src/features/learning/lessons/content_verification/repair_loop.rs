@@ -540,9 +540,17 @@ pub(super) async fn recite(
     if findings.is_empty() {
         return Ok(false);
     }
+    // A sentence is cited as its field writes it: the claim's located quote,
+    // not the extractor's passage.
     let sent: Vec<Finding> = findings
         .iter()
-        .map(|(_, finding)| finding.clone())
+        .map(|(id, finding)| Finding {
+            quote: ledger.entry(id).map_or_else(
+                || finding.quote.clone(),
+                |entry| entry.location().quote.clone(),
+            ),
+            ..finding.clone()
+        })
         .collect();
     let reciting: Vec<ClaimId> = findings.iter().map(|(id, _)| id.clone()).collect();
     let kept = ledger.live_statements_but(&reciting);
