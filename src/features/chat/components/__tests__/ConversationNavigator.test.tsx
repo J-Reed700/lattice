@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationNavigator } from '@/features/chat/components/ConversationNavigator';
@@ -12,6 +12,31 @@ const messages: ConversationMessage[] = Array.from({ length: 40 }, (_, index) =>
   content: `Topic ${index + 1}`, status: 'completed', tokens: 5, createdAt: '2026-10-03',
 }));
 const getKey = (message: ConversationMessage | OptimisticMessage) => 'id' in message ? message.id : message.tempId;
+
+const ROW_HEIGHT = 60;
+const VIEWPORT = 300;
+
+/**
+ * A list that scrolls as in a browser: `scrollTo` moves it at once, and the scroll event comes with the next frame,
+ * ahead of that frame's callbacks. Returns a function that runs that many frames.
+ */
+function scrollLikeABrowser(rows: number) {
+  const pending: FrameRequestCallback[] = [];
+  vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => pending.push(callback));
+  vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(VIEWPORT);
+  vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockReturnValue(rows * ROW_HEIGHT);
+  HTMLElement.prototype.scrollTo = function (this: HTMLElement, options?: ScrollToOptions | number) {
+    const top = typeof options === 'object' ? options.top ?? 0 : 0;
+    this.scrollTop = Math.max(0, Math.min(top, rows * ROW_HEIGHT - VIEWPORT));
+    window.requestAnimationFrame(() => { this.dispatchEvent(new Event('scroll')); });
+  } as HTMLElement['scrollTo'];
+  return (frames: number) => {
+    for (let frame = 0; frame < frames; frame++) {
+      const due = pending.splice(0);
+      act(() => { due.forEach((callback) => callback(performance.now())); });
+    }
+  };
+}
 
 describe('ConversationNavigator', () => {
   beforeEach(() => {
@@ -66,5 +91,45 @@ describe('ConversationNavigator', () => {
     expect(screen.getByRole('button', { name: 'Message 1, You: Topic 2' })).toHaveAttribute('aria-current', 'location');
     view.rerender(<ConversationNavigator {...props} messages={[]} />);
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+  });
+
+  it('leaves a scroll the reader makes right after the outline opens where they put it', () => {
+    const runFrames = scrollLikeABrowser(messages.length);
+    useChatNavigationStore.setState({ expanded: true });
+    render(<ConversationNavigator messages={messages} activeIndex={messages.length - 1} getKey={getKey} onNavigate={vi.fn()} onLatest={vi.fn()} />);
+    const list = screen.getByLabelText('Message checkpoints');
+    expect(list.scrollTop).toBe(messages.length * ROW_HEIGHT - VIEWPORT);
+
+    list.scrollTop = 11 * ROW_HEIGHT;
+    fireEvent.scroll(list);
+    runFrames(5);
+
+    expect(list.scrollTop).toBe(11 * ROW_HEIGHT);
+    expect(screen.getByRole('button', { name: /^Message 12, / })).toBeInTheDocument();
+  });
+
+  it('follows the reading position, and leaves a scroll the reader makes right after it moves', () => {
+    const runFrames = scrollLikeABrowser(messages.length);
+    useChatNavigationStore.setState({ expanded: true });
+    const props = { messages, getKey, onNavigate: vi.fn(), onLatest: vi.fn() };
+    const view = render(<ConversationNavigator {...props} activeIndex={0} />);
+    const list = screen.getByLabelText('Message checkpoints');
+    runFrames(3);
+    expect(list.scrollTop).toBe(0);
+
+    view.rerender(<ConversationNavigator {...props} activeIndex={30} />);
+    expect(list.scrollTop).toBe(31 * ROW_HEIGHT - VIEWPORT);
+    runFrames(3);
+    view.rerender(<ConversationNavigator {...props} activeIndex={29} />);
+    expect(list.scrollTop).toBe(31 * ROW_HEIGHT - VIEWPORT);
+    runFrames(3);
+    view.rerender(<ConversationNavigator {...props} activeIndex={10} />);
+    expect(list.scrollTop).toBe(10 * ROW_HEIGHT);
+
+    list.scrollTop = 900;
+    fireEvent.scroll(list);
+    runFrames(5);
+
+    expect(list.scrollTop).toBe(900);
   });
 });
