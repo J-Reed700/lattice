@@ -253,10 +253,14 @@ pub(super) fn build_journal_map_prompt(
 ) -> String {
     [
         format!(
-            "You are synthesizing journal entry chunk {} of {}.",
-            chunk_index, chunk_total
+            "Below are journal entries, chunk {chunk_index} of {chunk_total}. You will synthesize them."
         ),
-        "Use only the provided entry transcripts.".to_string(),
+        "".to_string(),
+        "Entries:".to_string(),
+        entries.join("\n\n---\n\n"),
+        "".to_string(),
+        format!("Now write the synthesis of these entries (chunk {chunk_index} of {chunk_total})."),
+        "Use only the entry transcripts above.".to_string(),
         "Goal: capture practical details so the final output can replace re-reading every entry."
             .to_string(),
         "Output markdown with exactly these sections:".to_string(),
@@ -277,9 +281,6 @@ pub(super) fn build_journal_map_prompt(
         "".to_string(),
         "- An entry marked (part i of n) continues across chunks; describe the part you have."
             .to_string(),
-        "".to_string(),
-        "Entries:".to_string(),
-        entries.join("\n\n---\n\n"),
     ]
     .join("\n")
 }
@@ -293,8 +294,13 @@ pub(super) fn build_journal_reduce_prompt(chunk_outputs: &[String]) -> String {
         .join("\n\n---\n\n");
 
     [
-        "Merge the chunk syntheses into one final journal brief.".to_string(),
-        "Use only the chunk syntheses below.".to_string(),
+        "Below are chunk syntheses of a journal. You will merge them into one final brief."
+            .to_string(),
+        "".to_string(),
+        chunks,
+        "".to_string(),
+        "Now merge the chunk syntheses above into one final journal brief.".to_string(),
+        "Use only the chunk syntheses above.".to_string(),
         "Audience: someone who wants to understand and act quickly without reading every entry."
             .to_string(),
         "Output markdown with exactly these sections (in this order):".to_string(),
@@ -314,10 +320,8 @@ pub(super) fn build_journal_reduce_prompt(chunk_outputs: &[String]) -> String {
         "- Evidence Map: markdown table with columns `Claim`, `Supporting entries`, `Confidence`."
             .to_string(),
         "- Preserve numeric source citations [n] verbatim from the chunk syntheses; never renumber or invent citations.".to_string(),
-        "- Keep the brief concise but comprehensive; avoid fluff and repetition.".to_string(),
+        "- Keep every name, date, figure and limit the chunk syntheses state; cut repetition, not detail.".to_string(),
         "- If data is missing in a section, write `None identified.`".to_string(),
-        "".to_string(),
-        chunks,
     ]
     .join("\n")
 }
@@ -471,6 +475,15 @@ mod tests {
         assert!(prompts
             .iter()
             .any(|prompt| prompt.contains("ENTRY 2 (part 2 of")));
+    }
+
+    #[test]
+    fn map_and_reduce_rules_follow_their_material() {
+        let map = build_journal_map_prompt(&["ENTRY 1".to_string()], 1, 1);
+        let reduce = build_journal_reduce_prompt(&["notes".to_string()]);
+
+        assert!(map.find("ENTRY 1") < map.find("Output markdown"));
+        assert!(reduce.find("CHUNK SYNTHESIS 1") < reduce.find("Output markdown"));
     }
 
     /// Entries that fit one prompt still make one prompt, as before.

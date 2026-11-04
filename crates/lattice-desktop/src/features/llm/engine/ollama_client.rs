@@ -171,6 +171,16 @@ impl OllamaClient {
             .unwrap_or(FALLBACK_CONTEXT_WINDOW)
     }
 
+    /// The largest window this model runs at, as `/api/show` reports it.
+    pub async fn reported_window(&self) -> Option<usize> {
+        let limits = self.show_limits().await;
+        [limits.trained, limits.pinned]
+            .into_iter()
+            .flatten()
+            .filter(|window| *window > 0)
+            .min()
+    }
+
     /// What `/api/show` says about the model's window; nothing on any failure,
     /// since this only narrows a window that is already known.
     async fn show_limits(&self) -> ShowLimits {

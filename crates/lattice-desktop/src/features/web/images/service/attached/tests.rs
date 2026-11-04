@@ -96,11 +96,14 @@ async fn fixture() -> Fixture {
     .await
     .unwrap();
     let dir = TempDir::new().unwrap();
+    let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
+    sweep_gate.open();
     let service = Arc::new(ChatImageService::new(
         pool.clone(),
         dir.path().join("chat-images"),
         Arc::new(NoNetwork),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
+        sweep_gate,
     ));
     Fixture { pool, dir, service }
 }

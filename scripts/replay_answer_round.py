@@ -9,11 +9,15 @@ continuations while they make progress. Scored on the subset file's rubric.
 
 argv: calls.jsonl subset.json out.jsonl [query ids...]
 """
-import copy, json, re, sys, time, urllib.request
+import copy, json, os, re, sys, time, urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from replay_model import served_model  # noqa: E402
 
 CALLS, SUBSET, OUT = sys.argv[1:4]
 ONLY = set(sys.argv[4:])
-items = {i['id']: i for i in json.load(open(SUBSET))['items']}
+items = {i['id']: i for i in json.load(open(SUBSET, encoding="utf-8"))['items']}
 
 READ = ("Before answering, go through every numbered passage above in order and write one line for each: "
         "its label, then the sentences of that passage that bear on my question, copied exactly as written and in "
@@ -84,12 +88,13 @@ def base_request(q):
     return req
 
 requests = {}
-for line in open(CALLS):
+for line in open(CALLS, encoding="utf-8"):
     r = json.loads(line); c = r['call']; q = c.get('request') or {}; m = q.get('messages') or []
     if q.get('tools') and m and str(m[0].get('content', '')).startswith('You are Lattice'):
         requests.setdefault(r['query_id'], (c['path'], q))
 
-out = open(OUT, 'a')
+out = open(OUT, 'a', encoding="utf-8")
+MODEL = served_model('http://127.0.0.1:8089')
 for qid, (path, shipped) in requests.items():
     if ONLY and qid not in ONLY:
         continue
@@ -141,6 +146,6 @@ for qid, (path, shipped) in requests.items():
                'writing_s': round(wsecs, 1), 'continuations': continuations, 'continuation_s': round(cont_s, 1),
                'tool_calls': len(calls), 'cited': sorted(cited(answer)), 'left_out_after': sorted(noted - cited(answer)),
                'missing': missing(qid, answer), 'facts': len(facts(qid)), 'notes': notes_text, 'answer': answer}
-        out.write(json.dumps(rec) + '\n'); out.flush()
+        out.write(json.dumps({'model': MODEL, **rec}) + '\n'); out.flush()
         print(f"{qid} s{seed} | read {rec['reading_s']}s sweeps={sweeps} noted={rec['noted']} unverified={rec['unverified_notes']} | "
               f"write {rec['writing_s']}s cont={continuations} ({rec['continuation_s']}s) | {'PASS' if not rec['missing'] else 'miss ' + str(rec['missing'])}", flush=True)

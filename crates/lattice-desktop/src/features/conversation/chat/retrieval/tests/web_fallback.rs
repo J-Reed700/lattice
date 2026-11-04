@@ -87,6 +87,7 @@ fn unrelated_passages() -> Vec<SearchResultDto> {
 /// Finds the same passages for every query, and never reranks them.
 struct FixedLibrary {
     passages: Vec<SearchResultDto>,
+    queries: Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait]
@@ -105,13 +106,14 @@ impl HybridSearchTrait for FixedLibrary {
     }
     async fn search_branches(
         &self,
-        _query: &str,
+        query: &str,
         _space_id: Option<&str>,
         _allowed_document_ids: Option<&HashSet<String>>,
         _limit: usize,
         _vector_weight: f32,
         _bm25_weight: f32,
     ) -> QueryBranches {
+        self.queries.lock().unwrap().push(query.to_string());
         QueryBranches {
             branches: Vec::new(),
             answered: 2,
@@ -195,6 +197,7 @@ fn intent_wants_the_web() -> SearchFlags {
             needs_knowledge_base: false,
             needs_web: true,
             is_followup: false,
+            standalone_question: None,
             confidence: 0.9,
         },
     )
@@ -204,6 +207,7 @@ struct Ran {
     outcome: RetrievalPipelineOutcome,
     steps: Vec<TurnStepDto>,
     web_queries: Vec<String>,
+    library_queries: Vec<String>,
 }
 
 impl Ran {
@@ -219,12 +223,25 @@ impl Ran {
 }
 
 async fn run(passages: Vec<SearchResultDto>, flags: SearchFlags, turn: &str) -> Ran {
+    run_turn(passages, flags, turn, None).await
+}
+
+async fn run_turn(
+    passages: Vec<SearchResultDto>,
+    flags: SearchFlags,
+    turn: &str,
+    standalone_question: Option<&str>,
+) -> Ran {
     let web = Arc::new(RecordingWeb::default());
+    let library = Arc::new(FixedLibrary {
+        passages,
+        queries: Mutex::default(),
+    });
     let runtime = FakeRuntime {
         tools: Some(web.clone()),
         vault: Some(TestVault {
             records: handbook_records().await,
-            search: Arc::new(FixedLibrary { passages }),
+            search: library.clone(),
         }),
         ..FakeRuntime::default()
     };
@@ -244,6 +261,7 @@ async fn run(passages: Vec<SearchResultDto>, flags: SearchFlags, turn: &str) -> 
             conversation_id: CONVERSATION,
             request_id: turn,
             message: QUESTION,
+            standalone_question,
             llm: &llm,
             highlight_terms: &[],
             focus: &crate::features::conversation::chat::focus::FocusScope::default(),
@@ -257,11 +275,26 @@ async fn run(passages: Vec<SearchResultDto>, flags: SearchFlags, turn: &str) -> 
         None,
     )
     .await;
+    let library_queries = library.queries.lock().unwrap().clone();
     Ran {
         outcome,
         steps: recorder.steps(),
         web_queries: web.queries(),
+        library_queries,
     }
+}
+
+/// A follow-up's own words may name nothing, so the library is searched for
+/// them and for the question the intent step wrote in their place.
+#[tokio::test]
+async fn a_followup_also_searches_the_question_it_stands_for() {
+    let question = "What is the hold on the edge ring?";
+    let flags = SearchFlags {
+        force_kb_search: true,
+        ..SearchFlags::from_preferences(None)
+    };
+    let ran = run_turn(unrelated_passages(), flags, "followup-turn", Some(question)).await;
+    assert_eq!(ran.library_queries, [QUESTION, question]);
 }
 
 /// The reported defect: a handbook question went out as a public search and
@@ -376,6 +409,7 @@ async fn a_closed_book_turn_stays_closed_whatever_the_intent_says() {
             needs_knowledge_base: true,
             needs_web: true,
             is_followup: false,
+            standalone_question: None,
             confidence: 1.0,
         },
     );

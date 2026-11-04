@@ -245,6 +245,7 @@ fn main() {
                 tauri_build::InlinedPlugin::new().commands(&[
                     "set_cloud_api_key",
                     "list_cloud_models",
+                    "get_model_limits",
                     "get_settings",
                     "get_settings_category",
                     "update_settings",
@@ -604,6 +605,7 @@ fn main() {
                     "create_interview_study_deck",
                     "create_learning_tangent",
                     "list_learning_tangents",
+                    "set_conversation_course",
                 ]),
             )
             .plugin(
@@ -616,8 +618,16 @@ fn main() {
             )
             .plugin(
                 "transcription",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "transcribe_file",
+                    "transcribe_speech",
+                    "get_transcription_status",
+                ]),
+            )
+            .plugin(
+                "speech",
                 tauri_build::InlinedPlugin::new()
-                    .commands(&["transcribe_file", "get_transcription_status"]),
+                    .commands(&["get_speech_status", "synthesize_speech"]),
             )
             .plugin(
                 "corpus-shape",

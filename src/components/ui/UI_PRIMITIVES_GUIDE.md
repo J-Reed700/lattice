@@ -314,6 +314,7 @@ palette as well as the application theme.
 | `SearchableSelect` | Search labels, descriptions and keywords; show optional status indicators; confirm a controlled value | Type to filter, arrows to browse, Enter to select, Escape to dismiss and restore focus |
 | `NavigationTabs` | Radix tabs with underline or segmented appearance, badges and a separate actions slot | Arrows/Home/End move focus; Enter/Space activates, allowing the owner to save drafts first |
 | `ResizableColumns` | Adjustable trailing pane; optional saved width; stacks when its container is narrow | Left/Right adjust width, Shift takes larger steps, Home/End set limits; double-click resets |
+| `SplitHandle` | Thin drag edge that sizes the pane on one side of it; the owner keeps the width and any saving | Left/Right step the width; double-click resets |
 | `SortableList` | Drag a handle to reorder; explicit up/down controls remain available | Move buttons or Alt+Up/Down on a row; changes are announced |
 | `PairingBoard` | Connect named cards by selecting or dragging; clear and replace assignments | Select the left item, then activate the right item; changes are announced |
 | `SaveStatus` | Consistent saving, saved, unsaved and error feedback with icons | Status/alert announcements; retry actions belong to the owning workflow |

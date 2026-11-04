@@ -7,6 +7,7 @@ import { folderFocusFor } from '@/features/chat/model/folderThreadHost';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
 import type { ChatResponse, ChatStreamEventDto } from '@/lib/bindings';
+import { isBoundChat } from '@/shared/conversations/boundChats';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import type { GenerationOutcome, RegenerateOptions } from '@/shared/conversations/conversationsStore.types';
 import type { ApiResult } from '@/types';
@@ -497,11 +498,11 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
     attachmentImages?: ChatImage[]
   ) => {
     const state = conversationUiStore.getState();
-    // The fallback is a Chat conversation: an Explorer thread is never
-    // continued without its folder.
+    // The fallback is a Chat conversation: a bound chat is never continued
+    // away from what it is bound to.
     const requestConversationId = conversationId
       ?? state.activeConversationId
-      ?? conversations.find(conversation => !conversation.explorerRoot)?.id
+      ?? conversations.find(conversation => !isBoundChat(conversation))?.id
       ?? null;
     if (!requestConversationId) {
       setUiError('No active conversation selected. Create or select a conversation first.');

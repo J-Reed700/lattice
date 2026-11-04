@@ -36,6 +36,8 @@ pub use container::Container;
 #[cfg(test)]
 mod file_preview_tests;
 pub mod modules;
+#[cfg(test)]
+mod turn_source_tests;
 pub use modules::{
     AIModule, CoreModule, FileOpsModule, IndexingModule, LibraryModule, SearchModule, SystemModule,
 };

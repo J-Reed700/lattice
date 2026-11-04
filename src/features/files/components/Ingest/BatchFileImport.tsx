@@ -18,11 +18,11 @@ import { cn } from '@/lib/utils';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { ConversationSpaceDto } from '@/types';
 import type { CustomCollection } from '@/types/fileBrowser';
+import { formatBytes } from '@/utils/formatters';
 import {
   filterIndexablePaths,
   validateIndexablePath,
 } from '@/utils/indexingFileValidation';
-import { formatBytes } from '@/utils/formatters';
 import { mimeTypeForPath } from '@/utils/mimeTypes';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 

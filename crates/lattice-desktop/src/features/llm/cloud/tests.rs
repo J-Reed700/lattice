@@ -926,6 +926,60 @@ fn claude_that_thinks_is_given_room_to_think_and_answer() {
     );
 }
 
+/// A request for no thinking at all gets each model's own way of turning it
+/// off, and its reply-sized ceiling; a model that cannot turn it off thinks at
+/// the lowest effort. A request that says nothing still thinks as before.
+#[test]
+fn claude_turns_thinking_off_where_the_model_allows_it() {
+    let body = |model: &str, effort: Option<&str>| {
+        let settings = LLMSettingsDto {
+            provider: LLMProvider::Anthropic,
+            model: model.into(),
+            max_tokens: 64_000,
+            context_window: 200_000,
+            ..Default::default()
+        };
+        CloudLlm::new(&settings, "test".into())
+            .unwrap()
+            .body(
+                &CompletionRequest {
+                    input: vec![CompletionInput::Message {
+                        role: "user".into(),
+                        content: "Which passages bear on the question?".into(),
+                    }],
+                    max_output_tokens: Some(512),
+                    reasoning_effort: effort.map(str::to_owned),
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap()
+    };
+    for (model, off) in [
+        ("claude-haiku-5-5", "disabled"),
+        ("claude-opus-5", "disabled"),
+        ("claude-sonnet-5", "disabled"),
+        ("claude-sonnet-5-5", "between_tools"),
+    ] {
+        let request = body(model, Some("none"));
+        assert_eq!(request["thinking"]["type"], off, "{model}");
+        assert_eq!(request["max_tokens"], 512, "{model}");
+    }
+    for model in ["claude-opus-5-5", "claude-fable-5-1"] {
+        let request = body(model, Some("none"));
+        assert_eq!(request["thinking"]["type"], "adaptive", "{model}");
+        assert_eq!(request["output_config"]["effort"], "low", "{model}");
+    }
+    assert_eq!(
+        body("claude-haiku-5-5", None)["thinking"]["type"],
+        "adaptive"
+    );
+    assert_eq!(
+        body("claude-haiku-5-5", Some("low"))["thinking"]["type"],
+        "adaptive"
+    );
+}
+
 #[test]
 fn claude_thinks_unasked_from_the_5_family_on() {
     for model in [

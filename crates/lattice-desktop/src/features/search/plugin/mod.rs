@@ -16,7 +16,7 @@ use tauri::{
     Runtime, State,
 };
 
-/// Report whether reranking is switched on and whether its model is present.
+/// Report whether the reranker's model is present, and so whether search reranks.
 #[tauri::command]
 #[specta::specta]
 pub async fn reranker_status(
@@ -24,12 +24,11 @@ pub async fn reranker_status(
 ) -> Result<RerankerStatusDto, ApiError> {
     let setup = RerankerSetup {
         model_manager: container.model_manager(),
-        toggle: container.reranking_toggle(),
     };
     reranker_status_impl(&setup).await.map_err(ApiError::from)
 }
 
-/// Download the reranker artifacts. Does not switch reranking on.
+/// Download the reranker's model, after which search reranks.
 #[tauri::command]
 #[specta::specta]
 pub async fn download_reranker(
@@ -37,7 +36,6 @@ pub async fn download_reranker(
 ) -> Result<RerankerStatusDto, ApiError> {
     let setup = RerankerSetup {
         model_manager: container.model_manager(),
-        toggle: container.reranking_toggle(),
     };
     download_reranker_impl(&setup).await.map_err(ApiError::from)
 }

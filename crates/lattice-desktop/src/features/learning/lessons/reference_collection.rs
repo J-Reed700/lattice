@@ -269,7 +269,7 @@ impl<'a> ReferenceCollection<'a> {
         query: &str,
         fits: impl Fn(&[ReferencePassage]) -> bool,
     ) -> Result<Vec<ReferencePassage>> {
-        self.fill(query, fits).await
+        self.retrieve_in(query, &Scope::All, fits).await
     }
 
     /// The next page of verification evidence for `query`: ranked passages,
@@ -355,14 +355,21 @@ impl<'a> ReferenceCollection<'a> {
         Ok(page)
     }
 
-    async fn fill(
+    /// [`Self::retrieve_within`] over the sources `scope` keeps.
+    pub(in crate::features::learning) async fn retrieve_in(
         &self,
         query: &str,
+        scope: &Scope,
         fits: impl Fn(&[ReferencePassage]) -> bool,
     ) -> Result<Vec<ReferencePassage>> {
         let mut depth = FIRST_PAGE;
         loop {
-            let found = self.retrieve(query, depth).await?;
+            let found: Vec<ReferencePassage> = self
+                .rank(&[query], scope, depth)
+                .await?
+                .into_iter()
+                .map(|ranked| ranked.passage)
+                .collect();
             let exhausted = found.len() < depth;
             let mut passages = found;
             let fitting = longest_fitting_prefix(&passages, &fits);

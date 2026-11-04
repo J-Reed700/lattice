@@ -212,6 +212,7 @@ async fn the_model_choice_migration_keeps_every_chat_and_drops_the_dead_model_co
     let listed = repo
         .list_conversations_explorer(ListConversationsExplorerQueryDto {
             space_id: Some("space-a".into()),
+            program_id: None,
             query: None,
             saved_only: None,
             bookmarked_only: None,

@@ -103,6 +103,10 @@ pub struct DocumentResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_index: Option<usize>,
 
+    /// The chunk this result came from, when it came from one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_id: Option<String>,
+
     /// Last modification timestamp
     pub modified_at: DateTime<Utc>,
 
@@ -183,10 +187,6 @@ pub struct GetDocumentInput {
     /// Document ID from search results
     pub document_id: String,
 
-    /// Include file metadata (size, dates, tags)
-    #[serde(default = "default_true")]
-    pub include_metadata: bool,
-
     /// Characters to return from `offset` on. The chat's tool loop sets this
     /// to the room the result has in the model's window; without it the text
     /// runs to the end of the document.
@@ -197,10 +197,6 @@ pub struct GetDocumentInput {
     /// previous result's `next_offset` to read on from where it stopped.
     #[serde(default)]
     pub offset: usize,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// Document metadata.
@@ -248,7 +244,7 @@ pub struct GetDocumentOutput {
     #[serde(default)]
     pub total_chars: usize,
 
-    /// Document metadata (if include_metadata=true)
+    /// Document metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<DocumentMetadata>,
 }

@@ -184,7 +184,7 @@ fn research_job(request: &TurnRequest) -> Result<NewJob> {
 
 /// The rounds a research turn may spend: its progress counts them.
 fn rounds_total() -> u32 {
-    u32::try_from(tool_loop::max_tool_rounds(true, false)).unwrap_or(u32::MAX)
+    u32::try_from(tool_loop::max_tool_rounds(true, None)).unwrap_or(u32::MAX)
 }
 
 /// Cancels the research job of `request_id` in a conversation, or every live

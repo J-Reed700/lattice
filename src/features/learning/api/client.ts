@@ -760,6 +760,11 @@ export const learningApi = {
     invokeCommand('list_learning_tangents', {
       request: { programId: programId ?? null },
     }),
+
+  setConversationCourse: (
+    request: Wire.SetConversationCourseRequestDto,
+  ): Promise<void> =>
+    invokeCommand('set_conversation_course', { request }),
 };
 
 export type {

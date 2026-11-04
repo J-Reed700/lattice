@@ -16,9 +16,22 @@ export type { ConversationFilterMode } from './conversationsStore.types';
 type ConversationsSnapshot = StoreApi<ConversationsState>;
 const ConversationsContext = createContext<ConversationsSnapshot | null>(null);
 
+const ThreadStartContext = createContext<string | undefined>(undefined);
+
+/** The message the open thread begins after, when its view keeps the earlier
+ * ones out of sight. Its first message still follows that one. */
+export function useThreadStartsAfter(): string | undefined {
+  return useContext(ThreadStartContext);
+}
+
 /** A transcript can project the shared controller onto a different conversation
  * without selecting it globally or starting a second generation lifecycle. */
-export function ConversationSnapshotProvider({ value, children }: { value: ConversationsState; children?: ReactNode }) {
+export function ConversationSnapshotProvider({ value, threadStartsAfter, children }: {
+  value: ConversationsState;
+  /** The message this view's thread begins after, when it leaves earlier messages out of sight. */
+  threadStartsAfter?: string;
+  children?: ReactNode;
+}) {
   const storeRef = useRef<ConversationsSnapshot | null>(null);
   if (!storeRef.current) storeRef.current = createStore<ConversationsState>(() => value);
 
@@ -29,7 +42,11 @@ export function ConversationSnapshotProvider({ value, children }: { value: Conve
     storeRef.current?.setState(value, true);
   }, [value]);
 
-  return createElement(ConversationsContext.Provider, { value: storeRef.current }, children);
+  return createElement(
+    ConversationsContext.Provider,
+    { value: storeRef.current },
+    createElement(ThreadStartContext.Provider, { value: threadStartsAfter }, children),
+  );
 }
 
 function useStore(): ConversationsSnapshot {

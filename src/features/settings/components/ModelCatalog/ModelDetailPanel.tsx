@@ -97,6 +97,9 @@ function NoteRow({ children, tone = 'default' }: { children: ReactNode; tone?: '
 
 export function ModelDetailPanel(props: ModelDetailPanelProps) {
   const [selected, setSelected] = useState<ModelMetadata>(props.model.model);
+  useEffect(() => {
+    setSelected(props.model.model);
+  }, [props.model.model]);
   const { systemCapabilities } = useModelCatalog({ autoLoadModels: false });
   return <div className="space-y-5">
     <button type="button" onClick={props.onBack} className={cn(GHOST_BUTTON_CLASS, 'gap-1.5 pl-1.5')}>
@@ -151,9 +154,11 @@ function ModelDetailContent({
   const isDownloadedFromList = downloadedModels.some(
     (m) => m.id === metadata.id || m.model_id === metadata.id
   );
-  const [downloadedFromCheck, setDownloadedFromCheck] = useState<boolean | null>(null);
+  const [checkedStatus, setCheckedStatus] = useState<{ modelId: string; downloaded: boolean } | null>(null);
+  const downloadedFromCheck = checkedStatus?.modelId === metadata.id ? checkedStatus.downloaded : null;
   const isDownloaded = isDownloadedFromList || Boolean(downloadedFromCheck);
-  const isCheckingDownload = isModelsLoading ?? (!isDownloadedFromList && downloadedFromCheck === null);
+  const isCheckingDownload =
+    Boolean(isModelsLoading) || (!isDownloadedFromList && Boolean(isModelDownloaded) && downloadedFromCheck === null);
 
   // Tracks the moment between click and the backend registering the download.
   // Without this, the button stays enabled for ~3s while the Tauri command
@@ -181,16 +186,20 @@ function ModelDetailContent({
     Boolean(metadata.model_id && metadata.default_filename) || Boolean(metadata.download_url);
 
   useEffect(() => {
-    setDownloadedFromCheck(null);
     let active = true;
+    const currentModelId = metadata.id;
     if (isModelDownloaded && !isDownloadedFromList) {
-      void Promise.resolve(isModelDownloaded(metadata.id))
+      void Promise.resolve(isModelDownloaded(currentModelId))
         .then((res) => {
-          if (active && typeof res === 'boolean') setDownloadedFromCheck(res);
+          if (active && typeof res === 'boolean') {
+            setCheckedStatus({ modelId: currentModelId, downloaded: res });
+          }
         })
         .catch((err) => {
           console.error('Failed to check download status:', err);
-          if (active) setDownloadedFromCheck(false);
+          if (active) {
+            setCheckedStatus({ modelId: currentModelId, downloaded: false });
+          }
         });
     }
     return () => {
@@ -200,13 +209,20 @@ function ModelDetailContent({
 
   // Re-check download status when download completes
   useEffect(() => {
+    let active = true;
+    const currentModelId = metadata.id;
     if (activeDownload?.state === 'Completed' && isModelDownloaded) {
-      void Promise.resolve(isModelDownloaded(metadata.id))
+      void Promise.resolve(isModelDownloaded(currentModelId))
         .then((res) => {
-          if (typeof res === 'boolean') setDownloadedFromCheck(res);
+          if (active && typeof res === 'boolean') {
+            setCheckedStatus({ modelId: currentModelId, downloaded: res });
+          }
         })
         .catch(() => {});
     }
+    return () => {
+      active = false;
+    };
   }, [activeDownload?.state, isModelDownloaded, metadata.id]);
 
   const handleSetActiveChat = async () => {
@@ -322,7 +338,9 @@ function ModelDetailContent({
         addToast,
         queryClient,
       }, api);
-      if (alreadyDownloaded) setDownloadedFromCheck(true);
+      if (alreadyDownloaded) {
+        setCheckedStatus({ modelId: metadata.id, downloaded: true });
+      }
     } finally {
       setIsStartingDownload(false);
     }

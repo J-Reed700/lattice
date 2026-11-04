@@ -35,19 +35,6 @@ impl crate::features::indexing::note_index_sink::ChunkSizePreference
     }
 }
 
-/// The reranker setup's toggle, implemented over the settings use case, for
-/// the same reason as the chunk-size preference: search's port, satisfied
-/// from settings, bound where both may be named.
-#[async_trait::async_trait]
-impl crate::features::search::reranker_setup::RerankingToggle for Container {
-    async fn enabled(&self) -> Result<bool> {
-        self.get_settings_use_case()
-            .execute()
-            .await
-            .map(|settings| settings.search.enable_reranking)
-    }
-}
-
 /// The journal synthesis's entry reads, implemented over the references and
 /// daily-notes repositories. The impl sits at the composition root for the
 /// same reason as its siblings: conversation's port, satisfied from two

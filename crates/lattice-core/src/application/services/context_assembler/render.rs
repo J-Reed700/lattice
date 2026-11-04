@@ -61,13 +61,21 @@ fn json_string(value: &str) -> String {
 /// A past message as it is replayed. An assistant answer's pictures become
 /// their captions (`[Picture: caption]`): an `img-N` ref belongs to the turn
 /// that stored it, and a later answer that copied one would show another
-/// turn's picture, or none. Every other byte is kept.
+/// turn's picture, or none. Its citation markers go for the same reason: this
+/// turn's `[3]` is another passage, and a model reading the old one beside it
+/// takes a right answer for a wrong one and says so. Every other byte is kept.
 fn replayed(role: SourceRole, text: &str) -> std::borrow::Cow<'_, str> {
-    if role == SourceRole::Assistant && text.contains("](img-") {
+    if role != SourceRole::Assistant {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let answer = if text.contains("](img-") {
         std::borrow::Cow::Owned(crate::shared::markdown_media::images_to_captions(text))
     } else {
         std::borrow::Cow::Borrowed(text)
-    }
+    };
+    std::borrow::Cow::Owned(crate::shared::citation_markers::without_citation_markers(
+        &answer,
+    ))
 }
 
 fn role_label(role: SourceRole) -> &'static str {
@@ -219,10 +227,10 @@ pub fn render_evidence(blocks: &[String]) -> Option<String> {
 ///
 /// No trimming. `completion_input::from_context` trims, and a trimmed user
 /// message is a different message; this path exists so the production memory
-/// path never goes through that. The two rewrites are an answer's pictures,
-/// which replay as their captions (see `replayed`), and a question's attached
-/// pictures, which replay as one caption line each after its text: their
-/// pixels rode only in the turn they were sent in.
+/// path never goes through that. The rewrites are an answer's pictures and
+/// citation markers (see `replayed`), and a question's attached pictures, which
+/// replay as one caption line each after its text: their pixels rode only in
+/// the turn they were sent in.
 pub fn render_recent(message: &SourceMessage) -> CompletionInput {
     let content = replayed(message.role, &message.content);
     let content = if message.pictures.is_empty() {
@@ -499,6 +507,34 @@ mod tests {
 
     /// A question's attached pictures replay as caption lines after its
     /// text, which is kept byte for byte.
+    /// A past answer's `[3]` is not this turn's `[3]`, and a model that reads
+    /// the two together takes a right answer for a wrong one. What the user
+    /// wrote is theirs, and may ask about a number.
+    #[test]
+    fn a_recent_answer_replays_without_its_citation_markers() {
+        let message = |role, content: &str| SourceMessage {
+            id: "m3".into(),
+            conversation_id: "c1".into(),
+            sequence: 3,
+            role,
+            content: content.into(),
+            content_digest: compute_digest(content),
+            status: "completed".into(),
+            pictures: Vec::new(),
+        };
+        let answer = "The rule is 74 hours [5]. See \"the status line\" [6][7].";
+        match render_recent(&message(SourceRole::Assistant, answer)) {
+            CompletionInput::Message { content, .. } => {
+                assert_eq!(content, "The rule is 74 hours. See \"the status line\".");
+            }
+            other => panic!("unexpected input {other:?}"),
+        }
+        match render_recent(&message(SourceRole::User, answer)) {
+            CompletionInput::Message { content, .. } => assert_eq!(content, answer),
+            other => panic!("unexpected input {other:?}"),
+        }
+    }
+
     #[test]
     fn a_recent_question_names_its_attached_pictures() {
         let message = SourceMessage {

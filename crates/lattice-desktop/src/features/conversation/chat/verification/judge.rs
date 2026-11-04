@@ -5,18 +5,18 @@
 //! log-probabilities. No clock bounds the judging: stall detection, the output
 //! reservation and app shutdown end a call instead.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use futures::future::BoxFuture;
 use futures::{FutureExt, StreamExt};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
-use lattice_core::application::ports::llm_port::{chars_within_tokens, SamplingOverride};
-#[cfg(test)]
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+use lattice_core::application::ports::llm_port::{
+    chars_within_tokens, CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
+};
 use lattice_core::application::ports::LLMPort;
 #[cfg(test)]
 use lattice_core::application::services::claim_verification::{
@@ -28,13 +28,14 @@ use lattice_core::application::services::claim_verification::{
 pub(super) use lattice_core::application::services::claim_verification::{
     ClaimEvidence, ClaimJudgment, MIN_VERDICT_CONFIDENCE,
 };
+use lattice_core::application::services::evidence_retrieval::extract_normalized_tokens;
 use lattice_core::application::services::evidence_retrieval::{
     join_windows, scored_windows, WINDOW_OVERLAP_CHARS,
 };
 #[cfg(test)]
 use lattice_core::shared::error::Result;
 
-use super::lexical::{best_sentence, best_windows, LexicalClaim, ScoredWindow};
+use super::lexical::{best_sentence, best_windows, passage_text, LexicalClaim, ScoredWindow};
 
 /// Output room for the model's reasoning followed by the public verdict,
 /// factual explanation, and exact source quote. Reasoning tokens count toward
@@ -45,6 +46,29 @@ const MAX_QUOTE_CHARS: usize = 400;
 
 /// Between two windows of one page: the text in between was left out.
 const WINDOW_SEPARATOR: &str = "\n[…]\n";
+
+/// Sorts the sentences of a tutor's reply that cite nothing. A sentence that
+/// does both goes with the claims, so a false one stays flagged whatever
+/// surrounds it. See evals/tutor/2026-11-02-FIRST-RUNS.md.
+const SESSION_TALK_SYSTEM: &str = "A tutor's reply is being checked against its course. Below are sentences from its replies, each with its number. Some state something about the subject being taught; those must be checked. Others only run the session: greeting, praising or correcting the learner's words in general terms, saying what comes next, what was saved or how many cards are left, asking the learner to do something. Reply with a JSON array of the numbers of the sentences that state something about the subject, and nothing else. When a sentence does both, include it.";
+
+/// The numbers of `reply`, each less one, when the reply is one JSON array of
+/// numbers and nothing else.
+fn listed_positions(reply: &str) -> Option<HashSet<usize>> {
+    let text = reply.trim();
+    let text = text
+        .strip_prefix("```json")
+        .or_else(|| text.strip_prefix("```"))
+        .and_then(|rest| rest.strip_suffix("```"))
+        .unwrap_or(text);
+    let numbers: Vec<usize> = serde_json::from_str(text.trim()).ok()?;
+    Some(
+        numbers
+            .into_iter()
+            .filter_map(|number| number.checked_sub(1))
+            .collect(),
+    )
+}
 
 /// Whether a claim has anything to be judged against.
 #[derive(Debug, Clone)]
@@ -116,6 +140,43 @@ impl ClaimJudge {
         )
     }
 
+    /// The positions in `sentences` of those that say something about the
+    /// subject. `None` when the model could not say: nothing is settled then.
+    pub(super) async fn about_the_subject(&self, sentences: &[&str]) -> Option<HashSet<usize>> {
+        let listed: Vec<String> = sentences
+            .iter()
+            .enumerate()
+            .map(|(position, sentence)| format!("{}. {sentence}", position + 1))
+            .collect();
+        let reply = self
+            .llm
+            .complete(&CompletionRequest {
+                input: vec![
+                    CompletionInput::Message {
+                        role: "system".into(),
+                        content: SESSION_TALK_SYSTEM.into(),
+                    },
+                    CompletionInput::Message {
+                        role: "user".into(),
+                        content: listed.join("\n"),
+                    },
+                ],
+                sampling: Some(self.sampling),
+                max_output_tokens: Some(self.max_output_tokens),
+                no_time_limit: true,
+                priority: InferencePriority::Verification,
+                ..Default::default()
+            })
+            .await
+            .inspect_err(|error| warn!(%error, "Could not sort a reply's uncited sentences"))
+            .ok()?;
+        let positions = listed_positions(&reply.text);
+        if positions.is_none() {
+            warn!("The judge's list of claims could not be read; every sentence stays a claim");
+        }
+        positions
+    }
+
     /// Judges each `(claim index, claim text, evidence)`, keyed back by index.
     /// Parts go round by round (every claim's best part, then each open claim's
     /// second), so a claim citing a long page does not hold back the others; a
@@ -145,7 +206,15 @@ impl ClaimJudge {
                 .filter(|(slot, _)| tallies.get(*slot).is_some_and(Tally::is_open))
                 .filter_map(|(slot, (_, claim, parts))| {
                     let part = parts.get(round)?;
-                    Some(async move { (slot, self.checker().check(claim, part).await) }.boxed())
+                    Some(
+                        async move {
+                            (
+                                slot,
+                                founded(claim, self.checker().check(claim, part).await),
+                            )
+                        }
+                        .boxed(),
+                    )
                 })
                 .collect();
             let mut calls: futures::stream::FuturesUnordered<_> = calls.into_iter().collect();
@@ -213,6 +282,32 @@ impl Tally {
     }
 }
 
+/// A contradiction rests on the passage words that state the incompatible
+/// fact. A quote holding none of the claim's words states nothing about it, so
+/// all the judge found is that the passage does not state the claim.
+fn founded(claim: &str, judgment: ClaimJudgment) -> ClaimJudgment {
+    let quotes_the_claim = |outcome: &JudgeOutcome| {
+        outcome
+            .quote
+            .as_deref()
+            .map(extract_normalized_tokens)
+            .is_some_and(|quoted| !quoted.is_disjoint(&extract_normalized_tokens(claim)))
+    };
+    match judgment {
+        ClaimJudgment::Judged(outcome)
+            if outcome.verdict == ClaimVerdict::Contradicted && !quotes_the_claim(&outcome) =>
+        {
+            ClaimJudgment::Judged(JudgeOutcome {
+                verdict: ClaimVerdict::Unsupported,
+                quote: None,
+                reason: Some("The cited passage does not state this.".into()),
+                confidence: outcome.confidence,
+            })
+        }
+        other => other,
+    }
+}
+
 fn confident(outcome: &JudgeOutcome) -> bool {
     outcome
         .confidence
@@ -262,11 +357,7 @@ pub(super) fn evidence_for(claim: &LexicalClaim, sources: &[SourceDto], room: us
         let Some(source) = sources.get(idx) else {
             return Evidence::NoCitation;
         };
-        let body = if source.content.trim().is_empty() {
-            source.excerpt.as_deref().unwrap_or_default()
-        } else {
-            source.content.as_str()
-        };
+        let body = passage_text(source);
         if body.trim().is_empty() {
             continue;
         }

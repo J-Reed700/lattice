@@ -161,7 +161,7 @@ export const useToastStore = create<ToastStore>((set, get) => ({
 
   resumeToast: (id: string) => {
     const entry = dismissTimers.get(id);
-    if (!entry || !entry.paused) return;
+    if (!entry?.paused) return;
     if (entry.remaining <= 0) {
       get().dismissToast(id);
       return;

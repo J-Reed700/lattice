@@ -54,21 +54,17 @@ pub(crate) async fn check_available(
                 "No Ollama connection is configured. Add one in Settings → Chat".into(),
             ))
         }
-        ModelRef::Ollama { model } if model.trim().is_empty() => {
-            Err(AppError::InvalidConfig(
-                "The Ollama model is not configured. Choose one in Settings → Chat.".into(),
-            ))
-        }
+        ModelRef::Ollama { model } if model.trim().is_empty() => Err(AppError::InvalidConfig(
+            "The Ollama model is not configured. Choose one in Settings → Chat.".into(),
+        )),
         ModelRef::LlamaCpp { .. } if settings.llama_cpp.url.trim().is_empty() => {
             Err(AppError::InvalidConfig(
                 "No llama.cpp connection is configured. Add one in Settings → Chat".into(),
             ))
         }
-        ModelRef::LlamaCpp { model } if model.trim().is_empty() => {
-            Err(AppError::InvalidConfig(
-                "The llama.cpp model is not configured. Choose one in Settings → Chat.".into(),
-            ))
-        }
+        ModelRef::LlamaCpp { model } if model.trim().is_empty() => Err(AppError::InvalidConfig(
+            "The llama.cpp model is not configured. Choose one in Settings → Chat.".into(),
+        )),
         ModelRef::Ollama { .. } | ModelRef::LlamaCpp { .. } => Ok(()),
         ModelRef::Cloud { provider, .. } => {
             let key = cloud_provider_id(*provider);

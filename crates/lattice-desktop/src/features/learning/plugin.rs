@@ -71,6 +71,8 @@ mod study;
 pub use study::*;
 mod tangents;
 pub use tangents::*;
+mod tutor;
+pub use tutor::*;
 mod audit;
 pub use audit::*;
 mod trust;
@@ -276,7 +278,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             set_study_deck_target,
             create_interview_study_deck,
             create_learning_tangent,
-            list_learning_tangents
+            list_learning_tangents,
+            set_conversation_course
         ])
         .build()
 }

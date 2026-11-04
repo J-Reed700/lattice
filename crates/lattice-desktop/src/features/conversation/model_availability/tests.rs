@@ -1,6 +1,7 @@
 use super::*;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::metadata::ModelType;
+use lattice_core::domain::models::model_ref::CloudProvider;
 use std::path::{Path, PathBuf};
 
 /// The `models` table holding at most one row.
@@ -170,20 +171,20 @@ async fn a_server_model_requires_non_empty_model_name() {
     };
     settings.llama_cpp.url = "http://localhost:8080".into();
 
-    let empty_ollama = ModelRef::Ollama {
-        model: "  ".into(),
-    };
-    let empty_llama_cpp = ModelRef::LlamaCpp {
-        model: "".into(),
-    };
+    let empty_ollama = ModelRef::Ollama { model: "  ".into() };
+    let empty_llama_cpp = ModelRef::LlamaCpp { model: "".into() };
 
-    let ollama_err = check(&empty_ollama, Rows(None), &settings).await.unwrap_err();
+    let ollama_err = check(&empty_ollama, Rows(None), &settings)
+        .await
+        .unwrap_err();
     assert_eq!(
         message(ollama_err),
         "The Ollama model is not configured. Choose one in Settings → Chat."
     );
 
-    let llama_err = check(&empty_llama_cpp, Rows(None), &settings).await.unwrap_err();
+    let llama_err = check(&empty_llama_cpp, Rows(None), &settings)
+        .await
+        .unwrap_err();
     assert_eq!(
         message(llama_err),
         "The llama.cpp model is not configured. Choose one in Settings → Chat."

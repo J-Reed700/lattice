@@ -155,7 +155,7 @@ pub async fn review_patch(
             id: format!("addition:{}", addition.candidate_id),
             change: "add_mandatory_item",
             kind: addition.kind.as_str(),
-            label: addition.label.clone(),
+            label: Some(addition.label.clone()),
             proposed: addition.evidence.clone(),
             existing: Vec::new(),
             existing_label: None,
@@ -173,6 +173,15 @@ pub async fn review_patch(
             ValidatedTransitionTarget::Existing(id) => by_id.get(id.as_str()).copied(),
             ValidatedTransitionTarget::Candidate(_) => None,
         };
+        let replacement = transition
+            .replacement_candidate_id
+            .as_deref()
+            .and_then(|id| {
+                patch
+                    .additions
+                    .iter()
+                    .find(|addition| addition.candidate_id == id)
+            });
         requests.push(OwnedReview {
             id: format!("transition:{}", transition.target.as_str()),
             change: match transition.state {
@@ -183,10 +192,7 @@ pub async fn review_patch(
                 .map(|item| item.kind.as_str())
                 .or_else(|| candidate.map(|item| item.kind.as_str()))
                 .unwrap_or("constraint"),
-            label: existing
-                .map(|item| item.label.clone())
-                .or_else(|| candidate.map(|item| item.label.clone()))
-                .unwrap_or_default(),
+            label: replacement.map(|addition| addition.label.clone()),
             proposed: transition.evidence.clone(),
             existing: existing
                 .map(|item| item.evidence.clone())
@@ -206,7 +212,7 @@ pub async fn review_patch(
                     id: review.id.as_str(),
                     change: review.change,
                     kind: review.kind,
-                    label: review.label.as_str(),
+                    label: review.label.as_deref(),
                     proposed_evidence: passages(&review.proposed, evidence),
                     existing_evidence: passages(&review.existing, evidence),
                     existing_label: review.existing_label.as_deref(),
@@ -303,7 +309,7 @@ struct OwnedReview {
     id: String,
     change: &'static str,
     kind: &'static str,
-    label: String,
+    label: Option<String>,
     proposed: Vec<EvidenceSpan>,
     existing: Vec<EvidenceSpan>,
     existing_label: Option<String>,

@@ -1,8 +1,10 @@
 import { type StoreApi } from 'zustand';
 
-import { INDEXED_FOLDERS_QUERY_KEY } from '@/features/files/hooks/useIndexedFoldersQuery';
-import { SETTINGS_QUERY_KEY } from '@/features/settings/hooks/useSettingsQuery';
-import { queryClient } from '@/lib/queryClient';
+import {
+  INDEXED_FOLDERS_QUERY_KEY,
+  queryClient,
+  SETTINGS_QUERY_KEY,
+} from '@/lib/queryClient';
 import { type FileBrowserActions, type SourceConnection } from '@/types/fileBrowser';
 
 import { loadSourceConnections, persistSourceConnections, sortSourceConnections } from './fileBrowserPersistence';

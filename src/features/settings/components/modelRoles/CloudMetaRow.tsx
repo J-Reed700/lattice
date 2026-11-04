@@ -5,8 +5,8 @@
  * is selected, and the Utility, Learning or Verifier model when it names a cloud
  * model. The provider, model name and key are edited on the Chat settings
  * page; whether the model sees pictures is declared here, starting from the
- * provider's published default. Role assignment uses the same choices as
- * the llama.cpp and Ollama connections.
+ * provider's published default, and its window under Configure. Role
+ * assignment uses the same choices as the llama.cpp and Ollama connections.
  */
 
 import { useState } from 'react';
@@ -23,6 +23,7 @@ import { CLOUD_PROVIDER_NAMES, sameModelRef } from '@/utils/chatModelSelection';
 import { ConnectionRolesDialog } from './ConnectionRolesDialog';
 import { LearningWindowNotice } from './LearningWindowNotice';
 import { useModelRoles } from './ModelRolesContext';
+import { ModelWindowControls } from './ModelWindowControls';
 import { ActiveRoleBadge, RoleToggle } from './RoleButton';
 import { CONNECTION_ROLES, roleDescriptor, type ConnectionRole } from './roleConfig';
 import { ModelVisionDeclaration } from '../AITab/VisionDeclarationEditor';
@@ -116,6 +117,7 @@ export function CloudMetaRow({ modelRef, roles }: { modelRef: Extract<ModelRef, 
           served={modelRef.model}
           hint="Choose which tasks this connection powers. Role changes take effect immediately."
           onClose={() => setShowConfigModal(false)}
+          limits={<ModelWindowControls modelRef={modelRef} />}
         >
           {CONNECTION_ROLES.map((id) => (
             <RoleToggle

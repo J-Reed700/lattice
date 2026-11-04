@@ -24,6 +24,11 @@ pub struct Recipe {
     /// The embedding model's GGUF, with its `tokenizer.json` beside it.
     pub embedding_gguf: String,
     pub embedding_model_id: String,
+    /// The reranker's GGUF, served the way the app serves it. Without one the
+    /// run measures a desktop whose reranker is not downloaded yet, which
+    /// keeps search in its first-stage order.
+    #[serde(default)]
+    pub reranker_gguf: Option<String>,
     /// A llama-server the run checks and records. Exactly one of `server`
     /// and `cloud` names the answering model.
     #[serde(default)]
@@ -55,11 +60,15 @@ pub struct Server {
     pub url: String,
     /// The model name sent in each request.
     pub model: String,
-    /// The weights file, hashed at start so a run names what it measured.
-    pub gguf: String,
-    pub gguf_sha256: String,
+    /// The weights file, hashed at start so a run names what it measured. A
+    /// remote server's weights are named by its own report instead.
+    #[serde(default)]
+    pub gguf: Option<String>,
+    #[serde(default)]
+    pub gguf_sha256: Option<String>,
     /// The command the server was started with, kept with the run.
-    pub launch: String,
+    #[serde(default)]
+    pub launch: Option<String>,
     pub expected_ctx: u64,
     pub expected_slots: u64,
     /// `"off"`: add `chat_template_kwargs.enable_thinking: false` to every

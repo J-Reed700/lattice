@@ -84,7 +84,7 @@ impl IndexFileUseCase {
             .build_prepared_document(
                 source_path.as_path(),
                 library_path.as_path(),
-                content_checksum,
+                &library_hash,
                 request.chunking_strategy,
                 existing,
                 requested_context,
@@ -125,7 +125,7 @@ impl IndexFileUseCase {
         &self,
         source_path: &Path,
         library_path: &Path,
-        checksum: Checksum,
+        library_hash: &str,
         chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto,
         existing: Option<Document>,
         requested_context: Option<
@@ -134,6 +134,7 @@ impl IndexFileUseCase {
     ) -> Result<(Document, Vec<EmbeddingWithVector>)> {
         // Heavy work (extraction + embeddings) - NO TRANSACTION
         let metadata = FileMetadataFactory::from_path(library_path)?;
+        let checksum = Checksum::new(library_hash.to_owned())?;
         let extracted = self.content_extractor.extract_content(library_path).await?;
         let page_ranges = extracted.page_ranges;
         let ocr_pages = extracted.ocr_pages;
@@ -146,12 +147,14 @@ impl IndexFileUseCase {
         let mut document = Document::from_file(
             library_path_validated,
             metadata.clone(),
-            checksum,
+            checksum.clone(),
             content.clone(),
             chunking_strategy,
         )?;
 
         if let Some(mut saved) = existing {
+            saved.update_checksum(checksum);
+            saved.set_mime_type(metadata.mime_type().to_string());
             saved.reindex(content.clone(), chunking_strategy)?;
             document = saved;
         }
@@ -183,27 +186,6 @@ impl IndexFileUseCase {
             &page_ranges,
         )?;
         document.mark_ocr_pages(&ocr_pages);
-
-        for index in 0..document.chunks().len() {
-            let (chunk_content, has_section) = {
-                let chunk = document.chunks().get(index).ok_or_else(|| {
-                    AppError::InvalidInput(format!(
-                        "Chunk index {} out of bounds in index_file_and_persist",
-                        index
-                    ))
-                })?;
-                (chunk.content().to_string(), chunk.section().is_some())
-            };
-            document.set_chunk_token_count(index, metadata_extractor.count_tokens(&chunk_content));
-            document.set_chunk_word_count(
-                index,
-                metadata_extractor.count_words(&chunk_content) as usize,
-            );
-            document.set_chunk_has_code(index, metadata_extractor.contains_code(&chunk_content));
-            if !has_section {
-                document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
-            }
-        }
         let model_identity = self.embedding_service.model_identity();
         let embeddings = super::super::embedding_input::embed_prepared_chunks(
             &document,

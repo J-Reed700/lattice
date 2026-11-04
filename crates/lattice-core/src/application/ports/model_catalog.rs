@@ -500,6 +500,9 @@ impl ExternalModelMetadata {
                 ModelCategory::Transcription => {
                     capabilities.push("transcription".into());
                 }
+                ModelCategory::Speech => {
+                    capabilities.push("text-to-speech".into());
+                }
             }
         }
 

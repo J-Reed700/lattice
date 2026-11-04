@@ -187,6 +187,7 @@ impl ReindexDocumentUseCase {
         // Count words
         let word_count = metadata_extractor.count_words(&content);
 
+        document.set_mime_type(file_metadata.mime_type().to_string());
         document.set_language(language.clone());
         document.set_category(category);
         document.set_quality_score(quality_score);
@@ -201,24 +202,6 @@ impl ReindexDocumentUseCase {
         // From this extraction alone: a page that has gained a text layer since
         // the last run loses its mark.
         document.mark_ocr_pages(&ocr_pages);
-
-        for index in 0..document.chunks().len() {
-            let (chunk_content, has_section) = {
-                let chunk = document.chunks().get(index).ok_or_else(|| {
-                    AppError::InvalidInput(format!("Chunk index {} out of bounds", index))
-                })?;
-                (chunk.content().to_string(), chunk.section().is_some())
-            };
-            document.set_chunk_token_count(index, metadata_extractor.count_tokens(&chunk_content));
-            document.set_chunk_word_count(
-                index,
-                metadata_extractor.count_words(&chunk_content) as usize,
-            );
-            document.set_chunk_has_code(index, metadata_extractor.contains_code(&chunk_content));
-            if !has_section {
-                document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
-            }
-        }
         let model_identity = self.embedding_service.model_identity();
         let embeddings = super::embedding_input::embed_prepared_chunks(
             &document,

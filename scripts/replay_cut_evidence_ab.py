@@ -54,7 +54,7 @@ def cut_reading(ctx, cut):
         group = dropped[i:i + GROUP_SIZE]
         block = "\n\n".join(every[l] for l in group)
         messages = grouped.with_message(read_req, f"{message}\n\n{CUT_GROUP.format(passages=block)}")
-        stop = [f"[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
+        stop = [f"\n[{group[-1] + 1}]", f"\n{group[-1] + 1}."]
         r = grouped.ask(read_req, "cut", reserved, stop=stop, messages=messages)
         reqs.append(base.req_record(group, r, reserved))
         got = grouped.parse_into(lines, r, set(group))
@@ -77,14 +77,14 @@ def cut_reading(ctx, cut):
 def run(args):
     path = os.path.join(args.out, "records.jsonl")
     done = {r["key"] for r in base.read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     ctxs = grouped.contexts(args)
     print(f"{len(ctxs)} readings", flush=True)
     for ctx in ctxs:
         if ctx["key"] in done:
             continue
         rec = cut_reading(ctx, args.cut)
-        out.write(json.dumps(rec) + "\n")
+        out.write(json.dumps({"model": base.running_model(), **rec}) + "\n")
         out.flush()
         print(f"{ctx['key']} cut {rec['passages']}: facts {len(rec['facts_noted'])}/{len(rec['fact_labels'])} "
               f"nf{len(rec['nonfact_lines'])} req{rec['requests']} {rec['secs']}s", flush=True)

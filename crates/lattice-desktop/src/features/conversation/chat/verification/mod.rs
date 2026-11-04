@@ -3,7 +3,8 @@
 //! and the claim judge ([`judge`]) is asked about every cited sentence except
 //! a near-verbatim copy. A claim the judge could not settle keeps its lexical
 //! verdict unless overlap cannot settle it (a number, date or negation); then
-//! it reads as unverified, which never counts as unsupported.
+//! it reads as unverified, which never counts as unsupported. A cited
+//! quotation its passage does not hold ([`quotes`]) needs no judge at all.
 
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ mod background;
 mod gate_tests;
 mod judge;
 mod lexical;
+mod quotes;
 
 pub use self::background::VerificationReadyDto;
 pub(super) use self::background::{pending_metadata, BackgroundVerification};
@@ -56,6 +58,8 @@ impl UnverifiedReason {
 pub(super) enum VerificationMethod {
     Lexical,
     Judge,
+    /// The quoted words were looked for in the passage.
+    Quote,
 }
 
 impl VerificationMethod {
@@ -63,6 +67,7 @@ impl VerificationMethod {
         match self {
             Self::Lexical => "lexical",
             Self::Judge => "judge",
+            Self::Quote => "quote",
         }
     }
 }
@@ -102,6 +107,13 @@ impl ClaimAssessment {
             reason: None,
             unverified_reason: None,
         }
+    }
+
+    fn mark_misquoted(&mut self) {
+        self.verdict = ClaimVerdict::Unsupported;
+        self.method = VerificationMethod::Quote;
+        self.reason =
+            Some("The words in quotation marks are not in the passage this cites.".into());
     }
 
     fn mark_unverified(&mut self, reason: UnverifiedReason) {
@@ -295,6 +307,9 @@ pub struct GroundingVerifier {
     judge: Option<ClaimJudge>,
     /// Only sentences that cite a passage are claims (`cited_only`).
     cited_only: bool,
+    /// Uncited sentences that say nothing about the subject are no claims
+    /// (`without_session_talk`).
+    without_session_talk: bool,
 }
 
 impl GroundingVerifier {
@@ -313,6 +328,7 @@ impl GroundingVerifier {
                 Self {
                     judge: Some(judge),
                     cited_only: false,
+                    without_session_talk: false,
                 }
             }
             None => {
@@ -324,6 +340,7 @@ impl GroundingVerifier {
                 Self {
                     judge: None,
                     cited_only: false,
+                    without_session_talk: false,
                 }
             }
         }
@@ -359,6 +376,14 @@ impl GroundingVerifier {
         self
     }
 
+    /// A tutor's reply runs a session as it teaches: "Good, next card" is no
+    /// claim about the course, but an uncited false claim beside it must still
+    /// be found. So the judge sorts the sentences that cite nothing.
+    pub(super) fn without_session_talk(mut self, without: bool) -> Self {
+        self.without_session_talk = without;
+        self
+    }
+
     /// Applies the user's verification settings to the judge, if there is one;
     /// without them it decodes greedily.
     pub(super) fn with_tuning(mut self, tuning: &LLMVerificationSettingsDto) -> Self {
@@ -366,10 +391,40 @@ impl GroundingVerifier {
         self
     }
 
+    /// Takes out the sentences that cite nothing and say nothing about the
+    /// subject, as the judge sorts them. Without a judge's answer they all stay.
+    async fn drop_session_talk(&self, claims: &mut Vec<lexical::LexicalClaim>) {
+        let Some(judge) = self.judge.as_ref() else {
+            return;
+        };
+        let uncited: Vec<&str> = claims
+            .iter()
+            .filter(|claim| claim.citation_ids.is_empty())
+            .map(|claim| claim.claim_text.as_str())
+            .collect();
+        if uncited.is_empty() {
+            return;
+        }
+        let Some(about_the_subject) = judge.about_the_subject(&uncited).await else {
+            return;
+        };
+        let mut position = 0;
+        claims.retain(|claim| {
+            if !claim.citation_ids.is_empty() {
+                return true;
+            }
+            position += 1;
+            about_the_subject.contains(&(position - 1))
+        });
+    }
+
     pub async fn verify(&self, response: &str, sources: &[SourceDto]) -> GroundingReport {
         let mut claims = lexical::lexical_pass(response, sources);
         if self.cited_only {
             claims.retain(|claim| !claim.citation_ids.is_empty());
+        }
+        if self.without_session_talk {
+            self.drop_session_talk(&mut claims).await;
         }
         if claims.is_empty() {
             return GroundingReport::default();
@@ -377,6 +432,14 @@ impl GroundingVerifier {
 
         let mut assessments: Vec<ClaimAssessment> =
             claims.iter().map(ClaimAssessment::from_lexical).collect();
+        let misquoted = quotes::misquoted_claims(response, sources, &claims);
+        for assessment in assessments
+            .iter_mut()
+            .enumerate()
+            .filter_map(|(index, assessment)| misquoted.contains(&index).then_some(assessment))
+        {
+            assessment.mark_misquoted();
+        }
 
         let Some(judge) = self.judge.as_ref() else {
             return GroundingReport::from_assessments(assessments, false);
@@ -387,7 +450,7 @@ impl GroundingVerifier {
         // was nothing to find the claim in, so "not found" would be false.
         let mut requests = Vec::new();
         for (index, claim) in claims.iter().enumerate() {
-            if !lexical::needs_judge(claim) {
+            if !lexical::needs_judge(claim) || misquoted.contains(&index) {
                 continue;
             }
             // Room is what the judge's window holds beside the claim and its

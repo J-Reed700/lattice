@@ -2,6 +2,7 @@
 
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use lattice_core::domain::download::DownloadError;
+use lattice_core::shared::fs::SweepGate;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -11,11 +12,18 @@ use tracing::{error, info, warn};
 /// Scans the models directory for files that have no corresponding database record.
 /// Deletes orphaned files to free up disk space.
 ///
-/// Only files without a database record are deleted.
+/// Only files without a database record are deleted, and only once `gate` is
+/// open: a database that did not download the models has no record of any of
+/// them.
 pub async fn reconcile_orphaned_files(
     model_repo: Arc<DownloadedModelRepository>,
     models_dir: &Path,
+    gate: &SweepGate,
 ) -> Result<usize, DownloadError> {
+    if !gate.is_open() {
+        info!("Left the model directories alone: this database does not own the library files");
+        return Ok(0);
+    }
     info!("Scanning for orphaned model files in: {:?}", models_dir);
 
     if !models_dir.exists() {
@@ -131,6 +139,12 @@ fn calculate_dir_size(path: &Path) -> std::io::Result<u64> {
 mod tests {
     use super::*;
 
+    fn open_gate() -> SweepGate {
+        let gate = SweepGate::default();
+        gate.open();
+        gate
+    }
+
     #[tokio::test]
     async fn orphan_cleanup_preserves_unreadable_and_valid_models_but_removes_orphans() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -155,7 +169,12 @@ mod tests {
         assert!(repo.find_by_model_id("pending").await.is_err());
         assert!(repo.find_by_model_id("installed").await.unwrap().is_some());
 
-        assert_eq!(reconcile_orphaned_files(repo, dir.path()).await.unwrap(), 1);
+        assert_eq!(
+            reconcile_orphaned_files(repo, dir.path(), &open_gate())
+                .await
+                .unwrap(),
+            1
+        );
         for id in ["pending", "installed"] {
             assert_eq!(
                 std::fs::read(dir.path().join(id).join("weights")).unwrap(),
@@ -179,7 +198,34 @@ mod tests {
         std::fs::write(model.join("weights"), b"keep").unwrap();
         let repo = Arc::new(DownloadedModelRepository::new(pool));
 
-        assert_eq!(reconcile_orphaned_files(repo, dir.path()).await.unwrap(), 0);
+        assert_eq!(
+            reconcile_orphaned_files(repo, dir.path(), &open_gate())
+                .await
+                .unwrap(),
+            0
+        );
         assert_eq!(std::fs::read(model.join("weights")).unwrap(), b"keep");
+    }
+
+    #[tokio::test]
+    async fn orphan_cleanup_keeps_every_model_while_the_gate_is_shut() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let orphan = dir.path().join("orphan");
+        std::fs::create_dir(&orphan).unwrap();
+        std::fs::write(orphan.join("weights"), b"keep").unwrap();
+        let repo = Arc::new(DownloadedModelRepository::new(pool));
+
+        let removed = reconcile_orphaned_files(repo, dir.path(), &SweepGate::default())
+            .await
+            .unwrap();
+
+        assert_eq!(removed, 0);
+        assert_eq!(std::fs::read(orphan.join("weights")).unwrap(), b"keep");
     }
 }

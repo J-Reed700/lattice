@@ -117,6 +117,11 @@ impl Document {
         &self.mime_type
     }
 
+    /// Set MIME type (e.g. when reindexing refreshes file metadata).
+    pub fn set_mime_type(&mut self, mime_type: String) {
+        self.mime_type = mime_type;
+    }
+
     /// Get file size in bytes.
     pub fn size_bytes(&self) -> i64 {
         self.size_bytes

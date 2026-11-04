@@ -28,6 +28,7 @@ impl FunctionExecutor {
             .and_then(Self::parse_datetime)
             .unwrap_or_else(Utc::now);
         let size_bytes = result.size_bytes.unwrap_or(0);
+        let chunk_id = result.document_id.is_some().then(|| result.id.clone());
         let document_id = result.document_id.or(result.file_id).unwrap_or(result.id);
 
         DocumentResult {
@@ -38,6 +39,7 @@ impl FunctionExecutor {
             score: result.score,
             snippet,
             chunk_index: result.chunk_index,
+            chunk_id,
             modified_at,
             size_bytes,
         }
@@ -71,6 +73,7 @@ impl FunctionExecutor {
                     score: hit.score,
                     snippet: hit.content,
                     chunk_index: hit.position,
+                    chunk_id: Some(hit.id),
                     modified_at: *document.modified_at(),
                     size_bytes: document.size_bytes(),
                 })

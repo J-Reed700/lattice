@@ -1,10 +1,10 @@
 /**
  * ConnectionRolesDialog
  *
- * The roles menu a connection row (llama.cpp, Ollama, a cloud model) opens
- * from its Configure button: what the connection serves, then the role
- * toggles it can take. A downloaded model opens LocalModelConfigModal
- * instead, which also holds its load settings.
+ * The menu a connection row (llama.cpp, Ollama, a cloud model) opens from its
+ * Configure button: what the connection serves, the role toggles it can take,
+ * and the limits of what it serves. A downloaded model opens
+ * LocalModelConfigModal instead, which also holds its load settings.
  */
 
 import type { ReactNode } from 'react';
@@ -24,6 +24,8 @@ interface ConnectionRolesDialogProps {
   onClose: () => void;
   /** The role toggles. */
   children: ReactNode;
+  /** Under the roles: the limits of the model or models served. */
+  limits?: ReactNode;
 }
 
 export function ConnectionRolesDialog({
@@ -34,6 +36,7 @@ export function ConnectionRolesDialog({
   hint,
   onClose,
   children,
+  limits,
 }: ConnectionRolesDialogProps) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
@@ -55,7 +58,7 @@ export function ConnectionRolesDialog({
             <Dialog.Title className="truncate text-sm font-semibold text-text-primary">{title}</Dialog.Title>
           </div>
 
-          <div className="space-y-5 px-6 py-5">
+          <div className="max-h-[80vh] space-y-5 overflow-y-auto px-6 py-5">
             <div>
               <div className="mb-1.5 text-xs font-medium text-text-secondary">{servedLabel}</div>
               <div className="flex flex-col gap-0.5 rounded-lg border border-border-subtle bg-surface px-3.5 py-2.5">
@@ -69,6 +72,8 @@ export function ConnectionRolesDialog({
               <div className="flex flex-wrap items-center gap-1.5">{children}</div>
               <p className="mt-1.5 text-[11px] text-text-muted">{hint}</p>
             </div>
+
+            {limits ? <div className="space-y-5 border-t border-border-subtle pt-4">{limits}</div> : null}
           </div>
 
           <div className="flex items-center justify-end gap-2 border-t border-border-subtle px-6 py-4">

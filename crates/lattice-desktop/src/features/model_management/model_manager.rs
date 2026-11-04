@@ -30,20 +30,20 @@
 // - We need dynamic model discovery from HuggingFace API
 // Until then, keep it simple with hardcoded constants.
 
+use crate::infrastructure::file_system::compute_file_sha256_async;
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use async_trait::async_trait;
-use lattice_core::shared::constants::RERANKER_MODEL_DIR;
+use lattice_core::domain::models::curated::CURATED_RERANKER;
 use lattice_core::shared::error::{AppError, Result, ResultExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tauri::Emitter;
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 // BGE-M3 embedding model URLs
 const MODEL_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
@@ -51,15 +51,6 @@ const MODEL_DATA_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/on
 const TOKENIZER_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json";
 const VOCAB_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/vocab.txt";
 const CONFIG_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/config.json";
-
-// Qwen3-Reranker-0.6B at a pinned commit, so the files cannot change under the
-// app: the repository has been edited since release, and
-// `evals/retrieval/2026-10-12-RERANKER-FTS-HEADER-FUSION.md` measured exactly
-// these (model.safetensors sha256 27cd75a4…c5e65b). No checksum is passed:
-// `verify_checksum` reads the whole file into memory, 1.2 GB here.
-const RERANKER_MODEL_URL: &str = "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/resolve/e61197ed45024b0ed8a2d74b80b4d909f1255473/model.safetensors";
-const RERANKER_TOKENIZER_URL: &str = "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/resolve/e61197ed45024b0ed8a2d74b80b4d909f1255473/tokenizer.json";
-const RERANKER_CONFIG_URL: &str = "https://huggingface.co/Qwen/Qwen3-Reranker-0.6B/resolve/e61197ed45024b0ed8a2d74b80b4d909f1255473/config.json";
 
 // NOTE: Update this checksum after downloading the actual model
 // To calculate: sha256sum model.onnx or certUtil -hashfile model.onnx SHA256
@@ -319,7 +310,10 @@ impl ModelManager {
         let mut last_error = None;
 
         while attempts < MAX_RETRIES {
-            match self.download_file(url, target_path, filename, model_id).await {
+            match self
+                .download_file(url, target_path, filename, model_id)
+                .await
+            {
                 Ok(_) => {
                     if let Some(checksum) = expected_checksum {
                         if self.verify_checksum(target_path, checksum).await? {
@@ -356,7 +350,13 @@ impl ModelManager {
         Err(last_error.unwrap_or_else(|| AppError::Network("Max retries exceeded".to_string())))
     }
 
-    async fn download_file(&self, url: &str, target_path: &Path, filename: &str, model_id: &str) -> Result<()> {
+    async fn download_file(
+        &self,
+        url: &str,
+        target_path: &Path,
+        filename: &str,
+        model_id: &str,
+    ) -> Result<()> {
         let temp_path = target_path.with_extension("tmp");
 
         let mut downloaded: u64 = 0;
@@ -485,14 +485,17 @@ impl ModelManager {
                     0
                 };
 
-                self.emit_progress(model_id, DownloadProgress {
-                    bytes_downloaded: downloaded,
-                    total_bytes: total_size,
-                    percentage,
-                    speed_mbps,
-                    eta_seconds: eta,
-                    current_file: filename.to_string(),
-                });
+                self.emit_progress(
+                    model_id,
+                    DownloadProgress {
+                        bytes_downloaded: downloaded,
+                        total_bytes: total_size,
+                        percentage,
+                        speed_mbps,
+                        eta_seconds: eta,
+                        current_file: filename.to_string(),
+                    },
+                );
 
                 tracing::debug!(
                     "{}: {:.2}% ({}/{} MB) @ {:.2} MB/s, ETA: {}s",
@@ -521,27 +524,7 @@ impl ModelManager {
     }
 
     async fn verify_checksum(&self, file_path: &Path, expected: &str) -> Result<bool> {
-        let mut file = fs::File::open(file_path)
-            .await
-            .context("Failed to open file for checksum")?;
-
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 64 * 1024];
-
-        loop {
-            let n = file
-                .read(&mut buffer)
-                .await
-                .context("Failed to read file for checksum")?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buffer[..n]);
-        }
-
-        let hash = hasher.finalize();
-        let hash_hex = hex::encode(hash);
-
+        let hash_hex = compute_file_sha256_async(file_path).await?;
         Ok(hash_hex == expected)
     }
 
@@ -565,23 +548,21 @@ impl ModelManager {
             && tokio::fs::metadata(&tokenizer_path).await.is_ok()
     }
 
+    /// Download the reranker GGUF from its pinned commit unless it is already
+    /// here, and verify its SHA-256.
     pub async fn ensure_reranker_available(&self) -> Result<PathBuf> {
-        let reranker_dir = self.model_dir.join(RERANKER_MODEL_DIR);
-        let model_path = reranker_dir.join("model.safetensors");
-        let tokenizer_path = reranker_dir.join("tokenizer.json");
-        let config_path = reranker_dir.join("config.json");
-
-        if model_path.exists() && tokenizer_path.exists() && config_path.exists() {
-            tracing::info!("Reranker model already exists at {:?}", reranker_dir);
-            return Ok(model_path);
+        let gguf = self.get_reranker_path();
+        if self.is_reranker_ready().await {
+            tracing::info!("Reranker model already exists at {:?}", gguf);
+            return Ok(gguf);
         }
 
         tracing::info!("Reranker model not found, initiating download...");
-        match self.download_reranker_models().await {
-            Ok(_) => {
+        match self.download_reranker_model(&gguf).await {
+            Ok(()) => {
                 self.emit_complete("qwen3-reranker-0.6b");
                 self.reset_download_progress();
-                Ok(model_path)
+                Ok(gguf)
             }
             Err(e) => {
                 self.emit_error("qwen3-reranker-0.6b", &e.to_string());
@@ -591,60 +572,40 @@ impl ModelManager {
         }
     }
 
-    async fn download_reranker_models(&self) -> Result<()> {
-        let reranker_dir = self.model_dir.join(RERANKER_MODEL_DIR);
-        fs::create_dir_all(&reranker_dir)
-            .await
-            .context("Failed to create reranker directory")?;
-
-        // `load_reranker` picks the implementation from config.json, and the
-        // Qwen3 runtime sizes itself from it, so it comes with the weights.
-        let files = vec![
-            ("model.safetensors", RERANKER_MODEL_URL, None),
-            ("tokenizer.json", RERANKER_TOKENIZER_URL, None),
-            ("config.json", RERANKER_CONFIG_URL, None),
-        ];
-
-        for (filename, url, checksum) in files {
-            let target_path = reranker_dir.join(filename);
-
-            if target_path.exists() {
-                tracing::info!("{} already exists, skipping", filename);
-                continue;
-            }
-
-            tracing::info!("Downloading reranker {}...", filename);
-            self.download_with_retry(url, &target_path, filename, checksum, "qwen3-reranker-0.6b")
-                .await?;
-
-            if self.is_cancelled.load(Ordering::Relaxed) {
-                return Err(AppError::Other("Download cancelled by user".to_string()));
-            }
+    async fn download_reranker_model(&self, gguf: &Path) -> Result<()> {
+        if let Some(dir) = gguf.parent() {
+            fs::create_dir_all(dir)
+                .await
+                .context("Failed to create reranker directory")?;
         }
+        // A file of another size is a stale or foreign one; the download
+        // finishes by renaming over it.
+        tracing::info!("Downloading reranker {}...", CURATED_RERANKER.file);
+        self.download_with_retry(
+            &CURATED_RERANKER.url(),
+            gguf,
+            CURATED_RERANKER.file,
+            Some(CURATED_RERANKER.sha256),
+            "qwen3-reranker-0.6b",
+        )
+        .await?;
 
+        if self.is_cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other("Download cancelled by user".to_string()));
+        }
         Ok(())
     }
 
     pub fn get_reranker_path(&self) -> PathBuf {
-        self.model_dir
-            .join(RERANKER_MODEL_DIR)
-            .join("model.safetensors")
+        CURATED_RERANKER.path_in(&self.model_dir)
     }
 
-    pub fn get_reranker_tokenizer_path(&self) -> PathBuf {
-        self.model_dir
-            .join(RERANKER_MODEL_DIR)
-            .join("tokenizer.json")
-    }
-
+    /// The reranker GGUF is here at its pinned size. Its checksum was
+    /// verified when it was downloaded.
     pub async fn is_reranker_ready(&self) -> bool {
-        let model_path = self.get_reranker_path();
-        let tokenizer_path = self.get_reranker_tokenizer_path();
-        let config_path = self.model_dir.join(RERANKER_MODEL_DIR).join("config.json");
-
-        tokio::fs::metadata(&model_path).await.is_ok()
-            && tokio::fs::metadata(&tokenizer_path).await.is_ok()
-            && tokio::fs::metadata(&config_path).await.is_ok()
+        tokio::fs::metadata(self.get_reranker_path())
+            .await
+            .is_ok_and(|metadata| metadata.len() == CURATED_RERANKER.bytes)
     }
 
     async fn check_disk_space(&self) -> Result<()> {
@@ -726,10 +687,6 @@ impl ModelManagerTrait for ModelManager {
 
     fn get_reranker_path(&self) -> PathBuf {
         self.get_reranker_path()
-    }
-
-    fn get_reranker_tokenizer_path(&self) -> PathBuf {
-        self.get_reranker_tokenizer_path()
     }
 
     fn cancel_download(&self) {

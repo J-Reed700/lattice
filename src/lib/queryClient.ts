@@ -14,6 +14,7 @@ import { diagnostics } from '../utils/diagnostics';
  * - `retry: 3` - Retry failed requests up to 3 times with exponential backoff
  * - `refetchOnWindowFocus: false` - Don't refetch on window focus (desktop app behavior)
  * - `refetchOnReconnect: true` - Refetch when network reconnects (important for sync)
+ * - `networkMode: 'always'` - The data is local, so going offline must not pause reads or saves
  *
  * @see https://tanstack.com/query/latest/docs/reference/QueryClient
  *
@@ -32,6 +33,8 @@ export const queryClient = new QueryClient({
   mutationCache: new MutationCache({ onError: (error) => diagnostics.capture(error, 'Save operation') }),
   defaultOptions: {
     queries: {
+      networkMode: 'always',
+
       // How long data is considered fresh (5 minutes)
       staleTime: 1000 * 60 * 5,
 
@@ -57,9 +60,14 @@ export const queryClient = new QueryClient({
       refetchOnMount: true,
     },
     mutations: {
+      networkMode: 'always',
+
       // A failed response can follow a committed write. Only mutations with
       // durable idempotency guarantees may opt in to automatic retries.
       retry: false,
     },
   },
 });
+
+export const INDEXED_FOLDERS_QUERY_KEY = ['indexed-folders'] as const;
+export const SETTINGS_QUERY_KEY = ['settings'] as const;

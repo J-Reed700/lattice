@@ -2,10 +2,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
-import { SETTINGS_QUERY_KEY } from '@/features/settings/hooks/useSettingsQuery';
+import {
+  INDEXED_FOLDERS_QUERY_KEY,
+  SETTINGS_QUERY_KEY,
+} from '@/lib/queryClient';
 import type { IndexedFolder } from '@/types/api/files';
 
-export const INDEXED_FOLDERS_QUERY_KEY = ['indexed-folders'] as const;
+export { INDEXED_FOLDERS_QUERY_KEY };
 
 export function useIndexedFoldersQuery() {
   const api = useApi();

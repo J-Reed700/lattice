@@ -12,9 +12,9 @@ use tauri::State;
 use crate::features::model_management::commands_extra::{
     clear_active_chat_model_impl, clear_active_embedding_model_impl,
     clear_active_utility_model_impl, delete_downloaded_model_and_file_impl,
-    get_active_chat_model_typed, get_active_embedding_model_typed,
-    get_models_with_metadata_typed, is_model_already_downloaded_impl, set_active_chat_model_impl,
-    set_active_embedding_model_impl, set_active_utility_model_impl, warm_up_active_chat_model_impl,
+    get_active_chat_model_typed, get_active_embedding_model_typed, get_models_with_metadata_typed,
+    is_model_already_downloaded_impl, set_active_chat_model_impl, set_active_embedding_model_impl,
+    set_active_utility_model_impl, warm_up_active_chat_model_impl,
     warm_up_active_utility_model_impl, warm_up_learning_model_impl, LearningWindowShortfallDto,
     LoadedModelDto,
 };
@@ -178,7 +178,7 @@ pub async fn list_downloaded_models(
 ) -> Result<Vec<DownloadedModelResponse>, ApiError> {
     get_models_with_metadata_typed(container.inner())
         .await
-        .map_err(ApiError::internal)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -222,7 +222,7 @@ pub async fn get_active_chat_model(
 ) -> Result<Option<DownloadedModelResponse>, ApiError> {
     get_active_chat_model_typed(container.inner())
         .await
-        .map_err(ApiError::internal)
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -232,7 +232,7 @@ pub async fn get_active_embedding_model(
 ) -> Result<Option<DownloadedModelResponse>, ApiError> {
     get_active_embedding_model_typed(container.inner())
         .await
-        .map_err(ApiError::internal)
+        .map_err(ApiError::from)
 }
 
 /// Get active models (both chat and embedding)
@@ -241,10 +241,10 @@ pub async fn get_active_embedding_model(
 pub async fn get_active_models(container: State<'_, Container>) -> Result<ActiveModels, ApiError> {
     let chat_model = get_active_chat_model_typed(container.inner())
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(ApiError::from)?;
     let embedding_model = get_active_embedding_model_typed(container.inner())
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(ApiError::from)?;
 
     Ok(ActiveModels {
         chat_model,

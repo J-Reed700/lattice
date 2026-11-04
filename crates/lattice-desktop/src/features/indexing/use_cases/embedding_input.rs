@@ -68,11 +68,7 @@ pub fn prepare_structured(
             chunk.set_language(document.language().clone());
             chunk.set_token_count(part.token_count as i32);
             chunk.set_word_count(part.text.split_whitespace().count());
-            let section = span
-                .heading
-                .clone()
-                .or_else(|| extractor.extract_section(&part.text));
-            chunk.set_section(section);
+            chunk.set_section(span.heading.clone());
             let has_code = is_code || extractor.contains_code(&part.text);
             chunk.set_has_code(has_code);
             chunk.set_provenance(

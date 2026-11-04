@@ -1,6 +1,30 @@
 //! Lesson notes, card drafts and the journal and deck behind a program's memory.
 use super::*;
 
+/// The title and first text a lesson's note starts from.
+pub(crate) fn lesson_note_draft(
+    program: &LearningProgramDto,
+    lesson: &LearningLessonDto,
+) -> (String, String) {
+    let mut content = "# Lesson notes\n\n## Sources\n".to_owned();
+    for source in &program.sources {
+        content.push_str(&format!(
+            "- **{}** — {}\n",
+            source.title,
+            source.url.as_deref().unwrap_or("Selected document")
+        ));
+    }
+    content.push_str("\n## Key ideas\n\n_Add notes in your own words._\n\n## Reflection\n\n");
+    content.push_str(&format!(
+        "How does this lesson help with the objective: {}?\n",
+        lesson.objective
+    ));
+    (
+        format!("{} — {}", program.summary.title, lesson.title),
+        content,
+    )
+}
+
 impl LearningRepository {
     pub async fn ensure_lesson_note(
         &self,
@@ -421,7 +445,7 @@ pub(crate) async fn ensure_memory_resources(
             );
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("INSERT OR IGNORE INTO journals(id,name,description,icon,is_archived,sort_order,created_at,updated_at) VALUES(?,?,?,?,0,0,?,?)")
-                .bind(&id).bind(&name).bind("Learning Studio notebook").bind("book-open").bind(&now).bind(&now)
+                .bind(&id).bind(&name).bind("Learning Studio notebook").bind("📖").bind(&now).bind(&now)
                 .execute(&mut **tx).await.map_err(db)?;
             let canonical_id: String =
                 sqlx::query_scalar("SELECT id FROM journals WHERE id=? OR name=?")

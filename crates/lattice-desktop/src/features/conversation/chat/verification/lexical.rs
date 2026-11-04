@@ -92,14 +92,7 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
 
         let cited_source_indices: Vec<usize> = citation_ids
             .iter()
-            .filter_map(|id| {
-                let mut matches = sources
-                    .iter()
-                    .enumerate()
-                    .filter(|(idx, source)| source.citation_id.unwrap_or((*idx + 1) as u32) == *id);
-                let (idx, _) = matches.next()?;
-                matches.next().is_none().then_some(idx)
-            })
+            .filter_map(|id| source_index(*id, sources))
             .collect();
         let claim_text = strip_citation_markers(&sentence);
         // A formula's names count, its TeX does not: `\frac` is no word of
@@ -149,6 +142,26 @@ pub(super) fn lexical_pass(response: &str, sources: &[SourceDto]) -> Vec<Lexical
     }
 
     claims
+}
+
+/// The one source citation number `id` points at.
+pub(super) fn source_index(id: u32, sources: &[SourceDto]) -> Option<usize> {
+    let mut matches = sources
+        .iter()
+        .enumerate()
+        .filter(|(idx, source)| source.citation_id.unwrap_or((*idx + 1) as u32) == id);
+    let (idx, _) = matches.next()?;
+    matches.next().is_none().then_some(idx)
+}
+
+/// The text the judge reads for a source: the page, or its excerpt when the
+/// page came back empty.
+pub(super) fn passage_text(source: &SourceDto) -> &str {
+    if source.content.trim().is_empty() {
+        source.excerpt.as_deref().unwrap_or_default()
+    } else {
+        source.content.as_str()
+    }
 }
 
 /// Whether this claim is worth an LLM call. Every cited claim is, except a
@@ -232,14 +245,8 @@ struct PassageWording {
 }
 
 impl PassageWording {
-    /// The text the judge would read: the page, or its excerpt when the page
-    /// came back empty.
     fn of(source: &SourceDto) -> Self {
-        let text = if source.content.trim().is_empty() {
-            source.excerpt.as_deref().unwrap_or_default()
-        } else {
-            source.content.as_str()
-        };
+        let text = passage_text(source);
         Self {
             window_runs: passage_windows(text)
                 .iter()
@@ -327,7 +334,7 @@ fn drops_a_marker(claim: &str, sentence: &str) -> bool {
 /// The words of `text`, lowercased, in order. Unlike the overlap tokens,
 /// nothing is stemmed or dropped: "not", "only" and "the" all count, because
 /// a copy is a copy of every word.
-fn lowercase_words(text: &str) -> Vec<String> {
+pub(super) fn lowercase_words(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_alphanumeric())
         .filter(|word| !word.is_empty())
         .map(str::to_lowercase)
@@ -350,14 +357,33 @@ fn word_runs(words: &[String]) -> HashSet<String> {
         .collect()
 }
 
+/// The answer's lines as the claims are read from them: no fenced blocks, no
+/// pictures, no emphasis.
+pub(super) fn prose_lines(response: &str) -> Vec<String> {
+    lattice_core::shared::markdown_media::strip_fences_and_images(response)
+        .split('\n')
+        .map(strip_emphasis_markers)
+        .collect()
+}
+
 /// Every sentence with the citations it answers to. A full stop inside a token
 /// ("1.2 °C", "example.com") does not end a sentence. A sentence without a
 /// marker of its own takes the next marker in its paragraph or list item, or
-/// failing that the previous one; a line with no marker at all stays uncited.
+/// failing that the previous one. A list item with no marker at all takes the
+/// markers of the line ending in a colon that introduces its list; any other
+/// line with none stays uncited. A heading only names what follows.
 fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
     let mut out = Vec::new();
-    for block in response.split('\n') {
-        let block = strip_emphasis_markers(block);
+    let mut introduced: Vec<u32> = Vec::new();
+    for line in response.split('\n') {
+        let in_list = is_list_item(line) || line.starts_with(char::is_whitespace);
+        if !in_list && !line.trim().is_empty() {
+            introduced.clear();
+        }
+        if is_heading(line) {
+            continue;
+        }
+        let block = strip_emphasis_markers(line);
         let sentences = split_sentences(&block);
         let own: Vec<Vec<u32>> = sentences
             .iter()
@@ -370,11 +396,44 @@ fn sentences_with_citations(response: &str) -> Vec<(String, Vec<u32>)> {
                 .or_else(|| own.iter().skip(index + 1).find(|ids| !ids.is_empty()))
                 .or_else(|| own.iter().take(index).rev().find(|ids| !ids.is_empty()))
                 .cloned()
-                .unwrap_or_default();
+                .unwrap_or_else(|| {
+                    if in_list {
+                        introduced.clone()
+                    } else {
+                        Vec::new()
+                    }
+                });
             out.push((sentence, citations));
+        }
+        if !in_list && strip_citation_markers(&block).trim_end().ends_with(':') {
+            let mut seen = HashSet::new();
+            introduced = own
+                .into_iter()
+                .flatten()
+                .filter(|id| seen.insert(*id))
+                .collect();
         }
     }
     out
+}
+
+fn is_heading(line: &str) -> bool {
+    let line = line.trim_start();
+    let hashes = line.chars().take_while(|ch| *ch == '#').count();
+    (1..=6).contains(&hashes) && line.get(hashes..).is_some_and(|rest| rest.starts_with(' '))
+}
+
+fn is_list_item(line: &str) -> bool {
+    let line = line.trim_start();
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    let numbered = digits > 0
+        && line
+            .get(digits..)
+            .is_some_and(|rest| rest.starts_with(". ") || rest.starts_with(") "));
+    numbered
+        || ["- ", "* ", "+ "]
+            .iter()
+            .any(|bullet| line.starts_with(bullet))
 }
 
 /// Drops markdown emphasis so it cannot be read as sentence structure: a
@@ -420,7 +479,7 @@ fn strip_prose_emphasis(text: &str) -> String {
     out
 }
 
-fn split_sentences(text: &str) -> Vec<String> {
+pub(super) fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
     let formulas = inline_math_spans(text);

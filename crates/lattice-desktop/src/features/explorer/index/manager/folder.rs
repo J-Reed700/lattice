@@ -10,7 +10,7 @@ use crate::features::explorer::index::store;
 use crate::features::explorer::index::watcher::{self, Change, FolderWatcher};
 use crate::features::explorer::scope::Scope;
 use crate::infrastructure::passage_index::{EmbedTurns, LiveIndex, PassageTextSearch, Priority};
-use lattice_core::shared::{runtime::jobs::JobStatus, Result};
+use lattice_core::shared::Result;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -147,12 +147,9 @@ impl FolderIndexManager {
             .ensure_build(&root, &index_root, rebuild && !prefix.is_empty())
             .await
         {
-            Ok(job) => {
-                // A build already running has the newest word on its progress.
-                if job.status == JobStatus::Running {
-                    if let Some(activity) = build::activity_status(&job) {
-                        status.replace(activity);
-                    }
+            Ok(running) => {
+                if running {
+                    self.view.catch_up(&root);
                 }
                 Ok(folder)
             }
@@ -164,7 +161,7 @@ impl FolderIndexManager {
     }
 
     fn show(&self, root: &Path, status: &Arc<StatusCell>) {
-        *self.view.lock() = Some(OpenView {
+        self.view.show(OpenView {
             root: root.to_path_buf(),
             status: Arc::clone(status),
         });
@@ -176,12 +173,7 @@ impl FolderIndexManager {
         if let Some(task) = folder.watching.take() {
             let _ = task.await;
         }
-        {
-            let mut view = self.view.lock();
-            if view.as_ref().is_some_and(|view| view.root == folder.root) {
-                *view = None;
-            }
-        }
+        self.view.hide(&folder.root);
         *self.first.lock() = None;
         if let Some(index) = folder.index.take() {
             self.release(&index).await;
@@ -277,11 +269,11 @@ impl FolderIndexManager {
             };
             let status = view.status.get();
             let first = self.first.lock().clone();
-            let building = match first {
+            let building = match &first {
                 Some(id) => self
                     .jobs
                     .store()
-                    .get(&id)
+                    .get(id)
                     .await
                     .is_ok_and(|job| !job.status.is_finished()),
                 None => false,
@@ -290,7 +282,15 @@ impl FolderIndexManager {
                 status.state,
                 FolderIndexState::Scanning | FolderIndexState::Indexing
             );
-            if (!building && !moving) || std::time::Instant::now() > deadline {
+            if !building && !moving {
+                return status;
+            }
+            if std::time::Instant::now() > deadline {
+                let job = match &first {
+                    Some(id) => Some(self.jobs.store().get(id).await),
+                    None => None,
+                };
+                eprintln!("The folder never settled at {status:?}; its build: {job:?}");
                 return status;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -365,6 +365,9 @@ impl WatchTask {
             let Some(engine) = self.index.engine() else {
                 continue;
             };
+            // What a walk past the file bound counted stands until the next walk.
+            let over_bound =
+                Some(self.status.get()).filter(|status| status.state == FolderIndexState::TooLarge);
             let indexer = Indexer {
                 store: Arc::clone(&self.index.store),
                 vectors: engine.vectors,
@@ -374,14 +377,23 @@ impl WatchTask {
                 status: Arc::clone(&self.status),
                 cancel: self.cancel.clone(),
                 limits: self.limits,
+                files_found: over_bound.as_ref().map(|status| status.files_total),
                 turns: Arc::clone(&self.turns),
             };
             let outcome = indexer.sync_paths(relative).await;
             drop(writing);
             match outcome {
                 Ok(Outcome::Done) => self.status.update(|status| {
-                    status.state = FolderIndexState::Ready;
-                    status.message = None;
+                    match over_bound {
+                        Some(over_bound) => {
+                            status.state = over_bound.state;
+                            status.message = over_bound.message;
+                        }
+                        None => {
+                            status.state = FolderIndexState::Ready;
+                            status.message = None;
+                        }
+                    }
                     status.passages_per_second = None;
                     status.eta_seconds = None;
                 }),

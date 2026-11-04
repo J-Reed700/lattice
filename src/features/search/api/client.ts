@@ -325,18 +325,14 @@ export const searchApi = {
     }),
 
   /**
-   * Whether reranking is switched on, and whether its model is on disk.
-   *
-   * The two are independent: the setting can be on with nothing installed, in
-   * which case search silently returns its unreranked shortlist. `active` is
-   * the only field that says what will actually happen.
+   * Whether the reranker's model is on disk. Search always reranks once it
+   * is; until then it returns its first-stage shortlist.
    */
   getRerankerStatus: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
     apiCall<Wire.RerankerStatusDto>('reranker_status'),
 
   /**
-   * Fetches the reranker model. Does not switch reranking on — acquiring the
-   * model and choosing to use it stay separate decisions.
+   * Fetches the reranker model, after which search reranks.
    */
   downloadReranker: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
     apiCall<Wire.RerankerStatusDto>('download_reranker'),

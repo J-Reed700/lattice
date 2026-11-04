@@ -221,6 +221,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::create_interview_study_deck,
             lattice::features::learning::plugin::create_learning_tangent,
             lattice::features::learning::plugin::list_learning_tangents,
+            lattice::features::learning::plugin::set_conversation_course,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,
@@ -468,6 +469,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::mentions::plugin::delete_mention,
             // Settings plugin
             lattice::interfaces::commands::cloud_models::list_cloud_models,
+            lattice::interfaces::commands::cloud_models::get_model_limits,
             lattice::features::settings::plugin::test_ollama_connection,
             lattice::interfaces::commands::model_setup::test_llama_cpp_connection,
             lattice::features::settings::plugin::test_custom_tool,
@@ -509,7 +511,10 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::corpus_shape::commands::list_clusters,
             // Transcription plugin (2 commands)
             lattice::features::transcription::plugin::transcribe_file,
+            lattice::features::transcription::plugin::transcribe_speech,
             lattice::features::transcription::plugin::get_transcription_status,
+            lattice::features::speech::plugin::get_speech_status,
+            lattice::features::speech::plugin::synthesize_speech,
         ])
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()

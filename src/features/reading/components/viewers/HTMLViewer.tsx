@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
-import { openExternalUrl } from '@/utils/openExternalUrl';
 import { Loader2, AlertCircle, ExternalLink, Link2 } from 'lucide-react';
 
 import { useApi } from '@/contexts/ApiContext';
 import { readingKeys, readSourceText } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 import type { ApiClient } from '@/lib/api';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { htmlReadingDocument } from './htmlReadingDocument';

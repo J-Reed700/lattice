@@ -2,7 +2,7 @@
 //!
 //! Every dependency is a trait: the turn never sees a database pool, a concrete
 //! web client or a concrete search use case, so a stage can be driven by fakes.
-pub(crate) use super::ExplorerTurn;
+pub(crate) use super::TurnSource;
 use crate::features::conversation::workspace_dto::ConversationWebSourceSnapshotDto;
 use async_trait::async_trait;
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
@@ -183,14 +183,14 @@ pub trait ChatStorage: Send + Sync {
     /// The corpus-derived starter workflow: the space's document scope and the
     /// fingerprint cache with its aggregate reads.
     fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache>;
-    /// The folder an Explorer conversation reads beside the chat, with the
-    /// open file the request names checked against it; `None` for every
-    /// other conversation.
-    async fn explorer_turn(
+    /// What the conversation reads beside the chat: an Explorer thread's
+    /// folder, with the open file the request names checked against it, or a
+    /// tutor chat's course; `None` for every other conversation.
+    async fn turn_source(
         &self,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
-    ) -> Option<ExplorerTurn>;
+    ) -> Option<TurnSource>;
 }
 
 /// The writes a conversation can branch with: side threads (tangents), forks,

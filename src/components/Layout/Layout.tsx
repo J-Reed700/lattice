@@ -19,7 +19,6 @@ import {
 } from 'lucide-react';
 import { Outlet, useLocation } from 'react-router';
 
-import { ActivityIndicator } from '@/features/activity/components/ActivityIndicator';
 import { IndexingStatusRail } from '@/features/files/components/IndexingStatus/IndexingStatusRail';
 import { Iris } from '@/features/iris/components/Iris';
 import { DownloadsDrawer } from '@/features/model/components/Downloads/DownloadsDrawer';
@@ -208,7 +207,6 @@ export function Layout() {
           <div className="flex w-full flex-col items-center gap-px">
             <Iris compact={compact} />
             <IndexingStatusRail />
-            <ActivityIndicator />
             <HeaderDownloadsIndicator />
             <NavButton item={SETTINGS_NAV} isActive={activeView === SETTINGS_NAV.view} onClick={handleAsyncEvent(() => go(SETTINGS_NAV.view))} compact={compact} />
             {/* Only a wide window has a labeled rail to collapse. */}

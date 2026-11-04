@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 
+import { AudioViewer, audioViewerPropsFromSource } from '@/features/reading/components/viewers/AudioViewer';
 import { DocxViewer } from '@/features/reading/components/viewers/DocxViewer';
 import { HTMLViewer } from '@/features/reading/components/viewers/HTMLViewer';
-import { AudioViewer, audioViewerPropsFromSource } from '@/features/reading/components/viewers/AudioViewer';
 import { ImageViewer } from '@/features/reading/components/viewers/ImageViewer';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { PDFViewer } from '@/features/reading/components/viewers/PDFViewer';

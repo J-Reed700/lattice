@@ -140,7 +140,7 @@ async fn test_mock_model_manager_ensure_reranker() {
     assert!(manager.is_reranker_ready().await);
     assert_eq!(
         path,
-        std::path::PathBuf::from("/mock/models/reranker/model.safetensors")
+        std::path::PathBuf::from("/mock/models/reranker/reranker.gguf")
     );
 }
 
@@ -151,7 +151,6 @@ async fn test_mock_model_manager_paths() {
     let model_path = manager.get_model_path();
     let tokenizer_path = manager.get_tokenizer_path();
     let reranker_path = manager.get_reranker_path();
-    let reranker_tokenizer_path = manager.get_reranker_tokenizer_path();
 
     assert_eq!(
         model_path,
@@ -163,11 +162,7 @@ async fn test_mock_model_manager_paths() {
     );
     assert_eq!(
         reranker_path,
-        std::path::PathBuf::from("/mock/models/reranker/model.safetensors")
-    );
-    assert_eq!(
-        reranker_tokenizer_path,
-        std::path::PathBuf::from("/mock/models/reranker/tokenizer.json")
+        std::path::PathBuf::from("/mock/models/reranker/reranker.gguf")
     );
 }
 

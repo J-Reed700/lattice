@@ -164,17 +164,17 @@ fn tool_schemas_are_charged_against_a_small_window() {
 
 #[test]
 fn deep_research_gets_more_tool_rounds() {
-    assert!(max_tool_rounds(true, false) > max_tool_rounds(false, false));
+    assert!(max_tool_rounds(true, None) > max_tool_rounds(false, None));
     assert!(
-        max_tool_rounds(false, false) >= 2,
+        max_tool_rounds(false, None) >= 2,
         "one round to search, one to answer"
     );
 }
 
 #[test]
-fn an_explorer_turn_gets_more_rounds_than_a_plain_chat() {
-    assert!(max_tool_rounds(false, true) > max_tool_rounds(false, false));
-    assert!(max_tool_rounds(true, true) >= max_tool_rounds(false, true));
+fn a_source_sets_its_own_rounds_and_deep_research_keeps_its_own() {
+    assert_eq!(max_tool_rounds(false, Some(10)), 10);
+    assert_eq!(max_tool_rounds(true, Some(10)), max_tool_rounds(true, None));
 }
 
 #[test]

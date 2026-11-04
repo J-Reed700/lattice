@@ -32,7 +32,7 @@ Your task: Infer what the follow-up question is referring to using recent conver
 
 Guidelines:
 - Resolve pronouns and references ("those", "it", "they", "that") using context
-- Preserve key entities, compounds, nutrients, and constraints already discussed
+- Preserve key entities and constraints already discussed
 - Write 2-4 short sentences (max 90 words)
 - Focus on terms likely to appear in relevant documents
 - Do NOT answer the question directly

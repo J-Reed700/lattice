@@ -1,11 +1,11 @@
 //! A minimal reader for the GGUF header: what a model was trained for and
 //! what a server of it costs in memory. Context sizing needs the model's own
 //! `context_length`, since asking for more makes llama.cpp silently
-//! rope-scale. Only the key/value header is parsed; an unreadable file yields
-//! `None` and the caller sizes from hardware alone.
+//! rope-scale. Only the key/value header and the tensor list are parsed; an
+//! unreadable file yields `None` and the caller sizes from hardware alone.
 
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek};
 use std::path::Path;
 
 pub(super) const GGUF_MAGIC: u32 = 0x4655_4747; // "GGUF", little-endian
@@ -102,9 +102,6 @@ pub struct GgufModelInfo {
     pub shared_kv_layers: Option<u32>,
     /// Width of the feed-forward layer; the widest, where it varies by layer.
     pub feed_forward_length: Option<u32>,
-    /// Tokens in the vocabulary: `{architecture}.vocab_size`, else the length
-    /// of `tokenizer.ggml.tokens`.
-    pub vocab_size: Option<u32>,
     /// A hybrid's linear-attention layers (`{architecture}.ssm.*`): the
     /// convolution's width, the state each head keeps, the key groups and the
     /// inner width.
@@ -122,6 +119,8 @@ pub struct GgufModelInfo {
     /// `general.file_type` (`LLM_KV_GENERAL_FILE_TYPE`): the weights'
     /// precision as llama.cpp's `llama_ftype`, 1 for F16.
     pub file_type: Option<u32>,
+    /// Bytes of the file that stay in RAM however many layers are offloaded.
+    pub cpu_weight_bytes: u64,
 }
 
 /// llama.cpp stores keys and values as f16 by default: two bytes an element.
@@ -136,13 +135,12 @@ const SERVER_SLOTS: u64 = 4;
 
 /// llama.cpp's default micro-batch. A sliding-window layer also holds the
 /// batch being decoded past its window.
-const MICRO_BATCH_TOKENS: u64 = 512;
+pub(crate) const MICRO_BATCH_TOKENS: u32 = 512;
 
 /// llama.cpp rounds a sliding-window cache up to a multiple of this many cells.
 const SLIDING_CACHE_ALIGNMENT: u64 = 256;
 
-/// llama.cpp keeps recurrent state, and computes activations and logits, in
-/// f32.
+/// llama.cpp keeps recurrent state and computes activations in f32.
 const F32_BYTES: u64 = 4;
 
 /// One cell of the attention mask: the f32 mask plus the f16 copy flash
@@ -220,7 +218,7 @@ impl GgufModelInfo {
         let tokens = u64::from(context_tokens);
         // A layer is only marked sliding when the window is known.
         let window = u64::from(self.sliding_window.unwrap_or(0));
-        let sliding_cap = (window * SERVER_SLOTS + MICRO_BATCH_TOKENS)
+        let sliding_cap = (window * SERVER_SLOTS + u64::from(MICRO_BATCH_TOKENS))
             .div_ceil(SLIDING_CACHE_ALIGNMENT)
             * SLIDING_CACHE_ALIGNMENT;
         let sliding_tokens = tokens.min(sliding_cap);
@@ -309,24 +307,21 @@ impl GgufModelInfo {
     }
 
     /// Bytes of compute buffer llama-server reserves for a window of
-    /// `context_tokens`.
+    /// `context_tokens` at a micro-batch of `micro_batch` tokens: one
+    /// micro-batch of a layer, which holds the attention mask over the whole
+    /// window beside the feed-forward activations (gate and up).
     ///
-    /// It is sized for one full micro-batch at whichever step of the graph
-    /// needs the most:
-    /// - the output, which holds logits over the vocabulary for every token of
-    ///   the batch;
-    /// - a layer, which holds the attention mask over the whole window beside
-    ///   the feed-forward activations (gate and up).
+    /// Logits are not in it: the graph is reserved for one output a slot, and
+    /// they live in a host buffer of their own.
     ///
     /// Flash attention is assumed. llama.cpp's `-fa auto` turns it on wherever
     /// the backend supports it; without it, attention scratch grows with the
     /// window times the head count. A term the header does not give counts as
     /// nothing.
-    pub fn compute_buffer_bytes(&self, context_tokens: u32) -> u64 {
-        let output = u64::from(self.vocab_size.unwrap_or(0)) * F32_BYTES;
+    pub fn compute_buffer_bytes(&self, context_tokens: u32, micro_batch: u32) -> u64 {
         let layer = u64::from(context_tokens) * MASK_BYTES_PER_CELL
             + u64::from(self.feed_forward_length.unwrap_or(0)) * 2 * F32_BYTES;
-        MICRO_BATCH_TOKENS * output.max(layer)
+        u64::from(micro_batch) * layer
     }
 
     /// llama.cpp's rule for hybrids: counting from one, every
@@ -380,16 +375,15 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
         return None;
     }
 
-    let _tensor_count = read_u64(&mut reader)?;
+    let tensor_count = read_u64(&mut reader)?;
     let kv_count = read_u64(&mut reader)?;
 
     let mut architecture = None;
     let mut context_lengths: Vec<(String, u32)> = Vec::new();
-    let mut vocab_size = None;
-    let mut vocabulary_tokens = None;
     let mut info = GgufModelInfo::default();
 
-    for _ in 0..kv_count {
+    let mut pairs = 0..kv_count;
+    for _ in pairs.by_ref() {
         let Some(key) = read_string(&mut reader) else {
             break;
         };
@@ -409,21 +403,6 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             info.chat_template_supports_tools = template.contains("tools")
                 || template.contains("tool_call")
                 || template.contains("tool_calls");
-            continue;
-        }
-
-        // The vocabulary is counted, never read: its strings run to megabytes.
-        if key == "tokenizer.ggml.tokens" && kind == value_type::ARRAY {
-            let Some(element_type) = read_u32(&mut reader) else {
-                break;
-            };
-            let Some(count) = read_u64(&mut reader) else {
-                break;
-            };
-            if skip_elements(&mut reader, element_type, count).is_none() {
-                break;
-            }
-            vocabulary_tokens = u32::try_from(count).ok();
             continue;
         }
 
@@ -481,7 +460,6 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             ("feed_forward_length", value) => {
                 info.feed_forward_length = value.per_layer().and_then(|ff| ff.widest());
             }
-            ("vocab_size", Value::Number(size)) => vocab_size = Some(size),
             ("ssm.conv_kernel", Value::Number(width)) => info.ssm_conv_kernel = Some(width),
             ("ssm.state_size", Value::Number(size)) => info.ssm_state_size = Some(size),
             ("ssm.group_count", Value::Number(count)) => info.ssm_group_count = Some(count),
@@ -489,6 +467,11 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
             ("pooling_type", Value::Number(pooling)) => info.pooling_type = Some(pooling),
             _ => {}
         }
+    }
+
+    // A header the reader gave up on leaves it mid-value, short of the list.
+    if pairs.is_empty() {
+        info.cpu_weight_bytes = cpu_weight_bytes(&mut reader, tensor_count).unwrap_or(0);
     }
 
     // Prefer the key that belongs to this architecture; a file with exactly one
@@ -510,9 +493,49 @@ pub fn read_model_info(path: &Path) -> Option<GgufModelInfo> {
     Some(GgufModelInfo {
         architecture,
         trained_context_length,
-        vocab_size: vocab_size.or(vocabulary_tokens),
         ..info
     })
+}
+
+/// The bytes of the file llama.cpp keeps in RAM at any offload, from the
+/// tensor list `reader` stands at: the input embedding, unless the model ties
+/// its output to it, which sends a copy to the GPU and so the whole file. A
+/// tensor's size is the distance to the next offset, which holds for every
+/// quantization.
+fn cpu_weight_bytes(reader: &mut BufReader<File>, tensor_count: u64) -> Option<u64> {
+    let mut offsets = Vec::new();
+    let mut embedding = None;
+    let mut untied = false;
+    for _ in 0..tensor_count {
+        let name = read_string(reader)?;
+        for _ in 0..read_u32(reader)? {
+            read_u64(reader)?;
+        }
+        read_u32(reader)?;
+        let offset = read_u64(reader)?;
+        offsets.push(offset);
+        match name.as_str() {
+            "token_embd.weight" => embedding = Some(offset),
+            "output.weight" => untied = true,
+            _ => {}
+        }
+    }
+    if !untied {
+        return Some(0);
+    }
+    let start = embedding?;
+    let data_bytes = reader
+        .get_ref()
+        .metadata()
+        .ok()?
+        .len()
+        .saturating_sub(reader.stream_position().ok()?);
+    let end = offsets
+        .into_iter()
+        .filter(|&offset| offset > start)
+        .min()
+        .unwrap_or(data_bytes);
+    Some(end.saturating_sub(start))
 }
 
 pub(super) fn read_exact<const N: usize>(reader: &mut impl Read) -> Option<[u8; N]> {

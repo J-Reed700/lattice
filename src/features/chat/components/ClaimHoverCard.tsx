@@ -58,6 +58,7 @@ function howChecked(verdict: ClaimVerdict): string {
         return 'Nothing read the cited passage against this sentence';
     }
   }
+  if (verdict.method === 'quote') return 'The quoted words were looked for in the passage';
   if (verdict.method === 'judge') {
     const sure = verdict.confidence != null ? ` · ${Math.round(verdict.confidence * 100)}% sure` : '';
     return `The model read the passage against this sentence${sure}`;

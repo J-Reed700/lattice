@@ -38,6 +38,8 @@ pub use self::source_citations::WEB_SOURCE_PREFIX;
 pub(super) use self::source_citations::{
     drop_unbudgeted_sources, web_context_entries, WebContextItem,
 };
+#[cfg(test)]
+pub(super) use self::tests::empty_pipeline_outcome;
 mod sufficiency;
 mod summary_tier;
 mod tool_format;
@@ -182,6 +184,35 @@ pub(super) struct RetrievalPipelineOutcome {
     /// Every web search retrieval ran before the model did, the first one
     /// first, so a deep-research turn can tell the model what not to repeat.
     pub(super) web_queries: Vec<String>,
+}
+
+impl RetrievalPipelineOutcome {
+    /// Puts a turn source's passages ahead of what the library found. From
+    /// here they are the same evidence: fitted, numbered, shown and cited as a
+    /// library passage is. No document id is shown, so the model reads on with
+    /// the source's tools rather than `get_document`.
+    pub(super) fn lead_with(
+        &mut self,
+        passages: Vec<lattice_core::application::ports::turn_source::SourcePassage>,
+    ) {
+        let results = passages.iter().map(|passage| SearchResultDto {
+            id: passage.source.chunk_id.clone(),
+            title: passage.label.clone(),
+            content: passage.source.content.clone(),
+            score: passage.source.score,
+            path: None,
+            document_id: None,
+            position: None,
+            vector_score: None,
+            bm25_score: None,
+            vector_rank: None,
+            bm25_rank: None,
+            metadata: HashMap::new(),
+        });
+        self.search_response.results.splice(0..0, results);
+        self.sources
+            .splice(0..0, passages.into_iter().map(|passage| passage.source));
+    }
 }
 
 #[derive(Debug, Serialize, Clone, Default, specta::Type)]
@@ -336,7 +367,6 @@ async fn run_kb_retrieval(
     search_flags: SearchFlags,
     evidence_tokens: usize,
     chars_per_token: f64,
-    enable_reranking: bool,
     semantic_threshold: f32,
     tuning: &RetrievalTuningSettingsDto,
     cancel: &tokio_util::sync::CancellationToken,
@@ -347,7 +377,6 @@ async fn run_kb_retrieval(
         search_flags,
         evidence_tokens,
         chars_per_token,
-        enable_reranking,
         semantic_threshold,
         tuning,
         cancel,
@@ -427,6 +456,19 @@ async fn build_hyde_context_window_for_conversation(
 }
 
 use lattice_core::application::services::grounded_generation::retrieval_depth;
+
+/// The most library passages one turn reads, section neighbours included.
+pub(super) const MAX_READ_PASSAGES: usize = 40;
+
+/// How many library passages a turn searches for: as many as its evidence
+/// budget holds, at most [`MAX_READ_PASSAGES`].
+fn reading_depth(
+    evidence_tokens: usize,
+    passage_chars: Option<usize>,
+    chars_per_token: f64,
+) -> usize {
+    retrieval_depth(evidence_tokens, passage_chars, chars_per_token).min(MAX_READ_PASSAGES)
+}
 
 async fn persist_document_references(
     conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
@@ -612,6 +654,10 @@ pub(super) fn build_web_source_citations(
     build_web_source_citations_impl(results, highlight_terms, excerpt_chars)
 }
 
+pub(in crate::features::conversation::chat) use self::source_citations::{
+    build_document_part_citation, build_library_source_citations,
+};
+
 /// Infer human-readable category from file path/extension.
 pub(super) fn infer_category(path: &str) -> String {
     infer_category_impl(path)
@@ -627,8 +673,18 @@ pub(super) fn format_tool_result(
     settings: &ToolOutputSettingsDto,
     allowance: usize,
     page_offset: usize,
+    source_text: bool,
+    citations: &std::collections::HashMap<String, u32>,
 ) -> String {
-    format_tool_result_impl(tool_name, result, settings, allowance, page_offset)
+    format_tool_result_impl(
+        tool_name,
+        result,
+        settings,
+        allowance,
+        page_offset,
+        source_text,
+        citations,
+    )
 }
 
 #[cfg(test)]

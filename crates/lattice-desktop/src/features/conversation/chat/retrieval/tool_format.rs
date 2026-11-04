@@ -5,7 +5,11 @@ use lattice_core::application::contracts::tools::{
     WikiSummaryOutput,
 };
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchOutput};
+use lattice_core::application::ports::turn_source::SourcePassages;
 use lattice_core::shared::text::safe_truncate;
+use std::collections::HashMap;
+
+use super::source_citations::library_chunk_id;
 
 /// Room kept at the end of a result for the line saying what had to be left
 /// out of it, so that line always fits.
@@ -18,13 +22,17 @@ const MIN_RESULT_CHARS: usize = 2 * OMISSION_NOTE_CHARS;
 /// A tool's result as the model reads it, in at most `allowance` characters
 /// (its share of the window; see `tool_result_allowance`). When it does not
 /// fit, it says what was left out and how to reach it. `page_offset` is where
-/// a fetched page's text starts.
+/// a fetched page's text starts. `citations` holds the turn's numbers by chunk:
+/// a library result is shown under its own, since a list numbered from one
+/// would read as the passages the turn already holds.
 pub(super) fn format_tool_result(
     tool_name: &str,
     result: &FunctionResult,
     settings: &ToolOutputSettingsDto,
     allowance: usize,
     page_offset: usize,
+    source_text: bool,
+    citations: &HashMap<String, u32>,
 ) -> String {
     let allowance = allowance.max(MIN_RESULT_CHARS);
     if !result.success {
@@ -39,12 +47,15 @@ pub(super) fn format_tool_result(
         None => return "No data returned.".to_string(),
     };
 
-    // The folder tools already fit their text to this call's allowance, cut at
-    // a line and saying where to read on. Through the JSON fallback below the
-    // numbered lines would arrive as one escaped string.
-    if lattice_core::application::contracts::tools::explorer::is_explorer_tool(tool_name) {
+    // A turn source's tools already fit their text to this call's allowance,
+    // cut at a line and saying where to read on. Through the JSON fallback
+    // below the numbered lines would arrive as one escaped string.
+    if source_text {
         if let Some(text) = data.as_str() {
             return safe_truncate(text, allowance);
+        }
+        if let Ok(output) = serde_json::from_value::<SourcePassages>(data.clone()) {
+            return render_source_passages(&output, allowance, citations);
         }
     }
     let templates = &settings.templates;
@@ -112,53 +123,22 @@ pub(super) fn format_tool_result(
         }
         "semantic_search" => {
             if let Ok(output) = serde_json::from_value::<SemanticSearchOutput>(data.clone()) {
-                let blocks: Vec<String> = if !output.documents.is_empty() {
-                    output
-                        .documents
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, doc)| {
-                            let mut block = format!(
-                                "[{}] {} (doc_id: {}, best_score: {:.3}, matches: {})",
-                                idx + 1,
-                                doc.filename,
-                                doc.document_id,
-                                doc.max_score,
-                                doc.match_count
-                            );
-                            for (match_idx, evidence) in doc.matches.iter().enumerate() {
-                                let chunk_label = evidence
-                                    .chunk_index
-                                    .map(|v| format!("#{}", v))
-                                    .unwrap_or_else(|| "n/a".to_string());
-                                block.push_str(&format!(
-                                    "\n  [{}] chunk {} score {:.3}: {}",
-                                    match_idx + 1,
-                                    chunk_label,
-                                    evidence.score,
-                                    evidence.excerpt.trim()
-                                ));
-                            }
-                            block
-                        })
-                        .collect()
-                } else {
-                    output
-                        .results
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, res)| {
-                            format!(
-                                "[{}] {} (doc_id: {}, score: {:.3})\nExcerpt: {}",
-                                idx + 1,
-                                res.filename,
-                                res.document_id,
-                                res.score,
-                                res.snippet.trim()
-                            )
-                        })
-                        .collect()
-                };
+                let blocks: Vec<String> = output
+                    .results
+                    .iter()
+                    .map(|hit| {
+                        let label = citations
+                            .get(&library_chunk_id(hit))
+                            .map_or_else(|| "-".to_owned(), |number| format!("[{number}]"));
+                        format!(
+                            "{label} {} (doc_id: {}, score: {:.3})\nExcerpt: {}",
+                            hit.filename,
+                            hit.document_id,
+                            hit.score,
+                            hit.snippet.trim()
+                        )
+                    })
+                    .collect();
                 if blocks.is_empty() {
                     return "Search returned no results.".to_string();
                 }
@@ -274,6 +254,42 @@ pub(super) fn format_tool_result(
     let fallback = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
     let rendered = templates.default_template.replace("{json}", &fallback);
     fit_text(&rendered, allowance)
+}
+
+/// A turn source's passages, each under the turn's number for it as a library
+/// result is, as many as fit, closed by the source's note.
+fn render_source_passages(
+    output: &SourcePassages,
+    allowance: usize,
+    citations: &HashMap<String, u32>,
+) -> String {
+    let note = output
+        .note
+        .as_deref()
+        .map_or_else(String::new, |note| format!("\n[{note}]"));
+    let blocks: Vec<String> = output
+        .passages
+        .iter()
+        .map(|passage| {
+            let number = citations
+                .get(&passage.source.chunk_id)
+                .map_or_else(|| "-".to_owned(), |number| format!("[{number}]"));
+            format!(
+                "{number} {}\n{}",
+                passage.label,
+                passage.source.content.trim()
+            )
+        })
+        .collect();
+    if blocks.is_empty() {
+        return note.trim_start().to_string();
+    }
+    let (text, _) = fit_blocks(
+        &blocks,
+        allowance.saturating_sub(note.chars().count()),
+        "Search again more narrowly to see them.",
+    );
+    keep_note(&format!("{text}{note}"), allowance)
 }
 
 /// `blocks` joined by blank lines, as many from the front as fit `room`
@@ -416,6 +432,7 @@ fn render_fetched_page(page: &FetchUrlContentOutput, max_chars: usize, offset: u
 mod fetched_page_tests {
     use super::*;
     use lattice_core::application::contracts::tools::FunctionResult;
+    use lattice_core::application::ports::turn_source::SourcePassage;
 
     fn page(content: &str) -> FunctionResult {
         FunctionResult::success(
@@ -441,6 +458,8 @@ mod fetched_page_tests {
             &ToolOutputSettingsDto::default(),
             allowance,
             offset,
+            false,
+            &HashMap::new(),
         )
     }
 
@@ -514,30 +533,26 @@ mod fetched_page_tests {
     }
 
     fn search_output(documents: usize, matches: usize, excerpt: &str) -> FunctionResult {
-        use lattice_core::application::contracts::tools::{
-            DocumentEvidence, DocumentEvidenceMatch,
-        };
-        let documents = (0..documents)
-            .map(|d| DocumentEvidence {
+        use lattice_core::application::contracts::tools::DocumentResult;
+        let results = (0..documents)
+            .flat_map(|d| (0..matches).map(move |m| (d, m)))
+            .map(|(d, m)| DocumentResult {
                 document_id: format!("doc-{d}"),
                 filename: format!("file-{d}.pdf"),
                 file_path: format!("/vault/file-{d}.pdf"),
                 mime_type: "application/pdf".to_string(),
-                max_score: 0.9,
-                match_count: matches,
-                matches: (0..matches)
-                    .map(|m| DocumentEvidenceMatch {
-                        chunk_index: Some(m),
-                        score: 0.5,
-                        excerpt: format!("{excerpt} ({d}/{m})"),
-                    })
-                    .collect(),
+                score: 0.5,
+                snippet: format!("{excerpt} ({d}/{m})"),
+                chunk_index: Some(m),
+                chunk_id: Some(format!("chunk-{d}-{m}")),
+                modified_at: chrono::Utc::now(),
+                size_bytes: 1,
             })
             .collect();
         FunctionResult::success(
             serde_json::to_value(SemanticSearchOutput {
-                results: Vec::new(),
-                documents,
+                results,
+                documents: Vec::new(),
                 total_found: 0,
                 search_time_ms: 1.0,
                 query: "q".to_string(),
@@ -545,6 +560,141 @@ mod fetched_page_tests {
             })
             .unwrap_or_default(),
         )
+    }
+
+    fn source_passage(chunk: &str, content: &str) -> SourcePassage {
+        let source = serde_json::from_value(serde_json::json!({
+            "documentId": "course:version-1",
+            "chunkId": chunk,
+            "content": content,
+            "score": 1.0,
+            "fileName": "Search notes",
+            "filePath": "",
+            "mimeType": "text/plain",
+            "category": "Course source",
+            "fileSizeBytes": 0,
+            "modifiedAt": "",
+        }))
+        .unwrap();
+        SourcePassage {
+            label: format!("Ranking › Fusion › Search notes (source_id: {chunk})"),
+            source,
+        }
+    }
+
+    fn source_result(passages: Vec<SourcePassage>, note: Option<&str>) -> FunctionResult {
+        FunctionResult::success(
+            serde_json::to_value(SourcePassages {
+                passages,
+                note: note.map(str::to_string),
+            })
+            .unwrap(),
+        )
+    }
+
+    fn render_source(
+        result: &FunctionResult,
+        allowance: usize,
+        citations: &HashMap<String, u32>,
+    ) -> String {
+        format_tool_result(
+            "search_course",
+            result,
+            &ToolOutputSettingsDto::default(),
+            allowance,
+            0,
+            true,
+            citations,
+        )
+    }
+
+    /// Each passage reads under the turn's number for it, so the model cites
+    /// it as it cites a library passage, and what closes the result stays.
+    #[test]
+    fn a_source_s_passages_are_shown_under_the_turn_s_numbers() {
+        let citations = HashMap::from([("a".to_owned(), 7), ("b".to_owned(), 8)]);
+        let result = source_result(
+            vec![
+                source_passage("a", "Fusion sums reciprocal ranks."),
+                source_passage("b", "A larger k flattens them."),
+            ],
+            Some("Call read_course_source to read on."),
+        );
+
+        let rendered = render_source(&result, 4_000, &citations);
+
+        assert!(
+            rendered.contains(
+                "[7] Ranking › Fusion › Search notes (source_id: a)\nFusion sums reciprocal ranks."
+            ),
+            "{rendered}"
+        );
+        assert!(rendered.contains("[8] Ranking"), "{rendered}");
+        assert!(
+            rendered.ends_with("\n[Call read_course_source to read on.]"),
+            "{rendered}"
+        );
+    }
+
+    /// With no room for every passage, the note still closes the result and
+    /// says how many were left out.
+    #[test]
+    fn a_source_s_passages_past_the_allowance_are_counted() {
+        let long = "word ".repeat(400);
+        let result = source_result(
+            vec![source_passage("a", &long), source_passage("b", &long)],
+            Some("Read on."),
+        );
+        let citations = HashMap::from([("a".to_owned(), 1), ("b".to_owned(), 2)]);
+
+        let rendered = render_source(&result, 2_800, &citations);
+
+        assert!(rendered.chars().count() <= 2_800, "{}", rendered.len());
+        assert!(
+            rendered.contains("1 more result(s) did not fit"),
+            "{rendered}"
+        );
+        assert!(rendered.ends_with("[Read on.]"), "{rendered}");
+    }
+
+    #[test]
+    fn a_source_with_nothing_found_says_why() {
+        let result = source_result(Vec::new(), Some("No passage matched."));
+        assert_eq!(
+            render_source(&result, 4_000, &HashMap::new()),
+            "[No passage matched.]"
+        );
+    }
+
+    /// A folder's tools return plain text, and it stays what they wrote.
+    #[test]
+    fn a_source_s_plain_text_is_left_as_it_is() {
+        let result = FunctionResult::success(serde_json::Value::String("  1 fn main() {}".into()));
+        assert_eq!(
+            render_source(&result, 4_000, &HashMap::new()),
+            "  1 fn main() {}"
+        );
+    }
+
+    /// A number of the result's own would read as the passage the turn holds
+    /// under that number, and the citation would point at the wrong document.
+    #[test]
+    fn a_library_result_is_shown_under_the_turn_s_number_for_it() {
+        let citations = HashMap::from([("chunk-0-0".to_owned(), 41), ("chunk-1-0".to_owned(), 7)]);
+
+        let rendered = format_tool_result(
+            "semantic_search",
+            &search_output(2, 1, "text"),
+            &ToolOutputSettingsDto::default(),
+            4_000,
+            0,
+            false,
+            &citations,
+        );
+
+        assert!(rendered.contains("[41] file-0.pdf"), "{rendered}");
+        assert!(rendered.contains("[7] file-1.pdf"), "{rendered}");
+        assert!(!rendered.contains("[1]"), "{rendered}");
     }
 
     /// A search page that may have more says the offset the next starts at.
@@ -589,7 +739,7 @@ mod fetched_page_tests {
             rendered.contains("more result(s) did not fit"),
             "{rendered}"
         );
-        assert!(rendered.contains("[1] file-0.pdf"), "{rendered}");
+        assert!(rendered.contains("- file-0.pdf"), "{rendered}");
     }
 
     /// Every kind of result keeps the line saying what was left out and how to

@@ -31,10 +31,20 @@ fn parse_line(line: &str) -> Option<(u32, Option<String>)> {
     Some((label, says_something.then(|| note.to_string())))
 }
 
+/// Markdown emphasis a model may wrap a label in: `**[7]**`, `__7.__`.
+const EMPHASIS: [char; 2] = ['*', '_'];
+
 /// The label `text` opens with, whether it stood in brackets, and what
-/// follows it past an optional `:`, `.` or dash.
+/// follows it past an optional `:`, `.` or dash. A list marker before the
+/// label (`- [7]`) and emphasis around it (`**[7]**`, `**[7]:**`) are not
+/// part of the line.
 fn leading_label(text: &str) -> Option<(u32, bool, &str)> {
     let rest = text.trim_start();
+    let rest = ["- ", "* ", "• ", "+ "]
+        .iter()
+        .find_map(|marker| rest.strip_prefix(marker))
+        .unwrap_or(rest)
+        .trim_start_matches(EMPHASIS);
     let opened = rest.strip_prefix(|c: char| narrow(c) == '[');
     let rest = opened.unwrap_or(rest);
     let digits = rest
@@ -48,10 +58,13 @@ fn leading_label(text: &str) -> Option<(u32, bool, &str)> {
     let rest = &rest[digits..];
     let closed = rest.strip_prefix(|c: char| narrow(c) == ']');
     let bracketed = opened.is_some() && closed.is_some();
-    let rest = closed.unwrap_or(rest).trim_start();
+    let rest = closed
+        .unwrap_or(rest)
+        .trim_start_matches(EMPHASIS)
+        .trim_start();
     let rest = rest
         .strip_prefix(|c: char| matches!(narrow(c), ':' | '.' | '-' | '–' | '—'))
-        .unwrap_or(rest);
+        .map_or(rest, |after| after.trim_start_matches(EMPHASIS));
     Some((label, bracketed, rest))
 }
 

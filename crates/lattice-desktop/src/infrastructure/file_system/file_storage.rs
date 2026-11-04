@@ -18,15 +18,37 @@
 //! - Access outside allowed directories
 
 use async_trait::async_trait;
+use lattice_core::application::factories::ChecksumFactory;
 use lattice_core::application::ports::{FileMetadata, FileStoragePort};
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::fs::atomic::AtomicFs;
-use sha2::{Digest, Sha256};
 use std::io::ErrorKind;
 use std::path::Path;
 use tokio::fs;
-use tokio::io::AsyncReadExt;
+
+/// Compute the SHA-256 hash of a file on the blocking thread pool in a single
+/// streaming pass, avoiding per-chunk thread-pool round trips.
+pub async fn compute_file_sha256_async(path: &Path) -> Result<String> {
+    let path_buf = path.to_path_buf();
+    let display_path = path.to_string_lossy().to_string();
+    tokio::task::spawn_blocking(move || ChecksumFactory::compute_file_sha256_hex(&path_buf))
+        .await
+        .map_err(|e| AppError::FileRead {
+            path: display_path.clone(),
+            reason: format!("Checksum task failed: {e}"),
+        })?
+        .map_err(|e| match e.kind() {
+            ErrorKind::NotFound => AppError::FileNotFound { path: display_path },
+            ErrorKind::PermissionDenied => {
+                AppError::PermissionDenied(format!("Cannot read file: {}", display_path))
+            }
+            _ => AppError::FileRead {
+                path: display_path,
+                reason: e.to_string(),
+            },
+        })
+}
 
 /// Secure file storage implementation.
 ///
@@ -201,40 +223,7 @@ impl FileStoragePort for SecureFileStorage {
 
     async fn compute_hash(&self, path: &Path) -> Result<String> {
         self.validate_path(path)?;
-
-        let mut file = fs::File::open(path).await.map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => AppError::FileNotFound {
-                path: path.to_string_lossy().to_string(),
-            },
-            std::io::ErrorKind::PermissionDenied => {
-                AppError::PermissionDenied(format!("Cannot read file: {}", path.display()))
-            }
-            _ => AppError::FileRead {
-                path: path.to_string_lossy().to_string(),
-                reason: e.to_string(),
-            },
-        })?;
-
-        let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 64 * 1024];
-        loop {
-            let n = file
-                .read(&mut buffer)
-                .await
-                .map_err(|e| AppError::FileRead {
-                    path: path.to_string_lossy().to_string(),
-                    reason: e.to_string(),
-                })?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buffer[..n]);
-        }
-        let hash = hasher.finalize();
-
-        let hash_string = format!("{:x}", hash);
-
-        Ok(hash_string)
+        compute_file_sha256_async(path).await
     }
 
     async fn exists(&self, path: &Path) -> bool {

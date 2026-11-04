@@ -1,12 +1,15 @@
 //! `WebSnapshotGc::sweep`: drops `.part` files older than an hour and `.html`
 //! files no pending or ready row claims. Touches nothing but direct children
-//! of the snapshot directory whose names it recognises (§7, T14).
+//! of the snapshot directory whose names it recognises (§7, T14), and nothing
+//! at all while the sweep gate is shut.
 
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use super::repository::SnapshotRepository;
 use super::store::{is_valid_id, SnapshotStore, HTML_SUFFIX, PART_SUFFIX};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::fs::SweepGate;
 
 /// How old an unfinished write must be before it is treated as abandoned.
 pub const STALE_PART_AGE: Duration = Duration::from_secs(60 * 60);
@@ -23,14 +26,23 @@ pub struct SweepReport {
 pub struct WebSnapshotGc {
     store: SnapshotStore,
     repository: SnapshotRepository,
+    gate: Arc<SweepGate>,
 }
 
 impl WebSnapshotGc {
-    pub fn new(store: SnapshotStore, repository: SnapshotRepository) -> Self {
-        Self { store, repository }
+    pub fn new(store: SnapshotStore, repository: SnapshotRepository, gate: Arc<SweepGate>) -> Self {
+        Self {
+            store,
+            repository,
+            gate,
+        }
     }
 
     pub async fn sweep(&self) -> Result<SweepReport> {
+        if !self.gate.is_open() {
+            tracing::debug!("Left the web snapshot files alone: this database does not own them");
+            return Ok(SweepReport::default());
+        }
         let root = self.store.root().to_path_buf();
         if !tokio::fs::try_exists(&root).await.unwrap_or(false) {
             return Ok(SweepReport::default());

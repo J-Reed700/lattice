@@ -145,7 +145,8 @@ export type ChatImage = z.infer<typeof ChatImageSchema>;
  * One claim and how it was checked.
  *
  * `method` says which pass produced the verdict: `lexical` is stemmed token
- * overlap against the cited passage, `judge` is an LLM entailment decision.
+ * overlap against the cited passage, `judge` is an LLM entailment decision,
+ * and `quote` means the quoted words were looked for in the passage.
  * Treat them as different strengths of evidence, not the same verdict.
  *
  * `unverified` means the claim did not earn a finding — the judge ran out of
@@ -160,7 +161,7 @@ export const ClaimVerdictSchema = z.object({
   evidenceQuote: z.string().max(1000).nullable().optional(),
   /** The judge's short factual comparison, especially useful for negatives. */
   reason: z.string().max(600).nullable().optional(),
-  method: z.enum(['lexical', 'judge']),
+  method: z.enum(['lexical', 'judge', 'quote']),
   /** The judge's probability for `verdict`, when its provider reports one. */
   confidence: z.number().min(0).max(1).nullable().optional(),
   unverifiedReason: z.enum(['judge_failed', 'no_text', 'low_confidence']).nullable().optional(),
@@ -303,6 +304,13 @@ export interface Conversation {
    * Such threads live in the Explorer and are left out of Chat.
    */
   explorerRoot?: string | null;
+  /**
+   * The course this conversation teaches from, when it is a tutor chat. Such
+   * chats live in the course's Tutor tab and are left out of Chat.
+   */
+  programId?: string | null;
+  /** The lesson a tutor chat was opened from. */
+  lessonId?: string | null;
   /** Hidden from top-level lists until promoted. */
   tangentParentId?: string | null;
   messages?: ConversationMessage[];

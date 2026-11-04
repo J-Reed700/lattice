@@ -12,6 +12,7 @@ fn turn(time_budget: Duration) -> Turn<'static> {
         message: "When did the bridge open?",
         sources: Vec::new(),
         time_budget,
+        source: None,
     }
 }
 

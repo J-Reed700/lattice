@@ -33,6 +33,7 @@ pub use gc::{SweepReport, WebSnapshotGc};
 
 use crate::features::web::traits::page_snapshot::PageCapturePort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::http::normalize_web_source_url;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobRuntime, NewJob};
@@ -192,11 +193,12 @@ impl WebPageSnapshotService {
         jobs: Arc<JobRuntime>,
         events: Arc<dyn SnapshotEvents>,
         background: Arc<BackgroundTasks>,
+        sweep_gate: Arc<SweepGate>,
     ) -> Self {
         let repository = SnapshotRepository::new(pool);
         let store = SnapshotStore::new(root);
         Self {
-            gc: WebSnapshotGc::new(store.clone(), repository.clone()),
+            gc: WebSnapshotGc::new(store.clone(), repository.clone(), sweep_gate),
             shared: Arc::new(Shared {
                 repository,
                 store,
@@ -382,7 +384,8 @@ impl WebPageSnapshotService {
         self.shared.dto(row, progress).await
     }
 
-    /// Removes stale partial writes and files no pending or ready row claims.
+    /// Removes stale partial writes and files no pending or ready row claims,
+    /// once the sweep gate is open.
     pub async fn sweep(&self) -> Result<SweepReport> {
         self.gc.sweep().await
     }

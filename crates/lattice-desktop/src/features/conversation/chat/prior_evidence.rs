@@ -6,7 +6,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::features::conversation::chat::ports::ChatStorage;
-use lattice_core::application::contracts::sources::SourceDto;
+use crate::features::conversation::chat::verification::cited_labels;
+use lattice_core::application::contracts::sources::{SourceDto, COURSE_SOURCE_PREFIX};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::Result;
@@ -203,11 +204,15 @@ fn rank_sources(
         else {
             continue;
         };
+        let cited = cited_labels(&message.content);
         for value in sources {
             let Ok(mut source) = serde_json::from_value::<SourceDto>(value.clone()) else {
                 continue;
             };
-            if !source.document_id.starts_with(WEB_SOURCE_PREFIX)
+            if !source.citation_id.is_some_and(|id| cited.contains(&id)) {
+                continue;
+            }
+            if !outside_the_library(&source.document_id)
                 && !allowed_documents.contains(&source.document_id)
             {
                 continue;
@@ -250,6 +255,11 @@ fn rank_sources(
     // Stable ties retain newest-first order; relevance beats recency.
     ranked.sort_by_key(|entry| std::cmp::Reverse(entry.0));
     ranked.into_iter().map(|(_, source)| source).collect()
+}
+
+/// A web page or a course's passage: evidence no document scope governs.
+fn outside_the_library(document_id: &str) -> bool {
+    document_id.starts_with(WEB_SOURCE_PREFIX) || document_id.starts_with(COURSE_SOURCE_PREFIX)
 }
 
 pub(super) fn source_key(source: &SourceDto) -> String {
@@ -341,6 +351,36 @@ mod tests {
         message
     }
 
+    /// A course's passage is no library document, so no document scope lists
+    /// it: a follow-up in a tutor chat still has what the last answer cited.
+    #[test]
+    fn a_cited_course_passage_is_recalled_without_a_document_scope() {
+        let cited = source("course:version-1", "Blueberry evidence from the course");
+        let recalled = rank_sources(
+            &[message(cited)],
+            &["blueberry".to_string()],
+            &HashSet::new(),
+            &[],
+        );
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].document_id, "course:version-1");
+
+        let library = source(
+            "doc-outside-the-scope",
+            "Blueberry evidence from the library",
+        );
+        let scoped_out = rank_sources(
+            &[message(library)],
+            &["blueberry".to_string()],
+            &HashSet::new(),
+            &[],
+        );
+        assert!(
+            scoped_out.is_empty(),
+            "a library document still obeys the scope"
+        );
+    }
+
     #[test]
     fn recalls_old_original_evidence_past_ten_newer_searches_with_new_citation_ids() {
         let old = source(
@@ -400,6 +440,25 @@ mod tests {
         let recalled = rank_sources(&messages, &terms, &allowed, &[web]);
         assert_eq!(recalled.len(), 1);
         assert_eq!(recalled[0].document_id, "private-doc");
+    }
+
+    #[test]
+    fn a_passage_an_answer_read_but_did_not_cite_is_not_recalled() {
+        let read = SourceDto {
+            citation_id: Some(2),
+            ..source("web:https://example.com/read", "Blueberry evidence read")
+        };
+        let cited = source("web:https://example.com/cited", "Blueberry evidence cited");
+        let mut answer = message(cited.clone());
+        answer.metadata = Some(serde_json::json!({"sources": [cited, read]}).to_string());
+        let recalled = rank_sources(
+            &[answer],
+            &query_terms("blueberry evidence"),
+            &HashSet::new(),
+            &[],
+        );
+        assert_eq!(recalled.len(), 1);
+        assert_eq!(recalled[0].content, "Blueberry evidence cited");
     }
 
     #[test]

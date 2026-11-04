@@ -76,6 +76,7 @@ pub(super) fn normalize_model_type_for_models_table(model_type: ModelType) -> &'
         ModelType::Vision => "multi_modal",
         ModelType::Reranker => "qa",
         ModelType::Transcription => "custom",
+        ModelType::Speech => "unknown",
     }
 }
 

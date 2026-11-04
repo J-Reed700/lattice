@@ -6,6 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Marks a citation of a course's source: a passage of an immutable source
+/// version, which no library document or file stands behind.
+pub const COURSE_SOURCE_PREFIX: &str = "course:";
+
 /// Source citation for Q&A response.
 ///
 /// Represents a document chunk used as context for the answer.

@@ -341,10 +341,11 @@ impl EvidenceShare {
         fraction: 0.6,
         floor: 0,
     };
-    /// The folder an Explorer conversation reads beside the chat: a quarter
-    /// of what is left, so the open file shows on a small local model without
-    /// crowding out the question and its history, and grows with the window.
-    pub const FOLDER: Self = Self {
+    /// The source a conversation reads beside the chat, such as an Explorer
+    /// folder: a quarter of what is left, so the open file shows on a small
+    /// local model without crowding out the question and its history, and
+    /// grows with the window.
+    pub const BOUND_SOURCE: Self = Self {
         fraction: 0.25,
         floor: 500,
     };
@@ -678,17 +679,17 @@ mod tests {
             25_000
         );
         assert_eq!(
-            EvidenceBudget::new(100_000).allowance(EvidenceShare::FOLDER),
+            EvidenceBudget::new(100_000).allowance(EvidenceShare::BOUND_SOURCE),
             25_000
         );
-        // The folder keeps its floor while the room can hold it, and gives
+        // The source keeps its floor while the room can hold it, and gives
         // way when it cannot.
         assert_eq!(
-            EvidenceBudget::new(1_000).allowance(EvidenceShare::FOLDER),
+            EvidenceBudget::new(1_000).allowance(EvidenceShare::BOUND_SOURCE),
             500
         );
         assert_eq!(
-            EvidenceBudget::new(300).allowance(EvidenceShare::FOLDER),
+            EvidenceBudget::new(300).allowance(EvidenceShare::BOUND_SOURCE),
             300
         );
         assert_eq!(budget.remaining(), 5_000);

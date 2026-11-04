@@ -126,6 +126,11 @@ pub struct Container {
     /// Pictures shown inline in chat answers; fetched through `web_service`.
     pub(crate) chat_images: Arc<crate::features::web::images::ChatImageService>,
 
+    /// Whether the sweeps that delete files no row names may run. Shut until
+    /// startup finds that this database owns the files; the snapshot and
+    /// picture services hold the same gate.
+    pub(crate) sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,
+
     /// The Explorer's folder indexes: the open folder and its builds, which
     /// run as jobs. Built with the app handle, which it loads the embedder
     /// through; `None` in test fixtures.
@@ -213,11 +218,19 @@ impl Container {
     ) -> Result<Self> {
         // These are populated asynchronously when models load
         let embedding_runtime = Arc::new(EmbeddingRuntime::new());
-        // The embedding server is the one server outside the pool of LLMs
-        // that their admission may stop while it is idle.
-        let current_embedding =
-            Arc::new(super::modules::embedding::CurrentEmbeddingServer::default());
-        let llm_instances = Arc::new(LlmInstances::new().with_evictable(current_embedding.clone()));
+        // The embedding and reranking servers are the servers outside the pool
+        // of LLMs that their admission may stop while they are idle.
+        let current_embedding = Arc::new(super::modules::current_server::CurrentServer::new(
+            "embedding server",
+        ));
+        let current_reranker = Arc::new(super::modules::current_server::CurrentServer::new(
+            "reranking server",
+        ));
+        let llm_instances = Arc::new(
+            LlmInstances::new()
+                .with_evictable(current_embedding.clone())
+                .with_evictable(current_reranker.clone()),
+        );
         tracing::info!("Building Container with modular architecture (Hollow Container Pattern)");
 
         // State more than one feature reaches. Each is built once, here, and
@@ -233,6 +246,14 @@ impl Container {
         // the embedding server.
         let embedding_servers =
             Arc::new(crate::features::embedding::activity::StartedServers::default());
+        let rerank_starter: Arc<
+            dyn crate::features::search::engine::llama_reranker::RerankServerStarter,
+        > = Arc::new(super::modules::reranking::SidecarRerankStarter::new(
+            app_handle.clone(),
+            llm_instances.clone(),
+            llm_runtime.clone(),
+            current_reranker,
+        ));
         let embedding_starter: Arc<
             dyn crate::features::embedding::llama_cpp::EmbeddingServerStarter,
         > = Arc::new(crate::features::embedding::activity::WatchedStarter::new(
@@ -277,6 +298,7 @@ impl Container {
                 core.clone(),
                 embedding_runtime.clone(),
                 embedding_starter.clone(),
+                rerank_starter,
             )
             .await?,
         );
@@ -402,16 +424,19 @@ impl Container {
 
         let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
         let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
+        let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.db_pool().clone(),
             Arc::clone(&jobs),
             Arc::clone(&web_snapshot_events),
             Arc::clone(core.background()),
+            Arc::clone(&sweep_gate),
         )?;
         let chat_images = crate::features::web::di::build_chat_images(
             core.db_pool().clone(),
             Arc::clone(&web_service),
             Arc::clone(core.background()),
+            Arc::clone(&sweep_gate),
         )?;
 
         let turn_cancellation = Arc::new(
@@ -449,6 +474,7 @@ impl Container {
             web_page_snapshots,
             web_snapshot_events,
             chat_images,
+            sweep_gate,
             turn_cancellation,
             research_waiters,
             outline_run_registry,
@@ -466,7 +492,7 @@ impl Container {
 
     /// Serve embeddings through `starter` instead of the bundled sidecar.
     /// Tools that build a container without the app (the shipped-path eval)
-    /// pass a [`StandaloneEmbeddingStarter`](super::modules::embedding::standalone::StandaloneEmbeddingStarter).
+    /// pass a [`StandaloneServers`](super::modules::standalone::StandaloneServers).
     /// After construction the container is the starter's only holder, so
     /// every load and activation from here on uses this one.
     pub fn with_embedding_starter(
@@ -478,6 +504,17 @@ impl Container {
                 starter,
                 Arc::clone(&self.embedding_servers),
             ));
+        self
+    }
+
+    /// Serve the reranker in `gguf` through `starter` instead of the bundled
+    /// sidecar, as the evals that build a container without the app do.
+    pub async fn with_reranker(
+        self,
+        gguf: impl Into<PathBuf>,
+        starter: Arc<dyn crate::features::search::engine::llama_reranker::RerankServerStarter>,
+    ) -> Self {
+        self.search.reranker().serve_from(gguf, starter).await;
         self
     }
 
@@ -534,6 +571,16 @@ impl Container {
         let embedders: Arc<dyn crate::infrastructure::passage_index::EmbedderSource> = Arc::new(
             crate::features::embedding::di::AppEmbedders::new(handle.clone()),
         );
+        self.app_handle = Some(handle);
+        self.with_passage_indexes(embedders)
+    }
+
+    /// The folder and course indexes, embedding through `embedders`. The app
+    /// attaches them with its handle; an eval with no app passes its own.
+    pub fn with_passage_indexes(
+        mut self,
+        embedders: Arc<dyn crate::infrastructure::passage_index::EmbedderSource>,
+    ) -> Self {
         let searches: Arc<
             dyn lattice_core::application::ports::hybrid_search::HybridSearchFactory,
         > = Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory);
@@ -564,8 +611,6 @@ impl Container {
             ),
         );
         self.index_turns = Some(turns);
-
-        self.app_handle = Some(handle);
         self
     }
 }

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Layers3, PanelRightClose, PanelRightOpen } from 'lucide-react';
@@ -40,11 +40,12 @@ import { SourceMaintenancePanel } from '@/features/learning/sources/SourceMainte
 import { SourcesPanel } from '@/features/learning/sources/SourcesPanel';
 import { useCourseIndexOpen, useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { ProgramTangents, ProgramTangentsTrigger } from '@/features/learning/tangents/ProgramTangents';
+import { TutorPanel } from '@/features/learning/tutor/TutorPanel';
 import { useRepairLearningOutline } from '@/features/learning/workspace/useLearningStudio';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
-import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
+import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
 
@@ -120,6 +121,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   }, [destination, program.modules]);
   const [title, setTitle] = useState(program.summary.title);
   const [notebookDrafts, setNotebookDrafts] = useState<Record<string, NotebookDraft>>({});
+  // A tutor turn may add to a lesson's note; a draft kept from before would save over it.
+  const clearNotebookDrafts = useCallback(() => setNotebookDrafts({}), []);
   const [savingBeforeMove, setSavingBeforeMove] = useState(false);
   const repair = useRepairLearningOutline(program.summary.id);
   const outlineBlocked = repair.isPending || outlineGeneration?.isPending || Boolean(program.outlineReview && program.outlineReview.status !== 'passed');
@@ -152,7 +155,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   // A prepared or replaced lesson changes what its quiz can ask.
   useEffect(() => { void queryClient.invalidateQueries({ queryKey: learningQuizOverviewKey(program.summary.id) }); }, [queryClient, program.summary.id, program.summary.revision]);
   const resume = allLessons.find(({ lesson }) => lesson.id === program.summary.currentLessonId) ?? allLessons.find(({ lesson }) => !lesson.completed);
-  const primary = [{ id: 'lessons' as const, label: 'Lessons' }, { id: 'workbench' as const, label: 'Practice' }, { id: 'quizzes' as const, label: 'Quizzes' }, { id: 'recall' as const, label: 'Recall' }, { id: 'notebook' as const, label: 'Notebook' }, { id: 'sources' as const, label: 'Sources' }];
+  const primary = [{ id: 'lessons' as const, label: 'Lessons' }, { id: 'workbench' as const, label: 'Practice' }, { id: 'quizzes' as const, label: 'Quizzes' }, { id: 'recall' as const, label: 'Recall' }, { id: 'notebook' as const, label: 'Notebook' }, { id: 'tutor' as const, label: 'Tutor' }, { id: 'sources' as const, label: 'Sources' }];
   const activateTab = (next: Tab) => {
     if (next === 'canvas') setCanvasOpened(true);
     if (next === 'practical') setPracticalOpened(true);
@@ -246,6 +249,17 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     move();
     return true;
   };
+  const openModule = (module: LearningModuleDto) => void afterNotebookSave(() => {
+    setModuleId(module.id);
+    setLessonId(module.lessons.find((lesson) => !lesson.completed)?.id ?? module.lessons[0]?.id ?? '');
+    setTab('lessons');
+  });
+  const openLesson = (module: LearningModuleDto, selectedLessonId: string) => void afterNotebookSave(() => {
+    setModuleId(module.id);
+    setLessonId(selectedLessonId);
+    setTab('lessons');
+    requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  });
 
   const effectiveTangentId = initialTangentId ?? destination?.tangentId ?? null;
   // The goal once, behind a disclosure, and never when it is the title (§2.2).
@@ -277,7 +291,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
       <div className="studio-workspace pb-12">
         <div className="studio-course-toolbar">
           <Button variant="ghost" type="button" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(onBack)} className="studio-course-back disabled:opacity-50"><ArrowLeft size={15} /> {savingBeforeMove ? 'Saving your work…' : 'All programs'}</Button>
-          <div className="studio-course-tools"><CitationVisibilityToggle /><ProgramTangentsTrigger />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}
+          <div className="studio-course-tools"><CitationVisibilityToggle /><ProgramTangentsTrigger />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
             <Button variant="ghost" type="button" aria-pressed={contextVisible} disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setContextVisible((visible) => !visible))} className="studio-context-toggle disabled:opacity-50" title={contextVisible ? 'Hide lesson outline and notes' : 'Show lesson outline and notes'}>{contextVisible ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}<span>Outline & notes</span></Button>
           </div>
         </div>
@@ -300,10 +314,10 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     <OutlineReviewPanel program={program} generation={outlineGeneration} repair={repair} />
 
     {!program.sources.length && <p className="mt-3 text-xs leading-5 text-text-muted">Topic-based course · AI-authored from general knowledge. Add references in Sources to ground future lessons.</p>}
-    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}
+    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
     {activeProgram && <StudyHabitsBar className="studio-habits" onSelectFramework={handleSelectFramework} />}
     <div className="grid min-w-0 grid-cols-1 gap-2">
-      <CourseNavigator modules={program.modules} moduleId={currentModule?.id ?? ''} lessonId={currentLesson?.id ?? ''} disabled={savingBeforeMove} onModuleChange={(next) => void afterNotebookSave(() => { setModuleId(next.id); setLessonId(next.lessons.find((lesson) => !lesson.completed)?.id ?? next.lessons[0]?.id ?? ''); setTab('lessons'); })} onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}>
+      <CourseNavigator modules={program.modules} moduleId={currentModule?.id ?? ''} lessonId={currentLesson?.id ?? ''} disabled={savingBeforeMove} onModuleChange={openModule} onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}>
         {activeProgram ? <CourseCoach program={program} dueCount={memoryQuery.data?.dueCount ?? 0} disabled={savingBeforeMove || preparePending} onStep={goToStep} /> : resume && <Button type="button" aria-label={`Continue lesson: ${resume.lesson.title}`} title={resume.lesson.title} disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => { setModuleId(resume.module.id); setLessonId(resume.lesson.id); setTab('lessons'); })} className="studio-button studio-button-primary">Continue lesson <ArrowRight size={15} /></Button>}
       </CourseNavigator>
       <main className="min-w-0"><section id="workspace-panel" tabIndex={-1} aria-label="Program workspace content" className="studio-workspace-panel">
@@ -403,6 +417,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           onOpenLesson={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId); if (target) void afterNotebookSave(() => { setModuleId(target.module.id); setLessonId(lessonId); activateTab('lessons'); }); }}
           completionFor={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId)?.lesson; return target ? { completed: target.completed, pending: completePending, onComplete: () => onComplete(target) } : undefined; }} /></div>}
         {tab === 'sources' && <div className="mt-5">{program.summary.status === 'active' ? <><SourcesPanel programId={program.summary.id} onOpenReview={openHeldReview} /><SourceMaintenancePanel programId={program.summary.id} /></> : <div className="rounded-xl border border-dashed border-border bg-background p-6"><h3 className="font-serif text-xl text-text-primary">Accept this outline to open its source library</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">The outline’s original material is shown in each citation. After acceptance, you can add program-scoped snapshots, read saved versions, search their text, and review changes here.</p></div>}</div>}
+        {activeProgram && tab === 'tutor' && <TutorPanel program={program} lesson={currentLesson} onCourseChanged={clearNotebookDrafts} />}
         {activeProgram && tab === 'notebook' && <div className="mt-5"><NotebookPanel enabled program={program} lessonId={currentLesson?.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} /></div>}
         {activeProgram && canvasOpened && tab === 'canvas' && <div className="mt-5"><Suspense fallback={<div role="status" className="rounded-xl border border-border bg-surface p-8 text-sm text-text-muted">Opening Canvas…</div>}><LazyCanvasPanel programId={program.summary.id} lessonId={currentLesson?.id} lessonTitle={currentLesson?.title ?? 'Learning canvas'} theme={theme} enabled lesson={currentLesson} /></Suspense></div>}
         {activeProgram && tab === 'recall' && (

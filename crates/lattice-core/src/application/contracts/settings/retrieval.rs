@@ -42,9 +42,6 @@ pub struct SearchSettingsDto {
     /// Similarity threshold (0.0 - 1.0)
     pub similarity_threshold: f32,
 
-    /// Enable result reranking
-    pub enable_reranking: bool,
-
     /// Hybrid search alpha parameter (0.0 = vector, 1.0 = keyword)
     pub hybrid_search_alpha: f32,
 
@@ -192,9 +189,9 @@ fn default_deep_research_branch_queries() -> u32 {
     3
 }
 
-/// `blend_rerank_scores` mixes `0.35 * normalized_first_stage + 0.65 * rerank`,
-/// so the first-stage winner is worth 0.35 on its own. A top blended score
-/// below that floor means no passage earned any cross-encoder relevance.
+/// A reranked passage's score is the cross-encoder's relevance, 0 to 1. A best
+/// passage below this floor means the cross-encoder found nothing much more
+/// likely relevant than not.
 fn default_sufficiency_min_top_score() -> f32 {
     0.35
 }
@@ -240,9 +237,6 @@ impl Default for SearchSettingsDto {
         Self {
             max_results: 10,
             similarity_threshold: 0.7,
-            // Off: Qwen3-Reranker-0.6B raised nDCG@5 on v3 but not recall@5,
-            // at about 5.6 s per query and 3.8 GB on an M3 Max.
-            enable_reranking: false,
             hybrid_search_alpha: 0.5,
             retrieval_tuning: RetrievalTuningSettingsDto::default(),
             vector_index_compression: VectorIndexCompressionSettingsDto::default(),
@@ -297,7 +291,7 @@ impl Default for RetrievalTuningSettingsDto {
             external_search_max_wiki_terms: 8,
             external_search_max_web_terms: 10,
             external_search_query_max_chars: 1200,
-            rerank_max_candidates: 48,
+            rerank_max_candidates: 64,
             rerank_query_max_chars: 6000,
             sufficiency_min_top_score: default_sufficiency_min_top_score(),
             sufficiency_min_term_coverage: default_sufficiency_min_term_coverage(),

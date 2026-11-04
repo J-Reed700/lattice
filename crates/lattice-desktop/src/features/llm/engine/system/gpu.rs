@@ -86,12 +86,9 @@ pub async fn detect_gpu_with_sidecar(
         .or_else(detect_gpu_sysinfo)
 }
 
-/// The largest accelerator decides, since that is the one worth offloading to.
+/// The device a server offloads to decides.
 fn gpu_from_devices(devices: &[super::backend_devices::BackendDevice]) -> Option<GPUInfo> {
-    let device = devices
-        .iter()
-        .filter(|device| device.is_accelerator())
-        .max_by_key(|device| device.total_mib)?;
+    let device = super::backend_devices::offload_device(devices)?;
 
     Some(GPUInfo {
         vendor: device.vendor(),

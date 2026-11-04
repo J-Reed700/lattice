@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ActivityEntryDto } from '@/lib/bindings';
 
-import { aggregateProgress, irisLabel, irisNotes, readIris, type IrisInputs } from './irisReading';
+import { aggregateProgress, irisAnnouncement, irisLabel, irisNotes, readIris, type IrisInputs } from './irisReading';
 
 function entry(overrides: Partial<ActivityEntryDto> = {}): ActivityEntryDto {
   return {
@@ -25,6 +25,7 @@ function entry(overrides: Partial<ActivityEntryDto> = {}): ActivityEntryDto {
 function inputs(overrides: Partial<IrisInputs> = {}): IrisInputs {
   return {
     activity: { items: [], running: 0 },
+    activityFailed: false,
     indexingFailures: 0,
     failedDownloads: [],
     dueCards: 0,
@@ -121,11 +122,28 @@ describe('readIris', () => {
   it('reads an unknown snapshot as nothing running', () => {
     expect(readIris(inputs({ activity: undefined })).mood).toBe('idle');
   });
+
+  it('says so when it could not read what is running, and never calls that quiet', () => {
+    const failing = readIris(inputs({ activity: undefined, activityFailed: true }));
+    expect(failing).toMatchObject({ mood: 'notice', tone: 'alert', unseen: true, activityFailed: true, short: 'One new thing' });
+    expect(failing.headline).toBe('Could not read what is running.');
+
+    const seen = readIris(inputs({ activity: undefined, activityFailed: true, seenNoteIds: new Set(['activity-unreadable']) }));
+    expect(seen).toMatchObject({ mood: 'idle', tone: 'calm', unseen: false, short: "Can't tell" });
+    expect(seen.headline).toBe('Could not read what is running.');
+  });
+
+  it('keeps the work it last read when a later read fails', () => {
+    const reading = readIris(inputs({ activity: { items: [entry()], running: 1 }, activityFailed: true }));
+    expect(reading).toMatchObject({ mood: 'working', tone: 'alert', activityFailed: true });
+    expect(reading.work).toHaveLength(1);
+    expect(reading.notes.map((note) => note.id)).toEqual(['activity-unreadable']);
+  });
 });
 
 describe('irisNotes', () => {
   it('lists failures before news, each with somewhere to go', () => {
-    const notes = irisNotes({ indexingFailures: 1, failedDownloads: [{ id: 'd', name: 'MiniLM' }], dueCards: 1 });
+    const notes = irisNotes({ activityFailed: false, indexingFailures: 1, failedDownloads: [{ id: 'd', name: 'MiniLM' }], dueCards: 1 });
     expect(notes.map((note) => [note.text, note.action?.to])).toEqual([
       ['The MiniLM download failed.', 'downloads'],
       ['1 file couldn\'t be indexed.', 'indexing'],
@@ -133,8 +151,17 @@ describe('irisNotes', () => {
     ]);
   });
 
+  it('puts a failed read of what is running first, with nowhere to go', () => {
+    const notes = irisNotes({ activityFailed: true, indexingFailures: 1, failedDownloads: [], dueCards: 1 });
+    expect(notes.map((note) => [note.id, note.tone, note.action?.to ?? null])).toEqual([
+      ['activity-unreadable', 'alert', null],
+      ['index-failed:1', 'alert', 'indexing'],
+      ['flashcards-due', 'calm', 'flashcards'],
+    ]);
+  });
+
   it('says nothing about flashcards it could not count', () => {
-    expect(irisNotes({ indexingFailures: 0, failedDownloads: [], dueCards: null })).toEqual([]);
+    expect(irisNotes({ activityFailed: false, indexingFailures: 0, failedDownloads: [], dueCards: null })).toEqual([]);
   });
 });
 
@@ -150,6 +177,18 @@ describe('aggregateProgress', () => {
 
   it('is unknown when nothing reports a total', () => {
     expect(aggregateProgress([entry({ progress: { done: 3, total: 0, unit: 'files' } })])).toBeNull();
+  });
+});
+
+describe('irisAnnouncement', () => {
+  it('counts what runs, and keeps to counts so progress does not chatter', () => {
+    expect(irisAnnouncement([entry(), entry({ id: 'b' }), entry({ id: 'c', state: 'paused' })])).toBe('Iris: 2 running');
+    expect(irisAnnouncement([entry({ state: 'waiting' }), entry({ id: 'b', state: 'paused' })])).toBe('Iris: 2 waiting or paused');
+    expect(irisAnnouncement([])).toBe('Iris: nothing running');
+
+    const half = entry({ progress: { done: 50, total: 100, unit: 'bytes' } });
+    const most = entry({ progress: { done: 90, total: 100, unit: 'bytes' } });
+    expect(irisAnnouncement([half])).toBe(irisAnnouncement([most]));
   });
 });
 

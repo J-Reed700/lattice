@@ -37,38 +37,3 @@
     animation: none;
   }
 }
-
-/* The split handles between the three columns. The grab area is wider than
-   the line it draws, so the edge is easy to catch. */
-.explorer-split {
-  position: relative;
-  z-index: 1;
-  width: 0;
-  flex: 0 0 auto;
-}
-.explorer-split > div {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -4px;
-  width: 9px;
-  cursor: col-resize;
-  touch-action: none;
-  outline: none;
-}
-.explorer-split > div::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 3px;
-  width: 3px;
-  border-radius: 3px;
-  background: transparent;
-  transition: background-color var(--duration-fast) var(--ease-out);
-}
-.explorer-split > div:hover::after,
-.explorer-split > div:focus-visible::after,
-.explorer-split > div[data-dragging]::after {
-  background: hsl(var(--accent) / 0.75);
-}

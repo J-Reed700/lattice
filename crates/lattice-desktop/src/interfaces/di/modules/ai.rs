@@ -59,6 +59,9 @@ pub struct AIModule {
 
     // Credentials handle echoed from CoreModule for legacy Container API.
     credentials: Arc<dyn CredentialsPort>,
+
+    /// Read-aloud, which finds its voices through `downloaded_models`.
+    speech: Arc<crate::features::speech::engine::KokoroSpeech>,
 }
 
 impl AIModule {
@@ -103,6 +106,11 @@ impl AIModule {
             },
         );
         let ai_tags = crate::features::tags::di::build_ai(db_pool, model_provider);
+        let speech = crate::features::speech::di::build(
+            downloaded_models.clone()
+                as Arc<dyn lattice_core::domain::repositories::DownloadedModelRepository>,
+            Arc::clone(core.background()),
+        );
 
         Ok(Self {
             conversation,
@@ -113,6 +121,7 @@ impl AIModule {
             model_catalog_cache,
             download_manager,
             credentials: core.credentials().clone(),
+            speech,
         })
     }
 
@@ -237,6 +246,10 @@ impl AIModule {
     }
 
     #[allow(dead_code)]
+    pub fn speech(&self) -> &Arc<crate::features::speech::engine::KokoroSpeech> {
+        &self.speech
+    }
+
     pub fn credentials(&self) -> &Arc<dyn CredentialsPort> {
         &self.credentials
     }

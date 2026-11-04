@@ -375,7 +375,8 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     const mainNav = screen.getByRole('tablist', { name: 'Program workspace' });
-    expect(within(mainNav).getAllByRole('tab')).toHaveLength(6);
+    expect(within(mainNav).getAllByRole('tab')).toHaveLength(7);
+    expect(within(mainNav).getByRole('tab', { name: 'Tutor' })).toBeVisible();
     await user.click(within(mainNav).getByRole('tab', { name: 'Practice' }));
     await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
     const lab = screen.getByRole('textbox', { name: 'Lab scratchpad' });

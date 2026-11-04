@@ -29,6 +29,10 @@ Room and token counts come from the server (/props n_ctx, /tokenize) only; HTTP 
 """
 import argparse, collections, copy, json, os, re, sys, time, urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from replay_model import model_of  # noqa: E402
+
 # ---------- copied verbatim from scripts/replay_reading_ab.py ----------
 READ_OLD = ("Before answering, go through every numbered passage above in order and write one line for each: its label, "
             "then the sentences of that passage that bear on my question, copied exactly as written and in the passage's "
@@ -200,6 +204,16 @@ def reading_metrics(lines, noted, fl):
 
 # ---------- server (no timeouts; dry mode stubs /props and /tokenize and never calls the model) ----------
 URL, DRY, N_CTX, DRY_SENT = None, False, None, []
+CLAUDE = None  # scripts/replay_claude.py when the replay runs on Claude
+MODEL = None
+
+
+def running_model():
+    """The model this run is on, asked for once."""
+    global MODEL
+    if MODEL is None:
+        MODEL = "dry run" if DRY else model_of(CLAUDE, URL)
+    return MODEL
 # A server behind an auth header (a remote llama.cpp): the header's name and value from the environment, never
 # from the command line, so the value is in no shell history or process list.
 HEADERS = ({os.environ["LLAMA_AUTH_HEADER_NAME"]: os.environ["LLAMA_AUTH_HEADER_VALUE"]}
@@ -215,11 +229,15 @@ def http_json(path, body=None):
 def tokens(text):
     if DRY:
         return len(text) // 4  # DRY STUB, not a measurement
+    if CLAUDE:
+        return CLAUDE.tokens(text)
     return len(http_json("/tokenize", {"content": text})["tokens"])
 
 
 def n_ctx():
     global N_CTX
+    if CLAUDE:
+        return CLAUDE.WINDOW
     if N_CTX is None:
         N_CTX = http_json("/props")["default_generation_settings"]["n_ctx"]
     return N_CTX
@@ -241,6 +259,8 @@ def call(req, kind, **extra):
     if DRY:
         DRY_SENT.append((kind, r))
         return None
+    if CLAUDE:
+        return CLAUDE.call(r, kind)
     t = time.time()
     resp = json.load(urllib.request.urlopen(urllib.request.Request(
         URL + "/v1/chat/completions", json.dumps(r).encode(), {"Content-Type": "application/json", **HEADERS})))
@@ -256,7 +276,8 @@ def req_record(shown, r, max_tokens=None, measured=None):
     if r is not None:
         u, t = r.get("usage") or {}, r.get("timings") or {}
         out.update(finish=r["finish"], prompt_tokens=u.get("prompt_tokens"), prompt_new=t.get("prompt_n"),
-                   cache_n=t.get("cache_n"), output_tokens=u.get("completion_tokens"), secs=r["secs"])
+                   cache_n=t.get("cache_n"), output_tokens=u.get("completion_tokens"), secs=r["secs"],
+                   reply=r["content"])
     return out
 
 
@@ -538,7 +559,7 @@ def write_round2(ctx, lines, notes_text, noted, arm, seed, dry_answer=None):
 # ---------- loading ----------
 def load_rows(path):
     """Calls rows in order; a growing file's torn last line is dropped."""
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             try:
                 yield json.loads(line)
@@ -661,7 +682,7 @@ def warm(ctx, notes_text, instruction):
 def run_stage1(args, ctxs):
     path = os.path.join(args.out, "stage1.jsonl")
     done = {(r["key"], r["arm"]) for r in read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     for ctx in ctxs:
         recs = []
         live = [a for a in args.arms if (ctx["key"], a) not in done
@@ -682,7 +703,7 @@ def run_stage1(args, ctxs):
                 else:
                     recs.append(stage1_record(ctx, arm, "live", close_read_built(ctx)))
             for r in recs[-1:]:
-                out.write(json.dumps(r) + "\n")
+                out.write(json.dumps({"model": running_model(), **r}) + "\n")
                 out.flush()
         if recs:
             print(ctx["key"], " | ".join(f"{r['arm']}({r['how']}) {r['after']['recall']}/{r['after']['of']} "
@@ -693,7 +714,7 @@ def run_stage2(args, ctxs, notes_arm):
     s1 = {r["key"]: r for r in read_out(os.path.join(args.out, "stage1.jsonl")) if r["arm"] == notes_arm}
     path = os.path.join(args.out, "stage2.jsonl")
     done = {(r["key"], r["notes_arm"], r["arm"], r["seed"]) for r in read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     for ctx in ctxs:
         n = s1.get(ctx["key"])
         if not n:
@@ -710,7 +731,7 @@ def run_stage2(args, ctxs, notes_arm):
                     continue
                 r = write_round2(ctx, lines, n["text"], noted, arm, seed)
                 r["notes_arm"] = notes_arm
-                out.write(json.dumps(r) + "\n")
+                out.write(json.dumps({"model": running_model(), **r}) + "\n")
                 out.flush()
                 res.append(r)
         if res:
@@ -947,12 +968,12 @@ def main():
             summary(args)
         return
     for p in args.rubric:
-        items.update({i["id"]: i for i in json.load(open(p))["items"]})
+        items.update({i["id"]: i for i in json.load(open(p, encoding="utf-8"))["items"]})
     ctxs, tally = load(args)
     if args.dry:
         if not args.recipe:
             sys.exit("--dry needs --recipe for the stub n_ctx")
-        N_CTX = json.load(open(args.recipe))["server"]["expected_ctx"]
+        N_CTX = json.load(open(args.recipe, encoding="utf-8"))["server"]["expected_ctx"]
         dry(args, ctxs, tally)
     elif args.stage == 1:
         run_stage1(args, ctxs)

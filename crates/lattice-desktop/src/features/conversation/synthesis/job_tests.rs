@@ -191,7 +191,7 @@ async fn a_synthesis_stopped_by_a_restart_resumes_at_the_first_part_it_had_not_s
         .unwrap();
     assert!(result
         .synthesis
-        .starts_with("notes on Merge the chunk syntheses"));
+        .starts_with("notes on Below are chunk syntheses of a journal"));
     assert_eq!(result.chunk_count, 2);
     assert_eq!(result.conversation_ids, ["first", "second"]);
     jobs.close();
@@ -290,7 +290,7 @@ async fn notes_too_many_for_one_brief_are_merged_in_levels_first() {
     assert!(answered
         .last()
         .unwrap()
-        .starts_with("Merge the chunk syntheses into one final journal brief"));
+        .starts_with("Below are chunk syntheses of a journal"));
     jobs.close();
     jobs.drain().await;
 }

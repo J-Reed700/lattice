@@ -276,6 +276,7 @@ impl ObservedModel {
         std::fs::write(
             self.directory.join(format!("call-{call}.json")),
             serde_json::to_vec_pretty(&serde_json::json!({
+                "model":self.inner.model_name(),
                 "input":request.input,"answer":response.text,"finishReason":response.finish_reason,
                 "inputTokens":response.input_tokens,"outputTokens":response.output_tokens,
                 "firstTokenLogprobs":response.first_token_logprobs
@@ -381,6 +382,28 @@ impl LLMPort for TimedBackend {
 
 /// The model measures its pace from its first answer, and the page that pace
 /// sizes is a small part of the window.
+/// A saved call is read back long after the run, when nothing else says which
+/// model wrote it.
+#[tokio::test]
+async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
+    use lattice_core::application::ports::llm_port::CompletionInput;
+    let directory = tempfile::tempdir()?;
+    let model = ObservedModel::observing(Arc::new(TimedBackend), directory.path().to_path_buf(), 0);
+    model
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "Check this claim.".into(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("call-0.json"))?)?;
+    assert_eq!(saved["model"], "timed");
+    Ok(())
+}
+
 #[tokio::test]
 async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()> {
     use crate::features::learning::content_verification::page_budget;
@@ -996,10 +1019,9 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         let gguf = std::env::var("LATTICE_LESSON_EMBEDDING").map_err(|_| {
             AppError::InvalidConfig("Hybrid replay needs LATTICE_LESSON_EMBEDDING".into())
         })?;
-        let model = crate::interfaces::di::modules::embedding::standalone::open_gguf(
-            std::path::Path::new(&gguf),
-        )
-        .await?;
+        let model =
+            crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf))
+                .await?;
         Some(
             crate::features::learning::references::course_index::CourseIndexes::new(
                 indexes.into(),

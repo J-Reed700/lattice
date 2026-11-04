@@ -70,6 +70,8 @@ pub enum ModelCategory {
     OCR,
     /// On-device speech-to-text model (whisper family)
     Transcription,
+    /// On-device text-to-speech model (Kokoro)
+    Speech,
 }
 
 impl fmt::Display for ModelCategory {
@@ -79,6 +81,7 @@ impl fmt::Display for ModelCategory {
             ModelCategory::Embedding => write!(f, "Embedding"),
             ModelCategory::OCR => write!(f, "OCR"),
             ModelCategory::Transcription => write!(f, "Transcription"),
+            ModelCategory::Speech => write!(f, "Speech"),
         }
     }
 }
@@ -229,25 +232,9 @@ pub struct SystemCapabilities {
 }
 
 impl SystemCapabilities {
-    /// Calculate usable memory budget in GB for model inference, mirroring frontend computeModelFit.
-    pub fn usable_memory_gb(&self) -> f64 {
-        if matches!(self.gpu_type, GpuType::AppleSilicon)
-            || matches!(self.gpu_acceleration, GpuAcceleration::Metal)
-        {
-            self.total_ram_gb * 0.7
-        } else if !matches!(self.gpu_acceleration, GpuAcceleration::None) {
-            match self.vram_gb {
-                Some(vram) if vram > 0.0 => vram,
-                _ => self.total_ram_gb * 0.7,
-            }
-        } else {
-            self.total_ram_gb * 0.7
-        }
-    }
-
-    /// Check if system has sufficient usable RAM for a model.
+    /// Check if system has sufficient RAM for a model.
     pub fn has_sufficient_ram(&self, required_gb: f64) -> bool {
-        self.usable_memory_gb() >= required_gb
+        self.total_ram_gb >= required_gb
     }
 
     /// Check if system has sufficient disk space for a model.

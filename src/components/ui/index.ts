@@ -26,6 +26,8 @@ export { SearchableSelect } from './SearchableSelect';
 export type { SearchableOption } from './SearchableSelect';
 export { NavigationTabs } from './NavigationTabs';
 export { ResizableColumns } from './ResizableColumns';
+export { SplitHandle } from './SplitHandle';
+export type { SplitHandleProps } from './SplitHandle';
 export { SortableList } from './SortableList';
 export { PairingBoard } from './PairingBoard';
 export { SaveStatus } from './SaveStatus';

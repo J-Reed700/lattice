@@ -54,7 +54,7 @@ belong to their respective adapters, not the sync contracts.
   `bin/*` may reference it. Setup steps with no feature imports
   (directories, database, tracing, tokenizer, the renderer shutdown hook)
   stay in `infrastructure/setup/`.
-- `interfaces/di/container.rs` holds construction and runtime state. 25
+- `interfaces/di/container.rs` holds construction and runtime state. 26
   features expose accessors through an `impl Container` block in their own
   `di.rs` (conversation's is `di/`). batch, cache, compare, corpus_shape,
   daily_notes, download, explorer, huggingface, jobs, learning, qa and
@@ -171,9 +171,9 @@ round); and `journal.synthesis`. The renderer reads all of them through one
 jobs module (`src/features/jobs`: `list_jobs` plus one `jobs://status`
 listener).
 
-The renderer's Activity drawer (`features/activity`, command
-`activity_snapshot`) lists everything running, paused or waiting in one
-place: every job kind, each backend's model requests (the scheduler's
+The renderer's Iris card (`features/iris`, fed by `features/activity` and
+the command `activity_snapshot`) lists everything running, paused or waiting
+in one place: every job kind, each backend's model requests (the scheduler's
 running and queued counts, through `LLMPort::requests`), models and the
 embedding model loading, downloads, the library indexer, outline runs, and
 which index waits behind which in the embed turn order. Each feature
@@ -630,22 +630,35 @@ completed turns and updates the existing ledger and working summary. It uses
 the utility model when configured, otherwise the conversation model. Failure
 leaves the answer and the previous committed memory intact.
 
-`conversation_memory_attributes` attaches explicit conversation, space, or
-personal scope and validity/verification dates to existing item IDs. Nothing is
-shared automatically. Corrections inherit scope unless the user explicitly
-changes it. Deleted source evidence is never replaced with cached quotations.
+Each chat belongs to one memory pool: its project folder, then its course, then
+its space (`repository/memory_pool.rs`). What the user says about themselves
+(facts, preferences, goals) reaches the pool without being asked; a chat reads
+its own items, its pool and personal memory, never another pool.
+`conversation_memory_attributes` attaches an explicit scope (conversation, a
+pool by kind and key, or personal) and validity/verification dates to existing
+item IDs. No scope means the item follows the rule for its kind, and that rule
+is applied at read time: a row marks an item the user wrote or changed, so
+sharing never writes one. Corrections inherit scope unless the user explicitly
+changes it, and a correction or forget from any chat that reads a shared item
+reaches its source. Deleted source evidence is never replaced with cached quotations.
 Forgetting resolves the saved item and records source-span suppression so a
 rebuild cannot recreate the same saved assertion. Original transcript messages
 remain available through conversation history.
 
 The repository resolves mandatory evidence beyond the recent-message window.
-Shared requirements enter the same mandatory token budget; optional facts are
-ranked by lexical overlap and compatible source-message embeddings. Transcript
-recall fuses lexical, exact-identifier and semantic candidates with reciprocal
-rank fusion. Embedding model identity, dimension and live source bytes must
-match. Bounded scans report truncation; no retrieval miss proves absence.
+Only a conversation's own requirements enter the mandatory token budget; what
+reaches it from elsewhere is optional, ranked by lexical overlap and compatible
+source-message embeddings, and joins the prompt only when it shares a word with
+the turn or clears `SHARED_RELEVANCE_FLOOR` in meaning. Transcript recall fuses
+lexical, exact-identifier and semantic candidates with reciprocal rank fusion,
+then keeps a candidate only if it is an exact hit, clears that floor in meaning,
+or holds enough of the turn's weight (`RECALL_RELEVANCE_FLOOR`): the share of the
+turn's rarest words it contains, with rarity counted in that conversation so the
+share reads the same in any of them. Embedding model identity, dimension and live
+source bytes must match. Bounded scans report truncation; no retrieval miss
+proves absence.
 
-`search_saved_knowledge` reads explicitly available memories and optional
+`search_saved_knowledge` reads available memories and optional
 correction history within the turn's shared tool budget. The inspector shows
 scope, provenance, valid dates and the IDs included in the latest answer's
 initial context. User controls use React Query; their writes invalidate both

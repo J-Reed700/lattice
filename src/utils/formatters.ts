@@ -162,7 +162,7 @@ export function indexPercent(embedded: number, total: number): number {
 
 /** Whole percent done, 0–100 with Math.round. Accepts object with done/total or two numbers. */
 export function progressPercent(
-  progressOrDone: { done: number; total: number; [key: string]: any } | number,
+  progressOrDone: { readonly done: number; readonly total: number; readonly [key: string]: unknown } | number,
   total?: number
 ): number {
   const done = typeof progressOrDone === 'number' ? progressOrDone : progressOrDone.done;

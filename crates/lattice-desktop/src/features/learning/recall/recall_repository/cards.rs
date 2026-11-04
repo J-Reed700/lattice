@@ -6,6 +6,15 @@ impl LearningRecallRepository {
         &self,
         req: &SaveLearningRecallCardRequestDto,
     ) -> Result<LearningRecallWorkspaceDto> {
+        self.store_card(req).await?;
+        self.workspace(&req.program_id).await
+    }
+
+    /// [`Self::save_card`] without reading the workspace back.
+    pub(in crate::features::learning) async fn store_card(
+        &self,
+        req: &SaveLearningRecallCardRequestDto,
+    ) -> Result<()> {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.card_id, "card")?;
@@ -29,8 +38,7 @@ impl LearningRecallRepository {
             if card_id != req.card_id {
                 return Err(invalid("Operation replay does not match this card."));
             }
-            tx.commit().await.map_err(db)?;
-            return self.workspace(&req.program_id).await;
+            return tx.commit().await.map_err(db);
         }
         let deck_id = memory_deck(&mut tx, &req.program_id).await?;
         for version_id in &req.source_version_ids {
@@ -193,8 +201,7 @@ impl LearningRecallRepository {
         )
         .await?;
         operation.record(&mut *tx, &req.card_id).await?;
-        tx.commit().await.map_err(db)?;
-        self.workspace(&req.program_id).await
+        tx.commit().await.map_err(db)
     }
 
     pub async fn decide_duplicate(
@@ -240,6 +247,15 @@ impl LearningRecallRepository {
         &self,
         req: &ReviewLearningRecallCardRequestDto,
     ) -> Result<LearningRecallWorkspaceDto> {
+        self.record_card_review(req).await?;
+        self.workspace(&req.program_id).await
+    }
+
+    /// [`Self::review_card`] without reading the workspace back.
+    pub(in crate::features::learning) async fn record_card_review(
+        &self,
+        req: &ReviewLearningRecallCardRequestDto,
+    ) -> Result<()> {
         validate_uuid(&req.review_id, "review")?;
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.card_id, "card")?;
@@ -258,8 +274,7 @@ impl LearningRecallRepository {
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.review_id, &req.program_id, "review", &hash);
         if operation.seen(&mut *tx).await? {
-            tx.commit().await.map_err(db)?;
-            return self.workspace(&req.program_id).await;
+            return tx.commit().await.map_err(db);
         }
         let row = sqlx::query("SELECT c.format,c.options_json,c.correct_index FROM study_cards c JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.id=? AND p.program_id=?")
             .bind(&req.card_id)
@@ -311,8 +326,7 @@ impl LearningRecallRepository {
                 .map_err(db)?;
         }
         operation.record(&mut *tx, &req.review_id).await?;
-        tx.commit().await.map_err(db)?;
-        self.workspace(&req.program_id).await
+        tx.commit().await.map_err(db)
     }
 
     async fn canonical_sources(

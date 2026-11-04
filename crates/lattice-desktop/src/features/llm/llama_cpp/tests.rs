@@ -1439,6 +1439,19 @@ async fn a_remote_server_is_sized_from_its_props_and_counts_tokens_exactly() {
         .await;
     assert!(llm.counts_tokens_exactly());
     assert_eq!(llm.count_tokens_exact("four tokens here").await.unwrap(), 4);
+    assert_eq!(llm.max_context_tokens(), 32768);
+}
+
+#[tokio::test]
+async fn a_remote_server_that_does_not_report_its_window_is_sized_to_the_setting() {
+    let server = MockServer::start().await;
+    let configured = settings(server.uri());
+
+    let llm = LlamaCppLlm::new(&configured)
+        .unwrap()
+        .schedule(&SchedulerRegistry::default())
+        .await;
+    assert_eq!(llm.max_context_tokens(), configured.context_window as usize);
 }
 
 /// The config both a bundled and a remote server can be described by.

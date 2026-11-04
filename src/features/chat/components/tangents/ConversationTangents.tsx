@@ -1,24 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 
 import { ArrowLeft, GitBranch, Loader2, X } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
+import type { ChatPanelProps } from '@/features/chat/components/ChatPanel';
 import { useConversationTangentsQuery, useCreateTangentMutation } from '@/features/chat/hooks/useConversationTangents';
 import { conversationUiStore, useConversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { toast } from '@/stores/toastStore';
-import type { ToolPreferences } from '@/types';
 
+import { TangentDock, TangentExpandButton } from './TangentDock';
 import { TangentPanel } from './TangentPanel';
 import { TangentSelectionContext, type TangentSelectionData } from './TangentSelection';
 
 import './tangents.css';
 
 /** Mounted once in ChatPanel, so Chat and Explorer share the whole feature. */
-export function ConversationTangents({ conversationId, toolPreferences, unavailable, children }: {
+export function ConversationTangents({ conversationId, chat, children }: {
   conversationId: string;
-  toolPreferences: ToolPreferences;
-  unavailable: boolean;
+  /** The chat a tangent opens. ChatPanel hands itself down, so this folder never imports it. */
+  chat: ComponentType<ChatPanelProps>;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -73,18 +74,17 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
           </div>
           {children}
         </div>
-        {open && <aside id={`tangents-${conversationId}`} aria-label="Tangents" className="tangent-sidebar" onKeyDown={(event) => {
-          if (event.key === 'Escape' && !event.defaultPrevented) { event.stopPropagation(); close(); }
-        }}>
+        {open && <TangentDock id={`tangents-${conversationId}`} label="Tangents" onClose={close}>
           <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
             {selected && <IconButton label="All tangents" onClick={() => setSelectedId(null)}><ArrowLeft /></IconButton>}
             <GitBranch className="h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
             <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{selected ? 'Tangent' : 'Tangents'}</h2>
             <CitationVisibilityToggle compact className="h-8 min-h-8 w-8 justify-center px-0" />
+            <TangentExpandButton />
             <IconButton label="Close tangents" onClick={close}><X /></IconButton>
           </header>
-          {selected ? <TangentPanel key={selected.conversationId} tangent={selected} toolPreferences={toolPreferences}
-            unavailable={unavailable} onPromoted={() => { setSelectedId(null); close(); }} /> : (
+          {selected ? <TangentPanel key={selected.conversationId} tangent={selected} chat={chat}
+            onPromoted={() => { setSelectedId(null); close(); }} /> : (
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {tangents.isPending && <p role="status" className="text-sm text-text-muted">Loading tangents…</p>}
               {tangents.isError && <div role="alert" className="text-sm"><p>Couldn’t load tangents.</p><button type="button" className="mt-2 text-accent" onClick={() => void tangents.refetch()}>Try again</button></div>}
@@ -100,7 +100,7 @@ export function ConversationTangents({ conversationId, toolPreferences, unavaila
               </button>)}</div>
             </div>
           )}
-        </aside>}
+        </TangentDock>}
       </div>
     </TangentSelectionContext.Provider>
   );

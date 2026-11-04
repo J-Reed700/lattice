@@ -2,6 +2,7 @@
 use super::prepare::PreparedTurn;
 use super::*;
 use lattice_core::application::ports::llm_port::{chars_within_tokens, DEFAULT_CHARS_PER_TOKEN};
+use lattice_core::application::ports::turn_source::SourcePassage;
 use lattice_core::application::services::context_assembler::{EvidenceBudget, EvidenceShare};
 
 /// Attachments, the attached pictures and the Explorer folder block, already
@@ -9,7 +10,10 @@ use lattice_core::application::services::context_assembler::{EvidenceBudget, Evi
 pub(super) struct CarriedMaterial {
     pub(super) attachments: TurnAttachments,
     pub(super) pictures: super::pictures::CarriedPictures,
-    pub(super) explorer_context: Option<String>,
+    pub(super) source_context: Option<String>,
+    /// What the source found for the question. Numbered and fitted with the
+    /// library's passages, so charged with them rather than here.
+    pub(super) source_passages: Vec<SourcePassage>,
     pub(super) attachment_names: Vec<String>,
     pub(super) attachment_ids: Vec<String>,
 }
@@ -54,12 +58,12 @@ pub(super) async fn carry_material(
     // carries what it finds for the question, which is how a model without
     // tool calling gets past the open file. A closed-book turn searches
     // nothing, the folder's index included.
-    let explorer_context = match &turn.explorer {
-        Some(explorer) => Some(
-            explorer
+    let source_context = match &turn.source {
+        Some(source) => Some(
+            source
                 .context_block(
                     chars_within_tokens(
-                        evidence.allowance(EvidenceShare::FOLDER),
+                        evidence.allowance(EvidenceShare::BOUND_SOURCE),
                         DEFAULT_CHARS_PER_TOKEN,
                     ),
                     turn.llm.supports_tool_calling() && !flags.closed_book,
@@ -70,10 +74,24 @@ pub(super) async fn carry_material(
         None => None,
     };
     evidence.charge(
-        explorer_context
+        source_context
             .as_deref()
             .map_or(0, |text| turn.llm.count_tokens(text)),
     );
+    let source_passages = match turn.source.as_ref().filter(|_| !flags.closed_book) {
+        Some(source) => {
+            source
+                .passages(
+                    &turn.message,
+                    chars_within_tokens(
+                        evidence.allowance(EvidenceShare::BOUND_SOURCE),
+                        DEFAULT_CHARS_PER_TOKEN,
+                    ),
+                )
+                .await
+        }
+        None => Vec::new(),
+    };
 
     if !attachments.is_empty() {
         let carried = attachments.carried_count();
@@ -101,7 +119,8 @@ pub(super) async fn carry_material(
     CarriedMaterial {
         attachments,
         pictures,
-        explorer_context,
+        source_context,
+        source_passages,
         attachment_names,
         attachment_ids,
     }

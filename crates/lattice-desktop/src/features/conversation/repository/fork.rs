@@ -46,12 +46,15 @@ impl ConversationRepository {
             system_prompt: Option<String>,
             space_id: String,
             explorer_root: Option<String>,
+            program_id: Option<String>,
+            lesson_id: Option<String>,
             tangent_parent_id: Option<String>,
         }
 
         let source = sqlx::query_as::<_, SourceConversationRow>(
             r#"
-            SELECT model_choice, system_prompt, space_id, explorer_root, tangent_parent_id
+            SELECT model_choice, system_prompt, space_id, explorer_root, program_id, lesson_id,
+                   tangent_parent_id
             FROM conversations
             WHERE id = ?
             "#,
@@ -147,11 +150,11 @@ impl ConversationRepository {
         sqlx::query(
             r#"
             INSERT INTO conversations
-                (id, title, model_choice, system_prompt, space_id, explorer_root,
-                 created_at, updated_at, message_count, total_tokens,
+                (id, title, model_choice, system_prompt, space_id, explorer_root, program_id,
+                 lesson_id, created_at, updated_at, message_count, total_tokens,
                  forked_from_conversation_id, forked_from_message_id,
                  tangent_parent_id, tangent_selection, tangent_context_message_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(new_id)
@@ -160,8 +163,11 @@ impl ConversationRepository {
         .bind(&source.system_prompt)
         .bind(&source.space_id)
         // A branch of an Explorer thread reads the same folder; without it the
-        // branch would surface in Chat with nothing to look at.
+        // branch would surface in Chat with nothing to look at. A tutor chat's
+        // branch teaches from the same course.
         .bind(&source.explorer_root)
+        .bind(&source.program_id)
+        .bind(&source.lesson_id)
         .bind(&now)
         .bind(&now)
         .bind(conversation_id)
@@ -265,9 +271,10 @@ impl ConversationRepository {
         let inserted = sqlx::query(
             r#"
             INSERT INTO conversations
-                (id, title, model_choice, system_prompt, space_id, explorer_root,
-                 created_at, updated_at, message_count, total_tokens)
-            SELECT ?, ?, model_choice, system_prompt, space_id, explorer_root, ?, ?, 0, 0
+                (id, title, model_choice, system_prompt, space_id, explorer_root, program_id,
+                 lesson_id, created_at, updated_at, message_count, total_tokens)
+            SELECT ?, ?, model_choice, system_prompt, space_id, explorer_root, program_id,
+                   lesson_id, ?, ?, 0, 0
             FROM conversations
             WHERE id = ?
             "#,

@@ -599,3 +599,148 @@ fn catalog_geometries_send_what_the_pinned_server_keeps() {
     );
     assert_eq!(gemma.min_tokens(), 72);
 }
+
+#[test]
+fn the_speech_entries_pin_every_file_and_every_english_voice() {
+    let models = get_curated_models_by_category(ModelCategory::Speech);
+    let ids: Vec<&str> = models.iter().map(|model| model.id.as_str()).collect();
+    assert_eq!(ids, [SPEECH_MODEL_ID, SPEECH_VOICE_PACK_ID]);
+    for model in &models {
+        assert_eq!(
+            get_model_category_by_id(&model.id),
+            Some(ModelCategory::Speech)
+        );
+        assert_eq!(model.license, "Apache-2.0");
+        for file in &model.files {
+            assert!(file.size_bytes > 0, "{} has no size", file.filename);
+            let digest = file.checksum.as_deref().unwrap_or_default();
+            assert_eq!(digest.len(), 64, "{} has no sha256", file.filename);
+            assert!(
+                file.url.starts_with("https://huggingface.co/"),
+                "{}",
+                file.url
+            );
+            assert!(
+                !file.url.contains("/resolve/main/"),
+                "{} is not pinned to a revision",
+                file.url
+            );
+        }
+        assert_eq!(
+            model.total_size_bytes,
+            model.files.iter().map(|f| f.size_bytes).sum::<u64>()
+        );
+    }
+
+    let files_of = |id: &str| -> Vec<&str> {
+        models
+            .iter()
+            .filter(|model| model.id == id)
+            .flat_map(|model| model.files.iter().map(|f| f.filename.as_str()))
+            .collect()
+    };
+    for required in [SPEECH_CONFIG_FILE, SPEECH_WEIGHTS_FILE] {
+        assert!(files_of(SPEECH_MODEL_ID).contains(&required));
+    }
+    for accent in [SpeechAccent::American, SpeechAccent::British] {
+        let reader = accent.reader_files();
+        for required in [
+            reader.gold,
+            reader.silver,
+            reader.g2p_config,
+            reader.g2p_weights,
+        ] {
+            assert!(
+                files_of(accent.model_id()).contains(&required),
+                "missing {required}"
+            );
+        }
+    }
+
+    // `VOICES.md` lists American English 11F 9M and British English 4F 4M.
+    let count = |accent, gender| {
+        SPEECH_VOICES
+            .iter()
+            .filter(|v| v.accent() == accent && v.gender() == gender)
+            .count()
+    };
+    assert_eq!(count(SpeechAccent::American, SpeechGender::Female), 11);
+    assert_eq!(count(SpeechAccent::American, SpeechGender::Male), 9);
+    assert_eq!(count(SpeechAccent::British, SpeechGender::Female), 4);
+    assert_eq!(count(SpeechAccent::British, SpeechGender::Male), 4);
+    let pinned: std::collections::HashSet<&str> = SPEECH_VOICES.iter().map(|v| v.sha256).collect();
+    assert_eq!(pinned.len(), SPEECH_VOICES.len());
+    for voice in SPEECH_VOICES {
+        let file = speech_voice_file(voice.id);
+        assert!(
+            files_of(voice.model_id()).contains(&file.as_str()),
+            "missing {}",
+            voice.id
+        );
+        assert_eq!(voice.sha256.len(), 64, "{}", voice.id);
+        assert_eq!(
+            find_speech_voice(voice.id).map(|found| found.id),
+            Some(voice.id)
+        );
+    }
+    assert!(find_speech_voice(DEFAULT_SPEECH_VOICE).is_some());
+    assert!(find_speech_voice("jf_alpha").is_none());
+}
+
+#[test]
+fn the_first_speech_download_stays_as_installs_have_it() {
+    let model = get_curated_speech_models()
+        .into_iter()
+        .find(|model| model.id == "kokoro-82m-british")
+        .expect("the entry installs already have");
+    let files: Vec<(&str, u64, &str)> = model
+        .files
+        .iter()
+        .map(|f| {
+            let digest = f.checksum.as_deref().unwrap_or_default();
+            (
+                f.filename.as_str(),
+                f.size_bytes,
+                digest.get(..8).unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        files,
+        [
+            ("kokoro-v1_0.json", 2_351, "5abb01e2"),
+            ("kokoro-v1_0.pth", 327_212_226, "496dba11"),
+            ("misaki-gb_gold.json", 2_841_062, "090cdecb"),
+            ("misaki-gb_silver.json", 3_677_750, "cb8655f5"),
+            ("misaki-g2p-gb.json", 1_246, "e4f248e6"),
+            ("misaki-g2p-gb.safetensors", 3_011_692, "4994f474"),
+            ("voice-bf_emma.bin", 522_240, "669fe064"),
+            ("voice-bf_isabella.bin", 522_240, "3754352c"),
+            ("voice-bf_alice.bin", 522_240, "08afa6ba"),
+            ("voice-bf_lily.bin", 522_240, "5e0ee32e"),
+        ]
+    );
+    assert_eq!(model.total_size_bytes, 338_835_287);
+}
+
+#[test]
+fn speech_voices_run_best_graded_first_within_each_accent() {
+    let rank = |grade: &str| {
+        ["A", "A-", "B-", "C+", "C", "C-", "D+", "D", "D-", "F+"]
+            .iter()
+            .position(|known| *known == grade)
+            .expect("a grade from VOICES.md")
+    };
+    for accent in [SpeechAccent::American, SpeechAccent::British] {
+        let ranks: Vec<usize> = SPEECH_VOICES
+            .iter()
+            .filter(|voice| voice.accent() == accent)
+            .map(|voice| rank(voice.grade))
+            .collect();
+        assert!(ranks.is_sorted(), "{accent:?}: {ranks:?}");
+    }
+    let first_american = SPEECH_VOICES
+        .iter()
+        .position(|voice| voice.accent() == SpeechAccent::American);
+    assert_eq!(first_american, Some(8), "British voices come first");
+}

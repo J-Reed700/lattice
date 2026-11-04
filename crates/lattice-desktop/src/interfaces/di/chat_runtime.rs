@@ -3,6 +3,7 @@ use crate::features::conversation::chat::ports::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::explorer::prompt::ExplorerTurn as FolderTurn;
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
+use crate::features::learning::tutor::CourseTurn;
 use crate::interfaces::di::Container;
 use async_trait::async_trait;
 use lattice_core::application::contracts::explorer::ExplorerFocusDto;
@@ -113,19 +114,30 @@ impl ChatStorage for Container {
             ),
         )
     }
-    async fn explorer_turn(
+    async fn turn_source(
         &self,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
-    ) -> Option<ExplorerTurn> {
-        FolderTurn::resolve(
+    ) -> Option<TurnSource> {
+        let folder = FolderTurn::resolve(
             self.db_pool(),
             self.folder_index().map(Arc::as_ref),
             conversation_id,
             focus,
         )
+        .await;
+        if let Some(folder) = folder {
+            return Some(Arc::new(folder));
+        }
+        let container = self.clone();
+        CourseTurn::resolve(
+            self.db_pool(),
+            self.course_indexes().cloned(),
+            conversation_id,
+            Arc::new(move || container.sync_workspace_notes_to_vault()),
+        )
         .await
-        .map(|turn| Arc::new(turn) as ExplorerTurn)
+        .map(|turn| Arc::new(turn) as TurnSource)
     }
 }
 

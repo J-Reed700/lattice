@@ -1325,6 +1325,18 @@ async listLearningTangents(request: ListLearningTangentsRequestDto) : Promise<Re
 }
 },
 /**
+ * Makes a conversation a tutor chat of a course, on one of its lessons when it
+ * was opened from one.
+ */
+async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_conversation_course", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Download a model by ID
  *
  * Thin wrapper over `download_model_impl`, the shared model-setup command.
@@ -1863,7 +1875,7 @@ async batchSearch(queries: string[], limit: number | null, searchMode: string | 
 }
 },
 /**
- * Report whether reranking is switched on and whether its model is present.
+ * Report whether the reranker's model is present, and so whether search reranks.
  */
 async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
@@ -1874,7 +1886,7 @@ async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
 }
 },
 /**
- * Download the reranker artifacts. Does not switch reranking on.
+ * Download the reranker's model, after which search reranks.
  */
 async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
@@ -3568,6 +3580,18 @@ async listCloudModels(provider: CloudProvider) : Promise<Result<CloudModelCatalo
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * What `model`'s provider reports it can take: the top of its window and
+ * output settings. Empty for a limit its provider does not state.
+ */
+async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_model_limits", { model }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
@@ -3901,9 +3925,33 @@ async transcribeFile(path: string) : Promise<Result<TranscriptDto, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async transcribeSpeech(pcm: string) : Promise<Result<TranscribedSpeechDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|transcribe_speech", { pcm }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getTranscriptionStatus() : Promise<Result<TranscriptionStatusDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|get_transcription_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getSpeechStatus() : Promise<Result<SpeechStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:speech|get_speech_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async synthesizeSpeech(text: string, voice: string, speed: number) : Promise<Result<SpeechClipDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:speech|synthesize_speech", { text, voice, speed }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5296,6 +5344,15 @@ forkedFromMessageId: string | null;
  */
 explorerRoot: string | null;
 /**
+ * The course a tutor chat teaches from. Set only on tutor chats, which
+ * live in the course's Tutor tab; Chat leaves them out of its list.
+ */
+programId: string | null;
+/**
+ * The lesson a tutor chat was opened from, when it was.
+ */
+lessonId: string | null;
+/**
  * Present while this transcript lives in its parent's Tangents panel.
  */
 tangentParentId: string | null }
@@ -6564,6 +6621,10 @@ action: string; itemId: string | null;
 text: string | null; scope: string | null; kind: string | null; validFrom: string | null; validUntil: string | null; offset: number | null }
 export type KnowledgeResponseDto = { items: KnowledgeItemDto[]; hasMore: boolean;
 /**
+ * What this chat's pool is: `space`, `folder` or `course`.
+ */
+pool: string;
+/**
  * Items supplied in the initial context of the latest completed answer.
  */
 lastAnswerMemoryIds: string[] }
@@ -6658,11 +6719,13 @@ thinkingOverride: ThinkingOverrideDto;
  */
 thinkingSampling: SamplingProfileDto;
 /**
- * Maximum tokens to generate
+ * Maximum tokens to generate, for a model nothing more is known about: a
+ * connected model's own limits come first (`model_windows`).
  */
 maxTokens: number;
 /**
- * Context window size
+ * The window a connected model runs at until one is chosen for it
+ * (`model_windows`), held to what its provider reports.
  */
 contextWindow: number;
 /**
@@ -6687,6 +6750,11 @@ localModelConfigs: { [key in string]: LocalModelConfigDto };
  * provider's documented default; any other model without one cannot see.
  */
 visionDeclarations: { [key in string]: VisionDeclarationDto };
+/**
+ * The window and output ceiling chosen for a connected model, keyed by
+ * `ModelRef::to_string()`.
+ */
+modelWindows: { [key in string]: ModelWindowDto };
 /**
  * Speculative decoding for the bundled local server. Experimental, and
  * applied only to a model that carries a multi-token-prediction head;
@@ -8051,7 +8119,11 @@ export type ListBatchJobsResponseDto = {
  * List of batch job summaries (newest first)
  */
 jobs: BatchJobSummaryDto[] }
-export type ListConversationsExplorerQueryDto = { spaceId: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
+export type ListConversationsExplorerQueryDto = { spaceId: string | null;
+/**
+ * Only the tutor chats of this course.
+ */
+programId?: string | null; query: string | null; savedOnly: boolean | null; bookmarkedOnly: boolean | null; pinnedOnly: boolean | null; hasMessageBookmarks: boolean | null; includeArchived: boolean | null; limit: number | null; offset: number | null }
 /**
  * Query parameters for listing conversations.
  */
@@ -8216,7 +8288,11 @@ export type ModelCategoryDto =
 /**
  * On-device speech-to-text model
  */
-"Transcription"
+"Transcription" |
+/**
+ * On-device text-to-speech model
+ */
+"Speech"
 /**
  * Model file metadata DTO for frontend.
  */
@@ -8442,6 +8518,12 @@ export type ModelSourceDto =
  * External API (Hugging Face)
  */
 "External"
+/**
+ * A model's context window and output ceiling, in tokens. As a choice, an
+ * empty field follows the provider; as a report, it is a limit the provider
+ * does not state.
+ */
+export type ModelWindowDto = { contextWindow: number | null; maxOutputTokens: number | null }
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
 export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
@@ -8694,25 +8776,13 @@ claimId: string }
 export type RequestFactsDto = { promptTokensExact: number | null; promptTokensEstimated: number | null; windowTokens: number; outputReserved: number; serverKind: string; serverMessageSanitized: string | null; attempts: number; step: string }
 export type RequestLearningTutorResponseRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; requestKind: LearningTutorRequestKind; prompt: string; hintLevel: LearningPracticeHintLevel | null }
 /**
- * Whether reranking is switched on, and whether it could run if it were.
- *
- * Both are needed to describe the state honestly: on-but-missing and
- * off-but-installed are different situations with different next steps.
+ * Whether the reranker is on disk, and so whether search reranks.
  */
 export type RerankerStatusDto = {
 /**
- * Every artifact the reranker needs is on disk.
+ * The reranker's model is on disk, so search reranks with it.
  */
-installed: boolean;
-/**
- * The user's `search.enableReranking` setting.
- */
-enabled: boolean;
-/**
- * True only when reranking will actually happen. This is the field a UI
- * should believe; the other two explain why.
- */
-active: boolean; modelName: string; downloadBytes: number }
+installed: boolean; modelName: string; downloadBytes: number }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
 export type ResearchAttemptDto = { queries: string[]; sourcesAdded: SourceRefDto[]; passagesFound: number; at: number }
 /**
@@ -9170,10 +9240,6 @@ maxResults: number;
  */
 similarityThreshold: number;
 /**
- * Enable result reranking
- */
-enableReranking: boolean;
-/**
  * Hybrid search alpha parameter (0.0 = vector, 1.0 = keyword)
  */
 hybridSearchAlpha: number;
@@ -9202,6 +9268,11 @@ export type SetArchivePassphraseRequestDto = {
  * `None` removes the passphrase slot; the recovery code always remains.
  */
 passphrase?: string | null }
+export type SetConversationCourseRequestDto = { conversationId: string; programId: string;
+/**
+ * The lesson the chat was opened from, when it was.
+ */
+lessonId: string | null }
 export type SetConversationStateRequestDto = { conversationId: string; value: boolean }
 /**
  * Pins or unpins an entry in one journal; the conversation's own pin in the
@@ -9472,6 +9543,70 @@ export type SpeculativeDecodingDto = { mode: "off" } |
  * that carry one can use it; the server then runs a single slot.
  */
 { mode: "mtpDraft"; nMax: number }
+/**
+ * The English a voice speaks.
+ */
+export type SpeechAccentDto = "american" | "british"
+/**
+ * Speech for one piece of text.
+ */
+export type SpeechClipDto = { sampleRate: number;
+/**
+ * Mono 16-bit little-endian PCM, base64.
+ */
+pcm: string; durationMs: number }
+/**
+ * How a voice's speaker is described in Kokoro's voice list.
+ */
+export type SpeechGenderDto = "female" | "male"
+/**
+ * Whether read-aloud can speak now, and what downloading it involves.
+ */
+export type SpeechStatusDto = {
+/**
+ * True when the voice model is downloaded and complete.
+ */
+modelReady: boolean;
+/**
+ * The catalog id to download.
+ */
+modelId: string; modelName: string;
+/**
+ * Total bytes of the download.
+ */
+downloadBytes: number; license: string; voicePack: SpeechVoicePackDto; voices: SpeechVoiceDto[]; defaultVoice: string }
+/**
+ * One of the voices Kokoro can speak in.
+ */
+export type SpeechVoiceDto = {
+/**
+ * Kokoro's voice id, e.g. `bf_emma`.
+ */
+id: string; name: string; accent: SpeechAccentDto; gender: SpeechGenderDto;
+/**
+ * hexgrad's overall grade for the voice's training data, `A` to `F+`.
+ */
+grade: string;
+/**
+ * True when everything this voice needs is on disk.
+ */
+downloaded: boolean }
+/**
+ * The second download: the voices and accents the first one leaves out.
+ */
+export type SpeechVoicePackDto = {
+/**
+ * True when the pack is downloaded and complete.
+ */
+ready: boolean;
+/**
+ * The catalog id to download.
+ */
+modelId: string; modelName: string;
+/**
+ * Total bytes of the download.
+ */
+downloadBytes: number }
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
@@ -9847,6 +9982,22 @@ focusDocumentIds?: string[] | null;
  */
 explorerFocus?: ExplorerFocusDto | null }
 /**
+ * What was said in a recording made in the app.
+ */
+export type TranscribedSpeechDto = {
+/**
+ * The words, empty when the recording was not speech.
+ */
+text: string;
+/**
+ * Language tag reported by the model.
+ */
+language: string;
+/**
+ * Length of the recording.
+ */
+durationMs: number }
+/**
  * The transcript of one audio file.
  */
 export type TranscriptDto = {
@@ -9897,7 +10048,11 @@ modelReady: boolean;
 /**
  * Display name of the model that would be used.
  */
-modelName: string | null }
+modelName: string | null;
+/**
+ * What to download for a voice conversation.
+ */
+voiceModel: VoiceModelDto }
 export type TruncateConversationAfterRequestDto = { conversationId: string; messageId: string;
 /**
  * When true, `message_id` itself is deleted as well. Defaults to false.
@@ -10231,6 +10386,26 @@ export type VisionProjectorDownloadDto = {
  * when the whole projector is already on disk.
  */
 downloadId: string | null }
+/**
+ * The transcription model offered for a voice conversation.
+ */
+export type VoiceModelDto = {
+/**
+ * Catalog id, to start the download with.
+ */
+modelId: string;
+/**
+ * Display name.
+ */
+modelName: string;
+/**
+ * Size of the download.
+ */
+downloadBytes: number;
+/**
+ * Licence of the weights.
+ */
+license: string }
 /**
  * The course's waiting claims checked against a source the user added
  * (UI design §5.3): the held lessons' open claims the source mentions.

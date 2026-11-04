@@ -1,8 +1,6 @@
 import { type FC, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
-import { openExternalUrl } from '@/utils/openExternalUrl';
-import { isHttpUrl } from '@/utils/sourcePreview';
 
 import { useApi } from '@/contexts/ApiContext';
 import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/features/reading';
@@ -35,12 +33,15 @@ import type {
   PassageMatchTier,
   SourceWithMetadata,
 } from '@/types/conversation';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 import { sanitizeFileName } from '@/utils/sanitize';
 import {
   getSourceExternalUrl,
   getSourcePreviewKind,
   getWebArchiveHtmlPath,
+  isCourseSource,
+  isHttpUrl,
 } from '@/utils/sourcePreview';
 
 
@@ -382,7 +383,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       isFileLarge={isFileLarge}
       maxPreviewSize={MAX_PREVIEW_SIZE}
       isLoading={isLoading || isResolvingPreviewPath}
-      content={content}
+      content={isCourseSource(source) ? source.content : content}
       error={error}
       savedCitationText={savedCitationText}
       previewFilePath={previewFilePath}
@@ -495,7 +496,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       />}
 
       {/* Footer */}
-      <SourceReaderFooter
+      {!isCourseSource(source) && <SourceReaderFooter
         canShowInFolder={canShowInFolder}
         onShowInFolder={handleAsyncEvent(handleShowInFolder)}
         platformRevealLabel={platformRevealLabel}
@@ -505,7 +506,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
         onImportUrl={handleAsyncEvent(handleImportSourceUrl)}
         primaryActionLabel={primaryActionLabel}
         onOpenPrimary={handleAsyncEvent(handleOpenPrimary)}
-      />
+      />}
       {captureDraft !== null && (
         <JournalCapturePreview content={captureDraft} onClose={() => setCaptureDraft(null)}
           onOpenNote={(noteId) => { setCaptureDraft(null); onClose(); navigate(`/journals?noteId=${encodeURIComponent(noteId)}`); }} />

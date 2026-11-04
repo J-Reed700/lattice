@@ -51,6 +51,9 @@ impl SearchModule {
         core: Arc<CoreModule>,
         model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
         embedding_starter: Arc<dyn EmbeddingServerStarter>,
+        rerank_starter: Arc<
+            dyn crate::features::search::engine::llama_reranker::RerankServerStarter,
+        >,
     ) -> lattice_core::shared::error::Result<Self> {
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
         let models_path = core.data_dir().join("models");
@@ -72,6 +75,7 @@ impl SearchModule {
             active_dim,
             compression,
             vector_space(active.as_ref(), facts.as_ref(), &embedding_starter),
+            rerank_starter,
             Arc::clone(core.background()),
         )
         .await?;
@@ -95,6 +99,11 @@ impl SearchModule {
 
     pub fn hybrid_search_use_case(&self) -> &Arc<HybridSearchUseCase> {
         &self.search.hybrid_search_use_case
+    }
+
+    /// The reranker the hybrid search orders its shortlist with.
+    pub fn reranker(&self) -> &Arc<crate::features::search::engine::llama_reranker::LlamaReranker> {
+        &self.search.reranker
     }
 
     pub fn search_service(&self) -> &Arc<dyn SearchServiceTrait> {
@@ -292,8 +301,8 @@ mod index_identity_tests {
     use super::{active_facts, index_identity, vector_space};
     use crate::features::embedding::llama_cpp::{
         EmbeddingHeader, EmbeddingLaunch, EmbeddingServerStarter, LlamaEmbeddingService,
-        RunningEmbeddingServer,
     };
+    use crate::infrastructure::llama_server::RunningLlamaServer;
     use async_trait::async_trait;
     use lattice_core::application::ports::EmbeddingPort;
     use lattice_core::domain::models::downloaded::{
@@ -338,8 +347,8 @@ mod index_identity_tests {
         async fn accelerated(&self) -> bool {
             false
         }
-        async fn start(&self, _: &EmbeddingLaunch) -> Result<Arc<RunningEmbeddingServer>> {
-            Ok(Arc::new(RunningEmbeddingServer::new(
+        async fn start(&self, _: &EmbeddingLaunch) -> Result<Arc<RunningLlamaServer>> {
+            Ok(Arc::new(RunningLlamaServer::new(
                 "http://127.0.0.1:9",
                 "key",
                 None,

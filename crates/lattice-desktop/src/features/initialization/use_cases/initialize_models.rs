@@ -109,10 +109,6 @@ mod tests {
             self.model_path.clone()
         }
 
-        fn get_reranker_tokenizer_path(&self) -> PathBuf {
-            self.model_path.with_extension("json")
-        }
-
         fn cancel_download(&self) {}
 
         fn get_download_progress(&self) -> Option<f32> {

@@ -134,31 +134,47 @@ fn split_passage(passage: EvidencePassage, max_chars: usize) -> Vec<EvidencePass
     pieces
 }
 
-fn notes_task(title: &str, index: usize, total: usize) -> String {
-    [
-        format!(
-            "Below is part {} of {} of the conversation \"{}\".",
-            index, total, title
-        ),
-        "Write dense bullet notes of what this part establishes: facts and figures, sources it names, decisions and their reasons, and questions left open.".to_string(),
-        "Use only this part. Keep concrete values. No preamble.".to_string(),
-    ]
-    .join("\n")
+/// A summarizing call's words: what the material is, said before it, and what
+/// to write from it, said after it, so the model reads its job last rather
+/// than the conversation's last message.
+struct Prompt {
+    task: String,
+    closing: String,
 }
 
-fn handoff_task(title: &str, from_notes: bool) -> String {
-    let what = if from_notes {
-        "the notes below, taken from the conversation part by part"
+fn notes_task(title: &str, index: usize, total: usize) -> Prompt {
+    Prompt {
+        task: format!("Below is part {index} of {total} of the conversation \"{title}\"."),
+        closing: [
+            "Now write dense bullet notes of what this part establishes: facts and figures, sources it names, decisions and their reasons, and questions left open.",
+            "Use only this part. Keep concrete values. No preamble.",
+        ]
+        .join("\n"),
+    }
+}
+
+fn handoff_task(title: &str, from_notes: bool) -> Prompt {
+    let (material, source) = if from_notes {
+        (
+            format!("Below are notes taken part by part from the conversation \"{title}\". You will write a handoff note from them"),
+            "the notes above",
+        )
     } else {
-        "the conversation transcript below"
+        (
+            format!("Below is the transcript of the conversation \"{title}\". You will write a handoff note from it"),
+            "the conversation transcript above",
+        )
     };
+    Prompt {
+        task: format!("{material} so a new conversation can pick up where it left off."),
+        closing: handoff_rules(source),
+    }
+}
+
+fn handoff_rules(source: &str) -> String {
     [
-        format!(
-            "Write a handoff note for the conversation \"{}\" so a new conversation can pick up where it left off.",
-            title
-        ),
-        "The note will be the new conversation's only memory of this one.".to_string(),
-        format!("Use only {}. Do not add anything it does not say.", what),
+        "Now write the handoff note for the conversation above. The note will be the new conversation's only memory of this one.".to_string(),
+        format!("Use only {source}. Do not add anything it does not say."),
         "Output markdown with exactly these sections:".to_string(),
         "## Where things stand".to_string(),
         "## Established".to_string(),
@@ -171,6 +187,7 @@ fn handoff_task(title: &str, from_notes: bool) -> String {
         "- Open threads: unanswered questions and next steps.".to_string(),
         "- If a section has nothing, write `None.`".to_string(),
         "- No preamble, no closing remarks. Stay under 450 words.".to_string(),
+        "- Its last message may be a question nobody has answered yet. Do not answer it: put it under Open threads.".to_string(),
     ]
     .join("\n")
 }
@@ -236,16 +253,16 @@ const CALL_MAX_OUTPUT_TOKENS: usize = 2_048;
 /// what was forgotten. Every call and every room estimate is built here, so the
 /// rule is counted wherever the transcript is planned.
 fn summary_request(
-    task: String,
+    prompt: Prompt,
     forgotten: &Forgotten,
     evidence: Vec<EvidencePassage>,
     conversation_id: &str,
 ) -> GroundedRequest {
-    let task = match forgotten.rule() {
-        Some(rule) => format!("{task}\n\n{rule}"),
-        None => task,
+    let mut request = GroundedRequest::new(SYSTEM, prompt.task);
+    request.closing = match forgotten.rule() {
+        Some(rule) => format!("{}\n\n{rule}", prompt.closing),
+        None => prompt.closing,
     };
-    let mut request = GroundedRequest::new(SYSTEM, task);
     request.evidence = evidence;
     request.selection = EvidenceSelection::All;
     request.output_tokens = CALL_MAX_OUTPUT_TOKENS;
@@ -643,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn the_handoff_prompt_names_every_section() {
+    fn the_handoff_rules_come_after_the_transcript_and_name_every_section() {
         let prompt = handoff_task("Tomatoes", false);
         for section in [
             "## Where things stand",
@@ -651,10 +668,26 @@ mod tests {
             "## Decisions",
             "## Open threads",
         ] {
-            assert!(prompt.contains(section), "missing {section}");
+            assert!(prompt.closing.contains(section), "missing {section}");
+            assert!(
+                !prompt.task.contains(section),
+                "{section} before the transcript"
+            );
         }
-        assert!(prompt.contains("transcript"));
-        assert!(handoff_task("Tomatoes", true).contains("notes below"));
+        assert!(prompt.task.starts_with("Below is the transcript"));
+        assert!(prompt.closing.starts_with("Now write the handoff note"));
+        assert!(prompt.closing.contains("the conversation transcript above"));
+        let from_notes = handoff_task("Tomatoes", true);
+        assert!(from_notes.task.starts_with("Below are notes"));
+        assert!(from_notes.closing.contains("the notes above"));
+        assert!(notes_task("Tomatoes", 1, 2)
+            .closing
+            .starts_with("Now write dense bullet notes"));
+
+        let request = summary_request(prompt, &Forgotten::default(), Vec::new(), "conv-a");
+        assert!(request
+            .closing
+            .ends_with("Do not answer it: put it under Open threads."));
     }
 
     /// A forget holds in the note: the span is cut out of the transcript, and
@@ -701,9 +734,12 @@ mod tests {
         );
 
         let request = summary_request(handoff_task("Lab", false), &forgotten, Vec::new(), "conv-a");
-        assert!(request.task.starts_with(&handoff_task("Lab", false)));
-        assert!(request.task.contains("asked memory to forget"));
-        assert!(request.task.ends_with("\n- Locker code is 4471"));
+        assert_eq!(request.task, handoff_task("Lab", false).task);
+        assert!(request
+            .closing
+            .starts_with(&handoff_task("Lab", false).closing));
+        assert!(request.closing.contains("asked memory to forget"));
+        assert!(request.closing.ends_with("\n- Locker code is 4471"));
 
         let plain = summary_request(
             handoff_task("Lab", false),
@@ -711,6 +747,6 @@ mod tests {
             Vec::new(),
             "conv-a",
         );
-        assert_eq!(plain.task, handoff_task("Lab", false));
+        assert_eq!(plain.closing, handoff_task("Lab", false).closing);
     }
 }

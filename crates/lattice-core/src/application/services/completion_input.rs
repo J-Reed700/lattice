@@ -53,6 +53,14 @@ pub async fn complete_text(
     Ok(response.text)
 }
 
+/// Whether a "Role: content" context entry is the conversation's system
+/// prompt rather than one of its turns.
+pub fn is_system_entry(entry: &str) -> bool {
+    entry
+        .split_once(':')
+        .is_some_and(|(role, _)| role.trim().eq_ignore_ascii_case("system"))
+}
+
 /// Explicit context instructions already reflect conversation > space > global
 /// precedence. Use the default only when context supplies no system instruction.
 /// Keep history roles intact and combine supplemental instructions at the front.

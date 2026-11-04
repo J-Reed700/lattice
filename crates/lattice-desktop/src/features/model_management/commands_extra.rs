@@ -224,7 +224,7 @@ impl DownloadedModelResponse {
 /// Called by gateway - async dispatch.
 pub async fn get_models_with_metadata_typed(
     container: &Container,
-) -> Result<Vec<DownloadedModelResponse>, String> {
+) -> Result<Vec<DownloadedModelResponse>, AppError> {
     info!("Command: get_models_with_metadata - ENTRY");
 
     let repository = container.downloaded_models();
@@ -256,15 +256,13 @@ pub async fn get_models_with_metadata_typed(
         }
         Err(e) => {
             error!(error = %e, "Failed to get downloaded models");
-            Err(e.to_string())
+            Err(e)
         }
     }
 }
 
 pub async fn get_models_with_metadata_impl(container: &Container) -> Result<String, AppError> {
-    let models = get_models_with_metadata_typed(container)
-        .await
-        .map_err(AppError::Other)?;
+    let models = get_models_with_metadata_typed(container).await?;
     serde_json::to_string(&models)
         .map_err(|e| AppError::Serialization(format!("Failed to serialize models: {}", e)))
 }

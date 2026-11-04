@@ -209,6 +209,8 @@ export interface SetConversationStateRequest {
 }
 
 export interface ListConversationsExplorerQuery {
+  /** Only the tutor chats of this course. */
+  programId?: string;
   spaceId?: string;
   query?: string;
   savedOnly?: boolean;

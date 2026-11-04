@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { deferred } from '@/tests/deferred';
 
-import { ACTIVITY_REFRESH_EVENTS, useActivitySnapshot } from './api';
+import { ACTIVITY_REFRESH_EVENTS, activityKeys, useActivitySnapshot } from './api';
 
 const events = vi.hoisted(() => ({
   handlers: new Map<string, () => void>(),
@@ -32,8 +32,7 @@ vi.mock('@/features/jobs/api', () => ({
   },
 }));
 
-function setup() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function setup(client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   return renderHook(() => useActivitySnapshot(), { wrapper });
 }
@@ -56,6 +55,17 @@ describe('useActivitySnapshot', () => {
     expect(events.invoke).toHaveBeenCalledWith('plugin:activity|activity_snapshot', {});
     expect(result.current.failed).toBe(false);
     expect(result.current.readAt).toBeGreaterThan(0);
+  });
+
+  it('reads again on mount over a snapshot cached while nothing was listening', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(activityKeys.snapshot, snapshot(1));
+    events.invoke.mockResolvedValue(snapshot(2));
+
+    const { result } = setup(client);
+
+    expect(result.current.snapshot).toEqual(snapshot(1));
+    await waitFor(() => expect(result.current.snapshot).toEqual(snapshot(2)));
   });
 
   it('reads again after each event that may move it, including job status', async () => {

@@ -112,7 +112,8 @@ pub(super) fn render_prompt(
     let CarriedMaterial {
         attachments,
         pictures,
-        explorer_context,
+        source_context,
+        source_passages,
         attachment_names,
         attachment_ids,
     } = carried;
@@ -121,6 +122,7 @@ pub(super) fn render_prompt(
         prior_left_out,
         mut retrieval,
     } = retrieved;
+    retrieval.lead_with(source_passages);
     let llm = &turn.llm;
 
     // An attachment is in the prompt whole, so its search passages would be a
@@ -290,7 +292,7 @@ pub(super) fn render_prompt(
         prompt_settings: turn.prompt_settings.clone(),
         question: turn.message.clone(),
         is_greeting: retrieval.interpretation.query_type == QueryType::Greeting,
-        explorer: turn.explorer.is_some(),
+        source: turn.source.as_ref().map(|source| source.policy()),
         flags,
         deep_research_searches: searches_again.then(|| retrieval.web_queries.clone()),
         web_search_error: retrieval.web_search_error.clone(),
@@ -299,7 +301,7 @@ pub(super) fn render_prompt(
         sufficiency: retrieval.sufficiency.clone(),
     })
     .with_attachments(attachment_context, attachment_citations)
-    .with_folder(explorer_context)
+    .with_source(source_context)
     .with_prior_evidence(prior_evidence_context, prior_citations)
     .with_followup(followup_context_text, followup_citations)
     .with_library(library)
@@ -418,8 +420,8 @@ pub(super) async fn plan_request(
     let tool_prep_start = Instant::now();
     let tools = select_tools(container, turn, flags, tool_preferences, prompt);
     metrics.tool_prep_ms = elapsed_ms(tool_prep_start);
-    let system_policy = with_picture_guidance(&turn.system_prompt, &tools);
-    let plain_system_prompt = with_picture_guidance(&turn.prompt_settings.system_prompt, &tools);
+    let system_policy = with_tool_guidance(&turn.system_prompt, &tools);
+    let plain_system_prompt = with_tool_guidance(&turn.prompt_settings.system_prompt, &tools);
 
     // Enabled memory must account for unprocessed history before generation,
     // including conversations that have no extracted ledger yet.
@@ -568,7 +570,7 @@ pub(super) fn grounded_tool_tokens(
     container: &dyn ChatRuntime,
     llm: &Arc<dyn LLMPort>,
     custom_tools: &[CustomToolSettingsDto],
-    explorer: Option<&ExplorerTurn>,
+    source: Option<&TurnSource>,
     flags: SearchFlags,
     tool_preferences: Option<&ToolPreferences>,
 ) -> usize {
@@ -576,7 +578,7 @@ pub(super) fn grounded_tool_tokens(
         container,
         llm,
         custom_tools,
-        explorer,
+        source,
         flags,
         tool_preferences,
         Grounding {
@@ -587,12 +589,8 @@ pub(super) fn grounded_tool_tokens(
     if tools.is_empty() {
         0
     } else {
-        let guidance = if offers_pictures(&tools) {
-            llm.count_tokens(PICTURE_GUIDANCE)
-        } else {
-            0
-        };
-        llm.count_tokens(&tool_loop::tool_schema_text(&tools)) + guidance
+        llm.count_tokens(&tool_loop::tool_schema_text(&tools))
+            + llm.count_tokens(&tool_guidance(&tools))
     }
 }
 
@@ -603,18 +601,30 @@ const PICTURE_GUIDANCE: &str = "\nA picture helps when the reader would otherwis
     concrete thing. Get one only with find_image and paste its `markdown` line as its own paragraph, \
     unchanged; never write an image address of your own, and do not add a citation to the picture line.";
 
-fn offers_pictures(tools: &[ToolDefinition]) -> bool {
-    tools.iter().any(|tool| tool.name == "find_image")
+/// When to search memory, sent on every turn that can. What memory holds for
+/// the turn is already in the prompt, and a tool call is a whole extra round.
+const SAVED_KNOWLEDGE_GUIDANCE: &str =
+    "\nUse search_saved_knowledge only for something from before \
+    that is not already in front of you.";
+
+/// What the tools a turn offers need said about them, the line that comes with
+/// nearly every turn first, so the picture guidance never moves it.
+fn tool_guidance(tools: &[ToolDefinition]) -> String {
+    let offers = |name: &str| tools.iter().any(|tool| tool.name == name);
+    let mut guidance = String::new();
+    if offers(history_tools::TOOL_SEARCH_SAVED_KNOWLEDGE) {
+        guidance.push_str(SAVED_KNOWLEDGE_GUIDANCE);
+    }
+    if offers("find_image") {
+        guidance.push_str(PICTURE_GUIDANCE);
+    }
+    guidance
 }
 
-/// The turn's standing instructions, with the picture guidance when the turn
-/// can fetch pictures. Charged with the tool schemas by `grounded_tool_tokens`.
-pub(super) fn with_picture_guidance(system_prompt: &str, tools: &[ToolDefinition]) -> String {
-    if offers_pictures(tools) {
-        format!("{system_prompt}{PICTURE_GUIDANCE}")
-    } else {
-        system_prompt.to_string()
-    }
+/// The turn's standing instructions, with the guidance for the tools it offers.
+/// Charged with the tool schemas by `grounded_tool_tokens`.
+pub(super) fn with_tool_guidance(system_prompt: &str, tools: &[ToolDefinition]) -> String {
+    format!("{system_prompt}{}", tool_guidance(tools))
 }
 
 /// What the prompt carries, as far as the choice of tools goes.
@@ -639,7 +649,7 @@ fn select_tools(
         container,
         &turn.llm,
         &turn.settings.llm.custom_tools,
-        turn.explorer.as_ref(),
+        turn.source.as_ref(),
         flags,
         tool_preferences,
         grounding,
@@ -673,7 +683,7 @@ pub(super) fn offered_tools(
     container: &dyn ChatRuntime,
     llm: &Arc<dyn LLMPort>,
     custom_tools: &[CustomToolSettingsDto],
-    explorer: Option<&ExplorerTurn>,
+    source: Option<&TurnSource>,
     flags: SearchFlags,
     tool_preferences: Option<&ToolPreferences>,
     grounding: Grounding,
@@ -710,15 +720,16 @@ pub(super) fn offered_tools(
         history_tools::tools_for_turn(selected_tools, flags.closed_book, supports_tools);
     // An Explorer turn searches the library only when the user turns it on
     // (`classify_turn`); reading a document the message names stays open.
-    if explorer.is_some() && !flags.force_kb_search {
+    if source.is_some_and(|source| !source.policy().offers_library_tools) && !flags.force_kb_search
+    {
         turn_tools.retain(|tool| !LIBRARY_TOOL_NAMES.contains(&tool.name.as_str()));
     }
     // The folder tools ride on top of whichever branch was chosen above, the
     // way history access does: a turn grounded in library passages may still
     // need to open the file the question is about. A closed-book turn reads
     // nothing outside its message, the folder included.
-    if let Some(explorer) = explorer.filter(|_| supports_tools && !flags.closed_book) {
-        explorer.add_tools(&mut turn_tools);
+    if let Some(source) = source.filter(|_| supports_tools && !flags.closed_book) {
+        source.add_tools(&mut turn_tools);
     }
     turn_tools
 }

@@ -187,6 +187,9 @@ pub struct RemoveConversationSpaceMemberRequestDto {
 #[serde(rename_all = "camelCase")]
 pub struct ListConversationsExplorerQueryDto {
     pub space_id: Option<String>,
+    /// Only the tutor chats of this course.
+    #[serde(default)]
+    pub program_id: Option<String>,
     pub query: Option<String>,
     pub saved_only: Option<bool>,
     pub bookmarked_only: Option<bool>,

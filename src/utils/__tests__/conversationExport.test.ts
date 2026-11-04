@@ -242,6 +242,11 @@ describe('vaultDocumentIds', () => {
     expect(isWebSource(webPage)).toBe(true);
     expect(vaultDocumentIds([source(), webPage])).toEqual(['doc-halvorsen']);
   });
+
+  it('leaves a course\'s passages out too: no file stands behind them', () => {
+    const passage = source({ documentId: 'course:version-1', filePath: '', category: 'Course source' });
+    expect(vaultDocumentIds([source(), passage])).toEqual(['doc-halvorsen']);
+  });
 });
 
 describe('answerToMarkdown', () => {
@@ -304,6 +309,15 @@ describe('claimToMarkdown', () => {
   it('says a lexical match was never read for meaning', () => {
     const markdown = claimToMarkdown({ ...backed, method: 'lexical' }, citationMap, { capturedAt: AT });
     expect(markdown).toContain('matched on shared wording, not read for meaning');
+  });
+
+  it('says a missing quotation was looked for, not read', () => {
+    const markdown = claimToMarkdown(
+      { ...backed, verdict: 'unsupported', method: 'quote', evidenceQuote: null },
+      citationMap,
+      { capturedAt: AT },
+    );
+    expect(markdown).toContain('Not found in the cited passage — the quoted words were looked for in it.');
   });
 
   it('does not export a low-confidence check as a missing citation', () => {

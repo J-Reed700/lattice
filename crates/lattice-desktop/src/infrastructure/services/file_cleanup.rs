@@ -152,6 +152,7 @@ impl FileCleanupService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::testing::links;
     use std::fs;
     use tempfile::TempDir;
 
@@ -267,41 +268,21 @@ mod tests {
 
         fs::write(&real_file, "test").unwrap();
 
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(&real_file, &link_file).unwrap();
-
-            let service = FileCleanupService::new();
-            let result = service.delete_file(&link_file).await;
-
-            assert!(result.is_err());
-            assert!(matches!(
-                result,
-                Err(FileCleanupError::ValidationFailed(
-                    PathValidationError::SymlinkAttack { .. }
-                ))
-            ));
-
-            assert!(real_file.exists());
+        if !links::link_file(&real_file, &link_file).unwrap() {
+            return;
         }
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::symlink_file;
-            if symlink_file(&real_file, &link_file).is_ok() {
-                let service = FileCleanupService::new();
-                let result = service.delete_file(&link_file).await;
+        let service = FileCleanupService::new();
+        let result = service.delete_file(&link_file).await;
 
-                assert!(result.is_err());
-                assert!(matches!(
-                    result,
-                    Err(FileCleanupError::ValidationFailed(
-                        PathValidationError::SymlinkAttack { .. }
-                    ))
-                ));
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(FileCleanupError::ValidationFailed(
+                PathValidationError::SymlinkAttack { .. }
+            ))
+        ));
 
-                assert!(real_file.exists());
-            }
-        }
+        assert!(real_file.exists());
     }
 }

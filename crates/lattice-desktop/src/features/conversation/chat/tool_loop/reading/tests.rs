@@ -56,7 +56,7 @@ fn message(labels: &[u32]) -> String {
         .map(|label| format!("[{label}] Document: d{label}.md\nContent: …"))
         .collect::<Vec<_>>()
         .join("\n\n");
-    format!("{passages}\n\nQuestion: What happened?\n\nAnswer:\n\n{READING_INSTRUCTION}")
+    format!("{passages}\n\nQuestion: What happened?\n\n{READING_INSTRUCTION}")
 }
 
 fn planned(labels: &[u32]) -> CompletionRequest {
@@ -174,10 +174,17 @@ fn reply_nothing() -> CompletionResponse {
     reply("", "stop")
 }
 
+fn notes_of(reading: Reading) -> Option<Notes> {
+    match reading {
+        Reading::Noted(notes) => Some(notes),
+        Reading::NothingBears | Reading::NoNotes => None,
+    }
+}
+
 async fn read(model: &Model, request: &CompletionRequest) -> Option<Notes> {
     let recorder = TurnRecorder::silent("conversation", "request");
     let clock = TurnClock::new(Duration::from_secs(60), Duration::ZERO);
-    read_passages(
+    let reading = read_passages(
         model,
         request,
         &passages(),
@@ -186,7 +193,8 @@ async fn read(model: &Model, request: &CompletionRequest) -> Option<Notes> {
         &clock,
     )
     .await
-    .expect("only Stop and the deadline are errors")
+    .expect("only Stop and the deadline are errors");
+    notes_of(reading)
 }
 
 #[test]
@@ -348,6 +356,29 @@ fn a_numbered_list_of_labels_is_read_by_its_labels() {
     );
 }
 
+/// Labels set out as a list or in bold, as some models write them, are still
+/// labels.
+#[test]
+fn a_label_in_a_list_item_or_in_bold_is_read() {
+    assert_eq!(
+        parse_notes(
+            "- [3] The bell was cast in 1702.\n**[4]** -\n**[5]:** The tower fell.\n* [6] -\n__7.__ The mill closed."
+        ),
+        vec![
+            (3, Some("The bell was cast in 1702.".into())),
+            (4, None),
+            (5, Some("The tower fell.".into())),
+            (6, None),
+            (7, Some("The mill closed.".into())),
+        ]
+    );
+    assert_eq!(
+        parse_notes("[8] *The Mill* was sold."),
+        vec![(8, Some("*The Mill* was sold.".into()))],
+        "emphasis inside the note is the note's own"
+    );
+}
+
 #[test]
 fn only_the_labels_the_message_shows_are_read() {
     let mut planned = planned(&[1, 2]);
@@ -359,7 +390,9 @@ fn only_the_labels_the_message_shows_are_read() {
         "a message without the instruction asks for no reading"
     );
     assert!(!planned.input[1].text().contains(READING_INSTRUCTION));
-    assert!(planned.input[1].text().ends_with("Answer:"));
+    assert!(planned.input[1]
+        .text()
+        .ends_with("Question: What happened?"));
 }
 
 #[test]
@@ -397,7 +430,9 @@ async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
         reading.input[1].text(),
         format!(
             "{passages_and_question}{}",
-            GROUP_INSTRUCTION.replace("{passages}", &shown)
+            GROUP_INSTRUCTION
+                .replace("{passages}", &shown)
+                .replace("{last}", "4")
         ),
         "the message to its question, then the group shown again in place of the reading instruction"
     );
@@ -532,6 +567,11 @@ fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
         },
     ];
     assert!(noted_in(&read));
+    let searching = vec![CompletionInput::Message {
+        role: "user".into(),
+        content: SEARCH_OR_WRITE_INSTRUCTION.into(),
+    }];
+    assert!(noted_in(&searching));
     let unread = vec![CompletionInput::ToolResult {
         id: "1".into(),
         output: "Results.".into(),
@@ -540,10 +580,45 @@ fn a_resumed_turn_knows_its_saved_rounds_hold_the_reading() {
 }
 
 #[tokio::test]
-async fn a_reading_with_no_label_in_it_gives_no_notes() {
+async fn a_reading_with_no_label_in_it_is_shown_back_once_then_gives_no_notes() {
     let model = Model::new([reply("The mill closed in 1887.", "stop")]);
     assert!(read(&model, &planned(&[1, 2, 3, 4])).await.is_none());
-    assert_eq!(model.requests().len(), 1);
+    let sent = model.requests();
+    assert_eq!(sent.len(), 2, "the reading and one more ask");
+    assert_eq!(
+        sent[1].input[sent[1].input.len() - 2].text(),
+        "The mill closed in 1887.",
+        "the reply is shown back as the model's own message"
+    );
+    assert_eq!(
+        sent[1].input.last().unwrap().text(),
+        "You did not account for [1], [2], [3], [4]. Write one line for each of them, in the same form."
+    );
+}
+
+#[tokio::test]
+async fn a_reading_that_answered_instead_gets_its_lines_when_asked_once_more() {
+    let model = Model::new([
+        reply("The last miller retired in 1887.", "stop"),
+        reply(
+            "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -\n[4] -",
+            "stop",
+        ),
+    ]);
+    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    assert_eq!(notes.noted, [2].into());
+    assert_eq!(model.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn an_answer_written_after_the_lines_does_not_replace_them() {
+    let model = Model::new([reply(
+        "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.\n[3] -\n[4] -\n\nThe record shows:\n1. The mill was rebuilt.\n2. The miller retired.",
+        "stop",
+    )]);
+    let notes = read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    assert_eq!(notes.noted, [2].into(), "{:?}", notes.lines);
+    assert_eq!(notes.lines.get(&1), Some(&None));
 }
 
 #[tokio::test]
@@ -559,6 +634,65 @@ async fn a_reading_that_copies_no_passage_gives_no_notes() {
         read(&model, &planned(&[1, 2, 3, 4])).await.is_none(),
         "a paraphrase is no copy"
     );
+}
+
+async fn reading_of(reply_text: &str) -> Reading {
+    let model = Model::new([reply(reply_text, "stop"), reply("", "stop")]);
+    let recorder = TurnRecorder::silent("conversation", "request");
+    let clock = TurnClock::new(Duration::from_secs(60), Duration::ZERO);
+    read_passages(
+        &model,
+        &planned(&[1, 2, 3, 4]),
+        &passages(),
+        &recorder,
+        &CancellationToken::new(),
+        &clock,
+    )
+    .await
+    .expect("only Stop and the deadline are errors")
+}
+
+#[tokio::test]
+async fn only_a_hyphen_for_every_passage_means_that_nothing_bears() {
+    assert!(matches!(
+        reading_of("[1] -\n[2] -\n[3] -\n[4] -").await,
+        Reading::NothingBears
+    ));
+    assert!(
+        matches!(
+            reading_of("[1] -\n[2] The last miller retired in December 1887.\n[3] -\n[4] -").await,
+            Reading::NoNotes
+        ),
+        "a paraphrase says something bears on it"
+    );
+    assert!(
+        matches!(reading_of("[1] -\n[2] -").await, Reading::NoNotes),
+        "two passages were never read"
+    );
+}
+
+#[test]
+fn a_search_takes_the_readings_place_only_in_a_round_that_can_search() {
+    let mut closed = planned(&[1]);
+    closed.tools.clear();
+    search_instead(&mut closed);
+    assert!(closed
+        .input
+        .last()
+        .unwrap()
+        .text()
+        .contains(READING_INSTRUCTION));
+
+    let mut open = planned(&[1]);
+    open.tools = vec![ToolDefinition {
+        name: "semantic_search".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    }];
+    search_instead(&mut open);
+    let message = open.input.last().unwrap().text();
+    assert!(!message.contains(READING_INSTRUCTION));
+    assert!(message.ends_with(NOTHING_BEARS_INSTRUCTION));
 }
 
 #[tokio::test]
@@ -602,7 +736,7 @@ async fn notes_are_replayed_one_line_per_label_however_they_were_written() {
 }
 
 #[tokio::test]
-async fn a_reading_and_its_sweeps_stop_at_the_first_label_not_shown() {
+async fn a_reading_and_its_sweeps_stop_at_a_line_for_the_first_label_not_shown() {
     let model = Model::new([
         reply(
             "[1] -\n[2] 1887-12-21. The last miller at Greassby Mill retired, and the building was let as a store.",
@@ -614,7 +748,7 @@ async fn a_reading_and_its_sweeps_stop_at_the_first_label_not_shown() {
     let sent = model.requests();
     assert_eq!(sent.len(), 2, "a reading and one sweep");
     for request in &sent {
-        assert_eq!(request.stop, ["[5]", "\n5."]);
+        assert_eq!(request.stop, ["\n[5]", "\n5."]);
     }
 }
 
@@ -643,14 +777,45 @@ async fn the_writing_round_is_the_reading_round_with_the_notes_and_the_instructi
         &writing.input[request.input.len()],
         CompletionInput::Message { role, content } if role == "assistant" && content == "[1] -\n[2] -"
     ));
-    assert_eq!(writing.input.last().unwrap().text(), WRITE_INSTRUCTION);
+    assert_eq!(
+        writing.input.last().unwrap().text(),
+        SEARCH_OR_WRITE_INSTRUCTION
+    );
+}
+
+/// A round that can search is told to, for what the passages leave open: a
+/// shortlist reaches further by searching again. One that cannot is told to
+/// answer, or it would promise a search it cannot make.
+#[tokio::test]
+async fn only_a_round_with_tools_is_told_to_search_for_what_is_missing() {
+    let notes = Notes {
+        text: "[1] -".into(),
+        lines: BTreeMap::from([(1, None)]),
+        noted: BTreeSet::new(),
+        tokens: 3,
+    };
+    let mut closed = planned(&[1]);
+    closed.tools.clear();
+    assert!(append_notes(&Model::new([]), &mut closed, &notes).await);
+    assert_eq!(closed.input.last().unwrap().text(), WRITE_INSTRUCTION);
+
+    let mut open = planned(&[1]);
+    open.tools = vec![ToolDefinition {
+        name: "semantic_search".into(),
+        description: String::new(),
+        parameters: serde_json::json!({}),
+    }];
+    assert!(append_notes(&Model::new([]), &mut open, &notes).await);
+    let instruction = open.input.last().unwrap().text();
+    assert_eq!(instruction, SEARCH_OR_WRITE_INSTRUCTION);
+    assert!(instruction.starts_with("If the passages leave any part of my question unanswered"));
 }
 
 #[test]
 fn the_writing_round_asks_for_the_answer_in_the_passages_own_words() {
     assert_eq!(
         WRITE_INSTRUCTION,
-        "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question."
+        "Now answer my question directly, in the passages' own words, keeping their dates, figures and names as given. Cover every passage your notes quote and cite each with its label. Do not describe the notes or the passages, and say nothing about passages that do not bear on my question. Write in the language of my question, translating any passage in another."
     );
 }
 
@@ -664,7 +829,24 @@ fn a_continuation_quotes_each_left_out_note() {
     };
     assert_eq!(
         continue_instruction(&[6, 7].into(), &notes),
-        "Your answer does not use these passages, which your notes quote as bearing on my question: [6] \"A.\" [7] \"B.\". Continue your answer with what each of them says, in the same form as above, citing each with its label; do not repeat what you have written. If one of those notes was mistaken, write nothing for it."
+        "Your answer does not use these passages, which your notes quote as bearing on my question: [6] \"A.\" [7] \"B.\". Add only what my question still needs from them, continuing your answer in its own form and citing each with its label; do not repeat what you have written. If your answer already covers my question, reply with a single hyphen. Do not mention your notes or correct them."
+    );
+}
+
+#[test]
+fn a_continuation_that_says_its_quotes_back_adds_nothing() {
+    let notes = Notes {
+        text: String::new(),
+        lines: BTreeMap::from([(6, Some("A.".into())), (7, Some("B.".into()))]),
+        noted: [6, 7].into(),
+        tokens: 4,
+    };
+    let left = [6, 7].into();
+    assert_eq!(passages_added("[6] \"A.\" [7] \"B.\"", &left, &notes), 0);
+    assert_eq!(passages_added("[6] \"A.\"\n[7] \"B.\"", &left, &notes), 0);
+    assert_eq!(
+        passages_added("Both still apply: A [6], B [7].", &left, &notes),
+        2
     );
 }
 

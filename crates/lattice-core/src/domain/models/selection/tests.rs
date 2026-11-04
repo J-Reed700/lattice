@@ -141,50 +141,12 @@ fn test_model_recommendation_ranking() {
 fn test_system_capabilities_helpers() {
     let capabilities = create_test_capabilities();
 
-    assert_eq!(capabilities.usable_memory_gb(), 16.0 * 0.7);
     assert!(capabilities.has_sufficient_ram(4.0));
-    assert!(capabilities.has_sufficient_ram(11.0)); // 11.2 GB usable IS sufficient for 11.0 GB required
-    assert!(!capabilities.has_sufficient_ram(12.0)); // But NOT sufficient for 12.0 GB (11.2 GB usable)
+    assert!(capabilities.has_sufficient_ram(16.0)); // 16 GB total IS sufficient for 16 GB required
+    assert!(!capabilities.has_sufficient_ram(20.0)); // But NOT sufficient for 20 GB
     assert!(capabilities.has_sufficient_disk(50.0));
     assert!(capabilities.has_gpu_acceleration());
     assert_eq!(capabilities.effective_ram_gb(), 16.0);
-}
-
-#[test]
-fn test_usable_memory_discrete_gpu() {
-    let mut capabilities = create_test_capabilities();
-    capabilities.gpu_type = GpuType::Nvidia;
-    capabilities.gpu_acceleration = GpuAcceleration::CUDA;
-    capabilities.vram_gb = Some(8.0);
-    capabilities.total_ram_gb = 32.0;
-
-    assert_eq!(capabilities.usable_memory_gb(), 8.0);
-    assert!(capabilities.has_sufficient_ram(8.0));
-    assert!(!capabilities.has_sufficient_ram(10.0));
-}
-
-#[test]
-fn test_usable_memory_cpu_only() {
-    let mut capabilities = create_test_capabilities();
-    capabilities.gpu_type = GpuType::None;
-    capabilities.gpu_acceleration = GpuAcceleration::None;
-    capabilities.vram_gb = None;
-    capabilities.total_ram_gb = 16.0;
-
-    assert_eq!(capabilities.usable_memory_gb(), 11.2);
-    assert!(capabilities.has_sufficient_ram(8.0));
-    assert!(!capabilities.has_sufficient_ram(12.0));
-}
-
-#[test]
-fn test_score_ram_compatibility() {
-    let scorer = CompatibilityScorer::new();
-    let capabilities = create_test_capabilities();
-    let model = create_test_model();
-
-    let (score, rec) = scorer.score_ram_compatibility(&model, &capabilities);
-    assert_eq!(score, 100.0);
-    assert!(rec.is_none());
 }
 
 #[test]

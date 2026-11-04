@@ -1085,6 +1085,12 @@ export async function installLearningStudioBackend(page: Page) {
       initialize_database: () => "Database initialized",
       list_downloaded_models: () => [],
       list_loaded_models: () => [],
+      get_speech_status: () => ({
+        modelReady: false, modelId: "kokoro-82m-british", modelName: "Kokoro 82M", downloadBytes: 0, license: "Apache-2.0",
+        voicePack: { ready: false, modelId: "kokoro-82m-more-voices", modelName: "Kokoro 82M: more voices", downloadBytes: 0 },
+        voices: [{ id: "bf_emma", name: "Emma", accent: "british", gender: "female", grade: "B-", downloaded: false }],
+        defaultVoice: "bf_emma",
+      }),
       last_learning_window_shortfall: () => null,
       // Every course in the fixture is indexed, so no evidence action waits.
       course_index_status: () => ({ state: "ready", mode: "hybrid" }),
@@ -1143,6 +1149,7 @@ export async function installLearningStudioBackend(page: Page) {
       list_learning_programs: () => [program.summary],
       // No journey opens a tangent from a lesson, so every program lists none.
       list_learning_tangents: (): LearningTangentDto[] => [],
+      set_conversation_course: (): null => null,
       get_learning_program: () => program,
       get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {

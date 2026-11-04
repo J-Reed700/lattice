@@ -478,3 +478,204 @@ async fn test_index_file_with_chunking() {
     // embedder splits into 1000 / 100 windows.
     assert_eq!(response.chunks_created, 10);
 }
+
+#[tokio::test]
+async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_during_copy() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    struct MutatingContentStorage;
+
+    #[async_trait]
+    impl ContentAddressedStoragePort for MutatingContentStorage {
+        async fn import_file(&self, source_path: &Path) -> Result<ImportedBlob> {
+            let hash = "b".repeat(64);
+            Ok(ImportedBlob {
+                path: source_path.to_path_buf(),
+                lease: lattice_core::application::ports::BlobLease::detached(&hash),
+                hash,
+            })
+        }
+
+        async fn exists_by_hash(&self, _hash: &str) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn get_path_by_hash(&self, _hash: &str) -> Result<Option<std::path::PathBuf>> {
+            Ok(None)
+        }
+
+        fn owns(&self, _path: &Path) -> bool {
+            false
+        }
+
+        async fn list_hashes(&self) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn remove_if_unreferenced(
+            &self,
+            _hash: &str,
+            _refs: &dyn lattice_core::application::ports::BlobReferenceCheck,
+        ) -> Result<lattice_core::application::ports::BlobRemoval> {
+            Ok(lattice_core::application::ports::BlobRemoval::Retained(
+                lattice_core::application::ports::RetainReason::Missing,
+            ))
+        }
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("watched.txt");
+    fs::write(&file_path, "Watched content").unwrap();
+
+    let use_case = IndexFileUseCase::new(
+        Arc::new(MutatingContentStorage),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(MockEmbedder),
+        Arc::new(MockDocumentRepo),
+        Arc::new(MockEmbeddingRepo),
+        Arc::new(MockUnitOfWorkFactory),
+    );
+
+    let outcome = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: file_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap();
+
+    let PrepareForIndexingOutcome::Prepared(prepared) = outcome else {
+        panic!("expected Prepared outcome");
+    };
+    assert_eq!(prepared.document.checksum().as_str(), &"b".repeat(64));
+}
+
+#[tokio::test]
+async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_fake_code_sections()
+{
+    use std::fs;
+    use tempfile::TempDir;
+
+    struct TokenizerCountEmbedder {
+        token_count: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingPort for TokenizerCountEmbedder {
+        async fn embed_single(&self, _text: &str) -> Result<Vec<f32>> {
+            Ok(vec![0.1, 0.2, 0.3])
+        }
+
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
+        }
+
+        fn split_text(
+            &self,
+            passage: &str,
+            _prefix: &str,
+        ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>>
+        {
+            Ok(vec![
+                lattice_core::application::ports::embedding_port::EmbeddingTextChunk {
+                    start: 0,
+                    end: passage.len(),
+                    text: passage.to_string(),
+                    token_count: self.token_count,
+                },
+            ])
+        }
+
+        fn dimension(&self) -> usize {
+            3
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let use_case = IndexFileUseCase::new(
+        Arc::new(MockContentStorage),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(TokenizerCountEmbedder { token_count: 14 }),
+        Arc::new(MockDocumentRepo),
+        Arc::new(MockEmbeddingRepo),
+        Arc::new(MockUnitOfWorkFactory),
+    );
+
+    // 1. C code with #include must not get a fake section label "include <stdio.h>"
+    let c_path = temp_dir.path().join("main.c");
+    fs::write(
+        &c_path,
+        "#include <stdio.h>\nint main(void) { return 0; }\n",
+    )
+    .unwrap();
+    let PrepareForIndexingOutcome::Prepared(c_prepared) = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: c_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected Prepared outcome for C file");
+    };
+    assert_eq!(c_prepared.document.chunks()[0].section(), None);
+    assert!(c_prepared.document.chunks()[0].has_code());
+
+    // 2. YAML file keeps has_code == true and canonical mime_type
+    let yaml_path = temp_dir.path().join("config.yaml");
+    fs::write(&yaml_path, "server:\n  host: localhost\n  port: 8080\n").unwrap();
+    let PrepareForIndexingOutcome::Prepared(yaml_prepared) = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: yaml_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected Prepared outcome for YAML file");
+    };
+    assert_eq!(yaml_prepared.document.mime_type(), "text/x-yaml");
+    assert!(yaml_prepared.document.chunks()[0].has_code());
+
+    // 3. CJK text with no spaces keeps the tokenizer's token_count (14, not 1)
+    let cjk_path = temp_dir.path().join("notes.txt");
+    fs::write(&cjk_path, "人工智能正在改变软件工程的未来").unwrap();
+    let PrepareForIndexingOutcome::Prepared(cjk_prepared) = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: cjk_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected Prepared outcome for CJK file");
+    };
+    assert_eq!(cjk_prepared.document.chunks()[0].token_count(), 14);
+}

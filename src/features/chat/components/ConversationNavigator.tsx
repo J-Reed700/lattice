@@ -36,6 +36,8 @@ function preview(message: NavigableMessage): string {
   return text.length > 96 ? `${text.slice(0, 96)}…` : text;
 }
 
+const ROW_HEIGHT = 60;
+
 /** Small, fixed-height rows keep even a very long outline cheap to open. */
 function Checkpoints({ messages, activeIndex, getKey, onNavigate, id }: Omit<ConversationNavigatorProps, 'onLatest'> & { id: string }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -44,13 +46,19 @@ function Checkpoints({ messages, activeIndex, getKey, onNavigate, id }: Omit<Con
     count: messages.length,
     getScrollElement: () => scrollRef.current,
     getItemKey,
-    estimateSize: () => 60,
+    estimateSize: () => ROW_HEIGHT,
     overscan: 3,
   });
 
+  // One scroll, not scrollToIndex: its later checks would take back a scroll the reader makes in the meantime.
   useEffect(() => {
-    virtualizer.scrollToIndex(activeIndex, { align: 'auto' });
-  }, [activeIndex, virtualizer]);
+    const list = scrollRef.current;
+    if (!list) return;
+    const top = activeIndex * ROW_HEIGHT;
+    const bottom = top + ROW_HEIGHT;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }, [activeIndex]);
 
   return (
     <div id={id} ref={scrollRef} className="conversation-checkpoints" aria-label="Message checkpoints">

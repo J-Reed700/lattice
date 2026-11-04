@@ -82,7 +82,7 @@ pub async fn clear_active_embedding_model_impl(container: &Container) -> Result<
 /// Called by gateway - async dispatch.
 pub async fn get_active_chat_model_typed(
     container: &Container,
-) -> Result<Option<DownloadedModelResponse>, String> {
+) -> Result<Option<DownloadedModelResponse>, AppError> {
     let active_models = container.active_models();
     let use_case = GetActiveChatModelUseCase::new(active_models);
 
@@ -95,18 +95,15 @@ pub async fn get_active_chat_model_typed(
         }
         Err(e) => {
             error!(error = %e, "Failed to get active chat model");
-            Err(e.to_string())
+            Err(e)
         }
     }
 }
 
 pub async fn get_active_chat_model_impl(container: &Container) -> Result<String, AppError> {
-    let response = get_active_chat_model_typed(container)
-        .await
-        .map_err(AppError::Other)?;
-    serde_json::to_string(&response).map_err(|e| {
-        AppError::Serialization(format!("Failed to serialize chat model: {}", e))
-    })
+    let response = get_active_chat_model_typed(container).await?;
+    serde_json::to_string(&response)
+        .map_err(|e| AppError::Serialization(format!("Failed to serialize chat model: {}", e)))
 }
 
 /// Get the currently active embedding model
@@ -115,7 +112,7 @@ pub async fn get_active_chat_model_impl(container: &Container) -> Result<String,
 /// Called by gateway - async dispatch.
 pub async fn get_active_embedding_model_typed(
     container: &Container,
-) -> Result<Option<DownloadedModelResponse>, String> {
+) -> Result<Option<DownloadedModelResponse>, AppError> {
     let active_models = container.active_models();
     let use_case = GetActiveEmbeddingModelUseCase::new(active_models);
 
@@ -128,18 +125,15 @@ pub async fn get_active_embedding_model_typed(
         }
         Err(e) => {
             error!(error = %e, "Failed to get active embedding model");
-            Err(e.to_string())
+            Err(e)
         }
     }
 }
 
 pub async fn get_active_embedding_model_impl(container: &Container) -> Result<String, AppError> {
-    let response = get_active_embedding_model_typed(container)
-        .await
-        .map_err(AppError::Other)?;
-    serde_json::to_string(&response).map_err(|e| {
-        AppError::Serialization(format!("Failed to serialize embedding model: {}", e))
-    })
+    let response = get_active_embedding_model_typed(container).await?;
+    serde_json::to_string(&response)
+        .map_err(|e| AppError::Serialization(format!("Failed to serialize embedding model: {}", e)))
 }
 
 /// Set the active utility model.
