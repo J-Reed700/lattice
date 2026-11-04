@@ -527,6 +527,74 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
     .await
 }
 
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says_so() -> Result<()>
+{
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _logs = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
+
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web(false)),
+        async {
+            let llm = ScriptedModel {
+                outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
+                prompts: Mutex::new(vec![]),
+            };
+            let hints = [(0, "site:docs.python.org".to_owned())];
+            let outcome =
+                expand(&llm, &references, &[gap()], &hints, &ClaimChecks::default()).await?;
+            assert!(
+                matches!(outcome, Expansion::Exhausted(..)),
+                "a hint that is not a search adds none"
+            );
+            assert_eq!(llm.prompts.lock().unwrap().len(), 1, "only the planner ran");
+            let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+            assert!(
+                logs.contains(
+                    "A research hint is not a search: no terms are left once any site: operators are lifted out"
+                ),
+                "{logs}"
+            );
+            assert!(!logs.contains("3 to 240"), "{logs}");
+            Ok(())
+        },
+    )
+    .await
+}
+
 #[tokio::test]
 async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparisons() -> Result<()> {
     const SECOND_CAPTURE: &str =
