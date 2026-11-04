@@ -203,8 +203,8 @@ impl LearningPracticalRepository {
         if request.content.trim().is_empty() || request.content.chars().count() > 8_000 {
             return Err(invalid("Simulation turns must contain 1–8000 characters."));
         }
-        if reply.content.trim().is_empty() || reply.content.chars().count() > 6_000 {
-            return Err(invalid("Simulation reply must contain 1–6000 characters."));
+        if reply.content.trim().is_empty() {
+            return Err(invalid("Simulation reply must not be blank."));
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;

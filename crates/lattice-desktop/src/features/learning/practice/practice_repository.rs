@@ -304,8 +304,8 @@ pub fn validate_tutor_bounds(prompt: &str, response: &str) -> Result<()> {
     if prompt.trim().is_empty() || prompt.chars().count() > MAX_TUTOR_PROMPT_CHARS {
         return Err(invalid("Tutor prompt must be 1–2,000 characters."));
     }
-    if response.trim().is_empty() || response.chars().count() > 6_000 {
-        return Err(invalid("Tutor response must be 1–6,000 characters."));
+    if response.trim().is_empty() {
+        return Err(invalid("Tutor response must not be blank."));
     }
     Ok(())
 }

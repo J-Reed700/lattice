@@ -78,7 +78,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
             ));
         }
         let selected: Vec<_> = requested.iter().filter_map(|i| blinded.get(*i)).collect();
-        let schema = json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":requested.len(),"maxItems":requested.len(),"items":{"type":"object","additionalProperties":false,"required":["index","correctIndices","reason"],"properties":{"index":{"type":"integer","enum":requested},"correctIndices":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":3}},"reason":{"type":"string","minLength":10,"maxLength":700}}}}}});
+        let schema = json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":requested.len(),"maxItems":requested.len(),"items":{"type":"object","additionalProperties":false,"required":["index","correctIndices","reason"],"properties":{"index":{"type":"integer","enum":requested},"correctIndices":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":3}},"reason":{"type":"string","minLength":1}}}}}});
         let request =
             json!({"questions":selected,"requestedIndices":requested,"responseErrors":problems})
                 .to_string();
@@ -134,7 +134,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
                     || answer.correct_indices.iter().any(|i| *i >= options)
                     || answer.correct_indices.iter().collect::<HashSet<_>>().len()
                         != answer.correct_indices.len()
-                    || !(10..=700).contains(&answer.reason.trim().chars().count())
+                    || answer.reason.trim().is_empty()
                 {
                     problems.push(format!(
                         "Question {} has invalid option indices or justification.",
@@ -165,7 +165,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
                     let mut finding = ReviewFinding::new(FindingKind::AnswerKey, Some(FindingSite::Question(answer.index)), format!(
                         "Question {} has a disputed or ambiguous answer key: its authored index is {authored}, but an independent solution found indices {:?}. {} Rewrite the question and choices so exactly one answer follows from the literal prompt; verify its key and explanation.",
                         answer.index + 1, answer.correct_indices, answer.reason
-                    ).chars().take(700).collect::<String>());
+                    ));
                     finding.passage = question.get("prompt").and_then(Value::as_str).map(str::to_owned);
                     finding
                 })
@@ -249,26 +249,21 @@ fn verdict(item: &LearningAssessmentCandidate, solve: &BankSolve) -> KeyVerdict 
         K::Ordering(_) => format!("order {:?}", solve.ordered_values),
         K::Rubric => String::new(),
     };
-    KeyVerdict::Disputed(
-        format!(
-            "An independent solution answered {answer}: {}",
-            solve.reason.trim()
-        )
-        .chars()
-        .take(900)
-        .collect(),
-    )
+    KeyVerdict::Disputed(format!(
+        "An independent solution answered {answer}: {}",
+        solve.reason.trim()
+    ))
 }
 
 fn bank_schema(indices: &[usize]) -> Value {
     json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":indices.len(),"maxItems":indices.len(),"items":{"type":"object","additionalProperties":false,"required":["index","reason","correctIndices","answer","blankAnswers","matches","orderedValues"],"properties":{
         "index":{"type":"integer","enum":indices},
-        "reason":{"type":"string","minLength":10,"maxLength":900},
+        "reason":{"type":"string","minLength":1},
         "correctIndices":{"type":"array","maxItems":8,"items":{"type":"integer","minimum":0,"maximum":11}},
-        "answer":{"type":"string","maxLength":300},
-        "blankAnswers":{"type":"array","maxItems":8,"items":{"type":"string","maxLength":200}},
+        "answer":{"type":"string"},
+        "blankAnswers":{"type":"array","maxItems":8,"items":{"type":"string"}},
         "matches":{"type":"array","maxItems":8,"items":{"type":"integer","minimum":0,"maximum":11}},
-        "orderedValues":{"type":"array","maxItems":12,"items":{"type":"string","maxLength":500}}
+        "orderedValues":{"type":"array","maxItems":12,"items":{"type":"string"}}
     }}}}})
 }
 

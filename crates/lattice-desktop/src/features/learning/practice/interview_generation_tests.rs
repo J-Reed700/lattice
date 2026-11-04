@@ -61,9 +61,9 @@ fn interview_plan_validates_round_coverage_identity_and_real_content() -> Result
     let mut blank_role = valid.clone();
     blank_role["learnerRole"] = json!("  ");
     malformed.push(blank_role);
-    let mut too_large = valid.clone();
-    too_large["companySummary"] = json!("x".repeat(4_001));
-    malformed.push(too_large);
+    let mut blank_summary = valid.clone();
+    blank_summary["companySummary"] = json!("  ");
+    malformed.push(blank_summary);
     let mut unfinished = valid.clone();
     unfinished["questions"][3]["question"] = json!("Investigate why the");
     malformed.push(unfinished);
@@ -148,61 +148,21 @@ async fn unfinished_interview_question_gets_corrected_before_guides_are_authored
 }
 
 #[test]
-fn interview_schema_keeps_local_constrained_output_enabled() {
-    fn check(value: &Value) {
-        match value {
-            Value::Object(fields) => {
-                if let Some(maximum) = fields.get("maxLength").and_then(Value::as_u64) {
-                    assert!(
-                        maximum <= 2_000,
-                        "Oversized maxLength disables the local grammar"
-                    );
-                }
-                for child in fields.values() {
-                    check(child);
-                }
-            }
-            Value::Array(items) => {
-                for child in items {
-                    check(child);
-                }
-            }
-            _ => {}
-        }
-    }
-    check(&interview_plan_schema(LearningInterviewRoundKind::FullLoop));
-    assert!(
-        interview_plan_schema(LearningInterviewRoundKind::FullLoop)["properties"]["questions"]
-            ["items"]["properties"]["question"]
-            .get("maxLength")
-            .is_none(),
-        "A question must be allowed to finish before the app checks its length"
-    );
-}
-
-#[test]
-fn complete_code_question_can_exceed_the_old_grammar_limit_but_remains_bounded() -> Result<()> {
+fn a_complete_code_question_is_read_at_any_length() {
     let mut plan = plan_json(LearningInterviewRoundKind::FullLoop);
-    let task = format!(
-        "Investigate this supplied trace:\n```text\n{}\n```\nWhat evidence would you collect next?",
-        "operation committed, acknowledgement lost\n".repeat(30)
-    );
-    assert!((1_001..=2_000).contains(&task.chars().count()));
-    plan["questions"][3]["question"] = json!(task);
-    assert!(checked_interview_plan(
-        &plan.to_string(),
-        &LearningInterviewTargetDto::default(),
-        &[]
-    )
-    .is_ok());
-    plan["questions"][3]["question"] = json!(format!("{}?", "x".repeat(2_000)));
-    assert!(checked_interview_plan(
-        &plan.to_string(),
-        &LearningInterviewTargetDto::default(),
-        &[]
-    )
-    .is_err());
-    Ok(())
+    for lines in [30, 300] {
+        let task = format!(
+            "Investigate this supplied trace:\n```text\n{}\n```\nWhat evidence would you collect next?",
+            "operation committed, acknowledgement lost\n".repeat(lines)
+        );
+        plan["questions"][3]["question"] = json!(task);
+        assert!(checked_interview_plan(
+            &plan.to_string(),
+            &LearningInterviewTargetDto::default(),
+            &[]
+        )
+        .is_ok());
+    }
 }
 
 #[test]
