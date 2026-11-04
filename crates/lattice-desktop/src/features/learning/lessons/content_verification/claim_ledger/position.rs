@@ -182,16 +182,23 @@ impl ClaimLedger {
             .iter()
             .map(|id| {
                 let latest = self.latest(id);
+                let entry = self.entry(&latest);
                 let walked = self.position(policy, &latest);
                 if matches!(walked, Some(Walked::Diverged { .. })) {
                     tracing::warn!(claim = %latest.0, "claim.plan: a claim's steps do not fit its graph; the plan keeps it where it was");
                 }
+                // A claim gone with its sentence makes no more calls, wherever
+                // its steps left it.
+                let at = if entry.is_some_and(|entry| super::is_gone(entry.state())) {
+                    PlannedAt::Ended
+                } else {
+                    PlannedAt::of(walked)
+                };
                 Planned {
-                    class: self
-                        .entry(&latest)
+                    class: entry
                         .and_then(ClaimLedgerEntry::class)
                         .unwrap_or(Class::Sourced),
-                    at: PlannedAt::of(walked),
+                    at,
                     sentence: None,
                 }
             })
