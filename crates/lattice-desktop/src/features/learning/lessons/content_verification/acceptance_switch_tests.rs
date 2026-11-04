@@ -1079,6 +1079,35 @@ async fn a_rewrite_that_took_its_targets_sentence_out_ends_the_target_removed_an
     Ok(())
 }
 
+#[tokio::test]
+async fn a_claim_that_ended_at_a_node_of_its_graph_is_planned_as_ended() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let target = claim(
+        &mut ledger,
+        "target",
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        SOURCED,
+    )
+    .await?;
+    walk(&mut ledger, &target, Class::Sourced, &REWRITING).await?;
+    let gone = ClaimEvent::Superseded {
+        successor: None,
+        by: Actor::Machine,
+    };
+    ledger.append(&target, gone).await?;
+
+    // Its rewrite was asked for and it went with its sentence: the plan holds
+    // nothing more for it, so the call it made is not counted twice.
+    let planned = ledger.planned(&policy, std::slice::from_ref(&target));
+    assert_eq!(
+        planned[0].at,
+        crate::features::learning::lessons::call_plan::PlannedAt::Ended
+    );
+    Ok(())
+}
+
 /// A statement at `s.cut` on `quote` of `body`, with its last attempt sent.
 async fn cut_sent(quote: &str, body: &str) -> Result<(claim_ledger::ClaimLedger, ClaimId, Value)> {
     let policy = StandardPolicy::new();
