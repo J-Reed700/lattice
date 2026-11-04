@@ -895,3 +895,106 @@ async fn a_transcript_longer_than_the_window_keeps_its_newest_turns() -> Result<
     assert!(sent.contains("earlier turns not shown"));
     Ok(())
 }
+
+fn simulation_of(
+    turns: Vec<(
+        crate::features::learning::practical_dto::LearningSimulationSpeaker,
+        String,
+    )>,
+) -> crate::features::learning::practical_dto::LearningSimulationSessionDto {
+    use crate::features::learning::practical_dto::*;
+    LearningSimulationSessionDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        program_id: uuid::Uuid::new_v4().to_string(),
+        activity_id: uuid::Uuid::new_v4().to_string(),
+        activity_revision: 0,
+        practice_session_id: None,
+        learner_role: "Candidate".into(),
+        counterpart_role: "Interviewer".into(),
+        status: LearningSimulationStatus::Active,
+        revision: 1,
+        turns: turns
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, (speaker, content))| LearningSimulationTurnDto {
+                id: uuid::Uuid::new_v4().to_string(),
+                ordinal: ordinal as i64,
+                speaker,
+                content,
+                citations: vec![],
+                model_name: None,
+                created_at: 0,
+            })
+            .collect(),
+        created_at: 0,
+        updated_at: 0,
+        submitted_at: None,
+    }
+}
+
+#[tokio::test]
+async fn a_learner_turn_larger_than_the_room_is_refused_not_left_out() -> Result<()> {
+    use super::super::{generate_simulation_turn, SimulationActivityContext};
+    use crate::features::learning::practical_dto::LearningSimulationSpeaker::{
+        Counterpart, Learner,
+    };
+    use lattice_core::shared::error::AppError;
+    let context = SimulationActivityContext {
+        title: "Interview".into(),
+        brief: "Practice reasoning".into(),
+        rubric: vec![],
+        interview_plan: None,
+        interview_answers: None,
+    };
+    let pasted = "word ".repeat(20_000);
+    let llm = InterviewLlm {
+        window: Some(8_192),
+        ..Default::default()
+    };
+    let session = simulation_of(vec![
+        (Counterpart, "Which tradeoff matters most?".into()),
+        (Learner, pasted.clone()),
+    ]);
+    let error = generate_simulation_turn(&llm, &context, &session, &[], false)
+        .await
+        .expect_err("the learner's newest turn does not fit the window");
+    assert!(
+        matches!(&error, AppError::InvalidConfig(message) if message.contains("-token context window")),
+        "{error}"
+    );
+    let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
+    assert!(requests.is_empty(), "nothing was sent without the turn");
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_older_turn_larger_than_the_room_is_still_left_out() -> Result<()> {
+    use super::super::{generate_simulation_turn, SimulationActivityContext};
+    use crate::features::learning::practical_dto::LearningSimulationSpeaker::{
+        Counterpart, Learner,
+    };
+    let context = SimulationActivityContext {
+        title: "Interview".into(),
+        brief: "Practice reasoning".into(),
+        rubric: vec![],
+        interview_plan: None,
+        interview_answers: None,
+    };
+    let pasted = "word ".repeat(20_000);
+    let llm = InterviewLlm {
+        window: Some(8_192),
+        ..Default::default()
+    };
+    let session = simulation_of(vec![
+        (Learner, pasted.clone()),
+        (Counterpart, "Which tradeoff matters most?".into()),
+        (Learner, "I would weigh latency against durability.".into()),
+    ]);
+    generate_simulation_turn(&llm, &context, &session, &[], false).await?;
+    let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
+    let sent = requests.last().cloned().unwrap_or_default();
+    assert!(sent.contains("I would weigh latency against durability."));
+    assert!(!sent.contains(pasted.trim()));
+    assert!(sent.contains("1 earlier turns not shown"));
+    Ok(())
+}

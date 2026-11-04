@@ -655,3 +655,49 @@ fn a_learners_pasted_tutor_prompt_is_held_to_the_chat_limit() {
     );
     assert!(validate_tutor_bounds("  ", "A reply.").is_err());
 }
+
+#[tokio::test]
+async fn a_learners_long_artifact_is_held_to_the_chat_limit() -> Result<()> {
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let pool = active_memory_pool().await?;
+    let (p, lesson) = setup(&pool).await?;
+    let repo = LearningPracticeRepository::new(pool);
+    let start = start_request(&p, &lesson);
+    repo.start(&start, "start").await?;
+    let essay = "I tried the second approach first and it held. ".repeat(1_000);
+    assert!(essay.chars().count() > 24_000);
+    let long = repo
+        .save_artifact(
+            &save_request(&p.summary.id, &start.session_id, &id(), 0, &essay),
+            "essay",
+        )
+        .await;
+    assert!(long.is_ok(), "an essay: {:?}", long.err());
+    let at_the_limit = repo
+        .save_artifact(
+            &save_request(
+                &p.summary.id,
+                &start.session_id,
+                &id(),
+                1,
+                &"x".repeat(MAX_CHAT_MESSAGE_CHARS),
+            ),
+            "at-the-limit",
+        )
+        .await;
+    assert!(at_the_limit.is_ok(), "{:?}", at_the_limit.err());
+    let over = repo
+        .save_artifact(
+            &save_request(
+                &p.summary.id,
+                &start.session_id,
+                &id(),
+                2,
+                &"x".repeat(MAX_CHAT_MESSAGE_CHARS + 1),
+            ),
+            "over",
+        )
+        .await;
+    assert!(over.is_err());
+    Ok(())
+}

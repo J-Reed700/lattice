@@ -623,3 +623,65 @@ impl LearningAssessmentRepository {
         self.get_form(&req.form_id).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::learning::assessment_engine::LearningItemFormat as Format;
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+
+    fn answer(text: String) -> engine::LearningAssessmentResponse {
+        let mut response = engine::LearningAssessmentResponse::empty("item");
+        response.text = Some(text);
+        response
+    }
+
+    #[test]
+    fn a_learners_long_answer_is_held_to_the_chat_limit() {
+        let essay = "The inhibitor competes for the active site, so Vmax holds. ".repeat(600);
+        assert!(essay.chars().count() > 24_000);
+        for (what, text) in [
+            ("an essay", essay),
+            ("the chat limit", "x".repeat(MAX_CHAT_MESSAGE_CHARS)),
+        ] {
+            let checked = validate_response(&answer(text), Format::Explanation, 0, 0);
+            assert!(checked.is_ok(), "{what}: {:?}", checked.err());
+        }
+        let over = answer("x".repeat(MAX_CHAT_MESSAGE_CHARS + 1));
+        assert!(validate_response(&over, Format::Explanation, 0, 0).is_err());
+    }
+
+    #[test]
+    fn the_blanks_of_a_cloze_answer_share_the_chat_limit() {
+        let blanks = |count: usize| {
+            let mut response = engine::LearningAssessmentResponse::empty("item");
+            response.blank_responses = vec!["x".repeat(MAX_CHAT_MESSAGE_CHARS / 4); count];
+            response
+        };
+        assert!(validate_response(&blanks(4), Format::Cloze, 0, 0).is_ok());
+        assert!(validate_response(&blanks(5), Format::Cloze, 0, 0).is_err());
+    }
+
+    #[test]
+    fn an_artifact_answer_is_measured_in_characters_not_bytes() {
+        let artifact = |letters: usize| {
+            let mut response = engine::LearningAssessmentResponse::empty("item");
+            response.artifact_json = Some(serde_json::json!({"notes": "é".repeat(letters)}));
+            response
+        };
+        let half = MAX_CHAT_MESSAGE_CHARS / 2;
+        assert!(validate_response(&artifact(half), Format::Artifact, 0, 0).is_ok());
+        assert!(
+            validate_response(&artifact(MAX_CHAT_MESSAGE_CHARS), Format::Artifact, 0, 0).is_err()
+        );
+    }
+
+    #[test]
+    fn the_counts_a_quiz_answer_may_hold_are_unchanged() {
+        let mut response = engine::LearningAssessmentResponse::empty("item");
+        response.ordered_values = vec!["step".to_string(); 33];
+        assert!(validate_response(&response, Format::Ordering, 40, 0).is_err());
+        response.ordered_values = vec!["step".to_string(); 32];
+        assert!(validate_response(&response, Format::Ordering, 40, 0).is_ok());
+    }
+}

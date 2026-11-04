@@ -1728,3 +1728,20 @@ async fn a_learners_long_practical_request_is_held_to_the_chat_limit() -> Result
     }
     Ok(())
 }
+
+/// The commands take a `State<Container>`, which no test here builds, so the
+/// boundary's own numbers are read from its source.
+#[test]
+fn the_command_boundary_carries_no_cap_of_its_own_on_a_learners_text() -> Result<()> {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/features/learning/plugin/practical.rs"
+    ))?;
+    for cap in ["4_000", "4000", "8_000", "8000"] {
+        assert!(
+            !source.contains(cap),
+            "plugin/practical.rs still holds a learner's text to {cap}, not the chat limit"
+        );
+    }
+    Ok(())
+}
