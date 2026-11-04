@@ -171,7 +171,7 @@ A reader turns one judge's reply into the outcome vocabulary. The interpretation
 |---|---|---|
 | `Parts` | `ClaimChecker::check_bridge`, `BridgeOutcome::guarded` | any part contradicted → Refuted; any part specific-missing → Unproven; every part common, none stated → AllCommon; otherwise Stands. Replaces `BridgeOutcome::decision`. |
 | `Ground` | the same | every part stated or common and one stated → Stands; anything else → Refuted (the veto stands). |
-| `Page` | strict judge (`ClaimVerdict`) | Supported → Stands or StandsElsewhere by the passage's source; Unsupported, NoSource → Unproven; Contradicted → Refuted; Unverified → Unjudged |
+| `Page` | strict judge (`ClaimVerdict`) | Supported → Stands or StandsElsewhere by the passage's source (a sentence that cites nothing has no other source to be on, so its support Stands); Unsupported, NoSource → Unproven; Contradicted → Refuted; Unverified → Unjudged |
 | `Consistency` | `check_consistency` | Consistent → Stands; Contradicted → Refuted; UnfoundedSpecific → NeedsSource |
 | `Knowledge` | `check_knowledge` | unanimous `true_common` → Stands; majority `false` → Refuted; otherwise (a `needs_source`, a lone `false`) → NeedsSource. Replaces the routing in `class_checks::common`. |
 | `Veto` | `check_knowledge` | majority `false` → Refuted; otherwise Stands (`needs_source` never fails a Reasoning statement, classes design §4.5). |
@@ -247,11 +247,12 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
    - Then the ledger records the identities: `Extracted`, a class for a statement new to the ledger, the user's edits, the orphans, and the outcome of a repair that awaited this pass (below). No check is recorded here.
 3. Every live machine-owned statement then has a position (`ClaimLedger::position`):
    - At a reading node, `read_until_remedy` reads it on to a remedy or an end, and each reading is recorded with its decision (`record_reading`).
-   - At any other node, nothing is read. The report carries its latest reading's finding, which the job keeps. After a restart that finding is rebuilt from the ledger (the latest check and the passages it showed), never asked for again. Either way it decides nothing.
+   - At any other node, nothing is read. The report carries its latest reading's finding, which the job keeps. When the job has no saved finding for it, as in a fresh job over a lesson the ledger already holds, the finding is rebuilt from the ledger: the latest check's verdict, reason and support (a support found elsewhere names where, which the recite needs), and the passages the claim's card shows. It is never asked for again, and a missing finding is never a fault. Either way it decides nothing.
+   - The progress counts each statement read as one check, and as a saved check reused when every reading of it in the round came from a receipt.
 4. Three kinds of statement are outside the ledger's checks, as now: one the rule layer leaves out, a model-Internal statement until step 10, and a failed example, which keeps its own path (§6).
 
 **The remedies, by node.** Each remedy takes the statements at its nodes, and the step's outcome is recorded with its `Stepped`:
-- **Research.** The statements at `Research` nodes, plus a user's hint as now, go to `research::expand`. It records `Researched`, with outcome `Saved` when the round saved a source and `FoundNothing` otherwise. A round that reached nothing (`unreached`: every search and page read failed, or the planner gave no usable answer) is not research and records nothing, so the statements stay where they are.
+- **Research.** The statements at `Research` nodes, plus a user's hint (below), go to `research::expand`. It records `Researched`, with outcome `Saved` when the round saved a source and `FoundNothing` otherwise. A round that reached nothing (`unreached`: every search and page read failed, or the planner gave no usable answer) is not research and records nothing, so the statements stay where they are.
 - **Recite.** The statements at `Recite` nodes go to `cite_where_supported` with their page's finding. It records its `CitationRepaired` and the outcome `Done`.
 - **Uncite.** For the statements at `Uncite` nodes, the sentence's own entry in `citations` goes.
   - A sentence with no entry of its own keeps what it has: that is the section's quote, which others are read against.
@@ -267,13 +268,22 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
     - A sentence the cut took out, or that was out already → `Cut`.
     - A refused cut, its section going → `CannotCut`.
 
+**A user's hint.** A claim the user holds may carry a hint, what to search for (`ResearchWithHint`). The claim is the user's, so the policy does not walk it. The hint is the user's request for one research round and one reading of what that round found:
+- The hint goes to `research::expand` with the round's other targets and records `Researched`. The claim takes no `Stepped` for it: a step is the machine's decision, and the claim is not the machine's.
+- When the round saved a source, the claim is read once by the `Page` reader over the expanded references, whatever its class, since the user asked for a source. An unreadable answer is asked once more.
+- The reading answers the hint. The first judged local check after a `ResearchWithHint` is not an observation (§2.9): a reading that stands verifies the claim, and any other leaves it the user's, with the reading's reason on its card. Every other local check of a decided claim stays an observation.
+- Nothing else follows. The claim is not recited, rewritten or cut, because the user holds it.
+- A round that saved nothing answers the hint with its `Researched` alone, which found nothing. A round that reached nothing records nothing, so the hint is tried again on the next run.
+
+Today's hint path re-checked the whole pass, which re-asked only what the new evidence changed. A Sourced claim was read against the new page, and a Reasoning or Common claim met its own check again, restored from its receipt. So a hint helped a Sourced claim alone; read by the page, it helps any claim it can find a source for.
+
 **What the loop does next** (`decide`), checked in this order:
 1. A statement whose walk is `Stopped`, or whose record does not fit its graph, stops the lesson with its reason.
 2. Statements at `Rewrite` or `Cut` nodes are repaired, along with failed examples by their own rule.
 3. A statement at any other node is taken by the next pass.
 4. Once every machine-owned statement has ended, the sections are settled as now, and the lesson publishes unless a claim waits for the user.
 
-An iteration that records no `Stepped` and leaves the draft as it was stops the lesson with what was pending: §2.7's no-progress stop, here before the template exists.
+An iteration that records no `Stepped` and leaves the draft as it was stops the lesson with what was pending: §2.7's no-progress stop, here before the template exists. The stop names each statement and says in words what it waits for (research, a reading, its citation). When the round's research reached nothing, which is the usual cause, the stop says that and how to fix it. Node names go to the log, not to the message.
 
 **What is new about a claim, without a check.** Today a pass decides whether to check a claim again from what is new about it. The policy now decides when a statement is read, so the evidence or checker having changed no longer brings a check. Two reopenings stay, because they need no check:
 - a verified claim whose resolving source was deleted or replaced;
