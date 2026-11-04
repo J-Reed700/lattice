@@ -1039,6 +1039,46 @@ async fn a_repair_that_produced_nothing_usable_leaves_its_rewrite_not_applied() 
     Ok(())
 }
 
+#[tokio::test]
+async fn a_rewrite_that_took_its_targets_sentence_out_ends_the_target_removed_and_the_lesson_publishes(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let body = format!("{SENTENCE} {HEADER}");
+    let mut ledger = open().await?;
+    let target = claim(&mut ledger, "target", (SENTENCE, SENTENCE), &body, SOURCED).await?;
+    walk(&mut ledger, &target, Class::Sourced, &REWRITING).await?;
+    let header = claim(&mut ledger, "header", (HEADER, HEADER), &body, REASONED).await?;
+    walk(&mut ledger, &header, Class::Reasoning, &CONSISTENT).await?;
+    ledger
+        .begin_repairs(&policy, &lesson_of(&body), std::slice::from_ref(&target))
+        .await?;
+
+    // The rewrite took the target's sentence out and wrote nothing in its place.
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(HEADER),
+        &[(HEADER, HEADER)],
+        &[],
+    )
+    .await?;
+
+    assert_eq!(pass.statements.len(), 1);
+    let state = ledger.entry(&target).unwrap().state();
+    assert!(
+        matches!(
+            state,
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{state:?}"
+    );
+    assert!(matches!(ledger.decide(&policy, &[]), Decision::Publish));
+    Ok(())
+}
+
 /// A statement at `s.cut` on `quote` of `body`, with its last attempt sent.
 async fn cut_sent(quote: &str, body: &str) -> Result<(claim_ledger::ClaimLedger, ClaimId, Value)> {
     let policy = StandardPolicy::new();
