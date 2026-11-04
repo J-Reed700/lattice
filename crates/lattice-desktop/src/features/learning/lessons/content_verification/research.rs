@@ -633,7 +633,7 @@ async fn research<'a>(
             Some(searches) => needs.extend(searches.into_iter().map(|need| (need, None))),
             None => tracing::warn!(
                 chars = hint.chars().count(),
-                "A research hint is not a search: it needs 3 to 240 characters besides any site: operators"
+                "A research hint is not a search: no terms are left once any site: operators are lifted out"
             ),
         }
     }
