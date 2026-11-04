@@ -93,7 +93,6 @@ mod repair_work;
 mod report;
 pub(in crate::features::learning) mod research;
 mod review_pass;
-#[cfg(test)]
 mod round;
 mod rounds;
 pub(in crate::features::learning) use rounds::Rounds;

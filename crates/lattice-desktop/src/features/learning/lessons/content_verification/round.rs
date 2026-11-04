@@ -150,9 +150,118 @@ pub(super) trait Review: Send {
 /// user.
 pub(super) async fn run<F>(
     review: &mut dyn Review<Finished = F>,
-    _policy: &dyn AcceptancePolicy,
+    policy: &dyn AcceptancePolicy,
 ) -> Result<F> {
-    review.finish(Verdict::Publish).await
+    let mut resume = true;
+    loop {
+        review.sync(policy).await?;
+        // A failed rewrite can resume from its saved defects. This only skips
+        // repeating the diagnosis; it never skips reading the rewritten text.
+        if std::mem::take(&mut resume) && review.resume(policy).await? {
+            continue;
+        }
+        // What this iteration starts from, to know whether it moved anything.
+        let (stepped, draft) = (review.stepped(), review.draft().to_owned());
+        review.extract().await?;
+        if let Some(restored) = review.take_back(policy).await? {
+            review.restore(restored).await?;
+            continue;
+        }
+        review.identify(policy).await?;
+        if let Some(reason) = review.fault(policy) {
+            return review.finish(Verdict::Stop(reason)).await;
+        }
+        let mut stopped = review.read(policy).await?;
+        // A flow repair that wrote a statement is taken back (claim classes
+        // design §3.10).
+        if let Some(restored) = review.unmend().await? {
+            review.restore(restored).await?;
+            continue;
+        }
+        // Research for the statements at a research node and the claims a hint
+        // names, once per claim: what it saves is read at once, and what it
+        // does not find is recorded as tried (§4). A claim a hint names is the
+        // user's: it takes no step, and the page that reads what the round
+        // saved answers the hint. A round that reaches nothing records
+        // nothing, and the claims stay where they are.
+        let mut unreached = false;
+        while stopped.is_empty() {
+            match review.research(policy).await? {
+                Researched::Nothing => break,
+                Researched::Unreached => {
+                    unreached = true;
+                    break;
+                }
+                Researched::Searched {
+                    saved,
+                    stopped: read,
+                } => {
+                    stopped.extend(read);
+                    if !saved {
+                        break;
+                    }
+                }
+            }
+        }
+        if stopped.is_empty() && (review.recite(policy).await? || review.uncite(policy).await?) {
+            continue;
+        }
+        match review.decide(policy, &stopped) {
+            Decision::Continue(waiting) => {
+                // A pass that moved no statement and changed nothing would go
+                // round again as it was.
+                if review.stepped() == stepped && review.draft() == draft {
+                    let verdict = Verdict::NoProgress { waiting, unreached };
+                    return review.finish(verdict).await;
+                }
+                review.again(&waiting);
+            }
+            Decision::Stop(reason) => return review.finish(Verdict::Stop(*reason)).await,
+            Decision::Publish => {
+                // The last sync point: an edit made during this pass is
+                // applied and verified before anything publishes.
+                if !review.still_publishes(policy).await? {
+                    continue;
+                }
+                // Sections after cuts (claim classes design §3.10): the flow
+                // repairs and the sections that go are settled and checked
+                // before the lesson is final, and the sections that go are then
+                // taken out.
+                match review.settle().await? {
+                    Settled::Again => continue,
+                    Settled::Done => {}
+                }
+                // The last guard (acceptance design §2.9): the lesson holds no
+                // sentence that a claim the machine ended stood on.
+                if let Some((reason, claims)) = review.ended_but_standing() {
+                    let reason = Some(reason);
+                    return review.finish(Verdict::Hold { claims, reason }).await;
+                }
+                review.excise().await?;
+                // Then the Verifier audit, when the course opted in (§14.3):
+                // review pass → audit → publish. Its checks, and anything the
+                // user did while it ran, are read back before publishing.
+                match review.audit().await? {
+                    Audit::Off => {}
+                    Audit::Agreed => {
+                        if !review.still_publishes(policy).await? {
+                            continue;
+                        }
+                    }
+                    Audit::Hold { claims, reason } => {
+                        let reason = reason.map(|stop| *stop);
+                        return review.finish(Verdict::Hold { claims, reason }).await;
+                    }
+                }
+                return review.finish(Verdict::Publish).await;
+            }
+            Decision::NeedsReview(claims) => {
+                let reason = None;
+                return review.finish(Verdict::Hold { claims, reason }).await;
+            }
+            Decision::Repair(targets) => review.repair(policy, &targets).await?,
+        }
+    }
 }
 
 #[cfg(test)]
