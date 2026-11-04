@@ -128,7 +128,7 @@ async fn author_group(
     }
     let prompt = prompt.to_string();
     let output_tokens = output_tokens(selected.len());
-    let schema = json!({"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":selected.len(),"maxItems":selected.len(),"items":{"type":"object","additionalProperties":false,"required":["outcomeId","prompt","expectedAnswer","criteria"],"properties":{"outcomeId":{"type":"string","enum":selected.iter().map(|o|o.id.clone()).collect::<Vec<_>>()},"prompt":{"type":"string","minLength":30,"maxLength":1600},"expectedAnswer":{"type":"string","minLength":30,"maxLength":2000},"criteria":{"type":"string","minLength":30,"maxLength":1200}}}}}});
+    let schema = json!({"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":selected.len(),"maxItems":selected.len(),"items":{"type":"object","additionalProperties":false,"required":["outcomeId","prompt","expectedAnswer","criteria"],"properties":{"outcomeId":{"type":"string","enum":selected.iter().map(|o|o.id.clone()).collect::<Vec<_>>()},"prompt":{"type":"string","minLength":1},"expectedAnswer":{"type":"string","minLength":1},"criteria":{"type":"string","minLength":1}}}}}});
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Response {
@@ -141,13 +141,14 @@ async fn author_group(
             || response.tasks.iter().any(|t| {
                 !selected.iter().any(|o| o.id == t.outcome_id)
                     || !seen.insert(&t.outcome_id)
-                    || !(30..=1600).contains(&t.prompt.trim().chars().count())
-                    || !(30..=2000).contains(&t.expected_answer.trim().chars().count())
-                    || !(30..=1200).contains(&t.criteria.trim().chars().count())
+                    || t.prompt.trim().is_empty()
+                    || t.expected_answer.trim().is_empty()
+                    || t.criteria.trim().is_empty()
             })
         {
             return Err(AppError::InvalidInput(
-                "Starting-point tasks did not match the course outcomes or required bounds.".into(),
+                "Starting-point tasks did not match the course outcomes or left a field blank."
+                    .into(),
             ));
         }
         Ok(response.tasks)
@@ -226,11 +227,10 @@ pub async fn evaluate(
 /// fields in this order, and with the signal first it commits to one before it
 /// has read the response back.
 fn findings_schema(count: usize) -> serde_json::Value {
-    json!({"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["promptId","outcomeId","evidenceQuote","feedback","signal"],"properties":{"promptId":{"type":"string"},"outcomeId":{"type":"string"},"evidenceQuote":{"type":["string","null"],"maxLength":700},"feedback":{"type":"string","minLength":20,"maxLength":1200},"signal":{"enum":["needs_practice","ready_for_challenge","uncertain"]}}}}}})
+    json!({"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["promptId","outcomeId","evidenceQuote","feedback","signal"],"properties":{"promptId":{"type":"string"},"outcomeId":{"type":"string"},"evidenceQuote":{"type":["string","null"]},"feedback":{"type":"string","minLength":1},"signal":{"enum":["needs_practice","ready_for_challenge","uncertain"]}}}}}})
 }
 
-/// What one finding takes: up to 1,200 characters of feedback and a 700
-/// character quote, at about four characters a token, with its fields.
+/// What one finding takes: its feedback, its quote and its fields.
 const FINDING_OUTPUT_TOKENS: usize = 600;
 
 /// A finding whose quote is not in its response loses the quote, and with it
@@ -244,7 +244,6 @@ fn unquoted_are_uncertain(
             continue;
         };
         let quoted = !quote.trim().is_empty()
-            && quote.chars().count() <= 700
             && responses
                 .iter()
                 .any(|r| r.prompt_id == finding.prompt_id && r.response.contains(quote.as_str()));
@@ -269,12 +268,10 @@ pub fn validate_findings(
                     .prompts
                     .iter()
                     .any(|p| p.id == f.prompt_id && p.outcome_id == f.outcome_id)
-                || !(20..=1200).contains(&f.feedback.trim().chars().count())
+                || f.feedback.trim().is_empty()
                 || match &f.evidence_quote {
                     Some(q) => {
-                        q.trim().is_empty()
-                            || q.chars().count() > 700
-                            || !response.is_some_and(|r| r.response.contains(q))
+                        q.trim().is_empty() || !response.is_some_and(|r| r.response.contains(q))
                     }
                     None => f.signal != LearningDiagnosticSignal::Uncertain,
                 }

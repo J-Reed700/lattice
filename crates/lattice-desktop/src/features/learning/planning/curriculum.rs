@@ -307,10 +307,19 @@ fn text(value: &str, label: &str, max: usize) -> Result<()> {
     Ok(())
 }
 
+fn not_blank(value: &str, label: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "{label} must not be empty."
+        )));
+    }
+    Ok(())
+}
+
 fn validate_lesson(lesson: &LearningCurriculumLesson) -> Result<()> {
     id(&lesson.id, "lesson")?;
-    text(&lesson.title, "Lesson title", 160)?;
-    text(&lesson.objective, "Lesson objective", 1_200)?;
+    not_blank(&lesson.title, "Lesson title")?;
+    not_blank(&lesson.objective, "Lesson objective")?;
     if !(1..=600).contains(&lesson.estimated_minutes) {
         return Err(AppError::InvalidInput(
             "Lesson time must be between 1 and 600 minutes.".into(),
@@ -342,8 +351,8 @@ pub fn validate_curriculum(revision: &LearningCurriculumRevision) -> Result<()> 
     let mut module_ids = HashSet::new();
     for module in &revision.modules {
         id(&module.id, "module")?;
-        text(&module.title, "Module title", 160)?;
-        text(&module.purpose, "Module purpose", 2_000)?;
+        not_blank(&module.title, "Module title")?;
+        not_blank(&module.purpose, "Module purpose")?;
         if module.lessons.is_empty() || module.lessons.len() > 64 {
             return Err(AppError::InvalidInput(
                 "A module must contain 1–64 lessons.".into(),

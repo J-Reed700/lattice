@@ -136,7 +136,7 @@ pub(in crate::features::learning) async fn plan(
     });
     let schema = json!({"type":"object","additionalProperties":false,"required":["subtopics"],"properties":{
         "subtopics":{"type":"array","minItems":1,"maxItems":max_modules,"items":{"type":"object","additionalProperties":false,"required":["title","needs"],"properties":{
-            "title":{"type":"string","minLength":1,"maxLength":120},
+            "title":{"type":"string","minLength":1},
             "needs":{"type":"array","items":web_research::need_schema(None)}
         }}}
     }});
@@ -152,7 +152,7 @@ pub(in crate::features::learning) async fn plan(
         let mut subtopics = Vec::with_capacity(raw.subtopics.len());
         for subtopic in raw.subtopics {
             let title = subtopic.title.trim();
-            if title.is_empty() || title.chars().count() > 120 {
+            if title.is_empty() {
                 return Err(malformed());
             }
             let mut needs: Vec<PlannedNeed> = Vec::new();

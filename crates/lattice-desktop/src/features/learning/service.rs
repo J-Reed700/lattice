@@ -15,6 +15,12 @@ fn bounded(value: &str, name: &str, max: usize, required: bool) -> Result<()> {
     }
     Ok(())
 }
+fn not_blank(value: &str, name: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(AppError::InvalidInput(format!("{name} must not be empty")));
+    }
+    Ok(())
+}
 fn uuid(value: &str, label: &str) -> Result<()> {
     uuid::Uuid::parse_str(value)
         .map(|_| ())
@@ -228,8 +234,8 @@ fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]
                 "Generated module IDs must be unique.".into(),
             ));
         }
-        bounded(&m.title, "Module title", 120, true)?;
-        bounded(&m.summary, "Module summary", 2000, true)?;
+        not_blank(&m.title, "Module title")?;
+        not_blank(&m.summary, "Module summary")?;
         if m.outcomes.is_empty() || m.outcomes.len() > 12 {
             return Err(AppError::InvalidInput(
                 "Each module needs 1–12 learning outcomes.".into(),
@@ -247,8 +253,8 @@ fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]
                     "Generated identifiers must be unique.".into(),
                 ));
             }
-            bounded(&l.title, "Lesson title", 160, true)?;
-            bounded(&l.objective, "Lesson objective", 1200, true)?;
+            not_blank(&l.title, "Lesson title")?;
+            not_blank(&l.objective, "Lesson objective")?;
             if !(1..=600).contains(&l.estimated_minutes) {
                 return Err(AppError::InvalidInput(
                     "Lesson estimate must be between 1 and 600 minutes.".into(),
@@ -359,8 +365,8 @@ pub(super) fn validate_prepared(
     let mut keys = std::collections::HashSet::new();
     for b in &p.blocks {
         super::teaching::validate_saved_rubric(&b.rubric)?;
-        bounded(&b.title, "Block title", 160, true)?;
-        bounded(&b.body, "Block text", 8000, true)?;
+        not_blank(&b.title, "Block title")?;
+        not_blank(&b.body, "Block text")?;
         if (b.source_ids.is_empty() && !source_ids.is_empty())
             || b.source_ids
                 .iter()
@@ -378,15 +384,13 @@ pub(super) fn validate_prepared(
                 "Question identifiers must be unique.".into(),
             ));
         }
-        bounded(&q.prompt, "Question", 2000, true)?;
+        not_blank(&q.prompt, "Question")?;
         if q.options.len() < 2
             || q.options.len() > 8
-            || q.options
-                .iter()
-                .any(|o| o.trim().is_empty() || o.chars().count() > 1000)
+            || q.options.iter().any(|o| o.trim().is_empty())
         {
             return Err(AppError::InvalidInput(
-                "Questions need 2–8 bounded answer options.".into(),
+                "Questions need 2–8 answer options.".into(),
             ));
         }
         let mut opts = std::collections::HashSet::new();
@@ -424,7 +428,7 @@ pub(super) fn validate_prepared(
                 "Correct answer index is outside the available options.".into(),
             ));
         }
-        bounded(&k.explanation, "Answer explanation", 3000, true)?;
+        not_blank(&k.explanation, "Answer explanation")?;
     }
     if keys.len() != question_ids.len() {
         return Err(AppError::InvalidInput(

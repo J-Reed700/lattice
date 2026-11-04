@@ -127,7 +127,7 @@ pub(super) async fn insert_outcomes(
         let description = value_str(&row, "description")?;
         let ordinal = value_i64(&row, "ordinal")?;
         let created = value_i64(&row, "createdAt")?;
-        if title.trim().is_empty() || title.len() > 500 || description.len() > 5000 || ordinal < 0 {
+        if title.trim().is_empty() || ordinal < 0 {
             return Err(invalid("Pack outcome metadata is invalid."));
         }
         sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,?,?,?,?,?)").bind(id).bind(program_id).bind(module).bind(lesson).bind(title).bind(description).bind(ordinal).bind(created).execute(&mut *tx).await.map_err(db)?;
