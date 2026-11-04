@@ -4,7 +4,10 @@ mod catalogue_tests;
 mod drill_tests;
 mod edits_tests;
 mod grading_tests;
+mod key_tests;
 mod schedule_tests;
+
+use proptest::prelude::*;
 
 use super::*;
 
@@ -94,4 +97,42 @@ fn assessment(
     findings: Vec<(FindingOutcome, String)>,
 ) -> Assessment {
     Assessment { issues, findings }
+}
+
+/// A generated line: its filler and, when the line is edited, the filler of
+/// the text that replaces it.
+type Row = (String, Option<String>);
+
+fn rows(replacement: &'static str) -> impl Strategy<Value = Vec<Row>> {
+    proptest::collection::vec(("[a-c ]{0,4}", proptest::option::of(replacement)), 1..10)
+}
+
+/// A file of numbered lines, `L000:` and a filler each, and one edit for every
+/// line that has a replacement, which turns the whole line, without its line
+/// break, into `after(number, replacement)`. Every `before` occurs once.
+fn build(
+    rows: &[Row],
+    final_break: bool,
+    after: impl Fn(usize, &str) -> String,
+) -> (DrillFile, Vec<Edit>) {
+    let mut lines = Vec::new();
+    let mut edits = Vec::new();
+    for (number, (filler, replacement)) in rows.iter().enumerate() {
+        let line = format!("L{number:03}:{filler}");
+        if let Some(replacement) = replacement {
+            edits.push(edit("main.py", &line, &after(number, replacement)));
+        }
+        lines.push(line);
+    }
+    let mut text = lines.join("\n");
+    if final_break {
+        text.push('\n');
+    }
+    (file("main.py", &text), edits)
+}
+
+/// An `after` that begins `<` and its line number and ends `>`, so that it
+/// occurs once in the result.
+fn marked(number: usize, replacement: &str) -> String {
+    format!("<{number}:{replacement}>")
 }
