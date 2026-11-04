@@ -67,25 +67,26 @@ impl Reader for Scripted {
         if self.held && !self.tells {
             std::future::pending::<()>().await;
         }
-        let mut outcomes = self.outcomes.lock().unwrap();
-        let mut reads: Vec<Read> = statements
-            .iter()
-            .map(|statement| {
-                let outcome = outcomes.pop_front().expect("an outcome for each statement");
-                Read {
-                    outcome,
-                    finding: finding_of(
-                        (statement.unit, statement.claim, statement.classed),
-                        verdict_of(outcome),
-                        format!("{outcome:?}"),
-                        &[],
-                        None,
-                    ),
-                    reused: false,
-                }
-            })
-            .collect();
-        drop(outcomes);
+        let mut reads: Vec<Read> = {
+            let mut outcomes = self.outcomes.lock().unwrap();
+            statements
+                .iter()
+                .map(|statement| {
+                    let outcome = outcomes.pop_front().expect("an outcome for each statement");
+                    Read {
+                        outcome,
+                        finding: finding_of(
+                            (statement.unit, statement.claim, statement.classed),
+                            verdict_of(outcome),
+                            format!("{outcome:?}"),
+                            &[],
+                            None,
+                        ),
+                        reused: false,
+                    }
+                })
+                .collect()
+        };
         if self.short {
             reads.pop();
         }
