@@ -14,8 +14,9 @@ use crate::features::learning::lessons::claim_reviews::dto::ClaimActionRequestDt
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
+use lattice_core::domain::learning::acceptance::{Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
-    CheckResult, ClaimEvent, ClaimLedgerEntry, ClaimState, VerdictKind,
+    CheckResult, ClaimEvent, ClaimLedgerEntry, ClaimState, ReopenCause, VerdictKind,
 };
 
 /// The draft's input hash in these fixtures, as `prepare` resumes it.
@@ -164,6 +165,60 @@ async fn hinted(
     Ok(raw)
 }
 
+/// A lesson of one section whose statement was verified on a source the course
+/// has since lost, and which the user gave a hint on: the claim is the user's,
+/// and its latest check passed. Gives the lesson.
+async fn reopened_and_hinted(
+    pool: &sqlx::SqlitePool,
+    (repo, job, lesson_id): Scope<'_>,
+    statement: &str,
+) -> Result<String> {
+    const LOST: &str = "a-lost-source";
+    let body = section(statement);
+    let raw = lesson_of(&body).to_string();
+    lesson_drafts::run(repo, job, lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&raw).await?;
+        let mut ledger = open().await?;
+        let id = claim(
+            &mut ledger,
+            "hinted",
+            (statement, statement),
+            &body,
+            SOURCED,
+        )
+        .await?;
+        let verified = CheckResult::Supported {
+            source_version_id: LOST.into(),
+            supporting_quote: statement.into(),
+        };
+        let check = local_check(verified, "The source states it.", vec![]);
+        ledger.append(&id, ClaimEvent::Checked(check)).await?;
+        let stands = [(Step::Read(Reading::Parts), Outcome::Stands)];
+        walk(&mut ledger, &id, Class::Sourced, &stands).await?;
+        let reopened = ClaimEvent::Reopened {
+            cause: ReopenCause::SourceDeleted(LOST.into()),
+        };
+        ledger.append(&id, reopened).await?;
+        let revision = ClaimReviewRepository::new(pool.clone())
+            .load(lesson_id)
+            .await?
+            .revision
+            .0;
+        ClaimReviewService::new(pool.clone())
+            .resolve(
+                lesson_id,
+                &id.0,
+                ClaimActionRequestDto::ResearchWithHint { hint: HINT.into() },
+                revision,
+            )
+            .await?;
+        Ok(())
+    })
+    .await?;
+    Ok(raw)
+}
+
 /// One run of the loop over the lesson, with research on the page the fixture
 /// serves. The lesson is resumed when `first` is none.
 async fn resumed(
@@ -246,6 +301,46 @@ async fn a_hint_the_user_gave_is_searched_and_a_page_that_states_the_claim_verif
         !judged.is_empty() && judged.iter().all(|asked| asked == CLAIM),
         "{judged:?}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_hint_on_a_claim_whose_latest_check_passed_is_still_searched_and_the_page_that_states_it_verifies_it(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let scope = (&repo, job.as_str(), lesson_id.as_str());
+    let model = Searching::new(&[CLAIM]);
+    model.plans(Some(one_search()));
+    let raw = reopened_and_hinted(&pool, scope, CLAIM).await?;
+    assert!(matches!(
+        held(&pool, &lesson_id).await?.state(),
+        ClaimState::Reopened { .. }
+    ));
+
+    let finished = resumed(&pool, scope, &model, Some(raw)).await?;
+
+    let entry = held(&pool, &lesson_id).await?;
+    let queries = entry
+        .events()
+        .iter()
+        .find_map(|record| match &record.event {
+            ClaimEvent::Researched { queries, .. } => Some(queries.len()),
+            _ => None,
+        });
+    assert!(
+        queries.is_some_and(|queries| queries > 0),
+        "the round searched for the claim the hint names: {queries:?}"
+    );
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::ResolvedByEvidence { source_version_id, .. } if source_version_id != "a-lost-source"
+        ),
+        "{:?}",
+        entry.state()
+    );
+    finished?;
     Ok(())
 }
 
