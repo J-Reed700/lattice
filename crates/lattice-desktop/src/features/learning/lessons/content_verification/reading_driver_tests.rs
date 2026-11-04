@@ -33,6 +33,8 @@ struct Scripted {
     down: bool,
     /// Answers for one statement fewer than it is given.
     short: bool,
+    /// Never answers, as a model that does not reply.
+    held: bool,
 }
 
 fn verdict_of(outcome: Outcome) -> ClaimVerdict {
@@ -59,6 +61,9 @@ impl Reader for Scripted {
             .lock()
             .unwrap()
             .push((self.reading, classes.collect()));
+        if self.held {
+            std::future::pending::<()>().await;
+        }
         let mut outcomes = self.outcomes.lock().unwrap();
         let mut reads: Vec<Read> = statements
             .iter()
@@ -101,6 +106,7 @@ impl Script {
                 log: log.clone(),
                 down: false,
                 short: false,
+                held: false,
             })
             .collect();
         Self { readers, log }
@@ -127,6 +133,11 @@ impl Script {
 
     fn short(mut self, reading: Reading) -> Self {
         self.reader(reading).short = true;
+        self
+    }
+
+    fn held(mut self, reading: Reading) -> Self {
+        self.reader(reading).held = true;
         self
     }
 
@@ -225,6 +236,30 @@ async fn drive(
     let model = Model::new();
     let at = ReadContext::new(&model, &lesson, &references, &citations, &[], retained).await?;
     read_until_remedy(&StandardPolicy::new(), script, &at, statements).await
+}
+
+/// How many statements the progress counts, and how many of them as reused,
+/// when the reader of `held` is asked and never answers.
+async fn counted_while_held(
+    script: &Script,
+    held: Reading,
+    statements: &[(Statement<'_>, Position)],
+) -> (u32, u32) {
+    let retained = ClaimChecks::default();
+    let ((), trace) = crate::features::learning::lesson_progress::traced(async {
+        crate::features::learning::lesson_progress::begin_checks(statements.len());
+        let work = drive(script, &retained, statements);
+        tokio::select! {
+            result = work => panic!("The reader of {held:?} should hold the driver: {result:?}"),
+            _ = async {
+                while !script.calls().iter().any(|(asked, _)| *asked == held) {
+                    tokio::task::yield_now().await;
+                }
+            } => {}
+        }
+    })
+    .await;
+    (trace.checked, trace.reused)
 }
 
 #[tokio::test]
@@ -711,5 +746,69 @@ async fn a_quotation_or_the_users_evidence_settles_a_statement_the_gate_does_not
         .collect();
 
     assert_eq!(settled(&at, &statements)?, HashSet::from([1, 2]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_that_stands_at_parts_is_counted_when_parts_returns() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let script = Script::new()
+        .says(Reading::Parts, &[Outcome::Stands])
+        .held(Reading::Consistency);
+    let (cited, reasoned) = (
+        claim("Quillet is a lexer."),
+        claim("A tokenizer splits text."),
+    );
+    // Parts is read before Consistency, whatever the order the statements are
+    // handed in.
+    let given = [
+        (
+            statement(&reasoned, Class::Reasoning, ClassifiedBy::Model),
+            entry(&policy, Class::Reasoning),
+        ),
+        (
+            statement(&cited, Class::Sourced, ClassifiedBy::Writer),
+            entry(&policy, Class::Sourced),
+        ),
+    ];
+
+    let counted = counted_while_held(&script, Reading::Consistency, &given).await;
+
+    assert_eq!(
+        counted,
+        (1, 0),
+        "The statement that stood at Parts is counted before the next reading is asked"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_that_goes_to_a_remedy_is_counted_when_it_gets_there() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let script = Script::new()
+        .says(Reading::Parts, &[Outcome::Unproven])
+        .held(Reading::Consistency);
+    let (cited, reasoned) = (
+        claim("Quillet was written in 2004."),
+        claim("A tokenizer splits text."),
+    );
+    let given = [
+        (
+            statement(&reasoned, Class::Reasoning, ClassifiedBy::Model),
+            entry(&policy, Class::Reasoning),
+        ),
+        (
+            statement(&cited, Class::Sourced, ClassifiedBy::Writer),
+            entry(&policy, Class::Sourced),
+        ),
+    ];
+
+    let counted = counted_while_held(&script, Reading::Consistency, &given).await;
+
+    assert_eq!(
+        counted,
+        (1, 0),
+        "The statement that went to research is counted when it gets there"
+    );
     Ok(())
 }

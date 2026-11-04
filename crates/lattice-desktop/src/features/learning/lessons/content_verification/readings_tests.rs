@@ -1,6 +1,7 @@
 //! The readers over scripted models: each reading's outcomes and findings from
 //! the judges' own fixtures, the receipts they restore and record, and an
 //! outage as an error.
+use super::super::readings::driver::{read_until_remedy, ReadSteps};
 use super::super::readings::{Read, ReadContext, Reader, ReaderSet, Readers, Statement};
 use super::bridge_tests::{
     citing, half_stated, parts_reply, sources, Reading as ScriptedBridge, STATED, STATEMENT,
@@ -12,7 +13,9 @@ use super::evidence_paging_tests::{
 use super::*;
 use crate::features::learning::lesson_drafts;
 use lattice_core::application::services::claim_verification::PartKind;
-use lattice_core::domain::learning::acceptance::{Outcome, Reading};
+use lattice_core::domain::learning::acceptance::{
+    AcceptancePolicy, Outcome, Position, Reading, StandardPolicy,
+};
 use std::collections::VecDeque;
 
 const EVERY_READING: [Reading; 6] = [
@@ -210,6 +213,49 @@ pub(super) async fn paged(
         &claims_of(inventory),
     )
     .await
+}
+
+/// What the reading driver makes of each claim of `inventory` in the course
+/// `references`, with the choices `retained` holds: the standard readers along
+/// the standard policy, each statement at the entry of its class's graph.
+pub(super) async fn driven(
+    model: &dyn LLMPort,
+    references: &ReferenceCollection<'_>,
+    inventory: &Inventory,
+    retained: &ClaimChecks,
+) -> Result<Vec<ReadSteps>> {
+    let world = world_of(references, Citations::default());
+    let at = ReadContext::new(
+        model,
+        &world.lesson,
+        world.references,
+        &world.citations,
+        &world.runs,
+        retained,
+    )
+    .await?;
+    let policy = StandardPolicy::new();
+    let sorted = classed();
+    let entry = Position {
+        class: sorted.class,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(sorted.class).entry(),
+    };
+    let claims = claims_of(inventory);
+    let statements: Vec<(Statement<'_>, Position)> = claims
+        .iter()
+        .map(|(unit, claim)| {
+            let statement = Statement {
+                unit: *unit,
+                claim,
+                classed: sorted,
+            };
+            (statement, entry)
+        })
+        .collect();
+    let readers = Readers::standard();
+    read_until_remedy(&policy, &readers, &at, &statements).await
 }
 
 #[test]

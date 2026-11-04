@@ -1,4 +1,5 @@
-use super::readings_tests::paged;
+use super::bridge_tests::{citing, STATED};
+use super::readings_tests::{claim, driven, paged, read_all, world_of};
 use super::*;
 use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
@@ -421,7 +422,8 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo, &job, &lesson, async {
         let inventory = inventory(170);
         let retained = measured();
-        let work = paged(&blocked, &references, &inventory, &retained);
+        crate::features::learning::lesson_progress::begin_checks(170);
+        let work = driven(&blocked, &references, &inventory, &retained);
         tokio::select! {
             result = work => panic!("The unfinished checks should still be running: {result:?}"),
             result = tokio::time::timeout(Duration::from_secs(5), async {
@@ -440,6 +442,13 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         "{}",
         progress.progress_message
     );
+    let activity = progress.activity.unwrap();
+    assert_eq!(activity.checks_total, 170);
+    assert_eq!(
+        activity.checks_reused, 167,
+        "Late saved checks must be visible before the slow first request finishes"
+    );
+    assert_eq!(activity.checks_completed, 167);
     assert_eq!(
         *blocked.batch_sizes.lock().unwrap(),
         vec![3],
@@ -504,7 +513,8 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     let retained = measured();
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
-        let work=paged(&model,&references,&input,&retained);
+        crate::features::learning::lesson_progress::begin_checks(8);
+        let work=driven(&model,&references,&input,&retained);
         tokio::select! {
             result=work=>panic!("The incomplete claim should be waiting: {result:?}"),
             result=tokio::time::timeout(Duration::from_secs(5),async {
@@ -516,6 +526,12 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         }
         Ok(())
     })).await?;
+    let activity = repo.job(&job).await?.activity.unwrap();
+    assert_eq!(
+        activity.checks_completed, 7,
+        "Progress must include completed siblings while the last check is blocked"
+    );
+    assert_eq!(activity.checks_reused, 0);
     drop(repo);
     pool.close().await;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -540,6 +556,97 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     .await?;
     pool.close().await;
     Ok(())
+}
+
+#[tokio::test]
+async fn parts_restores_the_receipts_behind_a_slow_call_before_making_the_call() -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = super::bridge_tests::sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let citations = citing(&references)?;
+    let mut page = citations.of(0).to_vec();
+    canonicalize_evidence(&mut page);
+    let world = world_of(&references, citations);
+    let blocked = BatchModel {
+        block_batch: true,
+        block_individual: true,
+        ..Default::default()
+    };
+    let slow = claim("Quillet is a lexer that turns characters into tokens.");
+    let saved = [
+        claim("Quillet is a lexer that reads characters."),
+        claim("Quillet is a lexer that emits tokens."),
+    ];
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        // Receipts saved under the earlier key: a reader restores one by
+        // saving it again under the current key.
+        for one in &saved {
+            let receipt = ClaimReceipt {
+                verdict: ClaimVerdict::Supported,
+                reason: "The earlier key's receipt.".into(),
+                supporting_quote: Some(STATED.into()),
+                interpretation_policy: None,
+                shown: None,
+            };
+            lesson_drafts::record_checkpoint(
+                &claim_reuse::legacy_key(&blocked, 0, one, &page),
+                serde_json::to_value(&receipt)?,
+            )
+            .await?;
+        }
+        let claims = [(0, slow), (0, saved[0].clone()), (0, saved[1].clone())];
+        let work = read_all(Reading::Parts, &blocked, &world, &claims);
+        tokio::select! {
+            result = work => panic!("The slow call should still be waiting: {result:?}"),
+            result = tokio::time::timeout(Duration::from_secs(5), async {
+                while blocked.calls.lock().unwrap().is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("The slow call never started"),
+        }
+        for one in &saved {
+            let compared = ClaimChecks::key(0, one, &page);
+            let key = claim_receipt_key(&blocked, &format!("{compared}|guard:rule-layer"));
+            assert!(
+                lesson_drafts::checkpoint(&key).await?.is_some(),
+                "A receipt behind a slow call must be restored before the call is made"
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_statement_parts_hands_to_the_page_is_counted_once_after_its_page_reading() -> Result<()>
+{
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    // The first and third statements have page receipts; the second is asked.
+    let mut saved = inventory(3);
+    let asked = saved.units[0].claims[1].statement.clone();
+    saved.units[0].claims.retain(|one| one.statement != asked);
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        paged(&BatchModel::default(), &references, &saved, &measured()).await?;
+        let model = BatchModel::default();
+        let (steps, trace) = crate::features::learning::lesson_progress::traced(async {
+            crate::features::learning::lesson_progress::begin_checks(3);
+            driven(&model, &references, &inventory(3), &measured()).await
+        })
+        .await;
+        assert_eq!(steps?.len(), 3);
+        assert_eq!(
+            (trace.checked, trace.reused),
+            (3, 2),
+            "Each statement counts once, reused when its reading came from a saved check"
+        );
+        assert_eq!(model.calls.lock().unwrap().len(), 1);
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
