@@ -1,0 +1,1 @@
+Include a test file (kind `test`): the unit tests a team would keep next to this code. It is part of the code under review and is not the suite. It runs itself as a program, with the standard library only, fails by raising or throwing, and passes on your code.

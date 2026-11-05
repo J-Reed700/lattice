@@ -1,0 +1,1 @@
+Include a test file (kind `test`): the unit tests a team would keep next to this code, written with the language's usual test library. It is part of the code under review.

@@ -12,6 +12,7 @@ mod grading_job_tests;
 mod job_tests;
 #[path = "live_build_eval.rs"]
 mod live_build_eval;
+mod material_tests;
 mod plant_tests;
 mod proof_tests;
 mod prove_tests;
