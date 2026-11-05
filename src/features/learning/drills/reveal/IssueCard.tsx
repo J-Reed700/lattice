@@ -90,7 +90,7 @@ export function IssueCard({ entry, credited, onShow, material = 'code' }: {
       )}
       <div className="mt-4">
         <h4 className={eyebrow}>The fix</h4>
-        <div className="mt-1.5"><FixDiff fix={issue.fix} /></div>
+        <div className="mt-1.5"><FixDiff fix={issue.fix} prose={material === 'passage'} /></div>
       </div>
     </article>
   );
