@@ -267,10 +267,19 @@ impl ClaimLedger {
                     self.start(&successor, claim, class).await?;
                     successor
                 }
-                Some(id) if self.takes_successor(candidate, &id, records.get(&id)) => {
+                Some(id)
+                    if self.takes_successor(candidate, &id, records.get(&id))
+                        || self.rewritten_unawaited(
+                            candidate,
+                            &id,
+                            records.get(&id),
+                            &claim.statement,
+                        ) =>
+                {
                     // A statement on a sentence another claim's rewrite
-                    // changed is read again as a successor, at the post-rewrite
-                    // node of the class it holds.
+                    // changed, or on one that says something else with no
+                    // repair awaiting it, is read again as a successor, at the
+                    // post-rewrite node of the class it holds.
                     let successor = ClaimId::generate();
                     let held = self
                         .entry(&id)
@@ -376,6 +385,33 @@ impl ClaimLedger {
         let standing = field_text(candidate, location.unit_index, &location.field)
             .is_some_and(|text| text.contains(&record.before));
         !standing
+    }
+
+    /// Whether the claim `id`, which no repair awaited, now stands where its
+    /// sentence was written over with another statement, `statement`: a claim
+    /// of the machine's own, or one it has ended, not the user's, nor a code
+    /// example.
+    fn rewritten_unawaited(
+        &self,
+        candidate: &Value,
+        id: &ClaimId,
+        repair: Option<&RepairRecord>,
+        statement: &str,
+    ) -> bool {
+        if repair.is_some() {
+            return false;
+        }
+        let Some(entry) = self.entry(id) else {
+            return false;
+        };
+        if entry.state().is_settled() || entry.state().awaits_user() || entry.classified().is_none()
+        {
+            return false;
+        }
+        let location = entry.location();
+        let standing = field_text(candidate, location.unit_index, &location.field)
+            .is_some_and(|text| text.contains(&location.quote));
+        !standing && entry.statement() != statement
     }
 
     /// A claim seen for the first time: extracted, then classified. None is
