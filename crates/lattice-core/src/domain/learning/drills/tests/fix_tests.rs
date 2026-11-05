@@ -12,6 +12,7 @@ fn check(outcome: FixOutcome, decided_by: DecidedBy) -> IssueCheck {
         reason: "The comparison is back to the limit.".to_owned(),
         output: None,
         fallback: None,
+        graded_beside: Vec::new(),
     }
 }
 
@@ -104,6 +105,18 @@ fn a_fallback_is_kept_whatever_the_suite_says() {
 }
 
 #[test]
+fn the_issues_an_issue_was_graded_beside_are_kept_whatever_the_suite_says() {
+    let mut found = check(FixOutcome::Fixed, DecidedBy::Test);
+    found.graded_beside = vec![0, 2];
+    for suite in [SuiteVerdict::Passed, failing()] {
+        let settled = IssueFix::settle(1, found.clone(), &suite);
+        assert_eq!(settled.graded_beside, [0, 2]);
+    }
+    let alone = IssueFix::settle(1, check(FixOutcome::Fixed, DecidedBy::Judge), &failing());
+    assert!(alone.graded_beside.is_empty());
+}
+
+#[test]
 fn a_result_is_stored_and_shown_in_one_form() {
     let result = IssueFix {
         issue: 3,
@@ -112,6 +125,7 @@ fn a_result_is_stored_and_shown_in_one_form() {
         reason: "The test still fails.".to_owned(),
         output: Some("AssertionError".to_owned()),
         fallback: None,
+        graded_beside: vec![0, 4],
         suite: failing(),
     };
     let written = serde_json::to_value(&result).unwrap();
@@ -124,6 +138,7 @@ fn a_result_is_stored_and_shown_in_one_form() {
             "reason": "The test still fails.",
             "output": "AssertionError",
             "fallback": null,
+            "gradedBeside": [0, 4],
             "suite": {"status": "failed", "output": "AssertionError: the refund is gone"}
         })
     );

@@ -51,6 +51,9 @@ pub struct IssueCheck {
     pub output: Option<String>,
     /// Why the issue's test could not decide it and a judge did instead.
     pub fallback: Option<String>,
+    /// The other issues, by position in the key, whose key fixes were applied to the learner's files for the issue's
+    /// test: none when a judge decided the issue.
+    pub graded_beside: Vec<usize>,
 }
 
 /// One key issue's result, by its position in the key.
@@ -65,6 +68,9 @@ pub struct IssueFix {
     pub output: Option<String>,
     /// Why the issue's test could not decide it and a judge did instead.
     pub fallback: Option<String>,
+    /// The other issues, by position in the key, whose key fixes were applied to the learner's files for this issue's
+    /// test, so that the issue was graded beside them: none when a judge decided the issue.
+    pub graded_beside: Vec<usize>,
     /// The hidden suite's verdict on the learner's files: the same for every issue of the fix.
     pub suite: SuiteVerdict,
 }
@@ -86,6 +92,7 @@ impl IssueFix {
                 reason: format!("{} {BROKE}", check.reason),
                 output: Some(output.clone()),
                 fallback: check.fallback,
+                graded_beside: check.graded_beside,
                 suite: suite.clone(),
             },
             None => Self {
@@ -95,6 +102,7 @@ impl IssueFix {
                 reason: check.reason,
                 output: check.output,
                 fallback: check.fallback,
+                graded_beside: check.graded_beside,
                 suite: suite.clone(),
             },
         }

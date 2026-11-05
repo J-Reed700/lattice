@@ -3,12 +3,14 @@
 //!
 //! | Issue | Runner language | No runner |
 //! |---|---|---|
-//! | proven by a killing test | that test runs on the learner's files | judged, and the result says why |
+//! | proven by a killing test | that test runs on the learner's files, beside the key's fixes of the other issues | judged, and the result says why |
 //! | proven by judgement | judged | judged |
 //!
-//! A test that cannot decide, because its run timed out, no runtime was there or the runtime refused the files, proves
-//! nothing: the issue is judged and the result says so. In a runner language the hidden suite also runs once on the
-//! learner's files, and its verdict goes into every issue's result.
+//! An issue is graded on its own: a defect the learner left in another issue cannot fail its test, because the key's
+//! fix for every other issue is applied to the learner's text where it applies. A test that cannot decide, because its
+//! run timed out, no runtime was there or the runtime refused the files, proves nothing: the issue is judged and the
+//! result says so. In a runner language the hidden suite also runs once on the learner's files as written, and its
+//! verdict goes into every issue's result.
 
 use super::budget;
 use super::build::ask::render_files;
@@ -18,8 +20,8 @@ use crate::features::learning::generation::parse_json;
 use crate::features::learning::lessons::structured_call::complete_checked;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{
-    pattern, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck, IssueFix, KeyIssue, LineSpan,
-    Proof, SuiteVerdict,
+    apply, overlaps, pattern, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck, IssueFix,
+    KeyIssue, LineSpan, Proof, SuiteVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -48,7 +50,7 @@ pub(in crate::features::learning) async fn grade_fix(
     let mut graded = Vec::with_capacity(case.drill.key.len());
     for (position, issue) in case.drill.key.iter().enumerate() {
         let checked_by = strategy(choose(issue), tools);
-        let check = checked_by.grade(case, issue).await?;
+        let check = checked_by.grade(case, position, issue).await?;
         graded.push(IssueFix::settle(position, check, &suite));
     }
     Ok(graded)
@@ -73,8 +75,13 @@ pub(in crate::features::learning) fn choose(issue: &KeyIssue) -> StrategyKind {
 pub(in crate::features::learning) trait FixStrategy:
     Send + Sync
 {
-    /// What the issue's own check finds in the learner's files.
-    async fn grade(&self, case: &FixCase<'_>, issue: &KeyIssue) -> Result<IssueCheck>;
+    /// What the check of the issue at `position` in the key finds in the learner's files.
+    async fn grade(
+        &self,
+        case: &FixCase<'_>,
+        position: usize,
+        issue: &KeyIssue,
+    ) -> Result<IssueCheck>;
 }
 
 /// The strategy of `kind`, on `tools`.
@@ -88,31 +95,36 @@ pub(in crate::features::learning) fn strategy<'a>(
     }
 }
 
-/// The issue's killing test runs on the learner's files. It passes, so the issue is fixed; it fails, so it is not,
-/// with what the test wrote.
+/// The issue's killing test runs on the learner's files with the key's fixes of the other issues applied. It passes,
+/// so the issue is fixed; it fails, so it is not, with what the test wrote.
 struct KillingTestFix<'a> {
     tools: Tools<'a>,
 }
 
 #[async_trait]
 impl FixStrategy for KillingTestFix<'_> {
-    async fn grade(&self, case: &FixCase<'_>, issue: &KeyIssue) -> Result<IssueCheck> {
+    async fn grade(
+        &self,
+        case: &FixCase<'_>,
+        position: usize,
+        issue: &KeyIssue,
+    ) -> Result<IssueCheck> {
         let Proof::Killed { test } = &issue.proof else {
-            return JudgedFix { tools: self.tools }.grade(case, issue).await;
+            return JudgedFix { tools: self.tools }
+                .grade(case, position, issue)
+                .await;
         };
         let Some(runner) = self.tools.runner else {
             let why = "There is no runtime here to run the test.".to_owned();
-            return judged_instead(self.tools, case, issue, why).await;
+            return judged_instead(self.tools, case, position, issue, why).await;
         };
-        let outcome = match runner
-            .run(case.learner, test, self.tools.cancel.clone())
-            .await
-        {
+        let (files, graded_beside) = beside(case, position);
+        let outcome = match runner.run(&files, test, self.tools.cancel.clone()).await {
             Ok(outcome) => outcome,
             Err(_) if self.tools.cancel.is_cancelled() => return Err(cancelled()),
             Err(error) => {
                 let why = format!("The test could not be run: {error}");
-                return judged_instead(self.tools, case, issue, why).await;
+                return judged_instead(self.tools, case, position, issue, why).await;
             }
         };
         match outcome {
@@ -122,6 +134,7 @@ impl FixStrategy for KillingTestFix<'_> {
                 reason: "The test that shows this issue passes on your files.".to_owned(),
                 output: None,
                 fallback: None,
+                graded_beside,
             }),
             RunOutcome::Failed { output } => Ok(IssueCheck {
                 outcome: FixOutcome::NotFixed,
@@ -129,11 +142,12 @@ impl FixStrategy for KillingTestFix<'_> {
                 reason: "The test that shows this issue still fails on your files.".to_owned(),
                 output: Some(output),
                 fallback: None,
+                graded_beside,
             }),
             RunOutcome::Cancelled => Err(cancelled()),
             other => {
                 let why = other.says_nothing().unwrap_or_default();
-                judged_instead(self.tools, case, issue, why).await
+                judged_instead(self.tools, case, position, issue, why).await
             }
         }
     }
@@ -143,10 +157,11 @@ impl FixStrategy for KillingTestFix<'_> {
 async fn judged_instead(
     tools: Tools<'_>,
     case: &FixCase<'_>,
+    position: usize,
     issue: &KeyIssue,
     why: String,
 ) -> Result<IssueCheck> {
-    let mut check = JudgedFix { tools }.grade(case, issue).await?;
+    let mut check = JudgedFix { tools }.grade(case, position, issue).await?;
     check.fallback = Some(why);
     Ok(check)
 }
@@ -174,7 +189,12 @@ enum Verdict {
 
 #[async_trait]
 impl FixStrategy for JudgedFix<'_> {
-    async fn grade(&self, case: &FixCase<'_>, issue: &KeyIssue) -> Result<IssueCheck> {
+    async fn grade(
+        &self,
+        case: &FixCase<'_>,
+        _position: usize,
+        issue: &KeyIssue,
+    ) -> Result<IssueCheck> {
         let judgement = complete_checked(
             self.tools.llm,
             SYSTEM,
@@ -204,8 +224,29 @@ impl FixStrategy for JudgedFix<'_> {
             reason: judgement.reason.trim().to_owned(),
             output: None,
             fallback: None,
+            graded_beside: Vec::new(),
         })
     }
+}
+
+/// The learner's files with the key's fix of every other issue applied where it applies to their text, in the key's
+/// order, and the positions of the issues whose fixes were applied. A fix does not apply where the learner changed or
+/// removed the lines it replaces, where those lines are in their text more than once, or where it touches the lines of
+/// the issue at `position`, so that no other issue can mend this one.
+fn beside(case: &FixCase<'_>, position: usize) -> (Vec<DrillFile>, Vec<usize>) {
+    let own = case.drill.key.get(position).map(|issue| &issue.span);
+    let mut files = case.learner.to_vec();
+    let mut applied = Vec::new();
+    for (other, issue) in case.drill.key.iter().enumerate() {
+        if other == position || own.is_some_and(|own| overlaps(own, &issue.span)) {
+            continue;
+        }
+        if let Ok((fixed, _)) = apply(&files, std::slice::from_ref(&issue.fix)) {
+            files = fixed;
+            applied.push(other);
+        }
+    }
+    (files, applied)
 }
 
 /// The reasons, then the verdict.
