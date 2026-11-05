@@ -46,6 +46,7 @@ export const DECIDED_BY: Record<DecidedBy, string> = {
   test: 'the issue’s test',
   suite: 'the hidden suite',
   judge: 'a judge',
+  source: 'the source passage',
 };
 
 export const RATING: Record<PatternRating, Words> = {

@@ -78,12 +78,14 @@ impl FixStrategy for SourceCheckedFix<'_> {
             Rewrite::Unchanged => {
                 return Ok(checked(
                     FixOutcome::NotFixed,
+                    DecidedBy::Source,
                     "You left these sentences as they were.".to_owned(),
                 ))
             }
             Rewrite::Removed => {
                 return Ok(checked(
                     FixOutcome::Partly,
+                    DecidedBy::Source,
                     "You removed these sentences: the error is gone, but so is what the source says there.".to_owned(),
                 ))
             }
@@ -95,7 +97,7 @@ impl FixStrategy for SourceCheckedFix<'_> {
                 Some(quote) => format!("The source supports what you wrote: \"{quote}\""),
                 None => format!("The source supports what you wrote. {}", found.reason),
             };
-            return Ok(checked(FixOutcome::Fixed, reason));
+            return Ok(checked(FixOutcome::Fixed, DecidedBy::Source, reason));
         }
         let judgement = self.judge(source, issue, &written, &found.reason).await?;
         let outcome = if judgement.error_gone {
@@ -110,6 +112,7 @@ impl FixStrategy for SourceCheckedFix<'_> {
         };
         Ok(checked(
             outcome,
+            DecidedBy::Judge,
             format!("{said}: {} {}", found.reason, judgement.reason.trim()),
         ))
     }
@@ -167,10 +170,10 @@ impl SourceCheckedFix<'_> {
     }
 }
 
-fn checked(outcome: FixOutcome, reason: String) -> IssueCheck {
+fn checked(outcome: FixOutcome, decided_by: DecidedBy, reason: String) -> IssueCheck {
     IssueCheck {
         outcome,
-        decided_by: DecidedBy::Judge,
+        decided_by,
         reason,
         output: None,
         fallback: None,

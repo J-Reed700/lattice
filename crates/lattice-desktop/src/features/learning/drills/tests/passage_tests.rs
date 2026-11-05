@@ -34,9 +34,9 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    apply, check_key, targets, Assessment, Drill, DrillFile, Edit, FindingOutcome, FixOutcome,
-    IssueFix, IssueOutcome, KeyIssue, LineSpan, Material, Origin, Pattern, Proof, Severity,
-    SourceVerdict,
+    apply, check_key, targets, Assessment, DecidedBy, Drill, DrillFile, Edit, FindingOutcome,
+    FixOutcome, IssueFix, IssueOutcome, KeyIssue, LineSpan, Material, Origin, Pattern, Proof,
+    Severity, SourceVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
@@ -1040,6 +1040,7 @@ async fn a_rewrite_the_source_supports_is_fixed() -> Result<()> {
     let drill = planted_drill("drill");
     let fixed = fix_of(&model, &check, &drill, &explanation()).await?;
     assert_eq!(fixed.outcome, FixOutcome::Fixed);
+    assert_eq!(fixed.decided_by, DecidedBy::Source);
     assert!(fixed.reason.contains(FIGURE_QUOTE), "{}", fixed.reason);
     assert_eq!(check.sentences(), [FIRST]);
     assert!(model.requests().is_empty());
@@ -1056,6 +1057,7 @@ async fn sentences_left_as_they_were_are_not_fixed_and_nothing_is_asked() -> Res
         .replace(THIRD, "The benefit was smaller for what was known.");
     let fixed = fix_of(&model, &check, &drill, &learner).await?;
     assert_eq!(fixed.outcome, FixOutcome::NotFixed);
+    assert_eq!(fixed.decided_by, DecidedBy::Source);
     assert!(check.asked().is_empty());
     assert!(model.requests().is_empty());
     Ok(())
@@ -1071,6 +1073,7 @@ async fn removed_sentences_are_partly_a_fix() -> Result<()> {
         .replace(&format!("{FIRST_PLANTED}\n"), "");
     let fixed = fix_of(&model, &check, &drill, &learner).await?;
     assert_eq!(fixed.outcome, FixOutcome::Partly);
+    assert_eq!(fixed.decided_by, DecidedBy::Source);
     assert!(check.asked().is_empty());
     Ok(())
 }
@@ -1086,6 +1089,7 @@ async fn a_rewrite_without_the_error_that_the_source_does_not_support_is_partly_
     let learner = drill.files[0].text.replace(FIRST_PLANTED, ABOUT_TWENTY);
     let fixed = fix_of(&model, &check, &drill, &learner).await?;
     assert_eq!(fixed.outcome, FixOutcome::Partly);
+    assert_eq!(fixed.decided_by, DecidedBy::Judge);
     assert!(
         fixed.reason.contains("The source gives 14%."),
         "{}",
@@ -1116,6 +1120,7 @@ async fn a_rewrite_that_still_states_the_error_is_not_fixed() -> Result<()> {
     let learner = drill.files[0].text.replace(FIRST_PLANTED, ROUGHLY_FORTY);
     let fixed = fix_of(&model, &check, &drill, &learner).await?;
     assert_eq!(fixed.outcome, FixOutcome::NotFixed);
+    assert_eq!(fixed.decided_by, DecidedBy::Judge);
     Ok(())
 }
 
