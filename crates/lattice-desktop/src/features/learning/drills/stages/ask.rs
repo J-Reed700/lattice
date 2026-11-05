@@ -31,9 +31,10 @@ pub(in crate::features::learning) async fn ask_request<V>(
 }
 
 /// Asks for `request`, reads the answer with `accept`, and where the language has a runner and `to_run` names
-/// something to run, runs it. A run that fails sends the answer back once, in the same conversation, with the
-/// runner's output; a second failure fails the call. A run that ends without saying anything about the code fails
-/// the call as an unavailable service, never as a bad answer.
+/// something to run, runs it. A run that fails, or does not finish within the runtime's time limit, sends the
+/// answer back once, in the same conversation, with what the run wrote; a second failure fails the call. A runtime
+/// that is not there fails the call as an unavailable service, never as a bad answer, and a cancelled run is a
+/// cancelled build.
 pub(in crate::features::learning) async fn ask_until_suite_passes<V>(
     llm: &dyn LLMPort,
     runner: Option<&dyn CodeRunner>,
@@ -65,9 +66,11 @@ pub(in crate::features::learning) async fn ask_until_suite_passes<V>(
             RunOutcome::Failed { output } => {
                 format!("{what_runs} failed. The runner's output follows.\n{output}")
             }
-            RunOutcome::Inconclusive { why } => {
+            RunOutcome::TimedOut { output } => did_not_finish(what_runs, &output),
+            RunOutcome::Cancelled => return Err(cancelled()),
+            RunOutcome::Unavailable { why } => {
                 return Err(AppError::ServiceNotAvailable(format!(
-                    "{what_runs} could not be run to an end: {why}"
+                    "{what_runs} could not be run: {why}"
                 )))
             }
         };
@@ -77,6 +80,24 @@ pub(in crate::features::learning) async fn ask_until_suite_passes<V>(
         request = reask(request, &asked.raw, &why);
         again = true;
     }
+}
+
+/// What to tell the model about a run that did not finish within the runtime's time limit, and what it wrote.
+fn did_not_finish(what_runs: &str, output: &str) -> String {
+    let said = format!(
+        "{what_runs} did not finish within the runtime's time limit. Look for a loop that does not end, a wait, or work that takes too long."
+    );
+    if output.trim().is_empty() {
+        said
+    } else {
+        format!("{said} What it wrote before it was stopped follows.\n{output}")
+    }
+}
+
+/// What a stage fails with when a run was cancelled. The build's own token is cancelled then, and a stage whose
+/// token is cancelled is a stop, as the job runtime treats an error raised while stopping.
+pub(in crate::features::learning) fn cancelled() -> AppError {
+    AppError::InvalidState("The drill build was cancelled.".into())
 }
 
 /// A refusal the model is asked again with.

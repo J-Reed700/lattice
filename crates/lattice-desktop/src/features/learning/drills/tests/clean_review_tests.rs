@@ -218,6 +218,105 @@ async fn a_repair_that_breaks_the_suite_twice_fails_the_stage() -> Result<()> {
     Ok(())
 }
 
+fn looping() -> String {
+    review_answer(vec![issue(FLAW, "        while True:\n            pass\n")])
+}
+
+#[tokio::test]
+async fn a_repair_that_leaves_the_suite_running_is_sent_back_once_with_what_it_wrote() -> Result<()>
+{
+    let pool = pool().await?;
+    let model = ScriptedModel::new([looping(), review_answer(vec![issue(FLAW, REPAIR)])]);
+    let runner = FakeRunner::scripted(vec![
+        RunOutcome::TimedOut {
+            output: "spinning".into(),
+        },
+        RunOutcome::Passed,
+    ]);
+    let grader = idle_grader();
+    let reviewed = build(&pool, &model, Some(&runner), &grader)
+        .clean_review(&spec(), &flawed())
+        .await?;
+    assert_eq!(reviewed.files, files());
+    let reask = last(&model.requests()[1]);
+    assert!(
+        reask.starts_with("That answer could not be used:"),
+        "{reask}"
+    );
+    assert!(
+        reask.contains(
+            "The suite on the repaired code did not finish within the runtime's time limit."
+        ),
+        "{reask}"
+    );
+    assert!(reask.contains("spinning"), "{reask}");
+    let purposes: Vec<&str> = reviewed
+        .trail
+        .calls
+        .iter()
+        .map(|call| call.purpose.as_str())
+        .collect();
+    assert_eq!(purposes, ["clean review", "clean review (asked again)"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_repair_that_leaves_the_suite_running_twice_fails_the_stage_as_an_unusable_answer(
+) -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([looping(), looping()]);
+    let runner = FakeRunner::new(|_, _| RunOutcome::TimedOut {
+        output: String::new(),
+    });
+    let grader = idle_grader();
+    let error = build(&pool, &model, Some(&runner), &grader)
+        .clean_review(&spec(), &flawed())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(reason) if reason.contains("did not finish within the runtime's time limit")),
+        "{error:?}"
+    );
+    assert_eq!(model.requests().len(), 2, "asked once more, never twice");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_runtime_that_is_not_there_or_a_cancelled_run_is_never_blamed_on_the_answer() -> Result<()>
+{
+    for (outcome, unavailable) in [
+        (
+            RunOutcome::Unavailable {
+                why: "The bundled Python runtime is missing.".into(),
+            },
+            true,
+        ),
+        (RunOutcome::Cancelled, false),
+    ] {
+        let pool = pool().await?;
+        let model = ScriptedModel::new([looping(), looping()]);
+        let runner = FakeRunner::new(move |_, _| outcome.clone());
+        let grader = idle_grader();
+        let error = build(&pool, &model, Some(&runner), &grader)
+            .clean_review(&spec(), &flawed())
+            .await
+            .unwrap_err();
+        if unavailable {
+            assert!(
+                matches!(&error, AppError::ServiceNotAvailable(_)),
+                "{error:?}"
+            );
+        } else {
+            assert!(
+                matches!(&error, AppError::InvalidState(message) if message.contains("cancelled")),
+                "{error:?}"
+            );
+        }
+        assert_eq!(model.requests().len(), 1, "nothing is asked again");
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_reviewer_is_told_nothing_of_planting() -> Result<()> {
     let pool = pool().await?;

@@ -316,32 +316,53 @@ async fn a_second_miss_leaves_the_mutation_unproven() -> Result<()> {
     Ok(())
 }
 
+/// The runs that say nothing about the code, and what a verdict then says: a timeout, a cancellation and a runtime
+/// that is not there prove nothing.
+fn silent_runs() -> Vec<(RunOutcome, &'static str)> {
+    vec![
+        (
+            RunOutcome::TimedOut {
+                output: "partial".into(),
+            },
+            "time limit",
+        ),
+        (RunOutcome::Cancelled, "cancelled"),
+        (
+            RunOutcome::Unavailable {
+                why: "The runtime is gone.".into(),
+            },
+            "The runtime is gone.",
+        ),
+    ]
+}
+
 #[tokio::test]
 async fn a_run_that_does_not_end_proves_nothing_and_nothing_is_asked() -> Result<()> {
     let world = World::new();
-    for timed_out in ["clean", "mutated"] {
-        let model = ScriptedModel::new([]);
-        let runner = FakeRunner::new(move |files, _| {
-            let mutated = files
-                .iter()
-                .any(|file| file.text.contains(OPERATOR_AFTER.trim()));
-            if mutated == (timed_out == "mutated") {
-                RunOutcome::Inconclusive {
-                    why: "The run exceeded its time limit and was stopped.".into(),
+    for (silent, fragment) in silent_runs() {
+        for silent_on in ["clean", "mutated"] {
+            let model = ScriptedModel::new([]);
+            let silent = silent.clone();
+            let runner = FakeRunner::new(move |files, _| {
+                let mutated = files
+                    .iter()
+                    .any(|file| file.text.contains(OPERATOR_AFTER.trim()));
+                if mutated == (silent_on == "mutated") {
+                    silent.clone()
+                } else {
+                    RunOutcome::Passed
                 }
-            } else {
-                RunOutcome::Passed
-            }
-        });
-        let cancel = CancellationToken::new();
-        let verdict = strategy(StrategyKind::Killing, tools(&model, Some(&runner), &cancel))
-            .prove(&world.operator_case())
-            .await?;
-        let (why, _) = unproven(verdict);
-        assert!(why.contains("proves nothing"), "{why}");
-        assert!(why.contains("time limit"), "{why}");
-        assert!(model.requests().is_empty());
-        assert_eq!(runner.runs().len(), 2);
+            });
+            let cancel = CancellationToken::new();
+            let verdict = strategy(StrategyKind::Killing, tools(&model, Some(&runner), &cancel))
+                .prove(&world.operator_case())
+                .await?;
+            let (why, _) = unproven(verdict);
+            assert!(why.contains("proves nothing"), "{why}");
+            assert!(why.contains(fragment), "{fragment} in {why}");
+            assert!(model.requests().is_empty(), "{fragment} on {silent_on}");
+            assert_eq!(runner.runs().len(), 2);
+        }
     }
     Ok(())
 }
@@ -650,20 +671,25 @@ async fn a_new_edit_must_apply_beside_the_others() -> Result<()> {
 #[tokio::test]
 async fn a_suite_that_does_not_end_leaves_a_smell_unproven_and_asks_nothing() -> Result<()> {
     let world = World::new();
-    let model = ScriptedModel::new([]);
-    let runner = FakeRunner::new(|_, _| RunOutcome::Inconclusive {
-        why: "The run exceeded its time limit.".into(),
-    });
-    let cancel = CancellationToken::new();
-    let verdict = strategy(
-        StrategyKind::BehaviourKeptThenJudged,
-        tools(&model, Some(&runner), &cancel),
-    )
-    .prove(&world.literals_case())
-    .await?;
-    let (why, _) = unproven(verdict);
-    assert!(why.contains("time limit"), "{why}");
-    assert!(model.requests().is_empty());
+    for (silent, fragment) in silent_runs() {
+        let model = ScriptedModel::new([]);
+        let runner = FakeRunner::new(move |_, _| silent.clone());
+        let cancel = CancellationToken::new();
+        let verdict = strategy(
+            StrategyKind::BehaviourKeptThenJudged,
+            tools(&model, Some(&runner), &cancel),
+        )
+        .prove(&world.literals_case())
+        .await?;
+        let (why, _) = unproven(verdict);
+        assert!(
+            why.contains("The suite could not be run to an end"),
+            "{why}"
+        );
+        assert!(why.contains(fragment), "{fragment} in {why}");
+        assert!(model.requests().is_empty());
+        assert_eq!(runner.runs().len(), 1, "a timeout is not sent back");
+    }
     Ok(())
 }
 
@@ -736,20 +762,14 @@ async fn a_test_that_fails_on_the_clean_code_is_broken_and_not_weak() -> Result<
         suite: Some(SUITE),
         others: &[],
     };
-    for (outcome, fragment) in [
-        (
-            RunOutcome::Failed {
-                output: "ImportError".into(),
-            },
-            "broken and not weak: ImportError",
-        ),
-        (
-            RunOutcome::Inconclusive {
-                why: "The run exceeded its time limit.".into(),
-            },
-            "could not be run to an end",
-        ),
-    ] {
+    let mut outcomes = vec![(
+        RunOutcome::Failed {
+            output: "ImportError".into(),
+        },
+        "broken and not weak: ImportError",
+    )];
+    outcomes.extend(silent_runs());
+    for (outcome, fragment) in outcomes {
         let model = ScriptedModel::new([]);
         let runner = FakeRunner::new(move |_, _| outcome.clone());
         let cancel = CancellationToken::new();

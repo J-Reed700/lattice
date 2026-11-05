@@ -97,7 +97,10 @@ fn shown(outcome: &RunOutcome) -> String {
     match outcome {
         RunOutcome::Passed => "it passed".to_owned(),
         RunOutcome::Failed { output } => format!("it failed, with this output:\n{output}"),
-        RunOutcome::Inconclusive { why } => format!("it did not end: {why}"),
+        other => format!(
+            "it did not end: {}",
+            other.says_nothing().unwrap_or_default()
+        ),
     }
 }
 
@@ -128,21 +131,18 @@ impl ProofStrategy for KillingTest<'_> {
                 .run(case.mutated, &test, self.tools.cancel.clone())
                 .await?;
             trail.run("The killing test with the mutation", &changed);
-            match (&clean, &changed) {
-                (RunOutcome::Passed, RunOutcome::Failed { .. }) => {
-                    return Ok(ProofVerdict::Proven {
-                        proof: Proof::Killed { test },
-                        mutation: case.mutation.clone(),
-                        trail,
-                    })
-                }
-                (RunOutcome::Inconclusive { why }, _) | (_, RunOutcome::Inconclusive { why }) => {
-                    return Ok(unproven(
-                        format!("A killing test proves nothing when a run does not end: {why}"),
-                        trail,
-                    ))
-                }
-                _ => {}
+            if let (RunOutcome::Passed, RunOutcome::Failed { .. }) = (&clean, &changed) {
+                return Ok(ProofVerdict::Proven {
+                    proof: Proof::Killed { test },
+                    mutation: case.mutation.clone(),
+                    trail,
+                });
+            }
+            if let Some(why) = clean.says_nothing().or_else(|| changed.says_nothing()) {
+                return Ok(unproven(
+                    format!("A killing test proves nothing when a run does not end: {why}"),
+                    trail,
+                ));
             }
             if again {
                 return Ok(unproven(

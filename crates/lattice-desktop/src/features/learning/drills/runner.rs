@@ -21,8 +21,26 @@ pub enum RunOutcome {
     Passed,
     /// The test ran and failed. `output` is what it wrote.
     Failed { output: String },
-    /// The run says nothing about the code: it timed out, was cancelled, or the runtime was not there.
-    Inconclusive { why: String },
+    /// The run did not finish within the runtime's time limit and was stopped. `output` is what it wrote before.
+    TimedOut { output: String },
+    /// The run was cancelled.
+    Cancelled,
+    /// The runtime is not there to run anything.
+    Unavailable { why: String },
+}
+
+impl RunOutcome {
+    /// Why a run says nothing about the code, when it does not: it timed out, was cancelled, or had no runtime.
+    pub(in crate::features::learning) fn says_nothing(&self) -> Option<String> {
+        match self {
+            Self::Passed | Self::Failed { .. } => None,
+            Self::TimedOut { .. } => {
+                Some("The run exceeded the runtime's time limit and was stopped.".to_owned())
+            }
+            Self::Cancelled => Some("The run was cancelled.".to_owned()),
+            Self::Unavailable { why } => Some(why.clone()),
+        }
+    }
 }
 
 /// Something that can run a test against files.
@@ -145,13 +163,11 @@ pub(in crate::features::learning) fn outcome_of(result: &LearningLabExecutionRes
         LearningLabRunStatus::Failed => RunOutcome::Failed {
             output: output_of(result),
         },
-        LearningLabRunStatus::TimedOut => RunOutcome::Inconclusive {
-            why: "The run exceeded its time limit and was stopped.".into(),
+        LearningLabRunStatus::TimedOut => RunOutcome::TimedOut {
+            output: output_of(result),
         },
-        LearningLabRunStatus::Cancelled => RunOutcome::Inconclusive {
-            why: "The run was cancelled.".into(),
-        },
-        LearningLabRunStatus::RuntimeUnavailable => RunOutcome::Inconclusive {
+        LearningLabRunStatus::Cancelled => RunOutcome::Cancelled,
+        LearningLabRunStatus::RuntimeUnavailable => RunOutcome::Unavailable {
             why: if result.stderr.trim().is_empty() {
                 "The runtime is not available.".into()
             } else {

@@ -199,8 +199,8 @@ impl<'a> DrillBuild<'a> {
     }
 
     /// The output of `stage`: the checkpoint when one was saved, otherwise what `work` makes, saved before it is
-    /// returned. `None` when the job was cancelled or is no longer running. Model calls and runs happen inside
-    /// `work`, which the job's cancellation drops.
+    /// returned. `None` when the job was cancelled, is no longer running, or a run was cancelled. Model calls and
+    /// runs happen inside `work`, which the job's cancellation drops.
     async fn stage<T, F, Fut>(
         &self,
         context: &JobContext,
@@ -226,7 +226,11 @@ impl<'a> DrillBuild<'a> {
         let Some(output) = context.until_cancelled(work()).await else {
             return Ok(None);
         };
-        let output = output?;
+        let output = match output {
+            Ok(output) => output,
+            Err(_) if self.cancel.is_cancelled() => return Ok(None),
+            Err(error) => return Err(error),
+        };
         let saved = serde_json::to_value(&output)?;
         if !context.put_checkpoint(&key, &saved).await? {
             return Ok(None);

@@ -45,32 +45,68 @@ fn only_a_run_that_finished_says_anything_about_the_code() {
             output: "AssertionError".into()
         }
     );
-    for status in [
-        LearningLabRunStatus::TimedOut,
-        LearningLabRunStatus::Cancelled,
-    ] {
-        assert!(
-            matches!(
-                outcome_of(&result(status, "", "")),
-                RunOutcome::Inconclusive { .. }
-            ),
-            "a timeout or a cancellation proves nothing"
-        );
-    }
+    assert_eq!(
+        outcome_of(&result(
+            LearningLabRunStatus::TimedOut,
+            "so far\n",
+            "Run exceeded its time limit and was stopped.\n"
+        )),
+        RunOutcome::TimedOut {
+            output: "so far\nRun exceeded its time limit and was stopped.".into()
+        },
+        "a timeout keeps what the run wrote, apart from a failure"
+    );
+    assert_eq!(
+        outcome_of(&result(
+            LearningLabRunStatus::Cancelled,
+            "",
+            "Run cancelled.\n"
+        )),
+        RunOutcome::Cancelled
+    );
     assert_eq!(
         outcome_of(&result(
             LearningLabRunStatus::RuntimeUnavailable,
             "",
             "The bundled Python runtime is missing.\n"
         )),
-        RunOutcome::Inconclusive {
+        RunOutcome::Unavailable {
             why: "The bundled Python runtime is missing.".into()
         }
     );
-    assert!(matches!(
+    assert_eq!(
         outcome_of(&result(LearningLabRunStatus::RuntimeUnavailable, "", "")),
-        RunOutcome::Inconclusive { .. }
-    ));
+        RunOutcome::Unavailable {
+            why: "The runtime is not available.".into()
+        }
+    );
+}
+
+#[test]
+fn a_timeout_a_cancellation_and_a_missing_runtime_say_nothing_about_the_code() {
+    assert_eq!(RunOutcome::Passed.says_nothing(), None);
+    assert_eq!(
+        RunOutcome::Failed {
+            output: "boom".into()
+        }
+        .says_nothing(),
+        None
+    );
+    assert!(RunOutcome::TimedOut {
+        output: String::new()
+    }
+    .says_nothing()
+    .is_some_and(|why| why.contains("time limit")));
+    assert!(RunOutcome::Cancelled
+        .says_nothing()
+        .is_some_and(|why| why.contains("cancelled")));
+    assert_eq!(
+        RunOutcome::Unavailable {
+            why: "The runtime is gone.".into()
+        }
+        .says_nothing(),
+        Some("The runtime is gone.".to_owned())
+    );
 }
 
 #[test]
@@ -228,10 +264,7 @@ mod real_runtimes {
         let token = CancellationToken::new();
         token.cancel();
         let outcome = runner.run(&javascript(JS_LIMITER), JS_SUITE, token).await?;
-        assert!(
-            matches!(outcome, RunOutcome::Inconclusive { .. }),
-            "{outcome:?}"
-        );
+        assert_eq!(outcome, RunOutcome::Cancelled);
         Ok(())
     }
 

@@ -6,13 +6,15 @@ use super::support::{
     plant_answer, planted, proved, quiet, review, review_answer, spec, FakeGrader, FakeRunner,
     Harness, ScriptedModel, KILLING_TEST, MODEL, SUITE,
 };
-use crate::features::learning::drills::build::{Evidence, ModelCall, Stage};
+use crate::features::learning::drills::build::{DrillBuild, Evidence, ModelCall, Stage};
 use crate::features::learning::drills::repository::{self, StoredDrill};
+use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::persistence::db;
 use lattice_core::domain::learning::drills::{Origin, Proof};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{JobOutcome, JobStatus};
+use lattice_core::shared::runtime::jobs::{JobFailure, JobOutcome, JobStatus};
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
 
 /// What the model answers, call after call, when everything goes well: the code, no repairs, the mutations, the
 /// judge of the smell (the killed one asks nothing), the blind review and the one extra described.
@@ -286,5 +288,93 @@ async fn a_checkpoint_that_does_not_read_is_made_again() -> Result<()> {
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
     assert_eq!(model.purposes(), PURPOSES);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_of_its_stage(
+) -> Result<()> {
+    let harness = Harness::new(&spec()).await?;
+    let cancel = CancellationToken::new();
+    let trigger = cancel.clone();
+    let runner = FakeRunner::new(move |_, _| {
+        trigger.cancel();
+        RunOutcome::Cancelled
+    });
+    let model = ScriptedModel::new(answers());
+    let grader = FakeGrader::new(blind_assessment());
+    let context = harness.context().await?;
+    let outcome = DrillBuild::new(
+        &model,
+        Some(&runner as &dyn CodeRunner),
+        &grader,
+        &harness.pool,
+        cancel,
+    )
+    .run(&context, &spec())
+    .await?;
+    assert_eq!(outcome, JobOutcome::Stopped);
+    assert_eq!(
+        model.requests().len(),
+        1,
+        "the answer is not asked for again"
+    );
+    for stage in Stage::ALL {
+        assert!(
+            harness
+                .store
+                .checkpoint(&harness.job, &stage.key())
+                .await?
+                .is_none(),
+            "{}",
+            stage.key()
+        );
+    }
+    assert_eq!(
+        harness.store.get(&harness.job).await?.status,
+        JobStatus::Running,
+        "the runtime then suspends it to resume"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_it() -> Result<()> {
+    let harness = Harness::new(&spec()).await?;
+    let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+    let runner = FakeRunner::new(|_, _| RunOutcome::TimedOut {
+        output: String::new(),
+    });
+    let grader = FakeGrader::new(blind_assessment());
+    let context = harness.context().await?;
+    let error = harness
+        .build(&model, Some(&runner), &grader)
+        .run(&context, &spec())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
+    assert!(
+        matches!(JobFailure::classify(&error), JobFailure::Fail { .. }),
+        "a suite or code that loops must not be retried for ever"
+    );
+    assert_eq!(model.requests().len(), 2);
+
+    let model = ScriptedModel::new([clean_code_answer()]);
+    let runner = FakeRunner::new(|_, _| RunOutcome::Unavailable {
+        why: "The bundled Python runtime is missing.".into(),
+    });
+    let error = harness
+        .build(&model, Some(&runner), &grader)
+        .run(&context, &spec())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(JobFailure::classify(&error), JobFailure::Defer(_)),
+        "{error:?}"
+    );
+    assert_eq!(model.requests().len(), 1);
     Ok(())
 }

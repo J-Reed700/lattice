@@ -190,13 +190,16 @@ impl ProofStrategy for BehaviourKept<'_> {
             trail.run("The suite with the mutation", &outcome);
             let output = match outcome {
                 RunOutcome::Passed => return judge(tools, case, &mutation, &mutated, trail).await,
-                RunOutcome::Inconclusive { why } => {
+                RunOutcome::Failed { output } => output,
+                silent => {
                     return Ok(unproven(
-                        format!("The suite could not be run to an end with the mutation: {why}"),
+                        format!(
+                            "The suite could not be run to an end with the mutation: {}",
+                            silent.says_nothing().unwrap_or_default()
+                        ),
                         trail,
                     ))
                 }
-                RunOutcome::Failed { output } => output,
             };
             if again {
                 return Ok(unproven(
@@ -252,8 +255,11 @@ impl ProofStrategy for WeakenedTests<'_> {
                 format!("The changed test fails on the clean code, so it is broken and not weak: {output}"),
                 trail,
             )),
-            RunOutcome::Inconclusive { why } => Ok(unproven(
-                format!("The changed test could not be run to an end on the clean code: {why}"),
+            silent => Ok(unproven(
+                format!(
+                    "The changed test could not be run to an end on the clean code: {}",
+                    silent.says_nothing().unwrap_or_default()
+                ),
                 trail,
             )),
         }

@@ -180,13 +180,133 @@ async fn a_suite_that_fails_twice_fails_the_stage_with_the_output() -> Result<()
     Ok(())
 }
 
+fn timed_out(output: &str) -> RunOutcome {
+    RunOutcome::TimedOut {
+        output: output.into(),
+    }
+}
+
 #[tokio::test]
-async fn a_run_that_does_not_end_is_an_unavailable_service_and_the_answer_is_not_blamed(
+async fn a_suite_that_does_not_finish_is_sent_back_once_like_a_failure_with_what_it_wrote(
 ) -> Result<()> {
     let pool = pool().await?;
     let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
-    let runner = FakeRunner::new(|_, _| RunOutcome::Inconclusive {
-        why: "The run exceeded its time limit.".into(),
+    let runner = FakeRunner::scripted(vec![timed_out("waiting 1\nwaiting 2"), RunOutcome::Passed]);
+    let grader = idle_grader();
+    let code = build(&pool, &model, Some(&runner), &grader)
+        .clean_code(&spec())
+        .await?;
+    assert_eq!(code.files, files());
+    let requests = model.requests();
+    assert_eq!(requests.len(), 2);
+    let (first, second) = (messages(&requests[0]), messages(&requests[1]));
+    assert_eq!(second[..first.len()], first[..], "the same conversation");
+    assert_eq!(
+        second[first.len()],
+        ("assistant".to_owned(), clean_code_answer())
+    );
+    let reask = last(&requests[1]);
+    assert!(
+        reask.starts_with("That answer could not be used:"),
+        "{reask}"
+    );
+    assert!(
+        reask.contains("The suite on the code did not finish within the runtime's time limit."),
+        "{reask}"
+    );
+    assert!(reask.contains("waiting 2"), "{reask}");
+    let outcomes: Vec<RunOutcome> = code
+        .trail
+        .runs
+        .iter()
+        .map(|run| run.outcome.clone())
+        .collect();
+    assert_eq!(
+        outcomes,
+        [timed_out("waiting 1\nwaiting 2"), RunOutcome::Passed]
+    );
+    let purposes: Vec<&str> = code
+        .trail
+        .calls
+        .iter()
+        .map(|call| call.purpose.as_str())
+        .collect();
+    assert_eq!(purposes, ["clean code", "clean code (asked again)"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_timeout_that_wrote_nothing_says_only_that_the_suite_did_not_finish() -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+    let runner = FakeRunner::scripted(vec![timed_out(""), RunOutcome::Passed]);
+    let grader = idle_grader();
+    build(&pool, &model, Some(&runner), &grader)
+        .clean_code(&spec())
+        .await?;
+    let reask = last(&model.requests()[1]);
+    assert!(
+        reask.contains("did not finish within the runtime's time limit"),
+        "{reask}"
+    );
+    assert!(!reask.contains("What it wrote"), "{reask}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_suite_that_does_not_finish_twice_fails_the_stage_as_an_unusable_answer() -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+    let runner = FakeRunner::new(|_, _| timed_out("still going"));
+    let grader = idle_grader();
+    let error = build(&pool, &model, Some(&runner), &grader)
+        .clean_code(&spec())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(reason)
+            if reason.contains("did not finish within the runtime's time limit")
+                && reason.contains("still going")),
+        "{error:?}"
+    );
+    assert_eq!(model.requests().len(), 2, "asked once more, never twice");
+    assert_eq!(runner.runs().len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failure_and_a_timeout_in_either_order_fail_the_stage() -> Result<()> {
+    let failed = || RunOutcome::Failed {
+        output: "AssertionError: boom".into(),
+    };
+    for (outcomes, fragment) in [
+        (vec![failed(), timed_out("")], "time limit"),
+        (vec![timed_out(""), failed()], "AssertionError: boom"),
+    ] {
+        let pool = pool().await?;
+        let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+        let runner = FakeRunner::scripted(outcomes);
+        let grader = idle_grader();
+        let error = build(&pool, &model, Some(&runner), &grader)
+            .clean_code(&spec())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&error, AppError::ModelAnswerUnusable(reason) if reason.contains(fragment)),
+            "{fragment}: {error:?}"
+        );
+        assert_eq!(model.requests().len(), 2);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_runtime_that_is_not_there_is_an_unavailable_service_and_the_answer_is_not_blamed(
+) -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+    let runner = FakeRunner::new(|_, _| RunOutcome::Unavailable {
+        why: "The bundled Python runtime is missing.".into(),
     });
     let grader = idle_grader();
     let error = build(&pool, &model, Some(&runner), &grader)
@@ -194,10 +314,28 @@ async fn a_run_that_does_not_end_is_an_unavailable_service_and_the_answer_is_not
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::ServiceNotAvailable(why) if why.contains("time limit")),
+        matches!(&error, AppError::ServiceNotAvailable(why) if why.contains("bundled Python runtime is missing")),
         "{error:?}"
     );
-    assert_eq!(model.requests().len(), 1);
+    assert_eq!(model.requests().len(), 1, "nothing is asked again");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cancelled_run_is_a_cancelled_build_and_the_answer_is_not_blamed() -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+    let runner = FakeRunner::new(|_, _| RunOutcome::Cancelled);
+    let grader = idle_grader();
+    let error = build(&pool, &model, Some(&runner), &grader)
+        .clean_code(&spec())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::InvalidState(message) if message.contains("cancelled")),
+        "{error:?}"
+    );
+    assert_eq!(model.requests().len(), 1, "nothing is asked again");
     Ok(())
 }
 
