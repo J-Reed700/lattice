@@ -29,3 +29,6 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     tracing::info!("All migrations completed successfully");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
