@@ -91,6 +91,23 @@ fn bundled_python<R: Runtime>(
         .ok()
 }
 
+/// The worker that builds drills, on the Learning model and the built-in runtimes.
+fn drill_worker(
+    container: &Container,
+    runtimes: BuiltinRuntimes,
+) -> super::drills::jobs::DrillBuildWorker {
+    let model_container = container.clone();
+    super::drills::jobs::DrillBuildWorker {
+        pool: container.db_pool().clone(),
+        load_llm: std::sync::Arc::new(move || {
+            let container = model_container.clone();
+            Box::pin(async move { container.learning_llm(model_requirements::drills()).await })
+        }),
+        runtimes,
+        grader: std::sync::Arc::new(super::drills::jobs::unconnected_grader),
+    }
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
@@ -103,7 +120,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // then starts delivering saved work.
             tauri::async_runtime::block_on(container.jobs().register(
                 super::curriculum_repository::LESSON_PREPARATION,
-                std::sync::Arc::new(generation_worker(&container, runtimes)),
+                std::sync::Arc::new(generation_worker(&container, runtimes.clone())),
                 super::curriculum_repository::lesson_job_config(),
             ))?;
             // Quiz banks and grading resume or settle the same way.
@@ -117,6 +134,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 super::quiz_bank_jobs::QUIZ_GRADING,
                 std::sync::Arc::new(grading_worker),
                 super::quiz_bank_jobs::quiz_job_config(),
+            ))?;
+            // Drills are built one ahead per language, and a build resumes from its
+            // checkpoints.
+            tauri::async_runtime::block_on(container.jobs().register(
+                super::drills::jobs::DRILL_BUILD,
+                std::sync::Arc::new(drill_worker(&container, runtimes)),
+                super::drills::jobs::drill_job_config(),
             ))?;
             // Course index builds the last process left running resume; the
             // indexes of courses deleted meanwhile are removed, and courses

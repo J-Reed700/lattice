@@ -68,6 +68,11 @@ pub fn diagnostics() -> ModelRequirements {
     ModelRequirements::default()
 }
 
+/// Drill building: each call sizes its answer to fit.
+pub fn drills() -> ModelRequirements {
+    ModelRequirements::default()
+}
+
 /// Refuses a loaded Learning model whose window is below what `work` needs,
 /// naming the model, its window, the window needed and the fix. `work` reads
 /// as the subject of a sentence: "Preparing 'Transformers from scratch'".
