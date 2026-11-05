@@ -1,8 +1,8 @@
 //! The task the judge reads: the code as the reviewer saw it, the code before any issue was planted, the key and the
-//! review, numbered so that the answer can name them.
+//! review, numbered so that the answer can name them. Issues are numbered most severe first.
 
 use lattice_core::domain::learning::drills::{
-    overlapping, pattern, DrillFile, Finding, KeyIssue, LineSpan, Severity,
+    display_order, overlapping, pattern, DrillFile, Finding, KeyIssue, LineSpan, Severity,
 };
 
 use crate::features::learning::drills::grader::Review;
@@ -11,6 +11,7 @@ use crate::features::learning::drills::grader::Review;
 pub(super) fn task(review: &Review<'_>) -> String {
     let drill = review.drill;
     let findings = review.findings;
+    let order = display_order(&drill.key);
     let mut parts = vec![
         format!("Drill: {} ({})", drill.title, drill.language),
         format!(
@@ -23,13 +24,10 @@ pub(super) fn task(review: &Review<'_>) -> String {
         ),
         format!("The key: {}.", counted(drill.key.len(), "issue")),
     ];
-    parts.extend(
-        drill
-            .key
-            .iter()
-            .enumerate()
-            .map(|(index, issue)| issue_block(index + 1, issue, &drill.files)),
-    );
+    parts.extend(order.iter().enumerate().filter_map(|(index, &position)| {
+        let issue = drill.key.get(position)?;
+        Some(issue_block(index + 1, issue, &drill.files))
+    }));
     parts.push(format!(
         "The review: {}, in the order they were made.",
         counted(findings.len(), "finding")
@@ -40,7 +38,7 @@ pub(super) fn task(review: &Review<'_>) -> String {
             .enumerate()
             .map(|(index, finding)| finding_block(index + 1, finding, &drill.files)),
     );
-    parts.push(overlap_block(findings, &drill.key));
+    parts.push(overlap_block(findings, &drill.key, &order));
     parts.push(format!(
         "Give an entry for every issue ({}) and every finding ({}), the reason first.",
         numbers(drill.key.len()),
@@ -111,12 +109,20 @@ fn finding_block(number: usize, finding: &Finding, files: &[DrillFile]) -> Strin
     lines.join("\n")
 }
 
-/// The pairs of a finding and an issue whose lines overlap, the hint the judge is given.
-fn overlap_block(findings: &[Finding], key: &[KeyIssue]) -> String {
-    let pairs = overlapping(findings, key);
+/// The pairs of a finding and an issue, the issue by its number in the task, whose lines overlap: the hint the judge
+/// is given.
+fn overlap_block(findings: &[Finding], key: &[KeyIssue], order: &[usize]) -> String {
+    let mut pairs: Vec<(usize, usize)> = overlapping(findings, key)
+        .into_iter()
+        .filter_map(|(finding, issue)| {
+            let shown = order.iter().position(|&position| position == issue)?;
+            Some((finding, shown))
+        })
+        .collect();
     if pairs.is_empty() {
         return "No finding's lines overlap an issue's lines.".to_owned();
     }
+    pairs.sort_unstable();
     let lines: Vec<String> = pairs
         .iter()
         .map(|(finding, issue)| format!("finding {} and issue {}", finding + 1, issue + 1))

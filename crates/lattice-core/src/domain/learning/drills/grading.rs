@@ -173,9 +173,12 @@ pub fn overlapping(findings: &[Finding], key: &[KeyIssue]) -> Vec<(usize, usize)
     pairs
 }
 
-/// The key's positions in the order issues are numbered for the judge and the learner.
+/// The key's positions in the order issues are numbered for the judge and the learner: the most severe first, ties
+/// by position.
 pub fn display_order(key: &[KeyIssue]) -> Vec<usize> {
-    (0..key.len()).collect()
+    let mut order: Vec<usize> = (0..key.len()).collect();
+    order.sort_by_key(|&position| std::cmp::Reverse(key.get(position).map(|issue| issue.severity)));
+    order
 }
 
 /// How a review fared, as its parts: no single number stands for it.

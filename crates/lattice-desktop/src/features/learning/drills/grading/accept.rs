@@ -3,7 +3,7 @@
 //! that fails says what to change, so that asking again fixes it.
 
 use lattice_core::domain::learning::drills::{
-    validate, Assessment, AssessmentFault, Finding, FindingOutcome, IssueOutcome,
+    display_order, validate, Assessment, AssessmentFault, Finding, FindingOutcome, IssueOutcome,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -92,7 +92,8 @@ impl Kind {
 pub(super) fn accept(raw: &str, review: &Review<'_>) -> Result<Assessment> {
     let answer: Answer = serde_json::from_str(raw.trim())
         .map_err(|error| refuse(format!("The answer could not be read: {error}.")))?;
-    let key_len = review.drill.key.len();
+    let order = display_order(&review.drill.key);
+    let key_len = order.len();
     let findings = review.findings;
 
     let mut faults = Vec::new();
@@ -122,7 +123,7 @@ pub(super) fn accept(raw: &str, review: &Review<'_>) -> Result<Assessment> {
     let finding_outcomes: Vec<Option<(FindingOutcome, String)>> = matched
         .iter()
         .enumerate()
-        .map(|(finding, entry)| finding_outcome(finding, entry, key_len, &mut faults))
+        .map(|(finding, entry)| finding_outcome(finding, entry, &order, &mut faults))
         .collect();
     let complete =
         issue_outcomes.iter().all(Option::is_some) && finding_outcomes.iter().all(Option::is_some);
@@ -130,17 +131,28 @@ pub(super) fn accept(raw: &str, review: &Review<'_>) -> Result<Assessment> {
         return Err(refuse(faults.join(" ")));
     }
     let assessment = Assessment {
-        issues: issue_outcomes.into_iter().flatten().collect(),
+        issues: in_key_order(issue_outcomes.into_iter().flatten().collect(), &order),
         findings: finding_outcomes.into_iter().flatten().collect(),
     };
     if let Err(fault) = validate(key_len, findings.len(), &assessment) {
-        faults.push(describe(fault, &assessment));
+        faults.push(describe(fault, &assessment, &order));
     }
     if faults.is_empty() {
         Ok(assessment)
     } else {
         Err(refuse(faults.join(" ")))
     }
+}
+
+/// The outcomes of the issues, given in display order, in the key's own order.
+fn in_key_order(
+    shown: Vec<(IssueOutcome, String)>,
+    order: &[usize],
+) -> Vec<(IssueOutcome, String)> {
+    let mut placed: Vec<(usize, (IssueOutcome, String))> =
+        order.iter().copied().zip(shown).collect();
+    placed.sort_by_key(|(position, _)| *position);
+    placed.into_iter().map(|(_, outcome)| outcome).collect()
 }
 
 fn refuse(message: String) -> AppError {
@@ -265,11 +277,12 @@ fn issue_outcome(
 }
 
 /// What the entry says became of the finding at position `finding`, or `None` when it matches an issue the key does
-/// not have. A fault found in the entry is added to `faults`.
+/// not have. The issues it names are numbers in display order; the outcome holds their key positions. A fault found
+/// in the entry is added to `faults`.
 fn finding_outcome(
     finding: usize,
     entry: &FindingEntry,
-    key_len: usize,
+    order: &[usize],
     faults: &mut Vec<String>,
 ) -> Option<(FindingOutcome, String)> {
     if entry.reason.trim().is_empty() {
@@ -285,15 +298,16 @@ fn finding_outcome(
             for &named in entry.issues.as_deref().unwrap_or_default() {
                 match usize::try_from(named)
                     .ok()
-                    .filter(|number| (1..=key_len).contains(number))
+                    .and_then(|number| number.checked_sub(1))
+                    .and_then(|shown| order.get(shown))
                 {
-                    Some(number) => issues.push(number - 1),
+                    Some(&position) => issues.push(position),
                     None => {
                         in_the_key = false;
                         faults.push(format!(
                             "Finding {} matches issue {named}, but the key has {}.",
                             finding + 1,
-                            ISSUE.numbered(key_len)
+                            ISSUE.numbered(order.len())
                         ));
                     }
                 }
@@ -317,8 +331,15 @@ fn no_reason(kind: &Kind, number: usize) -> String {
     )
 }
 
-/// What `fault` says is wrong with `assessment`, as an instruction.
-fn describe(fault: AssessmentFault, assessment: &Assessment) -> String {
+/// What `fault` says is wrong with `assessment`, as an instruction. The fault holds key positions; the message names
+/// issues by the numbers the task gave them.
+fn describe(fault: AssessmentFault, assessment: &Assessment, order: &[usize]) -> String {
+    let shown = |position: usize| {
+        order
+            .iter()
+            .position(|&candidate| candidate == position)
+            .map_or(position + 1, |index| index + 1)
+    };
     let half_found = |issue: usize| {
         matches!(
             assessment.issues.get(issue),
@@ -333,16 +354,16 @@ fn describe(fault: AssessmentFault, assessment: &Assessment) -> String {
             format!("The answer has {got} finding entries for {expected} findings.")
         }
         AssessmentFault::FindingOutOfRange { issue, finding } => {
-            let (issue, finding) = (issue + 1, finding + 1);
+            let (issue, finding) = (shown(issue), finding + 1);
             format!("Issue {issue} is credited to finding {finding}, which the review does not have.")
         }
         AssessmentFault::IssueOutOfRange { finding, issue } => {
-            let (finding, issue) = (finding + 1, issue + 1);
+            let (finding, issue) = (finding + 1, shown(issue));
             format!("Finding {finding} matches issue {issue}, which the key does not have.")
         }
         AssessmentFault::CreditedWithoutMatch { issue, finding } => {
             let how = if half_found(issue) { "half found" } else { "found" };
-            let (issue, finding) = (issue + 1, finding + 1);
+            let (issue, finding) = (shown(issue), finding + 1);
             format!(
                 "Issue {issue} is {how} by finding {finding}, but finding {finding} does not match issue {issue}: list issue {issue} among the issues finding {finding} matches, or give issue {issue} another outcome."
             )
@@ -352,7 +373,7 @@ fn describe(fault: AssessmentFault, assessment: &Assessment) -> String {
             finding + 1
         ),
         AssessmentFault::MatchedButMissed { finding, issue } => {
-            let (finding, issue) = (finding + 1, issue + 1);
+            let (finding, issue) = (finding + 1, shown(issue));
             format!(
                 "Finding {finding} matches issue {issue}, but issue {issue} is missed: credit issue {issue} to a finding that earns it, or take it out of finding {finding}'s issues."
             )
