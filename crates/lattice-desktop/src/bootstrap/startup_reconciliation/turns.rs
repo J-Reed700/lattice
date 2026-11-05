@@ -30,9 +30,10 @@ pub async fn reconcile_interrupted_verifications(
 /// A question is written `pending` before generation and settled when the
 /// answer commits or the turn fails. A crash or force-quit in between leaves it
 /// `pending`, which renders as still in flight. Only a deep research turn
-/// survives a restart: its job is delivered again and answers the question its
-/// `assembled` checkpoint names, so that row stays `pending`. Every other such
-/// row has nothing left to finish it, and is failed so it can be retried.
+/// survives a restart, and only while what it saved can be read: its job is
+/// delivered again and answers the question its `assembled` checkpoint names,
+/// so that row stays `pending`. Every other such row has nothing left to
+/// finish it, and is failed so it can be retried.
 pub async fn reconcile_stuck_turns(
     pool: &sqlx::SqlitePool,
     jobs: &JobStore,
