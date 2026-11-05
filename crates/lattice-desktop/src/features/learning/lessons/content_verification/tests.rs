@@ -1075,6 +1075,9 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
         inner: Model,
         /// The context of each repair request.
         asked: Mutex<Vec<Value>>,
+        /// Why each section was asked for after a repair's edits could not
+        /// be applied.
+        sections: Mutex<Vec<String>>,
     }
     #[async_trait::async_trait]
     impl LLMPort for GradualRepair {
@@ -1122,6 +1125,13 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
             }
             if prompt.starts_with("Repair verified lesson defects.") {
                 let mut asked = self.asked.lock().unwrap();
+                // The section, asked for in the conversation of the request
+                // whose edits could not be applied, comes back as it was.
+                let task = prompt.rsplit("\n\n").next().unwrap();
+                if serde_json::from_str::<Value>(task).is_err() {
+                    self.sections.lock().unwrap().push(task.to_owned());
+                    return Ok(asked.last().unwrap()["candidate"].to_string());
+                }
                 asked.push(self::context(prompt));
                 assert!(asked.len() <= 2, "A claim's last attempt is no request");
                 assert!(!prompt.contains("lastAttempt"));
@@ -1155,6 +1165,7 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     let model = GradualRepair {
         inner: Model::new(),
         asked: Default::default(),
+        sections: Default::default(),
     };
     let (raw, report) = verify_and_repair(
         &model,
@@ -1185,6 +1196,11 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     let reason = asked[1]["failedClaims"][0]["reason"].as_str().unwrap();
     assert!(reason.contains("preserves whitespace"), "{reason}");
     assert!(!asked[1].to_string().contains("lastAttempt"));
+    // The second correction has no first sentence left to drop, so its edit
+    // changes nothing and the section is asked for once.
+    let sections = model.sections.lock().unwrap();
+    assert_eq!(sections.len(), 1, "{sections:?}");
+    assert!(sections[0].contains("changes nothing"), "{}", sections[0]);
     assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
     assert!(raw.contains(GOOD));
     assert!(report.issues.is_empty());
