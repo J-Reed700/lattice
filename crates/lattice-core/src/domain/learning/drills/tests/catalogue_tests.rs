@@ -198,7 +198,7 @@ fn applying(id: &str) -> HashSet<&'static str> {
     LANGUAGES
         .iter()
         .copied()
-        .filter(|language| found.applies_to(&Material::code(language)))
+        .filter(|language| found.applies_to(&Material::code(*language)))
         .collect()
 }
 

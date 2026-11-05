@@ -78,7 +78,7 @@ impl JobHandler for DrillBuildWorker {
         let check = ClaimSourceCheck::new(llm);
         let material = material_for(&spec.material, runner.as_deref(), &check);
         let grader = (self.grader)(llm);
-        DrillBuild::new(
+        let outcome = DrillBuild::new(
             llm,
             material,
             grader.as_ref(),
@@ -86,7 +86,8 @@ impl JobHandler for DrillBuildWorker {
             context.cancellation().clone(),
         )
         .run(context, &spec)
-        .await
+        .await;
+        outcome
     }
 }
 
@@ -142,7 +143,7 @@ impl JobHandler for DrillGradingWorker {
         let check = ClaimSourceCheck::new(llm);
         let material = material_for(&stored.drill.material, runner.as_deref(), &check);
         let grader = (self.grader)(llm);
-        AttemptGrading::new(
+        let outcome = AttemptGrading::new(
             llm,
             material,
             grader.as_ref(),
@@ -150,6 +151,7 @@ impl JobHandler for DrillGradingWorker {
             context.cancellation().clone(),
         )
         .run(context, &attempt, &stored)
-        .await
+        .await;
+        outcome
     }
 }
