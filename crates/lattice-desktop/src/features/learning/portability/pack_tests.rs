@@ -899,6 +899,7 @@ async fn a_source_body_past_a_million_bytes_round_trips_through_a_pack() -> Resu
     let body = "A long source states one more fact in every sentence it has. ".repeat(20_000);
     let body = body.trim();
     assert!(body.len() > 1_000_000, "past the old import bound");
+    let url = "https://example.org/a-long-source";
     LearningSourceLibraryRepository::new(pool.clone())
         .add_by(
             crate::features::learning::source_library::NewLearningSource {
@@ -908,8 +909,8 @@ async fn a_source_body_past_a_million_bytes_round_trips_through_a_pack() -> Resu
                 program_id,
                 kind: crate::features::learning::dto::LearningSourceKind::Web,
                 operation_kind: "add_web",
-                origin: "https://example.org/a-long-source",
-                requested_url: Some("https://example.org/a-long-source"),
+                origin: url,
+                requested_url: Some(url),
                 freshness: crate::features::learning::dto::LearningSourcePolicy::Manual,
             },
             captured(body),
@@ -926,10 +927,12 @@ async fn a_source_body_past_a_million_bytes_round_trips_through_a_pack() -> Resu
     );
     let (copy_id, _) = export_copy(&packs, program_id).await?;
 
+    // The copy also holds the fixture course's own source.
     let copied: i64 = sqlx::query_scalar(
-        "SELECT length(full_text) FROM learning_source_versions WHERE program_id=?",
+        "SELECT length(full_text) FROM learning_source_versions WHERE program_id=? AND requested_url=?",
     )
     .bind(&copy_id)
+    .bind(url)
     .fetch_one(&pool)
     .await?;
     assert_eq!(copied as usize, body.len());
