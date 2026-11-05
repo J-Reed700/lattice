@@ -847,3 +847,53 @@ async fn a_saved_research_request_that_names_no_request_fails_its_question() {
     jobs.close();
     jobs.drain().await;
 }
+
+/// A journal that saves nothing and says whether the app is closing.
+struct Journal {
+    closing: bool,
+}
+
+#[async_trait]
+impl ResearchJournal for Journal {
+    async fn assembled(&self, _turn: &AssembledTurn) -> Result<()> {
+        Ok(())
+    }
+    async fn round(&self, _round: &ResearchRound) -> Result<()> {
+        Ok(())
+    }
+    async fn resumes_later(&self) -> bool {
+        self.closing
+    }
+}
+
+/// A resumed turn that cannot start because the app is closing resumes at the
+/// next start, so its question stays pending.
+#[tokio::test]
+async fn a_resumed_research_turn_that_cannot_start_as_the_app_closes_keeps_its_question() {
+    // No chat model is selected, so the turn cannot start.
+    let runtime = FakeRuntime::default();
+    let attempt = first_attempt(&runtime).await;
+    let journal = Journal { closing: true };
+
+    let ended = turn::run_stages(
+        &runtime,
+        attempt.request.clone(),
+        &silent(),
+        Some(Research {
+            journal: &journal,
+            cancel: tokio_util::sync::CancellationToken::new(),
+            saved: Some(Saved {
+                assembled: attempt.assembled.clone(),
+                round: None,
+            }),
+        }),
+    )
+    .await;
+
+    assert!(ended.is_err());
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "pending",
+        "the job resumes it at the next start"
+    );
+}
