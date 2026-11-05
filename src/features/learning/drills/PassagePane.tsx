@@ -89,6 +89,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
                       <button
                         type="button"
                         data-line={sentence.line}
+                        aria-label={`Sentence ${sentence.line}: ${sentence.text}`}
                         aria-pressed={picked}
                         tabIndex={sentence.line === reached ? 0 : -1}
                         onFocus={() => setCurrent(sentence.line)}
@@ -100,7 +101,6 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
                           within(highlight, sentence.line) && 'ring-2 ring-accent/50',
                         )}
                       >
-                        <span className="sr-only">Sentence {sentence.line}: </span>
                         <sup
                           aria-hidden="true"
                           className={cn(
