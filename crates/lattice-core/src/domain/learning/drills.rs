@@ -24,8 +24,8 @@ pub use drill::{weight, Drill, DrillFile, Edit, KeyIssue, LineSpan, Origin, Proo
 pub use edits::{apply, overlaps, EditFault};
 pub use fix::{DecidedBy, FixOutcome, IssueCheck, IssueFix, SuiteVerdict};
 pub use grading::{
-    overlapping, score, validate, Assessment, AssessmentFault, Finding, FindingOutcome,
-    IssueOutcome, Score, SeverityTally,
+    display_order, overlapping, score, validate, Assessment, AssessmentFault, Finding,
+    FindingOutcome, IssueOutcome, Score, SeverityTally,
 };
 pub use key::{check_key, KeyFault};
 pub use schedule::{rating, ratings, targets, IssueRating, PatternDue, PatternRating};

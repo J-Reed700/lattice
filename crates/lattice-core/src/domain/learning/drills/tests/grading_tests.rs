@@ -645,3 +645,19 @@ fn an_assessment_is_written_in_snake_case() {
     let read: Assessment = serde_json::from_value(written).unwrap();
     assert_eq!(read, judged);
 }
+
+#[test]
+fn display_order_is_most_severe_first_and_ties_keep_their_positions() {
+    let at = |severity: Severity, line: u32| issue(severity, line, line);
+    assert_eq!(display_order(&[]), Vec::<usize>::new());
+    assert_eq!(display_order(&four_issues()), vec![0, 1, 2, 3]);
+    let key = vec![
+        at(Severity::Minor, 1),
+        at(Severity::Critical, 2),
+        at(Severity::Major, 3),
+        at(Severity::Critical, 4),
+        at(Severity::Nit, 5),
+        at(Severity::Minor, 6),
+    ];
+    assert_eq!(display_order(&key), vec![1, 3, 2, 0, 5, 4]);
+}

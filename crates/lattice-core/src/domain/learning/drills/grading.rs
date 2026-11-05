@@ -173,6 +173,11 @@ pub fn overlapping(findings: &[Finding], key: &[KeyIssue]) -> Vec<(usize, usize)
     pairs
 }
 
+/// The key's positions in the order issues are numbered for the judge and the learner.
+pub fn display_order(key: &[KeyIssue]) -> Vec<usize> {
+    (0..key.len()).collect()
+}
+
 /// How a review fared, as its parts: no single number stands for it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Score {

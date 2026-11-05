@@ -121,8 +121,8 @@ const NOTIFY: &str =
 const CLEAN_ORDERS: &str = "def total(prices):\n    result = 0\n    for i in range(len(prices)):\n        result += prices[i]\n    return result\n\n\ndef find(db, name):\n    return db.execute(\"SELECT * FROM orders WHERE name = ?\", (name,))\n";
 const CLEAN_NOTIFY: &str = "def send(mail):\n    try:\n        mail.deliver()\n    except Exception as error:\n        log.warning(\"delivery failed: %s\", error)\n";
 
-/// A drill of two files with three planted issues, its clean code and four findings: one on each of the first two
-/// issues, a general one, and one over the third.
+/// A drill of two files with three planted issues in severity order, its clean code and four findings: one on each of
+/// the first two issues, a general one, and one over the third.
 struct Scene {
     drill: Drill,
     clean: Vec<DrillFile>,
@@ -140,7 +140,7 @@ impl Scene {
                 key: vec![
                     key_issue(
                         "correctness.off_by_one",
-                        Severity::Major,
+                        Severity::Critical,
                         span("orders.py", 3, 3),
                         "The last pass reads past the end of prices and raises IndexError.",
                     ),
@@ -181,6 +181,17 @@ impl Scene {
                 ),
             ],
         }
+    }
+
+    /// The same, with the key in the order swallowed exception (minor), SQL injection (critical), off-by-one
+    /// (major), so that the numbers of the task are not the key's positions.
+    fn unsorted() -> Self {
+        let mut scene = Self::new();
+        let mut key = scene.drill.key.clone();
+        key[0].severity = Severity::Major;
+        key.swap(0, 2);
+        scene.drill.key = key;
+        scene
     }
 
     fn review(&self) -> Review<'_> {
@@ -731,7 +742,7 @@ async fn the_request_holds_the_files_the_clean_files_the_key_the_review_and_the_
         "9 |     return db.execute(\"SELECT * FROM orders WHERE name = ?\", (name,))",
         "File notify.py\n1 | def send(mail):\n2 |     try:\n3 |         mail.deliver()\n4 |     except Exception as error:\n5 |         log.warning(\"delivery failed: %s\", error)",
         "The key: 3 issues, numbered 1 to 3.",
-        "Issue 1: Off-by-one error (major), orders.py line 3",
+        "Issue 1: Off-by-one error (critical), orders.py line 3",
         "Issue 2: SQL injection (critical), orders.py line 9",
         "Issue 3: Swallowed exception (minor), notify.py lines 4 to 5",
         "The review: 4 findings, numbered 1 to 4, in the order they were made.",
@@ -764,7 +775,7 @@ async fn every_issue_is_shown_with_its_pattern_its_consequence_and_the_lines_it_
     };
     for expected in [
         format!(
-            "Issue 1: Off-by-one error (major), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
+            "Issue 1: Off-by-one error (critical), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
             definition("correctness.off_by_one")
         ),
         format!(
@@ -900,7 +911,7 @@ async fn an_odd_key_and_review_are_still_shown_whole() -> Result<()> {
     assert!(task.contains("Issue 4: no.such_pattern (nit), orders.py line 2\nConsequence: It is odd.\nLines:\n  2 |     result = 0"));
     assert!(!task.contains("clean code as well"));
     assert!(task.contains(&format!(
-        "Issue 1: Off-by-one error (major), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
+        "Issue 1: Off-by-one error (critical), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
         pattern("correctness.off_by_one").map_or("", |known| known.definition)
     )));
     assert!(!task.contains("Issue 4: no.such_pattern (nit), orders.py line 2\nPattern:"));
@@ -1092,4 +1103,168 @@ async fn an_answer_naming_finding_zero_is_refused_in_one_based_terms() {
         matches!(&error, AppError::ModelAnswerUnusable(reason) if reason == "Finding 0 is not a finding of the review, which has finding 1 only. Finding 1 has no entry: every finding needs exactly one."),
         "{error:?}"
     );
+}
+
+/// An answer for `Scene::unsorted`, which numbers its issues most severe first: issue 1 is the SQL injection, 2 the
+/// off-by-one and 3 the swallowed exception.
+fn valid_unsorted() -> Value {
+    json!({
+        "issues": [
+            issue_entry(1, "Finding 2 names the injection.", "found", Some(2), Some("lets a crafted name change the query")),
+            issue_entry(2, "Finding 1 says the loop runs one step too far.", "found", Some(1), Some("indexes past the end of prices")),
+            issue_entry(3, "Finding 4 points at the swallowed error.", "half_found", Some(4), None),
+        ],
+        "findings": [
+            finding_entry(1, "It names the off-by-one.", "matches", &[2]),
+            finding_entry(2, "It names the injection.", "matches", &[1]),
+            finding_entry(3, "A remark about tests, not a problem of this code.", "false_positive", &[]),
+            finding_entry(4, "It points at the swallowed error.", "matches", &[3]),
+        ]
+    })
+}
+
+fn changed_unsorted(edit: impl FnOnce(&mut Value)) -> Value {
+    let mut answer = valid_unsorted();
+    edit(&mut answer);
+    answer
+}
+
+#[tokio::test]
+async fn the_task_numbers_the_issues_most_severe_first_whatever_the_keys_order() -> Result<()> {
+    let llm = ScriptedJudge::answering(vec![valid_unsorted().to_string()]);
+    grade(&llm, &Scene::unsorted()).await?;
+    let (_, task) = the_request(&llm);
+    let mut last = 0;
+    for heading in [
+        "Issue 1: SQL injection (critical), orders.py line 9",
+        "Issue 2: Off-by-one error (major), orders.py line 3",
+        "Issue 3: Swallowed exception (minor), notify.py lines 4 to 5",
+        "The review: 4 findings",
+    ] {
+        let found = at(&task, heading);
+        assert!(found >= last, "{heading:?} is out of order in\n{task}");
+        last = found;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_overlap_hint_names_issues_by_the_numbers_of_the_task() -> Result<()> {
+    let scene = Scene::unsorted();
+    assert_eq!(
+        overlapping(&scene.findings, &scene.drill.key),
+        vec![(0, 2), (1, 1), (3, 0)]
+    );
+    let llm = ScriptedJudge::answering(vec![valid_unsorted().to_string()]);
+    grade(&llm, &scene).await?;
+    let (_, task) = the_request(&llm);
+    assert!(
+        task.contains("a hint and not a verdict:\nfinding 1 and issue 2\nfinding 2 and issue 1\nfinding 4 and issue 3"),
+        "{task}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_answers_issue_numbers_are_mapped_back_to_the_keys_positions() -> Result<()> {
+    let llm = ScriptedJudge::answering(vec![valid_unsorted().to_string()]);
+    let graded = grade(&llm, &Scene::unsorted()).await?;
+    assert_eq!(
+        graded,
+        Assessment {
+            issues: vec![
+                (
+                    IssueOutcome::HalfFound { finding: 3 },
+                    "Finding 4 points at the swallowed error.".into()
+                ),
+                (
+                    IssueOutcome::Found { finding: 1 },
+                    "Finding 2 names the injection.".into()
+                ),
+                (
+                    IssueOutcome::Found { finding: 0 },
+                    "Finding 1 says the loop runs one step too far.".into()
+                ),
+            ],
+            findings: vec![
+                (
+                    FindingOutcome::Matches { issues: vec![2] },
+                    "It names the off-by-one.".into()
+                ),
+                (
+                    FindingOutcome::Matches { issues: vec![1] },
+                    "It names the injection.".into()
+                ),
+                (
+                    FindingOutcome::FalsePositive,
+                    "A remark about tests, not a problem of this code.".into()
+                ),
+                (
+                    FindingOutcome::Matches { issues: vec![0] },
+                    "It points at the swallowed error.".into()
+                ),
+            ],
+        }
+    );
+    assert_eq!(llm.asked().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_finding_matching_issues_one_and_three_holds_their_key_positions_sorted() -> Result<()> {
+    let answer = changed_unsorted(|answer| {
+        answer["issues"][2] = issue_entry(
+            3,
+            "Finding 2 also points at the swallowed error.",
+            "half_found",
+            Some(2),
+            None,
+        );
+        answer["findings"][1] = finding_entry(2, "It names two.", "matches", &[3, 1]);
+        answer["findings"][3] = finding_entry(4, "A real problem.", "valid_extra", &[]);
+    });
+    let llm = ScriptedJudge::answering(vec![answer.to_string()]);
+    let graded = grade(&llm, &Scene::unsorted()).await?;
+    assert_eq!(
+        graded.findings[1].0,
+        FindingOutcome::Matches { issues: vec![0, 1] }
+    );
+    assert_eq!(graded.issues[0].0, IssueOutcome::HalfFound { finding: 1 });
+    assert_eq!(graded.issues[1].0, IssueOutcome::Found { finding: 1 });
+    assert_eq!(graded.issues[2].0, IssueOutcome::Found { finding: 0 });
+    assert_eq!(llm.asked().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn refusals_name_issues_by_the_numbers_of_the_task() -> Result<()> {
+    for (name, faulty, message) in [
+        (
+            "an issue credited to a finding that matches another",
+            changed_unsorted(|answer| {
+                answer["findings"][1] = finding_entry(2, "It names the swallowed error.", "matches", &[3]);
+            }),
+            "Issue 1 is found by finding 2, but finding 2 does not match issue 1: list issue 1 among the issues finding 2 matches, or give issue 1 another outcome.",
+        ),
+        (
+            "a finding matching an issue that is missed",
+            changed_unsorted(|answer| {
+                answer["issues"][2] = issue_entry(3, "No finding names it.", "missed", None, None);
+            }),
+            "Finding 4 matches issue 3, but issue 3 is missed: credit issue 3 to a finding that earns it, or take it out of finding 4's issues.",
+        ),
+        (
+            "an issue without an entry",
+            changed_unsorted(|answer| remove(answer, "issues", 0)),
+            "Issue 1 has no entry: every issue needs exactly one.",
+        ),
+    ] {
+        let llm = ScriptedJudge::answering(vec![faulty.to_string(), valid_unsorted().to_string()]);
+        let graded = grade(&llm, &Scene::unsorted()).await;
+        assert!(graded.is_ok(), "{name}: {graded:?}");
+        let asked = llm.asked();
+        assert_eq!(asked.len(), 2, "{name}");
+        assert_eq!(last_user_message(&asked[1]), reask(message), "{name}");
+    }
+    Ok(())
 }
