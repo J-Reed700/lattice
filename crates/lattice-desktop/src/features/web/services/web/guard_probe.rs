@@ -29,7 +29,8 @@ pub(crate) fn dotted_localhost(port: u16) -> String {
     format!("http://localhost.:{port}/")
 }
 
-async fn requests_received(server: &MockServer) -> usize {
+/// How many requests have reached `server`.
+pub(crate) async fn requests_received(server: &MockServer) -> usize {
     server.received_requests().await.unwrap().len()
 }
 
@@ -51,7 +52,8 @@ pub(crate) async fn assert_refused_without_contact<T: std::fmt::Debug>(
     );
 }
 
-async fn redirect_every_request_to(server: &MockServer, location: String) {
+/// Makes `server` answer every request with a redirect to `location`.
+pub(crate) async fn redirect_every_request_to(server: &MockServer, location: String) {
     Mock::given(any())
         .respond_with(ResponseTemplate::new(302).insert_header("location", location))
         .mount(server)
