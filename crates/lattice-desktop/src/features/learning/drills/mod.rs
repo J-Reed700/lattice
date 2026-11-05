@@ -14,8 +14,8 @@ pub mod grading;
 pub mod jobs;
 pub(in crate::features::learning) mod proof;
 pub mod repository;
-pub mod review;
 mod reveal;
+pub mod review;
 pub(in crate::features::learning) mod runner;
 pub mod spec;
 
