@@ -20,7 +20,6 @@ vi.mock('./useLlmSettings', () => ({ useLlmSettings: () => h.llm }));
 vi.mock('@/features/settings/hooks/connectionProbes', () => ({ probeCustomTool: h.probe }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 vi.mock('@/lib/api', () => ({ __esModule: true, VaultAPI: h.files, default: h.files }));
-vi.mock('@tauri-apps/plugin-fs', () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn() }));
 
 const tidesTool = {
   enabled: true,

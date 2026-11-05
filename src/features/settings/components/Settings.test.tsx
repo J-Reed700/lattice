@@ -21,11 +21,6 @@ const JSON_FILTERS = [{ name: 'JSON', extensions: ['json'] }];
 
 vi.mock('@/stores/toastStore');
 
-vi.mock('@tauri-apps/plugin-fs', () => ({
-  writeTextFile: vi.fn(),
-  readTextFile: vi.fn(),
-}));
-
 vi.mock('@/lib/api', () => ({
   __esModule: true,
   VaultAPI: {

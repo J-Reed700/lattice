@@ -9,7 +9,6 @@ import { LogsTab } from './LogsTab';
 
 const mockGetBackendLogs = vi.hoisted(() => vi.fn());
 const mockSaveTextFile = vi.hoisted(() => vi.fn());
-vi.mock('@tauri-apps/plugin-fs', () => ({ writeTextFile: vi.fn() }));
 vi.mock('@/lib/api', () => ({ __esModule: true, default: { getBackendLogs: mockGetBackendLogs, saveTextFile: mockSaveTextFile } }));
 
 const backendLines: BackendLogEntry[] = [

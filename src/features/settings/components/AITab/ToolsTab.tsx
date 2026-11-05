@@ -4,13 +4,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 
-import { open, save } from '@tauri-apps/plugin-dialog';
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { X } from 'lucide-react';
 
 import { PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
 import { probeCustomTool } from '@/features/settings/hooks/connectionProbes';
+import { useJsonFileDialogs } from '@/features/settings/hooks/useJsonFileDialogs';
+import { describeFailure } from '@/lib/errorHandling';
 import { toast } from '@/stores/toastStore';
 import type { CustomToolSettings as ApiCustomToolSettings } from '@/types/api/settings';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
@@ -31,6 +31,7 @@ const BUILT_IN_TOOLS = ['web_search', 'fetch_url_content', 'wiki_search', 'wiki_
 
 export function ToolsTab() {
   const api = useApi();
+  const { saveJsonFile, openJsonFile } = useJsonFileDialogs();
   const { llmSettings, isLoading, saveLlmUpdates } = useLlmSettings();
 
   const [customToolsDraft, setCustomToolsDraft] = useState<ApiCustomToolSettings[]>([]);
@@ -83,16 +84,18 @@ export function ToolsTab() {
   const importCustomToolsFromJson = async () => {
     setIsImportingCustomTools(true);
     try {
-      const filePath = await open({
-        multiple: false,
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      });
-      if (!filePath || typeof filePath !== 'string') {
+      const opened = await openJsonFile();
+      if (!opened.ok) {
+        toast.error("Couldn't import tools", {
+          message: describeFailure(opened),
+        });
+        return;
+      }
+      if (opened.data === null) {
         return;
       }
 
-      const text = await readTextFile(filePath);
-      const parsed = JSON.parse(text) as unknown;
+      const parsed = JSON.parse(opened.data) as unknown;
       const candidates = Array.isArray(parsed)
         ? parsed
         : parsed &&
@@ -131,20 +134,18 @@ export function ToolsTab() {
   const exportCustomToolsToJson = async () => {
     setIsExportingCustomTools(true);
     try {
-      const filePath = await save({
-        defaultPath: 'lattice-custom-tools.json',
-        filters: [{ name: 'JSON', extensions: ['json'] }],
-      });
-      if (!filePath || typeof filePath !== 'string') {
-        return;
-      }
-
       const payload = {
         version: 1,
         customTools: customToolsDraft.map(normalizeCustomTool),
       };
-      await writeTextFile(filePath, JSON.stringify(payload, null, 2));
-      toast.success('Tools exported');
+      const saved = await saveJsonFile('lattice-custom-tools.json', JSON.stringify(payload, null, 2));
+      if (!saved.ok) {
+        toast.error("Couldn't export tools", {
+          message: describeFailure(saved),
+        });
+      } else if (saved.data) {
+        toast.success('Tools exported');
+      }
     } catch (error) {
       toast.error("Couldn't export tools", {
         message: String(error),

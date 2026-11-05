@@ -93,10 +93,7 @@ const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
   'src/features/reading/components/ContentViewer/renderers/HTMLViewer.tsx',
   'src/features/reading/components/SourceReaderBody.tsx',
   'src/features/settings/components/AITab/ModelsTab.tsx',
-  'src/features/settings/components/AITab/ToolsTab.tsx',
   'src/features/settings/components/IndexingTab.tsx',
-  'src/features/settings/components/LogsTab.tsx',
-  'src/features/settings/components/Settings.tsx',
   'src/features/settings/components/VaultTab.tsx',
 ], (text) =>
   /\bfrom\s+['"]@tauri-apps\/plugin-|\bimport\(\s*['"]@tauri-apps\/plugin-/.test(text) ||

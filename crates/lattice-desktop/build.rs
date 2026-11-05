@@ -252,6 +252,8 @@ fn main() {
                     "reset_settings",
                     "export_settings",
                     "import_settings",
+                    "save_text_file",
+                    "open_text_file",
                     "get_system_theme",
                     "validate_folder_path",
                     "test_ollama_connection",
