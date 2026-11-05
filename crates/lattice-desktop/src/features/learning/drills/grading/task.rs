@@ -2,7 +2,7 @@
 //! review, numbered so that the answer can name them.
 
 use lattice_core::domain::learning::drills::{
-    overlapping, pattern, DrillFile, Finding, KeyIssue, LineSpan, Origin, Severity,
+    overlapping, pattern, DrillFile, Finding, KeyIssue, LineSpan, Severity,
 };
 
 use crate::features::learning::drills::grader::Review;
@@ -88,9 +88,6 @@ fn issue_block(index: usize, issue: &KeyIssue, files: &[DrillFile]) -> String {
         lines.push(format!("Pattern: {}", known.definition));
     }
     lines.push(format!("Consequence: {}", issue.consequence));
-    if issue.origin == Origin::FoundInReview {
-        lines.push("This issue is in the clean code as well.".to_owned());
-    }
     lines.push(quoted(&issue.span, files));
     lines.join("\n")
 }

@@ -878,11 +878,11 @@ async fn an_odd_key_and_review_are_still_shown_whole() -> Result<()> {
     let (_, task) = the_request(&llm);
     assert!(task.contains("The key: 4 issues, numbered 0 to 3."));
     assert!(task.contains("Issue 3: no.such_pattern (nit), orders.py line 2\nConsequence: It is odd.\nLines:\n  2 |     result = 0"));
-    assert_eq!(
-        task.matches("This issue is in the clean code as well.")
-            .count(),
-        1
-    );
+    assert!(!task.contains("clean code as well"));
+    assert!(task.contains(&format!(
+        "Issue 0: Off-by-one error (major), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
+        pattern("correctness.off_by_one").map_or("", |known| known.definition)
+    )));
     assert!(!task.contains("Issue 3: no.such_pattern (nit), orders.py line 2\nPattern:"));
     assert!(task.contains(
         "Finding 0: ghost.py lines 1 to 2\nLines: ghost.py is not one of the drill's files\nText:"
