@@ -3,8 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DrillReveal } from '@/features/learning/drills/reveal/DrillReveal';
-import { gradedResult, revealOf } from '@/features/learning/drills/reveal/revealTestData';
 import { plainText } from '@/features/learning/drills/reveal/plainText';
+import { gradedResult, revealOf } from '@/features/learning/drills/reveal/revealTestData';
 import { quotePieces } from '@/features/learning/drills/reveal/sourceQuotes';
 import type { CodeReviewResultDto, IssueFix, RevealedIssueDto } from '@/lib/bindings';
 
