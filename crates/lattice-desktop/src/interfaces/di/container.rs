@@ -24,10 +24,11 @@ use crate::features::function_calling::registry::{
 };
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::llm::instances::LlmInstances;
-use crate::features::web::services::web::WebService;
+use crate::features::web::services::web::{build_instance_client, public_web_client, WebService};
 use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
 use lattice_core::application::ports::EmbeddingPort as EmbeddingServiceTrait;
 use lattice_core::application::ports::SettingsSideEffectsPort;
+use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -398,6 +399,8 @@ impl Container {
                 recent_documents_repository: library.recent_docs_repo().clone(),
                 file_storage: indexing.file_storage().clone(),
                 web_service: web_service.clone(),
+                http_client: public_web_client()?,
+                custom_tool_client: build_instance_client(WEB_REQUEST_TIMEOUT)?,
             },
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;

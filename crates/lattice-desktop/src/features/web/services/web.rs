@@ -264,7 +264,8 @@ impl WebService {
 
 /// The one client for reading public web pages, with the default request
 /// timeout: no cookie jar, the private-address redirect policy and the
-/// public-only resolver. The snapshot engine and page capture fetch through it.
+/// public-only resolver. The snapshot engine, page capture and the function
+/// executor's Wikipedia tools fetch through it.
 pub(crate) fn public_web_client() -> Result<Client> {
     build_public_client(WEB_REQUEST_TIMEOUT)
 }
@@ -293,12 +294,13 @@ fn build_hop_client(timeout: Duration) -> Result<Client> {
         .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))
 }
 
-/// The client for the user's own SearXNG server, which usually runs on this
-/// machine or the user's network. The one origin the user typed is trusted,
-/// so it skips the public-only resolver; it follows no redirect, so the only
-/// place it can reach is `{that origin}/search`. Every other finder and every
-/// read of a result's page keeps the public client.
-fn build_instance_client(timeout: Duration) -> Result<Client> {
+/// The client for an endpoint the user named: their own SearXNG server, or a
+/// custom tool's, which usually run on this machine or the user's network.
+/// The one origin the user typed is trusted, so it skips the public-only
+/// resolver; it follows no redirect, so the only place it can reach is that
+/// origin. Every other finder and every read of a result's page keeps the
+/// public client.
+pub(crate) fn build_instance_client(timeout: Duration) -> Result<Client> {
     identity::client_builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())

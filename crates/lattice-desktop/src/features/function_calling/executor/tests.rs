@@ -8,7 +8,9 @@ use crate::features::recent::dto::RecentDocumentDto;
 use crate::features::search::mocks::{empty_hybrid_search, MockBM25Search, MockSearchService};
 use crate::features::tags::mocks::MockTagService;
 use crate::features::web::mocks::MockWebService;
-use crate::features::web::services::web::{guard_probe, WebService};
+use crate::features::web::services::web::{
+    build_instance_client, guard_probe, public_web_client, WebService,
+};
 use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -26,6 +28,7 @@ use lattice_core::application::ports::{
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::repositories::mocks::DddMockDocumentRepository as DddMockDocRepo;
 use lattice_core::domain::value_objects::Checksum;
+use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use std::path::{Path, PathBuf};
 
 struct MockFavoritesRepository;
@@ -201,6 +204,8 @@ fn test_executor_services(
         recent_documents_repository: Arc::new(MockRecentDocumentsRepository),
         file_storage: Arc::new(LongContentFileStorage::default()),
         web_service: web,
+        http_client: public_web_client().unwrap(),
+        custom_tool_client: build_instance_client(WEB_REQUEST_TIMEOUT).unwrap(),
     }
 }
 
@@ -909,4 +914,33 @@ async fn a_custom_tool_can_call_an_endpoint_on_this_machine() {
         result.error_message
     );
     assert_eq!(guard_probe::requests_received(&endpoint).await, 1);
+}
+
+/// A URL the model chooses is read through the web service and its guard, so
+/// a name that resolves to this machine is refused before anything is sent.
+#[tokio::test]
+async fn fetch_url_content_refuses_a_name_that_resolves_to_this_machine() {
+    let server = guard_probe::local_page().await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let executor = FunctionExecutor::new(test_executor_services(
+        Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
+        Arc::new(WebService::new(data_dir.path()).unwrap()),
+    ));
+    let url = guard_probe::dotted_localhost(server.address().port());
+
+    let result = executor
+        .execute(FunctionCall::new(
+            "call_fetch",
+            "fetch_url_content",
+            serde_json::json!({ "url": url }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        guard_probe::requests_received(&server).await,
+        0,
+        "{url} reached the local server"
+    );
+    assert_eq!(result.error_code.as_deref(), Some("EXECUTION_ERROR"));
 }
