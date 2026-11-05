@@ -152,10 +152,6 @@ pub trait ConversationServiceTrait: Send + Sync {
     ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
 
     /// Add a message with a specific status and a metadata payload.
-    ///
-    /// The default ignores `metadata` and delegates to
-    /// [`Self::add_message_with_status`], so test doubles that never read
-    /// metadata need no change. The real service overrides it.
     async fn add_message_with_metadata(
         &self,
         conversation_id: &str,
@@ -164,11 +160,7 @@ pub trait ConversationServiceTrait: Send + Sync {
         tokens: i64,
         status: String,
         metadata: Option<String>,
-    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
-        let _ = metadata;
-        self.add_message_with_status(conversation_id, role, content, tokens, status)
-            .await
-    }
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage>;
 
     /// Updates a message's status, for two-phase commit.
     ///

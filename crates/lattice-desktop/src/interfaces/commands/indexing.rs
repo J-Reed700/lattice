@@ -13,14 +13,7 @@ use lattice_core::shared::ipc::{ApiError, ErrorCode};
 use tauri::State;
 
 fn unwrap_api_result<T>(result: lattice_core::shared::ipc::ApiResult<T>) -> Result<T, ApiError> {
-    match result {
-        lattice_core::shared::ipc::ApiResult::Success { data, .. } => Ok(data),
-        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
-            code: error.code,
-            message: error.message,
-            details: error.details,
-        }),
-    }
+    result.into_result()
 }
 
 #[tauri::command]
@@ -71,19 +64,7 @@ pub async fn remove_indexed_file(
     if let Some(doc_id) = maybe_id {
         // 2. Delete using implementation (now returns ApiResult)
         let result = indexing_commands::delete_document_impl(&container, doc_id).await;
-
-        if result.is_ok() {
-            Ok(())
-        } else {
-            match result {
-                lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
-                    code: ErrorCode::InternalError,
-                    message: error.message,
-                    details: error.details,
-                }),
-                _ => Ok(()), // Should not happen since we checked is_ok()
-            }
-        }
+        unwrap_api_result(result)
     } else {
         // Idempotent success
         Ok(())
@@ -96,20 +77,11 @@ pub async fn get_indexing_status(
     container: State<'_, Container>,
 ) -> Result<IndexingStatus, ApiError> {
     let result = indexing_commands::get_index_progress_impl(&container).await;
-
-    match result {
-        lattice_core::shared::ipc::ApiResult::Success { data: progress, .. } => {
-            Ok(IndexingStatus {
-                active: progress.is_indexing,
-                progress: progress.percent_complete.unwrap_or(0.0),
-            })
-        }
-        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
-            code: ErrorCode::InternalError,
-            message: error.message,
-            details: error.details,
-        }),
-    }
+    let progress = unwrap_api_result(result)?;
+    Ok(IndexingStatus {
+        active: progress.is_indexing,
+        progress: progress.percent_complete.unwrap_or(0.0),
+    })
 }
 
 #[tauri::command]
@@ -141,28 +113,14 @@ pub async fn cancel_indexing(container: State<'_, Container>) -> Result<(), ApiE
 #[specta::specta]
 pub async fn pause_indexing(container: State<'_, Container>) -> Result<(), ApiError> {
     let result = indexing_commands::pause_indexing_impl(&container).await;
-    match result {
-        lattice_core::shared::ipc::ApiResult::Success { .. } => Ok(()),
-        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
-            code: ErrorCode::InternalError,
-            message: error.message,
-            details: error.details,
-        }),
-    }
+    unwrap_api_result(result)
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn resume_indexing(container: State<'_, Container>) -> Result<(), ApiError> {
     let result = indexing_commands::resume_indexing_impl(&container).await;
-    match result {
-        lattice_core::shared::ipc::ApiResult::Success { .. } => Ok(()),
-        lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
-            code: ErrorCode::InternalError,
-            message: error.message,
-            details: error.details,
-        }),
-    }
+    unwrap_api_result(result)
 }
 
 #[tauri::command]
@@ -189,15 +147,7 @@ pub async fn reindex_file(path: String, container: State<'_, Container>) -> Resu
     if let Some(doc_id) = maybe_id {
         // 2. Reindex using implementation (now returns ApiResult)
         let result = indexing_commands::reindex_document_impl(&container, doc_id).await;
-
-        match result {
-            lattice_core::shared::ipc::ApiResult::Success { .. } => Ok(()),
-            lattice_core::shared::ipc::ApiResult::Error { error, .. } => Err(ApiError {
-                code: ErrorCode::InternalError,
-                message: error.message,
-                details: error.details,
-            }),
-        }
+        unwrap_api_result(result).map(|_| ())
     } else {
         Err(ApiError {
             code: ErrorCode::NotFound,

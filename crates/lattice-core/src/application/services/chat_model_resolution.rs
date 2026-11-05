@@ -47,7 +47,9 @@ pub fn default_chat_model(
         LLMProvider::Google => Ok(cloud(CloudProvider::Google)),
         LLMProvider::Auto => local
             .or_else(|| {
-                (!settings.llama_cpp.model.trim().is_empty()).then(|| ModelRef::LlamaCpp {
+                (!settings.llama_cpp.url.trim().is_empty()
+                    && !settings.llama_cpp.model.trim().is_empty())
+                .then(|| ModelRef::LlamaCpp {
                     model: settings.llama_cpp.model.clone(),
                 })
             })

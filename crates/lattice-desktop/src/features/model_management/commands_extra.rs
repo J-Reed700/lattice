@@ -45,8 +45,9 @@ mod warm_up;
 
 pub use active_models::{
     clear_active_chat_model_impl, clear_active_embedding_model_impl,
-    clear_active_utility_model_impl, get_active_chat_model_impl, get_active_embedding_model_impl,
-    set_active_chat_model_impl, set_active_embedding_model_impl, set_active_utility_model_impl,
+    clear_active_utility_model_impl, get_active_chat_model_impl, get_active_chat_model_typed,
+    get_active_embedding_model_impl, get_active_embedding_model_typed, set_active_chat_model_impl,
+    set_active_embedding_model_impl, set_active_utility_model_impl,
 };
 use external_models::sync_external_model_directories;
 pub use warm_up::{
@@ -221,7 +222,9 @@ impl DownloadedModelResponse {
 ///
 /// Returns list of all models that have been downloaded, with full metadata.
 /// Called by gateway - async dispatch.
-pub async fn get_models_with_metadata_impl(container: &Container) -> Result<String, AppError> {
+pub async fn get_models_with_metadata_typed(
+    container: &Container,
+) -> Result<Vec<DownloadedModelResponse>, AppError> {
     info!("Command: get_models_with_metadata - ENTRY");
 
     let repository = container.downloaded_models();
@@ -249,16 +252,19 @@ pub async fn get_models_with_metadata_impl(container: &Container) -> Result<Stri
             }
 
             info!(count = response.len(), "Retrieved downloaded models");
-
-            serde_json::to_string(&response)
-                .map_err(|e| AppError::Serialization(format!("Failed to serialize models: {}", e)))
+            Ok(response)
         }
         Err(e) => {
             error!(error = %e, "Failed to get downloaded models");
-
             Err(e)
         }
     }
+}
+
+pub async fn get_models_with_metadata_impl(container: &Container) -> Result<String, AppError> {
+    let models = get_models_with_metadata_typed(container).await?;
+    serde_json::to_string(&models)
+        .map_err(|e| AppError::Serialization(format!("Failed to serialize models: {}", e)))
 }
 
 /// Check if a model is already downloaded

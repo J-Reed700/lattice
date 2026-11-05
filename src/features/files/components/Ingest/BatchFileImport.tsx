@@ -18,10 +18,12 @@ import { cn } from '@/lib/utils';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { ConversationSpaceDto } from '@/types';
 import type { CustomCollection } from '@/types/fileBrowser';
+import { formatBytes } from '@/utils/formatters';
 import {
   filterIndexablePaths,
   validateIndexablePath,
 } from '@/utils/indexingFileValidation';
+import { mimeTypeForPath } from '@/utils/mimeTypes';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { LibraryFilePicker } from './LibraryFilePicker';
@@ -102,27 +104,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
   }, [customCollections]);
   const buildFileItem = useCallback((path: string): FileItem => {
     const name = path.split(/[\\/]/).pop() || path;
-    const extension = name.split('.').pop()?.toLowerCase();
-
-    let type = 'application/octet-stream';
-    if (extension === 'pdf') type = 'application/pdf';
-    else if (extension === 'docx') {
-      type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-    } else if (extension === 'rtf') {
-      type = 'application/rtf';
-    } else if (extension === 'odt') {
-      type = 'application/vnd.oasis.opendocument.text';
-    } else if (extension === 'xlsx') {
-      type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-    } else if (extension === 'pptx') {
-      type = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
-    } else if (extension === 'txt') type = 'text/plain';
-    else if (extension === 'md' || extension === 'markdown') type = 'text/markdown';
-    else if (extension === 'html' || extension === 'htm') type = 'text/html';
-    else if (extension === 'csv') type = 'text/csv';
-    else if (extension === 'tsv') type = 'text/tab-separated-values';
-    else if (extension === 'json') type = 'application/json';
-    else if (extension === 'xml') type = 'application/xml';
+    const type = mimeTypeForPath(path) || 'application/octet-stream';
 
     return {
       path,
@@ -672,20 +654,11 @@ const statusLabel = (file: FileItem): string => {
   }
 };
 
-const formatSize = (bytes: number): string => {
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
-};
+
 
 const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled, position, onMove, isLast }) => {
   const meta = file.size > 0
-    ? formatSize(file.size)
+    ? formatBytes(file.size)
     : file.path.slice(0, file.path.length - file.name.length).replace(/[\\/]$/, '');
   const status = statusLabel(file);
 

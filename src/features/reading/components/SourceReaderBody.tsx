@@ -1,7 +1,6 @@
 import { type FC, useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
-import { open as openExternal } from '@tauri-apps/plugin-shell';
 
 import { useApi } from '@/contexts/ApiContext';
 import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/features/reading';
@@ -34,6 +33,7 @@ import type {
   PassageMatchTier,
   SourceWithMetadata,
 } from '@/types/conversation';
+import { openExternalUrl, whyExternalUrlDidNotOpen } from '@/utils/openExternalUrl';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 import { sanitizeFileName } from '@/utils/sanitize';
 import {
@@ -41,6 +41,7 @@ import {
   getSourcePreviewKind,
   getWebArchiveHtmlPath,
   isCourseSource,
+  isHttpUrl,
 } from '@/utils/sourcePreview';
 
 
@@ -68,7 +69,6 @@ const UUID_PATTERN =
 const normalizeCategory = (category: string): string =>
   category.toLowerCase().replace(/[_-]+/g, ' ').trim();
 
-const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value.trim());
 
 export interface SourceReaderBodyProps {
   presentation: ReaderPresentation;
@@ -296,14 +296,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       // The browser can find the passage too: a text fragment lands the reader
       // on the same sentences, highlighted, instead of the top of the article.
       const target = activePassage ? textFragmentUrl(openableUrl, activePassage) : openableUrl;
-      try {
-        await openExternal(target);
-      } catch (err) {
-        toast.error("Couldn't open URL", {
-          message: err instanceof Error ? err.message : String(err),
-        });
-        // Fallback for environments where shell open is blocked.
-        window.open(target, '_blank', 'noopener,noreferrer');
+      const failure = await whyExternalUrlDidNotOpen(target);
+      if (failure !== null) {
+        toast.error("Couldn't open URL", { message: failure });
       }
       return;
     }
@@ -320,10 +315,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
         const htmlOpen = await openSourcePath(byId.data.contentPath, api);
         if (!htmlOpen.ok) {
           if (openableUrl) {
-            try {
-              await openExternal(openableUrl);
-            } catch {
-              window.open(openableUrl, '_blank', 'noopener,noreferrer');
+            const opened = await openExternalUrl(openableUrl);
+            if (!opened) {
+              toast.error("Couldn't open archive", { message: htmlOpen.error });
             }
           } else {
             toast.error("Couldn't open archive", { message: htmlOpen.error });

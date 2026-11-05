@@ -82,6 +82,14 @@ const SUPPORTED_EXTENSIONS = new Set<string>([
   // Data files
   'csv',
   'tsv',
+  // Audio
+  'mp3',
+  'wav',
+  'ogg',
+  'flac',
+  'aac',
+  'm4a',
+  'wma',
 ]);
 
 const BLOCKED_EXTENSIONS = new Set<string>([

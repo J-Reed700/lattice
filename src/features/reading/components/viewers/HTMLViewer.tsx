@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 
 import { useQuery } from '@tanstack/react-query';
-import { open } from '@tauri-apps/plugin-shell';
 import { Loader2, AlertCircle, ExternalLink, Link2 } from 'lucide-react';
 
 import { useApi } from '@/contexts/ApiContext';
 import { readingKeys, readSourceText } from '@/features/reading/hooks/readSourceFile';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 import type { ApiClient } from '@/lib/api';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { htmlReadingDocument } from './htmlReadingDocument';
@@ -150,7 +150,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
             {originalUrl && (
               <button
                 type="button"
-                onClick={handleAsyncEvent(() => open(originalUrl))}
+                onClick={handleAsyncEvent(() => openExternalUrl(originalUrl))}
                 className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--border-subtle))]/70 bg-[hsl(var(--surface))]/90 px-4 py-1.5 text-sm text-primary hover:opacity-90"
               >
                 <ExternalLink size={14} />
@@ -180,7 +180,7 @@ export function HTMLViewer({ htmlPath, title, showTitle = false }: HTMLViewerPro
                   key={link}
                   type="button"
                   className="text-left text-sm text-primary hover:underline break-all"
-                  onClick={handleAsyncEvent(() => open(link))}
+                  onClick={handleAsyncEvent(() => openExternalUrl(link))}
                 >
                   {link}
                 </button>

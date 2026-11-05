@@ -5,6 +5,7 @@
 use crate::features::file::dto::{FileMetadataDto, GetFileMetadataRequestDto};
 use crate::infrastructure::security::FileAccessConfig;
 use chrono::{DateTime, Utc};
+use lattice_core::application::factories::FileMetadataFactory;
 use lattice_core::application::ports::FileStoragePort;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
@@ -86,25 +87,7 @@ impl GetFileMetadataUseCase {
 
     /// Detect MIME type from file extension.
     fn detect_mime_type(path: &std::path::Path) -> String {
-        match path.extension().and_then(|e| e.to_str()) {
-            Some("txt") => "text/plain",
-            Some("pdf") => "application/pdf",
-            Some("docx") => {
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            }
-            Some("doc") => "application/msword",
-            Some("md") => "text/markdown",
-            Some("html") | Some("htm") => "text/html",
-            Some("json") => "application/json",
-            Some("xml") => "application/xml",
-            Some("jpg") | Some("jpeg") => "image/jpeg",
-            Some("png") => "image/png",
-            Some("gif") => "image/gif",
-            Some("mp4") => "video/mp4",
-            Some("mp3") => "audio/mpeg",
-            _ => "application/octet-stream",
-        }
-        .to_string()
+        FileMetadataFactory::detect_mime_type(path)
     }
 }
 

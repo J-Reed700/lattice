@@ -2,13 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router';
 
 import { useApi } from '@/contexts/ApiContext';
-import { getBatchJobDetails, listAllBatchJobs } from '@/utils/batchHistory';
+import { BATCH_IMPORT_JOBS_QUERY_KEY, getBatchJobDetails, listAllBatchJobs } from '@/utils/batchHistory';
 
 /** Durable import history, including failures that finished while Chat was open. */
 export function ImportFailuresNotice() {
   const api = useApi();
   const { data, error } = useQuery({
-    queryKey: ['batch-imports', 'coverage'],
+    queryKey: [...BATCH_IMPORT_JOBS_QUERY_KEY, 'coverage'],
     queryFn: async () => {
       const jobs = (await listAllBatchJobs(api)).filter(job => job.jobType === 'file_import');
       const failed = jobs.reduce((sum, job) => sum + job.failedItems, 0);

@@ -17,6 +17,10 @@ describe('indexing input validation', () => {
     expect(validateIndexablePath(`/資料/notes.${extension.toUpperCase()}`)).toEqual({ ok: true, extension });
   });
 
+  it.each(['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'wma'])('accepts supported audio %s imports case-insensitively', extension => {
+    expect(validateIndexablePath(`/podcasts/episode.${extension.toUpperCase()}`)).toEqual({ ok: true, extension });
+  });
+
   it.each(['exe', 'dll', 'dylib', 'so', 'app', 'dmg', 'zip', 'tar', 'gz', '7z'])('rejects %s even behind a supported-looking prefix', extension => {
     expect(validateIndexablePath(`document.pdf.${extension.toUpperCase()}`)).toEqual({ ok: false, extension, reason: 'Executables and archives are not supported' });
   });

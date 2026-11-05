@@ -10,7 +10,7 @@
 
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 
-import { logComponentError } from '../../utils/errorLogger';
+import { diagnostics } from '../../utils/diagnostics';
 
 export interface ErrorBoundaryProps {
   children: ReactNode;
@@ -69,7 +69,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     }));
 
     // Log error
-    logComponentError(error, errorInfo, name);
+    diagnostics.record('error', error.message, name ?? 'Component', {
+      error,
+      componentStack: errorInfo.componentStack,
+    });
 
     if (onError) {
       try {

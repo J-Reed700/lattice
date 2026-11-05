@@ -26,31 +26,13 @@ export interface ResolvedReaderTarget {
   locator: PassageLocator | null;
 }
 
-const MIME_BY_FILE_TYPE: Record<string, string> = {
-  pdf: 'application/pdf',
-  md: 'text/markdown',
-  markdown: 'text/markdown',
-  txt: 'text/plain',
-  text: 'text/plain',
-  html: 'text/html',
-  htm: 'text/html',
-  web: 'text/html',
-  web_article: 'text/html',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  mp3: 'audio/mpeg',
-  m4a: 'audio/mp4',
-  wav: 'audio/wav',
-};
-
 function resolveMimeType(fileType?: string | null, filePath?: string | null, category?: string | null): string {
   const raw = (fileType ?? '').trim().toLowerCase();
   if (raw.includes('/')) return raw;
-  if (raw && MIME_BY_FILE_TYPE[raw]) return MIME_BY_FILE_TYPE[raw];
+  if (raw === 'web' || raw === 'web_article') return 'text/html';
+  if (raw === 'text') return 'text/plain';
+  const fromFileType = raw ? mimeTypeForPath(`file.${raw}`) : '';
+  if (fromFileType) return fromFileType;
   const fromPath = filePath ? mimeTypeForPath(filePath) : '';
   if (fromPath) return fromPath;
   const cat = (category ?? '').trim().toLowerCase();

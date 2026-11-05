@@ -6,13 +6,13 @@ describe('sourceHeaderMeta', () => {
   it('says the size when the file was actually measured', () => {
     expect(sourceHeaderMeta({ category: 'PDF', fileSizeBytes: 2048 })).toEqual([
       'PDF',
-      '2.0 KB',
+      '2 KB',
     ]);
   });
 
-  it('never renders "0.0 B" for a source carrying no size', () => {
+  it('never renders "0 B" for a source carrying no size', () => {
     // Passage references and compare cells build a SourceWithMetadata with no
-    // size; the old header claimed every one of them was 0.0 B.
+    // size; the old header claimed every one of them was 0 B.
     const meta = sourceHeaderMeta({ category: 'PDF', fileSizeBytes: 0 });
     expect(meta).toEqual(['PDF']);
     expect(meta.join(' · ')).not.toContain('B');

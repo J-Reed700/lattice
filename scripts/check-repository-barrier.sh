@@ -23,7 +23,7 @@ if [[ ! -d "$SRC" ]]; then
 fi
 
 FS_PATTERN='((tokio::fs|std::fs)::(read_dir|metadata|try_exists)|\.(exists|is_file|is_dir|try_exists)\(\))'
-SQL_PATTERN='sqlx::(query|query_as|query_scalar|raw_sql)'
+SQL_PATTERN='sqlx::(query|query_as|query_scalar|raw_sql|QueryBuilder)'
 violations=0
 checked_files=0
 

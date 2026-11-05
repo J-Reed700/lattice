@@ -127,6 +127,17 @@ pub struct ApiError {
     pub details: Option<String>,
 }
 
+impl ApiError {
+    /// Internal error with message.
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: ErrorCode::InternalError,
+            message: message.into(),
+            details: None,
+        }
+    }
+}
+
 /// Comprehensive error code enumeration for API responses.
 ///
 /// These codes allow the frontend to handle errors programmatically without
