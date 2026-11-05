@@ -1,7 +1,8 @@
 //! `SourceChecked`: a planted error in an explanation is proven by its source passage. The clean sentences the edit
 //! replaces must be supported by the passage, with the exact words they rest on, and the sentences it puts in their
-//! place must be contradicted or not supported by it. Anything else drops the mutation, as an unproven defect of
-//! code is dropped. A proven mutation's severity is raised to the floor its pattern and proof set.
+//! place must be contradicted or not supported by it, and the checker must be sure of both. Anything else drops the
+//! mutation, as an unproven defect of code is dropped. A proven mutation's severity is raised to the floor its pattern
+//! and proof set.
 
 use super::{SourceCheck, SourceSays};
 use crate::features::learning::drills::build::Trail;
@@ -47,6 +48,15 @@ impl ProofStrategy for SourceChecked<'_> {
             "source check of the clean sentences",
             self.check.model_name(),
         );
+        if !before.confident {
+            return Ok(unproven(
+                format!(
+                    "The source check was not sure of the sentences the change replaces, so they are no clean baseline: {}",
+                    before.reason
+                ),
+                trail,
+            ));
+        }
         let quote = match (before.says, before.quote) {
             (SourceSays::Supported, Some(quote)) => quote,
             (says, _) => {
@@ -65,6 +75,15 @@ impl ProofStrategy for SourceChecked<'_> {
             "source check of the planted sentences",
             self.check.model_name(),
         );
+        if !after.confident {
+            return Ok(unproven(
+                format!(
+                    "The source check was not sure of the changed sentences, so the change proves no error: {}",
+                    after.reason
+                ),
+                trail,
+            ));
+        }
         let verdict = match after.says {
             SourceSays::Contradicted => SourceVerdict::Contradicted,
             SourceSays::Unsupported => SourceVerdict::Unsupported,

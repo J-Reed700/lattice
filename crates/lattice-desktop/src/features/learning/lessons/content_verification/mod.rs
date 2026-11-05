@@ -480,6 +480,7 @@ pub(in crate::features::learning) fn unchecked(cause: impl Into<String>) -> Clai
         reason: Some(cause.into()),
         quote: None,
         confidence: None,
+        uncertain: false,
     })
 }
 

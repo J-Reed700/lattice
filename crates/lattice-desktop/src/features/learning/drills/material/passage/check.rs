@@ -1,6 +1,7 @@
 //! The source check: what a source passage says of one sentence. `ClaimSourceCheck` is an Adapter over the claim
 //! checker in its strict policy, with deterministic sampling: a verdict that rests on the passage comes with an exact
-//! quote of it, and a check that gives no verdict is an error, never a finding.
+//! quote of it, a finding says whether the checker was sure of it, and a check that gives no verdict is an error,
+//! never a finding.
 //!
 //! One sentence goes to each call. The batch check locates its evidence by passage identifier, so its quote would be
 //! the whole passage rather than the words a verdict rests on.
@@ -10,6 +11,7 @@ use lattice_core::application::ports::llm_port::SamplingOverride;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::claim_verification::{
     CheckPolicy, ClaimChecker, ClaimEvidence, ClaimJudgment, ClaimVerdict, ANSWER_ROOM_TOKENS,
+    MIN_VERDICT_CONFIDENCE,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -40,6 +42,16 @@ pub(in crate::features::learning) struct SourceFinding {
     pub quote: Option<String>,
     /// The checker's comparison of the sentence with the passage.
     pub reason: String,
+    /// Whether the checker was sure of `says`. A finding it was unsure of rests on nothing: it proves no error and
+    /// decides no fix.
+    pub confident: bool,
+}
+
+impl SourceFinding {
+    /// Whether the checker was sure the source says `says`.
+    pub(in crate::features::learning) fn surely(&self, says: SourceSays) -> bool {
+        self.confident && self.says == says
+    }
 }
 
 /// Checks a sentence against a source passage.
@@ -107,9 +119,14 @@ fn finding_of(judgment: ClaimJudgment) -> Result<SourceFinding> {
             ))
         }
     };
+    let confident = !outcome.uncertain
+        && outcome.confidence.is_none_or(|confidence| {
+            confidence.is_finite() && confidence >= MIN_VERDICT_CONFIDENCE
+        });
     Ok(SourceFinding {
         says,
         quote: outcome.quote,
         reason: outcome.reason.unwrap_or_default(),
+        confident,
     })
 }
