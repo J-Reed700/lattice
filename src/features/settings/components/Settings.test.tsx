@@ -19,6 +19,10 @@ const mockResetSettings = vi.hoisted(() => vi.fn());
 
 const JSON_FILTERS = [{ name: 'JSON', extensions: ['json'] }];
 
+/** The error toasts besides the page's own chat-settings load, which fails at a time of its own here. */
+const errorsBesidesTheSettingsLoad = () =>
+  vi.mocked(toast.error).mock.calls.filter(([message]) => message !== 'Failed to load chat settings');
+
 vi.mock('@/stores/toastStore');
 
 vi.mock('@/lib/api', () => ({
@@ -139,7 +143,7 @@ describe('Settings', () => {
       await waitFor(() => expect(mockSaveTextFile).toHaveBeenCalled());
       await waitFor(() => expect(screen.getByRole('button', { name: /^export$/i })).toBeEnabled());
       expect(toast.success).not.toHaveBeenCalled();
-      expect(toast.error).not.toHaveBeenCalled();
+      expect(errorsBesidesTheSettingsLoad()).toEqual([]);
     });
 
     it('reports why the file could not be written', async () => {
@@ -229,7 +233,7 @@ describe('Settings', () => {
       await waitFor(() => expect(screen.getByRole('button', { name: /^import$/i })).toBeEnabled());
       expect(mockImportSettings).not.toHaveBeenCalled();
       expect(toast.success).not.toHaveBeenCalled();
-      expect(toast.error).not.toHaveBeenCalled();
+      expect(errorsBesidesTheSettingsLoad()).toEqual([]);
     });
 
     it('reports why the file could not be read and imports nothing', async () => {
