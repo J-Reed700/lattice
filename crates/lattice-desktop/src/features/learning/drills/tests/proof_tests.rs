@@ -623,8 +623,8 @@ async fn a_new_edit_must_apply_beside_the_others() -> Result<()> {
     let world = World::new();
     let overlapping = replacement(
         "src/limiter.py",
-        "        if len(recent) > self.limit:\n",
         "        if len(recent) >= self.limit:\n",
+        "        if len(recent) >= self.limit and recent:\n",
     );
     let missing = replacement("src/config.py", "    return nothing\n", RESHAPED);
     let model = ScriptedModel::new([
