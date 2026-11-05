@@ -1,21 +1,26 @@
 //! Fakes and fixtures for the drill tests. Nothing here reaches a network: the model, the runner and the grader are
 //! scripted, and the code under review is a small Python project.
 
+use crate::features::learning::drills::attempt_grading::AttemptGrading;
+use crate::features::learning::drills::attempts::{self, Attempt, AttemptMode, Submission};
 use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
-    Baseline, BlindReview, CleanCode, CleanReview, DrillBuild, Mutation, Planted, Proved,
+    Baseline, BlindReview, CleanCode, CleanReview, DrillBuild, Evidence, Mutation, Planted, Proved,
     ProvenMutation, Trail, Verification,
 };
 use crate::features::learning::drills::grader::{Review, ReviewGrader};
+use crate::features::learning::drills::repository::{self, NewDrill};
 use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
+use crate::features::learning::persistence::db;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    apply, Assessment, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, Proof, Severity,
+    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, LineSpan,
+    Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
@@ -82,6 +87,10 @@ pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
         ("Report every problem you would raise", "blind review"),
         ("A reviewer commented on code", "key entry"),
         ("You grade a code review against an answer key", "grade"),
+        (
+            "You judge whether a learner's change to some code fixes one known issue",
+            "fix judge",
+        ),
     ] {
         if system.contains(needle) {
             return name;
@@ -704,4 +713,205 @@ pub(super) fn build<'a>(
 /// A grader for a stage that never grades.
 pub(super) fn idle_grader() -> FakeGrader {
     FakeGrader::failing("The grader is not used here.")
+}
+
+/// The drill's files with the operator repaired, as a learner who fixed the first issue leaves them.
+pub(super) fn operator_fixed() -> Vec<DrillFile> {
+    proved()
+        .files
+        .into_iter()
+        .map(|file| DrillFile {
+            text: file.text.replace(OPERATOR_AFTER, OPERATOR_BEFORE),
+            path: file.path,
+        })
+        .collect()
+}
+
+/// What the fix judge answers.
+pub(super) fn fix_answer(outcome: &str, reason: &str) -> String {
+    json!({"reason": reason, "outcome": outcome}).to_string()
+}
+
+/// A finding on the changed operator that says what is wrong with it.
+pub(super) fn operator_finding() -> Finding {
+    Finding {
+        span: Some(LineSpan {
+            path: "src/limiter.py".into(),
+            start: 13,
+            end: 13,
+        }),
+        text: "This lets one call more than the limit through.".into(),
+        severity: Some(Severity::Major),
+    }
+}
+
+/// A finding on no lines, about the dictionary that grows.
+pub(super) fn extra_finding() -> Finding {
+    Finding {
+        span: None,
+        text: "The dictionary grows without bound.".into(),
+        severity: None,
+    }
+}
+
+/// The assessment of [`operator_finding`] and [`extra_finding`] against the key of [`proved`]: the operator found
+/// by the first, the literals missed, and the second a real problem the key does not hold.
+pub(super) fn review_assessment() -> Assessment {
+    Assessment {
+        issues: vec![
+            (
+                IssueOutcome::Found { finding: 0 },
+                "The finding names the operator.".into(),
+            ),
+            (
+                IssueOutcome::Missed,
+                "No finding mentions the literals.".into(),
+            ),
+        ],
+        findings: vec![
+            (
+                FindingOutcome::Matches { issues: vec![0] },
+                "It is the changed operator.".into(),
+            ),
+            (
+                FindingOutcome::ValidExtra,
+                "The dictionary really does grow.".into(),
+            ),
+        ],
+    }
+}
+
+/// Puts the drill of [`proved`] into the bank, ready, as a finished build leaves it: with its suite, its runner and
+/// its evidence.
+pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
+    let proved = proved();
+    let drill = Drill {
+        id: id.into(),
+        language: "python".into(),
+        title: "A sliding-window rate limiter".into(),
+        files: proved.files.clone(),
+        key: proved.planted_key(),
+    };
+    let clean = files();
+    let spec = spec();
+    let evidence = Evidence::new(&code(), &review(), &planted(), &proved, &quiet());
+    let mut connection = pool.acquire().await.map_err(db)?;
+    repository::insert_in(
+        &mut connection,
+        &NewDrill {
+            drill: &drill,
+            clean_files: &clean,
+            spec: &spec,
+            domain: "rate limiting",
+            suite: Some(SUITE),
+            runner: Some("fake-python"),
+            model: MODEL,
+            evidence: &evidence,
+        },
+    )
+    .await
+}
+
+/// A pool with every migration, a drill stocked and an attempt opened on it and submitted, and its grading job
+/// claimed, as the job runtime would.
+pub(super) struct Waiting {
+    pub pool: SqlitePool,
+    pub store: JobStore,
+    pub attempt: String,
+    pub job: String,
+}
+
+impl Waiting {
+    /// An attempt waiting for its grade, with its job claimed.
+    pub(super) async fn new(
+        findings: Vec<Finding>,
+        fix_files: Option<Vec<DrillFile>>,
+    ) -> Result<Self> {
+        let waiting = Self::unclaimed(findings, fix_files).await?;
+        Self::claim(&waiting.store, &waiting.job).await?;
+        Ok(waiting)
+    }
+
+    /// An attempt waiting for its grade, with its job still pending, as the job runtime finds it.
+    pub(super) async fn unclaimed(
+        findings: Vec<Finding>,
+        fix_files: Option<Vec<DrillFile>>,
+    ) -> Result<Self> {
+        let pool = crate::features::learning::tests::pool().await?;
+        stock(&pool, "drill").await?;
+        let begun = attempts::start(&pool, "python", AttemptMode::Practice)
+            .await?
+            .ok_or_else(|| AppError::InternalError("No drill was ready.".into()))?;
+        let queued = attempts::submit(
+            &pool,
+            &begun.attempt.id,
+            Submission {
+                findings,
+                fix_files,
+                time_spent_ms: 90_000,
+            },
+        )
+        .await?;
+        let job = queued
+            .job
+            .ok_or_else(|| AppError::InternalError("No job was queued.".into()))?;
+        let store = JobStore::new(pool.clone());
+        Ok(Self {
+            pool,
+            store,
+            attempt: begun.attempt.id,
+            job,
+        })
+    }
+
+    /// Claims a grading job, as the runtime does before it runs.
+    pub(super) async fn claim(store: &JobStore, job: &str) -> Result<()> {
+        store
+            .claim(job)
+            .await?
+            .map(drop)
+            .ok_or_else(|| AppError::InternalError("The job was not claimed.".into()))
+    }
+
+    pub(super) async fn context(&self) -> Result<JobContext> {
+        JobContext::detached(&self.store, &self.job).await
+    }
+
+    pub(super) async fn attempt(&self) -> Result<Attempt> {
+        attempts::get(&self.pool, &self.attempt)
+            .await
+            .map(|(attempt, _)| attempt)
+    }
+
+    /// The grading of this attempt on these fakes. A runner of `None` judges the whole fix.
+    pub(super) fn grading<'a>(
+        &'a self,
+        model: &'a ScriptedModel,
+        runner: Option<&'a FakeRunner>,
+        grader: &'a FakeGrader,
+    ) -> AttemptGrading<'a> {
+        AttemptGrading::new(
+            model,
+            runner.map(|runner| runner as &dyn CodeRunner),
+            grader,
+            &self.pool,
+            CancellationToken::new(),
+        )
+    }
+
+    /// Runs the grading job's work on these fakes with the attempt as it now stands.
+    pub(super) async fn grade(
+        &self,
+        model: &ScriptedModel,
+        runner: Option<&FakeRunner>,
+        grader: &FakeGrader,
+    ) -> Result<lattice_core::shared::runtime::jobs::JobOutcome> {
+        let (attempt, stored) = attempts::waiting(&self.pool, &self.attempt)
+            .await?
+            .ok_or_else(|| AppError::InternalError("The attempt is not waiting.".into()))?;
+        let context = self.context().await?;
+        let grading = self.grading(model, runner, grader);
+        let outcome = grading.run(&context, &attempt, &stored).await;
+        outcome
+    }
 }

@@ -8,7 +8,7 @@ use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, hash, now};
 use lattice_core::domain::learning::drills::targets;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
+use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
 use serde_json::json;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -115,6 +115,28 @@ pub async fn queue_build_in(
     Ok(admitted.id)
 }
 
+/// The id of the build of `spec`'s language that is under way: the oldest pending or running one, or, when there is
+/// none, a new one queued for `spec`. A learner who finds the bank empty is told of the build already queued rather
+/// than getting another each time they ask. The caller tells the job runtime once the job is committed.
+pub async fn ensure_build(pool: &SqlitePool, spec: &DrillSpec) -> Result<String> {
+    spec.validate()?;
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let under_way = JobStore::list_for_subject_in(&mut transaction, DRILL_BUILD, &spec.language)
+        .await?
+        .into_iter()
+        .rev()
+        .find(|job| matches!(job.status, JobStatus::Pending | JobStatus::Running));
+    let id = match under_way {
+        Some(job) => job.id,
+        None => {
+            let seed = format!("start:{}", uuid::Uuid::new_v4());
+            queue_build_in(&mut transaction, spec, &seed).await?
+        }
+    };
+    transaction.commit().await.map_err(db)?;
+    Ok(id)
+}
+
 /// A drill given to a learner, and the build queued to replace it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Taken {
@@ -131,13 +153,21 @@ pub struct Taken {
 /// pattern counts as never practised and each build targets the same patterns.
 pub async fn take(pool: &SqlitePool, language: &str) -> Result<Option<Taken>> {
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let Some(mut drill) = repository::oldest_ready_in(&mut transaction, language).await? else {
-        transaction.commit().await.map_err(db)?;
+    let taken = take_in(&mut transaction, language).await?;
+    transaction.commit().await.map_err(db)?;
+    Ok(taken)
+}
+
+/// [`take`] inside the caller's transaction: what it took and queued is the caller's to commit.
+pub(in crate::features::learning) async fn take_in(
+    connection: &mut SqliteConnection,
+    language: &str,
+) -> Result<Option<Taken>> {
+    let Some(mut drill) = repository::oldest_ready_in(connection, language).await? else {
         return Ok(None);
     };
     let at = now();
-    if !repository::mark_taken_in(&mut transaction, &drill.drill.id, at).await? {
-        transaction.commit().await.map_err(db)?;
+    if !repository::mark_taken_in(connection, &drill.drill.id, at).await? {
         return Ok(None);
     }
     drill.status = DrillStatus::Taken;
@@ -153,8 +183,6 @@ pub async fn take(pool: &SqlitePool, language: &str) -> Result<Option<Taken>> {
             .collect(),
         program_id: None,
     };
-    let next_build =
-        queue_build_in(&mut transaction, &next, &format!("next:{}", drill.drill.id)).await?;
-    transaction.commit().await.map_err(db)?;
+    let next_build = queue_build_in(connection, &next, &format!("next:{}", drill.drill.id)).await?;
     Ok(Some(Taken { drill, next_build }))
 }

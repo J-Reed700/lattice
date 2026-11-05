@@ -1,6 +1,9 @@
-//! The `learning.drill_build` job: builds one drill from clean code, planting and proving its defects, and stores it
-//! in the bank (docs/design/2026-11-04-code-review-drills.md section 2).
+//! The two drill jobs. `learning.drill_build` builds one drill from clean code, planting and proving its defects, and
+//! stores it in the bank (docs/design/2026-11-04-code-review-drills.md section 2). `learning.drill_grading` grades one
+//! submitted attempt against the drill's key, running or judging the learner's fix (section 4).
 
+use super::attempt_grading::{give_up, AttemptGrading};
+use super::attempts;
 use super::build::DrillBuild;
 use super::grader::ReviewGrader;
 use super::grading::JudgeGrader;
@@ -17,6 +20,10 @@ use lattice_core::shared::runtime::jobs::{
 use sqlx::SqlitePool;
 
 pub const DRILL_BUILD: &str = "learning.drill_build";
+pub const DRILL_GRADING: &str = "learning.drill_grading";
+
+/// The steps of a grading job, for its progress: the review, the fix and the save.
+pub const GRADING_STEPS: u32 = 3;
 
 /// One build per language at a time; a running build resumes from its checkpoints after a restart, and a
 /// disconnected model defers it rather than failing it.
@@ -72,6 +79,64 @@ impl JobHandler for DrillBuildWorker {
             context.cancellation().clone(),
         )
         .run(context, &spec)
+        .await
+    }
+}
+
+/// One grading job per attempt at a time; a running job grades again from the start after a restart, and a stopped one
+/// leaves its attempt submitted.
+pub fn grading_job_config() -> JobKindConfig {
+    JobKindConfig::new(RecoveryPolicy::Requeue)
+        .exclusive_per_subject()
+        .backoff(Backoff::default())
+}
+
+/// Grades submitted attempts, on the Learning model, pinned for the whole job.
+#[derive(Clone)]
+pub struct DrillGradingWorker {
+    pub pool: SqlitePool,
+    pub load_llm: ModelLoader,
+    pub runtimes: BuiltinRuntimes,
+    pub grader: GraderFactory,
+}
+
+/// The attempt a job was queued to grade.
+pub fn attempt_of(job: &JobRecord) -> Result<String> {
+    job.requested
+        .get("attemptId")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| AppError::InvalidInput("The grading job names no review to grade.".into()))
+}
+
+#[async_trait]
+impl JobHandler for DrillGradingWorker {
+    async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+        let id = attempt_of(context.job())?;
+        let Some((attempt, stored)) = attempts::waiting(&self.pool, &id).await? else {
+            return Ok(JobOutcome::Completed {
+                result_ref: format!("attempt:{id}"),
+                message: "No review is waiting for this grade.".into(),
+            });
+        };
+        let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
+            return Ok(JobOutcome::Stopped);
+        };
+        let pin = match pin {
+            Ok(pin) => pin,
+            Err(error) => return give_up(&self.pool, context, &id, None, &error).await,
+        };
+        let llm = pin.llm.as_ref();
+        let runner = runner_for(&stored.drill.language, &self.runtimes);
+        let grader = (self.grader)(llm);
+        AttemptGrading::new(
+            llm,
+            runner.as_deref(),
+            grader.as_ref(),
+            &self.pool,
+            context.cancellation().clone(),
+        )
+        .run(context, &attempt, &stored)
         .await
     }
 }

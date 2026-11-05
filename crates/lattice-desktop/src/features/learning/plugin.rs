@@ -91,18 +91,37 @@ fn bundled_python<R: Runtime>(
         .ok()
 }
 
+/// The Learning model, pinned for each run of a drill job. Drills ask for nothing of its window: each call sizes its
+/// answer to fit.
+fn drill_model(container: &Container) -> super::quiz_bank_jobs::ModelLoader {
+    let model_container = container.clone();
+    std::sync::Arc::new(move || {
+        let container = model_container.clone();
+        Box::pin(async move { container.learning_llm(model_requirements::drills()).await })
+    })
+}
+
 /// The worker that builds drills, on the Learning model and the built-in runtimes.
 fn drill_worker(
     container: &Container,
     runtimes: BuiltinRuntimes,
 ) -> super::drills::jobs::DrillBuildWorker {
-    let model_container = container.clone();
     super::drills::jobs::DrillBuildWorker {
         pool: container.db_pool().clone(),
-        load_llm: std::sync::Arc::new(move || {
-            let container = model_container.clone();
-            Box::pin(async move { container.learning_llm(model_requirements::drills()).await })
-        }),
+        load_llm: drill_model(container),
+        runtimes,
+        grader: super::drills::jobs::judge_grader,
+    }
+}
+
+/// The worker that grades submitted attempts, on the Learning model and the built-in runtimes.
+fn drill_grading_worker(
+    container: &Container,
+    runtimes: BuiltinRuntimes,
+) -> super::drills::jobs::DrillGradingWorker {
+    super::drills::jobs::DrillGradingWorker {
+        pool: container.db_pool().clone(),
+        load_llm: drill_model(container),
         runtimes,
         grader: super::drills::jobs::judge_grader,
     }
@@ -136,11 +155,17 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 super::quiz_bank_jobs::quiz_job_config(),
             ))?;
             // Drills are built one ahead per language, and a build resumes from its
-            // checkpoints.
+            // checkpoints. A submitted review is graded by a job that a stop leaves
+            // submitted.
             tauri::async_runtime::block_on(container.jobs().register(
                 super::drills::jobs::DRILL_BUILD,
-                std::sync::Arc::new(drill_worker(&container, runtimes)),
+                std::sync::Arc::new(drill_worker(&container, runtimes.clone())),
                 super::drills::jobs::drill_job_config(),
+            ))?;
+            tauri::async_runtime::block_on(container.jobs().register(
+                super::drills::jobs::DRILL_GRADING,
+                std::sync::Arc::new(drill_grading_worker(&container, runtimes)),
+                super::drills::jobs::grading_job_config(),
             ))?;
             // Course index builds the last process left running resume; the
             // indexes of courses deleted meanwhile are removed, and courses

@@ -130,6 +130,21 @@ pub(in crate::features::learning) async fn oldest_ready_in(
         .transpose()
 }
 
+/// A drill by its id, ready or taken.
+pub(in crate::features::learning) async fn find_in(
+    connection: &mut SqliteConnection,
+    id: &str,
+) -> Result<Option<StoredDrill>> {
+    sqlx::query("SELECT id,language,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at FROM learning_drills WHERE id=?")
+        .bind(id)
+        .fetch_optional(connection)
+        .await
+        .map_err(db)?
+        .as_ref()
+        .map(read)
+        .transpose()
+}
+
 /// Marks a ready drill taken. False when it was not ready, so a drill is never given to two learners.
 pub(in crate::features::learning) async fn mark_taken_in(
     connection: &mut SqliteConnection,
