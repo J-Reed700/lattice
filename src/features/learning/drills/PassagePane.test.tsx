@@ -8,9 +8,9 @@ import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore
 import type { CodeReviewDrillDto } from '@/lib/bindings';
 
 import { PassagePane } from './PassagePane';
-import { paragraphsOf, pickSentence } from './passageText';
+import { pickSentence, sentencesOf } from './passageText';
 
-const TEXT = 'Spacing helps recall.\nIt helped by 40% a week later.\n\nThe benefit was larger for known material.\nTests make spacing work best.\n';
+const TEXT = 'Spacing helps recall.\nIt helped by 40% a week later.\nThe benefit was larger for known material.\nTests make spacing work best.\n';
 const DRILL: CodeReviewDrillDto = {
   title: 'Why spacing helps',
   material: { kind: 'passage', sourceTitle: 'Spacing and memory' },
@@ -46,13 +46,15 @@ function Held({ onSelect, initial = null, writingFix = false, fixEdits = {}, onF
 const sentence = (line: number) => screen.getByRole('button', { name: new RegExp(`^Sentence ${line}:`) });
 
 describe('the lines of an explanation', () => {
-  it('are its sentences by the line they are on, in paragraphs that a blank line ends', () => {
-    expect(paragraphsOf(TEXT)).toEqual([
-      [{ line: 1, text: 'Spacing helps recall.' }, { line: 2, text: 'It helped by 40% a week later.' }],
-      [{ line: 4, text: 'The benefit was larger for known material.' }, { line: 5, text: 'Tests make spacing work best.' }],
+  it('are its sentences, numbered from 1 by the line each is on', () => {
+    expect(sentencesOf(TEXT)).toEqual([
+      { line: 1, text: 'Spacing helps recall.' },
+      { line: 2, text: 'It helped by 40% a week later.' },
+      { line: 3, text: 'The benefit was larger for known material.' },
+      { line: 4, text: 'Tests make spacing work best.' },
     ]);
-    expect(paragraphsOf('')).toEqual([]);
-    expect(paragraphsOf('\n\nOne.\n\n\nTwo.\r\n')).toEqual([[{ line: 3, text: 'One.' }], [{ line: 6, text: 'Two.' }]]);
+    expect(sentencesOf('')).toEqual([]);
+    expect(sentencesOf('One.\r\nTwo.\r\n').map((sentence) => sentence.text)).toEqual(['One.', 'Two.']);
   });
 
   it('are picked alone, as a run from the first one picked, or cleared by picking the only one again', () => {
@@ -66,13 +68,14 @@ describe('the lines of an explanation', () => {
 });
 
 describe('PassagePane', () => {
-  it('reads as prose: a paragraph for each, and each sentence a button that names its number', () => {
+  it('reads as one flowing paragraph, and each sentence is a button that names its number, from 1 to n', () => {
     const { container } = render(<Held />);
     const paragraphs = container.querySelectorAll('p');
-    expect(paragraphs).toHaveLength(2);
-    expect(within(paragraphs[1] as HTMLElement).getAllByRole('button')).toHaveLength(2);
+    expect(paragraphs).toHaveLength(1);
+    expect(within(paragraphs[0] as HTMLElement).getAllByRole('button')).toHaveLength(4);
+    expect(screen.getAllByRole('button').map((button) => button.getAttribute('data-line'))).toEqual(['1', '2', '3', '4']);
     expect(sentence(2)).toHaveTextContent('It helped by 40% a week later.');
-    expect(screen.getByRole('button', { name: /^Sentence 4: .*The benefit was larger for known material\.$/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Sentence 3: .*The benefit was larger for known material\.$/ })).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'The explanation, sentence by sentence' })).toBeInTheDocument();
   });
 
@@ -80,32 +83,32 @@ describe('PassagePane', () => {
     const onSelect = vi.fn();
     render(<Held onSelect={onSelect} />);
     const user = userEvent.setup();
-    await user.click(sentence(4));
-    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 4, endLine: 4 });
-    expect(sentence(4)).toHaveAttribute('aria-pressed', 'true');
-    expect(sentence(5)).toHaveAttribute('aria-pressed', 'false');
-    await user.click(sentence(4));
-    expect(onSelect).toHaveBeenLastCalledWith(null);
+    await user.click(sentence(3));
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 3, endLine: 3 });
+    expect(sentence(3)).toHaveAttribute('aria-pressed', 'true');
     expect(sentence(4)).toHaveAttribute('aria-pressed', 'false');
+    await user.click(sentence(3));
+    expect(onSelect).toHaveBeenLastCalledWith(null);
+    expect(sentence(3)).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('extends the sentence picked to a run with a shift-click, across a paragraph', async () => {
+  it('extends the sentence picked to a run with a shift-click', async () => {
     const onSelect = vi.fn();
     render(<Held onSelect={onSelect} />);
     const user = userEvent.setup();
     await user.click(sentence(2));
-    fireEvent.click(sentence(5), { shiftKey: true });
-    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 2, endLine: 5 });
-    for (const line of [2, 4, 5]) expect(sentence(line)).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(sentence(4), { shiftKey: true });
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 2, endLine: 4 });
+    for (const line of [2, 3, 4]) expect(sentence(line)).toHaveAttribute('aria-pressed', 'true');
     expect(sentence(1)).toHaveAttribute('aria-pressed', 'false');
     await user.click(sentence(1));
     expect(onSelect).toHaveBeenLastCalledWith({ startLine: 1, endLine: 1 });
   });
 
   it('shows the number of a sentence that is picked, to the eye only', () => {
-    const { container } = render(<Held initial={{ startLine: 4, endLine: 4 }} />);
+    const { container } = render(<Held initial={{ startLine: 3, endLine: 3 }} />);
     const numbers = [...container.querySelectorAll('sup')];
-    expect(numbers.map((number) => number.textContent)).toEqual(['1', '2', '4', '5']);
+    expect(numbers.map((number) => number.textContent)).toEqual(['1', '2', '3', '4']);
     expect(numbers.map((number) => number.classList.contains('opacity-100'))).toEqual([false, false, true, false]);
     expect(numbers.every((number) => number.getAttribute('aria-hidden') === 'true')).toBe(true);
   });
@@ -118,15 +121,15 @@ describe('PassagePane', () => {
     await user.tab();
     expect(sentence(1)).toHaveFocus();
     await user.keyboard('{ArrowDown}{ArrowDown}');
-    expect(sentence(4)).toHaveFocus();
-    expect(sentence(4)).toHaveAttribute('tabindex', '0');
+    expect(sentence(3)).toHaveFocus();
+    expect(sentence(3)).toHaveAttribute('tabindex', '0');
     expect(sentence(1)).toHaveAttribute('tabindex', '-1');
     await user.keyboard('{Enter}');
-    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 4, endLine: 4 });
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 3, endLine: 3 });
     await user.keyboard('{ArrowUp}{Home}');
     expect(sentence(1)).toHaveFocus();
     await user.keyboard('{End}');
-    expect(sentence(5)).toHaveFocus();
+    expect(sentence(4)).toHaveFocus();
   });
 
   it('extends the run with shift and the arrow keys', async () => {
@@ -135,8 +138,8 @@ describe('PassagePane', () => {
     const user = userEvent.setup();
     await user.click(sentence(2));
     await user.keyboard('{Shift>}{ArrowDown}{ArrowDown}{/Shift}');
-    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 2, endLine: 5 });
-    expect(sentence(5)).toHaveFocus();
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 2, endLine: 4 });
+    expect(sentence(4)).toHaveFocus();
   });
 
   it('is an editor of the whole explanation, one sentence to a line, while a fix is written', () => {

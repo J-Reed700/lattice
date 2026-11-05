@@ -956,7 +956,7 @@ describe('the interview countdown', () => {
 
 describe('a drill on a passage of a course', () => {
   const SOURCE_TEXT = 'Students who spaced their study recalled 14% more a week later.';
-  const EXPLANATION = 'Spacing helps recall.\nIt helped by 40% a week later.\n\nThe benefit was larger for known material.\n';
+  const EXPLANATION = 'Spacing helps recall.\nIt helped by 40% a week later.\nThe benefit was larger for known material.\n';
   const PASSAGE_DRILL = {
     title: 'Why spacing helps',
     material: { kind: 'passage', sourceTitle: 'Spacing and memory' } as const,
@@ -1098,14 +1098,14 @@ describe('a drill on a passage of a course', () => {
       await review(user);
       await user.click(screen.getByRole('button', { name: /^Sentence 2:/ }));
       expect(screen.getByText('Sentence 2')).toBeVisible();
-      fireEvent.click(screen.getByRole('button', { name: /^Sentence 4:/ }), { shiftKey: true });
-      expect(screen.getByText('Sentences 2–4')).toBeVisible();
+      fireEvent.click(screen.getByRole('button', { name: /^Sentence 3:/ }), { shiftKey: true });
+      expect(screen.getByText('Sentences 2–3')).toBeVisible();
       await comment(user, 'The figure is 14%, not 40%.');
-      expect(screen.getByRole('button', { name: /Sentences 2–4/ })).toBeVisible();
+      expect(screen.getByRole('button', { name: /Sentences 2–3/ })).toBeVisible();
       await user.click(screen.getByRole('button', { name: 'Submit review' }));
       expect(api.submitCodeReview).toHaveBeenCalledWith(
         'attempt-1',
-        [{ span: { path: 'explanation.md', start: 2, end: 4 }, text: 'The figure is 14%, not 40%.', severity: null }],
+        [{ span: { path: 'explanation.md', start: 2, end: 3 }, text: 'The figure is 14%, not 40%.', severity: null }],
         null,
         expect.any(Number),
       );

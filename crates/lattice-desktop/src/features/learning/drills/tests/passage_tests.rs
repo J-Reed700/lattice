@@ -248,6 +248,7 @@ async fn a_drill_explains_a_passage_of_the_course_s_first_source_sized_to_its_se
     assert_eq!(code.title, "Why spacing study sessions helps");
     assert_eq!(code.domain, "Spacing and memory");
     assert_eq!(code.files, explanation_files(), "one sentence to a line");
+    assert_contiguous(&code.files[0].text);
     assert_eq!(code.suite, None);
     assert!(code.tests.is_empty());
     assert_eq!(model.purposes(), ["clean explanation"]);
@@ -371,6 +372,31 @@ async fn an_explanation_too_short_for_its_patterns_is_asked_for_again() -> Resul
 
 // The clean review.
 
+/// One sentence to a line and no empty line, so that the sentences are numbered 1 to n.
+fn assert_contiguous(text: &str) {
+    assert!(text.ends_with('\n'), "{text:?}");
+    assert!(
+        text.lines().all(|line| !line.trim().is_empty()),
+        "an empty line in {text:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_blank_line_a_stored_explanation_has_is_not_kept_by_the_review() -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let check = spacing_check();
+    let grader = idle_grader();
+    let mut code = passage_code();
+    code.files[0].text = format!("{FIRST}\n{SECOND}\n\n{THIRD}\n{FOURTH}\n");
+    let reviewed = passage_build(&pool, &model, &check, &grader)
+        .clean_review(&passage_spec("course"), &code)
+        .await?;
+    assert_eq!(reviewed.files, explanation_files());
+    assert_contiguous(&reviewed.files[0].text);
+    Ok(())
+}
+
 #[tokio::test]
 async fn every_sentence_the_source_supports_stays_and_nothing_is_asked_of_the_model() -> Result<()>
 {
@@ -437,9 +463,10 @@ async fn a_sentence_the_source_does_not_support_is_rewritten_once_and_dropped_wh
         reviewed.files,
         vec![DrillFile {
             path: "explanation.md".into(),
-            text: format!("{FIRST}\n{REWRITTEN}\n\n{THIRD}\n"),
+            text: format!("{FIRST}\n{REWRITTEN}\n{THIRD}\n"),
         }]
     );
+    assert_contiguous(&reviewed.files[0].text);
     assert_eq!(model.purposes(), ["rewrite", "rewrite"]);
     assert_eq!(
         check.sentences(),
@@ -539,7 +566,7 @@ fn the_planter_is_shown_the_source_and_the_numbered_sentences() {
             "The source passage, from Spacing and memory:\n<passage>\n{}\n</passage>",
             passage.text
         ),
-        format!("1 | {FIRST}\n2 | {SECOND}\n3 | \n4 | {THIRD}\n5 | {FOURTH}"),
+        format!("1 | {FIRST}\n2 | {SECOND}\n3 | {THIRD}\n4 | {FOURTH}"),
         "The patterns, one change for each:\n".to_owned(),
     ] {
         assert!(prompt.contains(&shown), "{shown:?} in {prompt}");
@@ -958,7 +985,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
         &figure.proof,
         Proof::Sourced { quote, planted: SourceVerdict::Contradicted, .. } if source.text.contains(quote.as_str())
     ));
-    assert_eq!(stored.drill.key[1].span.start, 4);
+    assert_eq!(stored.drill.key[1].span.start, 3);
     assert!(check_key(&stored.clean_files, &stored.drill).is_ok());
     assert_eq!(stored.evidence.proofs.len(), 2);
     Ok(())

@@ -1078,7 +1078,7 @@ pub(super) const SMALLER_QUOTE: &str = "It was smaller for material that was alr
 
 /// The explanation of [`spacing_passage`]: lines 1 and 2, a blank line, then lines 4 and 5.
 pub(super) fn explanation() -> String {
-    format!("{FIRST}\n{SECOND}\n\n{THIRD}\n{FOURTH}\n")
+    format!("{FIRST}\n{SECOND}\n{THIRD}\n{FOURTH}\n")
 }
 
 pub(super) fn explanation_files() -> Vec<DrillFile> {

@@ -9,8 +9,8 @@ import type { CodeReviewResultDto, IssueFix, RevealedIssueDto } from '@/lib/bind
 
 const PLANTED = 'It helped by 40% a week later.';
 const CLEAN = 'It helped by 14% a week later.';
-const REVIEWED = `Spacing helps recall.\n${PLANTED}\n\nThe benefit was smaller for known material.\n`;
-const CLEANED = `Spacing helps recall.\n${CLEAN}\n\nThe benefit was smaller for known material.\n`;
+const REVIEWED = `Spacing helps recall.\n${PLANTED}\nThe benefit was smaller for known material.\n`;
+const CLEANED = `Spacing helps recall.\n${CLEAN}\nThe benefit was smaller for known material.\n`;
 const QUOTE = 'recalled 14% more a week later';
 const SOURCE_TEXT = `Students who spaced their study ${QUOTE}.\n\nThe effect was smaller for what they already knew.`;
 
