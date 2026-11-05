@@ -135,6 +135,15 @@ impl IndexFileUseCase {
         // Heavy work (extraction + embeddings) - NO TRANSACTION
         let metadata = FileMetadataFactory::from_path(library_path)?;
         let checksum = Checksum::new(library_hash.to_owned())?;
+        // The file can change between the hash that found `existing` and the copy.
+        let existing = if existing
+            .as_ref()
+            .is_some_and(|found| found.checksum() != &checksum)
+        {
+            self.document_repo.find_by_checksum(&checksum).await?
+        } else {
+            existing
+        };
         let extracted = self.content_extractor.extract_content(library_path).await?;
         let page_ranges = extracted.page_ranges;
         let ocr_pages = extracted.ocr_pages;
@@ -147,13 +156,12 @@ impl IndexFileUseCase {
         let mut document = Document::from_file(
             library_path_validated,
             metadata.clone(),
-            checksum.clone(),
+            checksum,
             content.clone(),
             chunking_strategy,
         )?;
 
         if let Some(mut saved) = existing {
-            saved.update_checksum(checksum);
             saved.set_mime_type(metadata.mime_type().to_string());
             saved.reindex(content.clone(), chunking_strategy)?;
             document = saved;
