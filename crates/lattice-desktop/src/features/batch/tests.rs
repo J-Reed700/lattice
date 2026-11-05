@@ -1052,6 +1052,29 @@ async fn imports_are_checked_before_anything_is_saved() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn assert_url_import_refused_before_anything_is_saved(url: &str) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+
+    let started = harness.imports.start_urls(&[url.to_string()], None).await;
+
+    assert!(started.is_err(), "{url} was queued as a URL import");
+    assert_eq!(harness.count("SELECT count(*) FROM jobs").await?, 0);
+    assert!(harness.ingestion.ingested.lock().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_loopback_url_is_refused_before_a_url_import_is_saved() -> anyhow::Result<()> {
+    assert_url_import_refused_before_anything_is_saved("http://127.0.0.1:8080/x.mp4").await
+}
+
+#[tokio::test]
+async fn a_url_on_localhost_with_a_trailing_dot_is_refused_before_a_url_import_is_saved(
+) -> anyhow::Result<()> {
+    assert_url_import_refused_before_anything_is_saved("http://localhost.:8080/x.mp4").await
+}
+
 #[tokio::test]
 async fn a_running_import_can_be_neither_retried_nor_deleted() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;

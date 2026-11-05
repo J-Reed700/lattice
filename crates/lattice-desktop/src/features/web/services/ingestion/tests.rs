@@ -610,6 +610,45 @@ async fn test_likely_video_urls_prefer_video_error_when_all_strategies_fail() {
     assert!(error.to_string().contains("Failed to execute yt-dlp"));
 }
 
+fn service_with_no_article_extractor_and_no_yt_dlp() -> WebIngestionService {
+    use tokenizers::models::wordpiece::WordPiece;
+
+    WebIngestionService::builder()
+        .article_extractor(Arc::new(MockArticleExtractorService::new_disabled(
+            "article extractor unavailable".to_string(),
+        )))
+        .web_archive(Arc::new(MockWebArchiveService))
+        .embedding_service(Arc::new(MockEmbeddingService))
+        .index_storage(Arc::new(MockIndexStorage))
+        .tokenizer(Arc::new(Tokenizer::new(WordPiece::default())))
+        .enable_video_fallback(true)
+        .yt_dlp_binary("yt-dlp-command-that-does-not-exist")
+        .build()
+        .unwrap()
+}
+
+async fn assert_refused_before_yt_dlp_is_run(url: &str) {
+    let error = service_with_no_article_extractor_and_no_yt_dlp()
+        .extract_content_with_strategies(url)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(error, AppError::InvalidUrl(_)),
+        "{url} was handed to yt-dlp: {error}"
+    );
+}
+
+#[tokio::test]
+async fn a_loopback_video_url_is_refused_before_yt_dlp_is_run() {
+    assert_refused_before_yt_dlp_is_run("http://127.0.0.1:8080/x.mp4").await;
+}
+
+#[tokio::test]
+async fn a_video_url_on_localhost_with_a_trailing_dot_is_refused_before_yt_dlp_is_run() {
+    assert_refused_before_yt_dlp_is_run("http://localhost.:8080/x.mp4").await;
+}
+
 /// What an imported article's chunks and vectors become.
 mod article_vectors {
     use super::*;
