@@ -1,13 +1,14 @@
 //! A database recorded by a build that embedded the migrations with other line endings opens in
 //! this one. Any other difference in a recorded checksum is left for sqlx to refuse.
 
-use super::run_migrations;
+use super::{reconcile_line_endings, run_migrations};
 use crate::infrastructure::persistence::database::DatabaseConnection;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha384};
-use sqlx::migrate::Migrator;
+use sqlx::migrate::{Migration, Migrator};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
+use std::borrow::Cow;
 use std::io::Write;
 use std::sync::Arc;
 
@@ -79,7 +80,7 @@ async fn set_checksum(pool: &SqlitePool, version: i64, checksum: &[u8]) {
     assert_eq!(changed, 1, "migration {version} has a row");
 }
 
-async fn set_other_line_endings(pool: &SqlitePool, migration: &sqlx::migrate::Migration) {
+async fn set_other_line_endings(pool: &SqlitePool, migration: &Migration) {
     let other = checksum_of(&other_line_endings(&migration.sql));
     assert_ne!(
         other.as_slice(),
@@ -366,4 +367,99 @@ async fn a_database_file_recorded_with_the_other_line_endings_opens_on_the_next_
 
     assert_eq!(recorded(next_start.pool()).await, embedded_rows(&migrator));
     next_start.close().await.unwrap();
+}
+
+/// `migrator` as a checkout with LF line endings, or with CRLF ones, embeds it.
+fn with_line_endings(migrator: &Migrator, crlf: bool) -> Migrator {
+    let migrations: Vec<Migration> = migrator
+        .iter()
+        .map(|migration| {
+            let lf = migration.sql.replace("\r\n", "\n");
+            let sql = if crlf { lf.replace('\n', "\r\n") } else { lf };
+            Migration::new(
+                migration.version,
+                migration.description.clone(),
+                migration.migration_type,
+                Cow::Owned(sql),
+                migration.no_tx,
+            )
+        })
+        .collect();
+    Migrator {
+        migrations: Cow::Owned(migrations),
+        ..Migrator::DEFAULT
+    }
+}
+
+#[tokio::test]
+async fn a_database_recorded_with_either_line_endings_is_reconciled_to_the_other() {
+    for (recorded_with_crlf, opened_with_crlf) in [(true, false), (false, true)] {
+        let recorded_by = with_line_endings(&embedded(), recorded_with_crlf);
+        let opened_by = with_line_endings(&embedded(), opened_with_crlf);
+        let (before, after) = (embedded_rows(&recorded_by), embedded_rows(&opened_by));
+        assert!(
+            before
+                .iter()
+                .zip(&after)
+                .all(|(old, new)| old.0 == new.0 && old.1 != new.1),
+            "every checksum differs between the two checkouts"
+        );
+        let pool = empty_database().await;
+        recorded_by.run(&pool).await.unwrap();
+
+        reconcile_line_endings(&pool, &opened_by).await.unwrap();
+
+        assert_eq!(
+            recorded(&pool).await,
+            after,
+            "recorded with CRLF: {recorded_with_crlf}"
+        );
+        opened_by.run(&pool).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn reconciling_a_database_without_a_migrations_table_does_not_create_one() {
+    let pool = empty_database().await;
+
+    reconcile_line_endings(&pool, &embedded()).await.unwrap();
+
+    let objects: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(objects, 0);
+}
+
+#[tokio::test]
+async fn the_rewrites_are_one_transaction_and_are_logged_only_once_committed() {
+    let pool = migrated_database().await;
+    let migrator = embedded();
+    for migration in migrator.iter() {
+        set_other_line_endings(&pool, migration).await;
+    }
+    let before = recorded(&pool).await;
+    let third = migrator.iter().nth(2).unwrap().version;
+    sqlx::query(&format!(
+        r#"
+        CREATE TRIGGER refuse_third BEFORE UPDATE ON _sqlx_migrations
+        WHEN OLD.version = {third}
+        BEGIN
+            SELECT RAISE(ABORT, 'refused');
+        END
+        "#
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (logs, _capture) = capture_logs();
+
+    let error = reconcile_line_endings(&pool, &migrator)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("refused"), "{error}");
+    assert_eq!(recorded(&pool).await, before);
+    assert!(logs.migrator_lines().is_empty());
 }
