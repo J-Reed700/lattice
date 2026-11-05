@@ -539,6 +539,10 @@ describe('writing the review', () => {
     expect(viewer).toHaveAttribute('data-nonce', '1');
     await user.click(show1);
     expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-nonce', '2');
+
+    await user.click(screen.getByRole('tab', { name: 'src/store.py' }));
+    expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-highlight', '');
+    expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-nonce', '');
   });
 
   it('leaves editing when the comment being edited is deleted', async () => {

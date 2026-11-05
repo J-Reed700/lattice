@@ -28,7 +28,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
   const { session, review, failure, retry } = drill;
   const [activePath, setActivePath] = useState(session?.drill.files[0]?.path ?? '');
   const [picked, setPicked] = useState<Picked | null>(null);
-  const [highlight, setHighlight] = useState<{ range: ExplorerLineRange; nonce: number } | null>(null);
+  const [highlight, setHighlight] = useState<{ path: string; range: ExplorerLineRange; nonce: number } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [writingFix, setWritingFix] = useState(false);
   const [confirmEmpty, setConfirmEmpty] = useState(false);
@@ -68,6 +68,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
     setWritingFix(false);
     setActivePath(span.path);
     setHighlight((previous) => ({
+      path: span.path,
       range: { startLine: span.start, endLine: span.end },
       nonce: (previous?.nonce ?? 0) + 1,
     }));
@@ -120,8 +121,8 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
             writingFix={writingFix}
             selection={picked?.path === active.path ? picked.range : null}
             onSelectLines={selectLines}
-            highlight={highlight?.range ?? null}
-            highlightNonce={highlight?.nonce ?? null}
+            highlight={highlight?.path === active.path ? highlight.range : null}
+            highlightNonce={highlight?.path === active.path ? highlight.nonce : null}
             fixEdits={review.fixEdits}
             onFixEdit={review.editFix}
           />
