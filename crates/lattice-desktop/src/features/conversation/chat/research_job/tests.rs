@@ -520,6 +520,46 @@ async fn a_pending_research_turn_keeps_its_request_for_the_picture_sweep() {
     assert_eq!(kept, [pending.request_id.unwrap()].into_iter().collect());
 }
 
+/// A research turn still pending or running resumes at a later start and
+/// answers the question it saved, so the startup sweep of interrupted turns
+/// leaves that question pending; a finished one has nothing left to answer.
+/// The question is read from the checkpoint a real turn saves.
+#[tokio::test]
+async fn a_pending_research_turn_keeps_its_question_for_the_turn_sweep() {
+    let pool = pool().await;
+    let attempt = first_attempt(&FakeRuntime::default()).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let store = JobStore::new(pool);
+
+    let kept = resumable_question_ids(&store).await.unwrap();
+    assert_eq!(
+        kept,
+        [attempt.assembled.user_message_id.clone()]
+            .into_iter()
+            .collect()
+    );
+
+    store.cancel(&job_id).await.unwrap();
+    assert!(resumable_question_ids(&store).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_saved_research_question_that_cannot_be_read_is_left_out() {
+    let store = JobStore::new(pool().await);
+    let job = store
+        .submit(&research_job(&research("conversation-a")).unwrap())
+        .await
+        .unwrap();
+    store.claim(&job.id).await.unwrap();
+    let unreadable = serde_json::json!({ "question": "not the shape a turn saves" });
+    assert!(store
+        .put_checkpoint(&job.id, ASSEMBLED, &unreadable)
+        .await
+        .unwrap());
+
+    assert!(resumable_question_ids(&store).await.unwrap().is_empty());
+}
+
 /// The chat's model, which moves the chat to the default while it answers:
 /// a picker change during a turn must not reach the turn.
 struct ChosenThenChanged {

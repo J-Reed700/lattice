@@ -328,11 +328,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     });
 
     // A question the last run quit under would show as in flight for good;
-    // fail it so it can be retried.
+    // fail it so it can be retried. The question of a research turn stays: its
+    // job is delivered again and answers it.
     let turns_pool = container.db_pool().clone();
+    let turns_jobs = Arc::clone(container.jobs());
     background.spawn(async move {
         use super::startup_reconciliation::reconcile_stuck_turns;
-        match reconcile_stuck_turns(&turns_pool).await {
+        match reconcile_stuck_turns(&turns_pool, turns_jobs.store()).await {
             Ok(count) if count > 0 => {
                 tracing::info!(count, "Marked interrupted conversation turns as failed");
             }

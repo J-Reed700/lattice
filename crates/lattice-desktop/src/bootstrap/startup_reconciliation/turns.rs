@@ -1,5 +1,9 @@
 //! Conversation messages the last run left mid-flight: unfinished turns and grounding checks.
 
+use crate::features::conversation::chat::resumable_research_questions;
+use lattice_core::shared::error::AppError;
+use lattice_core::shared::runtime::jobs::JobStore;
+
 /// Close out grounding checks the last run never finished.
 ///
 /// An answer is persisted with `verification.pending = true` and checked in a
@@ -25,13 +29,23 @@ pub async fn reconcile_interrupted_verifications(
 ///
 /// A question is written `pending` before generation and settled when the
 /// answer commits or the turn fails. A crash or force-quit in between leaves it
-/// `pending`, which renders as still in flight with nothing left to finish it.
-/// No turn survives a restart, so every such row is failed and can be retried.
-pub async fn reconcile_stuck_turns(pool: &sqlx::SqlitePool) -> Result<u64, sqlx::Error> {
+/// `pending`, which renders as still in flight. Only a deep research turn
+/// survives a restart: its job is delivered again and answers the question its
+/// `assembled` checkpoint names, so that row stays `pending`. Every other such
+/// row has nothing left to finish it, and is failed so it can be retried.
+pub async fn reconcile_stuck_turns(
+    pool: &sqlx::SqlitePool,
+    jobs: &JobStore,
+) -> Result<u64, AppError> {
+    let resuming = resumable_research_questions(jobs).await?;
+    let resuming = serde_json::to_string(&resuming)
+        .map_err(|error| AppError::Serialization(error.to_string()))?;
     let result = sqlx::query(
         "UPDATE conversation_messages SET status = 'failed' \
-         WHERE status IN ('pending', 'streaming')",
+         WHERE status IN ('pending', 'streaming') \
+           AND id NOT IN (SELECT value FROM json_each(?))",
     )
+    .bind(resuming)
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
@@ -46,7 +60,7 @@ mod tests {
     use crate::features::conversation::service::ConversationService;
     use crate::features::conversation::ConversationServiceTrait;
     use lattice_core::domain::conversation::MessageRole;
-    use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
+    use lattice_core::shared::runtime::jobs::{JobStatus, NewJob};
     use std::collections::BTreeMap;
     use std::sync::Arc;
 
@@ -136,7 +150,8 @@ mod tests {
             .unwrap();
         }
 
-        assert_eq!(reconcile_stuck_turns(&pool).await.unwrap(), 2);
+        let jobs = JobStore::new(pool.clone());
+        assert_eq!(reconcile_stuck_turns(&pool, &jobs).await.unwrap(), 2);
 
         let statuses: Vec<(String, String)> =
             sqlx::query_as("SELECT id, status FROM conversation_messages ORDER BY id")
@@ -170,7 +185,9 @@ mod tests {
 
     /// The pass startup makes over the turns the last run left.
     async fn reconcile(pool: &sqlx::SqlitePool) {
-        reconcile_stuck_turns(pool).await.unwrap();
+        reconcile_stuck_turns(pool, &JobStore::new(pool.clone()))
+            .await
+            .unwrap();
     }
 
     async fn status_of(pool: &sqlx::SqlitePool, message_id: &str) -> String {

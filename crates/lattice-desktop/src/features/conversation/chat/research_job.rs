@@ -121,6 +121,40 @@ pub async fn resumable_request_ids(jobs: &JobStore) -> Result<std::collections::
         .collect())
 }
 
+/// The question a research turn saved pending on its thread, as its
+/// `assembled` checkpoint names it.
+#[derive(serde::Deserialize)]
+struct SavedQuestion {
+    user_message_id: String,
+}
+
+/// The questions of research turns still pending or running, each saved
+/// pending on its thread: a turn that resumes at a later start answers it, so
+/// the startup sweep of interrupted turns leaves it pending. A turn that has
+/// planned nothing yet has saved no question, and one whose saved question
+/// cannot be read has none to keep.
+///
+/// # Errors
+///
+/// The job store could not be read.
+pub async fn resumable_question_ids(jobs: &JobStore) -> Result<std::collections::HashSet<String>> {
+    let mut questions = std::collections::HashSet::new();
+    for job in jobs.live(DEEP_RESEARCH).await? {
+        let Some(assembled) = jobs.checkpoint(&job.id, ASSEMBLED).await? else {
+            continue;
+        };
+        match decode::<SavedQuestion>(assembled) {
+            Ok(saved) => {
+                questions.insert(saved.user_message_id);
+            }
+            Err(error) => {
+                warn!(job_id = job.id.as_str(), %error, "Could not read a saved research question");
+            }
+        }
+    }
+    Ok(questions)
+}
+
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T> {
     serde_json::from_value(value).map_err(|error| AppError::Serialization(error.to_string()))
 }
