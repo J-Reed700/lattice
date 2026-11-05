@@ -77,6 +77,29 @@ async fn the_request_names_the_targets_the_runtime_and_the_suite() -> Result<()>
 }
 
 #[tokio::test]
+async fn the_prompt_allows_the_name_the_comment_or_the_string_a_pattern_needs() -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([plant_answer()]);
+    let runner = FakeRunner::passing();
+    let grader = idle_grader();
+    build(&pool, &model, Some(&runner), &grader)
+        .plant(&spec(), &baseline())
+        .await?;
+    let system = system(&model.requests()[0]);
+    assert!(
+        system.contains("Add no comment, name or string that points at the defect or admits it."),
+        "{system}"
+    );
+    for forbidden in ["rename nothing", "write no string"] {
+        assert!(
+            !system.contains(forbidden),
+            "a misleading name, comment or hard-coded string must be possible: {forbidden}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn without_a_runner_no_test_is_asked_for() -> Result<()> {
     let pool = pool().await?;
     let model = ScriptedModel::new([plant_answer()]);

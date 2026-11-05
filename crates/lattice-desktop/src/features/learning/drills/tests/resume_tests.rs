@@ -3,8 +3,8 @@
 
 use super::support::{
     blind_answer, blind_assessment, clean_code_answer, code, entry_answer, files, judge_answer,
-    plant_answer, planted, proved, quiet, review, review_answer, spec, FakeGrader, FakeRunner,
-    Harness, ScriptedModel, KILLING_TEST, MODEL, SUITE,
+    plant_answer, planted, proved, purpose, quiet, review, review_answer, spec, system, FakeGrader,
+    FakeRunner, Harness, ScriptedModel, KILLING_TEST, MODEL, SUITE,
 };
 use crate::features::learning::drills::build::{DrillBuild, Evidence, ModelCall, Stage};
 use crate::features::learning::drills::repository::{self, StoredDrill};
@@ -376,5 +376,39 @@ async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_
         "{error:?}"
     );
     assert_eq!(model.requests().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn no_prompt_forbids_what_a_pattern_needs() -> Result<()> {
+    let harness = Harness::new(&spec()).await?;
+    let model = ScriptedModel::new(answers());
+    let runner = FakeRunner::killing_the_operator();
+    let grader = FakeGrader::new(blind_assessment());
+    let context = harness.context().await?;
+    harness
+        .build(&model, Some(&runner), &grader)
+        .run(&context, &spec())
+        .await?;
+    let requests = model.requests();
+    for request in &requests {
+        let system = system(request);
+        for forbidden in ["rename nothing", "Add no comment, rename"] {
+            assert!(
+                !system.contains(forbidden),
+                "{}: {forbidden}",
+                purpose(request)
+            );
+        }
+    }
+    let plant = requests
+        .iter()
+        .find(|request| purpose(request) == "plant")
+        .map(system)
+        .unwrap_or_default();
+    assert!(
+        plant.contains("Add no comment, name or string that points at the defect or admits it."),
+        "a rename, a comment or a string that does not point at the defect is allowed"
+    );
     Ok(())
 }
