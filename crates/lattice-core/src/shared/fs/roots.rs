@@ -6,6 +6,8 @@
 //! owner and the backup writer resolve them from this one place.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use crate::shared::error::{AppError, Result};
 
@@ -14,14 +16,37 @@ use crate::shared::error::{AppError, Result};
 /// own, so neither collects the other's files.
 pub const LATTICE_HOME_ENV: &str = "LATTICE_HOME";
 
-/// `$LATTICE_HOME`, else `~/.lattice`: the parent of every root below.
+static USERS_HOME: AtomicBool = AtomicBool::new(false);
+
+/// Let this process use `~/.lattice` when `LATTICE_HOME` is not set. Only the
+/// app's own entry point calls it: any other process (a test, an eval) gets a
+/// scratch home of its own, so none can write into the user's library.
+pub fn use_the_users_home() {
+    USERS_HOME.store(true, Ordering::SeqCst);
+}
+
+/// `$LATTICE_HOME`, else `~/.lattice` for the app and a scratch home for any
+/// other process: the parent of every root below.
 fn lattice_home() -> Result<PathBuf> {
     if let Some(home) = std::env::var_os(LATTICE_HOME_ENV).filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(home));
     }
+    if !USERS_HOME.load(Ordering::SeqCst) {
+        return Ok(scratch_home().clone());
+    }
     let home = dirs::home_dir()
         .ok_or_else(|| AppError::InvalidState("Cannot determine home directory".to_string()))?;
     Ok(home.join(".lattice"))
+}
+
+/// One per process, under the system temp folder, laid out as a home is.
+fn scratch_home() -> &'static PathBuf {
+    static SCRATCH: OnceLock<PathBuf> = OnceLock::new();
+    SCRATCH.get_or_init(|| {
+        std::env::temp_dir()
+            .join(format!("lattice-scratch-home-{}", uuid::Uuid::new_v4()))
+            .join(".lattice")
+    })
 }
 
 /// Holds the id of the database that owns the files in the roots below:
@@ -65,13 +90,19 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    /// Set on a child copy of this test binary so that [`print_roots`] runs.
+    /// Set on a child copy of this test binary so that [`print_roots`] runs;
+    /// [`CLAIMED`] as its value makes the child claim the user's home first.
     const PROBE: &str = "LATTICE_ROOTS_PROBE";
+    const CLAIMED: &str = "claimed";
 
     /// What a child process resolved: the name of each root and where it is.
     /// The variable is set only on the child, never on the process running the
     /// tests, because another test reading a root would see it.
     fn roots_with(configured: Option<&str>) -> Vec<(String, PathBuf)> {
+        roots_of_child(configured, "1")
+    }
+
+    fn roots_of_child(configured: Option<&str>, probe: &str) -> Vec<(String, PathBuf)> {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child
             .args([
@@ -79,7 +110,7 @@ mod tests {
                 "shared::fs::roots::tests::print_roots",
                 "--nocapture",
             ])
-            .env(PROBE, "1");
+            .env(PROBE, probe);
         match configured {
             Some(value) => child.env(LATTICE_HOME_ENV, value),
             None => child.env_remove(LATTICE_HOME_ENV),
@@ -103,8 +134,11 @@ mod tests {
     /// Prints every root for [`roots_with`]; does nothing in a normal run.
     #[test]
     fn print_roots() {
-        if std::env::var_os(PROBE).is_none() {
+        let Some(probe) = std::env::var_os(PROBE) else {
             return;
+        };
+        if probe == CLAIMED {
+            use_the_users_home();
         }
         for (name, root) in [
             ("home", lattice_home()),
@@ -140,6 +174,19 @@ mod tests {
         assert_eq!(
             roots_with(Some(second.to_str().unwrap())),
             all_under(&second)
+        );
+    }
+
+    #[test]
+    fn the_app_that_claims_the_users_home_gets_dot_lattice() {
+        let users = dirs::home_dir().unwrap().join(".lattice");
+        assert_eq!(roots_of_child(None, CLAIMED), all_under(&users));
+        let dir = tempfile::tempdir().unwrap();
+        let second = dir.path().join("second");
+        assert_eq!(
+            roots_of_child(Some(second.to_str().unwrap()), CLAIMED),
+            all_under(&second),
+            "LATTICE_HOME still moves the app's roots"
         );
     }
 
