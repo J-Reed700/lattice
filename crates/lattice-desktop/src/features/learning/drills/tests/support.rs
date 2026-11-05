@@ -1007,6 +1007,7 @@ pub(super) fn supported(quote: &str) -> Result<SourceFinding> {
         quote: Some(quote.to_owned()),
         reason: "The passage states it.".to_owned(),
         confident: true,
+        unusable: false,
     })
 }
 
@@ -1016,6 +1017,7 @@ pub(super) fn contradicted(quote: &str, reason: &str) -> Result<SourceFinding> {
         quote: Some(quote.to_owned()),
         reason: reason.to_owned(),
         confident: true,
+        unusable: false,
     })
 }
 
@@ -1025,6 +1027,7 @@ pub(super) fn unsupported(reason: &str) -> Result<SourceFinding> {
         quote: None,
         reason: reason.to_owned(),
         confident: true,
+        unusable: false,
     })
 }
 
@@ -1036,6 +1039,18 @@ pub(super) fn unsure(says: SourceSays, reason: &str) -> Result<SourceFinding> {
         quote: None,
         reason: reason.to_owned(),
         confident: false,
+        unusable: false,
+    })
+}
+
+/// What a check the checker gave no usable verdict on comes to: a finding of nothing, unsure.
+pub(super) fn no_verdict() -> Result<SourceFinding> {
+    Ok(SourceFinding {
+        says: SourceSays::Unsupported,
+        quote: None,
+        reason: "The source check gave no verdict that could be used.".to_owned(),
+        confident: false,
+        unusable: true,
     })
 }
 

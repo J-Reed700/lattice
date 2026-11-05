@@ -5,11 +5,11 @@
 
 use super::support::{
     contradicted, course, explanation, explanation_answer, explanation_files, figure_mutation,
-    fix_answer, idle_grader, last, passage_baseline, passage_build, passage_code,
+    fix_answer, idle_grader, last, no_verdict, passage_baseline, passage_build, passage_code,
     passage_plant_answer, passage_spec, quiet, reversed_mutation, spacing_check, spacing_passage,
     supported, system, unsupported, unsure, FakeGrader, ScriptedCheck, ScriptedModel, CHECK_MODEL,
-    CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH, MODEL, SECOND, SLEEP,
-    SMALLER_QUOTE, SPACING, THIRD, THIRD_PLANTED,
+    CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH, MODEL, REVERSED, SECOND,
+    SLEEP, SMALLER_QUOTE, SPACING, THIRD, THIRD_PLANTED,
 };
 use crate::features::learning::drills::bank::{self, take, take_from, Shelf};
 use crate::features::learning::drills::build::{
@@ -18,7 +18,7 @@ use crate::features::learning::drills::build::{
 };
 use crate::features::learning::drills::fix_grading::{grade_fix, FixCase};
 use crate::features::learning::drills::jobs::spec_of;
-use crate::features::learning::drills::material::passage::{SourceFinding, SourceSays};
+use crate::features::learning::drills::material::passage::{finding_of, SourceFinding, SourceSays};
 use crate::features::learning::drills::material::{
     ClaimSourceCheck, DrillMaterial, JudgeWording, PassageMaterial, SourceCheck,
 };
@@ -33,6 +33,9 @@ use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, SamplingOverride,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::claim_verification::{
+    ClaimJudgment, ClaimVerdict, JudgeOutcome,
+};
 use lattice_core::domain::learning::drills::{
     apply, check_key, targets, Assessment, DecidedBy, Drill, DrillFile, Edit, FindingOutcome,
     FixOutcome, IssueFix, IssueOutcome, KeyIssue, LineSpan, Material, Origin, Pattern, Proof,
@@ -707,34 +710,115 @@ async fn a_mutation_whose_planted_sentence_the_source_supports_is_dropped() -> R
 }
 
 #[tokio::test]
-async fn a_source_check_with_no_verdict_is_an_error_and_never_a_proof() -> Result<()> {
+async fn a_source_check_whose_call_fails_is_an_error_and_never_a_proof() -> Result<()> {
     let pool = pool().await?;
     let model = ScriptedModel::new(Vec::<String>::new());
     let grader = idle_grader();
-    let failures: [fn() -> AppError; 2] = [
-        || {
-            AppError::ModelAnswerUnusable(
-                "The source check gave no verdict that could be used.".into(),
-            )
-        },
-        || AppError::ServiceNotAvailable("The checker is down.".into()),
-    ];
-    for failure in failures {
-        let check = ScriptedCheck::new(move |_| Err(failure()));
-        let proved = passage_build(&pool, &model, &check, &grader)
-            .prove(
-                &passage_spec("course"),
-                &passage_baseline(),
-                &planted_of(vec![figure_mutation()]),
-            )
-            .await;
-        assert!(proved.is_err(), "{:?}: {proved:?}", failure());
-        assert_eq!(
-            check.sentences(),
-            [FIRST],
-            "nothing more is asked once a check fails"
-        );
-    }
+    let check =
+        ScriptedCheck::new(|_| Err(AppError::ServiceNotAvailable("The checker is down.".into())));
+    let proved = passage_build(&pool, &model, &check, &grader)
+        .prove(
+            &passage_spec("course"),
+            &passage_baseline(),
+            &planted_of(vec![figure_mutation()]),
+        )
+        .await;
+    assert!(
+        matches!(proved, Err(AppError::ServiceNotAvailable(_))),
+        "{proved:?}"
+    );
+    assert_eq!(
+        check.sentences(),
+        [FIRST],
+        "nothing more is asked once a call fails"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planted_sentence_the_checker_gave_no_verdict_on_drops_only_that_mutation() -> Result<()>
+{
+    let pool = pool().await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let grader = idle_grader();
+    let check = ScriptedCheck::new(|sentence| {
+        if sentence == FIRST_PLANTED {
+            no_verdict()
+        } else if sentence == THIRD_PLANTED {
+            contradicted(SMALLER_QUOTE, "The source says smaller.")
+        } else {
+            supported(FIGURE_QUOTE)
+        }
+    });
+    let proved = passage_build(&pool, &model, &check, &grader)
+        .prove(
+            &passage_spec("course"),
+            &passage_baseline(),
+            &planted_of(vec![figure_mutation(), reversed_mutation()]),
+        )
+        .await?;
+    assert_eq!(proved.proven.len(), 1);
+    assert_eq!(proved.proven[0].mutation.pattern, REVERSED);
+    assert_eq!(proved.dropped.len(), 1);
+    assert_eq!(proved.dropped[0].mutation.pattern, FIGURE);
+    assert!(
+        proved.dropped[0].why.contains("no usable verdict"),
+        "{}",
+        proved.dropped[0].why
+    );
+    assert!(
+        proved.dropped[0]
+            .trail
+            .calls
+            .iter()
+            .any(|call| call.purpose.contains("no usable verdict")),
+        "{:?}",
+        proved.dropped[0].trail
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_clean_sentence_the_checker_gave_no_verdict_on_is_rewritten_and_the_build_goes_on(
+) -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([
+        json!({"sentence": REWRITTEN}).to_string(),
+        json!({"sentence": STILL_WRONG}).to_string(),
+    ]);
+    let check = ScriptedCheck::new(|sentence| match sentence {
+        SECOND | FOURTH | STILL_WRONG => no_verdict(),
+        _ => supported(FIGURE_QUOTE),
+    });
+    let grader = idle_grader();
+    let spec = DrillSpec {
+        patterns: vec![FIGURE.into()],
+        ..passage_spec("course")
+    };
+    let reviewed = passage_build(&pool, &model, &check, &grader)
+        .clean_review(&spec, &passage_code())
+        .await?;
+    assert_eq!(
+        reviewed.files[0].text,
+        explanation_text_of(&[FIRST, REWRITTEN, THIRD]),
+        "rewritten when the rewrite is supported, dropped when it gets no verdict either"
+    );
+    assert_eq!(model.purposes(), ["rewrite", "rewrite"]);
+    assert_eq!(reviewed.repairs.len(), 2);
+    assert!(
+        reviewed.repairs[0]
+            .description
+            .contains("no usable verdict"),
+        "{}",
+        reviewed.repairs[0].description
+    );
+    let unusable = reviewed
+        .trail
+        .calls
+        .iter()
+        .filter(|call| call.purpose.contains("no usable verdict"))
+        .count();
+    assert_eq!(unusable, 3, "{:?}", reviewed.trail);
     Ok(())
 }
 
@@ -1175,24 +1259,28 @@ async fn a_judged_issue_of_a_passage_is_judged_with_the_source_shown() -> Result
 // The adapter over the claim checker.
 
 #[tokio::test]
-async fn the_claim_checker_finds_a_sentence_supported_with_an_exact_quote_of_the_passage(
+async fn the_claim_checker_is_shown_the_passage_s_sentences_and_quotes_the_one_it_cites(
 ) -> Result<()> {
-    let model = ScriptedModel::new([format!(
-        "supported\nReason: The passage gives 14% a week later.\nSource quote: {FIGURE_QUOTE}"
-    )]);
+    let model = ScriptedModel::new([
+        "Reason: The passage gives 14% a week later.\nSource passage: passage-0\nVerdict: supported"
+            .to_owned(),
+    ]);
     let passage = spacing_passage();
     let found = ClaimSourceCheck::new(&model)
         .check(FIRST, &passage.text)
         .await?;
+    let first = "In a 2006 study by Cepeda and colleagues, learners who spread their study over several sessions recalled 14% more a week later than learners who studied in one session.";
     assert_eq!(
         found,
         SourceFinding {
             says: SourceSays::Supported,
-            quote: Some(FIGURE_QUOTE.into()),
+            quote: Some(first.into()),
             reason: "The passage gives 14% a week later.".into(),
             confident: true,
+            unusable: false,
         }
     );
+    assert!(passage.text.contains(first));
     let requests = model.requests();
     assert_eq!(requests.len(), 1);
     assert_eq!(
@@ -1200,43 +1288,75 @@ async fn the_claim_checker_finds_a_sentence_supported_with_an_exact_quote_of_the
         Some(SamplingOverride::deterministic())
     );
     let asked = last(&requests[0]);
-    assert!(asked.contains(&passage.text), "{asked}");
+    for shown in [
+        format!("[passage-0]\n{first}"),
+        "[passage-1]\nAll of the learners were adults.".to_owned(),
+        "[passage-2]\nThe benefit held in laboratory settings.".to_owned(),
+        format!("[passage-3]\n{SMALLER_QUOTE}"),
+    ] {
+        assert!(asked.contains(&shown), "{shown:?} in {asked}");
+    }
+    assert!(!asked.contains("[passage-4]"), "{asked}");
     assert!(asked.contains(FIRST), "{asked}");
     assert_eq!(ClaimSourceCheck::new(&model).model_name(), MODEL);
     Ok(())
 }
 
 #[tokio::test]
-async fn a_verdict_without_an_exact_quote_of_the_passage_is_an_error() {
+async fn a_hard_wrapped_source_with_irregular_space_still_gives_exact_quotes() -> Result<()> {
+    let passage = "Spacing study sessions\nhelped learners recall  14% more\r\na week later.   It was\n   smaller for material\nalready well known.\n\nA new paragraph.";
     let model = ScriptedModel::new([
-        "contradicted\nReason: The source gives 14%.\nSource quote: recalled 40% more".to_owned(),
+        "Reason: The source says smaller.\nSource passage: passage-1\nVerdict: contradicted"
+            .to_owned(),
     ]);
-    let error = ClaimSourceCheck::new(&model)
-        .check(FIRST_PLANTED, &spacing_passage().text)
-        .await
-        .unwrap_err();
+    let found = ClaimSourceCheck::new(&model)
+        .check(THIRD_PLANTED, passage)
+        .await?;
+    let cited = "It was\n   smaller for material\nalready well known.";
+    assert_eq!(found.says, SourceSays::Contradicted);
+    assert_eq!(found.quote.as_deref(), Some(cited));
     assert!(
-        matches!(error, AppError::ModelAnswerUnusable(_)),
-        "{error:?}"
+        passage.contains(cited),
+        "the quote is the source's own bytes"
     );
+    let asked = last(&model.requests()[0]);
+    assert!(
+        asked.contains("[passage-0]\nSpacing study sessions\nhelped learners recall  14% more\r\na week later."),
+        "a wrapped line does not end a sentence: {asked}"
+    );
+    assert!(asked.contains("[passage-2]\nA new paragraph."), "{asked}");
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_check_with_no_verdict_is_an_error() {
-    let model = ScriptedModel::new(["I cannot tell.".to_owned(), "Still not sure.".to_owned()]);
-    let error = ClaimSourceCheck::new(&model)
-        .check(FIRST, &spacing_passage().text)
-        .await
-        .unwrap_err();
-    assert!(
-        matches!(error, AppError::ModelAnswerUnusable(_)),
-        "{error:?}"
-    );
+async fn a_verdict_citing_no_sentence_of_the_passage_is_a_finding_of_nothing() -> Result<()> {
+    let cites_nothing =
+        "Reason: The source gives 14%.\nSource passage: passage-9\nVerdict: contradicted"
+            .to_owned();
+    let model = ScriptedModel::new([cites_nothing.clone(), cites_nothing]);
+    let found = ClaimSourceCheck::new(&model)
+        .check(FIRST_PLANTED, &spacing_passage().text)
+        .await?;
+    assert!(found.unusable, "{found:?}");
+    assert!(!found.confident);
+    assert_eq!(found.quote, None);
     assert_eq!(
         model.requests().len(),
         2,
         "the checker asks once more for its format"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_check_with_no_verdict_is_a_finding_of_nothing_and_not_an_error() -> Result<()> {
+    let model = ScriptedModel::new(["I cannot tell.".to_owned(), "Still not sure.".to_owned()]);
+    let found = ClaimSourceCheck::new(&model)
+        .check(FIRST, &spacing_passage().text)
+        .await?;
+    assert_eq!(found, no_verdict()?);
+    assert_eq!(model.requests().len(), 2);
+    Ok(())
 }
 
 /// A model that is not there.
@@ -1691,69 +1811,56 @@ async fn a_rewrite_the_checker_is_unsure_of_goes_to_the_judge_and_is_never_fixed
     Ok(())
 }
 
-/// A model that answers with `text` and reports `logprobs` for its first token.
-struct Weighed {
-    text: String,
-    logprobs: Vec<(String, f32)>,
+fn outcome(verdict: ClaimVerdict, confidence: Option<f32>, uncertain: bool) -> ClaimJudgment {
+    ClaimJudgment::Judged(JudgeOutcome {
+        verdict,
+        quote: None,
+        reason: Some("The passage gives no figure of 40%.".into()),
+        confidence,
+        uncertain,
+    })
 }
 
-impl Weighed {
-    fn new(text: &str, probabilities: &[(&str, f32)]) -> Self {
-        Self {
-            text: text.to_owned(),
-            logprobs: probabilities
-                .iter()
-                .map(|(token, probability)| ((*token).to_owned(), probability.ln()))
-                .collect(),
-        }
-    }
-}
-
-#[async_trait]
-impl LLMPort for Weighed {
-    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
-        let mut response = CompletionResponse::from_text(self.text.clone());
-        response.first_token_logprobs = Some(self.logprobs.clone());
-        Ok(response)
-    }
-    fn model_name(&self) -> &str {
-        "weighed"
-    }
-    fn max_context_tokens(&self) -> usize {
-        128_000
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-#[tokio::test]
-async fn the_claim_checker_says_when_it_was_unsure() -> Result<()> {
-    let passage = spacing_passage();
-    let answer = "unsupported\nReason: The passage gives no figure of 40%.\nSource quote: none";
-    let low = Weighed::new(answer, &[("unsupported", 0.6), ("supported", 0.4)]);
-    let found = ClaimSourceCheck::new(&low)
-        .check(FIRST_PLANTED, &passage.text)
-        .await?;
-    assert_eq!(found.says, SourceSays::Unsupported);
-    assert!(!found.confident, "a low probability: {found:?}");
-
-    let disagreeing = Weighed::new(answer, &[("supported", 0.95), ("unsupported", 0.05)]);
-    let found = ClaimSourceCheck::new(&disagreeing)
-        .check(FIRST_PLANTED, &passage.text)
-        .await?;
-    assert_eq!(found.says, SourceSays::Unsupported);
+#[test]
+fn a_judgment_comes_to_a_finding_that_says_whether_the_checker_was_sure() {
+    let sure = finding_of(outcome(ClaimVerdict::Unsupported, None, false)).unwrap();
+    assert_eq!(sure.says, SourceSays::Unsupported);
+    assert!(sure.confident && !sure.unusable, "{sure:?}");
+    assert_eq!(sure.reason, "The passage gives no figure of 40%.");
     assert!(
-        !found.confident,
-        "the first token and the text disagree, though the first token was likely: {found:?}"
+        finding_of(outcome(ClaimVerdict::Unsupported, Some(0.95), false))
+            .unwrap()
+            .confident
     );
 
-    let sure = Weighed::new(answer, &[("unsupported", 0.95), ("supported", 0.05)]);
-    let found = ClaimSourceCheck::new(&sure)
-        .check(FIRST_PLANTED, &passage.text)
-        .await?;
-    assert_eq!(found.says, SourceSays::Unsupported);
-    assert!(found.confident, "{found:?}");
-    assert_eq!(found.reason, "The passage gives no figure of 40%.");
-    Ok(())
+    let low = finding_of(outcome(ClaimVerdict::Unsupported, Some(0.6), false)).unwrap();
+    assert!(!low.confident && !low.unusable, "{low:?}");
+    let downgraded = finding_of(outcome(ClaimVerdict::Unsupported, Some(0.95), true)).unwrap();
+    assert!(
+        !downgraded.confident,
+        "the checker recorded Unsupported for an answer it was unsure of: {downgraded:?}"
+    );
+
+    for nothing in [
+        ClaimJudgment::Unusable,
+        outcome(ClaimVerdict::Unverified, None, false),
+    ] {
+        let found = finding_of(nothing).unwrap();
+        assert!(found.unusable && !found.confident, "{found:?}");
+        assert_eq!(found.says, SourceSays::Unsupported);
+    }
+    let failed = finding_of(ClaimJudgment::Failed(AppError::ServiceNotAvailable(
+        "down".into(),
+    )));
+    assert!(
+        matches!(failed, Err(AppError::ServiceNotAvailable(_))),
+        "{failed:?}"
+    );
+}
+
+/// An explanation's text of these sentences, as the explanation is written.
+fn explanation_text_of(sentences: &[&str]) -> String {
+    let mut text = sentences.join("\n");
+    text.push('\n');
+    text
 }
