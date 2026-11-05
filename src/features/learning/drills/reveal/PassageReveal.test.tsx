@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { DrillReveal } from '@/features/learning/drills/reveal/DrillReveal';
 import { gradedResult, revealOf } from '@/features/learning/drills/reveal/revealTestData';
+import { plainText } from '@/features/learning/drills/reveal/plainText';
 import { quotePieces } from '@/features/learning/drills/reveal/sourceQuotes';
 import type { CodeReviewResultDto, IssueFix, RevealedIssueDto } from '@/lib/bindings';
 
@@ -116,6 +117,48 @@ describe('quotePieces', () => {
     ]);
     expect(quotePieces('abc', [])).toEqual([{ text: 'abc', quoted: false, focused: false }]);
     expect(quotePieces('', ['a'])).toEqual([]);
+  });
+});
+
+describe('plainText', () => {
+  it.each([
+    ['## A heading', 'A heading'],
+    ['**bold** and __bold__', 'bold and bold'],
+    ['*it* and _it_', 'it and it'],
+    ['~~gone~~', 'gone'],
+    ['`code`', 'code'],
+    ['[a link](https://example.com/a_b_c) here', 'a link here'],
+    ['![a picture](p.png)', 'a picture'],
+    ['[a ref][1]', 'a ref'],
+    ['> quoted', 'quoted'],
+    ['snake_case_name and 2 * 3 * 4', 'snake_case_name and 2 * 3 * 4'],
+    ['plain words stay', 'plain words stay'],
+  ])('strips %j to %j', (markdown, plain) => {
+    expect(plainText(markdown)).toBe(plain);
+  });
+});
+
+describe('DrillReveal, a source written in markdown', () => {
+  const RAW = '**Students** who spaced their study [recalled **14%** more](https://example.com/a) a week later.';
+  const QUOTE_RAW = '[recalled **14%** more](https://example.com/a) a week later';
+
+  it('shows the source passage and the quote as plain text, with the quote still marked in it', () => {
+    const base = passage();
+    setup({
+      ...base,
+      reveal: {
+        ...(base.reveal as NonNullable<typeof base.reveal>),
+        issues: [{ ...ISSUE, sourceQuote: QUOTE_RAW }],
+        source: { title: 'Spacing', text: RAW, versionId: 'v1' },
+      },
+    });
+    const source = within(pane('What the source says'));
+    expect(source.getByText('recalled 14% more a week later').tagName).toBe('MARK');
+    expect(pane('What the source says')).toHaveTextContent('Students who spaced their study recalled 14% more a week later.');
+    expect(pane('What the source says')).not.toHaveTextContent('**');
+    expect(pane('What the source says')).not.toHaveTextContent('](');
+    const card = within(screen.getByRole('article', { name: 'Misquoted figure' }));
+    expect(card.getByText('recalled 14% more a week later')).toBeInTheDocument();
   });
 });
 
