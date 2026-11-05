@@ -7,7 +7,7 @@ use super::support::{
     contradicted, course, explanation, explanation_answer, explanation_files, figure_mutation,
     fix_answer, idle_grader, last, passage_baseline, passage_build, passage_code,
     passage_plant_answer, passage_spec, quiet, reversed_mutation, spacing_check, spacing_passage,
-    supported, system, unsupported, FakeGrader, ScriptedCheck, ScriptedModel, CHECK_MODEL,
+    supported, system, unsupported, unsure, FakeGrader, ScriptedCheck, ScriptedModel, CHECK_MODEL,
     CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH, MODEL, SECOND, SLEEP,
     SMALLER_QUOTE, SPACING, THIRD, THIRD_PLANTED,
 };
@@ -1158,6 +1158,7 @@ async fn the_claim_checker_finds_a_sentence_supported_with_an_exact_quote_of_the
             says: SourceSays::Supported,
             quote: Some(FIGURE_QUOTE.into()),
             reason: "The passage gives 14% a week later.".into(),
+            confident: true,
         }
     );
     let requests = model.requests();
@@ -1498,4 +1499,229 @@ fn the_explanation_texts_of_the_fixtures_agree() {
     assert!(SPACING.contains(SMALLER_QUOTE));
     assert!(spacing_passage().text.contains(SMALLER_QUOTE));
     assert!(!SLEEP.contains("spacing"));
+}
+
+// The checker's certainty: a finding the checker was not sure of proves nothing.
+
+const UNSURE: &str =
+    "The checker could not confidently establish a factual finding from these passages.";
+
+#[tokio::test]
+async fn a_planted_sentence_the_checker_is_unsure_of_drops_the_mutation() -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let check = ScriptedCheck::new(|sentence| {
+        if sentence == FIRST {
+            supported(FIGURE_QUOTE)
+        } else {
+            unsure(SourceSays::Unsupported, UNSURE)
+        }
+    });
+    let grader = idle_grader();
+    let proved = passage_build(&pool, &model, &check, &grader)
+        .prove(
+            &passage_spec("course"),
+            &passage_baseline(),
+            &planted_of(vec![figure_mutation()]),
+        )
+        .await?;
+    assert!(proved.proven.is_empty(), "{:?}", proved.proven);
+    assert_eq!(proved.dropped.len(), 1);
+    assert!(
+        proved.dropped[0].why.contains("not sure"),
+        "{}",
+        proved.dropped[0].why
+    );
+    assert_eq!(check.sentences(), [FIRST, FIRST_PLANTED]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_clean_sentence_the_checker_is_unsure_of_drops_the_mutation_before_the_planted_one_is_asked(
+) -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let check = ScriptedCheck::new(|sentence| {
+        if sentence == FIRST {
+            unsure(SourceSays::Supported, UNSURE)
+        } else {
+            contradicted(FIGURE_QUOTE, "The source gives 14%.")
+        }
+    });
+    let grader = idle_grader();
+    let proved = passage_build(&pool, &model, &check, &grader)
+        .prove(
+            &passage_spec("course"),
+            &passage_baseline(),
+            &planted_of(vec![figure_mutation()]),
+        )
+        .await?;
+    assert!(proved.proven.is_empty());
+    assert_eq!(check.sentences(), [FIRST]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planted_sentence_the_source_confidently_does_not_support_proves_the_error() -> Result<()>
+{
+    let pool = pool().await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let check = ScriptedCheck::new(|sentence| {
+        if sentence == FIRST {
+            supported(FIGURE_QUOTE)
+        } else {
+            unsupported("The passage gives no figure of 40%.")
+        }
+    });
+    let grader = idle_grader();
+    let proved = passage_build(&pool, &model, &check, &grader)
+        .prove(
+            &passage_spec("course"),
+            &passage_baseline(),
+            &planted_of(vec![figure_mutation()]),
+        )
+        .await?;
+    assert!(proved.dropped.is_empty(), "{:?}", proved.dropped);
+    assert_eq!(
+        proved.proven[0].proof,
+        Proof::Sourced {
+            quote: FIGURE_QUOTE.into(),
+            planted: SourceVerdict::Unsupported,
+            reason: "The passage gives no figure of 40%.".into(),
+        }
+    );
+    assert_eq!(
+        proved.proven[0].mutation.severity,
+        Severity::Minor,
+        "an unsupported figure is at least minor"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_clean_sentence_the_checker_is_unsure_of_is_rewritten_as_an_unsupported_one_is(
+) -> Result<()> {
+    let pool = pool().await?;
+    let model = ScriptedModel::new([
+        json!({"sentence": REWRITTEN}).to_string(),
+        json!({"sentence": STILL_WRONG}).to_string(),
+    ]);
+    let check = ScriptedCheck::new(|sentence| match sentence {
+        SECOND => unsure(SourceSays::Unsupported, UNSURE),
+        FOURTH => unsure(SourceSays::Supported, UNSURE),
+        STILL_WRONG => unsure(SourceSays::Supported, UNSURE),
+        _ => supported(FIGURE_QUOTE),
+    });
+    let grader = idle_grader();
+    let spec = DrillSpec {
+        patterns: vec![FIGURE.into()],
+        ..passage_spec("course")
+    };
+    let reviewed = passage_build(&pool, &model, &check, &grader)
+        .clean_review(&spec, &passage_code())
+        .await?;
+    assert_eq!(
+        reviewed.files[0].text,
+        format!("{FIRST}\n{REWRITTEN}\n\n{THIRD}\n"),
+        "an unsure verdict, even of support, keeps nothing as it is"
+    );
+    assert_eq!(model.purposes(), ["rewrite", "rewrite"]);
+    assert_eq!(reviewed.repairs.len(), 2);
+    assert_eq!(
+        reviewed.repairs[1].edit.after, "",
+        "the unsure rewrite is dropped"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_rewrite_the_checker_is_unsure_of_goes_to_the_judge_and_is_never_fixed_on_its_say_so(
+) -> Result<()> {
+    let drill = planted_drill("drill");
+    for says in [SourceSays::Supported, SourceSays::Unsupported] {
+        let check = ScriptedCheck::new(move |_| unsure(says, UNSURE));
+        let model = ScriptedModel::new([
+            json!({"reason": "The 40% is gone.", "errorGone": true}).to_string()
+        ]);
+        let fixed = fix_of(&model, &check, &drill, &explanation()).await?;
+        assert_eq!(fixed.outcome, FixOutcome::Partly, "{says:?}");
+        assert!(fixed.reason.contains("not sure"), "{}", fixed.reason);
+        assert_eq!(model.purposes(), ["error gone"], "{says:?}");
+
+        let check = ScriptedCheck::new(move |_| unsure(says, UNSURE));
+        let model = ScriptedModel::new([
+            json!({"reason": "It still says 40%.", "errorGone": false}).to_string(),
+        ]);
+        let fixed = fix_of(&model, &check, &drill, &explanation()).await?;
+        assert_eq!(fixed.outcome, FixOutcome::NotFixed, "{says:?}");
+        assert_eq!(model.purposes(), ["error gone"], "{says:?}");
+    }
+    Ok(())
+}
+
+/// A model that answers with `text` and reports `logprobs` for its first token.
+struct Weighed {
+    text: String,
+    logprobs: Vec<(String, f32)>,
+}
+
+impl Weighed {
+    fn new(text: &str, probabilities: &[(&str, f32)]) -> Self {
+        Self {
+            text: text.to_owned(),
+            logprobs: probabilities
+                .iter()
+                .map(|(token, probability)| ((*token).to_owned(), probability.ln()))
+                .collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl LLMPort for Weighed {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut response = CompletionResponse::from_text(self.text.clone());
+        response.first_token_logprobs = Some(self.logprobs.clone());
+        Ok(response)
+    }
+    fn model_name(&self) -> &str {
+        "weighed"
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn the_claim_checker_says_when_it_was_unsure() -> Result<()> {
+    let passage = spacing_passage();
+    let answer = "unsupported\nReason: The passage gives no figure of 40%.\nSource quote: none";
+    let low = Weighed::new(answer, &[("unsupported", 0.6), ("supported", 0.4)]);
+    let found = ClaimSourceCheck::new(&low)
+        .check(FIRST_PLANTED, &passage.text)
+        .await?;
+    assert_eq!(found.says, SourceSays::Unsupported);
+    assert!(!found.confident, "a low probability: {found:?}");
+
+    let disagreeing = Weighed::new(answer, &[("supported", 0.95), ("unsupported", 0.05)]);
+    let found = ClaimSourceCheck::new(&disagreeing)
+        .check(FIRST_PLANTED, &passage.text)
+        .await?;
+    assert_eq!(found.says, SourceSays::Unsupported);
+    assert!(
+        !found.confident,
+        "the first token and the text disagree, though the first token was likely: {found:?}"
+    );
+
+    let sure = Weighed::new(answer, &[("unsupported", 0.95), ("supported", 0.05)]);
+    let found = ClaimSourceCheck::new(&sure)
+        .check(FIRST_PLANTED, &passage.text)
+        .await?;
+    assert_eq!(found.says, SourceSays::Unsupported);
+    assert!(found.confident, "{found:?}");
+    assert_eq!(found.reason, "The passage gives no figure of 40%.");
+    Ok(())
 }

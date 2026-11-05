@@ -1006,6 +1006,7 @@ pub(super) fn supported(quote: &str) -> Result<SourceFinding> {
         says: SourceSays::Supported,
         quote: Some(quote.to_owned()),
         reason: "The passage states it.".to_owned(),
+        confident: true,
     })
 }
 
@@ -1014,6 +1015,7 @@ pub(super) fn contradicted(quote: &str, reason: &str) -> Result<SourceFinding> {
         says: SourceSays::Contradicted,
         quote: Some(quote.to_owned()),
         reason: reason.to_owned(),
+        confident: true,
     })
 }
 
@@ -1022,6 +1024,18 @@ pub(super) fn unsupported(reason: &str) -> Result<SourceFinding> {
         says: SourceSays::Unsupported,
         quote: None,
         reason: reason.to_owned(),
+        confident: true,
+    })
+}
+
+/// A finding the checker was not sure of: it found the sentence `says` what it does, but with too little confidence
+/// to rest anything on.
+pub(super) fn unsure(says: SourceSays, reason: &str) -> Result<SourceFinding> {
+    Ok(SourceFinding {
+        says,
+        quote: None,
+        reason: reason.to_owned(),
+        confident: false,
     })
 }
 
