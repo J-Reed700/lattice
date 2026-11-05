@@ -15,6 +15,8 @@ mod plant;
 mod prove;
 mod review;
 
+#[cfg(test)]
+pub(in crate::features::learning) use check::finding_of;
 pub(in crate::features::learning) use check::{
     ClaimSourceCheck, SourceCheck, SourceFinding, SourceSays,
 };
@@ -107,6 +109,15 @@ impl DrillMaterial for PassageMaterial<'_> {
 
     fn reviewer_context(&self, baseline: &Baseline) -> Option<String> {
         baseline.source.as_ref().map(source_block)
+    }
+}
+
+/// What a source check is called in a trail: `purpose`, and whether the check gave no usable verdict.
+pub(super) fn check_purpose(purpose: &str, found: &SourceFinding) -> String {
+    if found.unusable {
+        format!("{purpose} (no usable verdict)")
+    } else {
+        purpose.to_owned()
     }
 }
 

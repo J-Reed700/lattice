@@ -4,7 +4,8 @@
 //! an explanation every sentence of which the source supports, as a clean suite is for code.
 
 use super::{
-    explanation_text, sentence_lines, sentences_needed, PassageMaterial, SourceFinding, SourceSays,
+    check_purpose, explanation_text, sentence_lines, sentences_needed, PassageMaterial,
+    SourceFinding, SourceSays,
 };
 use crate::features::learning::drills::budget;
 use crate::features::learning::drills::build::ask::{ask_request, refuse, text_schema};
@@ -26,7 +27,9 @@ const REWRITE_SYSTEM: &str = "You correct one sentence of a study note so that i
 
 /// What the check found of a sentence, as a clause.
 fn said(found: &SourceFinding) -> String {
-    if found.confident {
+    if found.unusable {
+        "the source check gave no usable verdict on it".to_owned()
+    } else if found.confident {
         format!("the source passage {} it", found.says.says())
     } else {
         "the source check was not sure of it".to_owned()
@@ -61,10 +64,15 @@ impl PassageMaterial<'_> {
         let mut trail = Trail::default();
         let mut repairs: Vec<Repair> = Vec::new();
         let mut kept: Vec<String> = Vec::new();
+        let mut unusable = 0;
         for (index, sentence) in sentence_lines(&file.text).into_iter().enumerate() {
             let number = index + 1;
             let found = self.check.check(&sentence, &source.text).await?;
-            trail.call("source check", self.check.model_name());
+            trail.call(
+                &check_purpose("source check", &found),
+                self.check.model_name(),
+            );
+            unusable += usize::from(found.unusable);
             if found.surely(SourceSays::Supported) {
                 kept.push(sentence);
                 continue;
@@ -72,7 +80,11 @@ impl PassageMaterial<'_> {
             let rewritten = match rewrite(ctx.llm, source, &sentence, &found, &mut trail).await? {
                 Some(rewritten) => {
                     let again = self.check.check(&rewritten, &source.text).await?;
-                    trail.call("source check (rewritten)", self.check.model_name());
+                    trail.call(
+                        &check_purpose("source check (rewritten)", &again),
+                        self.check.model_name(),
+                    );
+                    unusable += usize::from(again.unusable);
                     again.surely(SourceSays::Supported).then_some(rewritten)
                 }
                 None => None,
@@ -87,6 +99,18 @@ impl PassageMaterial<'_> {
             kept.extend(rewritten);
         }
         let count = kept.len();
+        let rewritten = repairs
+            .iter()
+            .filter(|repair| !repair.edit.after.is_empty())
+            .count();
+        tracing::info!(
+            drill = %code.drill_id,
+            kept = count - rewritten,
+            rewritten,
+            dropped = repairs.len() - rewritten,
+            unusable_checks = unusable,
+            "A passage drill's clean review is done"
+        );
         if count < needed {
             return Err(AppError::InvalidData(format!(
                 "Only {count} sentences of the explanation are supported by the source passage, and a drill of {} patterns needs at least {needed}.",

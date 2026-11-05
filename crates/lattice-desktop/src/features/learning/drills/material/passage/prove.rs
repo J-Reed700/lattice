@@ -4,7 +4,7 @@
 //! mutation, as an unproven defect of code is dropped. A proven mutation's severity is raised to the floor its pattern
 //! and proof set.
 
-use super::{SourceCheck, SourceSays};
+use super::{check_purpose, SourceCheck, SourceFinding, SourceSays};
 use crate::features::learning::drills::build::Trail;
 use crate::features::learning::drills::proof::{unproven, ProofCase, ProofStrategy, ProofVerdict};
 use async_trait::async_trait;
@@ -45,13 +45,14 @@ impl ProofStrategy for SourceChecked<'_> {
         };
         let before = self.check.check(&clean, &source.text).await?;
         trail.call(
-            "source check of the clean sentences",
+            &check_purpose("source check of the clean sentences", &before),
             self.check.model_name(),
         );
         if !before.confident {
             return Ok(unproven(
                 format!(
-                    "The source check was not sure of the sentences the change replaces, so they are no clean baseline: {}",
+                    "The source check {} the sentences the change replaces, so they are no clean baseline: {}",
+                    unsure_of(&before),
                     before.reason
                 ),
                 trail,
@@ -72,13 +73,20 @@ impl ProofStrategy for SourceChecked<'_> {
         };
         let after = self.check.check(&planted, &source.text).await?;
         trail.call(
-            "source check of the planted sentences",
+            &check_purpose("source check of the planted sentences", &after),
             self.check.model_name(),
         );
         if !after.confident {
+            if after.unusable {
+                tracing::info!(
+                    pattern = case.pattern.id,
+                    "A source check of a planted error gave no usable verdict, and the mutation is dropped"
+                );
+            }
             return Ok(unproven(
                 format!(
-                    "The source check was not sure of the changed sentences, so the change proves no error: {}",
+                    "The source check {} the changed sentences, so the change proves no error: {}",
+                    unsure_of(&after),
                     after.reason
                 ),
                 trail,
@@ -111,6 +119,15 @@ impl ProofStrategy for SourceChecked<'_> {
             mutation,
             trail,
         })
+    }
+}
+
+/// What the source check did with sentences it was unsure of.
+fn unsure_of(found: &SourceFinding) -> &'static str {
+    if found.unusable {
+        "gave no usable verdict on"
+    } else {
+        "was not sure of"
     }
 }
 
