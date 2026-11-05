@@ -16,6 +16,7 @@ use tempfile::TempDir;
 
 use super::super::reconcile_orphaned_files;
 use super::{open_gate_if_owner, LibrarySweeps};
+use crate::features::conversation::repository::ConversationRepository;
 use crate::features::indexing::library_owner::LibraryFiles;
 use crate::features::indexing::LibraryGc;
 use crate::features::web::images::{ChatImageService, ImageNetwork};
@@ -27,7 +28,7 @@ use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::setup::setup_database;
-use crate::infrastructure::storage::ContentAddressedStorage;
+use crate::infrastructure::storage::{ContentAddressedStorage, FileIntents};
 use lattice_core::application::ports::ChatImagesPort;
 use lattice_core::shared::constants::RERANKER_MODEL_DIR;
 use lattice_core::shared::fs::SweepGate;
@@ -83,10 +84,13 @@ fn sweeps_over(
     background: &Arc<BackgroundTasks>,
 ) -> LibrarySweeps {
     LibrarySweeps {
-        library_gc: Arc::new(LibraryGc::new(
-            Arc::new(ContentAddressedStorage::with_root(home.join("files"))),
-            Arc::new(DocumentRepositoryImpl::new(pool.clone())),
-        )),
+        library_gc: Arc::new(
+            LibraryGc::new(
+                Arc::new(ContentAddressedStorage::with_root(home.join("files"))),
+                Arc::new(DocumentRepositoryImpl::new(pool.clone())),
+            )
+            .with_intents(FileIntents::new(pool.clone())),
+        ),
         snapshots: Arc::new(WebPageSnapshotService::new(
             pool.clone(),
             home.join("web-snapshots"),
@@ -252,6 +256,54 @@ fn filed(home: &Path) -> Option<String> {
     std::fs::read_to_string(home.join("owner"))
         .ok()
         .map(|text| text.trim().to_string())
+}
+
+/// A record a process that has since ended wrote.
+async fn earlier_record(pool: &SqlitePool, store: &str, kind: &str, name: &str) {
+    sqlx::query(
+        "INSERT INTO file_intents (store, kind, name, run_id) VALUES (?, ?, ?, 'an earlier run')",
+    )
+    .bind(store)
+    .bind(kind)
+    .bind(name)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The file name's stem: the id a page or picture is stored under.
+fn id_of(path: &Path) -> String {
+    path.file_stem().unwrap().to_string_lossy().into_owned()
+}
+
+/// A chat with one frozen page and one picture, rows and files.
+async fn chat_with_files(pool: &SqlitePool, home: &Path, chat: &str) -> [PathBuf; 2] {
+    sqlx::query(
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at)          VALUES (?, 'A chat', 'space_general', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+    )
+    .bind(chat)
+    .execute(pool)
+    .await
+    .unwrap();
+    let page = snapshot(home);
+    sqlx::query(
+        "INSERT INTO web_page_snapshots (id, conversation_id, normalized_url, requested_url,          status, created_at) VALUES (?, ?, 'https://example.com/', 'https://example.com/',          'ready', '2026-11-01T00:00:00Z')",
+    )
+    .bind(id_of(&page))
+    .bind(chat)
+    .execute(pool)
+    .await
+    .unwrap();
+    let picture = picture(home);
+    sqlx::query(
+        "INSERT INTO chat_images (id, conversation_id, request_id, ref, ext, mime, sha256,          byte_size, width, height, caption, origin, created_at)          VALUES (?, ?, 'request', 'img-1', 'png', 'image/png', '', 4, 1, 1, '', 'page',          '2026-11-01T00:00:00Z')",
+    )
+    .bind(id_of(&picture))
+    .bind(chat)
+    .execute(pool)
+    .await
+    .unwrap();
+    [page, picture]
 }
 
 fn deleted(paths: &[PathBuf]) -> Vec<&PathBuf> {
@@ -505,4 +557,62 @@ async fn the_owning_database_keeps_a_model_directory_no_row_names() {
     assert_eq!(removed, 0);
     let gone = deleted(&kept);
     assert!(gone.is_empty(), "the model cleanup deleted {gone:?}");
+}
+
+/// What the owning database's own records name goes at startup: an import an
+/// earlier run never committed, and a page and a picture a delete let go of
+/// whose removal did not finish. What no record names stays.
+#[tokio::test]
+async fn the_owning_database_collects_what_its_records_name() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let (hash, crashed) = imported_file(home.path(), "copied, never committed");
+    earlier_record(&pool, "library", "import", &hash).await;
+    let page = snapshot(home.path());
+    earlier_record(&pool, "web_snapshot", "release", &id_of(&page)).await;
+    let released_picture = picture(home.path());
+    let name = released_picture
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    earlier_record(&pool, "chat_image", "release", &name).await;
+    let collected = [crashed, page, released_picture];
+    let (_, unnamed_file) = imported_file(home.path(), "no record names me");
+    let unnamed = [unnamed_file, snapshot(home.path()), picture(home.path())];
+
+    start_up(&pool, home.path()).await;
+
+    let left: Vec<_> = collected.iter().filter(|path| path.exists()).collect();
+    assert!(left.is_empty(), "the owner's sweep left {left:?}");
+    let gone = deleted(&unnamed);
+    assert!(gone.is_empty(), "the owner's sweep deleted {gone:?}");
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
+}
+
+#[tokio::test]
+async fn deleting_a_chat_through_the_app_frees_its_pages_and_pictures() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let run = start_up(&pool, home.path()).await;
+    let chats_files = chat_with_files(&pool, home.path(), "chat").await;
+    let unnamed = [snapshot(home.path()), picture(home.path())];
+
+    ConversationRepository::new(pool.clone())
+        .delete("chat")
+        .await
+        .unwrap();
+    run.sweeps.snapshots.sweep().await.unwrap();
+    run.sweeps.images.remove_unclaimed_files().await.unwrap();
+
+    let left: Vec<_> = chats_files.iter().filter(|path| path.exists()).collect();
+    assert!(left.is_empty(), "the deleted chat left {left:?}");
+    let gone = deleted(&unnamed);
+    assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
 }

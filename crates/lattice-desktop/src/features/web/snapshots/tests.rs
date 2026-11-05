@@ -264,6 +264,28 @@ async fn a_page_whose_row_went_with_no_record_of_it_is_kept() {
 }
 
 #[tokio::test]
+async fn deleting_its_conversation_lets_the_sweep_take_a_page() {
+    let f = fixture().await;
+    let ready = f.ready().await;
+    let file = f.root().join(format!("{}.html", ready.id));
+    crate::features::conversation::repository::ConversationRepository::new(f.pool.clone())
+        .delete(CONVERSATION)
+        .await
+        .unwrap();
+    assert!(file.exists(), "the delete alone removes no file");
+
+    let report = f.service.sweep().await.unwrap();
+
+    assert_eq!(report.removed_orphans, 1);
+    assert!(!file.exists());
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(records, 0, "the record goes with its page");
+}
+
+#[tokio::test]
 async fn sweep_removes_stale_parts_and_keeps_live_pages_and_pages_no_record_names() {
     let f = fixture().await;
     let ready = f.ready().await;

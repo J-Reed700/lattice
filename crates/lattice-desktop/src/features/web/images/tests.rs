@@ -740,6 +740,40 @@ async fn sweep_keeps_the_leases_of_a_turn_that_resumes() {
     assert_eq!(fx.row_count().await, images.len() as i64);
 }
 
+/// A truncate takes the answer's rows by cascade and records their files, which
+/// the pass after it frees; a running turn's leased pictures stay.
+#[tokio::test]
+async fn truncating_a_thread_frees_its_pictures() {
+    let fx = fixture().await;
+    let (_, images) = fx
+        .service
+        .find_and_store(&fx.scope(), heron(), None)
+        .await
+        .unwrap();
+    fx.service
+        .repository()
+        .attach(REQUEST, MESSAGE, &["img-1".into()])
+        .await
+        .unwrap();
+    crate::features::conversation::repository::ConversationRepository::new(fx.pool.clone())
+        .delete_messages(CONVERSATION, &[MESSAGE.to_string()])
+        .await
+        .unwrap();
+    assert!(fx.root().join(&images[0].file_name).exists());
+
+    assert_eq!(fx.service.remove_unclaimed_files().await.unwrap(), 1);
+    assert!(!fx.root().join(&images[0].file_name).exists());
+    assert!(
+        fx.root().join(&images[1].file_name).exists(),
+        "a running turn's leased picture stays"
+    );
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&fx.pool)
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
+}
+
 /// A picture whose row went some other way than a delete the app recorded:
 /// the pass after a truncate keeps it.
 #[tokio::test]

@@ -132,6 +132,7 @@ impl DeleteDocumentUseCase {
             .find_file_path_by_id(&document_id)
             .await?;
         let checksum = self.document_repo.find_checksum_by_id(&document_id).await?;
+        let releases_blob = self.library.owns(Path::new(&file_path));
 
         // Drop summary vectors before the rows go so the summary index never
         // keeps a dead entry (rows themselves cascade on delete).
@@ -156,7 +157,11 @@ impl DeleteDocumentUseCase {
             let chunks = chunk_repo.find_by_document(&document_id).await?;
 
             chunk_repo.delete_by_document(&document_id).await?;
-            DocumentRepositoryPort::delete(&*document_repo, &document_id).await?;
+            if releases_blob {
+                document_repo.delete_and_release_blob(&document_id).await?;
+            } else {
+                DocumentRepositoryPort::delete(&*document_repo, &document_id).await?;
+            }
             Ok::<_, AppError>(chunks)
         };
 
@@ -272,7 +277,7 @@ mod tests {
     use crate::features::web::mocks::MockWebArchiveService;
     use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
-    use crate::infrastructure::storage::ContentAddressedStorage;
+    use crate::infrastructure::storage::{ContentAddressedStorage, FileIntents};
     use lattice_core::application::contracts::search::SearchResultRecord;
     use lattice_core::application::contracts::web::CleanArticle;
     use parking_lot::Mutex;
@@ -381,7 +386,10 @@ mod tests {
                 Arc::clone(&self.vectors) as Arc<dyn VectorSearchPort>,
                 Arc::new(SqliteUnitOfWorkFactory::new(self.pool.clone())),
                 Arc::clone(&library),
-                Arc::new(LibraryGc::new(library, documents)),
+                Arc::new(
+                    LibraryGc::new(library, documents)
+                        .with_intents(FileIntents::new(self.pool.clone())),
+                ),
                 Arc::clone(&self.archive) as Arc<dyn ArticleArchive>,
             )
         }
@@ -418,6 +426,14 @@ mod tests {
             // The import is over; from here only documents keep the blob alive.
             (blob.hash.clone(), blob.path.clone())
         }
+
+        /// The library records left in the database: `(kind, name)`.
+        async fn records(&self) -> Vec<(String, String)> {
+            sqlx::query_as("SELECT kind, name FROM file_intents WHERE store = 'library'")
+                .fetch_all(&self.pool)
+                .await
+                .unwrap()
+        }
     }
 
     #[tokio::test]
@@ -435,6 +451,69 @@ mod tests {
         assert_eq!(response.status, "deleted");
         assert!(!blob_path.exists(), "the blob goes with its last document");
         assert!(!fixture.library_root.join(&hash).exists());
+    }
+
+    #[tokio::test]
+    async fn the_delete_records_a_blobs_release_until_the_blob_is_gone() {
+        let fixture = Fixture::new().await;
+        let (hash, blob_path) = fixture.import("paper.txt", "library blob").await;
+        fixture.register("doc-1", &blob_path, &hash).await;
+
+        // The record commits in the delete's own transaction.
+        let mut uow = SqliteUnitOfWorkFactory::new(fixture.pool.clone())
+            .create()
+            .await
+            .unwrap();
+        uow.document_repository()
+            .unwrap()
+            .delete_and_release_blob("doc-1")
+            .await
+            .unwrap();
+        uow.commit().await.unwrap();
+        assert_eq!(
+            fixture.records().await,
+            [("release".to_string(), hash.clone())]
+        );
+        assert!(blob_path.exists(), "the delete alone removes no file");
+
+        // What a start that finds it does.
+        fixture.use_case().library_gc.release(&hash).await.unwrap();
+        assert!(!blob_path.exists());
+        assert!(fixture.records().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deleting_a_library_document_leaves_no_record_once_its_blob_is_gone() {
+        let fixture = Fixture::new().await;
+        let (hash, blob_path) = fixture.import("paper.txt", "library blob").await;
+        fixture.register("doc-1", &blob_path, &hash).await;
+
+        fixture
+            .use_case()
+            .execute("doc-1".to_string())
+            .await
+            .unwrap();
+
+        assert!(!blob_path.exists());
+        assert!(fixture.records().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_file_lattice_does_not_own_records_no_release() {
+        let fixture = Fixture::new().await;
+        let note = fixture.temp.path().join("note.md");
+        tokio::fs::write(&note, "a note the user owns")
+            .await
+            .unwrap();
+        fixture.register("doc-1", &note, &"a".repeat(64)).await;
+
+        fixture
+            .use_case()
+            .execute("doc-1".to_string())
+            .await
+            .unwrap();
+
+        assert!(fixture.records().await.is_empty());
     }
 
     #[tokio::test]

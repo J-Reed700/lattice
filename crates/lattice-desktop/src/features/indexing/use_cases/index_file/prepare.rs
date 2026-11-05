@@ -67,6 +67,14 @@ impl IndexFileUseCase {
         }
 
         let already_in_library = self.content_storage.exists_by_hash(&content_hash).await?;
+        // Before the copy: a blob this import writes is never on disk without
+        // the record that lets a later start collect it. A copy that fails
+        // keeps the record for that reason.
+        let import_intent = if already_in_library {
+            None
+        } else {
+            self.begin_import(&content_hash).await?
+        };
         let ImportedBlob {
             path: library_path,
             hash: library_hash,
@@ -97,7 +105,8 @@ impl IndexFileUseCase {
                 // own caller's blob as still being imported.
                 drop(lease);
                 if imported_new {
-                    self.release_failed_import(&library_hash).await;
+                    self.release_failed_import(&library_hash, import_intent)
+                        .await;
                 }
                 return Err(error);
             }
@@ -109,6 +118,7 @@ impl IndexFileUseCase {
                 embeddings,
                 library_path: library_path.to_str().unwrap_or("").to_string(),
                 imported_new,
+                import_intent,
                 lease,
             },
         )))

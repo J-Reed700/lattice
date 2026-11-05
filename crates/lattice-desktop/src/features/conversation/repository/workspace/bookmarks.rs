@@ -124,6 +124,20 @@ impl ConversationRepository {
         }
 
         sqlx::query(
+            &crate::infrastructure::storage::file_intents::record_releases_sql(
+                crate::infrastructure::storage::FileStore::ChatImage,
+                "id || '.' || ext",
+                "chat_images WHERE message_id = ? AND conversation_id = ?",
+            ),
+        )
+        .bind(crate::infrastructure::storage::file_intents::run_id())
+        .bind(&request.message_id)
+        .bind(&request.conversation_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to record released pictures: {}", e)))?;
+
+        sqlx::query(
             r#"
         DELETE FROM conversation_messages
         WHERE id = ? AND conversation_id = ?

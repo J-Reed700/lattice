@@ -2,39 +2,51 @@
 //!
 //! One blob lives under `~/.lattice/files/{sha256}/` per distinct piece of
 //! imported content, and `documents.checksum` is that same SHA-256. A blob is
-//! garbage exactly when no document row carries its checksum and no import
-//! holds a lease on it.
+//! removed only when a record this database wrote names it (`file_intents`:
+//! an import that never committed, or a delete that let it go), no document
+//! references it and no import holds a lease on it. That no document
+//! references a blob is not enough on its own: a restored backup, rows a
+//! migration lost or another database sharing the library all leave real
+//! files without rows here.
 //!
-//! This service owns the reference check; the storage owns the locking and the
-//! filesystem. Both halves are needed, which is why neither can decide a
-//! deletion alone:
+//! This service owns the records and the reference check; the storage owns the
+//! locking and the filesystem:
 //!
 //! - [`LibraryGc::release`] runs after a document referencing a hash was
-//!   deleted, or after an import failed before committing its row.
+//!   deleted.
+//! - [`LibraryGc::import_failed`] runs after an import failed before
+//!   committing its row.
 //! - [`LibraryGc::sweep`] runs at startup, once the sweep gate is open for the
-//!   database that owns the library (`library_owner`), and collects what an
-//!   interrupted import or a crash left behind.
+//!   database that owns the library (`library_owner`), and finishes what the
+//!   records name.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use lattice_core::application::ports::content_addressed_storage_port::is_blob_hash;
 use lattice_core::application::ports::{
     BlobReferenceCheck, BlobRemoval, ContentAddressedStoragePort, DocumentRepositoryPort,
+    RetainReason,
 };
 use lattice_core::shared::error::Result;
 use lattice_core::shared::fs::SweepGate;
 
+use crate::infrastructure::storage::{FileIntents, FileStore, IntentKind};
+
 /// What a [`LibraryGc::sweep`] did.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SweepReport {
-    /// Blobs removed because nothing referenced them.
+    /// Blobs a record named and nothing referenced, removed.
     pub removed: usize,
-    /// Blobs left in place (referenced, leased, or already gone).
+    /// Blobs a record named that were kept: referenced again, leased, already
+    /// gone, or not removable now.
     pub retained: usize,
     /// Disk space reclaimed, in bytes.
     pub bytes_freed: u64,
+    /// Blobs no document references and no record names: kept.
+    pub unexplained: usize,
 }
 
 /// Reference check backed by the document table.
@@ -53,19 +65,42 @@ impl BlobReferenceCheck for DocumentReferences {
     }
 }
 
-/// Removes library blobs that no document references.
+/// Whether a removal attempt settled what the records for its hash asked: the
+/// blob is gone, claimed again, or could never have been a blob. A lease or an
+/// error leaves them for the next start.
+fn settles(hash: &str, outcome: &Result<BlobRemoval>) -> bool {
+    match outcome {
+        Ok(BlobRemoval::Retained(RetainReason::Leased)) => false,
+        Ok(_) => true,
+        Err(_) => !is_blob_hash(hash),
+    }
+}
+
+/// Removes library blobs that a record names and no document references.
 pub struct LibraryGc {
     library: Arc<dyn ContentAddressedStoragePort>,
     documents: Arc<dyn DocumentRepositoryPort>,
+    intents: Option<FileIntents>,
 }
 
 impl LibraryGc {
-    /// Create a collector over one library and one document table.
+    /// Create a collector over one library and one document table. Without
+    /// [`Self::with_intents`] it keeps no records, so its sweep removes nothing.
     pub fn new(
         library: Arc<dyn ContentAddressedStoragePort>,
         documents: Arc<dyn DocumentRepositoryPort>,
     ) -> Self {
-        Self { library, documents }
+        Self {
+            library,
+            documents,
+            intents: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_intents(mut self, intents: FileIntents) -> Self {
+        self.intents = Some(intents);
+        self
     }
 
     fn references(&self) -> DocumentReferences {
@@ -74,8 +109,67 @@ impl LibraryGc {
         }
     }
 
+    async fn forget(&self, ids: &[i64]) {
+        if let Some(intents) = &self.intents {
+            if let Err(error) = intents.forget(ids).await {
+                tracing::warn!(%error, "Could not clear a settled library record; the next start clears it");
+            }
+        }
+    }
+
+    async fn remove(&self, hash: &str) -> Result<BlobRemoval> {
+        self.library
+            .remove_if_unreferenced(hash, &self.references())
+            .await
+    }
+
+    /// Record, before an import writes `hash`'s bytes, that it is about to.
+    pub async fn begin_import(&self, hash: &str) -> Result<Option<i64>> {
+        match &self.intents {
+            Some(intents) => Ok(Some(
+                intents
+                    .record(FileStore::Library, IntentKind::Import, hash)
+                    .await?,
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// The import that recorded `intent` committed its document.
+    pub async fn import_committed(&self, intent: Option<i64>) {
+        if let Some(id) = intent {
+            self.forget(&[id]).await;
+        }
+    }
+
+    /// Give back `hash` after the import that recorded `intent` failed before
+    /// its document committed. The record stays when the blob could not be
+    /// dealt with, so the next start finishes it.
+    pub async fn import_failed(&self, hash: &str, intent: Option<i64>) {
+        let outcome = self.remove(hash).await;
+        let settled = settles(hash, &outcome);
+        match outcome {
+            Ok(removal) => tracing::info!(
+                %hash,
+                ?removal,
+                "Rolled back the library blob of a failed import"
+            ),
+            Err(error) => tracing::warn!(
+                %hash,
+                %error,
+                "Could not roll back a failed import's blob; the next startup sweep will collect it"
+            ),
+        }
+        if settled {
+            if let Some(id) = intent {
+                self.forget(&[id]).await;
+            }
+        }
+    }
+
     /// Consider `hash` for removal, after a document referencing it was
-    /// deleted or failed to commit.
+    /// deleted, and clear the release records of that delete once the blob is
+    /// gone or another document still references it.
     ///
     /// Deduplication means a blob can outlive the document that triggered
     /// this: the storage refuses while any other document still points at the
@@ -84,13 +178,18 @@ impl LibraryGc {
     /// # Errors
     ///
     /// - `AppError::InvalidInput` if `hash` is not a library blob hash
-    /// - `AppError::Database` if the reference count cannot be read
+    /// - `AppError::Database` if the records or the reference count cannot be read
     /// - `AppError::FileStorage` if the blob cannot be removed
     pub async fn release(&self, hash: &str) -> Result<BlobRemoval> {
-        let removal = self
-            .library
-            .remove_if_unreferenced(hash, &self.references())
-            .await?;
+        let released = match &self.intents {
+            Some(intents) => intents.releases_of(FileStore::Library, hash).await?,
+            None => Vec::new(),
+        };
+        let outcome = self.remove(hash).await;
+        if settles(hash, &outcome) {
+            self.forget(&released).await;
+        }
+        let removal = outcome?;
 
         match removal {
             BlobRemoval::Removed { bytes_freed } => {
@@ -104,47 +203,48 @@ impl LibraryGc {
         Ok(removal)
     }
 
-    /// Remove every blob no document references, once `gate` is open.
+    /// Remove every blob a record names that no document references, once
+    /// `gate` is open, and count the blobs no record explains, which stay.
     ///
-    /// Loads the referenced checksums once, then walks the blobs on disk. A
-    /// document committed between those two reads is still safe: the storage
-    /// re-checks references under its own per-hash lock before deleting
-    /// anything.
+    /// An import this process recorded may still be running, so its record is
+    /// left alone. The storage re-checks references and leases under its own
+    /// per-hash lock before deleting anything.
     ///
     /// # Errors
     ///
-    /// - `AppError::Database` if the checksum set cannot be read
+    /// - `AppError::Database` if the records or the checksum set cannot be read
     /// - `AppError::FileStorage` if the library cannot be listed
     ///
     /// A blob that cannot be removed is logged and counted as retained rather
-    /// than failing the whole sweep; the next startup tries again.
+    /// than failing the whole sweep; its record stays for the next start.
     pub async fn sweep(&self, gate: &SweepGate) -> Result<SweepReport> {
         if !gate.is_open() {
             tracing::debug!("Left the library alone: this database does not own its files");
             return Ok(SweepReport::default());
         }
-        let referenced: HashSet<String> =
-            self.documents.list_checksums().await?.into_iter().collect();
-        let hashes = self.library.list_hashes().await?;
-        let references = self.references();
+        let mut named: BTreeMap<String, Vec<i64>> = BTreeMap::new();
+        let mut in_flight: HashSet<String> = HashSet::new();
+        if let Some(intents) = &self.intents {
+            for intent in intents.pending(FileStore::Library).await? {
+                if intent.kind == IntentKind::Import && intent.this_run {
+                    in_flight.insert(intent.name);
+                } else {
+                    named.entry(intent.name).or_default().push(intent.id);
+                }
+            }
+        }
 
         let mut report = SweepReport::default();
-        for hash in hashes {
-            if referenced.contains(&hash) {
-                report.retained += 1;
-                continue;
-            }
-            match self
-                .library
-                .remove_if_unreferenced(&hash, &references)
-                .await
-            {
+        for (hash, ids) in &named {
+            let outcome = self.remove(hash).await;
+            let settled = settles(hash, &outcome);
+            match outcome {
                 Ok(BlobRemoval::Removed { bytes_freed }) => {
                     report.removed += 1;
                     report.bytes_freed = report.bytes_freed.saturating_add(bytes_freed);
                 }
                 Ok(BlobRemoval::Retained(reason)) => {
-                    tracing::debug!(%hash, ?reason, "Sweep kept a library blob");
+                    tracing::debug!(%hash, ?reason, "Sweep kept a library blob a record names");
                     report.retained += 1;
                 }
                 Err(error) => {
@@ -152,7 +252,22 @@ impl LibraryGc {
                     report.retained += 1;
                 }
             }
+            if settled {
+                self.forget(ids).await;
+            }
         }
+
+        let referenced: HashSet<String> =
+            self.documents.list_checksums().await?.into_iter().collect();
+        report.unexplained = self
+            .library
+            .list_hashes()
+            .await?
+            .into_iter()
+            .filter(|hash| {
+                !referenced.contains(hash) && !named.contains_key(hash) && !in_flight.contains(hash)
+            })
+            .count();
 
         Ok(report)
     }
@@ -317,5 +432,165 @@ mod tests {
         );
 
         assert!(gc.release("../../etc").await.is_err());
+    }
+
+    /// A collector over `storage` and `documents` that keeps its records in a
+    /// migrated database of its own.
+    async fn recording(
+        storage: &Arc<ContentAddressedStorage>,
+        documents: &Arc<MockDocumentRepository>,
+    ) -> (LibraryGc, FileIntents, sqlx::SqlitePool) {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let intents = FileIntents::new(pool.clone());
+        let gc = LibraryGc::new(
+            Arc::clone(storage) as Arc<dyn ContentAddressedStoragePort>,
+            Arc::clone(documents) as Arc<dyn DocumentRepositoryPort>,
+        )
+        .with_intents(intents.clone());
+        (gc, intents, pool)
+    }
+
+    /// A record a process that has since ended wrote.
+    async fn earlier_record(pool: &sqlx::SqlitePool, kind: IntentKind, hash: &str) {
+        sqlx::query(
+            "INSERT INTO file_intents (store, kind, name, run_id) \
+             VALUES ('library', ?, ?, 'an earlier run')",
+        )
+        .bind(kind.as_str())
+        .bind(hash)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_import_whose_record_outlived_its_process_is_collected() {
+        let temp = TempDir::new().unwrap();
+        let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
+        let documents = Arc::new(MockDocumentRepository::new());
+        let (gc, intents, pool) = recording(&storage, &documents).await;
+        let (hash, path) = import(
+            &storage,
+            temp.path(),
+            "crashed.txt",
+            "copied, never committed",
+        )
+        .await;
+        let (_, unnamed) = import(&storage, temp.path(), "unnamed.txt", "no record names me").await;
+        earlier_record(&pool, IntentKind::Import, &hash).await;
+
+        let report = gc.sweep(&open_gate()).await.unwrap();
+
+        assert_eq!(report.removed, 1);
+        assert_eq!(report.unexplained, 1);
+        assert!(!path.exists());
+        assert!(unnamed.exists());
+        assert!(intents
+            .pending(FileStore::Library)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_import_this_process_is_still_running_is_left_alone() {
+        let temp = TempDir::new().unwrap();
+        let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
+        let documents = Arc::new(MockDocumentRepository::new());
+        let (gc, intents, _pool) = recording(&storage, &documents).await;
+        let (hash, path) = import(&storage, temp.path(), "running.txt", "being imported").await;
+        gc.begin_import(&hash).await.unwrap();
+
+        let report = gc.sweep(&open_gate()).await.unwrap();
+
+        assert_eq!(report, SweepReport::default());
+        assert!(path.exists());
+        assert_eq!(intents.pending(FileStore::Library).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_delete_whose_removal_did_not_finish_is_collected_at_the_next_start() {
+        let temp = TempDir::new().unwrap();
+        let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
+        let documents = Arc::new(MockDocumentRepository::new());
+        let (gc, intents, pool) = recording(&storage, &documents).await;
+        let (hash, path) = import(&storage, temp.path(), "deleted.txt", "its document went").await;
+        earlier_record(&pool, IntentKind::Release, &hash).await;
+
+        let report = gc.sweep(&open_gate()).await.unwrap();
+
+        assert_eq!(report.removed, 1);
+        assert_eq!(report.bytes_freed, "its document went".len() as u64);
+        assert!(!path.exists());
+        assert!(intents
+            .pending(FileStore::Library)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_record_whose_hash_is_referenced_again_is_cleared_and_the_blob_kept() {
+        let temp = TempDir::new().unwrap();
+        let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
+        let documents = Arc::new(MockDocumentRepository::new());
+        let (gc, intents, pool) = recording(&storage, &documents).await;
+        let (hash, path) = import(&storage, temp.path(), "again.txt", "imported again").await;
+        earlier_record(&pool, IntentKind::Release, &hash).await;
+        earlier_record(&pool, IntentKind::Import, &hash).await;
+        documents.save(&document_for(&path, &hash)).await.unwrap();
+
+        let report = gc.sweep(&open_gate()).await.unwrap();
+
+        assert_eq!(report.removed, 0);
+        assert_eq!(report.retained, 1);
+        assert!(path.exists());
+        assert!(intents
+            .pending(FileStore::Library)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn release_clears_the_record_of_its_delete_once_the_blob_is_gone() {
+        let temp = TempDir::new().unwrap();
+        let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
+        let documents = Arc::new(MockDocumentRepository::new());
+        let (gc, intents, pool) = recording(&storage, &documents).await;
+        let (hash, path) = import(&storage, temp.path(), "paper.txt", "released").await;
+        earlier_record(&pool, IntentKind::Release, &hash).await;
+
+        assert!(gc.release(&hash).await.unwrap().was_removed());
+        assert!(!path.exists());
+        assert!(intents
+            .pending(FileStore::Library)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_failed_import_gives_back_its_blob_and_its_record() {
+        let temp = TempDir::new().unwrap();
+        let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
+        let documents = Arc::new(MockDocumentRepository::new());
+        let (gc, intents, _pool) = recording(&storage, &documents).await;
+        let (hash, path) = import(&storage, temp.path(), "failed.txt", "never committed").await;
+        let intent = gc.begin_import(&hash).await.unwrap();
+
+        gc.import_failed(&hash, intent).await;
+
+        assert!(!path.exists());
+        assert!(intents
+            .pending(FileStore::Library)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

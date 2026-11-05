@@ -1,4 +1,5 @@
-//! The startup sweeps of files on disk that no row of this database claims.
+//! The startup sweeps of files under the lattice home: each deletes only what
+//! a record this database wrote names as garbage, and keeps the rest.
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -49,17 +50,19 @@ impl LibrarySweeps {
                     removed = report.removed,
                     retained = report.retained,
                     bytes_freed = report.bytes_freed,
-                    "Swept the imported-file library"
+                    unexplained = report.unexplained,
+                    "Swept the imported-file library: {} blob folders no record explains; kept",
+                    report.unexplained
                 ),
                 Err(error) => {
                     tracing::error!(%error, "Failed to sweep the imported-file library");
                 }
             }
         });
-        // Frozen web snapshots whose rows are gone, and writes a crash cut short.
+        // Frozen web snapshots a delete let go of, and writes a crash cut short.
         self.snapshots.sweep_in_background("startup");
-        // Chat pictures a turn leased and never attached, and files no row
-        // claims. No turn survives a restart except a research turn, which
+        // Chat pictures a turn leased and never attached, and files a delete
+        // let go of. No turn survives a restart except a research turn, which
         // resumes from its saved rounds and still owns the pictures they found.
         self.images.sweep_in_background("startup", resuming);
     }

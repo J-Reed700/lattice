@@ -186,16 +186,19 @@ impl ImageStore {
     }
 
     /// Removes the file for `id`/`ext` and its prepared copies; a file
-    /// already gone is not an error.
-    pub async fn remove(&self, id: &str, ext: &str) {
+    /// already gone is not an error. True when the file is gone.
+    pub async fn remove(&self, id: &str, ext: &str) -> bool {
+        let mut gone = true;
         if let Some(path) = self.path_for(id, ext) {
             if let Err(error) = tokio::fs::remove_file(&path).await {
                 if error.kind() != std::io::ErrorKind::NotFound {
                     tracing::warn!(%error, image_id = id, "Could not remove a chat image file");
+                    gone = false;
                 }
             }
         }
         self.remove_prepared(id).await;
+        gone
     }
 }
 

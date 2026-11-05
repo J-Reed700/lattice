@@ -5,6 +5,7 @@ use crate::features::conversation::persistence_mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
     ModelChoiceColumn,
 };
+use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
 use lattice_core::domain::conversation::{
     ChatModelChoice, CompactionRecord, Conversation, ConversationAggregate,
@@ -287,6 +288,37 @@ impl ConversationRepository {
             .begin()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+
+        // The files of what goes with the conversation, recorded in the same
+        // transaction as let go of: the sweeps delete only what such a record
+        // names. Attachments are deleted before this through the document use
+        // case; any left are recorded for the startup sweep.
+        for (store, name, from) in [
+            (
+                FileStore::WebSnapshot,
+                "id",
+                "web_page_snapshots WHERE conversation_id = ?",
+            ),
+            (
+                FileStore::ChatImage,
+                "id || '.' || ext",
+                "chat_images WHERE conversation_id = ?",
+            ),
+            (
+                FileStore::Attachment,
+                "id",
+                "documents WHERE owner_conversation_id = ?",
+            ),
+        ] {
+            sqlx::query(&record_releases_sql(store, name, from))
+                .bind(run_id())
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| {
+                    AppError::Database(format!("Failed to record released files: {}", e))
+                })?;
+        }
 
         let result = sqlx::query("DELETE FROM conversations WHERE id = ?")
             .bind(id)

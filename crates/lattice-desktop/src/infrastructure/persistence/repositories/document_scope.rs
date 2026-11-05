@@ -107,6 +107,8 @@ impl DocumentScopePort for SqliteDocumentScope {
             "SELECT d.id FROM documents d
              WHERE d.owner_conversation_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM conversations c WHERE c.id = d.owner_conversation_id)
+               AND EXISTS (SELECT 1 FROM file_intents i
+                           WHERE i.store = 'attachment' AND i.kind = 'release' AND i.name = d.id)
              ORDER BY d.rowid",
         )
         .fetch_all(&self.pool)
@@ -301,8 +303,10 @@ mod tests {
         sqlx::raw_sql(
             "CREATE TABLE conversations (id TEXT PRIMARY KEY);
              CREATE TABLE documents (id TEXT PRIMARY KEY, owner_conversation_id TEXT);
+             CREATE TABLE file_intents (store TEXT, kind TEXT, name TEXT);
              INSERT INTO conversations VALUES ('chat');
-             INSERT INTO documents VALUES ('filed', NULL), ('attached', NULL), ('stray', NULL);",
+             INSERT INTO documents VALUES ('filed', NULL), ('attached', NULL), ('stray', NULL);
+             INSERT INTO file_intents VALUES ('attachment', 'release', 'stray');",
         )
         .execute(&pool)
         .await
@@ -319,7 +323,7 @@ mod tests {
             repo.documents_owned_by_conversation("chat").await.unwrap(),
             vec!["attached".to_string()]
         );
-        // A live conversation's attachments are not orphans; a dead one's are.
+        // A live conversation's attachments are not orphans; a deleted one's are.
         assert_eq!(
             repo.orphaned_conversation_owned_documents().await.unwrap(),
             vec!["stray".to_string()]

@@ -68,7 +68,10 @@ pub async fn reconcile_stale_downloads(
 /// Finds completed downloads that have no corresponding model record.
 /// Deletes the session to unblock the user from retrying.
 ///
-/// The database record is removed even if file cleanup fails.
+/// The file stays: a completed download is a whole file, and a missing model
+/// row is no evidence it is garbage. A vision projector has none by design,
+/// and a restored backup or a migration can lose the row of a model still on
+/// disk.
 pub async fn reconcile_orphaned_sessions(
     download_repo: Arc<dyn DownloadRepository>,
     model_repo: Arc<DownloadedModelRepository>,
@@ -111,22 +114,14 @@ pub async fn reconcile_orphaned_sessions(
                 model_id.unwrap_or("none")
             );
 
-            // CRITICAL: Database First Strategy
-            // Delete session FIRST to unblock user (even if file delete fails)
             match download_repo.delete(session.id()).await {
                 Ok(_) => {
-                    info!("Deleted orphaned session: {}", session_id);
+                    info!(
+                        "Deleted orphaned session: {}; kept its file {:?}",
+                        session_id,
+                        session.destination()
+                    );
                     cleaned += 1;
-
-                    // Best-effort file cleanup (failures are logged but don't block)
-                    let file_path = session.destination();
-                    match std::fs::remove_file(file_path) {
-                        Ok(_) => info!("Cleaned up file: {:?}", file_path),
-                        Err(e) => warn!(
-                            "File cleanup failed (non-critical): {:?} - {}",
-                            file_path, e
-                        ),
-                    }
                 }
                 Err(e) => error!("Failed to delete orphaned session {}: {}", session_id, e),
             }

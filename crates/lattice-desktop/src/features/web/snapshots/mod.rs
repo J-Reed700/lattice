@@ -195,10 +195,15 @@ impl WebPageSnapshotService {
         background: Arc<BackgroundTasks>,
         sweep_gate: Arc<SweepGate>,
     ) -> Self {
-        let repository = SnapshotRepository::new(pool);
+        let repository = SnapshotRepository::new(pool.clone());
         let store = SnapshotStore::new(root);
         Self {
-            gc: WebSnapshotGc::new(store.clone(), repository.clone(), sweep_gate),
+            gc: WebSnapshotGc::new(
+                store.clone(),
+                repository.clone(),
+                crate::infrastructure::storage::FileIntents::new(pool),
+                sweep_gate,
+            ),
             shared: Arc::new(Shared {
                 repository,
                 store,
@@ -384,8 +389,8 @@ impl WebPageSnapshotService {
         self.shared.dto(row, progress).await
     }
 
-    /// Removes stale partial writes and files no pending or ready row claims,
-    /// once the sweep gate is open.
+    /// Removes stale partial writes, pages a delete let go of and pages of
+    /// failed captures, once the sweep gate is open.
     pub async fn sweep(&self) -> Result<SweepReport> {
         self.gc.sweep().await
     }
