@@ -3,11 +3,13 @@
 //! a bounded body.
 
 use crate::features::web::services::identity;
+use crate::features::web::services::web::{
+    build_public_client, public_web_client, validate_url_resolved,
+};
 use crate::features::web::WebCaptureServiceTrait;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::contracts::web::UrlPreview;
-use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::{AppError, Result};
 use reqwest::Client;
 use scraper::{Html, Selector};
@@ -20,96 +22,23 @@ use tracing::{debug, info, warn};
 /// Provides URL preview and metadata extraction with comprehensive
 /// support for OpenGraph, Schema.org, and general HTML metadata.
 pub struct WebCaptureService {
-    /// HTTP client with timeout
+    /// The public-web client, built by [`build_public_client`].
     client: Client,
 }
 
 impl WebCaptureService {
     /// Create a new web capture service with browser-like headers.
     pub fn new() -> Result<Self> {
-        let client = identity::client_builder()
-            .timeout(WEB_REQUEST_TIMEOUT)
-            .build()
-            .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
-
-        Ok(Self { client })
+        Ok(Self {
+            client: public_web_client()?,
+        })
     }
 
     /// Create with custom timeout
     pub fn with_timeout(timeout: Duration) -> Result<Self> {
-        let client = identity::client_builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|e| AppError::InternalError(format!("Failed to create HTTP client: {}", e)))?;
-
-        Ok(Self { client })
-    }
-
-    /// Validate URL for security (SSRF prevention)
-    ///
-    /// Delegates to WebService's validation logic which blocks:
-    /// - localhost and loopback addresses
-    /// - Private IP ranges (RFC 1918)
-    /// - Link-local addresses
-    /// - Metadata endpoints (169.254.169.254)
-    fn validate_url(&self, url: &str) -> Result<()> {
-        let parsed = url::Url::parse(url)
-            .map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;
-
-        // Check scheme (only allow http/https)
-        match parsed.scheme() {
-            "http" | "https" => {}
-            _ => {
-                return Err(AppError::InvalidUrl(format!(
-                    "Unsupported URL scheme: {}. Only http and https are allowed.",
-                    parsed.scheme()
-                )));
-            }
-        }
-
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| AppError::InvalidUrl("URL must have a host".to_string()))?;
-
-        // Block localhost variants
-        let lowercase_host = host.to_lowercase();
-        if lowercase_host == "localhost"
-            || lowercase_host == "0.0.0.0"
-            || lowercase_host == "[::]"
-            || lowercase_host.starts_with("127.")
-        {
-            return Err(AppError::InvalidUrl(format!(
-                "Access to localhost blocked: {}",
-                host
-            )));
-        }
-
-        // Block private IP ranges (basic check)
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            use std::net::IpAddr;
-            let is_private = match ip {
-                IpAddr::V4(ipv4) => {
-                    ipv4.is_private()
-                        || ipv4.is_loopback()
-                        || ipv4.is_link_local()
-                        || ipv4.is_broadcast()
-                        || ipv4.is_documentation()
-                }
-                IpAddr::V6(ipv6) => {
-                    ipv6.is_loopback() || ipv6.is_multicast() || ipv6.is_unspecified()
-                }
-            };
-
-            if is_private {
-                return Err(AppError::InvalidUrl(format!(
-                    "Access to private/reserved IP blocked: {}",
-                    host
-                )));
-            }
-        }
-
-        debug!("URL validation passed: {}", url);
-        Ok(())
+        Ok(Self {
+            client: build_public_client(timeout)?,
+        })
     }
 
     /// Extract metadata from HTML document
@@ -383,7 +312,7 @@ impl WebCaptureServiceTrait for WebCaptureService {
         debug!("Fetching URL preview: {}", url);
 
         // Validate URL for security
-        self.validate_url(url)?;
+        validate_url_resolved(url).await?;
 
         identity::random_delay(500, 2000).await;
         let profile = identity::random_profile();
@@ -418,11 +347,8 @@ impl WebCaptureServiceTrait for WebCaptureService {
 
         // Get final URL (after redirects)
         let final_url = response.url().to_string();
-
-        // Re-validate final URL after redirects (prevents redirect-based SSRF)
         if final_url != url {
             debug!("URL redirected to: {}", final_url);
-            self.validate_url(&final_url)?;
         }
 
         let html = response
@@ -445,27 +371,6 @@ impl WebCaptureServiceTrait for WebCaptureService {
 mod tests {
     use super::*;
     use crate::features::web::services::web::guard_probe;
-
-    #[test]
-    fn test_validate_url() {
-        let service = WebCaptureService::new().unwrap();
-
-        // Valid URLs
-        assert!(service.validate_url("https://www.rust-lang.org").is_ok());
-        assert!(service.validate_url("http://example.com").is_ok());
-
-        // Invalid: localhost
-        assert!(service.validate_url("http://localhost:8000").is_err());
-        assert!(service.validate_url("http://127.0.0.1").is_err());
-
-        // Invalid: private IP
-        assert!(service.validate_url("http://192.168.1.1").is_err());
-        assert!(service.validate_url("http://10.0.0.1").is_err());
-
-        // Invalid: unsupported scheme
-        assert!(service.validate_url("ftp://example.com").is_err());
-        assert!(service.validate_url("file:///etc/passwd").is_err());
-    }
 
     #[test]
     fn test_extract_metadata() {

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::features::web::dto::{GetUrlPreviewRequestDto, UrlPreviewDto};
+use crate::features::web::services::web::check_public_url;
 use crate::features::web::WebCaptureServiceTrait;
 use lattice_core::application::contracts::web::UrlPreview;
 use lattice_core::shared::error::{AppError, Result};
@@ -27,12 +28,18 @@ impl GetUrlPreviewUseCase {
     ///
     /// Returns error if:
     /// - URL is invalid (not HTTP/HTTPS)
+    /// - URL is an address on this machine or a private network
     /// - Network request fails
     /// - HTML parsing fails
     /// - Metadata extraction fails
     pub async fn execute(&self, request: GetUrlPreviewRequestDto) -> Result<UrlPreviewDto> {
-        // 1. Validate URL (must be HTTP or HTTPS)
-        Self::validate_url(&request.url)?;
+        // 1. Validate URL (must be a public HTTP or HTTPS address)
+        if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
+            return Err(AppError::InvalidInput(
+                "URL must start with http:// or https://".to_string(),
+            ));
+        }
+        check_public_url(&request.url)?;
 
         // 2. Delegate to web capture service
         // (Service handles: URL validation, fetch, metadata extraction)
@@ -43,25 +50,6 @@ impl GetUrlPreviewUseCase {
 
         // 3. Convert service result to DTO
         Ok(Self::convert_preview(preview))
-    }
-
-    /// Validates that the URL is HTTP or HTTPS.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if URL is not HTTP/HTTPS
-    fn validate_url(url: &str) -> Result<()> {
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err(AppError::InvalidInput(
-                "URL must start with http:// or https://".to_string(),
-            ));
-        }
-
-        if url.trim().is_empty() {
-            return Err(AppError::InvalidInput("URL cannot be empty".to_string()));
-        }
-
-        Ok(())
     }
 
     /// Converts the service layer's `UrlPreview` to the application DTO.

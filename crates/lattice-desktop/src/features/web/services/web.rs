@@ -264,13 +264,14 @@ impl WebService {
 
 /// The one client for reading public web pages, with the default request
 /// timeout: no cookie jar, the private-address redirect policy and the
-/// public-only resolver. The snapshot engine fetches through it.
+/// public-only resolver. The snapshot engine and page capture fetch through it.
 pub(crate) fn public_web_client() -> Result<Client> {
     build_public_client(WEB_REQUEST_TIMEOUT)
 }
 
-/// The single builder behind [`WebService`] and [`public_web_client`].
-fn build_public_client(timeout: Duration) -> Result<Client> {
+/// The single builder behind every client that reads the public web, taking
+/// the request timeout a path needs.
+pub(crate) fn build_public_client(timeout: Duration) -> Result<Client> {
     identity::client_builder()
         .timeout(timeout)
         .redirect(redirect_policy())
