@@ -215,15 +215,15 @@ fn finding_entry(finding: usize, reason: &str, outcome: &str, issues: &[usize]) 
 fn valid() -> Value {
     json!({
         "issues": [
-            issue_entry(0, "Finding 0 says the loop runs one step too far.", "found", Some(0), Some("indexes past the end of prices")),
-            issue_entry(1, "Finding 1 names the injection.", "found", Some(1), Some("lets a crafted name change the query")),
-            issue_entry(2, "Finding 3 points at the swallowed error without saying what it costs.", "half_found", Some(3), None),
+            issue_entry(1, "Finding 1 says the loop runs one step too far.", "found", Some(1), Some("indexes past the end of prices")),
+            issue_entry(2, "Finding 2 names the injection.", "found", Some(2), Some("lets a crafted name change the query")),
+            issue_entry(3, "Finding 4 points at the swallowed error without saying what it costs.", "half_found", Some(4), None),
         ],
         "findings": [
-            finding_entry(0, "It names the off-by-one.", "matches", &[0]),
-            finding_entry(1, "It names the injection.", "matches", &[1]),
-            finding_entry(2, "A remark about tests, not a problem of this code.", "false_positive", &[]),
-            finding_entry(3, "It points at the swallowed error.", "matches", &[2]),
+            finding_entry(1, "It names the off-by-one.", "matches", &[1]),
+            finding_entry(2, "It names the injection.", "matches", &[2]),
+            finding_entry(3, "A remark about tests, not a problem of this code.", "false_positive", &[]),
+            finding_entry(4, "It points at the swallowed error.", "matches", &[3]),
         ]
     })
 }
@@ -233,15 +233,15 @@ fn assessment() -> Assessment {
         issues: vec![
             (
                 IssueOutcome::Found { finding: 0 },
-                "Finding 0 says the loop runs one step too far.".into(),
+                "Finding 1 says the loop runs one step too far.".into(),
             ),
             (
                 IssueOutcome::Found { finding: 1 },
-                "Finding 1 names the injection.".into(),
+                "Finding 2 names the injection.".into(),
             ),
             (
                 IssueOutcome::HalfFound { finding: 3 },
-                "Finding 3 points at the swallowed error without saying what it costs.".into(),
+                "Finding 4 points at the swallowed error without saying what it costs.".into(),
             ),
         ],
         findings: vec![
@@ -336,7 +336,7 @@ async fn entries_may_come_in_any_order() -> Result<()> {
 #[tokio::test]
 async fn a_reason_is_kept_as_the_judge_wrote_it_without_the_space_around_it() -> Result<()> {
     let answer = changed(|answer| {
-        answer["issues"][1]["reason"] = json!("  Finding 1 names the injection.\n");
+        answer["issues"][1]["reason"] = json!("  Finding 2 names the injection.\n");
         answer["findings"][2]["reason"] =
             json!("\tA remark about tests, not a problem of this code. ");
     });
@@ -350,14 +350,14 @@ async fn a_finding_that_names_two_issues_matches_both_and_the_issues_are_listed_
 ) -> Result<()> {
     let answer = changed(|answer| {
         answer["issues"][1] = issue_entry(
-            1,
-            "Finding 0 also says the query is built from the name.",
+            2,
+            "Finding 1 also says the query is built from the name.",
             "found",
-            Some(0),
+            Some(1),
             Some("The loop runs one step too far"),
         );
-        answer["findings"][0] = finding_entry(0, "It names both.", "matches", &[1, 0, 1]);
-        answer["findings"][1] = finding_entry(1, "It is wrong.", "false_positive", &[]);
+        answer["findings"][0] = finding_entry(1, "It names both.", "matches", &[2, 1, 2]);
+        answer["findings"][1] = finding_entry(2, "It is wrong.", "false_positive", &[]);
     });
     let llm = ScriptedJudge::answering(vec![answer.to_string()]);
     let graded = grade(&llm, &Scene::new()).await?;
@@ -412,13 +412,13 @@ async fn a_half_found_issue_needs_no_quote() -> Result<()> {
 async fn what_a_missed_issue_says_of_a_finding_and_a_quote_is_ignored() -> Result<()> {
     let answer = changed(|answer| {
         answer["issues"][2] = issue_entry(
-            2,
+            3,
             "No finding names it.",
             "missed",
-            Some(3),
+            Some(4),
             Some("This hides failures."),
         );
-        answer["findings"][3] = finding_entry(3, "A remark.", "false_positive", &[]);
+        answer["findings"][3] = finding_entry(4, "A remark.", "false_positive", &[]);
     });
     let llm = ScriptedJudge::answering(vec![answer.to_string()]);
     let graded = grade(&llm, &Scene::new()).await?;
@@ -435,37 +435,47 @@ fn refusals() -> Vec<(&'static str, Value, &'static str)> {
         (
             "an issue with no entry",
             changed(|answer| remove(answer, "issues", 2)),
-            "Issue 2 has no entry: every issue needs exactly one.",
+            "Issue 3 has no entry: every issue needs exactly one.",
         ),
         (
             "an issue with two entries",
             changed(|answer| repeat(answer, "issues", 0)),
-            "Issue 0 has 2 entries: every issue needs exactly one.",
+            "Issue 1 has 2 entries: every issue needs exactly one.",
         ),
         (
             "an entry for an issue the key does not have",
-            changed(|answer| answer["issues"][2]["issue"] = json!(3)),
-            "Issue 3 is not an issue of the key, which has issues 0 to 2. Issue 2 has no entry: every issue needs exactly one.",
+            changed(|answer| answer["issues"][2]["issue"] = json!(4)),
+            "Issue 4 is not an issue of the key, which has issues 1 to 3. Issue 3 has no entry: every issue needs exactly one.",
+        ),
+        (
+            "an entry for issue zero",
+            changed(|answer| answer["issues"][0]["issue"] = json!(0)),
+            "Issue 0 is not an issue of the key, which has issues 1 to 3. Issue 1 has no entry: every issue needs exactly one.",
         ),
         (
             "an entry for issue minus one",
             changed(|answer| answer["issues"][0]["issue"] = json!(-1)),
-            "Issue -1 is not an issue of the key, which has issues 0 to 2. Issue 0 has no entry: every issue needs exactly one.",
+            "Issue -1 is not an issue of the key, which has issues 1 to 3. Issue 1 has no entry: every issue needs exactly one.",
         ),
         (
             "a finding with no entry",
             changed(|answer| remove(answer, "findings", 1)),
-            "Finding 1 has no entry: every finding needs exactly one.",
+            "Finding 2 has no entry: every finding needs exactly one.",
         ),
         (
             "a finding with two entries",
             changed(|answer| repeat(answer, "findings", 2)),
-            "Finding 2 has 2 entries: every finding needs exactly one.",
+            "Finding 3 has 2 entries: every finding needs exactly one.",
         ),
         (
             "an entry for a finding the review does not have",
-            changed(|answer| answer["findings"][3]["finding"] = json!(4)),
-            "Finding 4 is not a finding of the review, which has findings 0 to 3. Finding 3 has no entry: every finding needs exactly one.",
+            changed(|answer| answer["findings"][3]["finding"] = json!(5)),
+            "Finding 5 is not a finding of the review, which has findings 1 to 4. Finding 4 has no entry: every finding needs exactly one.",
+        ),
+        (
+            "an entry for finding zero",
+            changed(|answer| answer["findings"][0]["finding"] = json!(0)),
+            "Finding 0 is not a finding of the review, which has findings 1 to 4. Finding 1 has no entry: every finding needs exactly one.",
         ),
         (
             "a missing entry among the issues and one among the findings",
@@ -473,111 +483,121 @@ fn refusals() -> Vec<(&'static str, Value, &'static str)> {
                 remove(answer, "issues", 2);
                 remove(answer, "findings", 1);
             }),
-            "Issue 2 has no entry: every issue needs exactly one. Finding 1 has no entry: every finding needs exactly one.",
+            "Issue 3 has no entry: every issue needs exactly one. Finding 2 has no entry: every finding needs exactly one.",
         ),
         (
             "an issue without a reason",
             changed(|answer| answer["issues"][1]["reason"] = json!("   ")),
-            "Issue 1 has no reason: say why before giving its outcome.",
+            "Issue 2 has no reason: say why before giving its outcome.",
         ),
         (
             "a finding without a reason",
             changed(|answer| answer["findings"][2]["reason"] = json!("")),
-            "Finding 2 has no reason: say why before giving its outcome.",
+            "Finding 3 has no reason: say why before giving its outcome.",
         ),
         (
             "a found issue that names no finding",
             changed(|answer| answer["issues"][0]["finding"] = json!(null)),
-            "Issue 0 is found but names no finding: give the finding that names its cause.",
+            "Issue 1 is found but names no finding: give the finding that names its cause.",
         ),
         (
             "a half found issue that names no finding",
             changed(|answer| answer["issues"][2]["finding"] = json!(null)),
-            "Issue 2 is half found but names no finding: give the finding that points at it.",
+            "Issue 3 is half found but names no finding: give the finding that points at it.",
         ),
         (
             "an issue found by a finding the review does not have",
             changed(|answer| answer["issues"][0]["finding"] = json!(9)),
-            "Issue 0 is found by finding 9, but the review has findings 0 to 3.",
+            "Issue 1 is found by finding 9, but the review has findings 1 to 4.",
+        ),
+        (
+            "an issue found by finding zero",
+            changed(|answer| answer["issues"][0]["finding"] = json!(0)),
+            "Issue 1 is found by finding 0, but the review has findings 1 to 4.",
         ),
         (
             "a find with no quote",
             changed(|answer| answer["issues"][0]["quote"] = json!(null)),
-            "Issue 0 is found by finding 0 but has no quote: quote the words of finding 0 that name its cause.",
+            "Issue 1 is found by finding 1 but has no quote: quote the words of finding 1 that name its cause.",
         ),
         (
             "a find with a blank quote",
             changed(|answer| answer["issues"][0]["quote"] = json!(" \n")),
-            "Issue 0 is found by finding 0 but has no quote: quote the words of finding 0 that name its cause.",
+            "Issue 1 is found by finding 1 but has no quote: quote the words of finding 1 that name its cause.",
         ),
         (
             "a quote that is not in the finding",
             changed(|answer| answer["issues"][1]["quote"] = json!("allows SQL injection")),
-            "The quote for issue 1, \"allows SQL injection\", is not in the text of finding 1: copy the words that name the cause exactly as finding 1 wrote them.",
+            "The quote for issue 2, \"allows SQL injection\", is not in the text of finding 2: copy the words that name the cause exactly as finding 2 wrote them.",
         ),
         (
             "a quote in other letters",
             changed(|answer| answer["issues"][0]["quote"] = json!("Indexes past the end of prices")),
-            "The quote for issue 0, \"Indexes past the end of prices\", is not in the text of finding 0: copy the words that name the cause exactly as finding 0 wrote them.",
+            "The quote for issue 1, \"Indexes past the end of prices\", is not in the text of finding 1: copy the words that name the cause exactly as finding 1 wrote them.",
         ),
         (
             "a quote from the code shown beside the finding",
             changed(|answer| answer["issues"][0]["quote"] = json!("range(len(prices) + 1)")),
-            "The quote for issue 0, \"range(len(prices) + 1)\", is not in the text of finding 0: copy the words that name the cause exactly as finding 0 wrote them.",
+            "The quote for issue 1, \"range(len(prices) + 1)\", is not in the text of finding 1: copy the words that name the cause exactly as finding 1 wrote them.",
         ),
         (
             "a quote of another finding",
             changed(|answer| answer["issues"][0]["quote"] = json!("lets a crafted name change the query")),
-            "The quote for issue 0, \"lets a crafted name change the query\", is not in the text of finding 0: copy the words that name the cause exactly as finding 0 wrote them.",
+            "The quote for issue 1, \"lets a crafted name change the query\", is not in the text of finding 1: copy the words that name the cause exactly as finding 1 wrote them.",
         ),
         (
             "a half find with a quote that is not in the finding",
             changed(|answer| answer["issues"][2]["quote"] = json!("Invented words")),
-            "The quote for issue 2, \"Invented words\", is not in the text of finding 3: copy the words that name the cause exactly as finding 3 wrote them.",
+            "The quote for issue 3, \"Invented words\", is not in the text of finding 4: copy the words that name the cause exactly as finding 4 wrote them.",
         ),
         (
             "an issue found by a finding that is a false positive",
-            changed(|answer| answer["findings"][0] = finding_entry(0, "It is wrong.", "false_positive", &[])),
-            "Issue 0 is found by finding 0, but finding 0 does not match issue 0: list issue 0 among the issues finding 0 matches, or give issue 0 another outcome.",
-        ),
-        (
-            "an issue half found by a finding that is a valid extra",
-            changed(|answer| answer["findings"][3] = finding_entry(3, "A real problem.", "valid_extra", &[])),
-            "Issue 2 is half found by finding 3, but finding 3 does not match issue 2: list issue 2 among the issues finding 3 matches, or give issue 2 another outcome.",
-        ),
-        (
-            "an issue found by a finding that matches another issue",
-            changed(|answer| answer["findings"][1] = finding_entry(1, "It names the swallowed error.", "matches", &[2])),
+            changed(|answer| answer["findings"][0] = finding_entry(1, "It is wrong.", "false_positive", &[])),
             "Issue 1 is found by finding 1, but finding 1 does not match issue 1: list issue 1 among the issues finding 1 matches, or give issue 1 another outcome.",
         ),
         (
+            "an issue half found by a finding that is a valid extra",
+            changed(|answer| answer["findings"][3] = finding_entry(4, "A real problem.", "valid_extra", &[])),
+            "Issue 3 is half found by finding 4, but finding 4 does not match issue 3: list issue 3 among the issues finding 4 matches, or give issue 3 another outcome.",
+        ),
+        (
+            "an issue found by a finding that matches another issue",
+            changed(|answer| answer["findings"][1] = finding_entry(2, "It names the swallowed error.", "matches", &[3])),
+            "Issue 2 is found by finding 2, but finding 2 does not match issue 2: list issue 2 among the issues finding 2 matches, or give issue 2 another outcome.",
+        ),
+        (
             "a finding that matches no issue",
-            changed(|answer| answer["findings"][2] = finding_entry(2, "It matches.", "matches", &[])),
-            "Finding 2 matches no issue: list the issues it matches, or call it a valid extra or a false positive.",
+            changed(|answer| answer["findings"][2] = finding_entry(3, "It matches.", "matches", &[])),
+            "Finding 3 matches no issue: list the issues it matches, or call it a valid extra or a false positive.",
         ),
         (
             "a finding that matches without listing issues",
-            changed(|answer| answer["findings"][2] = json!({"finding": 2, "reason": "It matches.", "outcome": "matches"})),
-            "Finding 2 matches no issue: list the issues it matches, or call it a valid extra or a false positive.",
+            changed(|answer| answer["findings"][2] = json!({"finding": 3, "reason": "It matches.", "outcome": "matches"})),
+            "Finding 3 matches no issue: list the issues it matches, or call it a valid extra or a false positive.",
         ),
         (
             "a finding that matches an issue that is missed",
             changed(|answer| {
-                answer["issues"][2] = issue_entry(2, "No finding names it.", "missed", None, None);
+                answer["issues"][2] = issue_entry(3, "No finding names it.", "missed", None, None);
             }),
-            "Finding 3 matches issue 2, but issue 2 is missed: credit issue 2 to a finding that earns it, or take it out of finding 3's issues.",
+            "Finding 4 matches issue 3, but issue 3 is missed: credit issue 3 to a finding that earns it, or take it out of finding 4's issues.",
         ),
         (
             "a finding that matches an issue the key does not have",
-            changed(|answer| answer["findings"][0] = finding_entry(0, "It names two.", "matches", &[0, 5])),
-            "Finding 0 matches issue 5, but the key has issues 0 to 2.",
+            changed(|answer| answer["findings"][0] = finding_entry(1, "It names two.", "matches", &[1, 6])),
+            "Finding 1 matches issue 6, but the key has issues 1 to 3.",
+        ),
+        (
+            "a finding that matches issue zero",
+            changed(|answer| answer["findings"][0] = finding_entry(1, "It names two.", "matches", &[1, 0])),
+            "Finding 1 matches issue 0, but the key has issues 1 to 3.",
         ),
         (
             "a finding that matches issue minus one",
             changed(|answer| {
-                answer["findings"][0] = json!({"finding": 0, "reason": "It names one.", "outcome": "matches", "issues": [-1]});
+                answer["findings"][0] = json!({"finding": 1, "reason": "It names one.", "outcome": "matches", "issues": [-1]});
             }),
-            "Finding 0 matches issue -1, but the key has issues 0 to 2.",
+            "Finding 1 matches issue -1, but the key has issues 1 to 3.",
         ),
         (
             "a reason missing and a quote missing",
@@ -585,15 +605,15 @@ fn refusals() -> Vec<(&'static str, Value, &'static str)> {
                 answer["issues"][0]["reason"] = json!("");
                 answer["issues"][1]["quote"] = json!(null);
             }),
-            "Issue 0 has no reason: say why before giving its outcome. Issue 1 is found by finding 1 but has no quote: quote the words of finding 1 that name its cause.",
+            "Issue 1 has no reason: say why before giving its outcome. Issue 2 is found by finding 2 but has no quote: quote the words of finding 2 that name its cause.",
         ),
         (
             "a quote missing and a finding that does not match the issue it credits",
             changed(|answer| {
                 answer["issues"][1]["quote"] = json!(null);
-                answer["findings"][3] = finding_entry(3, "A real problem.", "valid_extra", &[]);
+                answer["findings"][3] = finding_entry(4, "A real problem.", "valid_extra", &[]);
             }),
-            "Issue 1 is found by finding 1 but has no quote: quote the words of finding 1 that name its cause. Issue 2 is half found by finding 3, but finding 3 does not match issue 2: list issue 2 among the issues finding 3 matches, or give issue 2 another outcome.",
+            "Issue 2 is found by finding 2 but has no quote: quote the words of finding 2 that name its cause. Issue 3 is half found by finding 4, but finding 4 does not match issue 3: list issue 3 among the issues finding 4 matches, or give issue 3 another outcome.",
         ),
     ]
 }
@@ -665,7 +685,7 @@ async fn a_second_refusal_is_the_calls_error_with_its_own_reason() {
     let llm = ScriptedJudge::answering(vec![first.to_string(), second.to_string()]);
     let error = grade(&llm, &Scene::new()).await.unwrap_err();
     assert!(
-        matches!(&error, AppError::ModelAnswerUnusable(reason) if reason == "Finding 1 has no entry: every finding needs exactly one."),
+        matches!(&error, AppError::ModelAnswerUnusable(reason) if reason == "Finding 2 has no entry: every finding needs exactly one."),
         "{error:?}"
     );
     assert_eq!(llm.asked().len(), 2, "asked once more, never twice");
@@ -710,17 +730,17 @@ async fn the_request_holds_the_files_the_clean_files_the_key_the_review_and_the_
         "3 |     for i in range(len(prices)):\n4 |         result += prices[i]",
         "9 |     return db.execute(\"SELECT * FROM orders WHERE name = ?\", (name,))",
         "File notify.py\n1 | def send(mail):\n2 |     try:\n3 |         mail.deliver()\n4 |     except Exception as error:\n5 |         log.warning(\"delivery failed: %s\", error)",
-        "The key: 3 issues, numbered 0 to 2.",
-        "Issue 0: Off-by-one error (major), orders.py line 3",
-        "Issue 1: SQL injection (critical), orders.py line 9",
-        "Issue 2: Swallowed exception (minor), notify.py lines 4 to 5",
-        "The review: 4 findings, numbered 0 to 3, in the order they were made.",
-        "Finding 0: orders.py line 3, severity given: major",
-        "Finding 1: orders.py line 9\n",
-        "Finding 2: no lines selected, severity given: minor",
-        "Finding 3: notify.py lines 3 to 5\n",
+        "The key: 3 issues, numbered 1 to 3.",
+        "Issue 1: Off-by-one error (major), orders.py line 3",
+        "Issue 2: SQL injection (critical), orders.py line 9",
+        "Issue 3: Swallowed exception (minor), notify.py lines 4 to 5",
+        "The review: 4 findings, numbered 1 to 4, in the order they were made.",
+        "Finding 1: orders.py line 3, severity given: major",
+        "Finding 2: orders.py line 9\n",
+        "Finding 3: no lines selected, severity given: minor",
+        "Finding 4: notify.py lines 3 to 5\n",
         "Findings and issues whose lines overlap, a hint and not a verdict:",
-        "Give an entry for every issue (0 to 2) and every finding (0 to 3), the reason first.",
+        "Give an entry for every issue (1 to 3) and every finding (1 to 4), the reason first.",
     ];
     let mut last = 0;
     for section in sections {
@@ -744,15 +764,15 @@ async fn every_issue_is_shown_with_its_pattern_its_consequence_and_the_lines_it_
     };
     for expected in [
         format!(
-            "Issue 0: Off-by-one error (major), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
+            "Issue 1: Off-by-one error (major), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
             definition("correctness.off_by_one")
         ),
         format!(
-            "Issue 1: SQL injection (critical), orders.py line 9\nPattern: {}\nConsequence: A name with a quote in it changes the query.\nLines:\n  9 |     return db.execute(f\"SELECT * FROM orders WHERE name = '{{name}}'\")",
+            "Issue 2: SQL injection (critical), orders.py line 9\nPattern: {}\nConsequence: A name with a quote in it changes the query.\nLines:\n  9 |     return db.execute(f\"SELECT * FROM orders WHERE name = '{{name}}'\")",
             definition("security.sql_injection")
         ),
         format!(
-            "Issue 2: Swallowed exception (minor), notify.py lines 4 to 5\nPattern: {}\nConsequence: A failed delivery is never noticed.\nLines:\n  4 |     except Exception:\n  5 |         pass",
+            "Issue 3: Swallowed exception (minor), notify.py lines 4 to 5\nPattern: {}\nConsequence: A failed delivery is never noticed.\nLines:\n  4 |     except Exception:\n  5 |         pass",
             definition("errors.swallowed_exception")
         ),
     ] {
@@ -767,10 +787,10 @@ async fn every_finding_is_shown_with_its_lines_quoted_its_severity_and_its_text(
     grade(&llm, &Scene::new()).await?;
     let (_, task) = the_request(&llm);
     for expected in [
-        "Finding 0: orders.py line 3, severity given: major\nLines:\n  3 |     for i in range(len(prices) + 1):\nText:\n  The loop runs one step too far, so the last pass indexes past the end of prices.",
-        "Finding 1: orders.py line 9\nLines:\n  9 |     return db.execute(f\"SELECT * FROM orders WHERE name = '{name}'\")\nText:\n  Building SQL from name lets a crafted name change the query.",
-        "Finding 2: no lines selected, severity given: minor\nText:\n  Nothing here is tested.",
-        "Finding 3: notify.py lines 3 to 5\nLines:\n  3 |         mail.deliver()\n  4 |     except Exception:\n  5 |         pass\nText:\n  This hides failures.\n  Nobody will ever know a mail did not go out.",
+        "Finding 1: orders.py line 3, severity given: major\nLines:\n  3 |     for i in range(len(prices) + 1):\nText:\n  The loop runs one step too far, so the last pass indexes past the end of prices.",
+        "Finding 2: orders.py line 9\nLines:\n  9 |     return db.execute(f\"SELECT * FROM orders WHERE name = '{name}'\")\nText:\n  Building SQL from name lets a crafted name change the query.",
+        "Finding 3: no lines selected, severity given: minor\nText:\n  Nothing here is tested.",
+        "Finding 4: notify.py lines 3 to 5\nLines:\n  3 |         mail.deliver()\n  4 |     except Exception:\n  5 |         pass\nText:\n  This hides failures.\n  Nobody will ever know a mail did not go out.",
     ] {
         assert!(task.contains(expected), "{expected}\n\nis not in\n\n{task}");
     }
@@ -788,9 +808,9 @@ async fn the_pairs_whose_lines_overlap_are_a_hint_in_the_task() -> Result<()> {
     grade(&llm, &scene).await?;
     let (_, task) = the_request(&llm);
     assert!(task.contains(
-        "Findings and issues whose lines overlap, a hint and not a verdict:\nfinding 0 and issue 0\nfinding 1 and issue 1\nfinding 3 and issue 2"
+        "Findings and issues whose lines overlap, a hint and not a verdict:\nfinding 1 and issue 1\nfinding 2 and issue 2\nfinding 4 and issue 3"
     ));
-    assert!(!task.contains("finding 2 and"));
+    assert!(!task.contains("finding 3 and"));
 
     let mut apart = Scene::new();
     apart.findings = vec![finding(
@@ -799,10 +819,10 @@ async fn the_pairs_whose_lines_overlap_are_a_hint_in_the_task() -> Result<()> {
         None,
     )];
     let llm = ScriptedJudge::answering(vec![json!({"issues": [
-            issue_entry(0, "No.", "missed", None, None),
             issue_entry(1, "No.", "missed", None, None),
             issue_entry(2, "No.", "missed", None, None),
-        ], "findings": [finding_entry(0, "Not a problem.", "false_positive", &[])]})
+            issue_entry(3, "No.", "missed", None, None),
+        ], "findings": [finding_entry(1, "Not a problem.", "false_positive", &[])]})
     .to_string()]);
     grade(&llm, &apart).await?;
     let (_, task) = the_request(&llm);
@@ -825,15 +845,15 @@ async fn line_numbers_are_padded_to_the_width_of_the_files_last_line() -> Result
     )];
     scene.findings = vec![finding(Some(span("long.txt", 9, 10)), "Unused.", None)];
     let answer = json!({
-        "issues": [issue_entry(0, "Finding 0 says it is unused.", "half_found", Some(0), None)],
-        "findings": [finding_entry(0, "It points at the lines.", "matches", &[0])],
+        "issues": [issue_entry(1, "Finding 1 says it is unused.", "half_found", Some(1), None)],
+        "findings": [finding_entry(1, "It points at the lines.", "matches", &[1])],
     });
     let llm = ScriptedJudge::answering(vec![answer.to_string()]);
     grade(&llm, &scene).await?;
     let (_, task) = the_request(&llm);
     assert!(task.contains(" 8 | line 8\n 9 | line 9\n10 | line 10\n11 | line 11"));
     assert!(task.contains("Consequence: It is never used.\nLines:\n   9 | line 9\n  10 | line 10"));
-    assert!(task.contains("Finding 0: long.txt lines 9 to 10\nLines:\n   9 | line 9\n  10 | line 10\nText:\n  Unused."));
+    assert!(task.contains("Finding 1: long.txt lines 9 to 10\nLines:\n   9 | line 9\n  10 | line 10\nText:\n  Unused."));
     Ok(())
 }
 
@@ -862,35 +882,35 @@ async fn an_odd_key_and_review_are_still_shown_whole() -> Result<()> {
     ];
     let answer = json!({
         "issues": [
-            issue_entry(0, "No.", "missed", None, None),
             issue_entry(1, "No.", "missed", None, None),
             issue_entry(2, "No.", "missed", None, None),
             issue_entry(3, "No.", "missed", None, None),
+            issue_entry(4, "No.", "missed", None, None),
         ],
         "findings": [
-            finding_entry(0, "No such file.", "false_positive", &[]),
-            finding_entry(1, "No such lines.", "false_positive", &[]),
-            finding_entry(2, "Says nothing.", "false_positive", &[]),
+            finding_entry(1, "No such file.", "false_positive", &[]),
+            finding_entry(2, "No such lines.", "false_positive", &[]),
+            finding_entry(3, "Says nothing.", "false_positive", &[]),
         ]
     });
     let llm = ScriptedJudge::answering(vec![answer.to_string()]);
     grade(&llm, &scene).await?;
     let (_, task) = the_request(&llm);
-    assert!(task.contains("The key: 4 issues, numbered 0 to 3."));
-    assert!(task.contains("Issue 3: no.such_pattern (nit), orders.py line 2\nConsequence: It is odd.\nLines:\n  2 |     result = 0"));
+    assert!(task.contains("The key: 4 issues, numbered 1 to 4."));
+    assert!(task.contains("Issue 4: no.such_pattern (nit), orders.py line 2\nConsequence: It is odd.\nLines:\n  2 |     result = 0"));
     assert!(!task.contains("clean code as well"));
     assert!(task.contains(&format!(
-        "Issue 0: Off-by-one error (major), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
+        "Issue 1: Off-by-one error (major), orders.py line 3\nPattern: {}\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n  3 |     for i in range(len(prices) + 1):",
         pattern("correctness.off_by_one").map_or("", |known| known.definition)
     )));
-    assert!(!task.contains("Issue 3: no.such_pattern (nit), orders.py line 2\nPattern:"));
+    assert!(!task.contains("Issue 4: no.such_pattern (nit), orders.py line 2\nPattern:"));
     assert!(task.contains(
-        "Finding 0: ghost.py lines 1 to 2\nLines: ghost.py is not one of the drill's files\nText:"
+        "Finding 1: ghost.py lines 1 to 2\nLines: ghost.py is not one of the drill's files\nText:"
     ));
     assert!(task.contains(
-        "Finding 1: orders.py lines 40 to 41\nLines: none of them is in the file\nText:"
+        "Finding 2: orders.py lines 40 to 41\nLines: none of them is in the file\nText:"
     ));
-    assert!(task.contains("Finding 2: no lines selected\nText: (empty)"));
+    assert!(task.contains("Finding 3: no lines selected\nText: (empty)"));
     Ok(())
 }
 
@@ -928,6 +948,23 @@ fn the_schema_asks_for_the_reason_before_the_outcome_and_bounds_no_text() {
             "{bound} bounds what the judge may write"
         );
     }
+    assert!(!written.contains("\"minimum\":0"), "{written}");
+    assert_eq!(
+        schema["properties"]["issues"]["items"]["properties"]["finding"]["minimum"],
+        1
+    );
+    assert_eq!(
+        schema["properties"]["findings"]["items"]["properties"]["finding"]["minimum"],
+        1
+    );
+    assert_eq!(
+        schema["properties"]["issues"]["items"]["properties"]["issue"]["minimum"],
+        1
+    );
+    assert_eq!(
+        schema["properties"]["findings"]["items"]["properties"]["issues"]["items"]["minimum"],
+        1
+    );
     assert_eq!(
         schema["properties"]["issues"]["items"]["properties"]["outcome"]["enum"],
         json!(["found", "half_found", "missed"])
@@ -978,4 +1015,81 @@ async fn the_classifier_knob_decides_whether_the_call_reasons_first() -> Result<
     assert_eq!(llm.sent().len(), expected);
     assert_eq!(llm.asked().len(), 1);
     Ok(())
+}
+
+#[tokio::test]
+async fn the_task_and_the_system_message_number_issues_and_findings_from_one() -> Result<()> {
+    let llm = ScriptedJudge::answering(vec![valid().to_string()]);
+    grade(&llm, &Scene::new()).await?;
+    let (system, task) = the_request(&llm);
+    assert!(
+        system.contains("Issues and findings are numbered from 1."),
+        "{system}"
+    );
+    assert!(task.contains("Issue 1: Off-by-one error"), "{task}");
+    assert!(task.contains("Finding 1: orders.py line 3"), "{task}");
+    assert!(task.contains("3 issues, numbered 1 to 3"), "{task}");
+    assert!(task.contains("4 findings, numbered 1 to 4"), "{task}");
+    assert!(
+        !task.contains("Issue 0") && !task.contains("Finding 0"),
+        "{task}"
+    );
+
+    let mut one = Scene::new();
+    one.drill.key.truncate(1);
+    one.findings.truncate(1);
+    let answer = json!({
+        "issues": [issue_entry(1, "Finding 1 names it.", "half_found", Some(1), None)],
+        "findings": [finding_entry(1, "It points at it.", "matches", &[1])],
+    });
+    let llm = ScriptedJudge::answering(vec![answer.to_string()]);
+    grade(&llm, &one).await?;
+    let (_, task) = the_request(&llm);
+    assert!(task.contains("The key: 1 issue, numbered 1."), "{task}");
+    assert!(
+        task.contains("The review: 1 finding, numbered 1,"),
+        "{task}"
+    );
+    assert!(
+        task.contains("every issue (1) and every finding (1)"),
+        "{task}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_answer_naming_issue_one_and_finding_one_credits_the_first_positions() -> Result<()> {
+    let mut one = Scene::new();
+    one.drill.key.truncate(1);
+    one.findings.truncate(1);
+    let answer = json!({
+        "issues": [issue_entry(1, "Finding 1 names it.", "found", Some(1), Some("indexes past the end of prices"))],
+        "findings": [finding_entry(1, "It names the off-by-one.", "matches", &[1])],
+    });
+    let llm = ScriptedJudge::answering(vec![answer.to_string()]);
+    let graded = grade(&llm, &one).await?;
+    assert_eq!(graded.issues[0].0, IssueOutcome::Found { finding: 0 });
+    assert_eq!(
+        graded.findings[0].0,
+        FindingOutcome::Matches { issues: vec![0] }
+    );
+    assert_eq!(llm.asked().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_answer_naming_finding_zero_is_refused_in_one_based_terms() {
+    let mut one = Scene::new();
+    one.drill.key.truncate(1);
+    one.findings.truncate(1);
+    let answer = json!({
+        "issues": [issue_entry(1, "Finding 0 names it.", "half_found", Some(1), None)],
+        "findings": [finding_entry(0, "It points at it.", "matches", &[1])],
+    });
+    let llm = ScriptedJudge::answering(vec![answer.to_string(), answer.to_string()]);
+    let error = grade(&llm, &one).await.unwrap_err();
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(reason) if reason == "Finding 0 is not a finding of the review, which has finding 1 only. Finding 1 has no entry: every finding needs exactly one."),
+        "{error:?}"
+    );
 }

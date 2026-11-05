@@ -609,19 +609,19 @@ pub(super) fn grade_answer() -> String {
     json!({
         "issues": [
             {
-                "issue": 0, "reason": "The comment names the operator.", "outcome": "found",
-                "finding": 0, "quote": "lets one call more than the limit through"
+                "issue": 1, "reason": "The comment names the operator.", "outcome": "found",
+                "finding": 1, "quote": "lets one call more than the limit through"
             },
             {
-                "issue": 1, "reason": "No comment mentions the literals.", "outcome": "missed",
+                "issue": 2, "reason": "No comment mentions the literals.", "outcome": "missed",
                 "finding": null, "quote": null
             }
         ],
         "findings": [
-            {"finding": 0, "reason": "It is the changed operator.", "outcome": "matches", "issues": [0]},
-            {"finding": 1, "reason": "That is how the code is meant to read.", "outcome": "false_positive", "issues": []},
-            {"finding": 2, "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra", "issues": []},
-            {"finding": 3, "reason": "It names nothing.", "outcome": "false_positive", "issues": []}
+            {"finding": 1, "reason": "It is the changed operator.", "outcome": "matches", "issues": [1]},
+            {"finding": 2, "reason": "That is how the code is meant to read.", "outcome": "false_positive", "issues": []},
+            {"finding": 3, "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra", "issues": []},
+            {"finding": 4, "reason": "It names nothing.", "outcome": "false_positive", "issues": []}
         ]
     })
     .to_string()

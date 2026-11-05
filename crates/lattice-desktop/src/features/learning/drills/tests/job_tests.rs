@@ -223,7 +223,7 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
     assert!(
         job.error_message
             .as_deref()
-            .is_some_and(|message| message.contains("Issue 0 has no entry")),
+            .is_some_and(|message| message.contains("Issue 1 has no entry")),
         "{:?}",
         job.error_message
     );
