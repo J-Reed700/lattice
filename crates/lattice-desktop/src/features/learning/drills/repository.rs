@@ -162,12 +162,23 @@ pub(in crate::features::learning) async fn oldest_ready_in(
         .transpose()
 }
 
-/// The oldest ready drill on a passage of the course `program_id`.
+/// The oldest ready drill on a passage of the course `program_id` that was built for no topic.
 pub(in crate::features::learning) async fn oldest_ready_of_course_in(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='passage' AND program_id=? AND status='ready' ORDER BY created_at,rowid LIMIT 1"))
+    oldest_ready_of_course_topic_in(connection, program_id, None).await
+}
+
+/// The oldest ready drill on a passage of the course `program_id` that was built for `topic`, as typed in any case
+/// and with any space around it, or for no topic when there is none.
+pub(in crate::features::learning) async fn oldest_ready_of_course_topic_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    topic: Option<&str>,
+) -> Result<Option<StoredDrill>> {
+    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='passage' AND program_id=?2 AND status='ready' AND ((?1 IS NULL AND json_extract(spec_json,'$.domain') IS NULL) OR lower(trim(json_extract(spec_json,'$.domain')))=lower(trim(?1))) ORDER BY created_at,rowid LIMIT 1"))
+        .bind(topic)
         .bind(program_id)
         .fetch_optional(connection)
         .await

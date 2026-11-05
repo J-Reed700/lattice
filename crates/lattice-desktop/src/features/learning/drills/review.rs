@@ -66,7 +66,7 @@ pub async fn start(
     };
     spec.validate()?;
     let shelf = Shelf::of(&spec)?;
-    if let Some(begun) = attempts::start_on(pool, shelf, mode).await? {
+    if let Some(begun) = attempts::start_on(pool, shelf, spec.domain.as_deref(), mode).await? {
         return Ok(Started {
             dto: StartedCodeReviewDto::Started {
                 attempt_id: begun.attempt.id.clone(),

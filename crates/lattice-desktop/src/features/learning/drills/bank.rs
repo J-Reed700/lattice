@@ -2,7 +2,7 @@
 //! Taking the ready drill queues the build of the next, so the one ahead is built on the newest schedule.
 
 use super::build::STEPS;
-use super::jobs::DRILL_BUILD;
+use super::jobs::{spec_of, DRILL_BUILD};
 use super::repository::{self, DrillStatus, StoredDrill};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, hash, now};
@@ -146,6 +146,15 @@ pub async fn queue_build_in(
     Ok(admitted.id)
 }
 
+/// Whether two topics, or the lack of one, are the same: case and the space around them do not matter.
+fn same_topic(left: Option<&str>, right: Option<&str>) -> bool {
+    match (left, right) {
+        (None, None) => true,
+        (Some(left), Some(right)) => left.trim().to_lowercase() == right.trim().to_lowercase(),
+        _ => false,
+    }
+}
+
 /// The id of the build of `spec`'s shelf that is under way: the oldest pending or running one, or, when there is
 /// none, a new one queued for `spec`. A learner who finds the bank empty is told of the build already queued rather
 /// than getting another each time they ask. The caller tells the job runtime once the job is committed.
@@ -157,7 +166,11 @@ pub async fn ensure_build(pool: &SqlitePool, spec: &DrillSpec) -> Result<String>
         .await?
         .into_iter()
         .rev()
-        .find(|job| matches!(job.status, JobStatus::Pending | JobStatus::Running));
+        .find(|job| {
+            matches!(job.status, JobStatus::Pending | JobStatus::Running)
+                && spec_of(job)
+                    .is_ok_and(|found| same_topic(found.domain.as_deref(), spec.domain.as_deref()))
+        });
     let id = match under_way {
         Some(job) => job.id,
         None => {
@@ -200,10 +213,20 @@ pub(in crate::features::learning) async fn take_in(
     connection: &mut SqliteConnection,
     shelf: Shelf<'_>,
 ) -> Result<Option<Taken>> {
+    take_topic_in(connection, shelf, None).await
+}
+
+/// [`take_in`] for a drill on a passage built for `topic`, or for no topic when there is none: a drill built for
+/// another topic stays on the shelf. A shelf of code has no topics.
+pub(in crate::features::learning) async fn take_topic_in(
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
+    topic: Option<&str>,
+) -> Result<Option<Taken>> {
     let ready = match shelf {
         Shelf::Language(language) => repository::oldest_ready_in(connection, language).await?,
         Shelf::Course(program_id) => {
-            repository::oldest_ready_of_course_in(connection, program_id).await?
+            repository::oldest_ready_of_course_topic_in(connection, program_id, topic).await?
         }
     };
     let Some(mut drill) = ready else {
