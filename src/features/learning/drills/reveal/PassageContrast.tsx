@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef } from 'react';
 import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore';
 import { sentencesOf } from '@/features/learning/drills/passageText';
 import type { ContrastFocus } from '@/features/learning/drills/reveal/CodeContrast';
+import { plainText } from '@/features/learning/drills/reveal/plainText';
 import { cleanLinesOf, type RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
 import { eyebrow, sectionHeading } from '@/features/learning/drills/reveal/revealStyle';
 import { quotePieces } from '@/features/learning/drills/reveal/sourceQuotes';
@@ -80,8 +81,9 @@ export function PassageContrast({ reviewed, clean, ranked, cleanFiles, source, f
     const range = cleanLinesOf(entry.issue, cleanFiles);
     return range ? [range] : [];
   });
-  const quotes = ranked.flatMap((entry) => (entry.issue.sourceQuote ? [entry.issue.sourceQuote] : []));
-  const pieces = source ? quotePieces(source.text, quotes, focus?.quote ?? null) : [];
+  const quotes = ranked.flatMap((entry) => (entry.issue.sourceQuote ? [plainText(entry.issue.sourceQuote)] : []));
+  const text = source ? plainText(source.text) : '';
+  const pieces = source ? quotePieces(text, quotes, focus?.quote ? plainText(focus.quote) : null) : [];
   return (
     <section aria-labelledby={headingId} className="space-y-3">
       <div>
@@ -116,7 +118,7 @@ export function PassageContrast({ reviewed, clean, ranked, cleanFiles, source, f
           </div>
           <p className="max-h-[28rem] overflow-auto whitespace-pre-wrap px-5 py-4 text-[15px] leading-8 text-text-primary">
             {pieces.length === 0
-              ? source.text
+              ? text
               : pieces.map((piece, index) => (piece.quoted
                 ? <mark key={index} className={`rounded px-0.5 text-text-primary ${piece.focused ? 'bg-accent-muted ring-2 ring-accent' : 'bg-warning-muted'}`}>{piece.text}</mark>
                 : <span key={index}>{piece.text}</span>))}

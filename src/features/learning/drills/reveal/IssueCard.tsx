@@ -5,6 +5,7 @@ import { Check, CircleDot, FileCode, X, type LucideIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import type { ReviewKind } from '@/features/learning/drills/drillOptions';
 import { FixDiff } from '@/features/learning/drills/reveal/FixDiff';
+import { plainText } from '@/features/learning/drills/reveal/plainText';
 import { ISSUE_OUTCOME, lineLabel } from '@/features/learning/drills/reveal/revealCopy';
 import type { RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
 import { eyebrow, jumpButton, panel, sectionHeading } from '@/features/learning/drills/reveal/revealStyle';
@@ -84,7 +85,7 @@ export function IssueCard({ entry, credited, onShow, material = 'code' }: {
       {material === 'passage' && issue.sourceQuote && (
         <div className="mt-4">
           <h4 className={eyebrow}>What the source says</h4>
-          <blockquote className="mt-1 border-l-2 border-warning-fg/50 pl-3 text-sm leading-6 text-text-primary">{issue.sourceQuote}</blockquote>
+          <blockquote className="mt-1 border-l-2 border-warning-fg/50 pl-3 text-sm leading-6 text-text-primary">{plainText(issue.sourceQuote)}</blockquote>
         </div>
       )}
       <div className="mt-4">
