@@ -90,6 +90,27 @@ describe('PassagePane', () => {
     }
   });
 
+  it('makes each sentence an inline span with the role of a button, which a browser lays out as text', () => {
+    render(<Held />);
+    for (const line of [1, 2, 3, 4]) expect(sentence(line).tagName).toBe('SPAN');
+  });
+
+  it('picks a sentence with Enter or Space, extends with shift, and keeps Space from scrolling the page', () => {
+    const onSelect = vi.fn();
+    render(<Held onSelect={onSelect} />);
+    fireEvent.keyDown(sentence(2), { key: 'Enter' });
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 2, endLine: 2 });
+    fireEvent.keyDown(sentence(4), { key: 'Enter', shiftKey: true });
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 2, endLine: 4 });
+    fireEvent.keyDown(sentence(1), { key: 'Enter' });
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 1, endLine: 1 });
+    const notPrevented = fireEvent.keyDown(sentence(3), { key: ' ' });
+    expect(notPrevented).toBe(false);
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 3, endLine: 3 });
+    fireEvent.keyDown(sentence(4), { key: ' ', shiftKey: true });
+    expect(onSelect).toHaveBeenLastCalledWith({ startLine: 3, endLine: 4 });
+  });
+
   it('reports the line of the sentence clicked, and clears it when it is clicked again', async () => {
     const onSelect = vi.fn();
     render(<Held onSelect={onSelect} />);
