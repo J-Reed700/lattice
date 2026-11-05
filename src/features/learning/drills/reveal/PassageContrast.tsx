@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef } from 'react';
 
 import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore';
-import { paragraphsOf } from '@/features/learning/drills/passageText';
+import { sentencesOf } from '@/features/learning/drills/passageText';
 import type { ContrastFocus } from '@/features/learning/drills/reveal/CodeContrast';
 import { cleanLinesOf, type RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
 import { eyebrow, sectionHeading } from '@/features/learning/drills/reveal/revealStyle';
@@ -25,7 +25,7 @@ function Explanation({ title, text, marked, focused, nonce, tone, word }: {
 }) {
   const titleId = useId();
   const root = useRef<HTMLDivElement>(null);
-  const paragraphs = useMemo(() => paragraphsOf(text), [text]);
+  const all = useMemo(() => sentencesOf(text), [text]);
   useEffect(() => {
     if (nonce === null || !focused) return;
     root.current?.querySelector(`[data-line="${focused.startLine}"]`)?.scrollIntoView?.({ block: 'nearest' });
@@ -36,10 +36,10 @@ function Explanation({ title, text, marked, focused, nonce, tone, word }: {
         <h3 id={titleId} className={eyebrow}>{title}</h3>
       </div>
       <div ref={root} className="max-h-[34rem] space-y-4 overflow-auto px-5 py-4 text-[15px] leading-8 text-text-primary">
-        {paragraphs.length === 0 && <p className="text-sm text-text-muted">This version has no explanation.</p>}
-        {paragraphs.map((paragraph) => (
-          <p key={paragraph[0].line}>
-            {paragraph.map((sentence) => {
+        {all.length === 0 && <p className="text-sm text-text-muted">This version has no explanation.</p>}
+        {all.length > 0 && (
+          <p>
+            {all.map((sentence) => {
               const isMarked = marked.some((range) => within(range, sentence.line));
               return (
                 <span key={sentence.line} data-line={sentence.line}>
@@ -54,7 +54,7 @@ function Explanation({ title, text, marked, focused, nonce, tone, word }: {
               );
             })}
           </p>
-        ))}
+        )}
       </div>
     </div>
   );

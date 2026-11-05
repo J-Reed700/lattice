@@ -4,13 +4,13 @@ import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore
 import type { CodeReviewDrillDto } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 
-import { paragraphsOf, pickSentence } from './passageText';
+import { pickSentence, sentencesOf } from './passageText';
 
 const within = (range: ExplorerLineRange | null, line: number) =>
   range !== null && line >= range.startLine && line <= range.endLine;
 
 /**
- * The explanation to review, as prose: its sentences run on in paragraphs and each can be picked, alone or, with
+ * The explanation to review, as one paragraph of prose: each sentence can be picked, alone or, with
  * shift, as a run from the first one picked. Arrow keys move between sentences and, with shift, extend the run.
  * While the learner writes a fix, an editable copy of the explanation, one sentence to a line.
  */
@@ -29,8 +29,8 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
 }) {
   const file = drill.files[0];
   const text = file?.text ?? '';
-  const paragraphs = useMemo(() => paragraphsOf(text), [text]);
-  const lines = useMemo(() => paragraphs.flat().map((sentence) => sentence.line), [paragraphs]);
+  const all = useMemo(() => sentencesOf(text), [text]);
+  const lines = useMemo(() => all.map((sentence) => sentence.line), [all]);
   const [current, setCurrent] = useState<number | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const reached = current !== null && lines.includes(current) ? current : (lines[0] ?? null);
@@ -80,9 +80,9 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
             aria-label="The explanation, sentence by sentence"
             className="mx-auto max-w-prose space-y-5 px-6 py-6 text-[15px] leading-8 text-text-primary"
           >
-            {paragraphs.map((paragraph) => (
-              <p key={paragraph[0].line}>
-                {paragraph.map((sentence) => {
+            {all.length > 0 && (
+              <p>
+                {all.map((sentence) => {
                   const picked = within(selection, sentence.line);
                   return (
                     <span key={sentence.line}>
@@ -116,7 +116,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
                   );
                 })}
               </p>
-            ))}
+            )}
           </div>
         )}
       </div>

@@ -128,33 +128,19 @@ pub(super) fn sentences_needed(targets: &[&Pattern]) -> usize {
     apart.max(if contradicts { 2 } else { 1 })
 }
 
-/// An explanation's text: one sentence to a line, a blank line between paragraphs, the last line ended. Empty
-/// paragraphs are left out.
-pub(super) fn explanation_text(paragraphs: &[Vec<String>]) -> String {
-    let mut text = paragraphs
-        .iter()
-        .filter(|paragraph| !paragraph.is_empty())
-        .map(|paragraph| paragraph.join("\n"))
-        .collect::<Vec<_>>()
-        .join("\n\n");
+/// An explanation's text: one sentence to a line, no empty line, the last line ended, so that the sentences are
+/// numbered 1 to n by the line each is on.
+pub(super) fn explanation_text(sentences: &[String]) -> String {
+    let mut text = sentences.join("\n");
     text.push('\n');
     text
 }
 
-/// The paragraphs of an explanation's text, each as its sentence lines.
-pub(super) fn paragraphs_of(text: &str) -> Vec<Vec<String>> {
-    let mut paragraphs: Vec<Vec<String>> = vec![Vec::new()];
-    for line in text.lines().map(str::trim) {
-        if line.is_empty() {
-            if paragraphs.last().is_some_and(|last| !last.is_empty()) {
-                paragraphs.push(Vec::new());
-            }
-            continue;
-        }
-        if let Some(last) = paragraphs.last_mut() {
-            last.push(line.to_owned());
-        }
-    }
-    paragraphs.retain(|paragraph| !paragraph.is_empty());
-    paragraphs
+/// The sentences of an explanation's text, one for each line that says something.
+pub(super) fn sentence_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
 }

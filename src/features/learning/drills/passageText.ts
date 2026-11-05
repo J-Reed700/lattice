@@ -6,21 +6,13 @@ export interface Sentence {
   text: string;
 }
 
-/** The paragraphs of an explanation, each as its sentences. A blank line ends a paragraph and still counts as a line. */
-export function paragraphsOf(text: string): Sentence[][] {
-  const paragraphs: Sentence[][] = [];
-  let current: Sentence[] = [];
-  text.split('\n').forEach((raw, index) => {
-    const sentence = raw.trim();
-    if (sentence === '') {
-      if (current.length > 0) paragraphs.push(current);
-      current = [];
-      return;
-    }
-    current.push({ line: index + 1, text: sentence });
-  });
-  if (current.length > 0) paragraphs.push(current);
-  return paragraphs;
+/** The sentences of an explanation, one to a line, each with the number of its line. */
+export function sentencesOf(text: string): Sentence[] {
+  return text
+    .split('
+')
+    .map((raw, index) => ({ line: index + 1, text: raw.trim() }))
+    .filter((sentence) => sentence.text !== '');
 }
 
 /**

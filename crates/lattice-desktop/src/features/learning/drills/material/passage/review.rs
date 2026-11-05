@@ -4,7 +4,7 @@
 //! an explanation every sentence of which the source supports, as a clean suite is for code.
 
 use super::{
-    explanation_text, paragraphs_of, sentences_needed, PassageMaterial, SourceFinding, SourceSays,
+    explanation_text, sentence_lines, sentences_needed, PassageMaterial, SourceFinding, SourceSays,
 };
 use crate::features::learning::drills::budget;
 use crate::features::learning::drills::build::ask::{ask_request, refuse, text_schema};
@@ -60,39 +60,33 @@ impl PassageMaterial<'_> {
         })?;
         let mut trail = Trail::default();
         let mut repairs: Vec<Repair> = Vec::new();
-        let mut kept: Vec<Vec<String>> = Vec::new();
-        let mut number = 0;
-        for paragraph in paragraphs_of(&file.text) {
-            let mut standing = Vec::with_capacity(paragraph.len());
-            for sentence in paragraph {
-                number += 1;
-                let found = self.check.check(&sentence, &source.text).await?;
-                trail.call("source check", self.check.model_name());
-                if found.surely(SourceSays::Supported) {
-                    standing.push(sentence);
-                    continue;
-                }
-                let rewritten =
-                    match rewrite(ctx.llm, source, &sentence, &found, &mut trail).await? {
-                        Some(rewritten) => {
-                            let again = self.check.check(&rewritten, &source.text).await?;
-                            trail.call("source check (rewritten)", self.check.model_name());
-                            again.surely(SourceSays::Supported).then_some(rewritten)
-                        }
-                        None => None,
-                    };
-                repairs.push(repair(
-                    &file.path,
-                    number,
-                    &sentence,
-                    &found,
-                    rewritten.as_deref(),
-                ));
-                standing.extend(rewritten);
+        let mut kept: Vec<String> = Vec::new();
+        for (index, sentence) in sentence_lines(&file.text).into_iter().enumerate() {
+            let number = index + 1;
+            let found = self.check.check(&sentence, &source.text).await?;
+            trail.call("source check", self.check.model_name());
+            if found.surely(SourceSays::Supported) {
+                kept.push(sentence);
+                continue;
             }
-            kept.push(standing);
+            let rewritten = match rewrite(ctx.llm, source, &sentence, &found, &mut trail).await? {
+                Some(rewritten) => {
+                    let again = self.check.check(&rewritten, &source.text).await?;
+                    trail.call("source check (rewritten)", self.check.model_name());
+                    again.surely(SourceSays::Supported).then_some(rewritten)
+                }
+                None => None,
+            };
+            repairs.push(repair(
+                &file.path,
+                number,
+                &sentence,
+                &found,
+                rewritten.as_deref(),
+            ));
+            kept.extend(rewritten);
         }
-        let count: usize = kept.iter().map(Vec::len).sum();
+        let count = kept.len();
         if count < needed {
             return Err(AppError::InvalidData(format!(
                 "Only {count} sentences of the explanation are supported by the source passage, and a drill of {} patterns needs at least {needed}.",

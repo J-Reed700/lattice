@@ -95,8 +95,8 @@ fn schema() -> Value {
     })
 }
 
-/// Reads the answer: each paragraph is cut into its sentences, one to a line. An explanation with fewer sentences
-/// than the patterns need is refused.
+/// Reads the answer: each paragraph is cut into its sentences, and all of them are written one to a line, with no
+/// line between paragraphs. An explanation with fewer sentences than the patterns need is refused.
 fn read(raw: &str, needed: usize, lines: u32) -> Result<Answer> {
     let written: Written = parse_json(raw)?;
     if written.title.trim().is_empty() {
@@ -104,18 +104,18 @@ fn read(raw: &str, needed: usize, lines: u32) -> Result<Answer> {
             "The title is empty. Give the note a title that names what it explains.",
         ));
     }
-    let paragraphs: Vec<Vec<String>> = written
+    let all: Vec<String> = written
         .paragraphs
         .iter()
-        .map(|paragraph| {
+        .flat_map(|paragraph| {
             sentences(paragraph)
                 .into_iter()
                 .filter_map(|(start, end)| paragraph.get(start..end))
-                .map(str::to_owned)
-                .collect()
+                .map(|sentence| sentence.trim().to_owned())
+                .filter(|sentence| !sentence.is_empty())
         })
         .collect();
-    let count: usize = paragraphs.iter().map(Vec::len).sum();
+    let count = all.len();
     if count < needed {
         return Err(refuse(format!(
             "The explanation needs at least {needed} sentences, and it has {count}. Write about {lines} sentences."
@@ -123,6 +123,6 @@ fn read(raw: &str, needed: usize, lines: u32) -> Result<Answer> {
     }
     Ok(Answer {
         title: written.title.trim().to_owned(),
-        text: explanation_text(&paragraphs),
+        text: explanation_text(&all),
     })
 }
