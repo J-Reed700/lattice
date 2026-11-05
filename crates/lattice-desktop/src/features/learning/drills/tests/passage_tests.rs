@@ -131,7 +131,7 @@ fn clean_review() -> CleanReview {
 }
 
 /// Puts a ready drill on `source` of the course `program_id` into the bank.
-async fn drilled(
+pub(super) async fn drilled(
     pool: &SqlitePool,
     id: &str,
     program_id: &str,

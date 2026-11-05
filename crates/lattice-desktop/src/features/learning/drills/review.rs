@@ -3,13 +3,15 @@
 //! returned for the caller to tell the job runtime of once they are committed.
 
 use super::attempts::{self, AttemptMode, Submission};
-use super::bank;
+use super::bank::{self, Shelf};
 use super::dto::{
-    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, StartedCodeReviewDto,
+    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, ReviewDrillCourseDto,
+    ReviewMaterialDto, StartedCodeReviewDto,
 };
 use super::reveal::{learner_drill, result_of};
 use super::spec::DrillSpec;
-use crate::features::learning::persistence::now;
+use crate::features::learning::persistence::{db, now};
+use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use lattice_core::domain::learning::drills::{targets, Material};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
@@ -28,31 +30,43 @@ pub struct Acted {
     pub job: Option<String>,
 }
 
-/// Starts a drill of `language`: opens an attempt on the oldest ready one, which queues the build of the next. When none
-/// is ready, a build is queued and the learner is told it is under way; `lines` and `patterns_count` size that build,
-/// whose patterns are the ones the schedule offers.
+/// Starts a drill on `asked`: opens an attempt on the oldest ready one of its shelf, which queues the build of the next.
+/// When none is ready, a build is queued and the learner is told it is under way; `lines` (lines of code, or
+/// sentences) and `patterns_count` size that build, whose patterns are the ones the schedule offers.
 pub async fn start(
     pool: &SqlitePool,
-    language: &str,
+    asked: &ReviewMaterialDto,
     mode: AttemptMode,
     lines: u32,
     patterns_count: u32,
 ) -> Result<Started> {
     let count = usize::try_from(patterns_count).unwrap_or(usize::MAX);
-    let material = Material::code(language);
+    let (material, domain, program_id) = match asked {
+        ReviewMaterialDto::Code { language } => (Material::code(language), None, None),
+        ReviewMaterialDto::Passage { program_id, topic } => (
+            Material::Passage,
+            topic
+                .as_deref()
+                .map(str::trim)
+                .filter(|topic| !topic.is_empty())
+                .map(str::to_owned),
+            Some(program_id.clone()),
+        ),
+    };
     let patterns: Vec<String> = targets(&material, &[], now(), count)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();
     let spec = DrillSpec {
         material,
-        domain: None,
+        domain,
         lines,
         patterns,
-        program_id: None,
+        program_id,
     };
     spec.validate()?;
-    if let Some(begun) = attempts::start(pool, language, mode).await? {
+    let shelf = Shelf::of(&spec)?;
+    if let Some(begun) = attempts::start_on(pool, shelf, mode).await? {
         return Ok(Started {
             dto: StartedCodeReviewDto::Started {
                 attempt_id: begun.attempt.id.clone(),
@@ -70,6 +84,28 @@ pub async fn start(
         },
         jobs: vec![job],
     })
+}
+
+/// The courses a drill on a passage can draw on: those with at least one source that has text, in the order they were
+/// made.
+pub async fn courses(pool: &SqlitePool) -> Result<Vec<ReviewDrillCourseDto>> {
+    let programs: Vec<(String, String)> =
+        sqlx::query_as("SELECT id,title FROM learning_programs ORDER BY created_at,id")
+            .fetch_all(pool)
+            .await
+            .map_err(db)?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let mut courses = Vec::new();
+    for (program_id, title) in programs {
+        let sources = library.verification_sources(&program_id).await?;
+        if sources
+            .iter()
+            .any(|source| !source.excerpt.trim().is_empty())
+        {
+            courses.push(ReviewDrillCourseDto { program_id, title });
+        }
+    }
+    Ok(courses)
 }
 
 /// Hands in an open attempt: the learner's findings and, when they wrote one, their fix, with the time they spent as the

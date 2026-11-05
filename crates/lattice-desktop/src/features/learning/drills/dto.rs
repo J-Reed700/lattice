@@ -125,12 +125,49 @@ impl From<CodeReviewFindingDto> for Finding {
     }
 }
 
+/// What a learner asks to review: code in a language, or a passage from one of their courses.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ReviewMaterialDto {
+    Code {
+        language: String,
+    },
+    Passage {
+        #[serde(rename = "programId")]
+        program_id: String,
+        /// What the passage should be about; none: anything in the course's sources.
+        topic: Option<String>,
+    },
+}
+
+/// What a drill is made of, as the learner may see it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CodeReviewMaterialDto {
+    Code {
+        language: String,
+    },
+    /// An explanation of a passage; the passage itself is in the reveal only.
+    Passage {
+        #[serde(rename = "sourceTitle")]
+        source_title: String,
+    },
+}
+
+/// A course a drill on a passage can draw on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDrillCourseDto {
+    pub program_id: String,
+    pub title: String,
+}
+
 /// The drill as the learner may see it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CodeReviewDrillDto {
     pub title: String,
-    pub language: String,
+    pub material: CodeReviewMaterialDto,
     pub files: Vec<CodeReviewFileDto>,
 }
 
@@ -194,6 +231,18 @@ pub struct CodeReviewRevealDto {
     pub fix: Option<Vec<IssueFix>>,
     /// The code before any issue was planted, to read beside the drill's.
     pub clean_files: Vec<CodeReviewFileDto>,
+    /// The source passage an explanation was written from; none for code.
+    pub source: Option<RevealedSourceDto>,
+}
+
+/// The source passage of a drill on a passage, as the reveal shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealedSourceDto {
+    pub title: String,
+    pub text: String,
+    /// The version of the source the passage is the exact text of.
+    pub version_id: String,
 }
 
 /// What came of an issue of the key.
@@ -240,6 +289,8 @@ pub struct RevealedIssueDto {
     /// How to say it in an interview.
     pub explanation: String,
     pub fix: FixDiffDto,
+    /// The words of the source passage that settle the issue, when a source proved it.
+    pub source_quote: Option<String>,
     pub outcome: IssueResultKind,
     /// The position of the finding that earned the credit, when one did.
     pub finding: Option<usize>,

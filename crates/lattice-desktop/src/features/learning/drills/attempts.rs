@@ -138,9 +138,17 @@ pub struct Begun {
 /// Takes the oldest ready drill of `language` from the bank and opens an attempt on it, in one transaction. `None`
 /// when no drill of the language is ready.
 pub async fn start(pool: &SqlitePool, language: &str, mode: AttemptMode) -> Result<Option<Begun>> {
+    start_on(pool, bank::Shelf::Language(language), mode).await
+}
+
+/// [`start`] on the drills of `shelf`: a language's code, or the passages of a course.
+pub async fn start_on(
+    pool: &SqlitePool,
+    shelf: bank::Shelf<'_>,
+    mode: AttemptMode,
+) -> Result<Option<Begun>> {
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let Some(taken) = bank::take_in(&mut transaction, bank::Shelf::Language(language)).await?
-    else {
+    let Some(taken) = bank::take_in(&mut transaction, shelf).await? else {
         transaction.commit().await.map_err(db)?;
         return Ok(None);
     };
