@@ -128,7 +128,7 @@ export function reduce(state: DrillState, action: DrillAction): DrillState {
       return { ...state, building: { jobId: action.jobId, message: '', current: 0, total: 0, error: null } };
     case 'job': {
       const { building } = state;
-      if (state.stage !== 'starting' || !building || building.jobId !== action.job.id) return state;
+      if (state.stage !== 'starting' || building?.jobId !== action.job.id) return state;
       return {
         ...state,
         building: {

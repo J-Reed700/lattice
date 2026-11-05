@@ -946,7 +946,7 @@ describe('the interview countdown', () => {
   it('says when time is up and leaves the hand-in to the learner', async () => {
     api.codeReviewResult.mockResolvedValue(attempt({ mode: 'interview', startedAt: Date.now() - 11 * 60_000 }));
     show('/studio?drills=open&attempt=attempt-1');
-    expect(await screen.findByRole('status')).toHaveTextContent('Time is up');
+    expect((await screen.findByText(/Time is up/)).closest('[role="status"]')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Submit review' })).toBeEnabled();
     expect(api.submitCodeReview).not.toHaveBeenCalled();
   });

@@ -410,7 +410,7 @@ describe('DrillReveal, a graded review', () => {
       const scrollIntoView = vi.fn();
       Element.prototype.scrollIntoView = scrollIntoView;
       const original = window.matchMedia;
-      window.matchMedia = ((query: string) => ({ matches: query.includes('prefers-reduced-motion'), media: query })) as typeof window.matchMedia;
+      window.matchMedia = ((query: string) => ({ ...original(query), matches: query.includes('prefers-reduced-motion') })) as typeof window.matchMedia;
       try {
         setup();
         await user.click(
