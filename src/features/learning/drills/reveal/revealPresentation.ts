@@ -81,7 +81,7 @@ export function leadingLine(reveal: CodeReviewRevealDto): LeadingLine | null {
   }
   const half = tops.filter((issue) => issue.outcome === 'half_found');
   if (half.length > 0) {
-    return { led: false, text: `${lead} ${named(half)} ${was(half)} only half found (right lines, wrong reason).` };
+    return { led: false, text: `${lead} ${named(half)} ${was(half)} only half found: a comment pointed at it but gave no cause, or the wrong one.` };
   }
   return { led: false, text: `${lead} you missed ${named(tops)}.` };
 }
