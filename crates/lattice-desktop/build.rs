@@ -610,6 +610,7 @@ fn main() {
                     "submit_code_review",
                     "code_review_result",
                     "regrade_code_review",
+                    "code_review_languages",
                 ]),
             )
             .plugin(

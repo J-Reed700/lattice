@@ -454,6 +454,7 @@
     "learning:allow-submit-code-review",
     "learning:allow-code-review-result",
     "learning:allow-regrade-code-review",
+    "learning:allow-code-review-languages",
     "compare:allow-compare-documents",
     "corpus-shape:allow-cluster-vault-run",
     "corpus-shape:allow-list-clusters"

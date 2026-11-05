@@ -14,9 +14,10 @@ use crate::features::learning::drills::dto::{
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD, DRILL_GRADING};
 use crate::features::learning::drills::review;
 use crate::features::learning::persistence::db;
+use crate::features::learning::plugin::code_review_languages;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, PatternRating, Proof,
+    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, PatternRating, Proof, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -585,5 +586,29 @@ async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
         "the operator's test ran beside the fix of the literals, which the learner left"
     );
     assert_eq!(reveal["fix"][1]["gradedBeside"], json!([]));
+    Ok(())
+}
+
+#[test]
+fn the_languages_the_screen_offers_are_the_catalogues_in_its_order() {
+    assert_eq!(code_review_languages(), LANGUAGES);
+}
+
+/// The sizes of the screen's Short, Standard and Long: about this many lines, with this many patterns to plant.
+const SCREEN_SIZES: [(u32, u32); 3] = [(40, 3), (80, 4), (140, 5)];
+
+#[tokio::test]
+async fn every_language_the_screen_offers_starts_at_every_size_it_offers() -> Result<()> {
+    let pool = pool().await?;
+    for language in code_review_languages() {
+        for (lines, count) in SCREEN_SIZES {
+            let started =
+                review::start(&pool, &language, AttemptMode::Practice, lines, count).await?;
+            assert!(
+                matches!(started.dto, StartedCodeReviewDto::Building { .. }),
+                "{language} {lines} {count}: {started:?}"
+            );
+        }
+    }
     Ok(())
 }

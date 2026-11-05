@@ -4,6 +4,7 @@ use crate::features::learning::drills::dto::{
     CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, StartedCodeReviewDto,
 };
 use crate::features::learning::drills::review;
+use lattice_core::domain::learning::drills::LANGUAGES;
 
 // Code review drills (docs/design/2026-11-04-code-review-drills.md, section 1): what the review view calls.
 
@@ -79,4 +80,11 @@ pub async fn regrade_code_review(
         container.jobs().submitted(job).await;
     }
     Ok(acted.dto)
+}
+
+/// The languages a drill can be written in, in the catalogue's order.
+#[tauri::command]
+#[specta::specta]
+pub fn code_review_languages() -> Vec<String> {
+    LANGUAGES.iter().map(|id| (*id).to_owned()).collect()
 }

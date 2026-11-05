@@ -334,7 +334,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             start_code_review_drill,
             submit_code_review,
             code_review_result,
-            regrade_code_review
+            regrade_code_review,
+            code_review_languages
         ])
         .build()
 }
