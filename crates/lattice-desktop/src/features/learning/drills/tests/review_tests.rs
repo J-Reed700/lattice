@@ -55,6 +55,8 @@ fn secrets() -> Vec<(String, String)> {
     secrets
 }
 
+const GRADER: &str = "scripted-grading-model";
+
 /// What a DTO shows of the key: the texts it holds and the names of the fields it has.
 fn leaks(shown: &Value) -> Vec<String> {
     let json = serde_json::to_string(shown).expect("a DTO is JSON");
@@ -215,12 +217,12 @@ async fn an_attempt_not_yet_graded_shows_the_learner_nothing_of_the_key() -> Res
     assert_nothing_of_the_key(&serde_json::to_value(&acted.dto).expect("a DTO is JSON"));
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    attempts::record_ungraded_in(&mut connection, &attempt_id, Some(MODEL), "No answer.").await?;
+    attempts::record_ungraded_in(&mut connection, &attempt_id, Some(GRADER), "No answer.").await?;
     drop(connection);
     let ungraded = review::result(&pool, &attempt_id).await?;
     assert_eq!(ungraded.status, AttemptStatus::CouldntGrade);
     assert_eq!(ungraded.error.as_deref(), Some("No answer."));
-    assert_eq!(ungraded.grader_model.as_deref(), Some(MODEL));
+    assert_eq!(ungraded.grader_model.as_deref(), Some(GRADER));
     assert_eq!(ungraded.reveal, None);
     assert_nothing_of_the_key(&serde_json::to_value(&ungraded).expect("a DTO is JSON"));
     Ok(())
