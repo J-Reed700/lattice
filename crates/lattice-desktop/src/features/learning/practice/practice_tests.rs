@@ -364,3 +364,33 @@ fn the_grader_writes_its_grounds_before_it_scores() {
         ]))
     );
 }
+
+/// Every `maxLength`, and every `minLength` above one, in a model-facing
+/// schema, each as its JSON pointer and value.
+pub(crate) fn text_length_rules(schema: &serde_json::Value) -> Vec<String> {
+    fn walk(value: &serde_json::Value, at: &str, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, child) in fields {
+                    let here = format!("{at}/{key}");
+                    match (key.as_str(), child.as_u64()) {
+                        ("maxLength", Some(limit)) => found.push(format!("{here} = {limit}")),
+                        ("minLength", Some(limit)) if limit > 1 => {
+                            found.push(format!("{here} = {limit}"));
+                        }
+                        _ => walk(child, &here, found),
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    walk(child, &format!("{at}/{index}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", &mut found);
+    found
+}
