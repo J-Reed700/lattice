@@ -1473,7 +1473,10 @@ async fn a_parts_receipt_survives_a_change_in_the_course_ranking_and_the_page_is
 
         assert_eq!(parts.outcome, Outcome::Stands);
         assert!(parts.reused, "the citation's comparison was restored");
-        assert_eq!(page.finding.verdict, ClaimVerdict::Supported);
+        // The page leaves out the passage the citation shows, and nothing else
+        // on it states the claim.
+        assert_eq!(page.outcome, Outcome::Unproven);
+        assert_eq!(page.finding.verdict, ClaimVerdict::Unsupported);
         let checks = model.checks.lock().unwrap().clone();
         assert_eq!(checks.len(), 3, "the page alone is compared again");
         assert!(!read_marker(&checks[2]));
