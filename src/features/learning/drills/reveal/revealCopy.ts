@@ -90,7 +90,8 @@ export function momentOf(ms: number): { text: string; iso: string } | null {
   };
 }
 
-export function lineLabel(span: CodeReviewSpanDto): string {
+export function lineLabel(span: CodeReviewSpanDto, material: 'code' | 'passage' = 'code'): string {
+  if (material === 'passage') return span.start === span.end ? `Sentence ${span.start}` : `Sentences ${span.start}–${span.end}`;
   return span.start === span.end
     ? `${span.path} · line ${span.start}`
     : `${span.path} · lines ${span.start}–${span.end}`;
