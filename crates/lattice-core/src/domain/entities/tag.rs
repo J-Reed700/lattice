@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// ## Invariants
 ///
-/// - Tag name must be non-empty and <= 50 characters
+/// - Tag name must be non-empty
 /// - Tag name is unique (enforced by repository)
 /// - Color must be valid hex format (#RRGGBB)
 /// - Created timestamp is immutable

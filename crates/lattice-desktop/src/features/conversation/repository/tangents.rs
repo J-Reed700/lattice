@@ -13,9 +13,9 @@ impl ConversationRepository {
         request: CreateTangentRequestDto,
     ) -> Result<ConversationTangentDto> {
         let selected_text = request.selected_text.trim();
-        if selected_text.is_empty() || selected_text.chars().count() > 8_000 {
+        if selected_text.is_empty() {
             return Err(AppError::InvalidInput(
-                "Select between 1 and 8,000 characters for a tangent.".into(),
+                "Select some text for a tangent.".into(),
             ));
         }
         let title: String = selected_text

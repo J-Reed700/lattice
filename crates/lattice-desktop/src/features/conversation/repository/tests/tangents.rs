@@ -134,6 +134,28 @@ async fn tangent_anchor_deletion_retains_quote_and_nested_tangents_share_parent(
 }
 
 #[tokio::test]
+async fn a_tangent_can_start_from_a_passage_of_any_length() {
+    let pool = create_test_pool().await;
+    setup_schema(&pool).await;
+    let parent = seed_thread(&pool).await;
+    let repo = ConversationRepository::new(pool.clone());
+    let passage = "A long passage of the reply, quoted whole. ".repeat(300);
+    let passage = passage.trim().to_string();
+
+    let tangent = repo
+        .create_tangent(CreateTangentRequestDto {
+            selected_text: passage.clone(),
+            ..request(&parent, "m2")
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(tangent.selected_text, passage);
+    let messages = repo.get_messages(&tangent.conversation_id).await.unwrap();
+    assert!(messages[1].content.ends_with(&format!("> {passage}")));
+}
+
+#[tokio::test]
 async fn invalid_tangent_requests_cannot_create_orphan_conversations() {
     let pool = create_test_pool().await;
     setup_schema(&pool).await;
@@ -146,10 +168,6 @@ async fn invalid_tangent_requests_cannot_create_orphan_conversations() {
         request(&other.id.to_string(), "m2"),
         CreateTangentRequestDto {
             selected_text: "  ".into(),
-            ..request(&parent, "m2")
-        },
-        CreateTangentRequestDto {
-            selected_text: "🪴".repeat(8001),
             ..request(&parent, "m2")
         },
     ];

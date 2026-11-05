@@ -1,26 +1,18 @@
 //! # Metadata Value Object
 //!
-//! Validated metadata with size constraints to prevent database errors.
+//! Validated metadata JSON.
 
 use crate::shared::error::AppError;
 use serde::{Deserialize, Serialize};
 
-/// Maximum size for serialized metadata (64KB - some buffer)
-///
-/// TEXT columns in SQLite typically have a 64KB limit. We use 65,000 bytes
-/// (63.5KB) to leave room for encoding overhead and safety margin.
-const MAX_METADATA_SIZE_BYTES: usize = 65_000;
-
-/// Validated metadata that enforces size constraints
+/// Validated metadata JSON
 ///
 /// This value object ensures that metadata JSON:
-/// 1. Does not exceed database column size limits
-/// 2. Is valid JSON (can be deserialized)
-/// 3. Is immutable after validation
+/// 1. Is valid JSON (can be deserialized)
+/// 2. Is immutable after validation
 ///
 /// ## Invariants
 ///
-/// - Size ≤ 65,000 bytes (~64KB)
 /// - Valid JSON structure
 /// - Non-empty string
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +26,6 @@ impl ValidatedMetadata {
     /// # Errors
     ///
     /// Returns `AppError::InvalidInput` if:
-    /// - JSON exceeds size limit (65KB)
     /// - JSON is malformed (invalid syntax)
     /// - JSON is empty string
     pub fn new(json: String) -> Result<Self, AppError> {
@@ -42,15 +33,6 @@ impl ValidatedMetadata {
             return Err(AppError::InvalidInput(
                 "Metadata JSON cannot be empty".to_string(),
             ));
-        }
-
-        let size_bytes = json.len();
-        if size_bytes > MAX_METADATA_SIZE_BYTES {
-            return Err(AppError::InvalidInput(format!(
-                "Metadata too large: {} bytes (maximum: {} bytes, ~64KB). \
-                     Try reducing the number of sources or content length.",
-                size_bytes, MAX_METADATA_SIZE_BYTES
-            )));
         }
 
         serde_json::from_str::<serde_json::Value>(&json)
@@ -68,11 +50,6 @@ impl ValidatedMetadata {
     pub fn size_bytes(&self) -> usize {
         self.json.len()
     }
-
-    /// Get maximum allowed size in bytes
-    pub const fn max_size_bytes() -> usize {
-        MAX_METADATA_SIZE_BYTES
-    }
 }
 
 #[cfg(test)]
@@ -85,27 +62,17 @@ mod tests {
         let validated = ValidatedMetadata::new(json.clone()).unwrap();
 
         assert_eq!(validated.as_str(), json);
-        assert!(validated.size_bytes() < MAX_METADATA_SIZE_BYTES);
         assert!(validated.size_bytes() > 0);
     }
 
     #[test]
-    fn test_oversized_metadata() {
-        let large_json = format!(r#"{{"data": "{}"}}"#, "x".repeat(70_000));
-        let result = ValidatedMetadata::new(large_json);
+    fn metadata_of_any_size_is_valid() {
+        let large_json = format!(r#"{{"data": "{}"}}"#, "x".repeat(200_000));
 
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("too large"),
-            "Error should mention size: {}",
-            err_msg
-        );
-        assert!(
-            err_msg.contains("bytes"),
-            "Error should show byte count: {}",
-            err_msg
-        );
+        let validated = ValidatedMetadata::new(large_json.clone()).unwrap();
+
+        assert_eq!(validated.as_str(), large_json);
+        assert_eq!(validated.size_bytes(), large_json.len());
     }
 
     #[test]
@@ -137,24 +104,6 @@ mod tests {
     }
 
     #[test]
-    fn test_boundary_size() {
-        let boundary = format!(
-            r#"{{"data": "{}"}}"#,
-            "x".repeat(MAX_METADATA_SIZE_BYTES - 15)
-        );
-        let result = ValidatedMetadata::new(boundary);
-
-        match result {
-            Ok(metadata) => {
-                assert!(metadata.size_bytes() <= MAX_METADATA_SIZE_BYTES);
-            }
-            Err(_) => {
-                // Also acceptable if slightly over due to JSON structure
-            }
-        }
-    }
-
-    #[test]
     fn test_normal_sized_metadata() {
         // Typical case: 10 sources with reasonable content
         let sources = (0..10)
@@ -176,12 +125,6 @@ mod tests {
             metadata.size_bytes() < 10_000,
             "Normal metadata should be small"
         );
-    }
-
-    #[test]
-    fn test_max_size_constant() {
-        assert_eq!(ValidatedMetadata::max_size_bytes(), MAX_METADATA_SIZE_BYTES);
-        assert_eq!(ValidatedMetadata::max_size_bytes(), 65_000);
     }
 
     #[test]

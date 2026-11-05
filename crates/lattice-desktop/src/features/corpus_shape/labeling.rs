@@ -57,9 +57,6 @@ pub fn representatives_that_fit(llm: &dyn LLMPort, members: usize) -> usize {
     fits.min(members.max(1))
 }
 
-/// Upper bound on generated label length — LLMs love to run long.
-pub const MAX_LABEL_CHARS: usize = 80;
-
 /// A representative document for a cluster, as used by the labeling prompt.
 #[derive(Debug, Clone)]
 pub struct RepresentativeDoc {
@@ -100,8 +97,7 @@ pub async fn label_cluster(
     let system = build_system_prompt();
 
     // `LLMPort` has no per-call generation overrides — the system prompt does
-    // the work instead ("JSON only, no preamble"), the parser is tolerant, and
-    // `MAX_LABEL_CHARS` truncates whatever runs long.
+    // the work instead ("JSON only, no preamble") and the parser is tolerant.
     // Ollama-style models want the "system" bit prepended to context, and
     // `generate` takes a plain prompt plus a context array, so the system
     // prompt goes in as context.
@@ -222,27 +218,7 @@ fn sanitize(
         return fallback_label(member_count, hint);
     }
 
-    // Cap overrun.
-    label.label = if trimmed.chars().count() > MAX_LABEL_CHARS {
-        let boundary = trimmed
-            .char_indices()
-            .take(MAX_LABEL_CHARS)
-            .last()
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        let safe = trimmed
-            .get(..boundary)
-            .unwrap_or(&trimmed)
-            .trim_end()
-            .to_string();
-        if safe.is_empty() {
-            trimmed
-        } else {
-            safe
-        }
-    } else {
-        trimmed
-    };
+    label.label = trimmed;
 
     if let Some(desc) = label.description.as_mut() {
         *desc = desc.trim().to_string();
@@ -339,21 +315,22 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_caps_very_long_labels() {
+    fn a_long_label_from_the_model_is_kept_whole() {
         let reps = vec![RepresentativeDoc {
             title: "t".to_string(),
             content_preview: String::new(),
         }];
-        let long = "a".repeat(500);
+        let long = "the same long subject ".repeat(20);
+        let long = long.trim().to_string();
         let label = sanitize(
             ClusterLabel {
-                label: long,
+                label: long.clone(),
                 description: None,
             },
             &reps,
             1,
         );
-        assert!(label.label.chars().count() <= MAX_LABEL_CHARS);
+        assert_eq!(label.label, long);
     }
 
     /// The preview is sized by the port from the call's room, so the prompt

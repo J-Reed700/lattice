@@ -3,8 +3,7 @@ use super::{
     EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem, MemoryKind, MemoryPatch, MemoryState,
     MemoryValidationError, ProposedEvidence, SourceMessage, SourceRole, ValidatedAddition,
     ValidatedPatch, ValidatedTransition, ValidatedTransitionTarget, MAX_EVIDENCE_PER_ITEM,
-    MAX_LABEL_CHARS, MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
-    MEMORY_SCHEMA_VERSION,
+    MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES, MEMORY_SCHEMA_VERSION,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -164,11 +163,6 @@ pub fn validate_patch(
     for proposed in &patch.add {
         if !seen_candidates.insert(proposed.candidate_id.as_str()) {
             return Err(MemoryValidationError::DuplicateCandidate(
-                proposed.candidate_id.clone(),
-            ));
-        }
-        if proposed.label.chars().count() > MAX_LABEL_CHARS {
-            return Err(MemoryValidationError::LabelTooLong(
                 proposed.candidate_id.clone(),
             ));
         }

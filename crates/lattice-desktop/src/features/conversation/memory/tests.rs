@@ -1114,6 +1114,49 @@ fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
     }
 }
 
+/// Every `maxLength`, and every `minLength` above 1, anywhere in `schema`,
+/// with its JSON pointer.
+fn text_length_bounds(schema: &serde_json::Value) -> Vec<String> {
+    fn walk(value: &serde_json::Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    let at = format!("{path}/{key}");
+                    let past_one = child.as_u64().is_some_and(|bound| bound > 1);
+                    if key.as_str() == "maxLength" || (key.as_str() == "minLength" && past_one) {
+                        found.push(at.clone());
+                    }
+                    walk(child, &at, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    walk(child, &format!("{path}/{index}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", &mut found);
+    found
+}
+
+/// Claude's structured outputs accept a `maxLength` and do not enforce it, and
+/// a llama.cpp grammar does, so a bound on what the model writes is a different
+/// rule for each provider. The labels and reasons are the model's to write at
+/// the length they need.
+#[test]
+fn no_memory_schema_bounds_the_length_of_what_the_model_writes() {
+    for (name, schema) in [
+        ("patch", super::prompts::patch_schema()),
+        ("verdict", super::prompts::verdict_schema()),
+    ] {
+        let bounds = text_length_bounds(&schema);
+        assert!(bounds.is_empty(), "{name} schema bounds text at {bounds:?}");
+    }
+}
+
 fn object_keys(value: Option<&serde_json::Value>) -> Vec<String> {
     value
         .and_then(serde_json::Value::as_object)

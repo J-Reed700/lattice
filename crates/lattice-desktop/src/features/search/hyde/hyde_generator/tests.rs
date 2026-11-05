@@ -312,6 +312,22 @@ async fn test_followup_generates_hyde_hybrid() {
 }
 
 #[tokio::test]
+async fn a_long_hypothetical_passage_is_kept_whole() {
+    let passage = (0..150)
+        .map(|n| format!("point{n}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let generator = HyDEGenerator::new(Arc::new(MockLLM::new(passage.clone())));
+
+    let result = generator
+        .generate(QueryType::Followup, "what are the benefits?")
+        .await
+        .unwrap();
+
+    assert_eq!(result.hyde_text.as_deref(), Some(passage.as_str()));
+}
+
+#[tokio::test]
 async fn test_empty_query_returns_error() {
     let mock_llm = Arc::new(MockLLM::new("response"));
     let generator = HyDEGenerator::new(mock_llm);

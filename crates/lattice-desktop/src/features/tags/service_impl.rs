@@ -78,10 +78,8 @@ impl TagServiceImpl {
 #[async_trait]
 impl TagServiceTrait for TagServiceImpl {
     async fn create_tag(&self, name: &str, color: Option<&str>) -> Result<Tag> {
-        if name.is_empty() || name.len() > 100 {
-            return Err(AppError::InvalidInput(
-                "Tag name must be 1-100 characters".into(),
-            ));
+        if name.is_empty() {
+            return Err(AppError::InvalidInput("A tag needs a name".into()));
         }
 
         let normalized_name = name.trim().to_lowercase();
@@ -100,10 +98,8 @@ impl TagServiceTrait for TagServiceImpl {
         color: Option<&str>,
     ) -> Result<Tag> {
         if let Some(n) = name {
-            if n.is_empty() || n.len() > 100 {
-                return Err(AppError::InvalidInput(
-                    "Tag name must be 1-100 characters".into(),
-                ));
+            if n.is_empty() {
+                return Err(AppError::InvalidInput("A tag needs a name".into()));
             }
         }
 
@@ -183,7 +179,7 @@ impl TagServiceTrait for TagServiceImpl {
         let normalized_tags: Vec<String> = tag_names
             .into_iter()
             .map(|t| t.trim().to_lowercase())
-            .filter(|t| !t.is_empty() && t.len() <= 100)
+            .filter(|t| !t.is_empty())
             .collect();
 
         // Merge with existing tags
@@ -268,7 +264,7 @@ impl TagServiceTrait for TagServiceImpl {
 
         let tags = TagGenerator::parse_tags(&response, max_tags)
             .into_iter()
-            .filter(|tag| !tag.is_empty() && tag.len() <= 100)
+            .filter(|tag| !tag.is_empty())
             .collect();
 
         Ok(tags)
@@ -421,6 +417,78 @@ mod tests {
                 && user == "user"
                 && message == "Document: Ownership"
         ));
+    }
+
+    struct NoModel;
+
+    impl LoadedChatModelPort for NoModel {
+        fn current_model(&self) -> Option<Arc<dyn lattice_core::application::ports::LLMPort>> {
+            None
+        }
+    }
+
+    async fn service_with_tags() -> TagServiceImpl {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                color TEXT NOT NULL DEFAULT '#6366f1',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+             CREATE TABLE document_tags (document_id TEXT NOT NULL, tag_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (document_id, tag_id));",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        TagServiceImpl::new(pool, Arc::new(NoModel))
+    }
+
+    fn long_tag(suffix: &str) -> String {
+        format!("{}-{suffix}", ["a-tag-named-at-length"; 12].join("-"))
+    }
+
+    #[tokio::test]
+    async fn a_tag_named_at_length_is_created() {
+        let service = service_with_tags().await;
+        let name = long_tag("created");
+
+        let created = service.create_tag(&name, None).await.unwrap();
+
+        assert_eq!(created.name().as_str(), name);
+    }
+
+    #[tokio::test]
+    async fn a_tag_is_renamed_to_a_name_of_any_length() {
+        let service = service_with_tags().await;
+        let created = service.create_tag("short", None).await.unwrap();
+        let name = long_tag("renamed");
+
+        let updated = service
+            .update_tag(created.id().as_str(), Some(name.as_str()), None)
+            .await
+            .unwrap();
+
+        assert_eq!(updated.name().as_str(), name);
+    }
+
+    #[tokio::test]
+    async fn a_generated_tag_of_any_length_is_applied_not_dropped() {
+        let service = service_with_tags().await;
+        let name = long_tag("applied");
+
+        let applied = service
+            .apply_tags("doc-1", vec![name.clone(), "short".to_string()])
+            .await
+            .unwrap();
+
+        let names: Vec<&str> = applied.iter().map(|tag| tag.name().as_str()).collect();
+        assert!(names.contains(&name.as_str()), "{names:?}");
+        assert!(names.contains(&"short"), "{names:?}");
     }
 
     #[test]
