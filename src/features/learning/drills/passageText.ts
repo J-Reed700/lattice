@@ -9,8 +9,7 @@ export interface Sentence {
 /** The sentences of an explanation, one to a line, each with the number of its line. */
 export function sentencesOf(text: string): Sentence[] {
   return text
-    .split('
-')
+    .split('\n')
     .map((raw, index) => ({ line: index + 1, text: raw.trim() }))
     .filter((sentence) => sentence.text !== '');
 }

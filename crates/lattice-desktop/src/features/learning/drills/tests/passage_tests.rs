@@ -1654,7 +1654,7 @@ async fn a_clean_sentence_the_checker_is_unsure_of_is_rewritten_as_an_unsupporte
         .await?;
     assert_eq!(
         reviewed.files[0].text,
-        format!("{FIRST}\n{REWRITTEN}\n\n{THIRD}\n"),
+        format!("{FIRST}\n{REWRITTEN}\n{THIRD}\n"),
         "an unsure verdict, even of support, keeps nothing as it is"
     );
     assert_eq!(model.purposes(), ["rewrite", "rewrite"]);

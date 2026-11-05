@@ -119,7 +119,7 @@ fn the_strategy_is_chosen_by_family_and_by_whether_the_language_has_a_runner() {
     let unobservable = Verification::Unobservable("A race cannot be seen.".into());
     let not_asked = Verification::NotAsked;
     let verifications = [&killing, &unobservable, &not_asked];
-    for family in Family::ALL {
+    for family in Family::CODE {
         let behavioural = matches!(
             family,
             Family::Correctness

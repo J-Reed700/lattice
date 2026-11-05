@@ -129,7 +129,7 @@ export function DrillChoose({ options, onChange, onStart }: {
                   </p>
                 )}
               </div>
-              {courses && courses.length === 0 && (
+              {courses?.length === 0 && (
                 <p role="status" className="mt-1.5 text-xs text-text-muted">None of your courses has a source to take a passage from yet.</p>
               )}
             </div>
