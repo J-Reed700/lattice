@@ -108,7 +108,6 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         expanded: None,
         checks: ClaimChecks::default(),
         verified: None,
-        planned: Vec::new(),
         cited_where_supported: HashSet::new(),
         candidate: Value::Null,
         extraction: None,
@@ -139,8 +138,6 @@ struct PreparationReview<'a, 'r> {
     expanded: Option<ReferenceCollection<'r>>,
     checks: ClaimChecks,
     verified: Option<String>,
-    /// The claims the call plan was made for, in its order: the first pass's.
-    planned: Vec<ClaimId>,
     /// Citations this job repaired to where a claim's support was found.
     cited_where_supported: HashSet<(usize, String)>,
     /// The draft as this round parsed it, and what its extraction,
@@ -279,6 +276,9 @@ impl Review for PreparationReview<'_, '_> {
         ))
         .await?;
         self.pass = Some(pass);
+        // The plan sees each successor where it starts and takes in each
+        // statement new to the ledger, before either is read.
+        plan_moved(policy, &self.ledger, &self.candidate);
         Ok(())
     }
 
@@ -312,7 +312,7 @@ impl Review for PreparationReview<'_, '_> {
             &self.checks,
         );
         self.report = Some(report);
-        plan_moved(policy, &self.ledger, &mut self.planned);
+        plan_moved(policy, &self.ledger, &self.candidate);
         Ok(stopped)
     }
 
@@ -456,7 +456,7 @@ impl Review for PreparationReview<'_, '_> {
             &self.checks,
         );
         self.report = Some(report);
-        plan_moved(policy, &self.ledger, &mut self.planned);
+        plan_moved(policy, &self.ledger, &self.candidate);
         Ok(Researched::Searched { saved, stopped })
     }
 
@@ -777,21 +777,22 @@ async fn uncite(
     Ok(moved)
 }
 
-/// Tells the call plan where the ledger has its statements now. They are the
-/// claims of the first pass the ledger observed, in its order, each followed
-/// to the claim that carries its sentence on.
-pub(super) fn plan_moved(
-    policy: &dyn AcceptancePolicy,
-    ledger: &ClaimLedger,
-    planned: &mut Vec<ClaimId>,
-) {
-    if planned.is_empty() {
-        planned.extend_from_slice(ledger.finding_claims());
+/// Tells the call plan where the ledger has its statements now in
+/// `candidate`, and takes into it the claims of the latest pass that continue
+/// none of its own. Its own are the claims of the pass it was made for, in its
+/// order, and those it took in, each followed to the claim that carries its
+/// sentence on.
+pub(super) fn plan_moved(policy: &dyn AcceptancePolicy, ledger: &ClaimLedger, candidate: &Value) {
+    let Some(mut claims) = crate::features::learning::lesson_progress::plan_claims() else {
+        return;
+    };
+    if claims.is_empty() {
+        claims.extend_from_slice(ledger.finding_claims());
     }
-    crate::features::learning::lesson_progress::statements_moved(
-        policy,
-        &ledger.planned(policy, planned),
-    );
+    let held = claims.len();
+    let joining = ledger.unplanned(policy, candidate, &mut claims);
+    let moved = ledger.planned(policy, candidate, claims.get(..held).unwrap_or_default());
+    crate::features::learning::lesson_progress::statements_moved(policy, &claims, &moved, &joining);
 }
 
 /// The lesson waits for the user's review (§6.1): the draft is saved, the

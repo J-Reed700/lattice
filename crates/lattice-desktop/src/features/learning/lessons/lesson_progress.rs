@@ -3,14 +3,14 @@
 //! concurrent chat, outline generation, or other jobs. The calls it counts are
 //! those made inside [`checks`], the work of the call plan's readers and
 //! rewrites; every other request shows the model working and counts nothing.
-use super::call_plan::{CallPlan, Planned};
+use super::call_plan::{CallPlan, Joining, Planned};
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
     LearningClaimTally, LearningGenerationActivity, LearningGenerationPhase,
     LearningGenerationStep, LearningStatementPlan,
 };
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
-use lattice_core::domain::learning::claim_review::Class;
+use lattice_core::domain::learning::claim_review::{ClaimId, Class};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobContext;
 use std::sync::{Arc, Mutex};
@@ -27,6 +27,12 @@ struct State {
     /// The most calls the lesson's checks can make, once its statements are
     /// sorted.
     plan: Option<CallPlan>,
+    /// The claims the plan follows, in its order: those of the pass it was
+    /// made for, then each it took in.
+    planned: Vec<ClaimId>,
+    /// The sorting calls made since the plan's last event: once it is made, a
+    /// sort sorts only statements new to it, which it takes in.
+    sorted: u32,
     /// Every ceiling the plan published, in order.
     #[cfg(test)]
     ceilings: Vec<u32>,
@@ -66,7 +72,8 @@ fn in_checks() -> bool {
 /// The term of the call plan a counted call is drawn from.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::features::learning) enum Term {
-    /// The sort: among the calls made before the plan.
+    /// The sort: among the calls made before the plan, or of a statement it
+    /// takes in.
     Sort,
     /// A statement's reading: its share, or its statement's reserve when it is
     /// a successor.
@@ -149,6 +156,9 @@ pub(in crate::features::learning) fn model_calls(count: u32, term: Term) -> Mode
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         let before = state.activity.model_calls;
         state.activity.model_calls = before.saturating_add(count);
+        if matches!(term, Term::Sort) {
+            state.sorted = state.sorted.saturating_add(count);
+        }
         tracing::debug!(
             ?term,
             calls = count,
@@ -253,6 +263,8 @@ pub(in crate::features::learning) fn lesson(title: &str) {
             state.activity.model_calls = 0;
             state.activity.model_calls_ceiling = None;
             state.plan = None;
+            state.planned.clear();
+            state.sorted = 0;
         }
         state.activity.lesson_title = Some(title.into());
     });
@@ -328,8 +340,9 @@ pub(in crate::features::learning) fn new_references(count: Option<usize>) {
 }
 
 /// The lesson's statements are sorted: from here its checks' calls have a
-/// ceiling (claim classes design §3.12). Later passes sort again and change
-/// nothing.
+/// ceiling (claim classes design §3.12). A later sort changes nothing here: a
+/// statement new to the ledger is taken in when its pass is named
+/// ([`statements_moved`]).
 pub(in crate::features::learning) fn calls_planned(
     policy: &dyn AcceptancePolicy,
     statements: &[Planned],
@@ -378,30 +391,53 @@ pub(in crate::features::learning) fn flow_repaired() {
     });
 }
 
-/// The plan's statements have moved through their graphs: `statements` are
-/// where the ledger now has them, in the plan's order.
+/// The claims the plan follows, in its order, once it is made: none until a
+/// pass names the claims it was made for.
+pub(in crate::features::learning) fn plan_claims() -> Option<Vec<ClaimId>> {
+    CURRENT
+        .try_with(|progress| {
+            let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.plan.as_ref().map(|_| state.planned.clone())
+        })
+        .ok()
+        .flatten()
+}
+
+/// The plan's statements have moved through their graphs: `moved` are where
+/// the ledger now has the plan's claims, in its order, and `joining` the
+/// statements of `claims` beyond them, which it was not made for and takes in
+/// where they stand. The plan follows `claims` from now on.
 pub(in crate::features::learning) fn statements_moved(
     policy: &dyn AcceptancePolicy,
-    statements: &[Planned],
+    claims: &[ClaimId],
+    moved: &[Planned],
+    joining: &[Joining],
 ) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        let beyond = state
-            .plan
-            .as_mut()
-            .map_or(0, |plan| plan.moved(policy, statements));
-        publish_ceiling(&mut state, Change { beyond });
+        let Some(plan) = state.plan.as_mut() else {
+            return;
+        };
+        let taken_in = plan.take_in(policy, joining);
+        let beyond = plan.moved(policy, moved);
+        state.planned = claims.to_vec();
+        publish_ceiling(&mut state, Change { taken_in, beyond });
     });
 }
 
 /// What an event of the plan changed in it beside the calls made.
 #[derive(Clone, Copy, Default)]
 struct Change {
+    /// The calls of the statements it took in, which it was not made for.
+    taken_in: u32,
     /// The calls statements can cost beyond their share and their reserve.
     beyond: u32,
 }
 
 fn publish_ceiling(state: &mut State, change: Change) {
+    let taken_in = change
+        .taken_in
+        .saturating_add(std::mem::take(&mut state.sorted));
     let made = state.activity.model_calls;
     let ceiling = state.plan.as_ref().map(|plan| plan.ceiling(made));
     if let (Some(before), Some(now), Some(plan)) = (
@@ -411,19 +447,22 @@ fn publish_ceiling(state: &mut State, change: Change) {
     ) {
         if now > before {
             state.activity.model_calls_ceiling_rises += 1;
-            let unheld = (now - before).saturating_sub(change.beyond);
+            let unheld = (now - before).saturating_sub(taken_in.saturating_add(change.beyond));
             let cause = if unheld > 0 {
                 "the checks made calls no slot held"
+            } else if taken_in > 0 {
+                "it took in statements it was not made for"
             } else {
                 "a statement can cost more than its share and its reserve"
             };
             tracing::error!(
                 made,
-                most = plan.most(),
-                reserve = plan.reserve(),
+                most = plan.shares(),
+                reserve = plan.reserves(),
                 flow_repairs = plan.flow_repairs(),
                 previous = before,
                 ceiling = now,
+                taken_in,
                 beyond = change.beyond,
                 unheld,
                 "claim.plan: the ceiling rose; {cause}"
@@ -822,7 +861,12 @@ mod tests {
                 assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
 
                 // The Sourced statement is resolved: its path is over.
-                statements_moved(&policy, &[alone(Class::Sourced, PlannedAt::Ended)]);
+                statements_moved(
+                    &policy,
+                    &[],
+                    &[alone(Class::Sourced, PlannedAt::Ended)],
+                    &[],
+                );
                 assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(34));
                 cuts_known(0);
                 assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(33));
@@ -892,7 +936,7 @@ mod tests {
                 };
                 let ceiling = || progress.snapshot().2.model_calls_ceiling;
                 calls_planned(&policy, &[statement(PlannedAt::Entry)], 2);
-                statements_moved(&policy, &[statement(PlannedAt::Ended)]);
+                statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
                 cuts_known(2);
                 // The sorting call made (1) and the flow repair of each of the
                 // two sections that took a cut.
@@ -903,7 +947,7 @@ mod tests {
                 flow_repaired();
                 assert_eq!(ceiling(), Some(3));
                 // The pass after the repairs does not raise it.
-                statements_moved(&policy, &[statement(PlannedAt::Ended)]);
+                statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
                 assert_eq!(ceiling(), Some(3));
 
                 // The second finds no gap to mend: it makes no call, and the
@@ -912,6 +956,49 @@ mod tests {
                 assert_eq!(ceiling(), Some(2));
                 assert_eq!(progress.snapshot().2.model_calls, 2);
                 assert_eq!(progress.snapshot().2.model_calls_ceiling_rises, 0);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its_sort_and_share(
+    ) {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                let policy = StandardPolicy::new();
+                let planned = |class, at| Planned {
+                    class,
+                    at,
+                    sentence: None,
+                };
+                let done = planned(Class::Sourced, PlannedAt::Ended);
+                calls_planned(&policy, &[done], 0);
+                assert_eq!(plan_claims(), Some(Vec::new()));
+                let first = ClaimId("first".into());
+                statements_moved(&policy, std::slice::from_ref(&first), &[done], &[]);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(0));
+
+                // A later sort sorts a statement new to the plan, which joins it.
+                checks(async { drop(model_call(Term::Sort)) }).await;
+                let joined = ClaimId("joined".into());
+                let joining = Joining {
+                    planned: planned(Class::Common, PlannedAt::Entry),
+                    beside: Vec::new(),
+                };
+                statements_moved(
+                    &policy,
+                    &[first.clone(), joined.clone()],
+                    &[done],
+                    &[joining],
+                );
+
+                // The sorting call made and the newcomer's longest path from
+                // its entry: a rise, counted.
+                let activity = progress.snapshot().2;
+                assert_eq!(activity.model_calls_ceiling, Some(1 + 16));
+                assert_eq!(activity.model_calls_ceiling_rises, 1);
+                assert_eq!(plan_claims(), Some(vec![first, joined]));
             })
             .await;
     }

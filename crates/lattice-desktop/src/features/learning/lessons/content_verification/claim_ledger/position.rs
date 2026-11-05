@@ -4,13 +4,14 @@
 use std::collections::HashMap;
 
 use super::ClaimLedger;
-use crate::features::learning::lessons::call_plan::{Planned, PlannedAt};
+use crate::features::learning::lessons::call_plan::{Joining, Planned, PlannedAt};
 use lattice_core::domain::learning::acceptance::{
     decide, walk_from, AcceptancePolicy, Position, Step, Taken, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, Class, ClassifiedBy,
 };
+use serde_json::Value;
 
 /// A claim's walk: where its steps leave it, and the position it stood at
 /// last, which is the one it left to end when it ended.
@@ -169,40 +170,102 @@ impl ClaimLedger {
         decide(policy, at, taken)?.1
     }
 
-    /// The plan's statements as the ledger has them now: each of `claims`
-    /// followed to the claim that carries its sentence on, at its place. The
-    /// plan reads where each stands, not the class or sentence it carries, so
-    /// those are the class the ledger holds and none.
+    /// The plan's statements as the ledger has them now in `candidate`: each
+    /// of `claims` followed to the claim that carries its sentence on, at its
+    /// place. The plan reads where each stands, not the class or sentence it
+    /// carries, so those are the class the ledger holds and none.
     pub(in crate::features::learning::lessons::content_verification) fn planned(
         &self,
         policy: &dyn AcceptancePolicy,
+        candidate: &Value,
         claims: &[ClaimId],
     ) -> Vec<Planned> {
         claims
             .iter()
-            .map(|id| {
-                let latest = self.latest(id);
-                let entry = self.entry(&latest);
-                let walked = self.position(policy, &latest);
-                if matches!(walked, Some(Walked::Diverged { .. })) {
-                    tracing::warn!(claim = %latest.0, "claim.plan: a claim's steps do not fit its graph; the plan keeps it where it was");
-                }
-                // A claim gone with its sentence makes no more calls, wherever
-                // its steps left it.
-                let at = if entry.is_some_and(|entry| super::is_gone(entry.state())) {
-                    PlannedAt::Ended
-                } else {
-                    PlannedAt::of(walked)
-                };
-                Planned {
-                    class: entry
-                        .and_then(ClaimLedgerEntry::class)
-                        .unwrap_or(Class::Sourced),
-                    at,
-                    sentence: None,
-                }
-            })
+            .map(|id| self.plan_of(policy, candidate, &self.latest(id)))
             .collect()
+    }
+
+    /// Where the plan has `id`: at its place, a cut that narrows its sentence
+    /// in `candidate` holding the narrowing's call.
+    fn plan_of(&self, policy: &dyn AcceptancePolicy, candidate: &Value, id: &ClaimId) -> Planned {
+        let entry = self.entry(id);
+        let walked = self.position(policy, id);
+        if matches!(walked, Some(Walked::Diverged { .. })) {
+            tracing::warn!(claim = %id.0, "claim.plan: a claim's steps do not fit its graph; the plan keeps it where it was");
+        }
+        // A claim gone with its sentence makes no more calls, wherever its
+        // steps left it.
+        let at = if entry.is_some_and(|entry| super::is_gone(entry.state())) {
+            PlannedAt::Ended
+        } else {
+            match PlannedAt::of(walked) {
+                PlannedAt::At(at)
+                    if policy
+                        .graph(at.class)
+                        .node(at.node)
+                        .is_some_and(|node| node.step == Step::Cut)
+                        && self.narrows(candidate, id) =>
+                {
+                    PlannedAt::Narrowing(at)
+                }
+                other => other,
+            }
+        };
+        Planned {
+            class: entry
+                .and_then(ClaimLedgerEntry::class)
+                .unwrap_or(Class::Sourced),
+            at,
+            sentence: None,
+        }
+    }
+
+    /// The claims of the latest pass that continue none of `claims`, the
+    /// plan's, each as the plan takes it in: where it stands in `candidate`
+    /// and the plan's statements on its sentence. They join `claims`, in the
+    /// pass's order.
+    pub(in crate::features::learning::lessons::content_verification) fn unplanned(
+        &self,
+        policy: &dyn AcceptancePolicy,
+        candidate: &Value,
+        claims: &mut Vec<ClaimId>,
+    ) -> Vec<Joining> {
+        let mut joining = Vec::new();
+        for id in &self.findings {
+            if self.continues(id, claims) {
+                continue;
+            }
+            let mates = self.cotenants(id);
+            let beside: Vec<usize> = claims
+                .iter()
+                .enumerate()
+                .filter(|(_, held)| mates.contains(&self.latest(held)))
+                .map(|(index, _)| index)
+                .collect();
+            claims.push(id.clone());
+            joining.push(Joining {
+                planned: self.plan_of(policy, candidate, id),
+                beside,
+            });
+        }
+        joining
+    }
+
+    /// Whether `id` is one of `claims` or carries the sentence of one on after
+    /// the machine's rewrites.
+    fn continues(&self, id: &ClaimId, claims: &[ClaimId]) -> bool {
+        let mut here = id.clone();
+        for _ in 0..=self.entries.len() {
+            if claims.contains(&here) {
+                return true;
+            }
+            match self.predecessor(&here) {
+                Some(before) => here = before.claim_id().clone(),
+                None => return false,
+            }
+        }
+        false
     }
 
     /// Where each claim still on its sentence stands, by section and

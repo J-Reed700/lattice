@@ -226,7 +226,7 @@ fn calls_of(policy: &dyn AcceptancePolicy, journey: &Journey, at: PlannedAt) -> 
             journey.start.class,
             policy.graph(journey.start.class).entry(),
         ),
-        PlannedAt::At(at) => (at.class, at.node),
+        PlannedAt::At(at) | PlannedAt::Narrowing(at) => (at.class, at.node),
         PlannedAt::Ended => return 0,
     };
     policy.graph(class).node(node).map_or(0, |node| node.calls)
@@ -676,6 +676,79 @@ fn a_flow_repair_uses_up_the_call_held_for_it_so_its_call_made_leaves_the_ceilin
     // None is held beyond the sections that took a cut.
     plan.flow_repaired();
     assert_eq!(plan.ceiling(6), before - 1);
+}
+
+#[test]
+fn a_statement_taken_in_adds_its_share_and_beside_others_the_reserves_a_rewrite_of_their_sentence_needs(
+) {
+    let policy = StandardPolicy::new();
+    let mut plan = CallPlan::new(&policy, &[alone(Class::Reasoning), alone(Class::Common)], 1);
+    let before = plan.ceiling(3);
+    let joining = |planned, beside| Joining { planned, beside };
+
+    // Alone on its sentence it brings its longest path from its entry.
+    assert_eq!(
+        plan.take_in(&policy, &[joining(alone(Class::Common), vec![])]),
+        16
+    );
+    assert_eq!(plan.ceiling(3), before + 16);
+    assert_eq!(reserves(&plan), [0, 0, 0]);
+
+    // Beside the Reasoning statement it brings its reserve too, and the
+    // Reasoning statement, which held none, gets its own: either one's rewrite
+    // has the other read again.
+    assert_eq!(
+        plan.take_in(&policy, &[joining(alone(Class::Sourced), vec![0])]),
+        16 + 17 + 17
+    );
+    assert_eq!(reserves(&plan), [17, 0, 0, 17]);
+
+    // The two are one sentence now: one ending releases nothing, both do.
+    let common = alone(Class::Common);
+    plan.moved(
+        &policy,
+        &[
+            ended(alone(Class::Reasoning)),
+            common,
+            common,
+            alone(Class::Sourced),
+        ],
+    );
+    assert_eq!(reserves(&plan), [17, 0, 0, 17]);
+    plan.moved(
+        &policy,
+        &[
+            ended(alone(Class::Reasoning)),
+            common,
+            common,
+            ended(alone(Class::Sourced)),
+        ],
+    );
+    assert_eq!(reserves(&plan), [0, 0, 0, 0]);
+}
+
+#[test]
+fn a_cut_that_narrows_its_sentence_holds_the_narrowings_call() {
+    let policy = StandardPolicy::new();
+    let target = on_sentence(Class::Reasoning, 0);
+    let mate = on_sentence(Class::Reasoning, 0);
+    let mut plan = CallPlan::new(&policy, &[target, mate], 0);
+    let reading = moved_to(mate, at_node(&policy, Class::Reasoning, "r.final"));
+    let narrowing = Planned {
+        at: PlannedAt::Narrowing(at_node(&policy, Class::Reasoning, "r.cut")),
+        ..target
+    };
+
+    // The target waits at a cut that narrows the sentence while its mate's
+    // successor reads: one call is still to come for the narrowing.
+    plan.moved(&policy, &[narrowing, reading]);
+    assert_eq!(mosts(&plan), [1, 8]);
+    let before = plan.ceiling(0);
+
+    // The narrowing is made and the target is cut: its call came out of what
+    // was held for it, and the ceiling stays where it was.
+    plan.moved(&policy, &[ended(target), reading]);
+    assert_eq!(plan.ceiling(1), before);
 }
 
 #[test]

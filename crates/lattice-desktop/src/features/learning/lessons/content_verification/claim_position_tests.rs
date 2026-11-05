@@ -511,7 +511,7 @@ async fn the_plans_statements_are_followed_to_the_claims_that_carry_their_senten
     let second = claim(&mut ledger, "second", "Second.", &sorted).await?;
     let third = ClaimId("not-in-the-ledger".into());
 
-    let planned = ledger.planned(&policy, &[first, second, third]);
+    let planned = ledger.planned(&policy, &Value::Null, &[first, second, third]);
 
     let plan = |class, at| Planned {
         class,
@@ -560,9 +560,12 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
         );
         let report = pass_report(vec![finding(FIRST), finding(SECOND)]);
         identify_findings(&mut ledger, &lesson, &report).await?;
-        let mut planned = Vec::new();
-        repair_loop::plan_moved(&policy, &ledger, &mut planned);
-        assert_eq!(planned, ledger.finding_claims());
+        repair_loop::plan_moved(&policy, &ledger, &lesson);
+        let planned = ledger.finding_claims().to_vec();
+        assert_eq!(
+            crate::features::learning::lesson_progress::plan_claims(),
+            Some(planned.clone())
+        );
 
         // Each claim, in its turn, is read for consistency and passes the veto.
         let start = at(&policy, Class::Reasoning, (false, false), "r.read");
@@ -570,9 +573,9 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
             taken(Reading::Consistency, Outcome::Stands),
             taken(Reading::Veto, Outcome::Stands),
         ];
-        for claim in planned.clone() {
+        for claim in planned {
             step(&mut ledger, &policy, &claim, start, &passes).await?;
-            repair_loop::plan_moved(&policy, &ledger, &mut planned);
+            repair_loop::plan_moved(&policy, &ledger, &lesson);
         }
         Ok::<(), AppError>(())
     })

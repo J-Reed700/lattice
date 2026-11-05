@@ -1225,7 +1225,7 @@ async fn a_claim_that_ended_at_a_node_of_its_graph_is_planned_as_ended() -> Resu
 
     // Its rewrite was asked for and it went with its sentence: the plan holds
     // nothing more for it, so the call it made is not counted twice.
-    let planned = ledger.planned(&policy, std::slice::from_ref(&target));
+    let planned = ledger.planned(&policy, &lesson_of(SENTENCE), std::slice::from_ref(&target));
     assert_eq!(
         planned[0].at,
         crate::features::learning::lessons::call_plan::PlannedAt::Ended
