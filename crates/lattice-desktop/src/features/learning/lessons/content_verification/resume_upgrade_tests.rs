@@ -1,5 +1,4 @@
 //! The gate's weighing as the ledger records it: a trust assessment fixture.
-use super::*;
 use lattice_core::domain::learning::claim_review::{SupportedBy, TrustAssessment};
 use lattice_core::domain::provenance::*;
 

@@ -651,8 +651,11 @@ async fn test_restore_backup_rolls_back_on_failure() {
         fs::set_permissions(parent, perms).unwrap();
         original
     };
+    // Elsewhere a read-only folder still takes new files: a folder where the
+    // restore copies the backup first makes that copy fail.
+    #[cfg(not(unix))]
+    fs::create_dir(db_path.with_extension("db.restoring")).unwrap();
 
-    // Attempt restore (should fail due to permissions)
     let result = adapter2.restore_backup(backup_pathbuf).await;
 
     #[cfg(unix)]
@@ -662,14 +665,10 @@ async fn test_restore_backup_rolls_back_on_failure() {
         fs::set_permissions(parent, parent_permissions).unwrap();
     }
 
-    // On Unix, should fail due to permissions
-    #[cfg(unix)]
-    {
-        assert!(
-            result.is_err(),
-            "Restore should fail with read-only permissions"
-        );
-    }
+    assert!(
+        result.is_err(),
+        "Restore should fail when it cannot write its files"
+    );
 
     let verify_pool = connect_fixture_pool(&db_path).await;
 
