@@ -79,6 +79,15 @@ pub(super) struct Carried {
     pub(super) quote: String,
 }
 
+/// What wrote over the sentence a claim stood on, when a pass finds another
+/// statement where it was and no repair of the claim awaits the pass.
+enum WrittenOver {
+    /// A repair the job checkpointed: the statement is its successor.
+    ByRepair,
+    /// Nothing the job checkpointed: the statement is new.
+    FromOutside,
+}
+
 impl ClaimLedger {
     /// The statements of a pass, as `match_pass` and `identify` take them: each
     /// of `claims`, a section's index and what it states, then each code
@@ -155,8 +164,9 @@ impl ClaimLedger {
 
     /// Which claim each extracted statement (and failed example) of a pass
     /// continues, a repair's heirs included, and the claims none continues:
-    /// computed, nothing recorded. The pending repairs and the lesson before
-    /// them are read, not taken.
+    /// computed, nothing recorded. A statement where nothing the job
+    /// checkpointed wrote over a claim's sentence continues no claim. The
+    /// pending repairs and the lesson before them are read, not taken.
     pub(in super::super) fn match_pass(
         &self,
         candidate: &Value,
@@ -189,6 +199,27 @@ impl ClaimLedger {
                 texts.get(&(unit, field.to_owned())).map(String::as_str)
             })
         };
+        // A sentence written over outside the pipeline is no longer its
+        // claim's: what it says now is new to the ledger, and the claim ends
+        // with its sentence (acceptance design §2.9).
+        for (index, slot) in assigned.assigned.iter_mut().enumerate() {
+            let outside = slot
+                .as_ref()
+                .zip(claims.get(index))
+                .is_some_and(|(id, claim)| {
+                    matches!(
+                        self.written_over(
+                            candidate,
+                            (id, claim.statement.as_str()),
+                            self.pending.repairs.iter()
+                        ),
+                        Some(WrittenOver::FromOutside)
+                    )
+                });
+            if let Some(id) = slot.take_if(|_| outside) {
+                assigned.orphaned.push(id);
+            }
+        }
         // A repaired sentence the matching rules lost (a rewrite that changed
         // its statement where no single span can be named) continues as the
         // new text its repair wrote in the same field, never as a sentence
@@ -269,17 +300,20 @@ impl ClaimLedger {
                 }
                 Some(id)
                     if self.takes_successor(candidate, &id, records.get(&id))
-                        || self.rewritten_unawaited(
-                            candidate,
-                            &id,
-                            records.get(&id),
-                            &claim.statement,
+                        || matches!(
+                            self.written_over(
+                                candidate,
+                                (&id, claim.statement.as_str()),
+                                records.values()
+                            ),
+                            Some(WrittenOver::ByRepair)
                         ) =>
                 {
                     // A statement on a sentence another claim's rewrite
-                    // changed, or on one that says something else with no
-                    // repair awaiting it, is read again as a successor, at the
-                    // post-rewrite node of the class it holds.
+                    // changed, or that a checkpointed repair wrote where the
+                    // claim's own record is gone, is read again as a
+                    // successor, at the post-rewrite node of the class it
+                    // holds.
                     let successor = ClaimId::generate();
                     let held = self
                         .entry(&id)
@@ -387,31 +421,42 @@ impl ClaimLedger {
         !standing
     }
 
-    /// Whether the claim `id`, which no repair awaited, now stands where its
-    /// sentence was written over with another statement, `statement`: a claim
-    /// of the machine's own, or one it has ended, not the user's, nor a code
-    /// example.
-    fn rewritten_unawaited(
+    /// What wrote over the sentence the claim `id` stood on, where a pass now
+    /// finds another statement, `statement`: a repair the job checkpointed
+    /// when one of `repairs` is for the claim's section and the lesson those
+    /// repairs started from held the sentence, something outside the pipeline
+    /// otherwise. None for a claim one of `repairs` is for, one the user holds
+    /// or edited, a code example's, one whose sentence stands, and one that
+    /// states the same.
+    fn written_over<'r>(
         &self,
         candidate: &Value,
-        id: &ClaimId,
-        repair: Option<&RepairRecord>,
-        statement: &str,
-    ) -> bool {
-        if repair.is_some() {
-            return false;
+        (id, statement): (&ClaimId, &str),
+        mut repairs: impl Iterator<Item = &'r RepairRecord> + Clone,
+    ) -> Option<WrittenOver> {
+        if self.edited_now.contains(id) || repairs.clone().any(|record| record.claim_id == *id) {
+            return None;
         }
-        let Some(entry) = self.entry(id) else {
-            return false;
-        };
+        let entry = self.entry(id)?;
         if entry.state().is_settled() || entry.state().awaits_user() || entry.classified().is_none()
         {
-            return false;
+            return None;
         }
         let location = entry.location();
-        let standing = field_text(candidate, location.unit_index, &location.field)
-            .is_some_and(|text| text.contains(&location.quote));
-        !standing && entry.statement() != statement
+        let holds = |lesson: &Value| {
+            field_text(lesson, location.unit_index, &location.field)
+                .is_some_and(|text| text.contains(&location.quote))
+        };
+        if holds(candidate) || entry.statement() == statement {
+            return None;
+        }
+        let repaired = self.pending.previous.as_ref().is_some_and(holds)
+            && repairs.any(|record| record.unit == location.unit_index);
+        Some(if repaired {
+            WrittenOver::ByRepair
+        } else {
+            WrittenOver::FromOutside
+        })
     }
 
     /// A claim seen for the first time: extracted, then classified. None is
