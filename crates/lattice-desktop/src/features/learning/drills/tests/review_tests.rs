@@ -575,6 +575,11 @@ async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
     assert_eq!(reveal["fix"][0]["decidedBy"], "test");
     assert_eq!(reveal["fix"][0]["suite"]["status"], "passed");
     assert_eq!(
+        reveal["fix"][0]["suite"]["ranBeside"],
+        json!([1]),
+        "the suite ran beside the fix of the literals, which the learner left"
+    );
+    assert_eq!(
         reveal["fix"][0]["gradedBeside"],
         json!([1]),
         "the operator's test ran beside the fix of the literals, which the learner left"

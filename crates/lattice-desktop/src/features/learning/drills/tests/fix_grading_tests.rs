@@ -120,8 +120,9 @@ async fn a_killing_test_that_passes_on_the_learners_files_fixes_its_issue() -> R
     let runs = runner.runs();
     assert_eq!(runs.len(), 2, "the suite once and the one killing test");
     assert_eq!(
-        runs[0].0, learner,
-        "the suite runs on the learner's files as written"
+        runs[0].0,
+        both_fixed(),
+        "the suite runs beside the fix of the planted issue the learner left"
     );
     assert_eq!(
         runs[1].0,
@@ -634,7 +635,7 @@ mod real_runtime {
     }
 
     #[tokio::test]
-    async fn a_fix_that_changes_nothing_fails_the_killing_test_and_the_suite_on_python(
+    async fn a_fix_that_changes_nothing_fails_the_killing_test_and_breaks_nothing_on_python(
     ) -> Result<()> {
         let runner = python()?;
         let model = ScriptedModel::new([fix_answer("not", "The literals are as they were.")]);
@@ -648,8 +649,9 @@ mod real_runtime {
             "{:?}",
             results[0].output
         );
+        // Both defects are repaired for the suite, which passes: nothing the learner did broke what worked.
         assert!(
-            matches!(&results[0].suite, SuiteVerdict::Failed { output } if output.contains("AssertionError")),
+            matches!(&results[0].suite, SuiteVerdict::Passed),
             "{:?}",
             results[0].suite
         );
@@ -682,11 +684,12 @@ mod real_runtime {
     }
 }
 
-/// Grading each issue on its own: the key's fixes of the other issues are applied to the learner's files for an issue's
-/// killing test where they apply, so a defect the learner left in one issue cannot fail the test of another.
+/// Grading each issue on its own: the key's fixes of the planted issues are applied to the learner's files for an
+/// issue's killing test, and for the hidden suite, where they apply, so that a defect the learner left in one issue
+/// cannot fail the test of another or the suite. A fix found in review is never applied.
 mod beside {
     use super::super::support::{
-        config, flawed_limiter, literals_edit, operator_edit, LITERALS, OPERATOR, OPERATOR_BEFORE,
+        files, literals_edit, operator_edit, LITERALS, OPERATOR, OPERATOR_BEFORE,
     };
     use super::*;
     use lattice_core::domain::learning::drills::{
@@ -697,10 +700,15 @@ mod beside {
     /// The test that shows the literals' defect.
     const OTHER_TEST: &str = "assert default_limiter(lambda: 0).limit == 100\n";
     const OTHER_OUTPUT: &str = "AssertionError: the defaults are written out twice";
-    /// A defect of the clean code that the blind review found, and its repair.
+    /// `forget` as the clean code has it, and as the defect planted in it leaves it: it raises for a key never seen.
+    const FORGET_CLEAN: &str = "        self.hits.pop(key, None)\n";
     const FORGET_FLAWED: &str = "        del self.hits[key]\n";
-    const FORGET_FIXED: &str = "        self.hits.pop(key, None)\n";
-    /// The literals' lines as a learner rewrites them in a way of their own.
+    /// A comment the blind review found misleading, and the line that replaces it.
+    const DOC_FLAWED: &str =
+        "    \"\"\"Allows at most `limit` calls per key in a sliding window.\"\"\"\n";
+    const DOC_FIXED: &str =
+        "    \"\"\"Allows at most `limit` calls per key within `window` seconds.\"\"\"\n";
+    /// The literals' line as a learner rewrites it in a way of their own.
     const REWRITTEN: &str = "    return RateLimiter(120, 30, clock)\n";
 
     fn rewritten(files: &[DrillFile], change: impl Fn(&str) -> String) -> Vec<DrillFile> {
@@ -751,25 +759,25 @@ mod beside {
         drill
     }
 
-    /// A drill of three issues: the operator and the literals, which were planted and each have a killing test, and
-    /// `forget`, a defect of the clean code that the blind review found. Returns the clean code beside the drill.
-    fn three_issues() -> (Vec<DrillFile>, Drill) {
-        let clean = vec![
-            DrillFile {
+    /// A drill of four issues: the operator, the literals and `forget`, which were planted, and a misleading comment,
+    /// which the blind review found. The operator and the literals have killing tests. Returns the clean code beside
+    /// the drill.
+    fn four_issues() -> (Vec<DrillFile>, Drill) {
+        let clean = files();
+        let planted = [
+            operator_edit(),
+            literals_edit(),
+            Edit {
                 path: "src/limiter.py".into(),
-                text: flawed_limiter(),
-            },
-            DrillFile {
-                path: "src/config.py".into(),
-                text: config(),
+                before: FORGET_CLEAN.into(),
+                after: FORGET_FLAWED.into(),
             },
         ];
-        let planted = [operator_edit(), literals_edit()];
         let (drilled, spans) = apply(&clean, &planted).expect("the edits apply");
-        let forget = Edit {
+        let comment = Edit {
             path: "src/limiter.py".into(),
-            before: FORGET_FLAWED.into(),
-            after: FORGET_FIXED.into(),
+            before: DOC_FLAWED.into(),
+            after: DOC_FIXED.into(),
         };
         let key = vec![
             key_issue(
@@ -793,16 +801,26 @@ mod beside {
                 Origin::Planted,
             ),
             key_issue(
-                "review-1",
+                "planted-3",
                 "correctness.boundary_and_empty_input",
-                LineSpan {
-                    path: "src/limiter.py".into(),
-                    start: 21,
-                    end: 21,
-                },
-                forget,
+                spans[2].clone(),
+                reversed(&planted[2]),
                 Proof::Judged {
                     reason: "Forget raises for a key it never saw.".into(),
+                },
+                Origin::Planted,
+            ),
+            key_issue(
+                "review-1",
+                "readability.misleading_comment",
+                LineSpan {
+                    path: "src/limiter.py".into(),
+                    start: 2,
+                    end: 2,
+                },
+                comment,
+                Proof::Judged {
+                    reason: "The comment leaves out the unit of the window.".into(),
                 },
                 Origin::FoundInReview,
             ),
@@ -817,9 +835,9 @@ mod beside {
         (clean, drill)
     }
 
-    /// The files with the repair of `forget` made.
+    /// The files with the defect planted in `forget` repaired.
     fn with_forget_repaired(files: &[DrillFile]) -> Vec<DrillFile> {
-        rewritten(files, |text| text.replace(FORGET_FLAWED, FORGET_FIXED))
+        rewritten(files, |text| text.replace(FORGET_FLAWED, FORGET_CLEAN))
     }
 
     /// A runner on which either defect fails the first killing test, the literals' defect fails the second, and the
@@ -842,13 +860,36 @@ mod beside {
         })
     }
 
+    /// A runner on which either defect fails the suite and the first killing test, the literals' defect fails the
+    /// second killing test, and a rename of `default_limiter` fails the suite.
+    fn defects_and_a_rename_fail_the_suite() -> FakeRunner {
+        FakeRunner::new(|files, test| {
+            let has = |text: &str| files.iter().any(|file| file.text.contains(text));
+            let operator = has(OPERATOR_AFTER.trim());
+            let literals = has(LITERALS_AFTER.trim());
+            let failed = match test {
+                KILLING_TEST => operator || literals,
+                OTHER_TEST => literals,
+                SUITE => operator || literals || has("def make_limiter"),
+                _ => false,
+            };
+            if failed {
+                RunOutcome::Failed {
+                    output: OTHER_OUTPUT.into(),
+                }
+            } else {
+                RunOutcome::Passed
+            }
+        })
+    }
+
     fn shown(results: &[IssueFix]) -> serde_json::Value {
         serde_json::to_value(results).expect("results are JSON")
     }
 
     #[test]
-    fn the_three_issue_drill_is_a_valid_drill() {
-        let (clean, drill) = three_issues();
+    fn the_four_issue_drill_is_a_valid_drill() {
+        let (clean, drill) = four_issues();
         assert_eq!(check_key(&clean, &drill), Ok(()));
     }
 
@@ -898,31 +939,96 @@ mod beside {
     }
 
     #[tokio::test]
-    async fn the_suite_runs_once_on_the_learners_files_as_written() -> Result<()> {
+    async fn the_suite_runs_once_beside_the_fixes_of_the_planted_issues_the_learner_left(
+    ) -> Result<()> {
         let model = ScriptedModel::new(Vec::<String>::new());
         let runner = either_defect_fails_the_first_test();
-        let learner = operator_fixed();
-        grade(&model, Some(&runner), Some(SUITE), &two_killed(), &learner).await?;
+        let results = grade(
+            &model,
+            Some(&runner),
+            Some(SUITE),
+            &two_killed(),
+            &operator_fixed(),
+        )
+        .await?;
         let suite_runs: Vec<Vec<DrillFile>> = runner
             .runs()
             .into_iter()
             .filter(|(_, test)| test == SUITE)
             .map(|(files, _)| files)
             .collect();
-        assert_eq!(suite_runs, [learner]);
+        assert_eq!(suite_runs, [both_fixed()]);
+        assert_eq!(shown(&results)[0]["suite"]["ranBeside"], json!([1]));
         Ok(())
     }
 
     #[tokio::test]
-    async fn a_fix_for_lines_the_learner_changed_is_not_applied_and_one_found_in_review_is(
+    async fn a_defect_the_learner_left_does_not_make_the_suite_demote_the_issues_they_fixed(
     ) -> Result<()> {
-        let (_, drill) = three_issues();
-        // The learner fixes the operator, rewrites the literals in a way of their own, and leaves `forget`.
+        let model = ScriptedModel::new(Vec::<String>::new());
+        let runner = defects_and_a_rename_fail_the_suite();
+        let results = grade(
+            &model,
+            Some(&runner),
+            Some(SUITE),
+            &two_killed(),
+            &operator_fixed(),
+        )
+        .await?;
+
+        // The learner fixed one of the two planted issues. The other's defect fails the suite on their files as
+        // written, and it is theirs to fix, not something their edits broke.
+        assert_eq!(results[0].outcome, FixOutcome::Fixed, "{:?}", results[0]);
+        assert_eq!(results[0].decided_by, DecidedBy::Test);
+        let shown = shown(&results);
+        assert_eq!(
+            shown[0]["suite"],
+            json!({"status": "passed", "ranBeside": [1]})
+        );
+        assert_eq!(
+            shown[1]["suite"], shown[0]["suite"],
+            "every result carries the one verdict"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_edit_of_the_learners_that_breaks_something_else_still_demotes_the_issues_they_fixed(
+    ) -> Result<()> {
+        let model = ScriptedModel::new(Vec::<String>::new());
+        let runner = defects_and_a_rename_fail_the_suite();
+        // The learner fixes the operator and renames the function the suite imports.
+        let learner = rewritten(&operator_fixed(), |text| {
+            text.replace("def default_limiter(clock):", "def make_limiter(clock):")
+        });
+        let results = grade(&model, Some(&runner), Some(SUITE), &two_killed(), &learner).await?;
+
+        assert_eq!(results[0].outcome, FixOutcome::Partly, "{:?}", results[0]);
+        assert_eq!(results[0].decided_by, DecidedBy::Suite);
+        assert_eq!(results[0].output.as_deref(), Some(OTHER_OUTPUT));
+        let shown = shown(&results);
+        assert_eq!(shown[0]["suite"]["status"], "failed");
+        assert_eq!(
+            shown[0]["suite"]["ranBeside"],
+            json!([1]),
+            "the suite still fails beside the literals' fix, on the learner's own rename"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_fix_for_lines_the_learner_changed_is_not_applied() -> Result<()> {
+        let (_, drill) = four_issues();
+        // The learner fixes the operator, rewrites the literals in a way of their own, and leaves `forget` and the
+        // comment.
         let learner = rewritten(&drill.files, |text| {
             text.replace(OPERATOR_AFTER, OPERATOR_BEFORE)
                 .replace(LITERALS_AFTER, REWRITTEN)
         });
-        let model = ScriptedModel::new([fix_answer("not", "Forget still raises.")]);
+        let model = ScriptedModel::new([
+            fix_answer("not", "Forget still raises."),
+            fix_answer("not", "The comment is as it was."),
+        ]);
         let runner = FakeRunner::passing();
         let results = grade(&model, Some(&runner), Some(SUITE), &drill, &learner).await?;
 
@@ -932,30 +1038,34 @@ mod beside {
             "the literals are as the learner left them"
         );
         let runs = runner.runs();
-        assert!(
-            runs.contains(&(beside.clone(), KILLING_TEST.to_owned())),
-            "the first test ran beside the repair of forget and not beside the key's fix for the literals"
-        );
-        assert!(runs.contains(&(beside, OTHER_TEST.to_owned())));
+        for (name, test) in [
+            ("the first test", KILLING_TEST),
+            ("the second test", OTHER_TEST),
+            ("the suite", SUITE),
+        ] {
+            assert!(
+                runs.contains(&(beside.clone(), test.to_owned())),
+                "{name} ran beside the repair of forget and not beside the key's fix for the literals"
+            );
+        }
         let shown = shown(&results);
         assert_eq!(shown[0]["gradedBeside"], json!([2]));
         assert_eq!(shown[1]["gradedBeside"], json!([2]));
-        assert_eq!(
-            shown[2]["gradedBeside"],
-            json!([]),
-            "a judge decided forget"
-        );
+        assert_eq!(shown[0]["suite"]["ranBeside"], json!([2]));
         Ok(())
     }
 
     #[tokio::test]
     async fn a_fix_for_lines_that_are_in_the_text_twice_is_not_applied() -> Result<()> {
-        let (_, drill) = three_issues();
+        let (_, drill) = four_issues();
         let mut learner = rewritten(&drill.files, |text| {
             text.replace(OPERATOR_AFTER, OPERATOR_BEFORE)
         });
         learner[1].text.push_str(LITERALS_AFTER);
-        let model = ScriptedModel::new([fix_answer("not", "Forget still raises.")]);
+        let model = ScriptedModel::new([
+            fix_answer("not", "Forget still raises."),
+            fix_answer("not", "The comment is as it was."),
+        ]);
         let runner = FakeRunner::passing();
         let results = grade(&model, Some(&runner), Some(SUITE), &drill, &learner).await?;
 
@@ -969,9 +1079,45 @@ mod beside {
     }
 
     #[tokio::test]
+    async fn a_fix_found_in_review_is_not_applied_beside_the_test_of_a_planted_issue() -> Result<()>
+    {
+        let (_, drill) = four_issues();
+        // The learner changed nothing.
+        let learner = drill.files.clone();
+        let model = ScriptedModel::new([
+            fix_answer("not", "Forget raises."),
+            fix_answer("not", "The comment is as it was."),
+        ]);
+        let runner = FakeRunner::passing();
+        let results = grade(&model, Some(&runner), Some(SUITE), &drill, &learner).await?;
+
+        // The comment was the review's finding. Its repair is never made for a planted issue's test, which passed on
+        // the clean code with the comment as it was, nor for the suite.
+        let runs = runner.runs();
+        assert_eq!(runs.len(), 3, "the suite and the two killing tests");
+        for (files, _) in &runs {
+            assert!(
+                files.iter().all(|file| !file.text.contains(DOC_FIXED)),
+                "{files:?}"
+            );
+        }
+        let beside = rewritten(&learner, |text| {
+            text.replace(LITERALS_AFTER, LITERALS_BEFORE)
+                .replace(FORGET_FLAWED, FORGET_CLEAN)
+        });
+        assert!(runs.contains(&(beside, KILLING_TEST.to_owned())));
+        let shown = shown(&results);
+        assert_eq!(shown[0]["gradedBeside"], json!([1, 2]));
+        assert_eq!(shown[1]["gradedBeside"], json!([0, 2]));
+        assert_eq!(shown[0]["suite"]["ranBeside"], json!([0, 1, 2]));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn a_fix_that_touches_the_lines_of_the_issue_is_not_applied_to_its_test() -> Result<()> {
         let mut drill = drill();
-        // A finding of the review whose fix repairs the operator's line along with the lines around it.
+        // A planted issue whose fix repairs the operator's line along with the lines around it. The build makes no
+        // such key, and the rule holds all the same.
         let around: String = drill.files[0]
             .text
             .lines()
@@ -981,7 +1127,7 @@ mod beside {
             .collect();
         let repaired = around.replace(OPERATOR_AFTER.trim_end(), OPERATOR_BEFORE.trim_end());
         drill.key.push(key_issue(
-            "review-1",
+            "planted-3",
             "correctness.stale_state",
             LineSpan {
                 path: "src/limiter.py".into(),
@@ -996,7 +1142,7 @@ mod beside {
             Proof::Judged {
                 reason: "The window is read before the comparison.".into(),
             },
-            Origin::FoundInReview,
+            Origin::Planted,
         ));
         let model = ScriptedModel::new([
             fix_answer("not", "The literals are as they were."),
@@ -1019,13 +1165,13 @@ mod beside {
 
     #[cfg(feature = "learning-labs")]
     #[tokio::test]
-    async fn a_defect_the_learner_left_does_not_fail_the_test_of_an_issue_they_fixed_on_python(
+    async fn a_defect_the_learner_left_fails_neither_the_test_nor_the_suite_of_an_issue_they_fixed_on_python(
     ) -> Result<()> {
-        use super::super::support::files;
         use crate::features::learning::drills::runner::runner_for;
         use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 
-        // The second issue forgets to save the calls it counted, so the first issue's test fails whatever the operator.
+        // The second issue forgets to save the calls it counted, so the first issue's test, and the suite, fail
+        // whatever the operator.
         const STATE_TEST: &str = "from src.limiter import RateLimiter\n\nlimiter = RateLimiter(2, 10, lambda: 0)\nassert limiter.allow(\"a\")\nassert limiter.allow(\"a\")\nassert not limiter.allow(\"a\"), \"the third call inside the window must be refused\"\n";
         let state = Edit {
             path: "src/limiter.py".into(),
@@ -1083,14 +1229,19 @@ mod beside {
             &FixCase {
                 drill: &drill,
                 learner: &learner,
-                suite: None,
+                suite: Some(SUITE),
             },
         )
         .await?;
 
         assert_eq!(results[0].outcome, FixOutcome::Fixed, "{:?}", results[0]);
         assert_eq!(results[0].decided_by, DecidedBy::Test);
-        assert_eq!(shown(&results)[0]["gradedBeside"], json!([1]));
+        let shown = shown(&results);
+        assert_eq!(shown[0]["gradedBeside"], json!([1]));
+        assert_eq!(
+            shown[0]["suite"],
+            json!({"status": "passed", "ranBeside": [1]})
+        );
         assert_eq!(results[1].outcome, FixOutcome::NotFixed, "{:?}", results[1]);
         assert!(
             results[1].output.as_deref().is_some_and(
