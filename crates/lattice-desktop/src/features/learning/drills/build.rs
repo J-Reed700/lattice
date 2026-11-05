@@ -5,6 +5,9 @@
 //! The stages run in a fixed order. Each is a method with a typed input and output, and its output is saved as a
 //! job checkpoint, so a resumed job starts at the first stage without one and repeats no model call and no run:
 //!
+//! What the stages do to the material is the material's (`DrillMaterial`): the clean files and their review, the
+//! wording of the plant and the review, and how a defect is proven. The stages order the work and checkpoint it.
+//!
 //! 1. clean code (`drill-build-v1:clean_code`)
 //! 2. clean review (`drill-build-v1:clean_review`)
 //! 3. plant (`drill-build-v1:plant`)
@@ -13,7 +16,7 @@
 //! 6. store: one transaction writes the drill and completes the job, so it has no checkpoint to resume from.
 
 use crate::features::learning::drills::grader::ReviewGrader;
-use crate::features::learning::drills::runner::CodeRunner;
+use crate::features::learning::drills::material::{DrillMaterial, StageCtx};
 use crate::features::learning::drills::spec::DrillSpec;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
@@ -110,31 +113,40 @@ impl Stage {
 /// The step after the last stage.
 const STORE_INDEX: u32 = 5;
 
-/// Builds one drill. The model, the runner, the grader and the database are the build's own; the job runtime's
+/// Builds one drill. The model, the material, the grader and the database are the build's own; the job runtime's
 /// context carries the checkpoints and the cancellation.
 pub(in crate::features::learning) struct DrillBuild<'a> {
     llm: &'a dyn LLMPort,
-    runner: Option<&'a dyn CodeRunner>,
+    material: Box<dyn DrillMaterial + 'a>,
     grader: &'a dyn ReviewGrader,
     pool: &'a SqlitePool,
     cancel: CancellationToken,
 }
 
 impl<'a> DrillBuild<'a> {
-    /// A build that runs code on `runner`, or, without one, proves every defect by judgement alone.
+    /// A build of a drill of `material`.
     pub(in crate::features::learning) fn new(
         llm: &'a dyn LLMPort,
-        runner: Option<&'a dyn CodeRunner>,
+        material: Box<dyn DrillMaterial + 'a>,
         grader: &'a dyn ReviewGrader,
         pool: &'a SqlitePool,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             llm,
-            runner,
+            material,
             grader,
             pool,
             cancel,
+        }
+    }
+
+    /// What the material's stages are given to work with.
+    fn context(&self) -> StageCtx<'_> {
+        StageCtx {
+            llm: self.llm,
+            pool: self.pool,
+            cancel: &self.cancel,
         }
     }
 

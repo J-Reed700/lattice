@@ -15,6 +15,7 @@
 
 use super::budget;
 use super::build::ask::render_files;
+use super::material::DrillMaterial;
 use super::proof::Tools;
 use super::runner::RunOutcome;
 use crate::features::learning::generation::parse_json;
@@ -44,13 +45,14 @@ pub(in crate::features::learning) struct FixCase<'a> {
 /// The result for every key issue, in the key's order. A run cancelled while grading is an error, which the job
 /// treats as a stop.
 pub(in crate::features::learning) async fn grade_fix(
+    material: &dyn DrillMaterial,
     tools: Tools<'_>,
     case: &FixCase<'_>,
 ) -> Result<Vec<IssueFix>> {
     let suite = run_suite(tools, case).await?;
     let mut graded = Vec::with_capacity(case.drill.key.len());
     for (position, issue) in case.drill.key.iter().enumerate() {
-        let checked_by = strategy(choose(issue), tools);
+        let checked_by = material.fix_strategy(issue, tools);
         let check = checked_by.grade(case, position, issue).await?;
         graded.push(IssueFix::settle(position, check, &suite));
     }
@@ -68,7 +70,7 @@ pub(in crate::features::learning) enum StrategyKind {
 pub(in crate::features::learning) fn choose(issue: &KeyIssue) -> StrategyKind {
     match issue.proof {
         Proof::Killed { .. } => StrategyKind::KillingTest,
-        Proof::Judged { .. } => StrategyKind::Judged,
+        Proof::Judged { .. } | Proof::Sourced { .. } => StrategyKind::Judged,
     }
 }
 
@@ -274,7 +276,7 @@ fn task(case: &FixCase<'_>, issue: &KeyIssue) -> String {
     let known = pattern(&issue.pattern);
     format!(
         "Language: {}\n\nIssue: {} ({}), {}\nDefinition: {}\nWhat goes wrong: {}\n\nThe key's fix, in {}:\n<before>\n{}\n</before>\n<after>\n{}\n</after>\n\nThe code the learner reviewed:\n\n{}\n\nThe code as the learner changed it:\n\n{}",
-        case.drill.language,
+        case.drill.material.language().unwrap_or_default(),
         known.map_or(issue.pattern.as_str(), |known| known.name),
         issue.pattern,
         place(&issue.span),

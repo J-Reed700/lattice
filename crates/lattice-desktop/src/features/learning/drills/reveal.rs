@@ -18,7 +18,12 @@ use lattice_core::shared::error::{AppError, Result};
 pub fn learner_drill(stored: &StoredDrill) -> CodeReviewDrillDto {
     CodeReviewDrillDto {
         title: stored.drill.title.clone(),
-        language: stored.drill.language.clone(),
+        language: stored
+            .drill
+            .material
+            .language()
+            .unwrap_or_default()
+            .to_owned(),
         files: stored
             .drill
             .files

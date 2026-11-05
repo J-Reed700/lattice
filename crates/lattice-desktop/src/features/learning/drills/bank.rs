@@ -6,7 +6,7 @@ use super::jobs::DRILL_BUILD;
 use super::repository::{self, DrillStatus, StoredDrill};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, hash, now};
-use lattice_core::domain::learning::drills::targets;
+use lattice_core::domain::learning::drills::{targets, Material};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
 use serde_json::json;
@@ -70,6 +70,14 @@ pub fn least_recently_used(used: &[(String, i64)]) -> &'static str {
         .unwrap_or("backend services")
 }
 
+/// What the bank keeps one ready drill of: the language of code drills.
+pub fn bank_key(material: &Material) -> &str {
+    match material {
+        Material::Code { language } => language,
+        Material::Passage => "passage",
+    }
+}
+
 /// The domain the next drill of `language` is about.
 pub async fn next_domain(pool: &SqlitePool, language: &str) -> Result<String> {
     let used = repository::domain_uses(pool, language).await?;
@@ -99,7 +107,7 @@ pub async fn queue_build_in(
         connection,
         &NewJob {
             kind: DRILL_BUILD.into(),
-            subject_id: Some(spec.language.clone()),
+            subject_id: Some(bank_key(&spec.material).to_owned()),
             operation_id: uuid::Uuid::new_v5(
                 &uuid::Uuid::NAMESPACE_OID,
                 format!("{DRILL_BUILD}:{seed}").as_bytes(),
@@ -121,11 +129,12 @@ pub async fn queue_build_in(
 pub async fn ensure_build(pool: &SqlitePool, spec: &DrillSpec) -> Result<String> {
     spec.validate()?;
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let under_way = JobStore::list_for_subject_in(&mut transaction, DRILL_BUILD, &spec.language)
-        .await?
-        .into_iter()
-        .rev()
-        .find(|job| matches!(job.status, JobStatus::Pending | JobStatus::Running));
+    let under_way =
+        JobStore::list_for_subject_in(&mut transaction, DRILL_BUILD, bank_key(&spec.material))
+            .await?
+            .into_iter()
+            .rev()
+            .find(|job| matches!(job.status, JobStatus::Pending | JobStatus::Running));
     let id = match under_way {
         Some(job) => job.id,
         None => {
@@ -173,14 +182,15 @@ pub(in crate::features::learning) async fn take_in(
     drill.status = DrillStatus::Taken;
     drill.taken_at = Some(at);
     let count = drill.spec.patterns.len().max(1);
+    let material = Material::code(language);
     let next = DrillSpec {
-        language: language.to_owned(),
-        domain: None,
-        lines: drill.spec.lines,
-        patterns: targets(language, &[], at, count)
+        patterns: targets(&material, &[], at, count)
             .iter()
             .map(|pattern| pattern.id.to_owned())
             .collect(),
+        material,
+        domain: None,
+        lines: drill.spec.lines,
         program_id: None,
     };
     let next_build = queue_build_in(connection, &next, &format!("next:{}", drill.drill.id)).await?;

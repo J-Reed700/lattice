@@ -6,22 +6,17 @@ use lattice_core::domain::learning::drills::{
 };
 
 use crate::features::learning::drills::grader::Review;
+use crate::features::learning::drills::material::JudgeWording;
 
 /// The user message of the judge's request.
-pub(super) fn task(review: &Review<'_>) -> String {
+pub(super) fn task(review: &Review<'_>, wording: &JudgeWording) -> String {
     let drill = review.drill;
     let findings = review.findings;
     let order = display_order(&drill.key);
     let mut parts = vec![
-        format!("Drill: {} ({})", drill.title, drill.language),
-        format!(
-            "The code as the reviewer saw it, with line numbers:\n\n{}",
-            listing(&drill.files)
-        ),
-        format!(
-            "The same code before any issue was planted, with its own line numbers:\n\n{}",
-            listing(review.clean)
-        ),
+        format!("Drill: {} ({})", drill.title, wording.kind),
+        format!("{}\n\n{}", wording.reviewed, listing(&drill.files)),
+        format!("{}\n\n{}", wording.original, listing(review.clean)),
         format!("The key: {}.", counted(drill.key.len(), "issue")),
     ];
     parts.extend(order.iter().enumerate().filter_map(|(index, &position)| {

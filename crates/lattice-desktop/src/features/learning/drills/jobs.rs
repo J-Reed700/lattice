@@ -7,6 +7,7 @@ use super::attempts;
 use super::build::DrillBuild;
 use super::grader::ReviewGrader;
 use super::grading::JudgeGrader;
+use super::material::{code_language, CodeMaterial};
 use super::runner::runner_for;
 use super::spec::DrillSpec;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
@@ -69,11 +70,12 @@ impl JobHandler for DrillBuildWorker {
         };
         let pin = pin?;
         let llm = pin.llm.as_ref();
-        let runner = runner_for(&spec.language, &self.runtimes);
+        let runner = runner_for(code_language(&spec.material)?, &self.runtimes);
+        let material = CodeMaterial::new(runner.as_deref());
         let grader = (self.grader)(llm);
         DrillBuild::new(
             llm,
-            runner.as_deref(),
+            Box::new(material),
             grader.as_ref(),
             &self.pool,
             context.cancellation().clone(),
@@ -127,11 +129,12 @@ impl JobHandler for DrillGradingWorker {
             Err(error) => return give_up(&self.pool, context, &id, None, &error).await,
         };
         let llm = pin.llm.as_ref();
-        let runner = runner_for(&stored.drill.language, &self.runtimes);
+        let runner = runner_for(code_language(&stored.drill.material)?, &self.runtimes);
+        let material = CodeMaterial::new(runner.as_deref());
         let grader = (self.grader)(llm);
         AttemptGrading::new(
             llm,
-            runner.as_deref(),
+            Box::new(material),
             grader.as_ref(),
             &self.pool,
             context.cancellation().clone(),

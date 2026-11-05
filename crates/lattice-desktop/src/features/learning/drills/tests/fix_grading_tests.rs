@@ -6,12 +6,13 @@ use super::support::{
     LITERALS_AFTER, LITERALS_BEFORE, OPERATOR_AFTER, SUITE,
 };
 use crate::features::learning::drills::fix_grading::{choose, grade_fix, FixCase, StrategyKind};
+use crate::features::learning::drills::material::CodeMaterial;
 use crate::features::learning::drills::proof::Tools;
 use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::practice::practice_tests::text_length_rules;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{
-    DecidedBy, Drill, DrillFile, FixOutcome, IssueFix, Proof, SuiteVerdict,
+    DecidedBy, Drill, DrillFile, FixOutcome, IssueFix, Material, Proof, SuiteVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
@@ -23,7 +24,7 @@ fn drill() -> Drill {
     let proved = proved();
     Drill {
         id: "drill".into(),
-        language: "python".into(),
+        material: Material::code("python"),
         title: "A sliding-window rate limiter".into(),
         files: proved.files.clone(),
         key: proved.planted_key(),
@@ -86,6 +87,7 @@ async fn grade(
         cancel: &cancel,
     };
     grade_fix(
+        &CodeMaterial::new(tools.runner),
         tools,
         &FixCase {
             drill,
@@ -522,6 +524,7 @@ async fn files_the_runtime_refuses_prove_nothing_so_the_judge_decides() -> Resul
     let learner = operator_fixed();
     let drill = drill();
     let results = grade_fix(
+        &CodeMaterial::new(tools.runner),
         tools,
         &FixCase {
             drill: &drill,
@@ -618,6 +621,7 @@ mod real_runtime {
         };
         let drill = drill();
         grade_fix(
+            &CodeMaterial::new(tools.runner),
             tools,
             &FixCase {
                 drill: &drill,
@@ -839,7 +843,7 @@ mod beside {
         ];
         let drill = Drill {
             id: "drill".into(),
-            language: "python".into(),
+            material: Material::code("python"),
             title: "A sliding-window rate limiter".into(),
             files: drilled,
             key,
@@ -1196,7 +1200,7 @@ mod beside {
         let (drilled, spans) = apply(&files(), &planted).expect("the edits apply");
         let drill = Drill {
             id: "drill".into(),
-            language: "python".into(),
+            material: Material::code("python"),
             title: "A sliding-window rate limiter".into(),
             files: drilled,
             key: vec![
@@ -1237,6 +1241,7 @@ mod beside {
             cancel: &cancel,
         };
         let results = grade_fix(
+            &CodeMaterial::new(tools.runner),
             tools,
             &FixCase {
                 drill: &drill,

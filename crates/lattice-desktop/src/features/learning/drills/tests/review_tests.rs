@@ -17,7 +17,8 @@ use crate::features::learning::persistence::db;
 use crate::features::learning::plugin::code_review_languages;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, PatternRating, Proof, LANGUAGES,
+    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, Material, PatternRating, Proof,
+    LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -243,9 +244,9 @@ async fn with_no_drill_ready_a_build_is_queued_and_the_learner_is_told() -> Resu
     let job = JobStore::new(pool.clone()).get(job_id).await?;
     assert_eq!(job.kind, DRILL_BUILD);
     let spec = spec_of(&job)?;
-    assert_eq!(spec.language, "python");
+    assert_eq!(spec.material, Material::code("python"));
     assert_eq!(spec.lines, 50);
-    let wanted: Vec<String> = targets("python", &[], 0, 2)
+    let wanted: Vec<String> = targets(&Material::code("python"), &[], 0, 2)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();

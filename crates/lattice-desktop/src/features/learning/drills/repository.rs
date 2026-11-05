@@ -5,7 +5,7 @@
 use super::build::Evidence;
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, decode, encode, now};
-use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue};
+use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
@@ -81,9 +81,13 @@ pub(in crate::features::learning) async fn insert_in(
             .map_err(db)?,
         None => None,
     };
+    let language =
+        new.drill.material.language().ok_or_else(|| {
+            AppError::InvalidData("Drills on a passage cannot be stored yet.".into())
+        })?;
     sqlx::query("INSERT INTO learning_drills(id,language,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,NULL)")
         .bind(&new.drill.id)
-        .bind(&new.drill.language)
+        .bind(language)
         .bind(&new.drill.title)
         .bind(new.domain)
         .bind(program_id)
@@ -183,7 +187,9 @@ fn read(row: &SqliteRow) -> Result<StoredDrill> {
     Ok(StoredDrill {
         drill: Drill {
             id: row.get("id"),
-            language: row.get("language"),
+            material: Material::Code {
+                language: row.get("language"),
+            },
             title: row.get("title"),
             files,
             key,

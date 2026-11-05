@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DiffKind, KeyIssue, Origin, PatternDue, Proof,
+    line_diff, pattern, targets, DiffKind, KeyIssue, Material, Origin, PatternDue, Proof,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
@@ -28,6 +28,7 @@ use crate::features::learning::drills::build::{
 };
 use crate::features::learning::drills::grading::live_grading_eval::model;
 use crate::features::learning::drills::grading::JudgeGrader;
+use crate::features::learning::drills::material::{code_language, CodeMaterial};
 use crate::features::learning::drills::repository::{self, StoredDrill};
 use crate::features::learning::drills::runner::{runner_for, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
@@ -92,7 +93,7 @@ fn drill_json(stored: &StoredDrill, counts: &Counts, seconds: f64) -> Value {
         .collect();
     json!({
         "id": stored.drill.id,
-        "language": stored.drill.language,
+        "language": stored.drill.material.language(),
         "title": stored.drill.title,
         "domain": stored.domain,
         "model": stored.model,
@@ -184,7 +185,11 @@ fn runs(trail: &Trail) -> String {
 /// fix as a diff, what was dropped, the clean code, the clean review, the blind review and the models.
 fn markdown(stored: &StoredDrill, counts: &Counts, seconds: f64) -> String {
     let evidence = &stored.evidence;
-    let mut out = format!("# {} ({})\n\n", stored.drill.title, stored.drill.language);
+    let mut out = format!(
+        "# {} ({})\n\n",
+        stored.drill.title,
+        stored.drill.material.language().unwrap_or_default()
+    );
     out.push_str(&format!(
         "- Domain: {}\n- Built by: {}\n- Runner: {}\n- Built in {seconds:.0} seconds\n- Patterns asked for: {}\n\n",
         stored.domain,
@@ -236,6 +241,11 @@ fn markdown(stored: &StoredDrill, counts: &Counts, seconds: f64) -> String {
             }
             Proof::Judged { reason } => {
                 out.push_str(&format!("Proven by the judge: {reason}\n\n"));
+            }
+            Proof::Sourced { quote, reason, .. } => {
+                out.push_str(&format!(
+                    "Proven by the source, which says \"{quote}\": {reason}\n\n"
+                ));
             }
         }
         if let Some(proof) = evidence.proofs.iter().find(|proof| proof.issue == issue.id) {
@@ -368,11 +378,12 @@ async fn build(
         ));
     }
     let context = JobContext::detached(&store, &job).await?;
-    let runner = runner_for(&spec.language, runtimes);
+    let runner = runner_for(code_language(&spec.material)?, runtimes);
+    let material = CodeMaterial::new(runner.as_deref());
     let grader = JudgeGrader::new(llm);
     let outcome = DrillBuild::new(
         llm,
-        runner.as_deref(),
+        Box::new(material),
         &grader,
         pool,
         CancellationToken::new(),
@@ -467,14 +478,15 @@ async fn live_build_eval() -> Result<()> {
         let mut tried: Vec<PatternDue> = Vec::new();
         for index in 1..=count {
             let name = format!("{language}-{index:02}");
+            let material = Material::code(language.clone());
             let spec = DrillSpec {
-                language: language.clone(),
                 domain: None,
                 lines,
-                patterns: targets(language, &tried, now(), patterns)
+                patterns: targets(&material, &tried, now(), patterns)
                     .iter()
                     .map(|pattern| pattern.id.to_owned())
                     .collect(),
+                material,
                 program_id: None,
             };
             tried.extend(spec.patterns.iter().map(|pattern| PatternDue {

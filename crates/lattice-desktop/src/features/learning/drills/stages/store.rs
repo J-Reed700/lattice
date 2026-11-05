@@ -34,7 +34,7 @@ impl DrillBuild<'_> {
         key.extend(built.blind.extras.iter().cloned());
         let drill = Drill {
             id: built.baseline.drill_id.clone(),
-            language: spec.language.clone(),
+            material: spec.material.clone(),
             title: built.baseline.title.clone(),
             files: built.proved.files.clone(),
             key,
@@ -58,7 +58,7 @@ impl DrillBuild<'_> {
                 spec,
                 domain: &built.baseline.domain,
                 suite: built.baseline.suite.as_deref(),
-                runner: self.runner.map(|runner| runner.name()),
+                runner: self.material.runner().map(|runner| runner.name()),
                 model: self.llm.model_name(),
                 evidence: &evidence,
             },

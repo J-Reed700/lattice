@@ -8,7 +8,8 @@ use super::support::{
 use crate::features::learning::drills::build::Proved;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    check_key, Assessment, Drill, FindingOutcome, IssueOutcome, LineSpan, Origin, Proof, Severity,
+    check_key, Assessment, Drill, FindingOutcome, IssueOutcome, LineSpan, Material, Origin, Proof,
+    Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -126,7 +127,7 @@ async fn a_valid_extra_becomes_a_found_in_review_issue_with_its_span_from_its_fi
     key.extend(blind.extras.clone());
     let drill = Drill {
         id: "d".into(),
-        language: "python".into(),
+        material: Material::code("python"),
         title: "A limiter".into(),
         files: proved.files.clone(),
         key,

@@ -10,7 +10,7 @@ use super::dto::{
 use super::reveal::{learner_drill, result_of};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::now;
-use lattice_core::domain::learning::drills::targets;
+use lattice_core::domain::learning::drills::{targets, Material};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
@@ -39,12 +39,13 @@ pub async fn start(
     patterns_count: u32,
 ) -> Result<Started> {
     let count = usize::try_from(patterns_count).unwrap_or(usize::MAX);
-    let patterns: Vec<String> = targets(language, &[], now(), count)
+    let material = Material::code(language);
+    let patterns: Vec<String> = targets(&material, &[], now(), count)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();
     let spec = DrillSpec {
-        language: language.to_owned(),
+        material,
         domain: None,
         lines,
         patterns,

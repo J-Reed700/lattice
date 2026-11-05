@@ -11,7 +11,7 @@ use crate::features::learning::drills::repository::{self, DrillStatus, NewDrill}
 use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::persistence::db;
 use crate::features::learning::tests::pool;
-use lattice_core::domain::learning::drills::{targets, Drill};
+use lattice_core::domain::learning::drills::{targets, Drill, Material};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
 use sqlx::SqlitePool;
@@ -29,13 +29,13 @@ async fn insert(
     let proved = proved();
     let drill = Drill {
         id: id.into(),
-        language: language.into(),
+        material: Material::code(language),
         title: "A limiter".into(),
         files: proved.files.clone(),
         key: proved.planted_key(),
     };
     let mut spec = spec();
-    spec.language = language.into();
+    spec.material = Material::code(language);
     spec.lines = lines;
     spec.patterns = patterns
         .iter()
@@ -176,14 +176,14 @@ async fn taking_a_drill_queues_the_next_build_with_its_size_and_the_targets_of_t
     assert_eq!(job.subject_id.as_deref(), Some("python"));
     assert_eq!(job.status, JobStatus::Pending);
     let queued = spec_of(&job)?;
-    let expected: Vec<String> = targets("python", &[], 0, 3)
+    let expected: Vec<String> = targets(&Material::code("python"), &[], 0, 3)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();
     assert_eq!(
         queued,
         DrillSpec {
-            language: "python".into(),
+            material: Material::code("python"),
             domain: None,
             lines: 70,
             patterns: expected,
@@ -227,7 +227,7 @@ async fn a_spec_that_names_no_drill_is_refused_before_a_job_is_queued() -> Resul
     let pool = pool().await?;
     for bad in [
         DrillSpec {
-            language: "klingon".into(),
+            material: Material::code("klingon"),
             ..spec()
         },
         DrillSpec {

@@ -7,7 +7,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::domain::learning::drills::{
     overlapping, pattern, Drill, DrillFile, Edit, Finding, FindingOutcome, KeyIssue, LineSpan,
-    Origin, Proof, Severity,
+    Material, Origin, Proof, Severity,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -134,7 +134,7 @@ impl Scene {
         Self {
             drill: Drill {
                 id: "orders".into(),
-                language: "python".into(),
+                material: Material::code("python"),
                 title: "Orders".into(),
                 files: vec![file("orders.py", ORDERS), file("notify.py", NOTIFY)],
                 key: vec![
@@ -729,7 +729,7 @@ async fn the_request_holds_the_files_the_clean_files_the_key_the_review_and_the_
     let llm = ScriptedJudge::answering(vec![valid().to_string()]);
     grade(&llm, &Scene::new()).await?;
     let (system, task) = the_request(&llm);
-    assert_eq!(system, SYSTEM);
+    assert_eq!(system, JudgeWording::of(&Material::code("python"))?.system);
 
     let sections = [
         "Drill: Orders (python)",

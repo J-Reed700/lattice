@@ -9,6 +9,7 @@ use crate::features::learning::drills::build::{
     ProvenMutation, Trail, Verification,
 };
 use crate::features::learning::drills::grader::{Review, ReviewGrader};
+use crate::features::learning::drills::material::CodeMaterial;
 use crate::features::learning::drills::repository::{self, NewDrill};
 use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
@@ -20,7 +21,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
     apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, LineSpan,
-    Proof, Severity,
+    Material, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
@@ -400,7 +401,7 @@ pub(super) const LITERALS: &str = "readability.magic_number";
 
 pub(super) fn spec() -> DrillSpec {
     DrillSpec {
-        language: "python".into(),
+        material: Material::code("python"),
         domain: Some("rate limiting".into()),
         lines: 40,
         patterns: vec![OPERATOR.into(), LITERALS.into()],
@@ -675,7 +676,9 @@ impl Harness {
     ) -> DrillBuild<'a> {
         DrillBuild::new(
             model,
-            runner.map(|runner| runner as &dyn CodeRunner),
+            Box::new(CodeMaterial::new(
+                runner.map(|runner| runner as &dyn CodeRunner),
+            )),
             grader,
             &self.pool,
             CancellationToken::new(),
@@ -703,7 +706,9 @@ pub(super) fn build<'a>(
 ) -> DrillBuild<'a> {
     DrillBuild::new(
         model,
-        runner.map(|runner| runner as &dyn CodeRunner),
+        Box::new(CodeMaterial::new(
+            runner.map(|runner| runner as &dyn CodeRunner),
+        )),
         grader,
         pool,
         CancellationToken::new(),
@@ -787,7 +792,7 @@ pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
     let proved = proved();
     let drill = Drill {
         id: id.into(),
-        language: "python".into(),
+        material: Material::code("python"),
         title: "A sliding-window rate limiter".into(),
         files: proved.files.clone(),
         key: proved.planted_key(),
@@ -892,7 +897,9 @@ impl Waiting {
     ) -> AttemptGrading<'a> {
         AttemptGrading::new(
             model,
-            runner.map(|runner| runner as &dyn CodeRunner),
+            Box::new(CodeMaterial::new(
+                runner.map(|runner| runner as &dyn CodeRunner),
+            )),
             grader,
             &self.pool,
             CancellationToken::new(),
