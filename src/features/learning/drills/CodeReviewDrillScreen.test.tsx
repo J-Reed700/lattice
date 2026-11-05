@@ -291,7 +291,7 @@ describe('starting a drill', () => {
     ['cancelled', 'The drill build was cancelled.'],
     ['failed', 'The drill could not be built.'],
     ['interrupted', 'The drill could not be built.'],
-  ] as const)('says a build that %s without a reason did', async (status, message) => {
+  ] as const)('says what happened to a build that ends as %s and gives no reason', async (status, message) => {
     api.startCodeReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
