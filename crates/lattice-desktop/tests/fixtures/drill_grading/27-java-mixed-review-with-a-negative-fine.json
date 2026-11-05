@@ -1,0 +1,198 @@
+{
+  "name": "27-java-mixed-review-with-a-negative-fine",
+  "kind": "mixed",
+  "why": "A review of a drill with a planted operator slip, a planted readability issue, a planted misleading comment and an issue found in review. The negative fine (found in review) and the overdue-on-the-due-date operator are both named in full: found. 'This condition is hard to read' is on the renewal condition and names no cause: half found. Asking for a double so partial days can be charged is advice against code that is right (the fine is per whole day, by design): false positive. The misleading comment is missed.",
+  "drill": {
+    "id": "loan-desk",
+    "language": "java",
+    "title": "Renewals and fines at a loan desk",
+    "files": [
+      {
+        "path": "LoanDesk.java",
+        "text": "import java.time.LocalDate;\nimport java.time.temporal.ChronoUnit;\n\npublic class LoanDesk {\n    private static final int LOAN_DAYS = 14;\n    private static final int MAX_RENEWALS = 2;\n    private static final long BLOCKING_FINE_CENTS = 500;\n    private static final long FINE_CENTS_PER_DAY = 25;\n\n    public record Loan(String isbn, LocalDate dueDate, int renewals) {\n        public boolean isOverdue(LocalDate today) {\n            return !today.isBefore(dueDate);\n        }\n    }\n\n    public record Member(String id, boolean suspended, long finesCents, boolean premium) {}\n\n    public Loan renew(Member member, Loan loan, LocalDate today) {\n        if (member.suspended()\n                || loan.renewals() >= (member.premium() ? MAX_RENEWALS + 1 : MAX_RENEWALS)\n                || loan.isOverdue(today)\n                || member.finesCents() >= BLOCKING_FINE_CENTS) {\n            throw new IllegalStateException(\"Loan of \" + loan.isbn() + \" cannot be renewed\");\n        }\n        return new Loan(loan.isbn(), loan.dueDate().plusDays(LOAN_DAYS), loan.renewals() + 1);\n    }\n\n    /** The fine in cents: a fixed amount for every whole day late, capped at the price of the book. */\n    public long fineCents(Loan loan, LocalDate returnedOn) {\n        long daysLate = ChronoUnit.DAYS.between(loan.dueDate(), returnedOn);\n        return daysLate * FINE_CENTS_PER_DAY;\n    }\n}\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "desk-due-date-is-overdue",
+        "pattern": "correctness.wrong_operator",
+        "severity": "major",
+        "span": {
+          "path": "LoanDesk.java",
+          "start": 12,
+          "end": 12
+        },
+        "consequence": "!today.isBefore(dueDate) is also true on the due date itself, so a loan counts as overdue a day early and a member who asks to renew on the last day is refused.",
+        "fix": {
+          "path": "LoanDesk.java",
+          "before": "            return !today.isBefore(dueDate);",
+          "after": "            return today.isAfter(dueDate);"
+        },
+        "explanation": "isOverdue uses !isBefore, which includes the due date, but a loan is only overdue after it. Use isAfter(dueDate).",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces isAfter with the negated isBefore, which adds the due date itself to the overdue days."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "desk-renewal-condition",
+        "pattern": "readability.complex_conditional",
+        "severity": "minor",
+        "span": {
+          "path": "LoanDesk.java",
+          "start": 18,
+          "end": 22
+        },
+        "consequence": "The four renewal rules and a nested ternary are packed into one negated condition, so a reader has to work out again each time when a renewal is allowed, and a change to one rule is easy to get wrong.",
+        "fix": {
+          "path": "LoanDesk.java",
+          "before": "    public Loan renew(Member member, Loan loan, LocalDate today) {\n        if (member.suspended()\n                || loan.renewals() >= (member.premium() ? MAX_RENEWALS + 1 : MAX_RENEWALS)\n                || loan.isOverdue(today)\n                || member.finesCents() >= BLOCKING_FINE_CENTS) {",
+          "after": "    private boolean mayRenew(Member member, Loan loan, LocalDate today) {\n        int allowed = member.premium() ? MAX_RENEWALS + 1 : MAX_RENEWALS;\n        return !member.suspended()\n                && loan.renewals() < allowed\n                && !loan.isOverdue(today)\n                && member.finesCents() < BLOCKING_FINE_CENTS;\n    }\n\n    public Loan renew(Member member, Loan loan, LocalDate today) {\n        if (!mayRenew(member, loan, today)) {"
+        },
+        "explanation": "renew puts all of the renewal rules, with a ternary for the premium allowance inside one of them, into a single if. Move them into a named method such as mayRenew, with the allowance as a local, so that the condition reads as one idea.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the call to the named method mayRenew with its rules written out inside the if, and the clean code names them."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "desk-fine-comment-promises-a-cap",
+        "pattern": "readability.misleading_comment",
+        "severity": "minor",
+        "span": {
+          "path": "LoanDesk.java",
+          "start": 28,
+          "end": 28
+        },
+        "consequence": "The comment promises that a fine never exceeds the price of the book, but fineCents knows no price and applies no cap, so a reader trusts a limit that does not exist and a long-overdue book can cost far more than it is worth.",
+        "fix": {
+          "path": "LoanDesk.java",
+          "before": "    /** The fine in cents: a fixed amount for every whole day late, capped at the price of the book. */",
+          "after": "    /** The fine in cents: a fixed amount for every whole day the book comes back after its due date. */"
+        },
+        "explanation": "The doc comment says the fine is capped at the price of the book, and the method never looks at a price. Describe what the code does, or add the cap.",
+        "proof": {
+          "judged": {
+            "reason": "The edit changes the comment to describe a cap that the code does not apply, and the clean comment describes the code."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "desk-early-return-is-a-credit",
+        "pattern": "correctness.boundary_and_empty_input",
+        "severity": "major",
+        "span": {
+          "path": "LoanDesk.java",
+          "start": 30,
+          "end": 30
+        },
+        "consequence": "A book returned before its due date gives a negative number of days, so fineCents returns a negative amount and the member is credited money instead of owing nothing.",
+        "fix": {
+          "path": "LoanDesk.java",
+          "before": "        long daysLate = ChronoUnit.DAYS.between(loan.dueDate(), returnedOn);",
+          "after": "        long daysLate = Math.max(0, ChronoUnit.DAYS.between(loan.dueDate(), returnedOn));"
+        },
+        "explanation": "fineCents multiplies the days between the due date and the return, and that number is negative for an early return. Clamp it at zero before multiplying.",
+        "proof": {
+          "judged": {
+            "reason": "A blind review of the finished code reported it, and the judge confirmed that the clean code has it too: nothing stops daysLate from being negative."
+          }
+        },
+        "origin": "found_in_review"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "LoanDesk.java",
+      "text": "import java.time.LocalDate;\nimport java.time.temporal.ChronoUnit;\n\npublic class LoanDesk {\n    private static final int LOAN_DAYS = 14;\n    private static final int MAX_RENEWALS = 2;\n    private static final long BLOCKING_FINE_CENTS = 500;\n    private static final long FINE_CENTS_PER_DAY = 25;\n\n    public record Loan(String isbn, LocalDate dueDate, int renewals) {\n        public boolean isOverdue(LocalDate today) {\n            return today.isAfter(dueDate);\n        }\n    }\n\n    public record Member(String id, boolean suspended, long finesCents, boolean premium) {}\n\n    private boolean mayRenew(Member member, Loan loan, LocalDate today) {\n        int allowed = member.premium() ? MAX_RENEWALS + 1 : MAX_RENEWALS;\n        return !member.suspended()\n                && loan.renewals() < allowed\n                && !loan.isOverdue(today)\n                && member.finesCents() < BLOCKING_FINE_CENTS;\n    }\n\n    public Loan renew(Member member, Loan loan, LocalDate today) {\n        if (!mayRenew(member, loan, today)) {\n            throw new IllegalStateException(\"Loan of \" + loan.isbn() + \" cannot be renewed\");\n        }\n        return new Loan(loan.isbn(), loan.dueDate().plusDays(LOAN_DAYS), loan.renewals() + 1);\n    }\n\n    /** The fine in cents: a fixed amount for every whole day the book comes back after its due date. */\n    public long fineCents(Loan loan, LocalDate returnedOn) {\n        long daysLate = ChronoUnit.DAYS.between(loan.dueDate(), returnedOn);\n        return daysLate * FINE_CENTS_PER_DAY;\n    }\n}\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "LoanDesk.java",
+        "start": 30,
+        "end": 30
+      },
+      "text": "fineCents goes negative when a book is returned before its due date: daysLate is negative then, so the member is credited money instead of owing nothing. Clamp it at zero.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "LoanDesk.java",
+        "start": 12,
+        "end": 12
+      },
+      "text": "!today.isBefore(dueDate) is true on the due date itself, so a loan counts as overdue a day early and a renewal on the last day is refused.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "LoanDesk.java",
+        "start": 18,
+        "end": 22
+      },
+      "text": "This condition is hard to read.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "LoanDesk.java",
+        "start": 8,
+        "end": 8
+      },
+      "text": "Use double for the fine so that partial days can be charged.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      {
+        "half_found": {
+          "finding": 2
+        }
+      },
+      "missed",
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            3
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}
