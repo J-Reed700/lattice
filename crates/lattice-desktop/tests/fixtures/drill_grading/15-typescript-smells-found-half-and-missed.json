@@ -1,0 +1,164 @@
+{
+  "name": "15-typescript-smells-found-half-and-missed",
+  "kind": "mixed",
+  "why": "A review of a refactoring-smell drill. The magic numbers are found: the finding says what is wrong (bare 450 and 120) and why it matters (nobody can tell what they are or which to change). The flag argument is half found: the finding points at the boolean and calls it a smell but never says why it matters, and the rubric asks a find to name 'what is wrong and why it matters'. The nesting in discountPercent is missed. The remark about reduce is only a preference between equivalent ways of writing the same sum: a false positive. The last finding names a real defect of the clean code that the key does not hold: with no orders the average is 0 divided by 0, which is NaN: valid extra. Least certain label: the flag argument, which a lenient reading of 'names its cause' would call found.",
+  "drill": {
+    "id": "order-pricing",
+    "language": "typescript",
+    "title": "Order pricing",
+    "files": [
+      {
+        "path": "pricing.ts",
+        "text": "export interface LineItem {\n  sku: string;\n  quantity: number;\n  unitCents: number;\n}\n\nexport interface Order {\n  customerId: string;\n  status: \"open\" | \"shipped\" | \"cancelled\";\n  lines: LineItem[];\n  coupon: string | null;\n  tier: \"standard\" | \"gold\" | \"blocked\";\n  weightKg: number;\n}\n\nexport function ordersFor(orders: Order[], customerId: string, onlyOpen: boolean): Order[] {\n  return orders.filter(\n    (order) => order.customerId === customerId && (!onlyOpen || order.status === \"open\"),\n  );\n}\n\nconst GOLD_DISCOUNT_PERCENT = 10;\nconst WELCOME_DISCOUNT_PERCENT = 5;\n\nexport function discountPercent(order: Order): number {\n  let percent = 0;\n  if (order.lines.length > 0) {\n    if (order.tier !== \"blocked\") {\n      if (order.tier === \"gold\") {\n        percent = GOLD_DISCOUNT_PERCENT;\n      } else {\n        if (order.coupon === \"WELCOME\") {\n          percent = WELCOME_DISCOUNT_PERCENT;\n        }\n      }\n    }\n  }\n  return percent;\n}\n\nexport function shippingCents(order: Order): number {\n  return 450 + Math.ceil(order.weightKg) * 120;\n}\n\nexport function subtotalCents(order: Order): number {\n  return order.lines.reduce((sum, line) => sum + line.quantity * line.unitCents, 0);\n}\n\nexport function totalCents(order: Order): number {\n  const subtotal = subtotalCents(order);\n  const discount = Math.round((subtotal * discountPercent(order)) / 100);\n  return subtotal - discount + shippingCents(order);\n}\n\nexport function averageTotalCents(orders: Order[]): number {\n  const total = orders.reduce((sum, order) => sum + totalCents(order), 0);\n  return total / orders.length;\n}\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "pricing-flag-argument",
+        "pattern": "design.flag_argument",
+        "severity": "minor",
+        "span": {
+          "path": "pricing.ts",
+          "start": 16,
+          "end": 20
+        },
+        "consequence": "Every call reads as ordersFor(orders, id, true) or ordersFor(orders, id, false), so a reader has to open the function to learn what the boolean selects, and one function does two jobs behind a single name.",
+        "fix": {
+          "path": "pricing.ts",
+          "before": "export function ordersFor(orders: Order[], customerId: string, onlyOpen: boolean): Order[] {\n  return orders.filter(\n    (order) => order.customerId === customerId && (!onlyOpen || order.status === \"open\"),\n  );\n}",
+          "after": "export function ordersFor(orders: Order[], customerId: string): Order[] {\n  return orders.filter((order) => order.customerId === customerId);\n}\n\nexport function openOrdersFor(orders: Order[], customerId: string): Order[] {\n  return ordersFor(orders, customerId).filter((order) => order.status === \"open\");\n}"
+        },
+        "explanation": "ordersFor takes a boolean that switches it between listing all of a customer's orders and listing only the open ones. Split it into ordersFor and openOrdersFor so that each call says what it wants.",
+        "proof": {
+          "judged": {
+            "reason": "The edit merges ordersFor and openOrdersFor into one function with an onlyOpen flag, and the clean code keeps them apart."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "pricing-nested-discount",
+        "pattern": "readability.deep_nesting",
+        "severity": "minor",
+        "span": {
+          "path": "pricing.ts",
+          "start": 26,
+          "end": 38
+        },
+        "consequence": "The discount rule sits four levels deep, so to see when a gold customer or a coupon applies a reader has to follow every enclosing condition, and each new rule adds another level.",
+        "fix": {
+          "path": "pricing.ts",
+          "before": "  let percent = 0;\n  if (order.lines.length > 0) {\n    if (order.tier !== \"blocked\") {\n      if (order.tier === \"gold\") {\n        percent = GOLD_DISCOUNT_PERCENT;\n      } else {\n        if (order.coupon === \"WELCOME\") {\n          percent = WELCOME_DISCOUNT_PERCENT;\n        }\n      }\n    }\n  }\n  return percent;\n",
+          "after": "  if (order.lines.length === 0 || order.tier === \"blocked\") {\n    return 0;\n  }\n  if (order.tier === \"gold\") {\n    return GOLD_DISCOUNT_PERCENT;\n  }\n  if (order.coupon === \"WELCOME\") {\n    return WELCOME_DISCOUNT_PERCENT;\n  }\n  return 0;\n"
+        },
+        "explanation": "discountPercent nests its conditions four deep and carries the answer out in a mutable percent. Guard clauses that return early say the same thing flat: no lines or a blocked customer gets 0, gold gets the gold rate, the coupon gets its rate.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the early returns with nested conditions that give the same results, and the clean code returns early."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "pricing-magic-shipping",
+        "pattern": "readability.magic_number",
+        "severity": "nit",
+        "span": {
+          "path": "pricing.ts",
+          "start": 41,
+          "end": 43
+        },
+        "consequence": "Nothing says that 450 is the flat charge or that 120 is the price per kilo, so whoever changes the rates has to work out which literal to touch.",
+        "fix": {
+          "path": "pricing.ts",
+          "before": "export function shippingCents(order: Order): number {\n  return 450 + Math.ceil(order.weightKg) * 120;\n}",
+          "after": "const BASE_SHIPPING_CENTS = 450;\nconst PER_KG_CENTS = 120;\n\nexport function shippingCents(order: Order): number {\n  return BASE_SHIPPING_CENTS + Math.ceil(order.weightKg) * PER_KG_CENTS;\n}"
+        },
+        "explanation": "shippingCents has the base charge and the per-kilo price as bare numbers. Name them as constants beside the function so the rates read as rates and change in one place.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the named constants BASE_SHIPPING_CENTS and PER_KG_CENTS with their values."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "pricing.ts",
+      "text": "export interface LineItem {\n  sku: string;\n  quantity: number;\n  unitCents: number;\n}\n\nexport interface Order {\n  customerId: string;\n  status: \"open\" | \"shipped\" | \"cancelled\";\n  lines: LineItem[];\n  coupon: string | null;\n  tier: \"standard\" | \"gold\" | \"blocked\";\n  weightKg: number;\n}\n\nexport function ordersFor(orders: Order[], customerId: string): Order[] {\n  return orders.filter((order) => order.customerId === customerId);\n}\n\nexport function openOrdersFor(orders: Order[], customerId: string): Order[] {\n  return ordersFor(orders, customerId).filter((order) => order.status === \"open\");\n}\n\nconst GOLD_DISCOUNT_PERCENT = 10;\nconst WELCOME_DISCOUNT_PERCENT = 5;\n\nexport function discountPercent(order: Order): number {\n  if (order.lines.length === 0 || order.tier === \"blocked\") {\n    return 0;\n  }\n  if (order.tier === \"gold\") {\n    return GOLD_DISCOUNT_PERCENT;\n  }\n  if (order.coupon === \"WELCOME\") {\n    return WELCOME_DISCOUNT_PERCENT;\n  }\n  return 0;\n}\n\nconst BASE_SHIPPING_CENTS = 450;\nconst PER_KG_CENTS = 120;\n\nexport function shippingCents(order: Order): number {\n  return BASE_SHIPPING_CENTS + Math.ceil(order.weightKg) * PER_KG_CENTS;\n}\n\nexport function subtotalCents(order: Order): number {\n  return order.lines.reduce((sum, line) => sum + line.quantity * line.unitCents, 0);\n}\n\nexport function totalCents(order: Order): number {\n  const subtotal = subtotalCents(order);\n  const discount = Math.round((subtotal * discountPercent(order)) / 100);\n  return subtotal - discount + shippingCents(order);\n}\n\nexport function averageTotalCents(orders: Order[]): number {\n  const total = orders.reduce((sum, order) => sum + totalCents(order), 0);\n  return total / orders.length;\n}\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "pricing.ts",
+        "start": 42,
+        "end": 42
+      },
+      "text": "450 and 120 are bare numbers. Nothing says that 450 is the base charge or that 120 is the price per kilo, so whoever changes the rates has to guess which literal to touch. Name them as constants.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "pricing.ts",
+        "start": 16,
+        "end": 20
+      },
+      "text": "ordersFor takes a boolean flag, which is a code smell.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "pricing.ts",
+        "start": 46,
+        "end": 46
+      },
+      "text": "I'd rewrite this reduce as a for loop, reduce is hard to read.",
+      "severity": "nit"
+    },
+    {
+      "span": {
+        "path": "pricing.ts",
+        "start": 57,
+        "end": 57
+      },
+      "text": "averageTotalCents divides by orders.length, which is 0 when there are no orders, so the average of nothing comes out as NaN and reaches whatever displays it.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "half_found": {
+          "finding": 1
+        }
+      },
+      "missed",
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            2
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "false_positive",
+      "valid_extra"
+    ]
+  }
+}
