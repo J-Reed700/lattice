@@ -99,6 +99,52 @@ mod tests {
             .unwrap()
     }
 
+    /// A tangent goes with its parent by cascade; its attachments, and a nested
+    /// tangent's, are orphans of that delete too.
+    #[tokio::test]
+    async fn a_deleted_chats_tangents_leave_orphans_too() {
+        let pool = migrated_pool().await;
+        conversation(&pool, "chat").await;
+        for (tangent, parent) in [("tangent", "chat"), ("nested", "tangent")] {
+            sqlx::query(
+                "INSERT INTO conversations (id, title, space_id, created_at, updated_at,                  tangent_parent_id) VALUES (?, 'A tangent', 'space_general',                  '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?)",
+            )
+            .bind(tangent)
+            .bind(parent)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        attachment(&pool, "in-tangent", "tangent").await;
+        attachment(&pool, "in-nested", "nested").await;
+        ConversationRepository::new(pool.clone())
+            .delete("chat")
+            .await
+            .unwrap();
+        let intents = FileIntents::new(pool.clone());
+
+        let delete = |id: String| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("DELETE FROM documents WHERE id = ?")
+                    .bind(id)
+                    .execute(&pool)
+                    .await?;
+                Ok::<(), AppError>(())
+            }
+        };
+        let (found, deleted) = reconcile_orphaned_attachments(
+            &SqliteDocumentScope::new(pool.clone()),
+            &intents,
+            delete,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!((found, deleted), (2, 2));
+        assert!(documents(&pool).await.is_empty());
+    }
+
     #[tokio::test]
     async fn a_deleted_chats_leftover_attachment_goes_and_a_lost_rows_does_not() {
         let pool = migrated_pool().await;

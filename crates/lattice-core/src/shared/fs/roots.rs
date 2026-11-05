@@ -150,6 +150,42 @@ mod tests {
         ] {
             println!("ROOT\t{name}\t{}", root.unwrap().display());
         }
+        if let Some(vault) = resolve_vault_root("") {
+            println!("VAULT\t{}", vault.display());
+        }
+    }
+
+    /// The vault a child process resolves when none is configured.
+    fn default_vault_of_child(probe: &str) -> Option<PathBuf> {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "shared::fs::roots::tests::print_roots",
+                "--nocapture",
+            ])
+            .env(PROBE, probe)
+            .env_remove(LATTICE_HOME_ENV)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| {
+                line.split_once("VAULT\t")
+                    .map(|(_, path)| PathBuf::from(path))
+            })
+    }
+
+    /// A test that saves a note with no vault configured must not write into
+    /// the user's own `~/Lattice`.
+    #[test]
+    fn a_process_that_has_not_claimed_the_users_home_gets_a_scratch_vault_by_default() {
+        let users = dirs::home_dir().unwrap().join("Lattice");
+        let vault = default_vault_of_child("1").expect("a default vault");
+        assert!(
+            !vault.starts_with(&users),
+            "the default vault is the user's at {}",
+            vault.display()
+        );
     }
 
     fn all_under(home: &Path) -> Vec<(String, PathBuf)> {

@@ -276,12 +276,19 @@ fn id_of(path: &Path) -> String {
     path.file_stem().unwrap().to_string_lossy().into_owned()
 }
 
-/// A chat with one frozen page and one picture, rows and files.
-async fn chat_with_files(pool: &SqlitePool, home: &Path, chat: &str) -> [PathBuf; 2] {
+/// A chat, a tangent of `parent` when given, with one frozen page and one
+/// picture, rows and files.
+async fn chat_with_files(
+    pool: &SqlitePool,
+    home: &Path,
+    chat: &str,
+    parent: Option<&str>,
+) -> [PathBuf; 2] {
     sqlx::query(
-        "INSERT INTO conversations (id, title, space_id, created_at, updated_at)          VALUES (?, 'A chat', 'space_general', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at, tangent_parent_id)          VALUES (?, 'A chat', 'space_general', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?)",
     )
     .bind(chat)
+    .bind(parent)
     .execute(pool)
     .await
     .unwrap();
@@ -296,9 +303,10 @@ async fn chat_with_files(pool: &SqlitePool, home: &Path, chat: &str) -> [PathBuf
     .unwrap();
     let picture = picture(home);
     sqlx::query(
-        "INSERT INTO chat_images (id, conversation_id, request_id, ref, ext, mime, sha256,          byte_size, width, height, caption, origin, created_at)          VALUES (?, ?, 'request', 'img-1', 'png', 'image/png', '', 4, 1, 1, '', 'page',          '2026-11-01T00:00:00Z')",
+        "INSERT INTO chat_images (id, conversation_id, request_id, ref, ext, mime, sha256,          byte_size, width, height, caption, origin, created_at)          VALUES (?, ?, ?, 'img-1', 'png', 'image/png', '', 4, 1, 1, '', 'page',          '2026-11-01T00:00:00Z')",
     )
     .bind(id_of(&picture))
+    .bind(chat)
     .bind(chat)
     .execute(pool)
     .await
@@ -601,7 +609,7 @@ async fn deleting_a_chat_through_the_app_frees_its_pages_and_pictures() {
     let pool = migrated_pool().await;
     own(&pool, home.path(), A).await;
     let run = start_up(&pool, home.path()).await;
-    let chats_files = chat_with_files(&pool, home.path(), "chat").await;
+    let chats_files = chat_with_files(&pool, home.path(), "chat", None).await;
     let unnamed = [snapshot(home.path()), picture(home.path())];
 
     ConversationRepository::new(pool.clone())
@@ -615,4 +623,81 @@ async fn deleting_a_chat_through_the_app_frees_its_pages_and_pictures() {
     assert!(left.is_empty(), "the deleted chat left {left:?}");
     let gone = deleted(&unnamed);
     assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
+}
+
+#[tokio::test]
+async fn deleting_a_chat_frees_the_pages_and_pictures_of_its_tangents() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let run = start_up(&pool, home.path()).await;
+    let mut files = chat_with_files(&pool, home.path(), "chat", None)
+        .await
+        .to_vec();
+    files.extend(chat_with_files(&pool, home.path(), "tangent", Some("chat")).await);
+    files.extend(chat_with_files(&pool, home.path(), "nested", Some("tangent")).await);
+
+    ConversationRepository::new(pool.clone())
+        .delete("chat")
+        .await
+        .unwrap();
+    run.sweeps.snapshots.sweep().await.unwrap();
+    run.sweeps.images.remove_unclaimed_files().await.unwrap();
+
+    let left: Vec<_> = files.iter().filter(|path| path.exists()).collect();
+    assert!(
+        left.is_empty(),
+        "the deleted chat and its tangents left {left:?}"
+    );
+}
+
+/// A second database beside the owner's library lets go of a blob its own
+/// rows named; the owner's rows may name it too, so it stays.
+#[tokio::test]
+async fn a_database_that_does_not_own_the_library_removes_no_blob_it_lets_go_of() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    std::fs::write(home.path().join("owner"), A).unwrap();
+    let (hash, shared) = imported_file(home.path(), "a document both databases hold");
+    let run = start_up(&pool, home.path()).await;
+    assert!(!run.gate.is_open());
+
+    run.sweeps.library_gc.release(&hash).await.unwrap();
+    assert!(shared.exists(), "a release deleted the owner's blob");
+    run.sweeps.library_gc.import_failed(&hash, None).await;
+    assert!(shared.exists(), "a failed import deleted the owner's blob");
+}
+
+/// A database that does not own the library never acts on its records, so its
+/// start clears them, and touches no file.
+#[tokio::test]
+async fn a_database_that_does_not_own_the_library_clears_its_records_and_keeps_the_files() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    std::fs::write(home.path().join("owner"), A).unwrap();
+    let (hash, blob) = imported_file(home.path(), "let go of here");
+    earlier_record(&pool, "library", "release", &hash).await;
+    let page = snapshot(home.path());
+    earlier_record(&pool, "web_snapshot", "release", &id_of(&page)).await;
+    let released_picture = picture(home.path());
+    let name = released_picture
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    earlier_record(&pool, "chat_image", "release", &name).await;
+    let files = [blob, page, released_picture];
+
+    start_up(&pool, home.path()).await;
+
+    let gone = deleted(&files);
+    assert!(
+        gone.is_empty(),
+        "a database that does not own them deleted {gone:?}"
+    );
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
 }
