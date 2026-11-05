@@ -104,7 +104,7 @@ fn drill_worker(
             Box::pin(async move { container.learning_llm(model_requirements::drills()).await })
         }),
         runtimes,
-        grader: std::sync::Arc::new(super::drills::jobs::unconnected_grader),
+        grader: super::drills::jobs::judge_grader,
     }
 }
 

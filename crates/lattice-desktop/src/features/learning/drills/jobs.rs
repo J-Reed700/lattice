@@ -2,20 +2,19 @@
 //! in the bank (docs/design/2026-11-04-code-review-drills.md section 2).
 
 use super::build::DrillBuild;
-use super::grader::{Review, ReviewGrader};
+use super::grader::ReviewGrader;
+use super::grading::JudgeGrader;
 use super::runner::runner_for;
 use super::spec::DrillSpec;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::learning::drills::Assessment;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy,
 };
 use sqlx::SqlitePool;
-use std::sync::Arc;
 
 pub const DRILL_BUILD: &str = "learning.drill_build";
 
@@ -27,8 +26,14 @@ pub fn drill_job_config() -> JobKindConfig {
         .backoff(Backoff::default())
 }
 
-/// Makes the grader of a build's blind review from the model the build runs on.
-pub type GraderFactory = Arc<dyn Fn(Arc<dyn LLMPort>) -> Box<dyn ReviewGrader> + Send + Sync>;
+/// Makes the grader of a build's blind review on the model the build runs on.
+pub type GraderFactory = for<'a> fn(&'a dyn LLMPort) -> Box<dyn ReviewGrader + 'a>;
+
+/// The judge that grades a build's blind review on the model the build runs on: the grader every review goes
+/// through, whoever made it.
+pub fn judge_grader(llm: &dyn LLMPort) -> Box<dyn ReviewGrader + '_> {
+    Box::new(JudgeGrader::new(llm))
+}
 
 /// Builds drills, on the Learning model, pinned for the whole build.
 #[derive(Clone)]
@@ -56,10 +61,11 @@ impl JobHandler for DrillBuildWorker {
             return Ok(JobOutcome::Stopped);
         };
         let pin = pin?;
+        let llm = pin.llm.as_ref();
         let runner = runner_for(&spec.language, &self.runtimes);
-        let grader = (self.grader)(Arc::clone(&pin.llm));
+        let grader = (self.grader)(llm);
         DrillBuild::new(
-            pin.llm.as_ref(),
+            llm,
             runner.as_deref(),
             grader.as_ref(),
             &self.pool,
@@ -67,22 +73,5 @@ impl JobHandler for DrillBuildWorker {
         )
         .run(context, &spec)
         .await
-    }
-}
-
-/// The grader of a build until the judge that grades reviews (step 3) is connected: it refuses every review, so a
-/// build stops at its blind review and fails with the reason instead of storing a key nobody judged.
-pub fn unconnected_grader(_llm: Arc<dyn LLMPort>) -> Box<dyn ReviewGrader> {
-    Box::new(Unconnected)
-}
-
-struct Unconnected;
-
-#[async_trait]
-impl ReviewGrader for Unconnected {
-    async fn assess(&self, _review: &Review<'_>) -> Result<Assessment> {
-        Err(AppError::InvalidState(
-            "The judge that grades a review is not connected to the drill build yet.".into(),
-        ))
     }
 }

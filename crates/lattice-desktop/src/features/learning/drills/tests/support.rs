@@ -81,6 +81,7 @@ pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
         ("You write a test that shows a defect", "killing test"),
         ("Report every problem you would raise", "blind review"),
         ("A reviewer commented on code", "key entry"),
+        ("You grade a code review against an answer key", "grade"),
     ] {
         if system.contains(needle) {
             return name;
@@ -591,6 +592,30 @@ pub(super) fn blind_assessment() -> Assessment {
             (FindingOutcome::FalsePositive, "It names nothing.".into()),
         ],
     }
+}
+
+/// What the judge answers when asked to grade the findings of [`blind_answer`] against the key of [`proved`]: the
+/// assessment [`blind_assessment`] is.
+pub(super) fn grade_answer() -> String {
+    json!({
+        "issues": [
+            {
+                "issue": 0, "reason": "The comment names the operator.", "outcome": "found",
+                "finding": 0, "quote": "lets one call more than the limit through"
+            },
+            {
+                "issue": 1, "reason": "No comment mentions the literals.", "outcome": "missed",
+                "finding": null, "quote": null
+            }
+        ],
+        "findings": [
+            {"finding": 0, "reason": "It is the changed operator.", "outcome": "matches", "issues": [0]},
+            {"finding": 1, "reason": "That is how the code is meant to read.", "outcome": "false_positive", "issues": []},
+            {"finding": 2, "reason": "The dictionary really does grow without bound.", "outcome": "valid_extra", "issues": []},
+            {"finding": 3, "reason": "It names nothing.", "outcome": "false_positive", "issues": []}
+        ]
+    })
+    .to_string()
 }
 
 /// What the model answers when asked to describe the extra finding as an entry of the key.

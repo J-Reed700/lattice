@@ -1,19 +1,19 @@
-//! The `learning.drill_build` job on the job runtime: what it is queued with, how it ends, and that cancelling it
-//! stops the model and stores nothing.
+//! The `learning.drill_build` job on the job runtime: what it is queued with, how it ends with the judge that grades
+//! reviews, and that cancelling it stops the model and stores nothing.
 
 use super::support::{
-    blind_answer, blind_assessment, clean_code_answer, entry_answer, judge_answer, plant_answer,
-    review_answer, spec, FakeGrader, ScriptedModel,
+    blind_answer, blind_assessment, clean_code_answer, entry_answer, grade_answer, judge_answer,
+    messages, plant_answer, review_answer, spec, ScriptedModel,
 };
 use crate::features::learning::drills::bank::queue_build;
-use crate::features::learning::drills::grader::ReviewGrader;
 use crate::features::learning::drills::jobs::{
-    drill_job_config, spec_of, unconnected_grader, DrillBuildWorker, GraderFactory, DRILL_BUILD,
+    drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD,
 };
 use crate::features::learning::drills::repository;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::generation_jobs::pinned_for_test;
 use crate::features::learning::persistence::db;
+use crate::features::learning::practice::practice_tests::text_length_rules;
 use crate::features::learning::tests::pool;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
@@ -29,8 +29,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// A worker on `model`, without the built-in runtimes, so that every defect is proven by judgement.
-fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>, grader: GraderFactory) -> DrillBuildWorker {
+/// A worker on `model`, without the built-in runtimes, so that every defect is proven by judgement, and with the
+/// judge that grades reviews, as the app wires it.
+fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>) -> DrillBuildWorker {
     DrillBuildWorker {
         pool: pool.clone(),
         load_llm: Arc::new(move || {
@@ -38,18 +39,8 @@ fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>, grader: GraderFactory) -> 
             Box::pin(async move { Ok(pinned_for_test(model)) })
         }),
         runtimes: BuiltinRuntimes::new(None),
-        grader,
+        grader: judge_grader,
     }
-}
-
-fn judging(assessment: bool) -> GraderFactory {
-    Arc::new(move |_llm: Arc<dyn LLMPort>| -> Box<dyn ReviewGrader> {
-        if assessment {
-            Box::new(FakeGrader::new(blind_assessment()))
-        } else {
-            Box::new(FakeGrader::failing("unused"))
-        }
-    })
 }
 
 async fn drills(pool: &SqlitePool) -> Result<i64> {
@@ -109,7 +100,7 @@ async fn run_to_the_end(pool: &SqlitePool, worker: DrillBuildWorker, id: &str) -
 }
 
 #[tokio::test]
-async fn a_queued_build_runs_on_the_runtime_and_stores_the_drill() -> Result<()> {
+async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_review() -> Result<()> {
     let pool = pool().await?;
     let model = Arc::new(ScriptedModel::new([
         clean_code_answer(),
@@ -118,10 +109,11 @@ async fn a_queued_build_runs_on_the_runtime_and_stores_the_drill() -> Result<()>
         judge_answer(true),
         judge_answer(true),
         blind_answer(),
+        grade_answer(),
         entry_answer(),
     ]));
     let id = queue_build(&pool, &spec(), "end to end").await?;
-    run_to_the_end(&pool, worker(&pool, model.clone(), judging(true)), &id).await?;
+    run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
 
     let job = JobStore::new(pool.clone()).get(&id).await?;
     assert_eq!(job.status, JobStatus::Completed, "{:?}", job.error_message);
@@ -134,9 +126,10 @@ async fn a_queued_build_runs_on_the_runtime_and_stores_the_drill() -> Result<()>
             "judge",
             "judge",
             "blind review",
+            "grade",
             "key entry"
         ],
-        "without a runner both defects are judged"
+        "without a runner both defects are judged, and one call grades the review"
     );
     let mut connection = pool.acquire().await.map_err(db)?;
     let stored = repository::oldest_ready_in(&mut connection, "python")
@@ -151,6 +144,34 @@ async fn a_queued_build_runs_on_the_runtime_and_stores_the_drill() -> Result<()>
         .key
         .iter()
         .all(|issue| matches!(issue.proof, Proof::Judged { .. })));
+    assert_eq!(
+        stored.evidence.blind_review.assessment,
+        Some(blind_assessment()),
+        "the judge's grade of the review is kept as evidence"
+    );
+    assert_eq!(stored.drill.key[2].id, "review-1");
+
+    let requests = model.requests();
+    let grade = messages(&requests[6]);
+    assert!(
+        grade[1]
+            .1
+            .contains("A caller gets one call more than the limit."),
+        "the judge reads the key"
+    );
+    assert!(
+        grade[1]
+            .1
+            .contains("This lets one call more than the limit through."),
+        "and the review"
+    );
+    for request in &requests {
+        let schema = request
+            .json_schema
+            .as_ref()
+            .expect("every call is structured");
+        assert!(text_length_rules(schema).is_empty(), "{schema}");
+    }
     Ok(())
 }
 
@@ -164,7 +185,7 @@ async fn a_model_outage_defers_the_build_and_stores_nothing() -> Result<()> {
             Box::pin(async { Err(AppError::Network("The model is down.".into())) })
         }),
         runtimes: BuiltinRuntimes::new(None),
-        grader: judging(true),
+        grader: judge_grader,
     };
     run_to_the_end(&pool, outage, &id).await?;
     let job = JobStore::new(pool.clone()).get(&id).await?;
@@ -179,9 +200,10 @@ async fn a_model_outage_defers_the_build_and_stores_nothing() -> Result<()> {
 }
 
 #[tokio::test]
-async fn until_the_judge_is_connected_a_build_stops_at_its_blind_review_with_its_work_saved(
+async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it_saved(
 ) -> Result<()> {
     let pool = pool().await?;
+    let nothing = || json!({"issues": [], "findings": []}).to_string();
     let model = Arc::new(ScriptedModel::new([
         clean_code_answer(),
         review_answer(vec![]),
@@ -189,19 +211,27 @@ async fn until_the_judge_is_connected_a_build_stops_at_its_blind_review_with_its
         judge_answer(true),
         judge_answer(true),
         blind_answer(),
+        nothing(),
+        nothing(),
     ]));
-    let id = queue_build(&pool, &spec(), "unconnected").await?;
-    let grader: GraderFactory = Arc::new(unconnected_grader);
-    run_to_the_end(&pool, worker(&pool, model, grader), &id).await?;
+    let id = queue_build(&pool, &spec(), "ungradable").await?;
+    run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
+
     let store = JobStore::new(pool.clone());
     let job = store.get(&id).await?;
     assert_eq!(job.status, JobStatus::Failed);
     assert!(
         job.error_message
             .as_deref()
-            .is_some_and(|message| message.contains("not connected")),
+            .is_some_and(|message| message.contains("Issue 0 has no entry")),
         "{:?}",
         job.error_message
+    );
+    let purposes = model.purposes();
+    assert_eq!(
+        purposes[purposes.len() - 2..],
+        ["grade", "grade"],
+        "the judge is asked once more, never twice"
     );
     assert_eq!(drills(&pool).await?, 0);
     for stage in ["clean_code", "clean_review", "plant", "prove"] {
@@ -253,7 +283,7 @@ async fn cancelling_a_build_stops_its_model_call_and_stores_nothing() -> Result<
     runtime
         .register(
             DRILL_BUILD,
-            Arc::new(worker(&pool, model.clone(), judging(true))),
+            Arc::new(worker(&pool, model.clone())),
             drill_job_config(),
         )
         .await?;
