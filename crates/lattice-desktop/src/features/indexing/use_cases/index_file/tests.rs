@@ -557,6 +557,188 @@ async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_duri
     assert_eq!(prepared.document.checksum().as_str(), &"b".repeat(64));
 }
 
+/// Files a document under one source group, then imports the same file under
+/// another after an editor saved it between the import's two hashes. Returns
+/// what is wrong with the library once that import has committed and a
+/// startup sweep has run.
+async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool) -> Vec<String> {
+    use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
+    use crate::infrastructure::storage::ContentAddressedStorage;
+    use lattice_core::application::ports::RepositoryPort;
+    use lattice_core::domain::value_objects::source_context::{
+        SourceContext, SourceGroup, StructureMode,
+    };
+    use lattice_core::domain::value_objects::{Checksum, ChunkingStrategy, FileMetadata};
+    use lattice_core::shared::fs::SweepGate;
+    use lattice_core::shared::types::ValidatedFilePath;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn group(id: &str, title: &str) -> SourceContext {
+        SourceContext {
+            group: SourceGroup {
+                id: id.to_string(),
+                title: title.to_string(),
+                edition: None,
+                description: None,
+                ordered: false,
+                structure: StructureMode::default(),
+            },
+            position: 0,
+        }
+    }
+
+    fn indexed(blob: &Path, hash: &str, text: &str, context: Option<SourceContext>) -> Document {
+        let metadata = FileMetadata::new(
+            "watched.txt".to_string(),
+            "text/plain".to_string(),
+            text.len() as i64,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let mut document = Document::from_file(
+            ValidatedFilePath::new(blob.to_path_buf()).unwrap(),
+            metadata,
+            Checksum::new(hash.to_string()).unwrap(),
+            text.to_string(),
+            ChunkingStrategy::FixedSize { size: 64 },
+        )
+        .unwrap();
+        document.set_source_context(context);
+        document.mark_indexed();
+        document
+    }
+
+    fn blob_folder(document: &Document) -> Option<&str> {
+        document.file_path().parent()?.file_name()?.to_str()
+    }
+
+    let temp = TempDir::new().unwrap();
+    let library_root = temp.path().join("lib");
+    let storage = Arc::new(ContentAddressedStorage::with_root(library_root.clone()));
+    let repo = Arc::new(MockDocumentRepository::new());
+    let first_group = group("11111111-1111-4111-8111-111111111111", "First group");
+    let second_group = group("22222222-2222-4222-8222-222222222222", "Second group");
+
+    // `MockFileStorage` hashes every file to this, as the first import of the
+    // file's content did, so that import's blob sits in this folder.
+    let first_hash = "a".repeat(64);
+    let first_text = "The first version of the file.";
+    let first_blob = library_root.join(&first_hash).join("watched.txt");
+    fs::create_dir_all(first_blob.parent().unwrap()).unwrap();
+    fs::write(&first_blob, first_text).unwrap();
+    repo.add_document(indexed(
+        &first_blob,
+        &first_hash,
+        first_text,
+        Some(first_group.clone()),
+    ));
+
+    let edited_text = "The second version, saved while the import ran.";
+    let source = temp.path().join("watched.txt");
+    fs::write(&source, edited_text).unwrap();
+    if edited_content_indexed {
+        let blob = storage.import_file(&source).await.unwrap();
+        repo.add_document(indexed(&blob.path, &blob.hash, edited_text, None));
+    }
+
+    let use_case = IndexFileUseCase::new(
+        storage.clone(),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(MockEmbedder),
+        repo.clone(),
+        Arc::new(MockEmbeddingRepo),
+        Arc::new(MockUnitOfWorkFactory),
+    );
+    let request = IndexFileRequestDto {
+        path: source.to_str().unwrap().to_string(),
+        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+            size: 512,
+        },
+        tags: None,
+        metadata: Some(std::collections::HashMap::from([(
+            "source_context".to_string(),
+            serde_json::to_string(&second_group).unwrap(),
+        )])),
+        space_id: None,
+    };
+    let PrepareForIndexingOutcome::Prepared(prepared) =
+        use_case.prepare_for_indexing(request).await.unwrap()
+    else {
+        panic!("a file filed under another group is prepared, not a duplicate");
+    };
+
+    // The commit's only write is this save of the prepared document.
+    let PreparedDocument {
+        document, lease, ..
+    } = *prepared;
+    repo.save(&document).await.unwrap();
+    drop(lease);
+    let gate = SweepGate::default();
+    gate.open();
+    LibraryGc::new(storage, repo.clone())
+        .sweep(&gate)
+        .await
+        .unwrap();
+
+    let rows = repo.find_all().await.unwrap();
+    let mut problems = Vec::new();
+    for row in &rows {
+        if blob_folder(row) != Some(row.checksum().as_str()) {
+            problems.push(format!(
+                "{} has checksum {} but its file is {}",
+                row.id().as_str(),
+                row.checksum(),
+                row.file_path().display()
+            ));
+        }
+        if !row.file_path().exists() {
+            problems.push(format!(
+                "{} points at {}, which is gone after the startup sweep",
+                row.id().as_str(),
+                row.file_path().display()
+            ));
+        }
+    }
+    match rows
+        .iter()
+        .find(|row| row.checksum().as_str() == first_hash)
+    {
+        Some(row) if row.source_context() == Some(&first_group) => {}
+        Some(_) => problems.push("the first document was filed under another group".to_string()),
+        None => problems.push(format!(
+            "no document references {first_hash}, the blob of the first import"
+        )),
+    }
+    let edited: Vec<_> = rows
+        .iter()
+        .filter(|row| row.checksum().as_str() != first_hash)
+        .collect();
+    match edited.as_slice() {
+        [row] if row.source_context() == Some(&second_group) => {}
+        _ => problems.push(format!(
+            "{} documents hold the edited content; expected one, filed under the second group",
+            edited.len()
+        )),
+    }
+    problems
+}
+
+#[tokio::test]
+async fn reimport_of_a_source_edited_during_the_copy_keeps_the_existing_document_on_its_blob() {
+    let problems = reimport_of_a_file_edited_during_the_copy(false).await;
+
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+#[tokio::test]
+async fn reimport_of_a_source_edited_during_the_copy_reuses_the_document_of_the_edited_content() {
+    let problems = reimport_of_a_file_edited_during_the_copy(true).await;
+
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
 #[tokio::test]
 async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_fake_code_sections()
 {
