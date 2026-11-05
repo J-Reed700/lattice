@@ -11,24 +11,19 @@ import { toast } from '@/stores/toastStore';
 import { Settings } from './Settings';
 
 
-const mockSave = vi.hoisted(() => vi.fn());
-const mockOpen = vi.hoisted(() => vi.fn());
-const mockWriteTextFile = vi.hoisted(() => vi.fn());
-const mockReadTextFile = vi.hoisted(() => vi.fn());
+const mockSaveTextFile = vi.hoisted(() => vi.fn());
+const mockOpenTextFile = vi.hoisted(() => vi.fn());
 const mockExportSettings = vi.hoisted(() => vi.fn());
 const mockImportSettings = vi.hoisted(() => vi.fn());
 const mockResetSettings = vi.hoisted(() => vi.fn());
 
+const JSON_FILTERS = [{ name: 'JSON', extensions: ['json'] }];
+
 vi.mock('@/stores/toastStore');
 
-vi.mock('@tauri-apps/plugin-dialog', () => ({
-  save: mockSave,
-  open: mockOpen,
-}));
-
 vi.mock('@tauri-apps/plugin-fs', () => ({
-  writeTextFile: mockWriteTextFile,
-  readTextFile: mockReadTextFile,
+  writeTextFile: vi.fn(),
+  readTextFile: vi.fn(),
 }));
 
 vi.mock('@/lib/api', () => ({
@@ -42,6 +37,8 @@ vi.mock('@/lib/api', () => ({
     exportSettings: mockExportSettings,
     importSettings: mockImportSettings,
     resetSettings: mockResetSettings,
+    saveTextFile: mockSaveTextFile,
+    openTextFile: mockOpenTextFile,
   },
   default: {
     getSettings: vi.fn().mockResolvedValue({ ok: false, error: 'not mocked' }),
@@ -52,6 +49,8 @@ vi.mock('@/lib/api', () => ({
     exportSettings: mockExportSettings,
     importSettings: mockImportSettings,
     resetSettings: mockResetSettings,
+    saveTextFile: mockSaveTextFile,
+    openTextFile: mockOpenTextFile,
   },
 }));
 
@@ -71,6 +70,8 @@ function renderSettings() {
 describe('Settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSaveTextFile.mockReset();
+    mockOpenTextFile.mockReset();
     mockExportSettings.mockResolvedValue({ ok: true, data: '{"foo":"bar"}' });
     mockImportSettings.mockResolvedValue({ ok: true, data: {} });
     mockResetSettings.mockResolvedValue({ ok: true, data: {} });
@@ -114,9 +115,9 @@ describe('Settings', () => {
   });
 
   describe('Export functionality', () => {
-    it('exports settings via backend command when export button clicked', async () => {
+    it('saves the exported settings through the backend save dialog', async () => {
       const user = userEvent.setup();
-      mockSave.mockResolvedValue('/path/to/settings.json');
+      mockSaveTextFile.mockResolvedValue({ ok: true, data: true });
 
       renderSettings();
 
@@ -124,34 +125,71 @@ describe('Settings', () => {
       await user.click(exportButton);
 
       await waitFor(() => {
-        expect(mockSave).toHaveBeenCalled();
+        expect(toast.success).toHaveBeenCalledWith('Settings exported successfully', { duration: 3000 });
       });
 
       expect(mockExportSettings).toHaveBeenCalled();
-      expect(mockWriteTextFile).toHaveBeenCalledWith('/path/to/settings.json', '{"foo":"bar"}');
-      expect(toast.success).toHaveBeenCalledWith('Settings exported successfully', { duration: 3000 });
+      expect(mockSaveTextFile).toHaveBeenCalledWith('lattice-settings.json', JSON_FILTERS, '{"foo":"bar"}');
     });
 
-    it('skips write when user cancels save dialog', async () => {
+    it('says nothing when the user cancels the save dialog', async () => {
       const user = userEvent.setup();
-      mockSave.mockResolvedValue(null);
+      mockSaveTextFile.mockResolvedValue({ ok: true, data: false });
 
       renderSettings();
 
       const exportButton = screen.getByRole('button', { name: /export/i });
       await user.click(exportButton);
 
-      await waitFor(() => expect(mockSave).toHaveBeenCalled());
-      expect(mockExportSettings).not.toHaveBeenCalled();
-      expect(mockWriteTextFile).not.toHaveBeenCalled();
+      await waitFor(() => expect(mockSaveTextFile).toHaveBeenCalled());
+      await waitFor(() => expect(screen.getByRole('button', { name: /^export$/i })).toBeEnabled());
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('reports why the file could not be written', async () => {
+      const user = userEvent.setup();
+      mockSaveTextFile.mockResolvedValue({
+        ok: false,
+        error: 'I/O error',
+        details: { code: 'FILE_SYSTEM_ERROR', message: 'I/O error', details: 'Access is denied.' },
+      });
+
+      renderSettings();
+
+      await user.click(screen.getByRole('button', { name: /export/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          "Couldn't export settings",
+          expect.objectContaining({ message: expect.stringContaining('I/O error: Access is denied.'), duration: 5000 })
+        );
+      });
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it('does not open the save dialog when the settings cannot be exported', async () => {
+      const user = userEvent.setup();
+      mockExportSettings.mockResolvedValue({ ok: false, error: 'settings are locked' });
+
+      renderSettings();
+
+      await user.click(screen.getByRole('button', { name: /export/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          "Couldn't export settings",
+          expect.objectContaining({ message: expect.stringContaining('settings are locked') })
+        );
+      });
+      expect(mockSaveTextFile).not.toHaveBeenCalled();
     });
   });
 
   describe('Import functionality', () => {
-    it('imports settings via backend command when import button clicked', async () => {
+    it('imports the settings file chosen in the backend open dialog', async () => {
       const user = userEvent.setup();
-      mockOpen.mockResolvedValue('/path/to/settings.json');
-      mockReadTextFile.mockResolvedValue('{"foo":"bar"}');
+      mockOpenTextFile.mockResolvedValue({ ok: true, data: '{"foo":"bar"}' });
 
       renderSettings();
 
@@ -162,13 +200,13 @@ describe('Settings', () => {
         expect(mockImportSettings).toHaveBeenCalledWith('{"foo":"bar"}', false);
       });
 
+      expect(mockOpenTextFile).toHaveBeenCalledWith(JSON_FILTERS);
       expect(toast.success).toHaveBeenCalledWith('Settings imported successfully', { duration: 3000 });
     });
 
     it('reports invalid settings file when backend rejects', async () => {
       const user = userEvent.setup();
-      mockOpen.mockResolvedValue('/path/to/invalid.json');
-      mockReadTextFile.mockResolvedValue('not valid');
+      mockOpenTextFile.mockResolvedValue({ ok: true, data: 'not valid' });
       mockImportSettings.mockResolvedValue({ ok: false, error: 'parse error' });
 
       renderSettings();
@@ -182,6 +220,45 @@ describe('Settings', () => {
           expect.objectContaining({ message: 'parse error', duration: 5000 })
         );
       });
+    });
+
+    it('imports nothing when the user cancels the open dialog', async () => {
+      const user = userEvent.setup();
+      mockOpenTextFile.mockResolvedValue({ ok: true, data: null });
+
+      renderSettings();
+
+      await user.click(screen.getByRole('button', { name: /^import$/i }));
+
+      await waitFor(() => expect(mockOpenTextFile).toHaveBeenCalled());
+      await waitFor(() => expect(screen.getByRole('button', { name: /^import$/i })).toBeEnabled());
+      expect(mockImportSettings).not.toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it('reports why the file could not be read and imports nothing', async () => {
+      const user = userEvent.setup();
+      mockOpenTextFile.mockResolvedValue({
+        ok: false,
+        error: 'Failed to read file: /path/to/settings.json',
+        details: { code: 'FILE_READ_ERROR', message: 'Failed to read file: /path/to/settings.json', details: 'The file is not valid UTF-8 text.' },
+      });
+
+      renderSettings();
+
+      await user.click(screen.getByRole('button', { name: /^import$/i }));
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith(
+          "Couldn't import settings",
+          expect.objectContaining({
+            message: expect.stringContaining('The file is not valid UTF-8 text.'),
+            duration: 5000,
+          })
+        );
+      });
+      expect(mockImportSettings).not.toHaveBeenCalled();
     });
   });
 

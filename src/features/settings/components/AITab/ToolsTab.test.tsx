@@ -1,5 +1,3 @@
-import { open, save } from '@tauri-apps/plugin-dialog';
-import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,11 +11,15 @@ const h = vi.hoisted(() => ({
   llm: { llmSettings: null as null | Record<string, unknown>, isLoading: false, saveLlmUpdates: vi.fn() },
   probe: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
+  files: { saveTextFile: vi.fn(), openTextFile: vi.fn() },
 }));
+
+const JSON_FILTERS = [{ name: 'JSON', extensions: ['json'] }];
 
 vi.mock('./useLlmSettings', () => ({ useLlmSettings: () => h.llm }));
 vi.mock('@/features/settings/hooks/connectionProbes', () => ({ probeCustomTool: h.probe }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
+vi.mock('@/lib/api', () => ({ __esModule: true, VaultAPI: h.files, default: h.files }));
 vi.mock('@tauri-apps/plugin-fs', () => ({ readTextFile: vi.fn(), writeTextFile: vi.fn() }));
 
 const tidesTool = {
@@ -37,6 +39,8 @@ const withTools = (customTools: unknown[] = [tidesTool]) => {
 describe('ToolsTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    h.files.saveTextFile.mockReset();
+    h.files.openTextFile.mockReset();
     h.llm.isLoading = false;
     h.llm.saveLlmUpdates.mockResolvedValue(true);
     withTools();
@@ -210,17 +214,16 @@ describe('ToolsTab', () => {
 
   describe('import', () => {
     it('imports an array, reading snake_case fields and defaults', async () => {
-      vi.mocked(open).mockResolvedValueOnce('/tools.json');
-      vi.mocked(readTextFile).mockResolvedValueOnce(JSON.stringify([
+      h.files.openTextFile.mockResolvedValueOnce({ ok: true, data: JSON.stringify([
         { name: 'star_atlas', endpoint: 'https://stars.example.org', query_param: 'term', max_results_param: 'rows', default_max_results: 7, enabled: false },
         { name: 'plain', endpoint: 'https://plain.example.org' },
         null,
         'not a tool',
-      ]));
+      ]) });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Import' }));
       await waitFor(() => expect(h.toast.success).toHaveBeenCalledWith('Imported 2 tool(s)'));
-      expect(open).toHaveBeenCalledWith({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+      expect(h.files.openTextFile).toHaveBeenCalledWith(JSON_FILTERS);
       const names = screen.getAllByLabelText('Name').map((input) => (input as HTMLInputElement).value);
       expect(names).toEqual(['star_atlas', 'plain']);
       expect(screen.getAllByLabelText('Query param').map((input) => (input as HTMLInputElement).value)).toEqual(['term', 'q']);
@@ -230,11 +233,10 @@ describe('ToolsTab', () => {
     });
 
     it('imports an export file with camelCase fields', async () => {
-      vi.mocked(open).mockResolvedValueOnce('/tools.json');
-      vi.mocked(readTextFile).mockResolvedValueOnce(JSON.stringify({
+      h.files.openTextFile.mockResolvedValueOnce({ ok: true, data: JSON.stringify({
         version: 1,
         customTools: [{ name: 'herbarium', description: 'Plants', endpoint: 'https://h.example.org', queryParam: 'name', maxResultsParam: 'max', defaultMaxResults: 3, enabled: true }],
-      }));
+      }) });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Import' }));
       await waitFor(() => expect(h.toast.success).toHaveBeenCalledWith('Imported 1 tool(s)'));
@@ -243,82 +245,100 @@ describe('ToolsTab', () => {
     });
 
     it('does nothing when the picker is cancelled', async () => {
-      vi.mocked(open).mockResolvedValueOnce(null);
+      h.files.openTextFile.mockResolvedValueOnce({ ok: true, data: null });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+      await waitFor(() => expect(h.files.openTextFile).toHaveBeenCalled());
       await waitFor(() => expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled());
-      expect(readTextFile).not.toHaveBeenCalled();
+      expect(h.toast.success).not.toHaveBeenCalled();
+      expect(h.toast.error).not.toHaveBeenCalled();
+      expect(screen.getByLabelText('Name')).toHaveValue('tide_tables');
     });
 
     it('rejects a file of the wrong shape', async () => {
-      vi.mocked(open).mockResolvedValueOnce('/tools.json');
-      vi.mocked(readTextFile).mockResolvedValueOnce('{"tools": []}');
+      h.files.openTextFile.mockResolvedValueOnce({ ok: true, data: '{"tools": []}' });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Import' }));
       await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith("Couldn't read that file", { message: 'Expected an array or { customTools: [...] }' }));
     });
 
     it('rejects a file with no usable tools', async () => {
-      vi.mocked(open).mockResolvedValueOnce('/tools.json');
-      vi.mocked(readTextFile).mockResolvedValueOnce('[1, 2]');
+      h.files.openTextFile.mockResolvedValueOnce({ ok: true, data: '[1, 2]' });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Import' }));
       await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith('No valid tools in that file'));
     });
 
     it('reports unreadable JSON', async () => {
-      vi.mocked(open).mockResolvedValueOnce('/tools.json');
-      vi.mocked(readTextFile).mockResolvedValueOnce('{oops');
+      h.files.openTextFile.mockResolvedValueOnce({ ok: true, data: '{oops' });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Import' }));
       await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith("Couldn't import tools", expect.objectContaining({ message: expect.stringContaining('SyntaxError') })));
     });
 
+    it('reports a file the backend could not read, with the reason', async () => {
+      h.files.openTextFile.mockResolvedValueOnce({
+        ok: false,
+        error: 'Failed to read file: /tools.json',
+        details: { code: 'FILE_READ_ERROR', message: 'Failed to read file: /tools.json', details: 'The file is not valid UTF-8 text.' },
+      });
+      render(<ToolsTab />);
+      fireEvent.click(screen.getByRole('button', { name: 'Import' }));
+      await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith("Couldn't import tools", { message: 'Failed to read file: /tools.json: The file is not valid UTF-8 text.' }));
+      expect(screen.getByLabelText('Name')).toHaveValue('tide_tables');
+    });
+
     it('shows progress while importing', async () => {
-      const picked = deferred<string | null>();
-      vi.mocked(open).mockReturnValueOnce(picked.promise as never);
+      const picked = deferred<unknown>();
+      h.files.openTextFile.mockReturnValueOnce(picked.promise);
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Import' }));
       expect(screen.getByRole('button', { name: 'Importing…' })).toBeDisabled();
-      await act(async () => { picked.resolve(null); await picked.promise; });
+      expect(h.files.openTextFile).toHaveBeenCalledTimes(1);
+      await act(async () => { picked.resolve({ ok: true, data: null }); await picked.promise; });
       expect(screen.getByRole('button', { name: 'Import' })).toBeEnabled();
     });
   });
 
   describe('export', () => {
     it('writes the tools to the chosen file', async () => {
-      vi.mocked(save).mockResolvedValueOnce('/backup/tools.json');
-      vi.mocked(writeTextFile).mockResolvedValueOnce(undefined);
+      h.files.saveTextFile.mockResolvedValueOnce({ ok: true, data: true });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Export' }));
       await waitFor(() => expect(h.toast.success).toHaveBeenCalledWith('Tools exported'));
-      expect(save).toHaveBeenCalledWith({ defaultPath: 'lattice-custom-tools.json', filters: [{ name: 'JSON', extensions: ['json'] }] });
-      expect(writeTextFile).toHaveBeenCalledWith('/backup/tools.json', JSON.stringify({ version: 1, customTools: [tidesTool] }, null, 2));
+      expect(h.files.saveTextFile).toHaveBeenCalledWith(
+        'lattice-custom-tools.json',
+        JSON_FILTERS,
+        JSON.stringify({ version: 1, customTools: [tidesTool] }, null, 2),
+      );
     });
 
     it('does nothing when the save dialog is cancelled', async () => {
-      vi.mocked(save).mockResolvedValueOnce(null);
+      h.files.saveTextFile.mockResolvedValueOnce({ ok: true, data: false });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+      await waitFor(() => expect(h.files.saveTextFile).toHaveBeenCalled());
       await waitFor(() => expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled());
-      expect(writeTextFile).not.toHaveBeenCalled();
+      expect(h.toast.success).not.toHaveBeenCalled();
+      expect(h.toast.error).not.toHaveBeenCalled();
     });
 
     it('reports a failed write', async () => {
-      vi.mocked(save).mockResolvedValueOnce('/readonly/tools.json');
-      vi.mocked(writeTextFile).mockRejectedValueOnce('permission denied');
+      h.files.saveTextFile.mockResolvedValueOnce({ ok: false, error: 'permission denied' });
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Export' }));
       await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith("Couldn't export tools", { message: 'permission denied' }));
     });
 
     it('shows progress while exporting', async () => {
-      const picked = deferred<string | null>();
-      vi.mocked(save).mockReturnValueOnce(picked.promise as never);
+      const picked = deferred<unknown>();
+      h.files.saveTextFile.mockReturnValueOnce(picked.promise);
       render(<ToolsTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Export' }));
       expect(screen.getByRole('button', { name: 'Exporting…' })).toBeDisabled();
-      await act(async () => { picked.resolve(null); await picked.promise; });
+      expect(h.files.saveTextFile).toHaveBeenCalledTimes(1);
+      await act(async () => { picked.resolve({ ok: true, data: false }); await picked.promise; });
+      expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled();
     });
   });
 });

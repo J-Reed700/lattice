@@ -14,6 +14,8 @@ const route = (command: CommandName) => {
 
 type Case = [label: string, call: () => Promise<unknown>, command: CommandName, args: Record<string, unknown>];
 
+const jsonFilters = [{ name: 'JSON', extensions: ['json'] }];
+
 const cases: Case[] = [
   ['getModelLimits', () => settingsApi.getModelLimits({ kind: 'ollama', model: 'qwen' }), 'get_model_limits', { model: { kind: 'ollama', model: 'qwen' } }],
   ['listCloudModels', () => settingsApi.listCloudModels('anthropic'), 'list_cloud_models', { provider: 'anthropic' }],
@@ -26,6 +28,8 @@ const cases: Case[] = [
   ['exportSettings', () => settingsApi.exportSettings(), 'export_settings', {}],
   ['importSettings merging', () => settingsApi.importSettings('{"a":1}', true), 'import_settings', { request: { settings: '{"a":1}', merge: true } }],
   ['importSettings replacing', () => settingsApi.importSettings('{"a":1}'), 'import_settings', { request: { settings: '{"a":1}', merge: undefined } }],
+  ['saveTextFile', () => settingsApi.saveTextFile('lattice-logs.json', jsonFilters, '{"a":1}'), 'save_text_file', { suggestedName: 'lattice-logs.json', filters: jsonFilters, contents: '{"a":1}' }],
+  ['openTextFile', () => settingsApi.openTextFile(jsonFilters), 'open_text_file', { filters: jsonFilters }],
   ['getSystemTheme', () => settingsApi.getSystemTheme(), 'get_system_theme', {}],
   ['validateFolderPath', () => settingsApi.validateFolderPath('/archives'), 'validate_folder_path', { path: '/archives' }],
   ['testLlamaCppConnection', () => settingsApi.testLlamaCppConnection({ baseUrl: 'http://h' } as never), 'test_llama_cpp_connection', { request: { baseUrl: 'http://h' } }],

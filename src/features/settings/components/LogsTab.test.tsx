@@ -1,6 +1,4 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 
@@ -10,8 +8,9 @@ import { diagnostics } from '@/utils/diagnostics';
 import { LogsTab } from './LogsTab';
 
 const mockGetBackendLogs = vi.hoisted(() => vi.fn());
+const mockSaveTextFile = vi.hoisted(() => vi.fn());
 vi.mock('@tauri-apps/plugin-fs', () => ({ writeTextFile: vi.fn() }));
-vi.mock('@/lib/api', () => ({ __esModule: true, default: { getBackendLogs: mockGetBackendLogs } }));
+vi.mock('@/lib/api', () => ({ __esModule: true, default: { getBackendLogs: mockGetBackendLogs, saveTextFile: mockSaveTextFile } }));
 
 const backendLines: BackendLogEntry[] = [
   { timestamp: '2026-10-14T09:15:02.123456Z', level: 'error', target: 'lattice::search', message: 'Index missing at /Users/josh/vault/index.db' },
@@ -26,6 +25,7 @@ function renderTab() {
 beforeEach(() => {
   diagnostics.clear();
   vi.clearAllMocks();
+  mockSaveTextFile.mockReset();
   mockGetBackendLogs.mockResolvedValue({ ok: true, data: [] });
 });
 it('updates live, filters, and requires confirmation to clear', async () => {
@@ -78,13 +78,14 @@ it('shows redacted backend lines beside app entries and filters by source', asyn
 it('exports app and backend entries in one file, each with its source', async () => {
   mockGetBackendLogs.mockResolvedValue({ ok: true, data: backendLines });
   diagnostics.record('warn', 'Slow save', 'API');
-  vi.mocked(save).mockResolvedValue('/tmp/logs.json');
-  vi.mocked(writeTextFile).mockResolvedValue(undefined);
+  mockSaveTextFile.mockResolvedValue({ ok: true, data: true });
   renderTab();
   await screen.findByText(/Index missing/);
   fireEvent.click(screen.getByRole('button', { name: 'Export logs' }));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Logs exported.'));
-  const written = String(vi.mocked(writeTextFile).mock.calls[0]?.[1]);
+  const [suggestedName, filters, written] = mockSaveTextFile.mock.calls[0] as [string, unknown, string];
+  expect(suggestedName).toMatch(/^lattice-logs-\d{4}-\d{2}-\d{2}\.json$/);
+  expect(filters).toEqual([{ name: 'JSON', extensions: ['json'] }]);
   const exported = JSON.parse(written) as { version: number; entries: { origin: string; level: string; message: string }[] };
   expect(exported.version).toBe(1);
   expect(exported.entries.map(entry => [entry.origin, entry.level, entry.message])).toEqual(expect.arrayContaining([
@@ -94,13 +95,25 @@ it('exports app and backend entries in one file, each with its source', async ()
   ]));
   expect(written).not.toMatch(/josh|abc123/);
 });
-it('exports diagnostics through the native save dialog and reports failures', async () => {
+it('exports diagnostics through the backend save dialog and reports failures', async () => {
   diagnostics.capture('Cannot save', 'API');
-  vi.mocked(save).mockResolvedValue('/tmp/logs.json');
-  vi.mocked(writeTextFile).mockRejectedValueOnce(new Error('Permission denied'));
+  mockSaveTextFile.mockResolvedValueOnce({ ok: false, error: 'Permission denied' });
   renderTab();
   fireEvent.click(screen.getByRole('button', { name: 'Export logs' }));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Could not export'));
   expect(screen.getByText('Permission denied')).toBeInTheDocument();
-  expect(writeTextFile).toHaveBeenCalledWith('/tmp/logs.json', expect.stringContaining('Cannot save'));
+  expect(mockSaveTextFile).toHaveBeenCalledWith(
+    expect.stringMatching(/^lattice-logs-/),
+    [{ name: 'JSON', extensions: ['json'] }],
+    expect.stringContaining('Cannot save'),
+  );
+});
+it('announces nothing when the user cancels the save dialog', async () => {
+  diagnostics.record('warn', 'Slow save', 'API');
+  mockSaveTextFile.mockResolvedValueOnce({ ok: true, data: false });
+  renderTab();
+  fireEvent.click(screen.getByRole('button', { name: 'Export logs' }));
+  await waitFor(() => expect(mockSaveTextFile).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Export logs' })).toBeEnabled());
+  expect(screen.getByRole('status')).not.toHaveTextContent(/Logs exported|Could not export/);
 });
