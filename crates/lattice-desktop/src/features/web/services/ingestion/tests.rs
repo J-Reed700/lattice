@@ -603,7 +603,7 @@ async fn test_likely_video_urls_prefer_video_error_when_all_strategies_fail() {
         .unwrap();
 
     let error = service
-        .extract_content_with_strategies("https://www.youtube.com/watch?v=abc123")
+        .extract_content_with_strategies("https://1.1.1.1/video.mp4")
         .await
         .unwrap_err();
 
