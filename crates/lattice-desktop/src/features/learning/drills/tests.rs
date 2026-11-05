@@ -15,6 +15,7 @@ mod proof_tests;
 mod prove_tests;
 mod repository_tests;
 mod resume_tests;
+mod review_tests;
 mod runner_tests;
 mod schema_tests;
 mod store_tests;

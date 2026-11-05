@@ -77,6 +77,8 @@ mod audit;
 pub use audit::*;
 mod trust;
 pub use trust::*;
+mod code_review;
+pub use code_review::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -328,7 +330,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             create_interview_study_deck,
             create_learning_tangent,
             list_learning_tangents,
-            set_conversation_course
+            set_conversation_course,
+            start_code_review_drill,
+            submit_code_review,
+            code_review_result,
+            regrade_code_review
         ])
         .build()
 }

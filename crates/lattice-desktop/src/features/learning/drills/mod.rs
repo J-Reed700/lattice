@@ -7,12 +7,15 @@ pub mod attempts;
 pub mod bank;
 mod budget;
 pub(in crate::features::learning) mod build;
+pub mod dto;
 pub(in crate::features::learning) mod fix_grading;
 pub mod grader;
 pub mod grading;
 pub mod jobs;
 pub(in crate::features::learning) mod proof;
 pub mod repository;
+pub mod review;
+mod reveal;
 pub(in crate::features::learning) mod runner;
 pub mod spec;
 
