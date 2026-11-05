@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orphan_cleanup_preserves_unreadable_and_valid_models_but_removes_orphans() {
+    async fn orphan_cleanup_keeps_every_directory_no_record_names() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -173,15 +173,14 @@ mod tests {
             reconcile_orphaned_files(repo, dir.path(), &open_gate())
                 .await
                 .unwrap(),
-            1
+            0
         );
-        for id in ["pending", "installed"] {
+        for id in ["pending", "installed", "orphan"] {
             assert_eq!(
                 std::fs::read(dir.path().join(id).join("weights")).unwrap(),
                 b"model data"
             );
         }
-        assert!(!dir.path().join("orphan").exists());
     }
 
     #[tokio::test]

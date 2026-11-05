@@ -665,7 +665,7 @@ async fn rows_cascade_from_message_and_conversation_deletes() {
 }
 
 #[tokio::test]
-async fn sweep_drops_leases_and_unclaimed_files_and_keeps_the_rest() {
+async fn sweep_drops_leases_with_their_files_and_keeps_files_no_record_names() {
     let fx = fixture().await;
     let (_, images) = fx
         .service
@@ -677,22 +677,41 @@ async fn sweep_drops_leases_and_unclaimed_files_and_keeps_the_rest() {
         .attach(REQUEST, MESSAGE, &["img-1".into()])
         .await
         .unwrap();
-    let stray = format!("{}.png", new_id());
-    let part = format!("{}.jpg.part", new_id());
-    for name in [stray.as_str(), part.as_str(), "notes.txt"] {
+    let unnamed = format!("{}.png", new_id());
+    let writing = format!("{}.jpg.part", new_id());
+    let abandoned = format!("{}.jpg.part", new_id());
+    for name in [
+        unnamed.as_str(),
+        writing.as_str(),
+        abandoned.as_str(),
+        "notes.txt",
+    ] {
         std::fs::write(fx.root().join(name), b"x").unwrap();
     }
+    std::fs::File::options()
+        .write(true)
+        .open(fx.root().join(&abandoned))
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60))
+        .unwrap();
 
     let report = fx.service.sweep(&HashSet::new()).await.unwrap();
     assert_eq!(report.removed_leases, 1);
     assert_eq!(
-        report.removed_orphans, 3,
-        "img-2's file, the stray and the part"
+        report.removed_orphans, 2,
+        "img-2's file, whose lease went, and the abandoned part"
     );
     assert!(fx.root().join(&images[0].file_name).exists());
     assert!(!fx.root().join(&images[1].file_name).exists());
-    assert!(!fx.root().join(&stray).exists());
-    assert!(!fx.root().join(&part).exists());
+    assert!(
+        fx.root().join(&unnamed).exists(),
+        "a picture no record names is kept"
+    );
+    assert!(
+        fx.root().join(&writing).exists(),
+        "a write younger than an hour may still be running"
+    );
+    assert!(!fx.root().join(&abandoned).exists());
     assert!(
         fx.root().join("notes.txt").exists(),
         "unrecognised names are left alone"
@@ -721,21 +740,21 @@ async fn sweep_keeps_the_leases_of_a_turn_that_resumes() {
     assert_eq!(fx.row_count().await, images.len() as i64);
 }
 
-/// After a truncate or regenerate the cascade has taken the rows; their
-/// files go at once, and a running turn's leased pictures stay.
+/// A picture whose row went some other way than a delete the app recorded:
+/// the pass after a truncate keeps it.
 #[tokio::test]
-async fn unclaimed_files_go_and_leased_ones_stay() {
+async fn a_picture_no_record_names_stays_after_a_truncate() {
     let fx = fixture().await;
     let (_, images) = fx
         .service
         .find_and_store(&fx.scope(), heron(), None)
         .await
         .unwrap();
-    let stray = format!("{}.png", new_id());
-    std::fs::write(fx.root().join(&stray), b"x").unwrap();
+    let unnamed = format!("{}.png", new_id());
+    std::fs::write(fx.root().join(&unnamed), b"x").unwrap();
 
-    assert_eq!(fx.service.remove_unclaimed_files().await.unwrap(), 1);
-    assert!(!fx.root().join(&stray).exists());
+    assert_eq!(fx.service.remove_unclaimed_files().await.unwrap(), 0);
+    assert!(fx.root().join(&unnamed).exists());
     assert!(images
         .iter()
         .all(|image| fx.root().join(&image.file_name).exists()));

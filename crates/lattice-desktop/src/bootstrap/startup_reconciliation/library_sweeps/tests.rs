@@ -29,6 +29,7 @@ use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::setup::setup_database;
 use crate::infrastructure::storage::ContentAddressedStorage;
 use lattice_core::application::ports::ChatImagesPort;
+use lattice_core::shared::constants::RERANKER_MODEL_DIR;
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
@@ -371,58 +372,88 @@ async fn a_database_whose_files_name_another_owner_sweeps_nothing() {
     assert_eq!(filed(home.path()).as_deref(), Some(A));
 }
 
+/// The owning database no longer has the row of a file it imported: a backup
+/// from before the import was restored, or a migration lost the row. Nothing
+/// it wrote says the file is garbage, so the file stays.
 #[tokio::test]
-async fn the_owning_database_still_collects_what_nothing_references() {
+async fn the_owning_database_keeps_an_imported_file_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
     let pool = migrated_pool().await;
     own(&pool, home.path(), A).await;
     let (hash, referenced) = imported_file(home.path(), "referenced here");
     reference(&pool, &hash, &referenced).await;
-    // An import that crashed before it committed, a frozen page and a picture
-    // whose rows are gone.
-    let (_, crashed) = imported_file(home.path(), "copied, never committed");
-    let orphans = [crashed, snapshot(home.path()), picture(home.path())];
+    let (_, unnamed) = imported_file(home.path(), "imported after the backup");
 
     start_up(&pool, home.path()).await;
 
-    let left: Vec<_> = orphans.iter().filter(|path| path.exists()).collect();
-    assert!(left.is_empty(), "the owner's sweep left {left:?}");
-    assert!(referenced.exists(), "a referenced file survives the sweep");
+    assert!(
+        unnamed.exists(),
+        "the startup sweep deleted a file no row names"
+    );
+    assert!(referenced.exists());
 }
 
 #[tokio::test]
-async fn the_owning_database_still_sweeps_snapshots_and_pictures_after_a_chat_delete() {
+async fn the_owning_database_keeps_a_frozen_page_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
     let pool = migrated_pool().await;
     own(&pool, home.path(), A).await;
-    let run = start_up(&pool, home.path()).await;
-    // What the deleted chat's rows named: nothing names these files now.
-    let orphans = [snapshot(home.path()), picture(home.path())];
+    let page = snapshot(home.path());
 
-    run.delete_a_chat(&pool).await;
+    start_up(&pool, home.path()).await;
 
-    let left: Vec<_> = orphans.iter().filter(|path| path.exists()).collect();
     assert!(
-        left.is_empty(),
-        "the sweep after a chat delete left {left:?}"
+        page.exists(),
+        "the startup sweep deleted a page no row names"
     );
 }
 
 #[tokio::test]
-async fn an_existing_install_with_documents_takes_its_files_on_upgrade_and_sweeps() {
+async fn the_owning_database_keeps_a_picture_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
     let pool = migrated_pool().await;
-    // Before this version nothing recorded who owns the files.
+    own(&pool, home.path(), A).await;
+    let picture = picture(home.path());
+
+    start_up(&pool, home.path()).await;
+
+    assert!(
+        picture.exists(),
+        "the startup sweep deleted a picture no row names"
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_chat_keeps_the_pages_and_pictures_no_row_names() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let run = start_up(&pool, home.path()).await;
+    // Files whose rows went some other way than this chat's delete.
+    let unnamed = [snapshot(home.path()), picture(home.path())];
+
+    run.delete_a_chat(&pool).await;
+
+    let gone = deleted(&unnamed);
+    assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
+}
+
+#[tokio::test]
+async fn an_existing_install_takes_its_files_on_upgrade_and_keeps_what_no_record_names() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    // Before this version nothing recorded who owns the files, or which of
+    // them an import left behind.
     let (hash, referenced) = imported_file(home.path(), "referenced here");
     reference(&pool, &hash, &referenced).await;
-    let (_, crashed) = imported_file(home.path(), "copied, never committed");
+    let (_, unexplained) = imported_file(home.path(), "copied, never committed");
 
     start_up(&pool, home.path()).await;
 
     let id = recorded(&pool).await.expect("the database took the files");
     assert_eq!(filed(home.path()).as_deref(), Some(id.as_str()));
-    assert!(!crashed.exists(), "what nothing references is collected");
-    assert!(referenced.exists(), "a referenced file survives the sweep");
+    assert!(unexplained.exists(), "a file no record names is kept");
+    assert!(referenced.exists());
 }
 
 #[tokio::test]
@@ -449,14 +480,18 @@ async fn a_fresh_database_beside_a_models_directory_keeps_every_model() {
 }
 
 #[tokio::test]
-async fn the_owning_database_still_removes_a_model_directory_no_row_names() {
+async fn the_owning_database_keeps_a_model_directory_no_row_names() {
     let home = TempDir::new().unwrap();
     let models = TempDir::new().unwrap();
     let pool = migrated_pool().await;
     own(&pool, home.path(), A).await;
     installed(&pool, models.path(), "installed").await;
-    let kept = model_directory(models.path(), "installed");
-    let orphan = model_directory(models.path(), "orphan");
+    let kept = [
+        model_directory(models.path(), "installed"),
+        // The model manager downloads the reranker here with no row of its own.
+        model_directory(models.path(), RERANKER_MODEL_DIR),
+        model_directory(models.path(), "row-lost"),
+    ];
 
     let run = start_up(&pool, home.path()).await;
     let removed = reconcile_orphaned_files(
@@ -467,7 +502,7 @@ async fn the_owning_database_still_removes_a_model_directory_no_row_names() {
     .await
     .unwrap();
 
-    assert_eq!(removed, 1);
-    assert!(!orphan.exists(), "a directory no row names is removed");
-    assert!(kept.exists(), "an installed model is kept");
+    assert_eq!(removed, 0);
+    let gone = deleted(&kept);
+    assert!(gone.is_empty(), "the model cleanup deleted {gone:?}");
 }

@@ -211,15 +211,17 @@ mod tests {
         .unwrap()
     }
 
+    /// A blob no document references is not garbage on that alone: the
+    /// database may be a restored backup, or one that lost rows.
     #[tokio::test]
-    async fn sweep_removes_only_the_blobs_no_document_references() {
+    async fn sweep_keeps_the_blobs_no_record_names() {
         let temp = TempDir::new().unwrap();
         let storage = Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib")));
         let documents = Arc::new(MockDocumentRepository::new());
 
         let (kept_hash, kept_path) = import(&storage, temp.path(), "kept.txt", "keep me").await;
-        let (orphan_hash, orphan_path) =
-            import(&storage, temp.path(), "orphan.txt", "orphaned blob").await;
+        let (_, unnamed_path) =
+            import(&storage, temp.path(), "unnamed.txt", "no row names me").await;
 
         documents
             .save(&document_for(&kept_path, &kept_hash))
@@ -232,12 +234,10 @@ mod tests {
         );
         let report = gc.sweep(&open_gate()).await.unwrap();
 
-        assert_eq!(report.removed, 1);
-        assert_eq!(report.retained, 1);
-        assert_eq!(report.bytes_freed, "orphaned blob".len() as u64);
+        assert_eq!(report.removed, 0);
+        assert_eq!(report.bytes_freed, 0);
         assert!(kept_path.exists(), "a referenced blob survives the sweep");
-        assert!(!orphan_path.exists(), "an unreferenced blob is collected");
-        assert!(!temp.path().join("lib").join(&orphan_hash).exists());
+        assert!(unnamed_path.exists(), "a blob no record names is kept");
     }
 
     #[tokio::test]

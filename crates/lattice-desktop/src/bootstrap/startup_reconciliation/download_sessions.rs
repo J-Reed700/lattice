@@ -198,6 +198,57 @@ mod tests {
         assert_eq!(session.state(), &DownloadState::Downloading);
     }
 
+    /// A vision projector downloads with no model of its own, and a model row
+    /// can be lost while its session stays. Neither makes a finished download
+    /// garbage.
+    #[tokio::test]
+    async fn completed_downloads_keep_their_files_when_no_model_row_names_them() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let repository = Arc::new(MockDownloadRepository::new());
+        let mut files = Vec::new();
+        for (id, model) in [("projector", None), ("row-lost", Some("lost-model"))] {
+            let destination = dir.path().join(format!("{id}.gguf"));
+            std::fs::write(&destination, b"a finished download").unwrap();
+            let mut session = DownloadSession::new(
+                id.to_string(),
+                format!("https://example.com/{id}.gguf"),
+                destination.clone(),
+                Some(19),
+                None,
+            )
+            .unwrap();
+            if let Some(model) = model {
+                session = session.with_model_metadata(model.to_string(), model.to_string());
+            }
+            session.start().unwrap();
+            session.complete().unwrap();
+            repository.create(&session).await.unwrap();
+            files.push(destination);
+        }
+
+        reconcile_orphaned_sessions(
+            repository.clone(),
+            Arc::new(DownloadedModelRepository::new(pool)),
+        )
+        .await
+        .unwrap();
+
+        for file in &files {
+            assert_eq!(
+                std::fs::read(file).ok().as_deref(),
+                Some(&b"a finished download"[..]),
+                "{} was deleted",
+                file.display()
+            );
+        }
+    }
+
     #[tokio::test]
     async fn sqlite_session_interrupted_before_relaunch_is_reconciled() {
         use crate::features::download::download_repository::SqliteDownloadRepository;

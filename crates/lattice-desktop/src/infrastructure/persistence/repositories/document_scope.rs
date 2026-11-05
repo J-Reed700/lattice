@@ -267,6 +267,34 @@ mod tests {
         assert_eq!(count, 2);
     }
 
+    /// A conversation row a migration or a restored backup lost is not a
+    /// conversation the user deleted: its attachments stay.
+    #[tokio::test]
+    async fn a_conversation_row_gone_with_no_record_of_its_delete_orphans_nothing() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum, \
+             owner_conversation_id) \
+             VALUES ('attached', '/library/a.txt', 'a.txt', 1, '2026-11-01T00:00:00Z', 'abc', 'lost-chat')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let repo = SqliteDocumentScope::new(pool);
+
+        assert!(repo
+            .orphaned_conversation_owned_documents()
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn conversation_ownership_is_stamped_cleared_and_swept() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
