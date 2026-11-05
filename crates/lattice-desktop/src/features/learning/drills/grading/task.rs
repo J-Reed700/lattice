@@ -28,7 +28,7 @@ pub(super) fn task(review: &Review<'_>) -> String {
             .key
             .iter()
             .enumerate()
-            .map(|(index, issue)| issue_block(index, issue, &drill.files)),
+            .map(|(index, issue)| issue_block(index + 1, issue, &drill.files)),
     );
     parts.push(format!(
         "The review: {}, in the order they were made.",
@@ -38,7 +38,7 @@ pub(super) fn task(review: &Review<'_>) -> String {
         findings
             .iter()
             .enumerate()
-            .map(|(index, finding)| finding_block(index, finding, &drill.files)),
+            .map(|(index, finding)| finding_block(index + 1, finding, &drill.files)),
     );
     parts.push(overlap_block(findings, &drill.key));
     parts.push(format!(
@@ -76,11 +76,11 @@ fn numbered(text: &str, first: usize, last: usize) -> Vec<String> {
         .collect()
 }
 
-fn issue_block(index: usize, issue: &KeyIssue, files: &[DrillFile]) -> String {
+fn issue_block(number: usize, issue: &KeyIssue, files: &[DrillFile]) -> String {
     let known = pattern(&issue.pattern);
     let name = known.map_or(issue.pattern.as_str(), |known| known.name);
     let mut lines = vec![format!(
-        "Issue {index}: {name} ({}), {}",
+        "Issue {number}: {name} ({}), {}",
         severity_word(issue.severity),
         place(&issue.span)
     )];
@@ -92,9 +92,9 @@ fn issue_block(index: usize, issue: &KeyIssue, files: &[DrillFile]) -> String {
     lines.join("\n")
 }
 
-fn finding_block(index: usize, finding: &Finding, files: &[DrillFile]) -> String {
+fn finding_block(number: usize, finding: &Finding, files: &[DrillFile]) -> String {
     let mut head = format!(
-        "Finding {index}: {}",
+        "Finding {number}: {}",
         finding
             .span
             .as_ref()
@@ -119,7 +119,7 @@ fn overlap_block(findings: &[Finding], key: &[KeyIssue]) -> String {
     }
     let lines: Vec<String> = pairs
         .iter()
-        .map(|(finding, issue)| format!("finding {finding} and issue {issue}"))
+        .map(|(finding, issue)| format!("finding {} and issue {}", finding + 1, issue + 1))
         .collect();
     format!(
         "Findings and issues whose lines overlap, a hint and not a verdict:\n{}",
@@ -168,20 +168,20 @@ fn severity_word(severity: Severity) -> &'static str {
     }
 }
 
-/// "3 issues, numbered 0 to 2".
+/// "3 issues, numbered 1 to 3".
 fn counted(count: usize, noun: &str) -> String {
     match count {
         0 => format!("no {noun}s"),
-        1 => format!("1 {noun}, numbered 0"),
-        count => format!("{count} {noun}s, numbered 0 to {}", count - 1),
+        1 => format!("1 {noun}, numbered 1"),
+        count => format!("{count} {noun}s, numbered 1 to {count}"),
     }
 }
 
-/// "0 to 2".
+/// "1 to 3".
 fn numbers(count: usize) -> String {
     match count {
         0 => "none".to_owned(),
-        1 => "0".to_owned(),
-        count => format!("0 to {}", count - 1),
+        1 => "1".to_owned(),
+        count => format!("1 to {count}"),
     }
 }

@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::features::learning::drills::grader::Review;
 use crate::features::learning::grade_rationale::verbatim;
 
-/// The judge's answer as it was written, before any check.
+/// The judge's answer as it was written, before any check. Its numbers count from 1, as the learner's do.
 #[derive(Deserialize)]
 struct Answer {
     issues: Vec<IssueEntry>,
@@ -77,12 +77,12 @@ const FINDING: Kind = Kind {
 };
 
 impl Kind {
-    /// Which of them there are: "issues 0 to 2", "issue 0 only", "no issues".
+    /// Which of them there are: "issues 1 to 3", "issue 1 only", "no issues".
     fn numbered(&self, count: usize) -> String {
         match count {
             0 => format!("no {}", self.plural),
-            1 => format!("{} 0 only", self.singular),
-            count => format!("{} 0 to {}", self.plural, count - 1),
+            1 => format!("{} 1 only", self.singular),
+            count => format!("{} 1 to {count}", self.plural),
         }
     }
 }
@@ -147,8 +147,9 @@ fn refuse(message: String) -> AppError {
     AppError::InvalidInput(message)
 }
 
-/// The entries by the number they carry: one for every number below `count`. A number past `count`, a number with
-/// no entry and a number with several are faults; the first of several entries stands in for them.
+/// The entries by the number they carry, counted from 1: one for every number up to `count`, returned in position
+/// order. A number below 1 or past `count`, a number with no entry and a number with several are faults; the first
+/// of several entries stands in for them.
 fn by_position<'a, E>(
     entries: &'a [E],
     count: usize,
@@ -160,8 +161,8 @@ fn by_position<'a, E>(
     for entry in entries {
         let named = number_of(entry);
         match usize::try_from(named) {
-            Ok(number) if number < count => {
-                if let Some(slot) = slots.get_mut(number) {
+            Ok(number) if (1..=count).contains(&number) => {
+                if let Some(slot) = slots.get_mut(number - 1) {
                     slot.push(entry);
                 }
             }
@@ -176,7 +177,8 @@ fn by_position<'a, E>(
         }
     }
     let mut standing = Vec::with_capacity(count);
-    for (number, slot) in slots.iter().enumerate() {
+    for (position, slot) in slots.iter().enumerate() {
+        let number = position + 1;
         match slot.as_slice() {
             [] => faults.push(format!(
                 "{} {number} has no entry: every {} needs exactly one.",
@@ -197,8 +199,8 @@ fn by_position<'a, E>(
     standing
 }
 
-/// What the entry says became of `issue`, or `None` when it names no finding that can be credited. A fault found in
-/// the entry is added to `faults`.
+/// What the entry says became of the issue at position `issue`, or `None` when it names no finding that can be
+/// credited. A fault found in the entry is added to `faults`.
 fn issue_outcome(
     issue: usize,
     entry: &IssueEntry,
@@ -217,7 +219,8 @@ fn issue_outcome(
     let how = if found { "found" } else { "half found" };
     let Some(named) = entry.finding else {
         faults.push(format!(
-            "Issue {issue} is {how} but names no finding: give the finding that {}.",
+            "Issue {} is {how} but names no finding: give the finding that {}.",
+            issue + 1,
             if found {
                 "names its cause"
             } else {
@@ -228,14 +231,17 @@ fn issue_outcome(
     };
     let credited = usize::try_from(named)
         .ok()
-        .and_then(|number| findings.get(number).map(|finding| (number, finding)));
-    let Some((number, finding)) = credited else {
+        .and_then(|number| number.checked_sub(1))
+        .and_then(|position| findings.get(position).map(|finding| (position, finding)));
+    let Some((position, finding)) = credited else {
         faults.push(format!(
-            "Issue {issue} is {how} by finding {named}, but the review has {}.",
+            "Issue {} is {how} by finding {named}, but the review has {}.",
+            issue + 1,
             FINDING.numbered(findings.len())
         ));
         return None;
     };
+    let (issue, number) = (issue + 1, position + 1);
     let quote = entry
         .quote
         .as_deref()
@@ -251,15 +257,15 @@ fn issue_outcome(
         _ => {}
     }
     let outcome = if found {
-        IssueOutcome::Found { finding: number }
+        IssueOutcome::Found { finding: position }
     } else {
-        IssueOutcome::HalfFound { finding: number }
+        IssueOutcome::HalfFound { finding: position }
     };
     Some((outcome, reason))
 }
 
-/// What the entry says became of `finding`, or `None` when it matches an issue the key does not have. A fault found
-/// in the entry is added to `faults`.
+/// What the entry says became of the finding at position `finding`, or `None` when it matches an issue the key does
+/// not have. A fault found in the entry is added to `faults`.
 fn finding_outcome(
     finding: usize,
     entry: &FindingEntry,
@@ -279,13 +285,14 @@ fn finding_outcome(
             for &named in entry.issues.as_deref().unwrap_or_default() {
                 match usize::try_from(named)
                     .ok()
-                    .filter(|&number| number < key_len)
+                    .filter(|number| (1..=key_len).contains(number))
                 {
-                    Some(number) => issues.push(number),
+                    Some(number) => issues.push(number - 1),
                     None => {
                         in_the_key = false;
                         faults.push(format!(
-                            "Finding {finding} matches issue {named}, but the key has {}.",
+                            "Finding {} matches issue {named}, but the key has {}.",
+                            finding + 1,
                             ISSUE.numbered(key_len)
                         ));
                     }
@@ -304,13 +311,20 @@ fn finding_outcome(
 
 fn no_reason(kind: &Kind, number: usize) -> String {
     format!(
-        "{} {number} has no reason: say why before giving its outcome.",
-        kind.title
+        "{} {} has no reason: say why before giving its outcome.",
+        kind.title,
+        number + 1
     )
 }
 
 /// What `fault` says is wrong with `assessment`, as an instruction.
 fn describe(fault: AssessmentFault, assessment: &Assessment) -> String {
+    let half_found = |issue: usize| {
+        matches!(
+            assessment.issues.get(issue),
+            Some((IssueOutcome::HalfFound { .. }, _))
+        )
+    };
     match fault {
         AssessmentFault::IssueCount { expected, got } => {
             format!("The answer has {got} issue entries for {expected} issues.")
@@ -319,25 +333,29 @@ fn describe(fault: AssessmentFault, assessment: &Assessment) -> String {
             format!("The answer has {got} finding entries for {expected} findings.")
         }
         AssessmentFault::FindingOutOfRange { issue, finding } => {
+            let (issue, finding) = (issue + 1, finding + 1);
             format!("Issue {issue} is credited to finding {finding}, which the review does not have.")
         }
         AssessmentFault::IssueOutOfRange { finding, issue } => {
+            let (finding, issue) = (finding + 1, issue + 1);
             format!("Finding {finding} matches issue {issue}, which the key does not have.")
         }
         AssessmentFault::CreditedWithoutMatch { issue, finding } => {
-            let how = match assessment.issues.get(issue) {
-                Some((IssueOutcome::HalfFound { .. }, _)) => "half found",
-                _ => "found",
-            };
+            let how = if half_found(issue) { "half found" } else { "found" };
+            let (issue, finding) = (issue + 1, finding + 1);
             format!(
                 "Issue {issue} is {how} by finding {finding}, but finding {finding} does not match issue {issue}: list issue {issue} among the issues finding {finding} matches, or give issue {issue} another outcome."
             )
         }
         AssessmentFault::MatchesNothing { finding } => format!(
-            "Finding {finding} matches no issue: list the issues it matches, or call it a valid extra or a false positive."
+            "Finding {} matches no issue: list the issues it matches, or call it a valid extra or a false positive.",
+            finding + 1
         ),
-        AssessmentFault::MatchedButMissed { finding, issue } => format!(
-            "Finding {finding} matches issue {issue}, but issue {issue} is missed: credit issue {issue} to a finding that earns it, or take it out of finding {finding}'s issues."
-        ),
+        AssessmentFault::MatchedButMissed { finding, issue } => {
+            let (finding, issue) = (finding + 1, issue + 1);
+            format!(
+                "Finding {finding} matches issue {issue}, but issue {issue} is missed: credit issue {issue} to a finding that earns it, or take it out of finding {finding}'s issues."
+            )
+        }
     }
 }
