@@ -33,7 +33,7 @@ import type {
   PassageMatchTier,
   SourceWithMetadata,
 } from '@/types/conversation';
-import { openExternalUrl } from '@/utils/openExternalUrl';
+import { openExternalUrl, whyExternalUrlDidNotOpen } from '@/utils/openExternalUrl';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 import { sanitizeFileName } from '@/utils/sanitize';
 import {
@@ -296,9 +296,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       // The browser can find the passage too: a text fragment lands the reader
       // on the same sentences, highlighted, instead of the top of the article.
       const target = activePassage ? textFragmentUrl(openableUrl, activePassage) : openableUrl;
-      const opened = await openExternalUrl(target);
-      if (!opened) {
-        toast.error("Couldn't open URL");
+      const failure = await whyExternalUrlDidNotOpen(target);
+      if (failure !== null) {
+        toast.error("Couldn't open URL", { message: failure });
       }
       return;
     }
