@@ -1,10 +1,13 @@
 //! Shared builders for the drills' tests.
 
 mod catalogue_tests;
+mod diff_tests;
 mod drill_tests;
 mod edits_tests;
+mod fix_tests;
 mod grading_tests;
 mod key_tests;
+mod ratings_tests;
 mod schedule_tests;
 
 use proptest::prelude::*;

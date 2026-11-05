@@ -4,10 +4,11 @@
 use serde::{Deserialize, Serialize};
 
 use super::catalogue::{patterns_for, Family, Pattern};
-use super::grading::IssueOutcome;
+use super::drill::KeyIssue;
+use super::grading::{Assessment, IssueOutcome};
 
 /// How well a pattern was recognised, in the words recall's schedule takes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum PatternRating {
     Again,
@@ -25,6 +26,31 @@ pub fn rating(outcome: &IssueOutcome) -> PatternRating {
         IssueOutcome::HalfFound { .. } => PatternRating::Hard,
         IssueOutcome::Missed => PatternRating::Again,
     }
+}
+
+/// The rating of one key issue's pattern in one review, in the form the schedule is given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueRating {
+    /// The id of a catalogue pattern.
+    pub pattern: String,
+    pub rating: PatternRating,
+}
+
+/// The rating of each key issue's pattern under an assessment, one for each issue in the key's order. An issue the
+/// assessment has no outcome for counts as missed, as `score` counts it.
+pub fn ratings(key: &[KeyIssue], assessment: &Assessment) -> Vec<IssueRating> {
+    key.iter()
+        .enumerate()
+        .map(|(position, issue)| IssueRating {
+            pattern: issue.pattern.clone(),
+            rating: rating(
+                &assessment
+                    .issues
+                    .get(position)
+                    .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome),
+            ),
+        })
+        .collect()
 }
 
 /// When a pattern is next due for one learner and language.
