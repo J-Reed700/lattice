@@ -3,8 +3,15 @@
 
 use serde::{Deserialize, Serialize};
 
-/// What a result says when the hidden suite fails on an issue's fixed files.
-const BROKE: &str = "Your changes break what worked: the hidden suite fails on your files.";
+/// What a result says when the hidden suite fails on an issue's fixed files: that the learner's changes broke what
+/// worked, and, when the suite ran beside the fixes of issues the learner left, that it fails with those fixed too.
+fn broke(ran_beside: &[usize]) -> &'static str {
+    if ran_beside.is_empty() {
+        "Your changes break what worked: the hidden suite fails on your files."
+    } else {
+        "Your changes break what worked: the hidden suite fails on your files, even with the issues you left fixed."
+    }
+}
 
 /// Whether a learner's change fixes one issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -22,20 +29,30 @@ pub enum FixOutcome {
 pub enum DecidedBy {
     /// The issue's killing test, run on the learner's files.
     Test,
-    /// The hidden suite, run on the learner's files.
+    /// The hidden suite, run on the learner's files beside the fixes of the planted issues they left.
     Suite,
     /// A judge, shown the code, the learner's code and the issue.
     Judge,
 }
 
-/// What the hidden suite made of the learner's files as a whole.
+/// What the hidden suite made of the learner's files as a whole, run beside the key's fixes of the planted issues the
+/// learner left.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SuiteVerdict {
-    /// The suite passes: nothing that worked is broken.
-    Passed,
-    /// The suite fails: the fix broke behaviour that worked. `output` is what it wrote.
-    Failed { output: String },
+    /// The suite passes: nothing that worked is broken. `ran_beside` is the issues, by position in the key, whose
+    /// fixes it ran beside.
+    Passed {
+        #[serde(rename = "ranBeside")]
+        ran_beside: Vec<usize>,
+    },
+    /// The suite fails: the fix broke behaviour that worked. `output` is what it wrote, and `ran_beside` the issues,
+    /// by position in the key, whose fixes it ran beside.
+    Failed {
+        output: String,
+        #[serde(rename = "ranBeside")]
+        ran_beside: Vec<usize>,
+    },
     /// The suite proved nothing: the drill has none, no runtime was there to run it, or the run did not finish.
     NotRun { why: String },
 }
@@ -51,8 +68,8 @@ pub struct IssueCheck {
     pub output: Option<String>,
     /// Why the issue's test could not decide it and a judge did instead.
     pub fallback: Option<String>,
-    /// The other issues, by position in the key, whose key fixes were applied to the learner's files for the issue's
-    /// test: none when a judge decided the issue.
+    /// The other planted issues, by position in the key, whose key fixes were applied to the learner's files for the
+    /// issue's test: none when a judge decided the issue.
     pub graded_beside: Vec<usize>,
 }
 
@@ -68,10 +85,11 @@ pub struct IssueFix {
     pub output: Option<String>,
     /// Why the issue's test could not decide it and a judge did instead.
     pub fallback: Option<String>,
-    /// The other issues, by position in the key, whose key fixes were applied to the learner's files for this issue's
-    /// test, so that the issue was graded beside them: none when a judge decided the issue.
+    /// The other planted issues, by position in the key, whose key fixes were applied to the learner's files for this
+    /// issue's test, so that the issue was graded beside them: none when a judge decided the issue.
     pub graded_beside: Vec<usize>,
-    /// The hidden suite's verdict on the learner's files: the same for every issue of the fix.
+    /// The hidden suite's verdict on the learner's files, run beside the fixes it names: the same for every issue of
+    /// the fix.
     pub suite: SuiteVerdict,
 }
 
@@ -81,15 +99,17 @@ impl IssueFix {
     /// when the suite fails: the change fixes it and breaks what worked. Every result carries the verdict.
     pub fn settle(issue: usize, check: IssueCheck, suite: &SuiteVerdict) -> Self {
         let broken = match suite {
-            SuiteVerdict::Failed { output } if check.outcome == FixOutcome::Fixed => Some(output),
+            SuiteVerdict::Failed { output, ran_beside } if check.outcome == FixOutcome::Fixed => {
+                Some((output, ran_beside))
+            }
             _ => None,
         };
         match broken {
-            Some(output) => Self {
+            Some((output, ran_beside)) => Self {
                 issue,
                 outcome: FixOutcome::Partly,
                 decided_by: DecidedBy::Suite,
-                reason: format!("{} {BROKE}", check.reason),
+                reason: format!("{} {}", check.reason, broke(ran_beside)),
                 output: Some(output.clone()),
                 fallback: check.fallback,
                 graded_beside: check.graded_beside,

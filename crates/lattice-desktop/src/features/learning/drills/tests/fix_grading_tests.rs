@@ -116,7 +116,12 @@ async fn a_killing_test_that_passes_on_the_learners_files_fixes_its_issue() -> R
     assert_eq!(first.decided_by, DecidedBy::Test);
     assert_eq!(first.output, None);
     assert_eq!(first.fallback, None);
-    assert_eq!(first.suite, SuiteVerdict::Passed);
+    assert_eq!(
+        first.suite,
+        SuiteVerdict::Passed {
+            ran_beside: vec![1]
+        }
+    );
     let runs = runner.runs();
     assert_eq!(runs.len(), 2, "the suite once and the one killing test");
     assert_eq!(
@@ -353,7 +358,8 @@ async fn a_suite_the_fix_breaks_is_carried_by_every_issue_with_its_output() -> R
         assert_eq!(
             result.suite,
             SuiteVerdict::Failed {
-                output: SUITE_OUTPUT.into()
+                output: SUITE_OUTPUT.into(),
+                ran_beside: Vec::new()
             }
         );
         assert_eq!(result.outcome, FixOutcome::Partly, "{result:?}");
@@ -630,7 +636,12 @@ mod real_runtime {
         let results = grade_on(runner.as_ref(), &model, &operator_fixed()).await?;
         assert_eq!(results[0].outcome, FixOutcome::Fixed, "{:?}", results[0]);
         assert_eq!(results[0].decided_by, DecidedBy::Test);
-        assert_eq!(results[0].suite, SuiteVerdict::Passed);
+        assert_eq!(
+            results[0].suite,
+            SuiteVerdict::Passed {
+                ran_beside: vec![1]
+            }
+        );
         Ok(())
     }
 
@@ -650,10 +661,11 @@ mod real_runtime {
             results[0].output
         );
         // Both defects are repaired for the suite, which passes: nothing the learner did broke what worked.
-        assert!(
-            matches!(&results[0].suite, SuiteVerdict::Passed),
-            "{:?}",
-            results[0].suite
+        assert_eq!(
+            results[0].suite,
+            SuiteVerdict::Passed {
+                ran_beside: vec![0, 1]
+            }
         );
         Ok(())
     }
@@ -675,7 +687,7 @@ mod real_runtime {
         assert_eq!(results[0].outcome, FixOutcome::Partly, "{:?}", results[0]);
         assert_eq!(results[0].decided_by, DecidedBy::Suite);
         assert!(
-            matches!(&results[0].suite, SuiteVerdict::Failed { output } if output.contains("default_limiter")),
+            matches!(&results[0].suite, SuiteVerdict::Failed { output, .. } if output.contains("default_limiter")),
             "{:?}",
             results[0].suite
         );

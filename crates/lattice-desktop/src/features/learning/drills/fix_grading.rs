@@ -3,14 +3,15 @@
 //!
 //! | Issue | Runner language | No runner |
 //! |---|---|---|
-//! | proven by a killing test | that test runs on the learner's files, beside the key's fixes of the other issues | judged, and the result says why |
+//! | proven by a killing test | that test runs on the learner's files, beside the key's fixes of the other planted issues | judged, and the result says why |
 //! | proven by judgement | judged | judged |
 //!
 //! An issue is graded on its own: a defect the learner left in another issue cannot fail its test, because the key's
-//! fix for every other issue is applied to the learner's text where it applies. A test that cannot decide, because its
-//! run timed out, no runtime was there or the runtime refused the files, proves nothing: the issue is judged and the
-//! result says so. In a runner language the hidden suite also runs once on the learner's files as written, and its
-//! verdict goes into every issue's result.
+//! fix for every other planted issue is applied to the learner's text where it applies. A fix found in review is never
+//! applied. A test that cannot decide, because its run timed out, no runtime was there or the runtime refused the files,
+//! proves nothing: the issue is judged and the result says so. In a runner language the hidden suite also runs once, on
+//! the learner's files with the key's fix of every planted issue applied the same way, so that it fails only for what
+//! the learner's own changes broke. Its verdict, with the issues it ran beside, goes into every issue's result.
 
 use super::budget;
 use super::build::ask::render_files;
@@ -21,7 +22,7 @@ use crate::features::learning::lessons::structured_call::complete_checked;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{
     apply, overlaps, pattern, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck, IssueFix,
-    KeyIssue, LineSpan, Proof, SuiteVerdict,
+    KeyIssue, LineSpan, Origin, Proof, SuiteVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -95,8 +96,8 @@ pub(in crate::features::learning) fn strategy<'a>(
     }
 }
 
-/// The issue's killing test runs on the learner's files with the key's fixes of the other issues applied. It passes,
-/// so the issue is fixed; it fails, so it is not, with what the test wrote.
+/// The issue's killing test runs on the learner's files with the key's fixes of the other planted issues applied. It
+/// passes, so the issue is fixed; it fails, so it is not, with what the test wrote.
 struct KillingTestFix<'a> {
     tools: Tools<'a>,
 }
@@ -118,7 +119,7 @@ impl FixStrategy for KillingTestFix<'_> {
             let why = "There is no runtime here to run the test.".to_owned();
             return judged_instead(self.tools, case, position, issue, why).await;
         };
-        let (files, graded_beside) = beside(case, position);
+        let (files, graded_beside) = beside(case, Some(position));
         let outcome = match runner.run(&files, test, self.tools.cancel.clone()).await {
             Ok(outcome) => outcome,
             Err(_) if self.tools.cancel.is_cancelled() => return Err(cancelled()),
@@ -229,16 +230,22 @@ impl FixStrategy for JudgedFix<'_> {
     }
 }
 
-/// The learner's files with the key's fix of every other issue applied where it applies to their text, in the key's
-/// order, and the positions of the issues whose fixes were applied. A fix does not apply where the learner changed or
-/// removed the lines it replaces, where those lines are in their text more than once, or where it touches the lines of
-/// the issue at `position`, so that no other issue can mend this one.
-fn beside(case: &FixCase<'_>, position: usize) -> (Vec<DrillFile>, Vec<usize>) {
-    let own = case.drill.key.get(position).map(|issue| &issue.span);
+/// The learner's files with the key's fix of every planted issue applied where it applies to their text, in the key's
+/// order, and the positions of the issues whose fixes were applied. The issue at `position`, if there is one, is left
+/// as the learner has it. A fix does not apply where the learner changed or removed the lines it replaces, where those
+/// lines are in their text more than once, or where it touches the lines of the issue at `position`, so that no other
+/// issue can mend that one. A fix found in review is never applied.
+fn beside(case: &FixCase<'_>, position: Option<usize>) -> (Vec<DrillFile>, Vec<usize>) {
+    let own = position
+        .and_then(|at| case.drill.key.get(at))
+        .map(|issue| &issue.span);
     let mut files = case.learner.to_vec();
     let mut applied = Vec::new();
     for (other, issue) in case.drill.key.iter().enumerate() {
-        if other == position || own.is_some_and(|own| overlaps(own, &issue.span)) {
+        if Some(other) == position
+            || issue.origin != Origin::Planted
+            || own.is_some_and(|own| overlaps(own, &issue.span))
+        {
             continue;
         }
         if let Ok((fixed, _)) = apply(&files, std::slice::from_ref(&issue.fix)) {
@@ -289,7 +296,8 @@ fn place(span: &LineSpan) -> String {
     }
 }
 
-/// The hidden suite on the learner's files, once. A suite that cannot be run says nothing about the files.
+/// The hidden suite, once, on the learner's files with the key's fix of every planted issue applied where it applies.
+/// A suite that cannot be run says nothing about the files.
 async fn run_suite(tools: Tools<'_>, case: &FixCase<'_>) -> Result<SuiteVerdict> {
     let Some(suite) = case.suite else {
         return Ok(SuiteVerdict::NotRun {
@@ -301,9 +309,10 @@ async fn run_suite(tools: Tools<'_>, case: &FixCase<'_>) -> Result<SuiteVerdict>
             why: "There is no runtime here to run the hidden suite.".to_owned(),
         });
     };
-    match runner.run(case.learner, suite, tools.cancel.clone()).await {
-        Ok(RunOutcome::Passed) => Ok(SuiteVerdict::Passed),
-        Ok(RunOutcome::Failed { output }) => Ok(SuiteVerdict::Failed { output }),
+    let (files, ran_beside) = beside(case, None);
+    match runner.run(&files, suite, tools.cancel.clone()).await {
+        Ok(RunOutcome::Passed) => Ok(SuiteVerdict::Passed { ran_beside }),
+        Ok(RunOutcome::Failed { output }) => Ok(SuiteVerdict::Failed { output, ran_beside }),
         Ok(RunOutcome::Cancelled) => Err(cancelled()),
         Ok(other) => Ok(SuiteVerdict::NotRun {
             why: other.says_nothing().unwrap_or_default(),
