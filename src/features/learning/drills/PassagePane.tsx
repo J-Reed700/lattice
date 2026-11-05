@@ -42,7 +42,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
 
   if (!file) return null;
 
-  const move = (event: KeyboardEvent<HTMLButtonElement>, line: number) => {
+  const move = (event: KeyboardEvent<HTMLElement>, line: number) => {
     const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
     if (!step && event.key !== 'Home' && event.key !== 'End') return;
     event.preventDefault();
@@ -51,7 +51,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
     const target = lines[place];
     if (target === undefined) return;
     if (event.shiftKey) onSelectLines(pickSentence(selection ?? { startLine: line, endLine: line }, target, true));
-    root.current?.querySelector<HTMLButtonElement>(`[data-line="${target}"]`)?.focus();
+    root.current?.querySelector<HTMLElement>(`[data-line="${target}"]`)?.focus();
   };
 
   return (
@@ -81,22 +81,29 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
             className="mx-auto max-w-prose space-y-5 px-6 py-6 text-[15px] leading-8 text-text-primary"
           >
             {all.length > 0 && (
-              <p>
+              <p className="text-left">
                 {all.map((sentence) => {
                   const picked = within(selection, sentence.line);
                   return (
                     <span key={sentence.line}>
-                      <button
-                        type="button"
+                      <span
+                        role="button"
                         data-line={sentence.line}
                         aria-label={`Sentence ${sentence.line}: ${sentence.text}`}
                         aria-pressed={picked}
                         tabIndex={sentence.line === reached ? 0 : -1}
                         onFocus={() => setCurrent(sentence.line)}
                         onClick={(event) => onSelectLines(pickSentence(selection, sentence.line, event.shiftKey))}
-                        onKeyDown={(event) => move(event, sentence.line)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            onSelectLines(pickSentence(selection, sentence.line, event.shiftKey));
+                            return;
+                          }
+                          move(event, sentence.line);
+                        }}
                         className={cn(
-                          'group relative inline rounded px-0.5 text-inherit [box-decoration-break:clone] [-webkit-box-decoration-break:clone] transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent',
+                          'group relative inline cursor-pointer rounded px-0.5 text-inherit [box-decoration-break:clone] [-webkit-box-decoration-break:clone] transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent',
                           picked ? 'bg-accent-muted' : 'hover:bg-surface-hover',
                           within(highlight, sentence.line) && 'ring-2 ring-accent/50',
                         )}
@@ -111,7 +118,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
                           {sentence.line}
                         </sup>
                         {sentence.text}
-                      </button>{' '}
+                      </span>{' '}
                     </span>
                   );
                 })}
