@@ -200,6 +200,23 @@ async fn closed_after_one_round(pool: &sqlx::SqlitePool, attempt: &FirstAttempt)
     job.id
 }
 
+/// How the first attempt's question stands on the thread.
+async fn question_status(runtime: &FakeRuntime, attempt: &FirstAttempt) -> String {
+    let conversation = runtime
+        .conversations
+        .get_conversation(attempt.request.conversation_id.as_deref().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    conversation
+        .messages()
+        .iter()
+        .find(|message| message.id == attempt.assembled.user_message_id)
+        .unwrap()
+        .status
+        .clone()
+}
+
 #[tokio::test]
 async fn a_research_turn_stopped_by_a_restart_resumes_from_its_last_round() {
     let pool = pool().await;
@@ -699,6 +716,134 @@ async fn a_research_turn_resumed_after_its_model_was_deleted_fails_and_never_fal
         job.error_message
     );
     assert!(default.requests().is_empty(), "the default never answers");
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// The app opens again: the research job is registered and delivered, and this
+/// waits for it to end.
+async fn reopened(
+    runtime: &FakeRuntime,
+    jobs: &Arc<JobRuntime>,
+    job_id: &str,
+) -> lattice_core::shared::runtime::jobs::JobRecord {
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(DeepResearchJob::new(runtime.share(), silent())),
+        job_config(),
+    )
+    .await
+    .unwrap();
+    finished(jobs, job_id).await
+}
+
+/// A stop that reaches the turn before it registers, as while the chat's model
+/// loads, ends it.
+#[tokio::test]
+async fn a_resumed_research_turn_stopped_before_it_registers_fails_its_question() {
+    let pool = pool().await;
+    let llm = Scripted::new([]);
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(llm.clone()),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    assert!(runtime.turn_cancellation.request_cancel(
+        attempt.request.conversation_id.as_deref().unwrap(),
+        attempt.request.request_id.as_deref(),
+    ));
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(
+        job.status,
+        JobStatus::Cancelled,
+        "a stopped turn does not resume"
+    );
+    assert!(llm.requests().is_empty(), "the model is never asked");
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// A turn cannot start when another holds its request id.
+#[tokio::test]
+async fn a_resumed_research_turn_that_finds_its_request_in_flight_fails_its_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(Scripted::new([])),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    assert!(runtime.turn_cancellation.begin_turn_within(
+        attempt.request.request_id.as_deref().unwrap(),
+        attempt.request.conversation_id.as_deref().unwrap(),
+        None,
+    ));
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    assert!(
+        job.error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("already in flight")),
+        "{:?}",
+        job.error_message
+    );
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// A saved request that names no request id cannot be resumed.
+#[tokio::test]
+async fn a_saved_research_request_that_names_no_request_fails_its_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(Scripted::new([])),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let mut attempt = first_attempt(&runtime).await;
+    attempt.request.request_id = None;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    assert!(
+        job.error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("names its conversation and request")),
+        "{:?}",
+        job.error_message
+    );
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
     jobs.close();
     jobs.drain().await;
 }
