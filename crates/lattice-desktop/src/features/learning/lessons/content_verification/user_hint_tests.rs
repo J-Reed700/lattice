@@ -236,14 +236,24 @@ async fn resumed(
     model: &Searching,
     first: Option<String>,
 ) -> Result<Result<(String, LessonVerificationReport)>> {
-    let (repo, job, lesson_id) = scope;
+    resumed_over(pool, scope, model, first, &[source()]).await
+}
+
+/// [`resumed`] over the course `sources`.
+async fn resumed_over(
+    pool: &sqlx::SqlitePool,
+    (repo, job, lesson_id): Scope<'_>,
+    model: &Searching,
+    first: Option<String>,
+    sources: &[LearningSourceDto],
+) -> Result<Result<(String, LessonVerificationReport)>> {
     let program_id = repo.job(job).await?.program_id;
     Ok(research::run(
         pool.clone(),
         program_id,
         "Research methods".into(),
         Some(research::tests::web(false)),
-        prepare(repo, job, lesson_id, model, first, &[source()]),
+        prepare(repo, job, lesson_id, model, first, sources),
     )
     .await)
 }
@@ -445,26 +455,31 @@ async fn a_hint_whose_page_verifies_the_claim_on_a_source_its_section_does_not_c
     let scope = (&repo, job.as_str(), lesson_id.as_str());
     let model = Searching::new(&[CLAIM]);
     model.plans(Some(one_search()));
-    // The section cites a page of the course; the hint finds another.
+    // The section cites a page of the course; the hint finds another. The
+    // course is one of the program's sources, as a preparation job reads it.
+    let program_id = repo.job(&job).await?.program_id;
+    install_source(&pool, &program_id, &source().excerpt).await?;
+    let programs = crate::features::learning::repository::LearningRepository::new(pool.clone());
+    let course: Vec<LearningSourceDto> = programs
+        .verification_sources(&program_id)
+        .await?
+        .into_iter()
+        .filter(|saved| saved.excerpt.contains(GOOD))
+        .collect();
+    assert_eq!(course.len(), 1, "the section's source is the program's");
     let mut lesson = lesson_of(&section(CLAIM));
     lesson["blocks"][0]["sourceIndex"] = json!(0);
     lesson["blocks"][0]["quote"] = json!(GOOD);
     let raw = hinted_in(&pool, scope, lesson, CLAIM).await?;
 
-    let (published, _) = resumed(&pool, scope, &model, Some(raw)).await??;
+    let (published, _) = resumed_over(&pool, scope, &model, Some(raw), &course).await??;
 
     let published: Value = serde_json::from_str(&published)?;
     let block = &published["blocks"][0];
     assert_eq!(block["quote"], GOOD, "the section's own citation stands");
     // The claim is read against the page the hint found: the sentence it
     // states cites it, as the source the round saved after the course's own.
-    let program_id = repo.job(&job).await?.program_id;
-    let mut sources = vec![source()];
-    sources.extend(
-        crate::features::learning::repository::LearningRepository::new(pool.clone())
-            .verification_sources(&program_id)
-            .await?,
-    );
+    let sources = programs.verification_sources(&program_id).await?;
     let references = ReferenceCollection::lexical(&sources)?;
     let citations = section_citations(&published, &references)?;
     let read = citations.of_claim(0, CLAIM);
