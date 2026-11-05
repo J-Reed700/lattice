@@ -99,6 +99,113 @@ async fn asking_for_a_passage_with_none_ready_queues_a_build_on_the_course() -> 
     Ok(())
 }
 
+/// Marks the ready drill `id` as built for `topic`.
+async fn built_for(pool: &SqlitePool, id: &str, topic: &str) -> Result<()> {
+    sqlx::query("UPDATE learning_drills SET spec_json=json_set(spec_json,'$.domain',?) WHERE id=?")
+        .bind(topic)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(crate::features::learning::persistence::db)?;
+    Ok(())
+}
+
+async fn status_of(pool: &SqlitePool, id: &str) -> Result<String> {
+    sqlx::query_scalar("SELECT status FROM learning_drills WHERE id=?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(crate::features::learning::persistence::db)
+}
+
+#[tokio::test]
+async fn a_topic_is_not_served_a_ready_drill_built_for_no_topic_and_the_shelf_keeps_it(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    drilled(&pool, "ready", &program, &spacing_passage()).await?;
+    let started = review::start(
+        &pool,
+        &passage(&program, Some("spacing")),
+        AttemptMode::Practice,
+        4,
+        2,
+    )
+    .await?;
+    let StartedCodeReviewDto::Building { job_id } = &started.dto else {
+        panic!("the ready drill was not built for this topic: {started:?}");
+    };
+    let spec = spec_of(&JobStore::new(pool.clone()).get(job_id).await?)?;
+    assert_eq!(spec.domain.as_deref(), Some("spacing"));
+    assert_eq!(status_of(&pool, "ready").await?, "ready");
+
+    let plain = review::start(&pool, &passage(&program, None), AttemptMode::Practice, 4, 2).await?;
+    assert!(matches!(plain.dto, StartedCodeReviewDto::Started { .. }));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_topic_is_served_a_ready_drill_built_for_that_topic_and_no_topic_is_not() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    drilled(&pool, "spacing", &program, &spacing_passage()).await?;
+    built_for(&pool, "spacing", "spacing").await?;
+
+    let plain = review::start(&pool, &passage(&program, None), AttemptMode::Practice, 4, 2).await?;
+    assert!(
+        matches!(plain.dto, StartedCodeReviewDto::Building { .. }),
+        "a drill about a topic is not a drill about anything: {plain:?}"
+    );
+    let other = review::start(
+        &pool,
+        &passage(&program, Some("sleep")),
+        AttemptMode::Practice,
+        4,
+        2,
+    )
+    .await?;
+    assert!(matches!(other.dto, StartedCodeReviewDto::Building { .. }));
+    let asked = review::start(
+        &pool,
+        &passage(&program, Some(" spacing ")),
+        AttemptMode::Practice,
+        4,
+        2,
+    )
+    .await?;
+    assert!(
+        matches!(asked.dto, StartedCodeReviewDto::Started { .. }),
+        "{asked:?}"
+    );
+    assert_eq!(status_of(&pool, "spacing").await?, "taken");
+    Ok(())
+}
+
+#[tokio::test]
+async fn asking_again_for_a_topic_finds_its_build_and_another_topic_gets_its_own() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let ask = |topic: Option<&'static str>| {
+        let pool = pool.clone();
+        let program = program.clone();
+        async move {
+            review::start(
+                &pool,
+                &passage(&program, topic),
+                AttemptMode::Practice,
+                4,
+                2,
+            )
+            .await
+        }
+    };
+    let first = ask(Some("spacing")).await?;
+    assert_eq!(first.dto, ask(Some("spacing")).await?.dto);
+    assert_ne!(first.dto, ask(Some("sleep")).await?.dto);
+    assert_ne!(first.dto, ask(None).await?.dto);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_blank_topic_is_no_topic() -> Result<()> {
     let pool = pool().await?;
