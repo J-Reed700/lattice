@@ -134,17 +134,32 @@ mod tests {
     }
 
     #[test]
-    fn lattice_home_moves_every_root_and_an_empty_value_is_ignored() {
+    fn lattice_home_moves_every_root() {
         let dir = tempfile::tempdir().unwrap();
         let second = dir.path().join("second");
         assert_eq!(
             roots_with(Some(second.to_str().unwrap())),
             all_under(&second)
         );
+    }
 
-        let default = dirs::home_dir().unwrap().join(".lattice");
-        assert_eq!(roots_with(Some("")), all_under(&default));
-        assert_eq!(roots_with(None), all_under(&default));
+    /// A test or an eval that sets no home of its own must not write into the
+    /// user's library: on Windows `HOME` does not move it, so a run that
+    /// pointed only `HOME` at a scratch folder imported into the real one.
+    #[test]
+    fn a_process_that_has_not_claimed_the_users_home_gets_a_scratch_home() {
+        let users = dirs::home_dir().unwrap().join(".lattice");
+        for configured in [None, Some("")] {
+            let roots = roots_with(configured);
+            assert_eq!(roots.len(), 6, "{configured:?}");
+            for (name, path) in roots {
+                assert!(
+                    !path.starts_with(&users),
+                    "{name} resolved to the user's library at {} with LATTICE_HOME {configured:?}",
+                    path.display()
+                );
+            }
+        }
     }
 
     #[test]
