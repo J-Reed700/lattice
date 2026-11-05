@@ -1,4 +1,5 @@
-//! What one drill is built for: the material, the area of code, the size and the patterns to plant.
+//! What one drill is built for: the material, the area of code or the topic of a passage, the size and the patterns to
+//! plant.
 
 use lattice_core::domain::learning::drills::{pattern, Material, Pattern, LANGUAGES};
 use lattice_core::shared::error::{AppError, Result};
@@ -10,13 +11,15 @@ use serde::{Deserialize, Serialize};
 pub struct DrillSpec {
     /// What is reviewed.
     pub material: Material,
-    /// What the code is about. `None`: the bank picks one.
+    /// What the code is about, or the topic a passage is about. `None`: the bank picks a domain for code, and a
+    /// passage may be about anything in the course's sources.
     pub domain: Option<String>,
-    /// The size the learner chose, a target for the prompt.
+    /// The size the learner chose, a target for the prompt: lines of code, or sentences of an explanation.
     pub lines: u32,
     /// The target pattern ids, from `drills::targets`.
     pub patterns: Vec<String>,
-    /// The course whose topic gave the domain, when one did.
+    /// For code, the course whose topic gave the domain, when one did; for a passage, the course whose sources it is
+    /// taken from.
     pub program_id: Option<String>,
 }
 
@@ -52,8 +55,9 @@ impl TryFrom<StoredSpec> for DrillSpec {
 }
 
 impl DrillSpec {
-    /// Whether the spec names code in a language drills are written in, a size, a domain that says something when
-    /// it is given, and at least one pattern, each in the catalogue, applying to the material and listed once.
+    /// Whether the spec names code in a language drills are written in, or a passage of a named course; a size; a
+    /// domain that says something when it is given; and at least one pattern, each in the catalogue, applying to the
+    /// material and listed once.
     pub fn validate(&self) -> Result<()> {
         match &self.material {
             Material::Code { language } if !LANGUAGES.contains(&language.as_str()) => {
@@ -62,16 +66,18 @@ impl DrillSpec {
                 )));
             }
             Material::Code { .. } => {}
-            Material::Passage => {
+            Material::Passage if self.course().is_none() => {
                 return Err(AppError::InvalidInput(
-                    "Drills on a passage are not supported yet.".into(),
+                    "A drill on a passage names the course whose sources it is taken from.".into(),
                 ));
             }
+            Material::Passage => {}
         }
         if self.lines == 0 {
-            return Err(AppError::InvalidInput(
-                "A drill needs at least one line of code.".into(),
-            ));
+            return Err(AppError::InvalidInput(match self.material {
+                Material::Code { .. } => "A drill needs at least one line of code.".into(),
+                Material::Passage => "A drill needs at least one sentence to review.".into(),
+            }));
         }
         if self
             .domain
@@ -88,6 +94,13 @@ impl DrillSpec {
             ));
         }
         self.targets().map(drop)
+    }
+
+    /// The course a passage is taken from: the spec's course, when it names one that says something.
+    pub fn course(&self) -> Option<&str> {
+        self.program_id
+            .as_deref()
+            .filter(|program_id| !program_id.trim().is_empty())
     }
 
     /// The patterns to plant, in the spec's order.

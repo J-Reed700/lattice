@@ -126,6 +126,7 @@ impl CodeMaterial<'_> {
             files: answer.files,
             tests: answer.tests,
             suite: answer.suite,
+            source: None,
             trail,
         })
     }

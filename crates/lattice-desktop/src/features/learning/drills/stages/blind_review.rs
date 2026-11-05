@@ -90,9 +90,13 @@ impl DrillBuild<'_> {
         }
         let model = self.llm.model_name().to_owned();
         let wording = self.material.reviewer_wording(spec);
+        let subject = match self.material.reviewer_context(baseline) {
+            Some(context) => format!("{}\n\n{context}", wording.subject),
+            None => wording.subject.clone(),
+        };
         let request = model_call::structured(
             wording.reviewer,
-            format!("{}\n\n{}", wording.subject, render_files(&proved.files)),
+            format!("{subject}\n\n{}", render_files(&proved.files)),
             review_schema(&proved.files),
             budget::findings(spec.lines),
             "low",
@@ -120,6 +124,7 @@ impl DrillBuild<'_> {
             .assess(&Review {
                 drill: &drill,
                 clean: &baseline.files,
+                source: baseline.source.as_ref(),
                 findings: &findings,
             })
             .await?;
@@ -149,7 +154,14 @@ impl DrillBuild<'_> {
             };
             let request = model_call::structured(
                 wording.describer,
-                describer_prompt(&wording.subject, &proved.files, finding, reason, &patterns),
+                describer_prompt(
+                    &subject,
+                    wording.files,
+                    &proved.files,
+                    finding,
+                    reason,
+                    &patterns,
+                ),
                 entry_schema(&patterns, &proved.files),
                 budget::key_entry(),
                 "low",
@@ -271,13 +283,14 @@ fn lines_of(files: &[DrillFile], path: &str, text: &str) -> Option<LineSpan> {
 
 fn describer_prompt(
     subject: &str,
+    heading: &str,
     files: &[DrillFile],
     finding: &ReviewedFinding,
     reason: &str,
     patterns: &[&Pattern],
 ) -> String {
     let mut prompt = format!(
-        "{subject}\n\nThe code:\n\n{}\n\nThe comment, on {}:\n<quote>\n{}\n</quote>\n<comment>\n{}\n</comment>\nThe judge's reason: {reason}\n\nThe patterns:\n",
+        "{subject}\n\n{heading}\n\n{}\n\nThe comment, on {}:\n<quote>\n{}\n</quote>\n<comment>\n{}\n</comment>\nThe judge's reason: {reason}\n\nThe patterns:\n",
         render_files(files),
         finding.path,
         finding.quote,
@@ -318,7 +331,7 @@ fn entry_schema(patterns: &[&Pattern], files: &[DrillFile]) -> Value {
     })
 }
 
-/// Reads the entry of the key: `none` adds nothing; otherwise the pattern must be one for the language and the fix
+/// Reads the entry of the key: `none` adds nothing; otherwise the pattern must be one for the material and the fix
 /// must apply alone to the drill's files.
 fn describe(raw: &str, files: &[DrillFile], patterns: &[&Pattern]) -> Result<Described> {
     let entry: Entry = parse_json(raw)?;

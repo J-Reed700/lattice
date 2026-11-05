@@ -67,7 +67,7 @@ impl DrillMaterial for CodeMaterial<'_> {
     }
 
     fn proof_strategy<'a>(
-        &self,
+        &'a self,
         pattern: &Pattern,
         mutation: &Mutation,
         tools: Tools<'a>,
@@ -80,7 +80,7 @@ impl DrillMaterial for CodeMaterial<'_> {
         proof::strategy(kind, tools)
     }
 
-    fn fix_strategy<'a>(&self, issue: &KeyIssue, tools: Tools<'a>) -> Box<dyn FixStrategy + 'a> {
+    fn fix_strategy<'a>(&'a self, issue: &KeyIssue, tools: Tools<'a>) -> Box<dyn FixStrategy + 'a> {
         fix_grading::strategy(fix_grading::choose(issue), tools)
     }
 
@@ -89,6 +89,7 @@ impl DrillMaterial for CodeMaterial<'_> {
             reviewer: blind::REVIEWER,
             describer: blind::DESCRIBER,
             subject: format!("Language: {}", language_of(spec)),
+            files: "The code:",
         }
     }
 }

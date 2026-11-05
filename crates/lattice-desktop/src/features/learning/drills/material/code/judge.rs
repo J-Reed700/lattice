@@ -12,6 +12,9 @@ pub(in crate::features::learning::drills::material) fn judge_wording(
         kind: language.to_owned(),
         reviewed: "The code as the reviewer saw it, with line numbers:",
         original: "The same code before any issue was planted, with its own line numbers:",
+        line: "line",
+        lines: "lines",
+        source: None,
     }
 }
 

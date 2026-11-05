@@ -1,4 +1,4 @@
-//! Stage 6: the drill's key is checked against its code, and one transaction writes the drill and completes the job,
+//! Stage 6: the drill's key is checked against its material, and one transaction writes the drill and completes the job,
 //! so a cancelled job stores nothing and a stored drill never leaves its job running.
 
 use super::outputs::{Baseline, BlindReview, CleanCode, CleanReview, Evidence, Planted, Proved};
@@ -58,6 +58,7 @@ impl DrillBuild<'_> {
                 spec,
                 domain: &built.baseline.domain,
                 suite: built.baseline.suite.as_deref(),
+                source: built.baseline.source.as_ref(),
                 runner: self.material.runner().map(|runner| runner.name()),
                 model: self.llm.model_name(),
                 evidence: &evidence,

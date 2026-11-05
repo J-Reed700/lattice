@@ -28,7 +28,7 @@ use crate::features::learning::drills::build::{
 };
 use crate::features::learning::drills::grading::live_grading_eval::model;
 use crate::features::learning::drills::grading::JudgeGrader;
-use crate::features::learning::drills::material::{code_language, CodeMaterial};
+use crate::features::learning::drills::material::{material_for, ClaimSourceCheck};
 use crate::features::learning::drills::repository::{self, StoredDrill};
 use crate::features::learning::drills::runner::{runner_for, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
@@ -378,18 +378,16 @@ async fn build(
         ));
     }
     let context = JobContext::detached(&store, &job).await?;
-    let runner = runner_for(code_language(&spec.material)?, runtimes);
-    let material = CodeMaterial::new(runner.as_deref());
+    let runner = spec
+        .material
+        .language()
+        .and_then(|language| runner_for(language, runtimes));
+    let check = ClaimSourceCheck::new(llm);
+    let material = material_for(&spec.material, runner.as_deref(), &check);
     let grader = JudgeGrader::new(llm);
-    let outcome = DrillBuild::new(
-        llm,
-        Box::new(material),
-        &grader,
-        pool,
-        CancellationToken::new(),
-    )
-    .run(&context, spec)
-    .await;
+    let outcome = DrillBuild::new(llm, material, &grader, pool, CancellationToken::new())
+        .run(&context, spec)
+        .await;
     match outcome {
         Ok(JobOutcome::Committed) => {
             let id = store

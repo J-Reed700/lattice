@@ -62,6 +62,7 @@ impl<'a> AttemptGrading<'a> {
         let review = Review {
             drill: &stored.drill,
             clean: &stored.clean_files,
+            source: stored.source.as_ref(),
             findings,
         };
         let Some(assessed) = context.until_cancelled(self.grader.assess(&review)).await else {
@@ -89,6 +90,7 @@ impl<'a> AttemptGrading<'a> {
                     drill: &stored.drill,
                     learner,
                     suite: stored.suite.as_deref(),
+                    source: stored.source.as_ref(),
                 };
                 let tools = Tools {
                     llm: self.llm,

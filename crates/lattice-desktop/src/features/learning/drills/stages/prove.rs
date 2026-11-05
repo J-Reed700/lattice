@@ -54,6 +54,7 @@ impl DrillBuild<'_> {
                 pattern: known,
                 suite: baseline.suite.as_deref(),
                 others: &others,
+                source: baseline.source.as_ref(),
             };
             let proof_strategy = self.material.proof_strategy(known, mutation, tools);
             match proof_strategy.prove(&case).await? {
