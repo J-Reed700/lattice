@@ -119,9 +119,14 @@ async fn a_killing_test_that_passes_on_the_learners_files_fixes_its_issue() -> R
     assert_eq!(first.suite, SuiteVerdict::Passed);
     let runs = runner.runs();
     assert_eq!(runs.len(), 2, "the suite once and the one killing test");
-    assert!(
-        runs.iter().all(|(files, _)| *files == learner),
-        "every run is on the learner's files"
+    assert_eq!(
+        runs[0].0, learner,
+        "the suite runs on the learner's files as written"
+    );
+    assert_eq!(
+        runs[1].0,
+        both_fixed(),
+        "the killing test runs beside the fix of the other issue, which the learner left"
     );
     assert_eq!(
         runs.iter()
@@ -172,6 +177,12 @@ async fn an_issue_proven_by_judgement_is_judged_from_the_code_the_issue_and_the_
     assert_eq!(second.reason, "The learner uses the two constants again.");
     assert_eq!(second.output, None);
     assert_eq!(second.fallback, None);
+    let shown = serde_json::to_value(&results).expect("results are JSON");
+    assert_eq!(
+        shown[1]["gradedBeside"],
+        serde_json::json!([]),
+        "a judge decided it, beside nothing"
+    );
 
     let requests = model.requests();
     assert_eq!(requests.len(), 1);
@@ -426,6 +437,11 @@ async fn a_test_that_runs_out_of_time_proves_nothing_so_the_judge_decides_and_th
         "{:?}",
         results[0].fallback
     );
+    assert_eq!(
+        serde_json::to_value(&results).expect("results are JSON")[0]["gradedBeside"],
+        serde_json::json!([]),
+        "the judge read the learner's code as it is, beside nothing"
+    );
     assert_eq!(model.purposes(), ["fix judge", "fix judge"]);
     Ok(())
 }
@@ -662,6 +678,427 @@ mod real_runtime {
             results[0].suite
         );
         assert_eq!(results[1].outcome, FixOutcome::Partly);
+        Ok(())
+    }
+}
+
+/// Grading each issue on its own: the key's fixes of the other issues are applied to the learner's files for an issue's
+/// killing test where they apply, so a defect the learner left in one issue cannot fail the test of another.
+mod beside {
+    use super::super::support::{
+        config, flawed_limiter, literals_edit, operator_edit, LITERALS, OPERATOR, OPERATOR_BEFORE,
+    };
+    use super::*;
+    use lattice_core::domain::learning::drills::{
+        apply, check_key, Edit, KeyIssue, LineSpan, Origin, Severity,
+    };
+    use serde_json::json;
+
+    /// The test that shows the literals' defect.
+    const OTHER_TEST: &str = "assert default_limiter(lambda: 0).limit == 100\n";
+    const OTHER_OUTPUT: &str = "AssertionError: the defaults are written out twice";
+    /// A defect of the clean code that the blind review found, and its repair.
+    const FORGET_FLAWED: &str = "        del self.hits[key]\n";
+    const FORGET_FIXED: &str = "        self.hits.pop(key, None)\n";
+    /// The literals' lines as a learner rewrites them in a way of their own.
+    const REWRITTEN: &str = "    return RateLimiter(120, 30, clock)\n";
+
+    fn rewritten(files: &[DrillFile], change: impl Fn(&str) -> String) -> Vec<DrillFile> {
+        files
+            .iter()
+            .map(|file| DrillFile {
+                path: file.path.clone(),
+                text: change(&file.text),
+            })
+            .collect()
+    }
+
+    fn reversed(edit: &Edit) -> Edit {
+        Edit {
+            path: edit.path.clone(),
+            before: edit.after.clone(),
+            after: edit.before.clone(),
+        }
+    }
+
+    fn key_issue(
+        id: &str,
+        pattern: &str,
+        span: LineSpan,
+        fix: Edit,
+        proof: Proof,
+        origin: Origin,
+    ) -> KeyIssue {
+        KeyIssue {
+            id: id.into(),
+            pattern: pattern.into(),
+            severity: Severity::Major,
+            span,
+            consequence: format!("{id} goes wrong."),
+            fix,
+            explanation: format!("Say what is wrong with {id}."),
+            proof,
+            origin,
+        }
+    }
+
+    /// The stocked drill with its second issue proven by a killing test too.
+    fn two_killed() -> Drill {
+        let mut drill = drill();
+        drill.key[1].proof = Proof::Killed {
+            test: OTHER_TEST.into(),
+        };
+        drill
+    }
+
+    /// A drill of three issues: the operator and the literals, which were planted and each have a killing test, and
+    /// `forget`, a defect of the clean code that the blind review found. Returns the clean code beside the drill.
+    fn three_issues() -> (Vec<DrillFile>, Drill) {
+        let clean = vec![
+            DrillFile {
+                path: "src/limiter.py".into(),
+                text: flawed_limiter(),
+            },
+            DrillFile {
+                path: "src/config.py".into(),
+                text: config(),
+            },
+        ];
+        let planted = [operator_edit(), literals_edit()];
+        let (drilled, spans) = apply(&clean, &planted).expect("the edits apply");
+        let forget = Edit {
+            path: "src/limiter.py".into(),
+            before: FORGET_FLAWED.into(),
+            after: FORGET_FIXED.into(),
+        };
+        let key = vec![
+            key_issue(
+                "planted-1",
+                OPERATOR,
+                spans[0].clone(),
+                reversed(&planted[0]),
+                Proof::Killed {
+                    test: KILLING_TEST.into(),
+                },
+                Origin::Planted,
+            ),
+            key_issue(
+                "planted-2",
+                LITERALS,
+                spans[1].clone(),
+                reversed(&planted[1]),
+                Proof::Killed {
+                    test: OTHER_TEST.into(),
+                },
+                Origin::Planted,
+            ),
+            key_issue(
+                "review-1",
+                "correctness.boundary_and_empty_input",
+                LineSpan {
+                    path: "src/limiter.py".into(),
+                    start: 21,
+                    end: 21,
+                },
+                forget,
+                Proof::Judged {
+                    reason: "Forget raises for a key it never saw.".into(),
+                },
+                Origin::FoundInReview,
+            ),
+        ];
+        let drill = Drill {
+            id: "drill".into(),
+            language: "python".into(),
+            title: "A sliding-window rate limiter".into(),
+            files: drilled,
+            key,
+        };
+        (clean, drill)
+    }
+
+    /// The files with the repair of `forget` made.
+    fn with_forget_repaired(files: &[DrillFile]) -> Vec<DrillFile> {
+        rewritten(files, |text| text.replace(FORGET_FLAWED, FORGET_FIXED))
+    }
+
+    /// A runner on which either defect fails the first killing test, the literals' defect fails the second, and the
+    /// suite passes.
+    fn either_defect_fails_the_first_test() -> FakeRunner {
+        FakeRunner::new(|files, test| {
+            let has = |text: &str| files.iter().any(|file| file.text.contains(text));
+            let failed = match test {
+                KILLING_TEST => has(OPERATOR_AFTER.trim()) || has(LITERALS_AFTER.trim()),
+                OTHER_TEST => has(LITERALS_AFTER.trim()),
+                _ => false,
+            };
+            if failed {
+                RunOutcome::Failed {
+                    output: OTHER_OUTPUT.into(),
+                }
+            } else {
+                RunOutcome::Passed
+            }
+        })
+    }
+
+    fn shown(results: &[IssueFix]) -> serde_json::Value {
+        serde_json::to_value(results).expect("results are JSON")
+    }
+
+    #[test]
+    fn the_three_issue_drill_is_a_valid_drill() {
+        let (clean, drill) = three_issues();
+        assert_eq!(check_key(&clean, &drill), Ok(()));
+    }
+
+    #[tokio::test]
+    async fn an_issue_is_graded_beside_the_fixes_of_the_issues_the_learner_left() -> Result<()> {
+        let model = ScriptedModel::new(Vec::<String>::new());
+        let runner = either_defect_fails_the_first_test();
+        let learner = operator_fixed();
+        let results = grade(&model, Some(&runner), Some(SUITE), &two_killed(), &learner).await?;
+
+        // The learner fixed the operator and left the literals. The literals' defect fails the operator's test on
+        // their files as written, and does not decide it.
+        assert_eq!(results[0].outcome, FixOutcome::Fixed, "{:?}", results[0]);
+        assert_eq!(results[0].decided_by, DecidedBy::Test);
+        assert_eq!(results[1].outcome, FixOutcome::NotFixed, "{:?}", results[1]);
+        assert_eq!(results[1].decided_by, DecidedBy::Test);
+        assert_eq!(results[1].output.as_deref(), Some(OTHER_OUTPUT));
+
+        let runs = runner.runs();
+        assert!(
+            runs.contains(&(both_fixed(), KILLING_TEST.to_owned())),
+            "the first test ran beside the fix of the second issue"
+        );
+        assert!(
+            runs.contains(&(learner, OTHER_TEST.to_owned())),
+            "the second test ran on the learner's files, where the first issue is fixed already"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_result_says_which_fixes_the_issue_was_graded_beside() -> Result<()> {
+        let model = ScriptedModel::new(Vec::<String>::new());
+        let runner = either_defect_fails_the_first_test();
+        let results = grade(
+            &model,
+            Some(&runner),
+            Some(SUITE),
+            &two_killed(),
+            &operator_fixed(),
+        )
+        .await?;
+        let shown = shown(&results);
+        assert_eq!(shown[0]["gradedBeside"], json!([1]));
+        assert_eq!(shown[1]["gradedBeside"], json!([]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn the_suite_runs_once_on_the_learners_files_as_written() -> Result<()> {
+        let model = ScriptedModel::new(Vec::<String>::new());
+        let runner = either_defect_fails_the_first_test();
+        let learner = operator_fixed();
+        grade(&model, Some(&runner), Some(SUITE), &two_killed(), &learner).await?;
+        let suite_runs: Vec<Vec<DrillFile>> = runner
+            .runs()
+            .into_iter()
+            .filter(|(_, test)| test == SUITE)
+            .map(|(files, _)| files)
+            .collect();
+        assert_eq!(suite_runs, [learner]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_fix_for_lines_the_learner_changed_is_not_applied_and_one_found_in_review_is(
+    ) -> Result<()> {
+        let (_, drill) = three_issues();
+        // The learner fixes the operator, rewrites the literals in a way of their own, and leaves `forget`.
+        let learner = rewritten(&drill.files, |text| {
+            text.replace(OPERATOR_AFTER, OPERATOR_BEFORE)
+                .replace(LITERALS_AFTER, REWRITTEN)
+        });
+        let model = ScriptedModel::new([fix_answer("not", "Forget still raises.")]);
+        let runner = FakeRunner::passing();
+        let results = grade(&model, Some(&runner), Some(SUITE), &drill, &learner).await?;
+
+        let beside = with_forget_repaired(&learner);
+        assert!(
+            beside.iter().any(|file| file.text.contains(REWRITTEN)),
+            "the literals are as the learner left them"
+        );
+        let runs = runner.runs();
+        assert!(
+            runs.contains(&(beside.clone(), KILLING_TEST.to_owned())),
+            "the first test ran beside the repair of forget and not beside the key's fix for the literals"
+        );
+        assert!(runs.contains(&(beside, OTHER_TEST.to_owned())));
+        let shown = shown(&results);
+        assert_eq!(shown[0]["gradedBeside"], json!([2]));
+        assert_eq!(shown[1]["gradedBeside"], json!([2]));
+        assert_eq!(
+            shown[2]["gradedBeside"],
+            json!([]),
+            "a judge decided forget"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_fix_for_lines_that_are_in_the_text_twice_is_not_applied() -> Result<()> {
+        let (_, drill) = three_issues();
+        let mut learner = rewritten(&drill.files, |text| {
+            text.replace(OPERATOR_AFTER, OPERATOR_BEFORE)
+        });
+        learner[1].text.push_str(LITERALS_AFTER);
+        let model = ScriptedModel::new([fix_answer("not", "Forget still raises.")]);
+        let runner = FakeRunner::passing();
+        let results = grade(&model, Some(&runner), Some(SUITE), &drill, &learner).await?;
+
+        let runs = runner.runs();
+        assert!(
+            runs.contains(&(with_forget_repaired(&learner), KILLING_TEST.to_owned())),
+            "the key's fix for the literals does not say which of two places it means"
+        );
+        assert_eq!(shown(&results)[0]["gradedBeside"], json!([2]));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_fix_that_touches_the_lines_of_the_issue_is_not_applied_to_its_test() -> Result<()> {
+        let mut drill = drill();
+        // A finding of the review whose fix repairs the operator's line along with the lines around it.
+        let around: String = drill.files[0]
+            .text
+            .lines()
+            .skip(11)
+            .take(3)
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let repaired = around.replace(OPERATOR_AFTER.trim_end(), OPERATOR_BEFORE.trim_end());
+        drill.key.push(key_issue(
+            "review-1",
+            "correctness.stale_state",
+            LineSpan {
+                path: "src/limiter.py".into(),
+                start: 12,
+                end: 14,
+            },
+            Edit {
+                path: "src/limiter.py".into(),
+                before: around,
+                after: repaired,
+            },
+            Proof::Judged {
+                reason: "The window is read before the comparison.".into(),
+            },
+            Origin::FoundInReview,
+        ));
+        let model = ScriptedModel::new([
+            fix_answer("not", "The literals are as they were."),
+            fix_answer("not", "The lines are as they were."),
+        ]);
+        let runner = FakeRunner::killing_the_operator();
+        let learner = unchanged();
+        let results = grade(&model, Some(&runner), Some(SUITE), &drill, &learner).await?;
+
+        // The learner left the operator. Beside the literals' fix it still fails, and the other fix does not mend it.
+        assert_eq!(results[0].outcome, FixOutcome::NotFixed, "{:?}", results[0]);
+        assert_eq!(results[0].output.as_deref(), Some(OPERATOR_OUTPUT));
+        let beside = rewritten(&learner, |text| {
+            text.replace(LITERALS_AFTER, LITERALS_BEFORE)
+        });
+        assert!(runner.runs().contains(&(beside, KILLING_TEST.to_owned())));
+        assert_eq!(shown(&results)[0]["gradedBeside"], json!([1]));
+        Ok(())
+    }
+
+    #[cfg(feature = "learning-labs")]
+    #[tokio::test]
+    async fn a_defect_the_learner_left_does_not_fail_the_test_of_an_issue_they_fixed_on_python(
+    ) -> Result<()> {
+        use super::super::support::files;
+        use crate::features::learning::drills::runner::runner_for;
+        use crate::features::learning::embedded_runtime::BuiltinRuntimes;
+
+        // The second issue forgets to save the calls it counted, so the first issue's test fails whatever the operator.
+        const STATE_TEST: &str = "from src.limiter import RateLimiter\n\nlimiter = RateLimiter(2, 10, lambda: 0)\nassert limiter.allow(\"a\")\nassert limiter.allow(\"a\")\nassert not limiter.allow(\"a\"), \"the third call inside the window must be refused\"\n";
+        let state = Edit {
+            path: "src/limiter.py".into(),
+            before:
+                "        recent.append(now)\n        self.hits[key] = recent\n        return True\n"
+                    .into(),
+            after: "        recent.append(now)\n        return True\n".into(),
+        };
+        let planted = [operator_edit(), state];
+        let (drilled, spans) = apply(&files(), &planted).expect("the edits apply");
+        let drill = Drill {
+            id: "drill".into(),
+            language: "python".into(),
+            title: "A sliding-window rate limiter".into(),
+            files: drilled,
+            key: vec![
+                key_issue(
+                    "planted-1",
+                    OPERATOR,
+                    spans[0].clone(),
+                    reversed(&planted[0]),
+                    Proof::Killed {
+                        test: KILLING_TEST.into(),
+                    },
+                    Origin::Planted,
+                ),
+                key_issue(
+                    "planted-2",
+                    "correctness.stale_state",
+                    spans[1].clone(),
+                    reversed(&planted[1]),
+                    Proof::Killed {
+                        test: STATE_TEST.into(),
+                    },
+                    Origin::Planted,
+                ),
+            ],
+        };
+        // The learner fixes the operator and leaves the second issue.
+        let learner = rewritten(&drill.files, |text| {
+            text.replace(OPERATOR_AFTER, OPERATOR_BEFORE)
+        });
+
+        let runner = runner_for("python", &BuiltinRuntimes::for_tests())
+            .ok_or_else(|| AppError::InternalError("Python has no runner here".into()))?;
+        let model = ScriptedModel::new(Vec::<String>::new());
+        let cancel = CancellationToken::new();
+        let tools = Tools {
+            llm: &model,
+            runner: Some(runner.as_ref()),
+            cancel: &cancel,
+        };
+        let results = grade_fix(
+            tools,
+            &FixCase {
+                drill: &drill,
+                learner: &learner,
+                suite: None,
+            },
+        )
+        .await?;
+
+        assert_eq!(results[0].outcome, FixOutcome::Fixed, "{:?}", results[0]);
+        assert_eq!(results[0].decided_by, DecidedBy::Test);
+        assert_eq!(shown(&results)[0]["gradedBeside"], json!([1]));
+        assert_eq!(results[1].outcome, FixOutcome::NotFixed, "{:?}", results[1]);
+        assert!(
+            results[1].output.as_deref().is_some_and(
+                |output| output.contains("the third call inside the window must be refused")
+            ),
+            "{:?}",
+            results[1].output
+        );
         Ok(())
     }
 }
