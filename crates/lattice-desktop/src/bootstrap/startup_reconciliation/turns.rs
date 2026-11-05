@@ -41,6 +41,14 @@ pub async fn reconcile_stuck_turns(pool: &sqlx::SqlitePool) -> Result<u64, sqlx:
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
+    use crate::features::conversation::chat::DEEP_RESEARCH;
+    use crate::features::conversation::repository::ConversationRepository;
+    use crate::features::conversation::service::ConversationService;
+    use crate::features::conversation::ConversationServiceTrait;
+    use lattice_core::domain::conversation::MessageRole;
+    use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn a_check_the_last_run_never_finished_is_marked_not_checked() {
@@ -146,5 +154,201 @@ mod tests {
         assert_eq!(status("half-written"), "failed");
         assert_eq!(status("answered"), "completed");
         assert_eq!(status("already-failed"), "failed");
+    }
+
+    async fn migrated_pool() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    /// The pass startup makes over the turns the last run left.
+    async fn reconcile(pool: &sqlx::SqlitePool) {
+        reconcile_stuck_turns(pool).await.unwrap();
+    }
+
+    async fn status_of(pool: &sqlx::SqlitePool, message_id: &str) -> String {
+        sqlx::query_scalar("SELECT status FROM conversation_messages WHERE id = ?")
+            .bind(message_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A research job of `chat` as startup finds it, in `status`. A job that
+    /// had planned its turn has saved the `assembled` checkpoint naming
+    /// `question`.
+    async fn save_research_job(
+        jobs: &JobStore,
+        chat: &str,
+        request: &str,
+        question: Option<&str>,
+        status: JobStatus,
+    ) {
+        let job = jobs
+            .submit(&NewJob {
+                kind: DEEP_RESEARCH.into(),
+                subject_id: Some(chat.into()),
+                operation_id: format!("{DEEP_RESEARCH}:{request}"),
+                payload_hash: request.into(),
+                requested: serde_json::json!({ "request_id": request }),
+                progress_total: 1,
+                message: "Waiting to research".into(),
+            })
+            .await
+            .unwrap()
+            .id;
+        // A job saves checkpoints only while it runs.
+        assert!(jobs.claim(&job).await.unwrap().is_some());
+        if let Some(question) = question {
+            let assembled = serde_json::json!({ "user_message_id": question });
+            assert!(jobs
+                .put_checkpoint(&job, "assembled", &assembled)
+                .await
+                .unwrap());
+        }
+        let settled = match status {
+            JobStatus::Running => true,
+            JobStatus::Pending => jobs.suspend(&job).await.unwrap(),
+            JobStatus::Completed => jobs.complete(&job, "answer", "Answered").await.unwrap(),
+            JobStatus::Failed => jobs.fail(&job, "failed", "It failed").await.unwrap(),
+            JobStatus::Interrupted => jobs.interrupt(&job).await.unwrap(),
+            JobStatus::Cancelled => jobs.cancel(&job).await.is_ok(),
+        };
+        assert!(settled);
+    }
+
+    /// A research turn whose job is still pending or running is delivered
+    /// again after a restart and answers its question, so that question stays
+    /// pending; a finished job, or no job, leaves its question to be failed.
+    #[tokio::test]
+    async fn only_the_question_of_a_research_job_still_live_survives_the_restart() {
+        let pool = migrated_pool().await;
+        let jobs = JobStore::new(pool.clone());
+        sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Each question, the state of the research job that saved it, and what
+        // startup leaves the question as.
+        let cases = [
+            ("of-a-waiting-job", Some(JobStatus::Pending), "pending"),
+            ("of-a-running-job", Some(JobStatus::Running), "pending"),
+            ("of-a-completed-job", Some(JobStatus::Completed), "failed"),
+            ("of-a-failed-job", Some(JobStatus::Failed), "failed"),
+            ("of-a-cancelled-job", Some(JobStatus::Cancelled), "failed"),
+            (
+                "of-an-interrupted-job",
+                Some(JobStatus::Interrupted),
+                "failed",
+            ),
+            ("of-no-job", None, "failed"),
+        ];
+        for (question, job, _) in cases {
+            sqlx::query(
+                "INSERT INTO conversation_messages (id, conversation_id, role, content, status) \
+                 VALUES (?, 'c', 'user', 'text', 'pending')",
+            )
+            .bind(question)
+            .execute(&pool)
+            .await
+            .unwrap();
+            if let Some(status) = job {
+                save_research_job(&jobs, "c", question, Some(question), status).await;
+            }
+        }
+        // A turn still planning has saved no question.
+        save_research_job(&jobs, "c", "still-planning", None, JobStatus::Pending).await;
+
+        reconcile(&pool).await;
+
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, status FROM conversation_messages")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        let left: BTreeMap<&str, &str> = rows
+            .iter()
+            .map(|(id, status)| (id.as_str(), status.as_str()))
+            .collect();
+        let expected: BTreeMap<&str, &str> = cases
+            .iter()
+            .map(|(question, _, status)| (*question, *status))
+            .collect();
+        assert_eq!(left, expected);
+    }
+
+    /// The resumed turn commits its answer against the question its checkpoint
+    /// names, as `finalize_successful_turn` does: that works only if the
+    /// startup pass left the question pending.
+    #[tokio::test]
+    async fn a_resumed_research_turn_saves_its_answer_after_the_startup_sweep() {
+        let pool = migrated_pool().await;
+        let jobs = JobStore::new(pool.clone());
+        let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(
+            Arc::new(ConversationRepository::new(pool.clone())),
+        ));
+        let chat = service
+            .create_conversation("Research".into(), None)
+            .await
+            .unwrap()
+            .id
+            .to_string();
+        let question = service
+            .add_message_with_status(
+                &chat,
+                MessageRole::User,
+                "How are lithium batteries recycled?".into(),
+                8,
+                "pending".into(),
+            )
+            .await
+            .unwrap()
+            .id;
+        // The app closed with the research turn saved on its job.
+        save_research_job(
+            &jobs,
+            &chat,
+            "request",
+            Some(question.as_str()),
+            JobStatus::Pending,
+        )
+        .await;
+
+        // The app opens again and the job is delivered again.
+        reconcile(&pool).await;
+        let answered = service
+            .complete_turn(
+                &chat,
+                &question,
+                "Shredding, then leaching recovers most of the lithium.".into(),
+                12,
+                None,
+            )
+            .await;
+
+        assert!(
+            answered.is_ok(),
+            "the resumed turn could not save its answer: {:?}",
+            answered.as_ref().err()
+        );
+        assert_eq!(status_of(&pool, &question).await, "completed");
+        let answers: Vec<String> = sqlx::query_scalar(
+            "SELECT content FROM conversation_messages \
+             WHERE role = 'assistant' AND status = 'completed'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            answers,
+            ["Shredding, then leaching recovers most of the lithium."]
+        );
     }
 }
