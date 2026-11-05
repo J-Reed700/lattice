@@ -10,6 +10,7 @@ use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::use_cases::IndexFileUseCase;
+use crate::features::indexing::LibraryGc;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
 use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
@@ -23,6 +24,7 @@ use crate::infrastructure::{
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRuntime, JobStatus, JobStore, NewJob},
@@ -128,17 +130,26 @@ impl ImportHarness {
         initialize_database(db.pool()).await?;
         let uow = Arc::new(SqliteUnitOfWorkFactory::new(db.pool().clone()));
         let library = dir.join("library");
+        let storage = Arc::new(ContentAddressedStorage::with_root(library.clone()));
+        let documents = Arc::new(DocumentRepositoryImpl::new(db.pool().clone()));
+        // The database owns this library, as the app's does once it starts.
+        let gate = SweepGate::default();
+        gate.open();
+        let library_gc = Arc::new(
+            LibraryGc::new(storage.clone(), documents.clone(), Arc::new(gate))
+                .with_intents(FileIntents::new(db.pool().clone())),
+        );
         let indexer = Arc::new(configure(
             IndexFileUseCase::new(
-                Arc::new(ContentAddressedStorage::with_root(library.clone())),
+                storage,
                 Arc::new(SecureFileStorage::new()),
                 Arc::new(ContentExtractionAdapter::new()),
                 embedding.clone(),
-                Arc::new(DocumentRepositoryImpl::new(db.pool().clone())),
+                documents,
                 Arc::new(EmbeddingRepository::new(db.pool().clone())),
                 uow,
             )
-            .with_file_intents(FileIntents::new(db.pool().clone())),
+            .with_library_gc(library_gc),
         ));
         let ingestion = Arc::new(RecordingIngestion {
             pool: db.pool().clone(),

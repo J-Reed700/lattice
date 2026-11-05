@@ -62,6 +62,9 @@ pub struct IndexingShared {
     pub query_cache: Arc<dyn SearchResultCachePort>,
     pub index_observer: Arc<dyn DocumentIndexObserver>,
     pub extraction_workers: ExtractionWorkers,
+    /// Open once startup finds this database owns the library; until then
+    /// no blob is removed.
+    pub sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,
 }
 
 /// What indexing writes through that other features own, built by the
@@ -85,6 +88,7 @@ pub fn build(
         query_cache,
         index_observer,
         extraction_workers,
+        sweep_gate,
     } = shared;
     let IndexingPorts {
         embedding: indexing_embedding,
@@ -116,8 +120,9 @@ pub fn build(
         LibraryGc::new(
             Arc::clone(&content_storage),
             document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
+            sweep_gate,
         )
-        .with_intents(file_intents.clone()),
+        .with_intents(file_intents),
     );
 
     let index_file_use_case = Arc::new(
@@ -133,7 +138,7 @@ pub fn build(
         .with_vector_search(vector_search.clone())
         .with_query_cache(Arc::clone(&query_cache))
         .with_index_observer(Arc::clone(&index_observer))
-        .with_file_intents(file_intents),
+        .with_library_gc(Arc::clone(&library_gc)),
     );
     let index_directory_use_case = Arc::new(IndexDirectoryUseCase::new(
         index_file_use_case.clone(),

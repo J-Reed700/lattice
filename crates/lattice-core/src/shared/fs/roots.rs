@@ -71,11 +71,15 @@ pub fn web_snapshots_root() -> Result<PathBuf> {
 }
 
 /// The markdown vault: the configured path, or `<home>/Lattice` when the
-/// setting is empty.
+/// setting is empty. Only the app's home is the user's; any other process
+/// gets `Lattice` beside its scratch lattice home.
 pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
     let trimmed = configured.trim();
     if !trimmed.is_empty() {
         return Some(PathBuf::from(trimmed));
+    }
+    if !USERS_HOME.load(Ordering::SeqCst) {
+        return scratch_home().parent().map(|home| home.join("Lattice"));
     }
     dirs::home_dir().map(|h| h.join("Lattice"))
 }
@@ -173,6 +177,14 @@ mod tests {
                 line.split_once("VAULT\t")
                     .map(|(_, path)| PathBuf::from(path))
             })
+    }
+
+    #[test]
+    fn the_app_that_claims_the_users_home_gets_its_vault_by_default() {
+        assert_eq!(
+            default_vault_of_child(CLAIMED),
+            Some(dirs::home_dir().unwrap().join("Lattice"))
+        );
     }
 
     /// A test that saves a note with no vault configured must not write into

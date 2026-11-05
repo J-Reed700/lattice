@@ -331,6 +331,7 @@ impl Container {
         );
         tracing::debug!("AIModule initialized");
 
+        let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let indexing = Arc::new(
             super::modules::IndexingModule::new(
                 db_pool,
@@ -341,6 +342,7 @@ impl Container {
                     query_cache: query_cache.clone(),
                     index_observer: summary_tier.trigger().clone(),
                     extraction_workers,
+                    sweep_gate: Arc::clone(&sweep_gate),
                 },
             )
             .await?,
@@ -424,7 +426,6 @@ impl Container {
 
         let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
         let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
-        let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.db_pool().clone(),
             Arc::clone(&jobs),

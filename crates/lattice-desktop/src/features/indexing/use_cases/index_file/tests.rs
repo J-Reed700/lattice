@@ -21,6 +21,7 @@ impl ContentAddressedStoragePort for MockContentStorage {
             path: source_path.to_path_buf(),
             lease: lattice_core::application::ports::BlobLease::detached(&hash),
             hash,
+            created: true,
         })
     }
 
@@ -288,6 +289,10 @@ impl DocumentRepositoryPort for MockDocumentRepo {
 
     async fn delete(&self, _document_id: &str) -> Result<()> {
         Ok(())
+    }
+
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        <Self as DocumentRepositoryPort>::delete(self, document_id).await
     }
 
     async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {

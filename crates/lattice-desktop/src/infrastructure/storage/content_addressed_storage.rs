@@ -171,8 +171,9 @@ impl ContentAddressedStorage {
     }
 
     /// Place the source file's content under `{root}/{hash}`, or return the
-    /// copy that is already there. The caller holds the per-hash lock.
-    async fn place_in_library(&self, source_path: &Path, hash: &str) -> Result<PathBuf> {
+    /// copy that is already there, and whether this call copied it. The
+    /// caller holds the per-hash lock.
+    async fn place_in_library(&self, source_path: &Path, hash: &str) -> Result<(PathBuf, bool)> {
         let hash_dir = self.hash_directory(hash);
 
         if hash_dir.exists() {
@@ -185,7 +186,7 @@ impl ContentAddressedStorage {
                     path = %library_path.display(),
                     "File already in library (duplicate detected by hash)"
                 );
-                return Ok(library_path);
+                return Ok((library_path, false));
             }
 
             // Same content under a different filename is still a duplicate.
@@ -203,7 +204,7 @@ impl ContentAddressedStorage {
                     source = %source_path.display(),
                     "Duplicate content detected (different filename)"
                 );
-                return Ok(existing_path);
+                return Ok((existing_path, false));
             }
 
             // Directory exists but is empty — fall through and copy.
@@ -227,7 +228,7 @@ impl ContentAddressedStorage {
             "File imported to library"
         );
 
-        Ok(library_path)
+        Ok((library_path, true))
     }
 
     /// Total size of every file under `dir`.
@@ -292,9 +293,14 @@ impl ContentAddressedStoragePort for ContentAddressedStorage {
         // protected from the moment it exists until the row referencing it has
         // committed and the caller drops the lease.
         let lease = self.leases.acquire(&hash);
-        let path = self.place_in_library(source_path, &hash).await?;
+        let (path, created) = self.place_in_library(source_path, &hash).await?;
 
-        Ok(ImportedBlob { path, hash, lease })
+        Ok(ImportedBlob {
+            path,
+            hash,
+            lease,
+            created,
+        })
     }
 
     async fn exists_by_hash(&self, hash: &str) -> Result<bool> {
@@ -486,6 +492,8 @@ mod tests {
 
         assert_eq!(first.hash, second.hash);
         assert_eq!(first.path.parent(), second.path.parent());
+        assert!(first.created, "the first import writes the bytes");
+        assert!(!second.created, "a duplicate writes nothing");
     }
 
     #[tokio::test]

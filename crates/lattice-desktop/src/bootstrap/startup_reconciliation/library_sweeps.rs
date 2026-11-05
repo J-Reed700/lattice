@@ -11,6 +11,7 @@ use crate::features::indexing::library_owner::{self, LibraryFiles};
 use crate::features::indexing::LibraryGc;
 use crate::features::web::images::ChatImageService;
 use crate::features::web::snapshots::WebPageSnapshotService;
+use lattice_core::application::ports::ChatImagesPort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::runtime::background::BackgroundTasks;
@@ -33,19 +34,16 @@ pub struct LibrarySweeps {
 }
 
 impl LibrarySweeps {
-    /// Start all three in the background, if `gate` is open. `resuming` names
-    /// the requests whose chat pictures are kept.
+    /// Start all three in the background. With `gate` shut they remove no
+    /// file and clear the records this database will never act on.
+    /// `resuming` names the requests whose chat pictures are kept.
     pub fn start<R>(&self, gate: &Arc<SweepGate>, background: &BackgroundTasks, resuming: R)
     where
         R: Future<Output = Result<HashSet<String>>> + Send + 'static,
     {
-        if !gate.is_open() {
-            return;
-        }
         let library_gc = Arc::clone(&self.library_gc);
-        let gate = Arc::clone(gate);
         background.spawn(async move {
-            match library_gc.sweep(&gate).await {
+            match library_gc.sweep().await {
                 Ok(report) => tracing::info!(
                     removed = report.removed,
                     retained = report.retained,
@@ -64,7 +62,16 @@ impl LibrarySweeps {
         // Chat pictures a turn leased and never attached, and files a delete
         // let go of. No turn survives a restart except a research turn, which
         // resumes from its saved rounds and still owns the pictures they found.
-        self.images.sweep_in_background("startup", resuming);
+        if gate.is_open() {
+            self.images.sweep_in_background("startup", resuming);
+        } else {
+            let images = Arc::clone(&self.images);
+            background.spawn(async move {
+                if let Err(error) = images.remove_unclaimed_files().await {
+                    tracing::warn!(%error, "Failed to clear the chat picture records");
+                }
+            });
+        }
     }
 }
 

@@ -164,6 +164,10 @@ impl DocumentRepositoryPort for SingleDocumentRepository {
     async fn delete(&self, _document_id: &str) -> Result<()> {
         Ok(())
     }
+
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        <Self as DocumentRepositoryPort>::delete(self, document_id).await
+    }
     async fn find_by_checksum(&self, checksum: &Checksum) -> Result<Option<Document>> {
         Ok((self.document.checksum() == checksum).then(|| self.document.clone()))
     }

@@ -200,6 +200,10 @@ impl DocumentRepositoryPort for DddMockDocumentRepository {
         Ok(())
     }
 
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        <Self as DocumentRepositoryPort>::delete(self, document_id).await
+    }
+
     async fn find_by_checksum(
         &self,
         _checksum: &crate::domain::value_objects::Checksum,

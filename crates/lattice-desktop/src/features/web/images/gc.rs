@@ -6,8 +6,9 @@
 //! release names it, with its prepared copies; an unfinished write goes once it
 //! is older than an hour. A file no row and no record names is kept and
 //! counted. It touches only direct children of the image directory with names
-//! it recognises, and `prepared/` files. The file passes do nothing while the
-//! sweep gate is shut.
+//! it recognises, and `prepared/` files. While the sweep gate is shut the file
+//! passes touch no file and clear the records: a database that does not own
+//! the files never acts on them.
 
 use super::is_allowed_extension;
 use super::repository::{ImageRepository, ImageRow};
@@ -122,11 +123,13 @@ impl ChatImageGc {
     /// no record explains, which stay.
     pub async fn remove_unclaimed_files(&self) -> Result<ImageSweepReport> {
         let mut report = ImageSweepReport::default();
+        let released = self.repository.released().await?;
         if !self.gate.is_open() {
             tracing::debug!("Left the chat image files alone: this database does not own them");
+            let records: Vec<i64> = released.into_values().flatten().collect();
+            self.repository.forget_records(&records).await?;
             return Ok(report);
         }
-        let released = self.repository.released().await?;
         let root = self.store.root().to_path_buf();
         let mut settled: Vec<i64> = Vec::new();
         for (name, records) in &released {
@@ -165,7 +168,10 @@ impl ChatImageGc {
                     }
                 }
             }
-            self.store.remove_prepared(id).await;
+            if !self.store.remove_prepared(id).await {
+                report.retained += 1;
+                done = false;
+            }
             if done {
                 settled.extend(records);
             }

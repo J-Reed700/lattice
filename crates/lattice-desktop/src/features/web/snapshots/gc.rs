@@ -2,7 +2,8 @@
 //! delete recorded as let go of, and the pages of rows whose capture failed.
 //! A page no row and no record names is kept and counted. Touches nothing but
 //! direct children of the snapshot directory whose names it recognises (§7,
-//! T14), and nothing at all while the sweep gate is shut.
+//! T14), and no file at all while the sweep gate is shut, when it clears the
+//! records instead: a database that does not own the files never acts on them.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -52,13 +53,15 @@ impl WebSnapshotGc {
     }
 
     pub async fn sweep(&self) -> Result<SweepReport> {
-        if !self.gate.is_open() {
-            tracing::debug!("Left the web snapshot files alone: this database does not own them");
-            return Ok(SweepReport::default());
-        }
         let mut released: HashMap<String, Vec<i64>> = HashMap::new();
         for intent in self.intents.pending(FileStore::WebSnapshot).await? {
             released.entry(intent.name).or_default().push(intent.id);
+        }
+        if !self.gate.is_open() {
+            tracing::debug!("Left the web snapshot files alone: this database does not own them");
+            let records: Vec<i64> = released.into_values().flatten().collect();
+            self.intents.forget(&records).await?;
+            return Ok(SweepReport::default());
         }
         let live = self.repository.live_ids().await?;
         let failed = self.repository.failed_ids().await?;

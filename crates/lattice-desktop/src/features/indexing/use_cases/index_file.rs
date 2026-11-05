@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::LibraryGc;
-use crate::infrastructure::storage::FileIntents;
 use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     BlobLease, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
@@ -92,9 +91,10 @@ pub struct IndexFileUseCase {
     query_cache: Option<Arc<dyn SearchResultCachePort>>,
     /// Told when a document is committed; the summary tier queues it.
     index_observer: Option<Arc<dyn DocumentIndexObserver>>,
-    /// Where an import records the blob it is about to write, so a startup
-    /// sweep may collect it if the import never commits.
-    file_intents: Option<FileIntents>,
+    /// The library's collector, which records the blob an import is about to
+    /// write, so a startup sweep may collect it if the import never commits.
+    /// Without one, an import records nothing and gives no blob back.
+    library_gc: Option<Arc<LibraryGc>>,
 }
 
 impl IndexFileUseCase {
@@ -119,26 +119,28 @@ impl IndexFileUseCase {
             vector_search: None,
             query_cache: None,
             index_observer: None,
-            file_intents: None,
+            library_gc: None,
         }
     }
 
-    /// Record every blob an import is about to write in `intents`.
+    /// Record, and give back, the blobs imports write through `gc`, the
+    /// collector of the same library.
     #[must_use]
-    pub fn with_file_intents(mut self, intents: FileIntents) -> Self {
-        self.file_intents = Some(intents);
+    pub fn with_library_gc(mut self, gc: Arc<LibraryGc>) -> Self {
+        self.library_gc = Some(gc);
         self
     }
 
-    /// The collector of this use case's library, keeping its records.
-    fn library_gc(&self) -> LibraryGc {
-        let gc = LibraryGc::new(
-            Arc::clone(&self.content_storage),
-            Arc::clone(&self.document_repo),
-        );
-        match &self.file_intents {
-            Some(intents) => gc.with_intents(intents.clone()),
-            None => gc,
+    /// The collector of this use case's library; without one configured, one
+    /// that keeps no records and whose gate is shut.
+    fn library_gc(&self) -> Arc<LibraryGc> {
+        match &self.library_gc {
+            Some(gc) => Arc::clone(gc),
+            None => Arc::new(LibraryGc::new(
+                Arc::clone(&self.content_storage),
+                Arc::clone(&self.document_repo),
+                Arc::default(),
+            )),
         }
     }
 
@@ -232,6 +234,11 @@ impl IndexFileUseCase {
         self.library_gc().begin_import(hash).await
     }
 
+    /// The import that recorded `intent` no longer needs the record.
+    async fn end_import(&self, intent: Option<i64>) {
+        self.library_gc().end_import(intent).await;
+    }
+
     /// Abandon a prepared document that will never be committed.
     ///
     /// Cancellation lands between preparation and the commit, and from there
@@ -306,7 +313,7 @@ impl IndexFileUseCase {
         // The row is durable, so the document itself now protects the blob and
         // this import's lease and record have done their job.
         drop(lease);
-        self.library_gc().import_committed(import_intent).await;
+        self.end_import(import_intent).await;
         if let Some(search) = self.vector_search.clone() {
             let stale_keys: Vec<_> = stale_chunk_ids
                 .iter()

@@ -289,28 +289,36 @@ impl ConversationRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
-        // The files of what goes with the conversation, recorded in the same
-        // transaction as let go of: the sweeps delete only what such a record
-        // names. Attachments are deleted before this through the document use
-        // case; any left are recorded for the startup sweep.
-        for (store, name, from) in [
+        // The files of what goes with the conversation and, by cascade, its
+        // tangents and theirs, recorded in the same transaction as let go of:
+        // the sweeps delete only what such a record names. The chat's own
+        // attachments are deleted before this through the document use case;
+        // any left, and its tangents', are recorded for the startup sweep.
+        const SUBTREE: &str = "(WITH RECURSIVE subtree(id) AS (SELECT ? UNION \
+             SELECT c.id FROM conversations c JOIN subtree s ON c.tangent_parent_id = s.id) \
+             SELECT id FROM subtree)";
+        for (store, name, table, column) in [
             (
                 FileStore::WebSnapshot,
                 "id",
-                "web_page_snapshots WHERE conversation_id = ?",
+                "web_page_snapshots",
+                "conversation_id",
             ),
             (
                 FileStore::ChatImage,
                 "id || '.' || ext",
-                "chat_images WHERE conversation_id = ?",
+                "chat_images",
+                "conversation_id",
             ),
             (
                 FileStore::Attachment,
                 "id",
-                "documents WHERE owner_conversation_id = ?",
+                "documents",
+                "owner_conversation_id",
             ),
         ] {
-            sqlx::query(&record_releases_sql(store, name, from))
+            let from = format!("{table} WHERE {column} IN {SUBTREE}");
+            sqlx::query(&record_releases_sql(store, name, &from))
                 .bind(run_id())
                 .bind(id)
                 .execute(&mut *tx)

@@ -243,6 +243,14 @@ impl lattice_core::application::ports::DocumentRepositoryPort for MockUowDocumen
         Ok(())
     }
 
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        <Self as lattice_core::application::ports::DocumentRepositoryPort>::delete(
+            self,
+            document_id,
+        )
+        .await
+    }
+
     async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
         Ok(vec![])
     }

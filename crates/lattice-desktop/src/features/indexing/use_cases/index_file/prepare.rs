@@ -70,7 +70,7 @@ impl IndexFileUseCase {
         // Before the copy: a blob this import writes is never on disk without
         // the record that lets a later start collect it. A copy that fails
         // keeps the record for that reason.
-        let import_intent = if already_in_library {
+        let mut import_intent = if already_in_library {
             None
         } else {
             self.begin_import(&content_hash).await?
@@ -79,11 +79,26 @@ impl IndexFileUseCase {
             path: library_path,
             hash: library_hash,
             lease,
+            created,
         } = self
             .content_storage
             .import_file(source_path.as_path())
             .await?;
-        let imported_new = !already_in_library;
+        if created && import_intent.is_none() {
+            // The blob went between the check and the copy, so this import
+            // wrote it again; record that now rather than not at all.
+            import_intent = match self.begin_import(&library_hash).await {
+                Ok(intent) => intent,
+                Err(error) => {
+                    tracing::warn!(%error, hash = %library_hash, "Could not record a blob this import wrote");
+                    None
+                }
+            };
+        } else if !created {
+            // Another import put the content there first: not this one's.
+            self.end_import(import_intent.take()).await;
+        }
+        let imported_new = created;
 
         // Everything from here on can fail. When it does and this import is
         // what put the blob on disk, the blob has to go back: nothing will

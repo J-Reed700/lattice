@@ -88,6 +88,7 @@ fn sweeps_over(
             LibraryGc::new(
                 Arc::new(ContentAddressedStorage::with_root(home.join("files"))),
                 Arc::new(DocumentRepositoryImpl::new(pool.clone())),
+                Arc::clone(gate),
             )
             .with_intents(FileIntents::new(pool.clone())),
         ),

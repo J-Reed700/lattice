@@ -387,8 +387,12 @@ mod tests {
                 Arc::new(SqliteUnitOfWorkFactory::new(self.pool.clone())),
                 Arc::clone(&library),
                 Arc::new(
-                    LibraryGc::new(library, documents)
-                        .with_intents(FileIntents::new(self.pool.clone())),
+                    LibraryGc::new(library, documents, {
+                        let gate = lattice_core::shared::fs::SweepGate::default();
+                        gate.open();
+                        Arc::new(gate)
+                    })
+                    .with_intents(FileIntents::new(self.pool.clone())),
                 ),
                 Arc::clone(&self.archive) as Arc<dyn ArticleArchive>,
             )

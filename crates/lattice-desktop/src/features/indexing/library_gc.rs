@@ -9,6 +9,10 @@
 //! migration lost or another database sharing the library all leave real
 //! files without rows here.
 //!
+//! A database whose sweep gate is shut does not own the library: another
+//! database may reference any blob in it, so it removes none, and records
+//! nothing past its next start, when its sweep clears them.
+//!
 //! This service owns the records and the reference check; the storage owns the
 //! locking and the filesystem:
 //!
@@ -66,11 +70,11 @@ impl BlobReferenceCheck for DocumentReferences {
 }
 
 /// Whether a removal attempt settled what the records for its hash asked: the
-/// blob is gone, claimed again, or could never have been a blob. A lease or an
-/// error leaves them for the next start.
+/// blob is gone, claimed again, or could never have been a blob. A lease, a
+/// shut gate or an error leaves them for the next start.
 fn settles(hash: &str, outcome: &Result<BlobRemoval>) -> bool {
     match outcome {
-        Ok(BlobRemoval::Retained(RetainReason::Leased)) => false,
+        Ok(BlobRemoval::Retained(RetainReason::Leased | RetainReason::NotOwned)) => false,
         Ok(_) => true,
         Err(_) => !is_blob_hash(hash),
     }
@@ -81,19 +85,23 @@ pub struct LibraryGc {
     library: Arc<dyn ContentAddressedStoragePort>,
     documents: Arc<dyn DocumentRepositoryPort>,
     intents: Option<FileIntents>,
+    gate: Arc<SweepGate>,
 }
 
 impl LibraryGc {
-    /// Create a collector over one library and one document table. Without
+    /// Create a collector over one library and one document table, which
+    /// removes a blob only while `gate` is open. Without
     /// [`Self::with_intents`] it keeps no records, so its sweep removes nothing.
     pub fn new(
         library: Arc<dyn ContentAddressedStoragePort>,
         documents: Arc<dyn DocumentRepositoryPort>,
+        gate: Arc<SweepGate>,
     ) -> Self {
         Self {
             library,
             documents,
             intents: None,
+            gate,
         }
     }
 
@@ -118,6 +126,9 @@ impl LibraryGc {
     }
 
     async fn remove(&self, hash: &str) -> Result<BlobRemoval> {
+        if !self.gate.is_open() && is_blob_hash(hash) {
+            return Ok(BlobRemoval::Retained(RetainReason::NotOwned));
+        }
         self.library
             .remove_if_unreferenced(hash, &self.references())
             .await
@@ -135,8 +146,9 @@ impl LibraryGc {
         }
     }
 
-    /// The import that recorded `intent` committed its document.
-    pub async fn import_committed(&self, intent: Option<i64>) {
+    /// The import that recorded `intent` no longer needs the record: its
+    /// document committed, or the content was already in the library.
+    pub async fn end_import(&self, intent: Option<i64>) {
         if let Some(id) = intent {
             self.forget(&[id]).await;
         }
@@ -203,8 +215,10 @@ impl LibraryGc {
         Ok(removal)
     }
 
-    /// Remove every blob a record names that no document references, once
-    /// `gate` is open, and count the blobs no record explains, which stay.
+    /// Remove every blob a record names that no document references, and
+    /// count the blobs no record explains, which stay. While the gate is shut
+    /// it removes nothing and clears the records, which this database will
+    /// never act on; an import this process is running keeps its own.
     ///
     /// An import this process recorded may still be running, so its record is
     /// left alone. The storage re-checks references and leases under its own
@@ -217,11 +231,7 @@ impl LibraryGc {
     ///
     /// A blob that cannot be removed is logged and counted as retained rather
     /// than failing the whole sweep; its record stays for the next start.
-    pub async fn sweep(&self, gate: &SweepGate) -> Result<SweepReport> {
-        if !gate.is_open() {
-            tracing::debug!("Left the library alone: this database does not own its files");
-            return Ok(SweepReport::default());
-        }
+    pub async fn sweep(&self) -> Result<SweepReport> {
         let mut named: BTreeMap<String, Vec<i64>> = BTreeMap::new();
         let mut in_flight: HashSet<String> = HashSet::new();
         if let Some(intents) = &self.intents {
@@ -232,6 +242,12 @@ impl LibraryGc {
                     named.entry(intent.name).or_default().push(intent.id);
                 }
             }
+        }
+        if !self.gate.is_open() {
+            tracing::debug!("Left the library alone: this database does not own its files");
+            let ids: Vec<i64> = named.into_values().flatten().collect();
+            self.forget(&ids).await;
+            return Ok(SweepReport::default());
         }
 
         let mut report = SweepReport::default();
@@ -299,10 +315,10 @@ mod tests {
         (blob.hash.clone(), blob.path.clone())
     }
 
-    fn open_gate() -> SweepGate {
+    fn open_gate() -> Arc<SweepGate> {
         let gate = SweepGate::default();
         gate.open();
-        gate
+        Arc::new(gate)
     }
 
     fn document_for(path: &Path, checksum: &str) -> Document {
@@ -346,8 +362,9 @@ mod tests {
         let gc = LibraryGc::new(
             Arc::clone(&storage) as Arc<dyn ContentAddressedStoragePort>,
             Arc::clone(&documents) as Arc<dyn DocumentRepositoryPort>,
+            open_gate(),
         );
-        let report = gc.sweep(&open_gate()).await.unwrap();
+        let report = gc.sweep().await.unwrap();
 
         assert_eq!(report.removed, 0);
         assert_eq!(report.bytes_freed, 0);
@@ -361,12 +378,10 @@ mod tests {
         let gc = LibraryGc::new(
             Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib"))),
             Arc::new(MockDocumentRepository::new()),
+            open_gate(),
         );
 
-        assert_eq!(
-            gc.sweep(&open_gate()).await.unwrap(),
-            SweepReport::default()
-        );
+        assert_eq!(gc.sweep().await.unwrap(), SweepReport::default());
     }
 
     #[tokio::test]
@@ -377,9 +392,10 @@ mod tests {
         let gc = LibraryGc::new(
             Arc::clone(&storage) as Arc<dyn ContentAddressedStoragePort>,
             Arc::new(MockDocumentRepository::new()),
+            Arc::new(SweepGate::default()),
         );
 
-        let report = gc.sweep(&SweepGate::default()).await.unwrap();
+        let report = gc.sweep().await.unwrap();
 
         assert_eq!(report, SweepReport::default());
         assert!(
@@ -398,6 +414,7 @@ mod tests {
         let gc = LibraryGc::new(
             Arc::clone(&storage) as Arc<dyn ContentAddressedStoragePort>,
             Arc::clone(&documents) as Arc<dyn DocumentRepositoryPort>,
+            open_gate(),
         );
 
         assert!(gc.release(&hash).await.unwrap().was_removed());
@@ -417,6 +434,7 @@ mod tests {
         let gc = LibraryGc::new(
             Arc::clone(&storage) as Arc<dyn ContentAddressedStoragePort>,
             Arc::clone(&documents) as Arc<dyn DocumentRepositoryPort>,
+            open_gate(),
         );
 
         assert!(!gc.release(&hash).await.unwrap().was_removed());
@@ -429,6 +447,7 @@ mod tests {
         let gc = LibraryGc::new(
             Arc::new(ContentAddressedStorage::with_root(temp.path().join("lib"))),
             Arc::new(MockDocumentRepository::new()),
+            open_gate(),
         );
 
         assert!(gc.release("../../etc").await.is_err());
@@ -450,6 +469,7 @@ mod tests {
         let gc = LibraryGc::new(
             Arc::clone(storage) as Arc<dyn ContentAddressedStoragePort>,
             Arc::clone(documents) as Arc<dyn DocumentRepositoryPort>,
+            open_gate(),
         )
         .with_intents(intents.clone());
         (gc, intents, pool)
@@ -484,7 +504,7 @@ mod tests {
         let (_, unnamed) = import(&storage, temp.path(), "unnamed.txt", "no record names me").await;
         earlier_record(&pool, IntentKind::Import, &hash).await;
 
-        let report = gc.sweep(&open_gate()).await.unwrap();
+        let report = gc.sweep().await.unwrap();
 
         assert_eq!(report.removed, 1);
         assert_eq!(report.unexplained, 1);
@@ -506,7 +526,7 @@ mod tests {
         let (hash, path) = import(&storage, temp.path(), "running.txt", "being imported").await;
         gc.begin_import(&hash).await.unwrap();
 
-        let report = gc.sweep(&open_gate()).await.unwrap();
+        let report = gc.sweep().await.unwrap();
 
         assert_eq!(report, SweepReport::default());
         assert!(path.exists());
@@ -522,7 +542,7 @@ mod tests {
         let (hash, path) = import(&storage, temp.path(), "deleted.txt", "its document went").await;
         earlier_record(&pool, IntentKind::Release, &hash).await;
 
-        let report = gc.sweep(&open_gate()).await.unwrap();
+        let report = gc.sweep().await.unwrap();
 
         assert_eq!(report.removed, 1);
         assert_eq!(report.bytes_freed, "its document went".len() as u64);
@@ -545,7 +565,7 @@ mod tests {
         earlier_record(&pool, IntentKind::Import, &hash).await;
         documents.save(&document_for(&path, &hash)).await.unwrap();
 
-        let report = gc.sweep(&open_gate()).await.unwrap();
+        let report = gc.sweep().await.unwrap();
 
         assert_eq!(report.removed, 0);
         assert_eq!(report.retained, 1);
