@@ -29,6 +29,8 @@ use tokio::sync::Semaphore;
 
 mod address_guard;
 mod bounded;
+#[cfg(test)]
+pub(crate) mod guard_probe;
 mod hops;
 mod pacing;
 mod page;

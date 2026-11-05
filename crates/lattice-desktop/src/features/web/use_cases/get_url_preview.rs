@@ -286,4 +286,42 @@ mod tests {
             _ => panic!("Expected Network error"),
         }
     }
+
+    async fn assert_refused_without_calling_the_service(url: &str) {
+        let service = Arc::new(MockWebCaptureService::new());
+        let use_case = GetUrlPreviewUseCase::new(service.clone());
+
+        let result = use_case
+            .execute(GetUrlPreviewRequestDto {
+                url: url.to_string(),
+            })
+            .await;
+
+        assert_eq!(
+            service.get_call_count(),
+            0,
+            "{url} was handed to the capture service"
+        );
+        assert!(
+            matches!(result, Err(AppError::InvalidUrl(_))),
+            "{url} must be refused as an invalid URL, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_refuses_an_ipv4_mapped_loopback_literal() {
+        assert_refused_without_calling_the_service("http://[::ffff:127.0.0.1]:8080/").await;
+    }
+
+    #[tokio::test]
+    async fn preview_refuses_localhost_written_with_a_trailing_dot() {
+        assert_refused_without_calling_the_service("http://localhost.:8080/").await;
+    }
+
+    #[tokio::test]
+    async fn preview_refuses_ipv6_loopback_unique_local_and_link_local_literals() {
+        for url in ["http://[::1]/", "http://[fd00::1]/", "http://[fe80::1]/"] {
+            assert_refused_without_calling_the_service(url).await;
+        }
+    }
 }

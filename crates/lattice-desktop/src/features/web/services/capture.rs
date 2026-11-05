@@ -444,6 +444,7 @@ impl WebCaptureServiceTrait for WebCaptureService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::web::services::web::guard_probe;
 
     #[test]
     fn test_validate_url() {
@@ -574,5 +575,43 @@ mod tests {
             page_lead_image("<html><body><p>No pictures</p></body></html>"),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn page_capture_refuses_an_ipv4_mapped_loopback_literal() {
+        let service = WebCaptureService::new().unwrap();
+        let server = guard_probe::local_page().await;
+        let url = guard_probe::mapped_loopback(server.address().port());
+
+        let result = service.fetch_url_preview(&url).await;
+
+        guard_probe::assert_refused_without_contact(&server, &url, &result).await;
+    }
+
+    #[tokio::test]
+    async fn page_capture_refuses_localhost_written_with_a_trailing_dot() {
+        let service = WebCaptureService::new().unwrap();
+        let server = guard_probe::local_page().await;
+        let url = guard_probe::dotted_localhost(server.address().port());
+
+        let result = service.fetch_url_preview(&url).await;
+
+        guard_probe::assert_refused_without_contact(&server, &url, &result).await;
+    }
+
+    /// Drives the capture's own client: `fetch_url_preview` refuses the local
+    /// address this redirect starts from before it sends anything.
+    #[tokio::test]
+    async fn page_capture_client_refuses_a_redirect_through_a_local_server() {
+        let service = WebCaptureService::new().unwrap();
+
+        guard_probe::assert_refuses_a_redirect_through_a_local_server(&service.client).await;
+    }
+
+    #[tokio::test]
+    async fn page_capture_client_refuses_a_name_that_resolves_to_this_machine() {
+        let service = WebCaptureService::new().unwrap();
+
+        guard_probe::assert_refuses_a_name_that_resolves_to_this_machine(&service.client).await;
     }
 }
