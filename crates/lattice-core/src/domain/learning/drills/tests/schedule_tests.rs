@@ -79,7 +79,7 @@ fn patterns_due_come_first_earliest_first() {
         due("correctness.off_by_one", 9),
     ];
     assert_eq!(
-        ids(&targets("python", &states, 10, 3)),
+        ids(&targets(&Material::code("python"), &states, 10, 3)),
         [
             "errors.swallowed_exception",
             "security.sql_injection",
@@ -94,7 +94,7 @@ fn a_pattern_is_due_when_its_time_is_not_after_now() {
         due("security.sql_injection", 10),
         due("errors.swallowed_exception", 11),
     ];
-    let chosen = targets("python", &states, 10, 2);
+    let chosen = targets(&Material::code("python"), &states, 10, 2);
     assert_eq!(
         chosen.first().map(|pattern| pattern.id),
         Some("security.sql_injection")
@@ -109,7 +109,7 @@ fn never_practised_patterns_come_after_the_due_and_before_the_rest() {
         due("errors.swallowed_exception", 100),
         due("security.sql_injection", 1),
     ];
-    let chosen = targets("python", &states, 10, 9);
+    let chosen = targets(&Material::code("python"), &states, 10, 9);
     assert_eq!(
         chosen.first().map(|pattern| pattern.id),
         Some("security.sql_injection")
@@ -123,19 +123,19 @@ fn never_practised_patterns_come_after_the_due_and_before_the_rest() {
 fn a_pattern_with_no_state_is_never_practised() {
     let with_state = [never("correctness.off_by_one")];
     assert_eq!(
-        ids(&targets("python", &with_state, 0, 9)),
-        ids(&targets("python", &[], 0, 9))
+        ids(&targets(&Material::code("python"), &with_state, 0, 9)),
+        ids(&targets(&Material::code("python"), &[], 0, 9))
     );
 }
 
 #[test]
 fn when_every_pattern_is_practised_the_soonest_due_not_yet_due_comes_first() {
-    let states: Vec<PatternDue> = patterns_for("python")
+    let states: Vec<PatternDue> = patterns_for(&Material::code("python"))
         .enumerate()
         .map(|(position, pattern)| due(pattern.id, 1000 - position as i64))
         .collect();
-    let latest = patterns_for("python").last().unwrap();
-    let chosen = targets("python", &states, 0, 1);
+    let latest = patterns_for(&Material::code("python")).last().unwrap();
+    let chosen = targets(&Material::code("python"), &states, 0, 1);
     assert_eq!(ids(&chosen), [latest.id]);
 }
 
@@ -147,7 +147,7 @@ fn the_rest_are_taken_soonest_due_first_one_family_at_a_time() {
         due("errors.swallowed_exception", 30),
         due("correctness.off_by_one", 10),
     ];
-    let everything_else_is_far: Vec<PatternDue> = patterns_for("sql")
+    let everything_else_is_far: Vec<PatternDue> = patterns_for(&Material::code("sql"))
         .filter(|pattern| !states.iter().any(|state| state.pattern == pattern.id))
         .map(|pattern| due(pattern.id, 1_000))
         .collect();
@@ -156,7 +156,7 @@ fn the_rest_are_taken_soonest_due_first_one_family_at_a_time() {
         .cloned()
         .chain(everything_else_is_far)
         .collect();
-    let chosen = targets("sql", &all, 0, 4);
+    let chosen = targets(&Material::code("sql"), &all, 0, 4);
     assert_eq!(
         ids(&chosen),
         [
@@ -176,7 +176,7 @@ fn due_patterns_of_one_family_wait_for_other_families() {
         due("concurrency.missing_await", 3),
     ];
     assert_eq!(
-        ids(&targets("python", &states, 10, 3)),
+        ids(&targets(&Material::code("python"), &states, 10, 3)),
         [
             "concurrency.lock_ordering",
             "correctness.null_dereference",
@@ -193,7 +193,7 @@ fn due_patterns_in_other_families_are_all_taken_before_a_never_practised_one() {
         due("design.long_function", 1),
     ];
     assert_eq!(
-        ids(&targets("python", &states, 10, 4)),
+        ids(&targets(&Material::code("python"), &states, 10, 4)),
         [
             "design.long_function",
             "security.sql_injection",
@@ -205,10 +205,10 @@ fn due_patterns_in_other_families_are_all_taken_before_a_never_practised_one() {
 
 #[test]
 fn a_family_comes_round_again_only_when_every_family_has_been_taken() {
-    let chosen = targets("python", &[], 0, 18);
+    let chosen = targets(&Material::code("python"), &[], 0, 18);
     assert_eq!(chosen.len(), 18);
-    assert_eq!(families(&chosen[..9]), Family::ALL);
-    assert_eq!(families(&chosen[9..]), Family::ALL);
+    assert_eq!(families(&chosen[..9]), Family::CODE);
+    assert_eq!(families(&chosen[9..]), Family::CODE);
     let distinct: HashSet<&str> = ids(&chosen).into_iter().collect();
     assert_eq!(distinct.len(), 18);
 }
@@ -216,25 +216,27 @@ fn a_family_comes_round_again_only_when_every_family_has_been_taken() {
 #[test]
 fn every_language_can_fill_a_drill_from_every_family() {
     for language in LANGUAGES {
-        let chosen = targets(language, &[], 0, Family::ALL.len());
-        assert_eq!(families(&chosen), Family::ALL, "{language}");
+        let chosen = targets(&Material::code(language), &[], 0, Family::CODE.len());
+        assert_eq!(families(&chosen), Family::CODE, "{language}");
     }
 }
 
 #[test]
 fn only_patterns_that_apply_to_the_language_are_chosen() {
     for language in LANGUAGES {
-        let chosen = targets(language, &[], 0, usize::MAX);
+        let chosen = targets(&Material::code(language), &[], 0, usize::MAX);
         assert!(!chosen.is_empty(), "{language}");
         assert!(
-            chosen.iter().all(|pattern| pattern.applies_to(language)),
+            chosen
+                .iter()
+                .all(|pattern| pattern.applies_to(&Material::code(language))),
             "{language}"
         );
     }
-    let rust = ids(&targets("rust", &[], 0, usize::MAX));
+    let rust = ids(&targets(&Material::code("rust"), &[], 0, usize::MAX));
     assert!(rust.contains(&"errors.unwrap_on_fallible"));
     assert!(!rust.contains(&"correctness.mutable_default_argument"));
-    let python = ids(&targets("python", &[], 0, usize::MAX));
+    let python = ids(&targets(&Material::code("python"), &[], 0, usize::MAX));
     assert!(python.contains(&"correctness.mutable_default_argument"));
     assert!(!python.contains(&"errors.unwrap_on_fallible"));
 }
@@ -246,16 +248,16 @@ fn a_state_for_a_pattern_that_does_not_apply_or_does_not_exist_changes_nothing()
         due("no.such_pattern", 0),
     ];
     assert_eq!(
-        ids(&targets("rust", &states, 10, 9)),
-        ids(&targets("rust", &[], 10, 9))
+        ids(&targets(&Material::code("rust"), &states, 10, 9)),
+        ids(&targets(&Material::code("rust"), &[], 10, 9))
     );
 }
 
 #[test]
 fn a_count_larger_than_what_applies_gives_every_pattern_once() {
     for language in LANGUAGES {
-        let applying = patterns_for(language).count();
-        let chosen = targets(language, &[], 0, applying + 100);
+        let applying = patterns_for(&Material::code(language)).count();
+        let chosen = targets(&Material::code(language), &[], 0, applying + 100);
         assert_eq!(chosen.len(), applying, "{language}");
         let distinct: HashSet<&str> = ids(&chosen).into_iter().collect();
         assert_eq!(distinct.len(), applying, "{language}");
@@ -264,13 +266,13 @@ fn a_count_larger_than_what_applies_gives_every_pattern_once() {
 
 #[test]
 fn a_count_of_nothing_chooses_nothing() {
-    assert!(targets("python", &[], 0, 0).is_empty());
+    assert!(targets(&Material::code("python"), &[], 0, 0).is_empty());
 }
 
 #[test]
 fn a_count_smaller_than_what_applies_chooses_that_many() {
     for count in [1, 2, 5, 9] {
-        assert_eq!(targets("go", &[], 0, count).len(), count);
+        assert_eq!(targets(&Material::code("go"), &[], 0, count).len(), count);
     }
 }
 
@@ -282,9 +284,12 @@ fn equal_inputs_give_the_same_patterns_in_the_same_order() {
         never("design.long_function"),
         due("testing.untested_branch", 99),
     ];
-    let first = ids(&targets("java", &states, 10, 12));
+    let first = ids(&targets(&Material::code("java"), &states, 10, 12));
     for _ in 0..3 {
-        assert_eq!(ids(&targets("java", &states, 10, 12)), first);
+        assert_eq!(
+            ids(&targets(&Material::code("java"), &states, 10, 12)),
+            first
+        );
     }
 }
 
@@ -299,8 +304,8 @@ fn the_order_of_the_states_does_not_change_the_choice() {
     ];
     let reversed: Vec<PatternDue> = states.iter().rev().cloned().collect();
     assert_eq!(
-        ids(&targets("java", &states, 10, 12)),
-        ids(&targets("java", &reversed, 10, 12))
+        ids(&targets(&Material::code("java"), &states, 10, 12)),
+        ids(&targets(&Material::code("java"), &reversed, 10, 12))
     );
 }
 
@@ -312,7 +317,7 @@ fn patterns_due_at_the_same_time_are_taken_in_the_catalogues_order() {
         due("correctness.off_by_one", 5),
     ];
     assert_eq!(
-        ids(&targets("python", &states, 10, 3)),
+        ids(&targets(&Material::code("python"), &states, 10, 3)),
         [
             "correctness.off_by_one",
             "errors.swallowed_exception",
@@ -328,7 +333,7 @@ fn a_pattern_listed_twice_takes_its_first_entry() {
         never("security.sql_injection"),
     ];
     assert_eq!(
-        ids(&targets("python", &first_due, 10, 1)),
+        ids(&targets(&Material::code("python"), &first_due, 10, 1)),
         ["security.sql_injection"]
     );
     let first_never = [
@@ -336,7 +341,32 @@ fn a_pattern_listed_twice_takes_its_first_entry() {
         due("security.sql_injection", 1),
     ];
     assert_eq!(
-        ids(&targets("python", &first_never, 10, 1)),
+        ids(&targets(&Material::code("python"), &first_never, 10, 1)),
         ["correctness.null_dereference"]
+    );
+}
+
+#[test]
+fn a_passage_drill_is_filled_from_every_passage_family_and_only_passage_patterns() {
+    let chosen = targets(&Material::Passage, &[], 0, Family::PASSAGE.len());
+    assert_eq!(families(&chosen), Family::PASSAGE);
+    let everything = targets(&Material::Passage, &[], 0, usize::MAX);
+    let chosen_ids: HashSet<&str> = ids(&everything).into_iter().collect();
+    let passage_ids: HashSet<&str> = patterns_for(&Material::Passage)
+        .map(|pattern| pattern.id)
+        .collect();
+    assert_eq!(everything.len(), passage_ids.len());
+    assert_eq!(chosen_ids, passage_ids);
+    assert!(everything
+        .iter()
+        .all(|pattern| pattern.applies_to(&Material::Passage)));
+}
+
+#[test]
+fn a_code_pattern_state_does_not_change_what_a_passage_drill_plants() {
+    let states = [due("correctness.off_by_one", 0)];
+    assert_eq!(
+        ids(&targets(&Material::Passage, &states, 10, 5)),
+        ids(&targets(&Material::Passage, &[], 10, 5))
     );
 }
