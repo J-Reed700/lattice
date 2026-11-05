@@ -454,7 +454,7 @@ fn the_report_counts_agreement_by_outcome_and_shows_each_disagreement_whole() ->
 #[test]
 fn every_labelled_case_holds_together() -> Result<()> {
     let cases = cases()?;
-    assert!(cases.len() >= 9, "the first cases are written");
+    assert!(cases.len() >= 40, "the forty cases are written");
     let mut names = BTreeSet::new();
     for (stem, case) in &cases {
         assert_eq!(&case.name, stem, "a case is named for its file");
