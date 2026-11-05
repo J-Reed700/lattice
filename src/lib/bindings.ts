@@ -3664,6 +3664,30 @@ async importSettings(request: ImportSettingsRequest) : Promise<Result<SettingsDt
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Shows the platform's save dialog, offering `suggested_name`, and writes
+ * `contents` to the file the user picks. `false` when the user cancels.
+ */
+async saveTextFile(suggestedName: string, filters: FileFilterDto[], contents: string) : Promise<Result<boolean, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|save_text_file", { suggestedName, filters, contents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Shows the platform's open dialog and returns the text of the file the user
+ * picks. `None` when the user cancels.
+ */
+async openTextFile(filters: FileFilterDto[]) : Promise<Result<string | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|open_text_file", { filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async validateFolderPath(path: string) : Promise<Result<boolean, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|validate_folder_path", { path }) };
@@ -6091,6 +6115,10 @@ export type FailedLearningPackExportDto = { programId: string; title: string; er
  * Favorite document with metadata
  */
 export type FavoriteDocument = { id: string; document_id: string; document_name: string; document_path: string; file_type: string | null; added_at: string }
+/**
+ * One entry of a file dialog's type list: a name and the extensions it shows.
+ */
+export type FileFilterDto = { name: string; extensions: string[] }
 /**
  * Optional import context. File order comes from the request's file_paths.
  */
