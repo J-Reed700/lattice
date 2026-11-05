@@ -57,6 +57,7 @@ impl World {
             pattern: pattern(OPERATOR).unwrap(),
             suite: Some(SUITE),
             others: &self.operator_others,
+            source: None,
         }
     }
 
@@ -69,6 +70,7 @@ impl World {
             pattern: pattern(LITERALS).unwrap(),
             suite: Some(SUITE),
             others: &self.literals_others,
+            source: None,
         }
     }
 }
@@ -728,6 +730,7 @@ async fn a_weakened_test_that_still_passes_on_the_clean_code_goes_to_the_judge()
         pattern: pattern("testing.assertion_free_test").unwrap(),
         suite: Some(SUITE),
         others: &[],
+        source: None,
     };
     let model = ScriptedModel::new([judge_answer(true)]);
     let runner = FakeRunner::passing();
@@ -761,6 +764,7 @@ async fn a_test_that_fails_on_the_clean_code_is_broken_and_not_weak() -> Result<
         pattern: pattern("testing.assertion_free_test").unwrap(),
         suite: Some(SUITE),
         others: &[],
+        source: None,
     };
     let mut outcomes = vec![(
         RunOutcome::Failed {

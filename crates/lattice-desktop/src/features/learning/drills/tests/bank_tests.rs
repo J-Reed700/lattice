@@ -51,6 +51,7 @@ async fn insert(
             spec: &spec,
             domain,
             suite: Some(SUITE),
+            source: None,
             runner: Some("fake-python"),
             model: MODEL,
             evidence: &evidence,

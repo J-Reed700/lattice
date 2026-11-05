@@ -93,6 +93,7 @@ async fn grade(
             drill,
             learner,
             suite,
+            source: None,
         },
     )
     .await
@@ -530,6 +531,7 @@ async fn files_the_runtime_refuses_prove_nothing_so_the_judge_decides() -> Resul
             drill: &drill,
             learner: &learner,
             suite: Some(SUITE),
+            source: None,
         },
     )
     .await?;
@@ -627,6 +629,7 @@ mod real_runtime {
                 drill: &drill,
                 learner,
                 suite: Some(SUITE),
+                source: None,
             },
         )
         .await
@@ -1247,6 +1250,7 @@ mod beside {
                 drill: &drill,
                 learner: &learner,
                 suite: Some(SUITE),
+                source: None,
             },
         )
         .await?;

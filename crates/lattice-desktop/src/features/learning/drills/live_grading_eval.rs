@@ -299,6 +299,7 @@ async fn live_grading_eval() -> Result<()> {
         let review = Review {
             drill: &case.drill,
             clean: &case.clean,
+            source: None,
             findings: &case.review,
         };
         let started = Instant::now();

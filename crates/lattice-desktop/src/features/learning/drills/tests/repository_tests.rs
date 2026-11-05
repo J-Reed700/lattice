@@ -32,6 +32,7 @@ async fn add(pool: &SqlitePool, id: &str, program_id: Option<&str>) -> Result<()
             spec: &spec,
             domain: "rate limiting",
             suite: Some(SUITE),
+            source: None,
             runner: Some("builtin-python"),
             model: MODEL,
             evidence: &evidence,

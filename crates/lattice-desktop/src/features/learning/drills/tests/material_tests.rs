@@ -8,9 +8,7 @@ use super::support::{
 };
 use crate::features::learning::drills::build::ask::render_files;
 use crate::features::learning::drills::build::Baseline;
-use crate::features::learning::drills::material::{
-    code_language, CodeMaterial, DrillMaterial, JudgeWording,
-};
+use crate::features::learning::drills::material::{CodeMaterial, DrillMaterial, JudgeWording};
 use crate::features::learning::drills::runner::CodeRunner;
 use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::tests::pool;
@@ -208,6 +206,8 @@ fn the_reviewer_and_the_describer_are_what_they_were() {
     assert_eq!(wording.reviewer, golden(REVIEWER));
     assert_eq!(wording.describer, golden(DESCRIBER));
     assert_eq!(wording.subject, "Language: python");
+    assert_eq!(wording.files, "The code:");
+    assert_eq!(CodeMaterial::new(None).reviewer_context(&baseline()), None);
 }
 
 #[test]
@@ -224,6 +224,8 @@ fn the_judge_is_what_it_was() -> Result<()> {
         wording.original,
         "The same code before any issue was planted, with its own line numbers:"
     );
+    assert_eq!((wording.line, wording.lines), ("line", "lines"));
+    assert_eq!(wording.source, None);
     Ok(())
 }
 
@@ -239,15 +241,25 @@ fn code_material_runs_what_it_was_given() {
 }
 
 #[test]
-fn a_passage_has_no_material_to_build_or_grade_yet() {
-    assert!(code_language(&Material::Passage).is_err());
-    assert!(JudgeWording::of(&Material::Passage).is_err());
-    let passage = DrillSpec {
+fn a_passage_is_built_from_a_course_and_judged_in_sentences() {
+    let wording = JudgeWording::of(&Material::Passage).expect("a passage has a judge");
+    assert_eq!((wording.line, wording.lines), ("sentence", "sentences"));
+    let without_course = DrillSpec {
         material: Material::Passage,
+        patterns: vec!["fidelity.misquoted_figure".into()],
         ..spec()
     };
-    assert!(passage.validate().is_err());
-    assert_eq!(code_language(&Material::code("go")).unwrap(), "go");
+    assert!(without_course.validate().is_err());
+    let on_a_course = DrillSpec {
+        program_id: Some("course".into()),
+        ..without_course
+    };
+    assert!(on_a_course.validate().is_ok());
+    let with_code_patterns = DrillSpec {
+        patterns: spec().patterns,
+        ..on_a_course
+    };
+    assert!(with_code_patterns.validate().is_err());
 }
 
 #[test]
