@@ -1,0 +1,102 @@
+{
+  "name": "31-rust-a-review-with-no-findings",
+  "kind": "mixed",
+  "why": "The reviewer made no findings, so nothing names, points at or touches any issue: all three are missed, and there are no findings to label. The grader answers a review with no findings without asking the model, so this case counts three issues as agreement and tests nothing about the judge.",
+  "drill": {
+    "id": "settings-loader",
+    "language": "rust",
+    "title": "Loading settings from a file",
+    "files": [
+      {
+        "path": "settings.rs",
+        "text": "use std::collections::HashMap;\nuse std::fs;\nuse std::path::Path;\n\n#[derive(Debug, PartialEq)]\npub struct Settings {\n    pub port: u16,\n    pub workers: usize,\n}\n\n#[derive(Debug)]\npub enum ConfigError {\n    Read(std::io::Error),\n    Missing(&'static str),\n    Invalid(&'static str),\n}\n\nfn pairs(text: &str) -> HashMap<&str, &str> {\n    text.lines()\n        .map(str::trim)\n        .filter(|line| !line.is_empty() && !line.starts_with('#'))\n        .filter_map(|line| line.split_once('='))\n        .map(|(key, value)| (key.trim(), value.trim()))\n        .collect()\n}\n\nfn required<'a>(\n    values: &HashMap<&'a str, &'a str>,\n    key: &'static str,\n) -> Result<&'a str, ConfigError> {\n    values.get(key).copied().ok_or(ConfigError::Missing(key))\n}\n\npub fn load(path: &Path) -> Result<Settings, ConfigError> {\n    let text = fs::read_to_string(path).unwrap_or_default();\n    let values = pairs(&text);\n    let port = required(&values, \"port\")?.parse::<u16>().unwrap();\n    let workers = required(&values, \"workers\")?\n        .parse::<usize>()\n        .map_err(|_| ConfigError::Invalid(\"workers\"))?;\n    Ok(Settings { port, workers })\n}\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "settings-unreadable-file-is-empty",
+        "pattern": "errors.error_as_success",
+        "severity": "major",
+        "span": {
+          "path": "settings.rs",
+          "start": 35,
+          "end": 35
+        },
+        "consequence": "A missing or unreadable file reads as an empty string, so load goes on and reports that the port is missing: the real failure (no such file, permission denied) is never shown, and ConfigError::Read can no longer be produced.",
+        "fix": {
+          "path": "settings.rs",
+          "before": "    let text = fs::read_to_string(path).unwrap_or_default();",
+          "after": "    let text = fs::read_to_string(path).map_err(ConfigError::Read)?;"
+        },
+        "explanation": "load turns a failed read into an empty file with unwrap_or_default, so every read error looks like a missing key. Map the error to ConfigError::Read and return it with ?.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the error mapping and the ? with unwrap_or_default, and the clean code returns the read error."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "settings-port-unwrap",
+        "pattern": "errors.unwrap_on_fallible",
+        "severity": "major",
+        "span": {
+          "path": "settings.rs",
+          "start": 37,
+          "end": 37
+        },
+        "consequence": "A port that is not a number, or is above 65535, makes unwrap panic and take the process down at start-up, where load was meant to return ConfigError::Invalid.",
+        "fix": {
+          "path": "settings.rs",
+          "before": "    let port = required(&values, \"port\")?.parse::<u16>().unwrap();",
+          "after": "    let port = required(&values, \"port\")?\n        .parse::<u16>()\n        .map_err(|_| ConfigError::Invalid(\"port\"))?;"
+        },
+        "explanation": "The port comes from a file that a person edits, and parse can fail on it, but unwrap turns that ordinary failure into a panic. Map the parse error to ConfigError::Invalid and return it, as the workers value already is.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the mapped error and the ? with unwrap on the parse result, which the clean code returns as ConfigError::Invalid."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "settings-zero-workers",
+        "pattern": "correctness.boundary_and_empty_input",
+        "severity": "major",
+        "span": {
+          "path": "settings.rs",
+          "start": 41,
+          "end": 41
+        },
+        "consequence": "A config with workers = 0 is accepted, and whatever starts that many workers starts none, so queued jobs are never run and nothing says why.",
+        "fix": {
+          "path": "settings.rs",
+          "before": "    Ok(Settings { port, workers })",
+          "after": "    if workers == 0 {\n        return Err(ConfigError::Invalid(\"workers\"));\n    }\n    Ok(Settings { port, workers })"
+        },
+        "explanation": "load accepts any number for workers, including 0, which no pool can work with. Reject 0 as ConfigError::Invalid before building the settings.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the guard that rejects workers == 0 before the settings are built."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "settings.rs",
+      "text": "use std::collections::HashMap;\nuse std::fs;\nuse std::path::Path;\n\n#[derive(Debug, PartialEq)]\npub struct Settings {\n    pub port: u16,\n    pub workers: usize,\n}\n\n#[derive(Debug)]\npub enum ConfigError {\n    Read(std::io::Error),\n    Missing(&'static str),\n    Invalid(&'static str),\n}\n\nfn pairs(text: &str) -> HashMap<&str, &str> {\n    text.lines()\n        .map(str::trim)\n        .filter(|line| !line.is_empty() && !line.starts_with('#'))\n        .filter_map(|line| line.split_once('='))\n        .map(|(key, value)| (key.trim(), value.trim()))\n        .collect()\n}\n\nfn required<'a>(\n    values: &HashMap<&'a str, &'a str>,\n    key: &'static str,\n) -> Result<&'a str, ConfigError> {\n    values.get(key).copied().ok_or(ConfigError::Missing(key))\n}\n\npub fn load(path: &Path) -> Result<Settings, ConfigError> {\n    let text = fs::read_to_string(path).map_err(ConfigError::Read)?;\n    let values = pairs(&text);\n    let port = required(&values, \"port\")?\n        .parse::<u16>()\n        .map_err(|_| ConfigError::Invalid(\"port\"))?;\n    let workers = required(&values, \"workers\")?\n        .parse::<usize>()\n        .map_err(|_| ConfigError::Invalid(\"workers\"))?;\n    if workers == 0 {\n        return Err(ConfigError::Invalid(\"workers\"));\n    }\n    Ok(Settings { port, workers })\n}\n"
+    }
+  ],
+  "review": [],
+  "labels": {
+    "issues": [
+      "missed",
+      "missed",
+      "missed"
+    ],
+    "findings": []
+  }
+}
