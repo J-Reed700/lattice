@@ -488,40 +488,42 @@ async fn a_sentence_written_over_outside_the_pipeline_is_a_new_statement_with_it
 async fn a_sentence_a_checkpointed_repair_wrote_after_its_record_was_lost_is_read_after_the_rewrite_and_not_rewritten_again(
 ) -> Result<()> {
     let policy = StandardPolicy::new();
+    let body = format!("{SENTENCE} {HEADER}");
     let mut ledger = open().await?;
-    let target = claim(
-        &mut ledger,
-        "target",
-        (SENTENCE, SENTENCE),
-        SENTENCE,
-        SOURCED,
-    )
-    .await?;
-    walk(&mut ledger, &target, Class::Sourced, &REWRITING).await?;
+    let lost = claim(&mut ledger, "lost", (SENTENCE, SENTENCE), &body, SOURCED).await?;
+    let kept = claim(&mut ledger, "kept", (HEADER, HEADER), &body, SOURCED).await?;
+    for id in [&lost, &kept] {
+        walk(&mut ledger, id, Class::Sourced, &REWRITING).await?;
+    }
     ledger
-        .begin_repairs(&policy, &lesson_of(SENTENCE), std::slice::from_ref(&target))
+        .begin_repairs(&policy, &lesson_of(&body), &[lost.clone(), kept.clone()])
         .await?;
-    // The repair wrote the sentence anew and the claim's record was lost; the
-    // lesson the repair started from is still checkpointed.
-    ledger.pending.repairs.clear();
+    // The repair wrote both sentences anew and one claim's record was lost;
+    // the repair of their section is still checkpointed, with the lesson it
+    // started from.
+    ledger
+        .pending
+        .repairs
+        .retain(|record| record.claim_id != lost);
     assert!(ledger.pending.previous.is_some());
 
-    let lesson = lesson_of(HEADER);
+    let lesson = lesson_of(&format!("{REWRITTEN} {REWORDED}"));
     let pass = identified(
         &mut ledger,
         &Model::new(),
         &lesson,
-        &[(HEADER, HEADER)],
+        &[(REWRITTEN, REWRITTEN), (REWORDED, REWORDED)],
         &[],
     )
     .await?;
 
-    // What the repair wrote is its target's successor, read from the node
-    // after the rewrite, with the class the target held.
+    // What the repair wrote where it has no record of the claim is that
+    // claim's successor, read from the node after the rewrite with the class
+    // the claim held; the claim whose record stands continues there itself.
     let successor = pass.statements[0].id.clone();
-    assert_ne!(successor, target);
+    assert_ne!(successor, lost);
     assert!(matches!(
-        ledger.entry(&target).unwrap().state(),
+        ledger.entry(&lost).unwrap().state(),
         ClaimState::Edited {
             successor: Some(next),
             by: Actor::Machine,
@@ -533,6 +535,8 @@ async fn a_sentence_a_checkpointed_repair_wrote_after_its_record_was_lost_is_rea
         Some(SOURCED)
     );
     assert_eq!(node_of(&ledger, &successor), Some("s.final"));
+    assert_eq!(pass.statements[1].id, kept);
+    assert_eq!(node_of(&ledger, &kept), Some("s.final"));
 
     // A reading that fails it sends it to its cut: it is not rewritten again.
     let reader = Says::new(&[Outcome::Unproven]);
