@@ -126,7 +126,7 @@ describe('leadingLine', () => {
   it('says the most severe issue was only half found', () => {
     expect(leadingLine(revealOf())).toEqual({
       led: false,
-      text: 'Did not lead with the most severe issue: Stale state was only half found (right lines, wrong reason).',
+      text: 'Did not lead with the most severe issue: Stale state was only half found: a comment pointed at it but gave no cause, or the wrong one.',
     });
   });
 

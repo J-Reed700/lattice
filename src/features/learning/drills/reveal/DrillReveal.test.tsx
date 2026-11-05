@@ -98,7 +98,7 @@ describe('DrillReveal, a graded review', () => {
       setup();
       expect(
         within(region(TITLE)).getByText(
-          'Did not lead with the most severe issue: Stale state was only half found (right lines, wrong reason).',
+          'Did not lead with the most severe issue: Stale state was only half found: a comment pointed at it but gave no cause, or the wrong one.',
         ),
       ).toBeInTheDocument();
     });
