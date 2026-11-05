@@ -245,7 +245,7 @@ fn report(model: Value, graded: &[Graded]) -> Value {
 
 /// The model the live tests are configured for: the llama.cpp server `LATTICE_LLAMACPP_SETTINGS` describes or, with
 /// `LATTICE_USE_LEARNING_MODEL=1`, the Learning model those settings name, reached as the app reaches it.
-async fn model() -> Result<Arc<dyn LLMPort>> {
+pub(in crate::features::learning::drills) async fn model() -> Result<Arc<dyn LLMPort>> {
     let path = std::env::var("LATTICE_LLAMACPP_SETTINGS").map_err(|_| {
         AppError::InvalidConfig(
             "Set LATTICE_LLAMACPP_SETTINGS to the settings file the live tests read.".into(),

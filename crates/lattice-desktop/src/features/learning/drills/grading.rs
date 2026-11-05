@@ -25,7 +25,7 @@ mod tests;
 
 #[cfg(test)]
 #[path = "live_grading_eval.rs"]
-mod live_grading_eval;
+pub(in crate::features::learning::drills) mod live_grading_eval;
 
 /// What the judge is told it decides.
 const SYSTEM: &str = concat!(
