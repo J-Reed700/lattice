@@ -96,7 +96,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
                         onClick={(event) => onSelectLines(pickSentence(selection, sentence.line, event.shiftKey))}
                         onKeyDown={(event) => move(event, sentence.line)}
                         className={cn(
-                          'group rounded px-0.5 text-left transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent',
+                          'group relative inline rounded px-0.5 text-inherit [box-decoration-break:clone] [-webkit-box-decoration-break:clone] transition focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent',
                           picked ? 'bg-accent-muted' : 'hover:bg-surface-hover',
                           within(highlight, sentence.line) && 'ring-2 ring-accent/50',
                         )}
@@ -104,7 +104,7 @@ export function PassagePane({ drill, writingFix, selection, onSelectLines, highl
                         <sup
                           aria-hidden="true"
                           className={cn(
-                            'mr-0.5 text-[10px] font-semibold tabular-nums text-accent group-hover:opacity-100 group-focus-visible:opacity-100',
+                            'pointer-events-none absolute -top-2 left-0 text-[10px] font-semibold leading-none tabular-nums text-accent group-hover:opacity-100 group-focus-visible:opacity-100',
                             picked ? 'opacity-100' : 'opacity-0',
                           )}
                         >
