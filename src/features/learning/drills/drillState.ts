@@ -151,11 +151,9 @@ export function reduce(state: DrillState, action: DrillAction): DrillState {
       return { ...state, stage: 'submitting', failure: null };
     case 'result': {
       const { result, draft } = action;
-      const restoring = state.session === null;
-      const session =
-        state.session !== null && state.session.attemptId === result.attemptId
-          ? state.session
-          : sessionOf(result, draft.minutes);
+      const known = state.session;
+      const restoring = known === null;
+      const session = known?.attemptId === result.attemptId ? known : sessionOf(result, draft.minutes);
       return {
         ...state,
         stage: stageOf(result),

@@ -365,6 +365,27 @@ describe('writing the review', () => {
     expect(screen.getByText('DATA = {}')).toBeVisible();
   });
 
+  it('moves between the file tabs with the arrow keys, Home and End', async () => {
+    const { user } = show();
+    await startDrill(user);
+    const limiter = () => screen.getByRole('tab', { name: 'src/limiter.py' });
+    const store = () => screen.getByRole('tab', { name: 'src/store.py' });
+    await user.click(limiter());
+
+    await user.keyboard('{ArrowRight}');
+    expect(store()).toHaveAttribute('aria-selected', 'true');
+    expect(store()).toHaveFocus();
+    expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-path', 'src/store.py');
+    await user.keyboard('{ArrowRight}');
+    expect(limiter()).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{ArrowLeft}');
+    expect(store()).toHaveAttribute('aria-selected', 'true');
+    await user.keyboard('{Home}');
+    expect(limiter()).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(store()).toHaveFocus();
+  });
+
   it('makes a comment on the selected lines, and a general one on none', async () => {
     const { user } = show();
     await startDrill(user);
@@ -728,6 +749,22 @@ describe('handing the review in', () => {
     await user.click(screen.getByRole('button', { name: 'Try grading again' }));
     expect(await screen.findByText('Grading your review…')).toBeVisible();
     expect(api.regradeCodeReview).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives the reveal a way to grade again, and shows what the backend says when that is refused', async () => {
+    api.codeReviewResult.mockResolvedValue(graded());
+    const pending = deferred<CodeReviewResultDto>();
+    api.regradeCodeReview.mockReturnValue(pending.promise);
+    const { user } = show('/studio?drills=open&attempt=attempt-1');
+    await user.click(await screen.findByRole('button', { name: 'Grade again from the reveal' }));
+    await waitFor(() => expect(screen.getByTestId('reveal')).toHaveAttribute('data-regrading', 'true'));
+    expect(api.regradeCodeReview).toHaveBeenCalledWith('attempt-1');
+
+    await act(async () => {
+      pending.reject(new Error('Only a review that could not be graded can be graded again.'));
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent('Only a review that could not be graded can be graded again.');
+    expect(screen.getByTestId('reveal')).toHaveAttribute('data-regrading', 'false');
   });
 
   it('starts the next drill in the same language, mode and size from the reveal', async () => {
