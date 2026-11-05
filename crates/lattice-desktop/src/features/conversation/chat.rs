@@ -47,6 +47,8 @@ pub(crate) mod source_snapshots;
 mod research_job;
 pub mod retrieval;
 pub mod router;
+#[cfg(test)]
+pub(crate) use research_job::saved_by_a_turn;
 pub use research_job::{
     job_config as research_job_config, resumable_question_ids as resumable_research_questions,
     resumable_request_ids as resumable_research_requests, DeepResearchJob, ResearchWaiters,

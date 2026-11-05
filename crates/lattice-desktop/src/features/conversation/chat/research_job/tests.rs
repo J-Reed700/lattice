@@ -104,27 +104,7 @@ async fn first_attempt(runtime: &FakeRuntime) -> FirstAttempt {
         arguments: serde_json::json!({ "query": "lithium battery recycling" }),
     };
     FirstAttempt {
-        assembled: AssembledTurn {
-            user_message_id: question.id,
-            message_tokens: 8,
-            history_len: 0,
-            flags: SearchFlags::from_preferences(request.tool_preferences.as_ref()),
-            router: None,
-            input: vec![CompletionInput::Message {
-                role: "user".into(),
-                content: QUESTION.into(),
-            }],
-            tools: Vec::new(),
-            max_output_tokens: 1_024,
-            input_budget: 16_000,
-            memory_usage: None,
-            short_circuit_response: None,
-            sources: Vec::new(),
-            retrieval_trace: None,
-            pages_read: Default::default(),
-            steps: Vec::new(),
-            elapsed_ms: 50,
-        },
+        assembled: planned_turn(&request, question.id),
         round: ResearchRound {
             completed: 1,
             transcript: vec![
@@ -145,6 +125,47 @@ async fn first_attempt(runtime: &FakeRuntime) -> FirstAttempt {
         },
         request,
     }
+}
+
+/// The turn a research request plans, its question saved as `question`.
+fn planned_turn(request: &TurnRequest, question: String) -> AssembledTurn {
+    AssembledTurn {
+        user_message_id: question,
+        message_tokens: 8,
+        history_len: 0,
+        flags: SearchFlags::from_preferences(request.tool_preferences.as_ref()),
+        router: None,
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: QUESTION.into(),
+        }],
+        tools: Vec::new(),
+        max_output_tokens: 1_024,
+        input_budget: 16_000,
+        memory_usage: None,
+        short_circuit_response: None,
+        sources: Vec::new(),
+        retrieval_trace: None,
+        pages_read: Default::default(),
+        steps: Vec::new(),
+        elapsed_ms: 50,
+    }
+}
+
+/// A research job's request, and the `assembled` checkpoint a turn of that
+/// request saves once it has planned `question`, for tests outside this module
+/// that save jobs without running a turn.
+pub(crate) fn saved_by_a_turn(
+    chat: &str,
+    request_id: &str,
+    question: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let request = TurnRequest {
+        request_id: Some(request_id.to_string()),
+        ..research(chat)
+    };
+    let assembled = planned_turn(&request, question.to_string());
+    (encode(&request).unwrap(), encode(&assembled).unwrap())
 }
 
 /// Stands in for the turn the app was running: it saves what the turn had
@@ -896,4 +917,148 @@ async fn a_resumed_research_turn_that_cannot_start_as_the_app_closes_keeps_its_q
         "pending",
         "the job resumes it at the next start"
     );
+}
+
+/// A job running when the app stopped, with the request it was submitted with,
+/// the `assembled` checkpoint it saved and, if it finished one, its last round.
+async fn save_live_job(
+    store: &JobStore,
+    name: &str,
+    requested: serde_json::Value,
+    assembled: serde_json::Value,
+    round: Option<serde_json::Value>,
+) {
+    let job = store
+        .submit(&NewJob {
+            kind: DEEP_RESEARCH.into(),
+            subject_id: Some("conversation-a".into()),
+            operation_id: operation_id(name),
+            payload_hash: name.into(),
+            requested,
+            progress_total: 1,
+            message: "Waiting to research".into(),
+        })
+        .await
+        .unwrap();
+    // A job saves checkpoints only while it runs.
+    store.claim(&job.id).await.unwrap();
+    assert!(store
+        .put_checkpoint(&job.id, ASSEMBLED, &assembled)
+        .await
+        .unwrap());
+    if let Some(round) = round {
+        assert!(store.put_checkpoint(&job.id, ROUND, &round).await.unwrap());
+    }
+}
+
+/// A research turn resumes only if all it saved can be read as a resume reads
+/// it: its request, its `assembled` checkpoint and its last round.
+#[tokio::test]
+async fn a_question_is_kept_only_if_the_whole_saved_turn_can_be_read() {
+    let store = JobStore::new(pool().await);
+    let saved = |name: &str| saved_by_a_turn("conversation-a", name, &format!("question-{name}"));
+    let (requested, assembled) = saved("readable");
+    save_live_job(&store, "readable", requested, assembled, None).await;
+    let (_, assembled) = saved("request");
+    let unrelated = serde_json::json!({ "unrelated": true });
+    save_live_job(&store, "request", unrelated, assembled, None).await;
+    let (requested, mut assembled) = saved("assembled");
+    // Saved by an older build: the checkpoint lacks a field this one saves.
+    assembled.as_object_mut().unwrap().remove("pages_read");
+    save_live_job(&store, "assembled", requested, assembled, None).await;
+    let (requested, assembled) = saved("round");
+    let unreadable = serde_json::json!({ "completed": "many" });
+    save_live_job(&store, "round", requested, assembled, Some(unreadable)).await;
+
+    let kept = resumable_question_ids(&store).await.unwrap();
+
+    assert_eq!(
+        kept,
+        ["question-readable".to_string()].into_iter().collect()
+    );
+}
+
+/// A saved turn that cannot be read cannot resume: its job fails without
+/// asking a model, and the question it saved is left retryable.
+#[tokio::test]
+async fn a_research_job_whose_saved_turn_cannot_be_read_fails_with_its_question() {
+    let pool = pool().await;
+    let llm = Scripted::new([]);
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(llm.clone()),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    // Saved by an older build: the checkpoint lacks a field this one saves.
+    let mut assembled = jobs
+        .store()
+        .checkpoint(&job_id, ASSEMBLED)
+        .await
+        .unwrap()
+        .unwrap();
+    assembled.as_object_mut().unwrap().remove("pages_read");
+    sqlx::query("UPDATE job_checkpoints SET data_json = ? WHERE job_id = ? AND key = ?")
+        .bind(assembled.to_string())
+        .bind(job_id.as_str())
+        .bind(ASSEMBLED)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    assert!(
+        job.error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("pages_read")),
+        "{:?}",
+        job.error_message
+    );
+    assert!(llm.requests().is_empty(), "the model is never asked");
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// A stop that reaches a research job before it started cancels it, and the
+/// question it saved is left retryable.
+#[tokio::test]
+async fn stopping_a_research_job_that_never_started_fails_its_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+
+    let stopped = stop(
+        &runtime,
+        attempt.request.conversation_id.as_deref().unwrap(),
+        attempt.request.request_id.as_deref(),
+    )
+    .await
+    .unwrap();
+
+    assert!(stopped);
+    assert_eq!(
+        jobs.store().get(&job_id).await.unwrap().status,
+        JobStatus::Cancelled
+    );
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
 }

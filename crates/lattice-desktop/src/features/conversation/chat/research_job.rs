@@ -432,4 +432,6 @@ impl ResearchJournal for JobJournal<'_> {
 }
 
 #[cfg(test)]
+pub(crate) use tests::saved_by_a_turn;
+#[cfg(test)]
 mod tests;

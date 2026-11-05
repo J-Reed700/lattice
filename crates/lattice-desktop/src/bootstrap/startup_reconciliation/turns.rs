@@ -55,7 +55,7 @@ pub async fn reconcile_stuck_turns(
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
-    use crate::features::conversation::chat::DEEP_RESEARCH;
+    use crate::features::conversation::chat::{saved_by_a_turn, DEEP_RESEARCH};
     use crate::features::conversation::repository::ConversationRepository;
     use crate::features::conversation::service::ConversationService;
     use crate::features::conversation::ConversationServiceTrait;
@@ -198,14 +198,27 @@ mod tests {
             .unwrap()
     }
 
-    /// A research job of `chat` as startup finds it, in `status`. A job that
-    /// had planned its turn has saved the `assembled` checkpoint naming
-    /// `question`.
+    /// A question of conversation `c`, saved pending.
+    async fn ask(pool: &sqlx::SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO conversation_messages (id, conversation_id, role, content, status) \
+             VALUES (?, 'c', 'user', 'text', 'pending')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// A research job of `chat` as startup finds it, in `status`, with the
+    /// request it was submitted with and, if its turn had planned, the
+    /// `assembled` checkpoint it saved.
     async fn save_research_job(
         jobs: &JobStore,
         chat: &str,
         request: &str,
-        question: Option<&str>,
+        requested: serde_json::Value,
+        assembled: Option<serde_json::Value>,
         status: JobStatus,
     ) {
         let job = jobs
@@ -214,7 +227,7 @@ mod tests {
                 subject_id: Some(chat.into()),
                 operation_id: format!("{DEEP_RESEARCH}:{request}"),
                 payload_hash: request.into(),
-                requested: serde_json::json!({ "request_id": request }),
+                requested,
                 progress_total: 1,
                 message: "Waiting to research".into(),
             })
@@ -223,8 +236,7 @@ mod tests {
             .id;
         // A job saves checkpoints only while it runs.
         assert!(jobs.claim(&job).await.unwrap().is_some());
-        if let Some(question) = question {
-            let assembled = serde_json::json!({ "user_message_id": question });
+        if let Some(assembled) = assembled {
             assert!(jobs
                 .put_checkpoint(&job, "assembled", &assembled)
                 .await
@@ -268,20 +280,23 @@ mod tests {
             ("of-no-job", None, "failed"),
         ];
         for (question, job, _) in cases {
-            sqlx::query(
-                "INSERT INTO conversation_messages (id, conversation_id, role, content, status) \
-                 VALUES (?, 'c', 'user', 'text', 'pending')",
-            )
-            .bind(question)
-            .execute(&pool)
-            .await
-            .unwrap();
+            ask(&pool, question).await;
             if let Some(status) = job {
-                save_research_job(&jobs, "c", question, Some(question), status).await;
+                let (requested, assembled) = saved_by_a_turn("c", question, question);
+                save_research_job(&jobs, "c", question, requested, Some(assembled), status).await;
             }
         }
         // A turn still planning has saved no question.
-        save_research_job(&jobs, "c", "still-planning", None, JobStatus::Pending).await;
+        let (requested, _) = saved_by_a_turn("c", "still-planning", "no-question");
+        save_research_job(
+            &jobs,
+            "c",
+            "still-planning",
+            requested,
+            None,
+            JobStatus::Pending,
+        )
+        .await;
 
         reconcile(&pool).await;
 
@@ -329,11 +344,13 @@ mod tests {
             .unwrap()
             .id;
         // The app closed with the research turn saved on its job.
+        let (requested, assembled) = saved_by_a_turn(&chat, "request", &question);
         save_research_job(
             &jobs,
             &chat,
             "request",
-            Some(question.as_str()),
+            requested,
+            Some(assembled),
             JobStatus::Pending,
         )
         .await;
@@ -367,5 +384,34 @@ mod tests {
             answers,
             ["Shredding, then leaching recovers most of the lithium."]
         );
+    }
+
+    /// A job whose saved turn cannot be read fails when it is delivered again,
+    /// so it never answers its question: startup fails it, live job or not.
+    #[tokio::test]
+    async fn the_question_of_a_research_job_whose_saved_turn_cannot_be_read_is_failed() {
+        let pool = migrated_pool().await;
+        let jobs = JobStore::new(pool.clone());
+        sqlx::query("INSERT INTO conversations (id, title) VALUES ('c', 'c')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        ask(&pool, "of-an-older-turn").await;
+        let (requested, mut assembled) = saved_by_a_turn("c", "older", "of-an-older-turn");
+        // Saved by an older build: the checkpoint lacks a field this one saves.
+        assembled.as_object_mut().unwrap().remove("pages_read");
+        save_research_job(
+            &jobs,
+            "c",
+            "older",
+            requested,
+            Some(assembled),
+            JobStatus::Pending,
+        )
+        .await;
+
+        reconcile(&pool).await;
+
+        assert_eq!(status_of(&pool, "of-an-older-turn").await, "failed");
     }
 }
