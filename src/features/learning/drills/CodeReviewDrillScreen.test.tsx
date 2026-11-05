@@ -12,7 +12,8 @@ import { CodeReviewDrillScreen } from './CodeReviewDrillScreen';
 
 const api = vi.hoisted(() => ({
   codeReviewLanguages: vi.fn(),
-  startCodeReviewDrill: vi.fn(),
+  reviewDrillCourses: vi.fn(),
+  startReviewDrill: vi.fn(),
   submitCodeReview: vi.fn(),
   codeReviewResult: vi.fn(),
   regradeCodeReview: vi.fn(),
@@ -72,7 +73,7 @@ const FILES = [
   { path: 'src/limiter.py', text: 'import time\n\nclass Limiter:\n    def allow(self, key):\n        return True\n' },
   { path: 'src/store.py', text: 'DATA = {}\n' },
 ];
-const DRILL = { title: 'A rate limiter', language: 'python', files: FILES };
+const DRILL = { title: 'A rate limiter', material: { kind: 'code', language: 'python' } as const, files: FILES };
 
 function started(overrides: Partial<Extract<StartedCodeReviewDto, { status: 'started' }>> = {}): StartedCodeReviewDto {
   return { status: 'started', attemptId: 'attempt-1', mode: 'practice', startedAt: Date.now(), drill: DRILL, ...overrides };
@@ -85,6 +86,7 @@ const REVEAL: CodeReviewResultDto['reveal'] = {
   ratings: [],
   fix: null,
   cleanFiles: [],
+  source: null,
 };
 
 /** An attempt as the backend reads it: open unless the test says it was handed in. */
@@ -224,7 +226,7 @@ describe('choosing a drill', () => {
 
 describe('starting a drill', () => {
   it('opens the review of a drill that is ready, in the size and mode chosen, and remembers the choices', async () => {
-    api.startCodeReviewDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     const { user } = show();
     await screen.findByRole('option', { name: 'C#' });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
@@ -232,7 +234,7 @@ describe('starting a drill', () => {
     await user.click(screen.getByRole('button', { name: 'Start drill' }));
 
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCodeReviewDrill).toHaveBeenCalledWith('csharp', 'practice', 40, 3);
+    expect(api.startReviewDrill).toHaveBeenCalledWith({ kind: 'code', language: 'csharp' }, 'practice', 40, 3);
     expect(screen.getByRole('tab', { name: 'src/limiter.py' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-path', 'src/limiter.py');
     await addressIs('?drills=open&attempt=attempt-1');
@@ -240,7 +242,7 @@ describe('starting a drill', () => {
   });
 
   it('says a drill is being written when none is ready, shows the job, and opens the review when the build completes', async () => {
-    api.startCodeReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
 
@@ -249,30 +251,30 @@ describe('starting a drill', () => {
     report(buildJob({ progressMessage: 'Planting the defects (3 of 6)', progressCurrent: 2, progressTotal: 6 }));
     expect(await screen.findByText('Planting the defects (3 of 6)')).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Drill build progress' })).toHaveAttribute('aria-valuenow', '33');
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
     report(buildJob({ status: 'completed', finishedAt: 9 }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
     await addressIs('?drills=open&attempt=attempt-1');
   });
 
   it('starts again when any build of the language completes, and ignores the builds of other languages', async () => {
-    api.startCodeReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
 
     report(buildJob({ id: 'job-rust', subjectId: 'rust', status: 'completed', finishedAt: 9 }));
     report(buildJob({ id: 'job-other', kind: 'learning.drill_grading', status: 'completed', finishedAt: 9 }));
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
     report(buildJob({ id: 'job-next', status: 'completed', finishedAt: 9 }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
   });
 
   it('shows a failed build\'s error, asks again only when told to, and then opens the drill', async () => {
-    api.startCodeReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
@@ -280,11 +282,11 @@ describe('starting a drill', () => {
     report(buildJob({ status: 'failed', error: 'The model is not loaded.', finishedAt: 9 }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The model is not loaded.');
     expect(screen.queryByText('Writing a drill for you, usually a minute or two')).not.toBeInTheDocument();
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -292,7 +294,7 @@ describe('starting a drill', () => {
     ['failed', 'The drill could not be built.'],
     ['interrupted', 'The drill could not be built.'],
   ] as const)('says what happened to a build that ends as %s and gives no reason', async (status, message) => {
-    api.startCodeReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
@@ -301,7 +303,7 @@ describe('starting a drill', () => {
   });
 
   it('shows the error of a build that tries again, and goes on waiting', async () => {
-    api.startCodeReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
@@ -313,7 +315,7 @@ describe('starting a drill', () => {
   });
 
   it('shows the backend message when a drill cannot be started, and asks again on request', async () => {
-    api.startCodeReviewDrill.mockRejectedValueOnce(new Error('python is not a language drills are written in.')).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockRejectedValueOnce(new Error('python is not a language drills are written in.')).mockResolvedValueOnce(started());
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('python is not a language drills are written in.');
@@ -322,7 +324,7 @@ describe('starting a drill', () => {
   });
 
   it('stops waiting for a build and goes back to the choices, which are kept', async () => {
-    api.startCodeReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
     const { user } = show();
     await user.click(await screen.findByRole('radio', { name: /Long/ }));
     await user.click(screen.getByRole('button', { name: 'Start drill' }));
@@ -330,28 +332,28 @@ describe('starting a drill', () => {
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.getByRole('radio', { name: /Long/ })).toBeChecked();
     report(buildJob({ status: 'completed', finishedAt: 9 }));
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
   });
 
   it('takes one drill, however many reports of a finished build there are while it asks', async () => {
     const first = deferred<StartedCodeReviewDto>();
-    api.startCodeReviewDrill.mockReturnValueOnce(first.promise).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockReturnValueOnce(first.promise).mockResolvedValueOnce(started());
     const { user } = show();
     await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     report(buildJob({ status: 'completed', finishedAt: 9 }));
     report(buildJob({ status: 'completed', finishedAt: 9 }));
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
     await act(async () => {
       first.resolve({ status: 'building', jobId: 'job-9' });
     });
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('writing the review', () => {
   beforeEach(() => {
-    api.startCodeReviewDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     api.submitCodeReview.mockResolvedValue(submitted());
   });
 
@@ -559,7 +561,7 @@ describe('writing the review', () => {
 
 describe('writing a fix', () => {
   beforeEach(() => {
-    api.startCodeReviewDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     api.submitCodeReview.mockResolvedValue(submitted());
   });
 
@@ -615,7 +617,7 @@ describe('writing a fix', () => {
 
 describe('handing the review in', () => {
   beforeEach(() => {
-    api.startCodeReviewDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
   });
 
   it('asks before handing in a review with no comments, and hands it in when told to', async () => {
@@ -638,7 +640,7 @@ describe('handing the review in', () => {
   it('counts the time spent from when the attempt started', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-04T12:10:00Z'));
-    api.startCodeReviewDrill.mockResolvedValue(started({ startedAt: Date.now() - 125_000 }));
+    api.startReviewDrill.mockResolvedValue(started({ startedAt: Date.now() - 125_000 }));
     api.submitCodeReview.mockResolvedValue(submitted());
     const { user } = show();
     await startDrill(user);
@@ -774,12 +776,12 @@ describe('handing the review in', () => {
   it('starts the next drill in the same language, mode and size from the reveal', async () => {
     localStorage.setItem('lattice.drills.choices', JSON.stringify({ language: 'rust', mode: 'interview', size: 'long', minutes: 20 }));
     api.codeReviewLanguages.mockResolvedValue(['python', 'rust']);
-    api.startCodeReviewDrill.mockResolvedValueOnce(started({ mode: 'interview', drill: { ...DRILL, language: 'rust' } })).mockResolvedValueOnce(started({ attemptId: 'attempt-2' }));
-    api.submitCodeReview.mockResolvedValue(submitted({ mode: 'interview', drill: { ...DRILL, language: 'rust' } }));
-    api.codeReviewResult.mockResolvedValue(graded({ mode: 'interview', drill: { ...DRILL, language: 'rust' } }));
+    api.startReviewDrill.mockResolvedValueOnce(started({ mode: 'interview', drill: { ...DRILL, material: { kind: 'code', language: 'rust' } } })).mockResolvedValueOnce(started({ attemptId: 'attempt-2' }));
+    api.submitCodeReview.mockResolvedValue(submitted({ mode: 'interview', drill: { ...DRILL, material: { kind: 'code', language: 'rust' } } }));
+    api.codeReviewResult.mockResolvedValue(graded({ mode: 'interview', drill: { ...DRILL, material: { kind: 'code', language: 'rust' } } }));
     const { user } = show();
     await startDrill(user);
-    expect(api.startCodeReviewDrill).toHaveBeenLastCalledWith('rust', 'interview', 140, 5);
+    expect(api.startReviewDrill).toHaveBeenLastCalledWith({ kind: 'code', language: 'rust' }, 'interview', 140, 5);
     await comment(user, 'Something.');
     await user.click(screen.getByRole('button', { name: 'Submit review' }));
     await screen.findByText('Grading your review…');
@@ -787,8 +789,8 @@ describe('handing the review in', () => {
     await user.click(await screen.findByRole('button', { name: 'Next drill' }));
 
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(2);
-    expect(api.startCodeReviewDrill).toHaveBeenLastCalledWith('rust', 'interview', 140, 5);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenLastCalledWith({ kind: 'code', language: 'rust' }, 'interview', 140, 5);
     await addressIs('?drills=open&attempt=attempt-2');
     expect(screen.queryByText('Revealed attempt-1')).not.toBeInTheDocument();
   });
@@ -801,7 +803,7 @@ describe('an attempt in the address', () => {
     expect(screen.getByText('Opening your review…')).toBeVisible();
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
     expect(api.codeReviewResult).toHaveBeenCalledWith('attempt-7');
-    expect(api.startCodeReviewDrill).not.toHaveBeenCalled();
+    expect(api.startReviewDrill).not.toHaveBeenCalled();
     expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-path', 'src/limiter.py');
     expect(search()).toBe('?drills=open&attempt=attempt-7');
   });
@@ -860,7 +862,7 @@ describe('an attempt in the address', () => {
   });
 
   it('brings back the comments and the fix written before the learner left', async () => {
-    api.startCodeReviewDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     const first = show();
     await startDrill(first.user);
     await first.user.click(screen.getByRole('button', { name: 'Pick lines 2 to 3' }));
@@ -891,7 +893,7 @@ describe('an attempt in the address', () => {
   });
 
   it('forgets what was written once it is handed in', async () => {
-    api.startCodeReviewDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     api.submitCodeReview.mockResolvedValue(submitted());
     const first = show();
     await startDrill(first.user);
@@ -910,18 +912,18 @@ describe('the interview countdown', () => {
   });
 
   it('counts down the length the learner chose from the start of the attempt', async () => {
-    api.startCodeReviewDrill.mockResolvedValue(started({ mode: 'interview' }));
+    api.startReviewDrill.mockResolvedValue(started({ mode: 'interview' }));
     const { user } = show();
     await user.click(await screen.findByRole('radio', { name: /Interview/ }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Time limit' }), { target: { value: '15' } });
     await user.click(screen.getByRole('button', { name: 'Start drill' }));
 
     expect(await screen.findByRole('timer')).toHaveTextContent('Time left 15:00');
-    expect(api.startCodeReviewDrill).toHaveBeenCalledWith('python', 'interview', 80, 4);
+    expect(api.startReviewDrill).toHaveBeenCalledWith({ kind: 'code', language: 'python' }, 'interview', 80, 4);
   });
 
   it('is not there when practising', async () => {
-    api.startCodeReviewDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     const { user } = show();
     await startDrill(user);
     expect(screen.queryByRole('timer')).not.toBeInTheDocument();
@@ -929,7 +931,7 @@ describe('the interview countdown', () => {
   });
 
   it('keeps counting from the start when the attempt is reopened, in the length chosen for it', async () => {
-    api.startCodeReviewDrill.mockResolvedValue(started({ mode: 'interview' }));
+    api.startReviewDrill.mockResolvedValue(started({ mode: 'interview' }));
     const first = show();
     await first.user.click(await screen.findByRole('radio', { name: /Interview/ }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Time limit' }), { target: { value: '15' } });
@@ -949,5 +951,207 @@ describe('the interview countdown', () => {
     expect((await screen.findByText(/Time is up/)).closest('[role="status"]')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Submit review' })).toBeEnabled();
     expect(api.submitCodeReview).not.toHaveBeenCalled();
+  });
+});
+
+describe('a drill on a passage of a course', () => {
+  const SOURCE_TEXT = 'Students who spaced their study recalled 14% more a week later.';
+  const EXPLANATION = 'Spacing helps recall.\nIt helped by 40% a week later.\n\nThe benefit was larger for known material.\n';
+  const PASSAGE_DRILL = {
+    title: 'Why spacing helps',
+    material: { kind: 'passage', sourceTitle: 'Spacing and memory' } as const,
+    files: [{ path: 'explanation.md', text: EXPLANATION }],
+  };
+  const COURSES = [
+    { programId: 'course-1', title: 'Memory' },
+    { programId: 'course-2', title: 'Sleep' },
+  ];
+
+  beforeEach(() => {
+    api.reviewDrillCourses.mockResolvedValue(COURSES);
+  });
+
+  async function choosePassage(user: User) {
+    await user.click(await screen.findByRole('radio', { name: /A passage from a course/ }));
+    await screen.findByRole('option', { name: 'Memory' });
+  }
+
+  it('offers the code and a passage from a course, with code chosen and no course asked for', async () => {
+    show();
+    expect(await screen.findByRole('radio', { name: /^Code/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /A passage from a course/ })).not.toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Language' })).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: 'Course' })).not.toBeInTheDocument();
+    expect(api.reviewDrillCourses).not.toHaveBeenCalled();
+  });
+
+  it('asks for a course and a topic instead of a language, and sizes in sentences', async () => {
+    const { user } = show();
+    await choosePassage(user);
+    const course = screen.getByRole('combobox', { name: 'Course' });
+    expect(within(course).getAllByRole('option').map((option) => option.textContent)).toEqual(['Memory', 'Sleep']);
+    await waitFor(() => expect(course).toHaveValue('course-1'));
+    expect(screen.getByRole('textbox', { name: /Topic/ })).toHaveValue('');
+    expect(screen.queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Short.*About 6 sentences, 2 errors/ })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /Standard.*About 10 sentences, 3 errors/ })).toBeChecked();
+  });
+
+  it('starts a drill on the course chosen, with its topic when one is typed, and remembers the choice', async () => {
+    api.startReviewDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
+    const { user } = show();
+    await choosePassage(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Course' }), 'course-2');
+    await user.type(screen.getByRole('textbox', { name: /Topic/ }), 'sleep and memory');
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
+
+    expect(await screen.findByRole('heading', { name: 'Why spacing helps' })).toBeVisible();
+    expect(api.startReviewDrill).toHaveBeenCalledWith(
+      { kind: 'passage', programId: 'course-2', topic: 'sleep and memory' },
+      'practice',
+      10,
+      3,
+    );
+    expect(JSON.parse(localStorage.getItem('lattice.drills.choices') ?? '{}')).toMatchObject({
+      material: 'passage',
+      programId: 'course-2',
+      topic: 'sleep and memory',
+    });
+  });
+
+  it('sends no topic when none is typed, and the language only when code is chosen', async () => {
+    api.startReviewDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
+    const { user } = show();
+    await choosePassage(user);
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
+    await screen.findByRole('heading', { name: 'Why spacing helps' });
+    expect(api.startReviewDrill).toHaveBeenCalledWith({ kind: 'passage', programId: 'course-1', topic: null }, 'practice', 10, 3);
+  });
+
+  it('offers the course last used, and the first course when it is gone', async () => {
+    localStorage.setItem('lattice.drills.choices', JSON.stringify({ material: 'passage', programId: 'course-2' }));
+    const first = show();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Course' })).toHaveValue('course-2'));
+    first.unmount();
+    localStorage.setItem('lattice.drills.choices', JSON.stringify({ material: 'passage', programId: 'deleted' }));
+    show();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Course' })).toHaveValue('course-1'));
+  });
+
+  it('cannot start while no course has a source, and says so', async () => {
+    api.reviewDrillCourses.mockResolvedValue([]);
+    const { user } = show();
+    await user.click(await screen.findByRole('radio', { name: /A passage from a course/ }));
+    expect(await screen.findByText('None of your courses has a source to take a passage from yet.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
+  });
+
+  it('shows the message and reads the courses again when they cannot be read', async () => {
+    api.reviewDrillCourses.mockRejectedValueOnce(new Error('The library is unavailable.')).mockResolvedValue(COURSES);
+    const { user } = show();
+    await user.click(await screen.findByRole('radio', { name: /A passage from a course/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The library is unavailable.');
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('option', { name: 'Memory' })).toBeInTheDocument();
+  });
+
+  it('waits for the build of the course, not of a language', async () => {
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started({ drill: PASSAGE_DRILL }));
+    const { user } = show();
+    await choosePassage(user);
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
+    expect(await screen.findByText(/keeps one drill ready for each course/)).toBeVisible();
+
+    report(buildJob({ id: 'job-python', subjectId: 'python', status: 'completed', finishedAt: 9 }));
+    report(buildJob({ id: 'job-other', subjectId: 'passage:course-2', status: 'completed', finishedAt: 9 }));
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
+    report(buildJob({ id: 'job-next', subjectId: 'passage:course-1', status: 'completed', finishedAt: 9 }));
+    expect(await screen.findByRole('heading', { name: 'Why spacing helps' })).toBeVisible();
+  });
+
+  describe('reviewing the explanation', () => {
+    beforeEach(() => {
+      api.startReviewDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
+      api.submitCodeReview.mockResolvedValue(submitted({ drill: PASSAGE_DRILL }));
+    });
+
+    async function review(user: User) {
+      await choosePassage(user);
+      await user.click(screen.getByRole('button', { name: 'Start drill' }));
+      await screen.findByRole('heading', { name: 'Why spacing helps' });
+    }
+
+    it('shows the explanation as prose and nothing of the source', async () => {
+      const { user } = show();
+      await review(user);
+      expect(screen.getByRole('group', { name: 'The explanation, sentence by sentence' })).toBeVisible();
+      expect(screen.getByRole('button', { name: /Sentence 2: .*It helped by 40% a week later\./ })).toBeVisible();
+      expect(screen.getByText('Explanation of Spacing and memory · Practice')).toBeVisible();
+      expect(screen.queryByTestId('code-viewer')).not.toBeInTheDocument();
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent(SOURCE_TEXT);
+      expect(screen.getByText('A general comment. Click a sentence in the explanation to put it on sentences.')).toBeVisible();
+    });
+
+    it('puts a comment on the sentences picked, named as sentences, and hands them in by line', async () => {
+      const { user } = show();
+      await review(user);
+      await user.click(screen.getByRole('button', { name: /^Sentence 2:/ }));
+      expect(screen.getByText('Sentence 2')).toBeVisible();
+      fireEvent.click(screen.getByRole('button', { name: /^Sentence 4:/ }), { shiftKey: true });
+      expect(screen.getByText('Sentences 2–4')).toBeVisible();
+      await comment(user, 'The figure is 14%, not 40%.');
+      expect(screen.getByRole('button', { name: /Sentences 2–4/ })).toBeVisible();
+      await user.click(screen.getByRole('button', { name: 'Submit review' }));
+      expect(api.submitCodeReview).toHaveBeenCalledWith(
+        'attempt-1',
+        [{ span: { path: 'explanation.md', start: 2, end: 4 }, text: 'The figure is 14%, not 40%.', severity: null }],
+        null,
+        expect.any(Number),
+      );
+    });
+
+    it('clears the sentences picked', async () => {
+      const { user } = show();
+      await review(user);
+      await user.click(screen.getByRole('button', { name: /^Sentence 1:/ }));
+      await user.click(screen.getByRole('button', { name: 'Clear the selected sentences' }));
+      expect(screen.queryByText('Sentence 1')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Sentence 1:/ })).toHaveAttribute('aria-pressed', 'false');
+    });
+
+    it('writes the fix in a plain editor of the explanation and hands in the rewrite', async () => {
+      const { user } = show();
+      await review(user);
+      await comment(user, 'The figure is wrong.');
+      await user.click(screen.getByRole('button', { name: 'Write a fix (optional)' }));
+      const editor = screen.getByRole('textbox', { name: 'Edit the explanation' });
+      expect(editor).toHaveValue(EXPLANATION);
+      fireEvent.change(editor, { target: { value: EXPLANATION.replace('40%', '14%') } });
+      expect(screen.getByText('Explanation changed')).toBeVisible();
+      await user.click(screen.getByRole('button', { name: 'Back to the explanation' }));
+      expect(screen.getByRole('group', { name: 'The explanation, sentence by sentence' })).toBeVisible();
+      await user.click(screen.getByRole('button', { name: 'Submit review' }));
+      expect(api.submitCodeReview).toHaveBeenCalledWith(
+        'attempt-1',
+        expect.any(Array),
+        [{ path: 'explanation.md', text: EXPLANATION.replace('40%', '14%') }],
+        expect.any(Number),
+      );
+    });
+
+    it('starts the next drill on the same course after the reveal', async () => {
+      api.codeReviewResult.mockResolvedValue(graded({ drill: PASSAGE_DRILL }));
+      api.startReviewDrill.mockResolvedValueOnce(started({ drill: PASSAGE_DRILL })).mockResolvedValueOnce(started({ attemptId: 'attempt-2', drill: PASSAGE_DRILL }));
+      const { user } = show();
+      await review(user);
+      await comment(user, 'The figure is wrong.');
+      await user.click(screen.getByRole('button', { name: 'Submit review' }));
+      await screen.findByText('Grading your review…');
+      report(gradingJob({ status: 'completed', finishedAt: 9 }));
+      await user.click(await screen.findByRole('button', { name: 'Next drill' }));
+      await waitFor(() => expect(api.startReviewDrill).toHaveBeenCalledTimes(2));
+      expect(api.startReviewDrill).toHaveBeenLastCalledWith({ kind: 'passage', programId: 'course-1', topic: null }, 'practice', 10, 3);
+    });
   });
 });

@@ -2,13 +2,14 @@ import { LoaderCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
+import type { ReviewKind } from './drillOptions';
 import type { Building } from './drillState';
 
 /**
  * A drill is being asked for or written. A build takes a minute or two, and the bank keeps one drill ready for each
- * language after the first, so only the first start of a language waits.
+ * language, or each course, after the first, so only the first start of one waits.
  */
-export function DrillBuilding({ building, onStop }: { building: Building | null; onStop: () => void }) {
+export function DrillBuilding({ building, material = 'code', onStop }: { building: Building | null; material?: ReviewKind; onStop: () => void }) {
   if (!building) {
     return (
       <p role="status" className="flex items-center gap-3 text-sm text-text-secondary">
@@ -45,7 +46,7 @@ export function DrillBuilding({ building, onStop }: { building: Building | null;
           <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${share}%` }} />
         </div>
       )}
-      <p className="mt-4 text-xs leading-5 text-text-muted">After the first, the app keeps one drill ready for each language, so later starts are instant.</p>
+      <p className="mt-4 text-xs leading-5 text-text-muted">After the first, the app keeps one drill ready for each {material === 'passage' ? 'course' : 'language'}, so later starts are instant.</p>
       <Button type="button" variant="ghost" className="-ml-3 mt-4" onClick={onStop}>Stop waiting</Button>
     </section>
   );

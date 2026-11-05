@@ -8,13 +8,13 @@ import { DrillBuilding } from './DrillBuilding';
 import { DrillChoose } from './DrillChoose';
 import { DrillFailure } from './DrillFailure';
 import { DrillGrading } from './DrillGrading';
-import { languageLabel } from './drillOptions';
+import { materialLabel } from './drillMaterial';
 import { DrillReview } from './DrillReview';
 import { DrillReveal } from './reveal/DrillReveal';
 import { useCodeReviewDrill } from './useCodeReviewDrill';
 
 /**
- * A code review drill, from the choice of one to the reveal of what was planted in it. It opens at
+ * A review drill, from the choice of one to the reveal of what was planted in it. It opens at
  * `/studio?drills=open`, and the attempt it is on is `&attempt=<id>`, so an attempt that was left is found again.
  */
 export function CodeReviewDrillScreen({ onBack }: { onBack: () => void }) {
@@ -35,21 +35,21 @@ export function CodeReviewDrillScreen({ onBack }: { onBack: () => void }) {
     );
   }
 
-  const meta = session ? `${languageLabel(session.drill.language)} · ${session.mode === 'interview' ? 'Interview' : 'Practice'}` : undefined;
+  const meta = session ? `${materialLabel(session.drill)} · ${session.mode === 'interview' ? 'Interview' : 'Practice'}` : undefined;
   let content;
   if (stage === 'choose') {
     content = <DrillChoose options={drill.options} onChange={drill.setOptions} onStart={() => drill.start()} />;
   } else if (stage === 'starting') {
     content = (
       <>
-        <PageHeader title="Code review drills" />
+        <PageHeader title="Review drills" />
         {failure
           ? (
             <DrillFailure failure={failure} onRetry={drill.retry}>
               <Button type="button" variant="ghost" onClick={drill.restart}>Back to the choices</Button>
             </DrillFailure>
           )
-          : <DrillBuilding building={drill.building} onStop={drill.stopWaiting} />}
+          : <DrillBuilding building={drill.building} material={drill.options.material} onStop={drill.stopWaiting} />}
       </>
     );
   } else if (stage === 'loading' || !result) {
