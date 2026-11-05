@@ -3,3 +3,4 @@
 //! lattice-core's `domain::learning::drills`.
 
 pub mod grader;
+pub mod grading;
