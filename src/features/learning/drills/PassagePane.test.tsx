@@ -79,6 +79,17 @@ describe('PassagePane', () => {
     expect(screen.getByRole('group', { name: 'The explanation, sentence by sentence' })).toBeInTheDocument();
   });
 
+  it('runs the sentences on inside the paragraph, and the number of one takes no room', () => {
+    const { container } = render(<Held initial={{ startLine: 3, endLine: 3 }} />);
+    for (const button of screen.getAllByRole('button')) {
+      expect(button.classList.contains('inline')).toBe(true);
+      expect(button.className).toContain('box-decoration-break:clone');
+    }
+    for (const number of container.querySelectorAll('sup')) {
+      expect(number.classList.contains('absolute')).toBe(true);
+    }
+  });
+
   it('reports the line of the sentence clicked, and clears it when it is clicked again', async () => {
     const onSelect = vi.fn();
     render(<Held onSelect={onSelect} />);
