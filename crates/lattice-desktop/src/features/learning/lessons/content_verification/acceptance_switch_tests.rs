@@ -428,6 +428,52 @@ async fn a_pass_reads_only_statements_at_reading_nodes_and_a_claim_at_an_end_is_
 }
 
 #[tokio::test]
+async fn a_claim_that_ended_on_a_sentence_now_saying_something_else_with_no_repair_is_read_again(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let ended = claim(
+        &mut ledger,
+        "ended",
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        REASONED,
+    )
+    .await?;
+    walk(&mut ledger, &ended, Class::Reasoning, &CONSISTENT).await?;
+
+    // No repair awaited it, and where its sentence stood the section now states
+    // something else.
+    let pass = identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson_of(HEADER),
+        &[(HEADER, HEADER)],
+        &[],
+    )
+    .await?;
+
+    let successor = pass.statements[0].id.clone();
+    assert_ne!(successor, ended, "its end was reached on another sentence");
+    assert!(matches!(
+        ledger.entry(&ended).unwrap().state(),
+        ClaimState::Edited {
+            successor: Some(next),
+            by: Actor::Machine,
+            ..
+        } if *next == successor
+    ));
+    assert_eq!(
+        ledger.entry(&successor).unwrap().classified(),
+        Some(REASONED)
+    );
+    assert_eq!(node_of(&ledger, &successor), Some("r.final"));
+    let due: Vec<ClaimId> = ledger.due(&policy).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(due, [successor]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_claim_re_extracted_in_other_words_keeps_its_class_and_the_sort_is_not_asked_about_it(
 ) -> Result<()> {
     let mut ledger = open().await?;
