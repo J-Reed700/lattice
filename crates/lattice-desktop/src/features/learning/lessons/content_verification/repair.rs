@@ -395,7 +395,9 @@ async fn apply_or_replace_section(
             content: edit_response.to_owned(),
         },
     ];
-    let _model_call = crate::features::learning::lesson_progress::model_call();
+    let _model_call = crate::features::learning::lesson_progress::model_call(
+        crate::features::learning::lesson_progress::Term::Rewrite,
+    );
     crate::features::learning::lessons::structured_call::complete_checked_request(
         llm,
         request,
@@ -444,15 +446,17 @@ pub(in crate::features::learning) async fn candidate(
     // What this repair left as it was: the teaching review after it leaves
     // it too (claim sources design §10.3), as the synced ledger has it now.
     let protected = Protected::of_ledger(ledger, &sent);
-    crate::features::learning::teaching::review_lesson(
-        llm,
-        crate::features::learning::teaching::LESSON_REPAIR_SYSTEM,
-        prompt,
-        schema,
-        candidate.to_string(),
-        output_tokens,
-        references,
-        &protected,
+    crate::features::learning::lesson_progress::outside_checks(
+        crate::features::learning::teaching::review_lesson(
+            llm,
+            crate::features::learning::teaching::LESSON_REPAIR_SYSTEM,
+            prompt,
+            schema,
+            candidate.to_string(),
+            output_tokens,
+            references,
+            &protected,
+        ),
     )
     .await
 }
@@ -649,7 +653,9 @@ async fn repair_group(
     (targets, protected): (&[Protected], &[Protected]),
 ) -> Result<(Value, Vec<PutBack>)> {
     let raw = {
-        let _model_call = crate::features::learning::lesson_progress::model_call();
+        let _model_call = crate::features::learning::lesson_progress::model_call(
+            crate::features::learning::lesson_progress::Term::Rewrite,
+        );
         crate::features::learning::generation::complete_json(
             llm,
             system,

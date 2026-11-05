@@ -1,6 +1,8 @@
 //! Progress for the current durable lesson job, scoped to its future. Keeping
 //! this context task-local lets nested review calls report without affecting
-//! concurrent chat, outline generation, or other jobs.
+//! concurrent chat, outline generation, or other jobs. The calls it counts are
+//! those made inside [`checks`], the work of the call plan's readers and
+//! rewrites; every other request shows the model working and counts nothing.
 use super::call_plan::{CallPlan, Planned};
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
@@ -33,10 +35,47 @@ struct State {
 #[derive(Clone, Default)]
 struct Progress(Arc<Mutex<State>>);
 
-tokio::task_local! { static CURRENT: Progress; }
+tokio::task_local! {
+    static CURRENT: Progress;
+    /// Whether the work running is the plan's checks.
+    static CHECKS: bool;
+}
 
 pub(in crate::features::learning) fn active() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
+}
+
+/// Runs `future` as the plan's checks: the calls it makes are the calls the
+/// panel counts (acceptance design §2.4).
+pub(in crate::features::learning) async fn checks<F: std::future::Future>(future: F) -> F::Output {
+    CHECKS.scope(true, future).await
+}
+
+/// Runs `future`, a stage inside a check step that checks none of the plan's
+/// statements: its calls count nothing.
+pub(in crate::features::learning) async fn outside_checks<F: std::future::Future>(
+    future: F,
+) -> F::Output {
+    CHECKS.scope(false, future).await
+}
+
+fn in_checks() -> bool {
+    CHECKS.try_with(|inside| *inside).unwrap_or(false)
+}
+
+/// The term of the call plan a counted call is drawn from.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::features::learning) enum Term {
+    /// The sort: among the calls made before the plan.
+    Sort,
+    /// A statement's reading: its share, or its statement's reserve when it is
+    /// a successor.
+    Reading,
+    /// A rewrite or narrowing of statements' sentences, or a section asked for
+    /// whole in its place: their shares.
+    Rewrite,
+    /// A section's flow repair: one of the flow repairs held.
+    FlowRepair,
 }
 
 /// The slot-affinity key for this job's model calls: its course, so calls
@@ -97,25 +136,25 @@ impl Drop for ModelCall {
     }
 }
 
-pub(in crate::features::learning) fn model_call() -> ModelCall {
-    model_calls(1)
+pub(in crate::features::learning) fn model_call(term: Term) -> ModelCall {
+    model_calls(1, term)
 }
 
-/// `count` calls are about to be made: a knowledge check asks its samples one
-/// after another.
-pub(in crate::features::learning) fn model_calls(count: u32) -> ModelCall {
-    let progress = CURRENT.try_with(Clone::clone).ok();
-    if let Some(progress) = &progress {
+/// `count` calls drawn from `term` are about to be made: a knowledge check
+/// asks its samples one after another. Inside [`checks`] they are counted;
+/// elsewhere they are a [`request`].
+pub(in crate::features::learning) fn model_calls(count: u32, term: Term) -> ModelCall {
+    let call = request();
+    if let (true, Some(progress)) = (in_checks(), &call.0) {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.active_model_calls == 0 {
-            state.activity.response_characters = 0;
-            state.activity.model_attempt = 1;
-        }
-        state.active_model_calls += 1;
-        state.activity.model_running = true;
-        state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
         let before = state.activity.model_calls;
         state.activity.model_calls = before.saturating_add(count);
+        tracing::debug!(
+            ?term,
+            calls = count,
+            made = state.activity.model_calls,
+            "claim.plan: a call of the checks"
+        );
         if let Some(ceiling) = state.activity.model_calls_ceiling {
             if before <= ceiling && state.activity.model_calls > ceiling {
                 tracing::error!(
@@ -127,14 +166,25 @@ pub(in crate::features::learning) fn model_calls(count: u32) -> ModelCall {
             }
         }
     }
-    ModelCall(progress)
+    call
 }
 
-/// A request the plan does not count is running (a lesson's draft, the
-/// extraction of its claims, the coverage audit, the teaching review): the
-/// panel shows the model working and the calls made stay as they are.
+/// A model request is running: the panel shows the model working and the
+/// calls made stay as they are. A call of the checks is counted where they
+/// make it.
 pub(in crate::features::learning) fn request() -> ModelCall {
-    model_calls(0)
+    let progress = CURRENT.try_with(Clone::clone).ok();
+    if let Some(progress) = &progress {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.active_model_calls == 0 {
+            state.activity.response_characters = 0;
+            state.activity.model_attempt = 1;
+        }
+        state.active_model_calls += 1;
+        state.activity.model_running = true;
+        state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
+    }
+    ModelCall(progress)
 }
 
 pub(in crate::features::learning) fn model_retry(attempt: usize) {
@@ -300,7 +350,7 @@ pub(in crate::features::learning) fn calls_planned(
                 common: count(Class::Common),
             });
             state.plan = Some(CallPlan::new(policy, statements, sections));
-            publish_ceiling(&mut state);
+            publish_ceiling(&mut state, Change::default());
         }
     });
 }
@@ -313,7 +363,7 @@ pub(in crate::features::learning) fn cuts_known(sections: usize) {
         if let Some(plan) = state.plan.as_mut() {
             plan.cuts_known(u32::try_from(sections).unwrap_or(u32::MAX));
         }
-        publish_ceiling(&mut state);
+        publish_ceiling(&mut state, Change::default());
     });
 }
 
@@ -324,7 +374,7 @@ pub(in crate::features::learning) fn flow_repaired() {
         if let Some(plan) = state.plan.as_mut() {
             plan.flow_repaired();
         }
-        publish_ceiling(&mut state);
+        publish_ceiling(&mut state, Change::default());
     });
 }
 
@@ -336,18 +386,49 @@ pub(in crate::features::learning) fn statements_moved(
 ) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(plan) = state.plan.as_mut() {
-            plan.moved(policy, statements);
-        }
-        publish_ceiling(&mut state);
+        let beyond = state
+            .plan
+            .as_mut()
+            .map_or(0, |plan| plan.moved(policy, statements));
+        publish_ceiling(&mut state, Change { beyond });
     });
 }
 
-fn publish_ceiling(state: &mut State) {
+/// What an event of the plan changed in it beside the calls made.
+#[derive(Clone, Copy, Default)]
+struct Change {
+    /// The calls statements can cost beyond their share and their reserve.
+    beyond: u32,
+}
+
+fn publish_ceiling(state: &mut State, change: Change) {
     let made = state.activity.model_calls;
     let ceiling = state.plan.as_ref().map(|plan| plan.ceiling(made));
-    if let (Some(before), Some(now)) = (state.activity.model_calls_ceiling, ceiling) {
-        state.activity.model_calls_ceiling_rises += u32::from(now > before);
+    if let (Some(before), Some(now), Some(plan)) = (
+        state.activity.model_calls_ceiling,
+        ceiling,
+        state.plan.as_ref(),
+    ) {
+        if now > before {
+            state.activity.model_calls_ceiling_rises += 1;
+            let unheld = (now - before).saturating_sub(change.beyond);
+            let cause = if unheld > 0 {
+                "the checks made calls no slot held"
+            } else {
+                "a statement can cost more than its share and its reserve"
+            };
+            tracing::error!(
+                made,
+                most = plan.most(),
+                reserve = plan.reserve(),
+                flow_repairs = plan.flow_repairs(),
+                previous = before,
+                ceiling = now,
+                beyond = change.beyond,
+                unheld,
+                "claim.plan: the ceiling rose; {cause}"
+            );
+        }
     }
     state.activity.model_calls_ceiling = ceiling;
     #[cfg(test)]
@@ -529,8 +610,8 @@ mod tests {
                 new_pass();
                 phase(Phase::Evidence, "Checking claims");
                 begin_checks(3);
-                let first = model_call();
-                let second = model_call();
+                let first = model_call(Term::Reading);
+                let second = model_call(Term::Reading);
                 received("Answer");
                 drop(first);
                 checked(false);
@@ -677,12 +758,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_the_calls_made_inside_the_checks_are_counted() {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                drop(model_call(Term::Reading));
+                drop(request());
+                assert_eq!(progress.snapshot().2.model_calls, 0);
+                checks(async {
+                    drop(model_calls(3, Term::Reading));
+                    // The teaching review after a repair's patches is no
+                    // check of the plan's statements.
+                    outside_checks(async { drop(model_call(Term::Rewrite)) }).await;
+                    drop(request());
+                })
+                .await;
+                assert_eq!(progress.snapshot().2.model_calls, 3);
+                assert!(!progress.snapshot().2.model_running);
+            })
+            .await;
+    }
+
+    #[tokio::test]
     async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorted() {
         let progress = Progress::default();
         CURRENT
             .scope(progress.clone(), async {
                 lesson("A lesson");
-                drop(model_call());
+                checks(async { drop(model_call(Term::Sort)) }).await;
                 let activity = progress.snapshot().2;
                 assert_eq!(
                     (activity.model_calls, activity.model_calls_ceiling),
@@ -723,7 +826,7 @@ mod tests {
                 assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(34));
                 cuts_known(0);
                 assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(33));
-                drop(model_calls(3));
+                checks(async { drop(model_calls(3, Term::Reading)) }).await;
                 assert_eq!(progress.snapshot().2.model_calls, 4);
 
                 lesson("Another lesson");
@@ -753,7 +856,7 @@ mod tests {
             },
             ..Default::default()
         };
-        publish_ceiling(&mut state);
+        publish_ceiling(&mut state, Change::default());
         let first = state.activity.model_calls_ceiling.unwrap();
         assert_eq!(first, 1 + 16 + 1);
         assert_eq!(state.activity.model_calls_ceiling_rises, 0);
@@ -762,14 +865,14 @@ mod tests {
         if let Some(plan) = state.plan.as_mut() {
             plan.moved(&policy, &[sourced(PlannedAt::Ended)]);
         }
-        publish_ceiling(&mut state);
+        publish_ceiling(&mut state, Change::default());
         assert_eq!(state.activity.model_calls_ceiling, Some(2));
         assert!(state.activity.model_calls_ceiling.unwrap() <= first);
         assert_eq!(state.activity.model_calls_ceiling_rises, 0);
 
         // A ceiling shown lower and then published higher is a rise.
         state.activity.model_calls_ceiling = Some(1);
-        publish_ceiling(&mut state);
+        publish_ceiling(&mut state, Change::default());
         assert_eq!(state.activity.model_calls_ceiling_rises, 1);
     }
 
@@ -780,7 +883,7 @@ mod tests {
         CURRENT
             .scope(progress.clone(), async {
                 lesson("A lesson");
-                drop(model_call());
+                checks(async { drop(model_call(Term::Sort)) }).await;
                 let policy = StandardPolicy::new();
                 let statement = |at| Planned {
                     class: Class::Sourced,
@@ -796,7 +899,7 @@ mod tests {
                 assert_eq!(ceiling(), Some(3));
 
                 // The first repair makes its call and marks its section mended.
-                drop(model_call());
+                checks(async { drop(model_call(Term::FlowRepair)) }).await;
                 flow_repaired();
                 assert_eq!(ceiling(), Some(3));
                 // The pass after the repairs does not raise it.

@@ -431,7 +431,9 @@ async fn mend_section(
     };
     let system = format!("{FLOW} {}", text_edits::INSTRUCTIONS);
     let raw = {
-        let _model_call = crate::features::learning::lesson_progress::model_call();
+        let _model_call = crate::features::learning::lesson_progress::model_call(
+            crate::features::learning::lesson_progress::Term::FlowRepair,
+        );
         crate::features::learning::generation::complete_json(
             llm,
             &system,
@@ -594,15 +596,17 @@ pub(super) async fn settle(
                 Some(Protected { unit, ..item })
             })
             .collect();
-        let reviewed = crate::features::learning::teaching::review_lesson(
-            llm,
-            crate::features::learning::teaching::LESSON_REPAIR_SYSTEM,
-            prompt,
-            schema,
-            going.out_of(&edited).to_string(),
-            output_tokens,
-            references,
-            &protected,
+        let reviewed = crate::features::learning::lesson_progress::outside_checks(
+            crate::features::learning::teaching::review_lesson(
+                llm,
+                crate::features::learning::teaching::LESSON_REPAIR_SYSTEM,
+                prompt,
+                schema,
+                going.out_of(&edited).to_string(),
+                output_tokens,
+                references,
+                &protected,
+            ),
         )
         .await?;
         let reviewed: Value = parse_json(&reviewed)?;

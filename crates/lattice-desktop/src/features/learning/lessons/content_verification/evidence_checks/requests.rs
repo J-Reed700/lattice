@@ -262,7 +262,9 @@ pub(in crate::features::learning::lessons::content_verification) async fn group(
             claims.len(),
             pending.first().map_or(0, |item| item.unit) + 1
         ));
-        let _model_call = crate::features::learning::lesson_progress::model_call();
+        let _model_call = crate::features::learning::lesson_progress::model_call(
+            crate::features::learning::lesson_progress::Term::Reading,
+        );
         let judgments = match judge_batch_for_publication(llm, &targets).await {
             Ok(answered) => {
                 answers.add(AnswerSize::of(answered.output_tokens, targets.len()));

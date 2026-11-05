@@ -292,7 +292,9 @@ pub(super) async fn consistency_of(
         .map(|passage| passage.text.clone())
         .collect();
     let judged = {
-        let _model_call = crate::features::learning::lesson_progress::model_call();
+        let _model_call = crate::features::learning::lesson_progress::model_call(
+            crate::features::learning::lesson_progress::Term::Reading,
+        );
         consistency_checker(llm)
             .check_consistency(statement, &texts)
             .await
@@ -348,7 +350,10 @@ pub(super) async fn knowledge_of(
         CheckPolicy::Knowledge,
     );
     let judged = {
-        let _model_calls = crate::features::learning::lesson_progress::model_calls(SAMPLES);
+        let _model_calls = crate::features::learning::lesson_progress::model_calls(
+            SAMPLES,
+            crate::features::learning::lesson_progress::Term::Reading,
+        );
         checker.check_knowledge(statement).await
     };
     match judged {

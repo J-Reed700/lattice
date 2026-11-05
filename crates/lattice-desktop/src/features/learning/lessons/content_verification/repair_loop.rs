@@ -212,7 +212,7 @@ impl Review for PreparationReview<'_, '_> {
             crate::features::learning::lesson_progress::Phase::Repair,
             "Resuming the saved evidence-based repair",
         );
-        self.raw = repair::candidate(
+        self.raw = crate::features::learning::lesson_progress::checks(repair::candidate(
             self.llm,
             policy,
             self.prompt,
@@ -221,7 +221,7 @@ impl Review for PreparationReview<'_, '_> {
             self.output_tokens,
             active,
             &mut self.ledger,
-        )
+        ))
         .await?;
         Ok(true)
     }
@@ -269,14 +269,14 @@ impl Review for PreparationReview<'_, '_> {
             .take()
             .ok_or_else(|| out_of_order("extraction"))?;
         let active = self.expanded.as_ref().unwrap_or(self.references);
-        let pass = passes::identify(
+        let pass = crate::features::learning::lesson_progress::checks(passes::identify(
             self.llm,
             policy,
             &mut self.ledger,
             (&self.candidate, active),
             extraction,
             &self.checks,
-        )
+        ))
         .await?;
         self.pass = Some(pass);
         Ok(())
@@ -290,7 +290,7 @@ impl Review for PreparationReview<'_, '_> {
         let active = self.expanded.as_ref().unwrap_or(self.references);
         let pass = self.pass.as_ref().ok_or_else(|| out_of_order("pass"))?;
         let due = self.ledger.due(policy);
-        let readings = passes::read_steps(
+        let readings = crate::features::learning::lesson_progress::checks(passes::read_steps(
             self.llm,
             policy,
             &self.readers,
@@ -298,7 +298,7 @@ impl Review for PreparationReview<'_, '_> {
             &self.checks,
             (&self.candidate, active),
             (pass, &due),
-        )
+        ))
         .await?;
         let stopped =
             passes::record_readings(policy, &mut self.ledger, &mut self.checks, readings).await?;
@@ -385,7 +385,7 @@ impl Review for PreparationReview<'_, '_> {
             ));
         }
         let read = async {
-            let readings = passes::read_steps(
+            let readings = crate::features::learning::lesson_progress::checks(passes::read_steps(
                 self.llm,
                 policy,
                 &self.readers,
@@ -393,8 +393,10 @@ impl Review for PreparationReview<'_, '_> {
                 &self.checks,
                 (&self.candidate, active),
                 (pass, &due),
-            )
+            ))
             .await?;
+            // A hint's reading answers the user, whose claim no graph walks:
+            // it is no check of the plan's statements.
             let hinted = if saved {
                 passes::read_hinted(
                     self.llm,
@@ -551,7 +553,7 @@ impl Review for PreparationReview<'_, '_> {
             serde_json::to_string(&pending)?,
         )
         .await?;
-        self.raw = repair::candidate(
+        self.raw = crate::features::learning::lesson_progress::checks(repair::candidate(
             self.llm,
             policy,
             self.prompt,
@@ -560,7 +562,7 @@ impl Review for PreparationReview<'_, '_> {
             self.output_tokens,
             active,
             &mut self.ledger,
-        )
+        ))
         .await?;
         Ok(())
     }
@@ -578,13 +580,13 @@ impl Review for PreparationReview<'_, '_> {
 
     async fn settle(&mut self) -> Result<Settled> {
         let active = self.expanded.as_ref().unwrap_or(self.references);
-        let settled = sections::settle(
+        let settled = crate::features::learning::lesson_progress::checks(sections::settle(
             self.llm,
             (self.prompt, &self.schema, self.output_tokens),
             active,
             &self.raw,
             &mut self.ledger,
-        )
+        ))
         .await?;
         match settled {
             sections::Settled::Again(next) => {

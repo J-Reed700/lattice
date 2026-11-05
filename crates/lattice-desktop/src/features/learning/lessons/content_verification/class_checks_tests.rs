@@ -1554,15 +1554,17 @@ async fn the_ceiling_after_the_sort_counts_a_statement_the_model_calls_internal_
         .collect();
     let nothing = claim_ledger::Rewrites::default();
 
-    let (sorted, trace) = crate::features::learning::lesson_progress::traced(class_checks::sort(
-        &model,
-        &policy,
-        &candidate,
-        &claims,
-        &[None, None],
-        &nothing,
-        &Citations::default(),
-    ))
+    let (sorted, trace) = crate::features::learning::lesson_progress::traced(
+        crate::features::learning::lesson_progress::checks(class_checks::sort(
+            &model,
+            &policy,
+            &candidate,
+            &claims,
+            &[None, None],
+            &nothing,
+            &Citations::default(),
+        )),
+    )
     .await;
 
     assert_eq!(

@@ -140,7 +140,9 @@ pub(in crate::features::learning) async fn judge_in_order(
             return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
         let refusal = {
-            let _model_call = crate::features::learning::lesson_progress::model_call();
+            let _model_call = crate::features::learning::lesson_progress::model_call(
+                crate::features::learning::lesson_progress::Term::Reading,
+            );
             match checker.check_passages_or_size_refusal(claim, &texts).await {
                 Ok(answered) => {
                     return Judged {

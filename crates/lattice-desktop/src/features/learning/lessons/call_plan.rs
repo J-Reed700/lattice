@@ -164,11 +164,29 @@ impl CallPlan {
     /// The most calls the checks can make in all: the `made` so far and the
     /// most still to come.
     pub(crate) fn ceiling(&self, made: u32) -> u32 {
+        made.saturating_add(self.most())
+            .saturating_add(self.reserve())
+            .saturating_add(self.flow_repairs)
+    }
+
+    /// What the statements can still cost along their paths, all told.
+    pub(crate) fn most(&self) -> u32 {
         self.slots
             .iter()
-            .fold(made.saturating_add(self.flow_repairs), |total, slot| {
-                total.saturating_add(slot.most).saturating_add(slot.reserve)
-            })
+            .fold(0, |total: u32, slot| total.saturating_add(slot.most))
+    }
+
+    /// What is held in reserve for the statements' readings after a
+    /// neighbour's rewrite or narrowing.
+    pub(crate) fn reserve(&self) -> u32 {
+        self.slots
+            .iter()
+            .fold(0, |total: u32, slot| total.saturating_add(slot.reserve))
+    }
+
+    /// The flow repairs still held.
+    pub(crate) fn flow_repairs(&self) -> u32 {
+        self.flow_repairs
     }
 
     /// A section's flow repair is done: the call held for it is made, or was
@@ -191,8 +209,9 @@ impl CallPlan {
     /// A statement's number falls to what its place costs. Where the place
     /// costs more, a successor of the statement reads again and the increase
     /// comes out of its reserve; what the reserve cannot cover is a rise,
-    /// logged and shown. A reserve released stays released.
-    pub(crate) fn moved(&mut self, policy: &dyn AcceptancePolicy, statements: &[Planned]) {
+    /// logged and shown, and the number this gives. A reserve released stays
+    /// released.
+    pub(crate) fn moved(&mut self, policy: &dyn AcceptancePolicy, statements: &[Planned]) -> u32 {
         let held = self.slots.len();
         if statements.len() > held {
             tracing::warn!(
@@ -201,6 +220,7 @@ impl CallPlan {
                 "claim.plan: statements the plan does not hold moved; they are ignored"
             );
         }
+        let mut beyond: u32 = 0;
         for (slot, statement) in self.slots.iter_mut().zip(statements) {
             let at = settled(policy, statement.at);
             slot.class = class_at(slot.class, at);
@@ -220,10 +240,12 @@ impl CallPlan {
                     now,
                     "claim.plan: a statement can cost more than the plan held for it and its reserve; the ceiling rises"
                 );
+                beyond = beyond.saturating_add(now - slot.most);
                 slot.most = now;
             }
         }
         self.release();
+        beyond
     }
 
     /// Releases the reserve of each statement that has ended when every other
