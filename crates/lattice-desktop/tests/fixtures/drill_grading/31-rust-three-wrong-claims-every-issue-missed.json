@@ -1,7 +1,7 @@
 {
-  "name": "31-rust-a-review-with-no-findings",
-  "kind": "mixed",
-  "why": "The reviewer made no findings, so nothing names, points at or touches any issue: all three are missed, and there are no findings to label. The grader answers a review with no findings without asking the model, so this case counts three issues as agreement and tests nothing about the judge.",
+  "name": "31-rust-three-wrong-claims-every-issue-missed",
+  "kind": "false_positive",
+  "why": "Three confident claims, none of them true, so every finding is a false positive and every issue stays missed. split_once splits at the first '=' only, so a value that contains '=' keeps the rest of it. The &str that required returns is a copy of a reference into the text, which outlives every use in load, so nothing dangles. Both sit away from every issue's lines. The third is on the line of the read error turned into an empty string, so the hint pairs it with that issue, but it is about something else and is false: unwrap_or_default builds its default only when the read fails, and String::default() allocates nothing. The rubric says 'a finding on an issue's lines that is about a different problem is not about that issue' and calls a finding whose problem 'is not there' a false positive, whatever severity the reviewer gave it (the dangling reference was rated critical). Least certain label: the third finding, which names the very call the issue is about, so a judge may be tempted to count it as pointing at the issue.",
   "drill": {
     "id": "settings-loader",
     "language": "rust",
@@ -90,13 +90,45 @@
       "text": "use std::collections::HashMap;\nuse std::fs;\nuse std::path::Path;\n\n#[derive(Debug, PartialEq)]\npub struct Settings {\n    pub port: u16,\n    pub workers: usize,\n}\n\n#[derive(Debug)]\npub enum ConfigError {\n    Read(std::io::Error),\n    Missing(&'static str),\n    Invalid(&'static str),\n}\n\nfn pairs(text: &str) -> HashMap<&str, &str> {\n    text.lines()\n        .map(str::trim)\n        .filter(|line| !line.is_empty() && !line.starts_with('#'))\n        .filter_map(|line| line.split_once('='))\n        .map(|(key, value)| (key.trim(), value.trim()))\n        .collect()\n}\n\nfn required<'a>(\n    values: &HashMap<&'a str, &'a str>,\n    key: &'static str,\n) -> Result<&'a str, ConfigError> {\n    values.get(key).copied().ok_or(ConfigError::Missing(key))\n}\n\npub fn load(path: &Path) -> Result<Settings, ConfigError> {\n    let text = fs::read_to_string(path).map_err(ConfigError::Read)?;\n    let values = pairs(&text);\n    let port = required(&values, \"port\")?\n        .parse::<u16>()\n        .map_err(|_| ConfigError::Invalid(\"port\"))?;\n    let workers = required(&values, \"workers\")?\n        .parse::<usize>()\n        .map_err(|_| ConfigError::Invalid(\"workers\"))?;\n    if workers == 0 {\n        return Err(ConfigError::Invalid(\"workers\"));\n    }\n    Ok(Settings { port, workers })\n}\n"
     }
   ],
-  "review": [],
+  "review": [
+    {
+      "span": {
+        "path": "settings.rs",
+        "start": 22,
+        "end": 22
+      },
+      "text": "split_once splits at every '=', so a value that itself contains one, such as a URL with query parameters, loses everything after the second '='.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "settings.rs",
+        "start": 27,
+        "end": 32
+      },
+      "text": "required hands back a &str that borrows from the map, and the map is a local of load, so the reference dangles as soon as the map is gone.",
+      "severity": "critical"
+    },
+    {
+      "span": {
+        "path": "settings.rs",
+        "start": 35,
+        "end": 35
+      },
+      "text": "unwrap_or_default builds the default String even when the read succeeds, so every call to load allocates and throws away a String. Use unwrap_or_else.",
+      "severity": "minor"
+    }
+  ],
   "labels": {
     "issues": [
       "missed",
       "missed",
       "missed"
     ],
-    "findings": []
+    "findings": [
+      "false_positive",
+      "false_positive",
+      "false_positive"
+    ]
   }
 }
