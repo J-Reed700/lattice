@@ -428,7 +428,7 @@ async fn a_pass_reads_only_statements_at_reading_nodes_and_a_claim_at_an_end_is_
 }
 
 #[tokio::test]
-async fn a_claim_that_ended_on_a_sentence_now_saying_something_else_with_no_repair_is_read_again(
+async fn a_sentence_written_over_outside_the_pipeline_is_a_new_statement_with_its_classes_whole_check(
 ) -> Result<()> {
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
@@ -441,22 +441,87 @@ async fn a_claim_that_ended_on_a_sentence_now_saying_something_else_with_no_repa
     )
     .await?;
     walk(&mut ledger, &ended, Class::Reasoning, &CONSISTENT).await?;
+    // Sorted, the statement written in its place is Sourced.
+    let model = Classes::new(&[]).classed(&[(HEADER, "sourced")]);
 
-    // No repair awaited it, and where its sentence stood the section now states
-    // something else.
+    // No repair the job checkpointed wrote it: where the sentence stood, the
+    // section now states something else.
+    let lesson = lesson_of(HEADER);
+    let pass = identified(&mut ledger, &model, &lesson, &[(HEADER, HEADER)], &[]).await?;
+
+    // The claim ended with its sentence; what is written there is new, sorted
+    // and read from its class's entry.
+    let written = pass.statements[0].id.clone();
+    assert_ne!(written, ended, "its end was reached on another sentence");
+    assert!(matches!(
+        ledger.entry(&ended).unwrap().state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    assert_eq!(model.calls("sort"), 1);
+    assert_eq!(
+        ledger.entry(&written).unwrap().classified(),
+        Some((Class::Sourced, ClassifiedBy::Model))
+    );
+    assert_eq!(node_of(&ledger, &written), Some("s.read"));
+
+    // Its citation does not support it: it goes to research, with its rewrite
+    // still ahead, not to a cut.
+    let reader = Says::new(&[Outcome::Unproven]);
+    read_pass(&mut ledger, &reader, &pass, &lesson).await?;
+    assert_eq!(reader.asked(), [HEADER]);
+    assert_eq!(node_of(&ledger, &written), Some("s.research"));
+    assert!(matches!(
+        events_of(ledger.entry(&written).unwrap()).last(),
+        Some(ClaimEvent::Stepped {
+            rewrite_ahead: true,
+            ..
+        })
+    ));
+    assert_eq!(ledger.at(&policy, StepKind::Research), [written]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_a_checkpointed_repair_wrote_after_its_record_was_lost_is_read_after_the_rewrite_and_not_rewritten_again(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let target = claim(
+        &mut ledger,
+        "target",
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        SOURCED,
+    )
+    .await?;
+    walk(&mut ledger, &target, Class::Sourced, &REWRITING).await?;
+    ledger
+        .begin_repairs(&policy, &lesson_of(SENTENCE), std::slice::from_ref(&target))
+        .await?;
+    // The repair wrote the sentence anew and the claim's record was lost; the
+    // lesson the repair started from is still checkpointed.
+    ledger.pending.repairs.clear();
+    assert!(ledger.pending.previous.is_some());
+
+    let lesson = lesson_of(HEADER);
     let pass = identified(
         &mut ledger,
         &Model::new(),
-        &lesson_of(HEADER),
+        &lesson,
         &[(HEADER, HEADER)],
         &[],
     )
     .await?;
 
+    // What the repair wrote is its target's successor, read from the node
+    // after the rewrite, with the class the target held.
     let successor = pass.statements[0].id.clone();
-    assert_ne!(successor, ended, "its end was reached on another sentence");
+    assert_ne!(successor, target);
     assert!(matches!(
-        ledger.entry(&ended).unwrap().state(),
+        ledger.entry(&target).unwrap().state(),
         ClaimState::Edited {
             successor: Some(next),
             by: Actor::Machine,
@@ -465,11 +530,21 @@ async fn a_claim_that_ended_on_a_sentence_now_saying_something_else_with_no_repa
     ));
     assert_eq!(
         ledger.entry(&successor).unwrap().classified(),
-        Some(REASONED)
+        Some(SOURCED)
     );
-    assert_eq!(node_of(&ledger, &successor), Some("r.final"));
-    let due: Vec<ClaimId> = ledger.due(&policy).into_iter().map(|(id, _)| id).collect();
-    assert_eq!(due, [successor]);
+    assert_eq!(node_of(&ledger, &successor), Some("s.final"));
+
+    // A reading that fails it sends it to its cut: it is not rewritten again.
+    let reader = Says::new(&[Outcome::Unproven]);
+    read_pass(&mut ledger, &reader, &pass, &lesson).await?;
+    assert_eq!(node_of(&ledger, &successor), Some("s.cut"));
+    assert!(matches!(
+        events_of(ledger.entry(&successor).unwrap()).last(),
+        Some(ClaimEvent::Stepped {
+            rewrite_ahead: false,
+            ..
+        })
+    ));
     Ok(())
 }
 
