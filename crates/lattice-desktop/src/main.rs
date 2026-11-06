@@ -148,6 +148,9 @@ fn main() {
     if lattice::features::learning::lab_runner::is_runner_invocation() {
         std::process::exit(lattice::features::learning::lab_runner::run_child());
     }
+    // The app, and only the app, keeps its files in the user's ~/.lattice;
+    // a test or an eval gets a scratch home unless it sets LATTICE_HOME.
+    lattice_core::shared::fs::roots::use_the_users_home();
     lattice::features::transcription::engine::prefer_float_weights();
     lattice::infrastructure::crash::install_panic_hook();
     // This entrypoint exists only in an instrumented, isolated test package.

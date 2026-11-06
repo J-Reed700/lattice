@@ -109,6 +109,29 @@ export const settingsApi = {
     }),
 
   /**
+   * Shows the system save dialog and writes `contents` to the file the user
+   * picks; the webview never names the path.
+   *
+   * @returns False when the user cancels
+   */
+  saveTextFile: async (
+    suggestedName: string,
+    filters: Wire.FileFilterDto[],
+    contents: string,
+  ): Promise<ApiResult<boolean>> =>
+    apiCall<boolean>('save_text_file', { suggestedName, filters, contents }),
+
+  /**
+   * Shows the system open dialog and reads the file the user picks as text.
+   *
+   * @returns The text, or null when the user cancels
+   */
+  openTextFile: async (
+    filters: Wire.FileFilterDto[],
+  ): Promise<ApiResult<string | null>> =>
+    apiCall<string | null>('open_text_file', { filters }),
+
+  /**
    * Detects the system theme preference.
    * Returns 'light' or 'dark' based on OS-level settings.
    *

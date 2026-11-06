@@ -8,6 +8,9 @@ use crate::features::recent::dto::RecentDocumentDto;
 use crate::features::search::mocks::{empty_hybrid_search, MockBM25Search, MockSearchService};
 use crate::features::tags::mocks::MockTagService;
 use crate::features::web::mocks::MockWebService;
+use crate::features::web::services::web::{
+    build_instance_client, guard_probe, public_web_client, WebService,
+};
 use crate::infrastructure::persistence::repositories::mocks::MockChunkRepository;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -25,6 +28,7 @@ use lattice_core::application::ports::{
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::repositories::mocks::DddMockDocumentRepository as DddMockDocRepo;
 use lattice_core::domain::value_objects::Checksum;
+use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use std::path::{Path, PathBuf};
 
 struct MockFavoritesRepository;
@@ -164,6 +168,10 @@ impl DocumentRepositoryPort for SingleDocumentRepository {
     async fn delete(&self, _document_id: &str) -> Result<()> {
         Ok(())
     }
+
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        <Self as DocumentRepositoryPort>::delete(self, document_id).await
+    }
     async fn find_by_checksum(&self, checksum: &Checksum) -> Result<Option<Document>> {
         Ok((self.document.checksum() == checksum).then(|| self.document.clone()))
     }
@@ -200,6 +208,8 @@ fn test_executor_services(
         recent_documents_repository: Arc::new(MockRecentDocumentsRepository),
         file_storage: Arc::new(LongContentFileStorage::default()),
         web_service: web,
+        http_client: public_web_client().unwrap(),
+        custom_tool_client: build_instance_client(WEB_REQUEST_TIMEOUT).unwrap(),
     }
 }
 
@@ -800,5 +810,141 @@ async fn test_execute_fetch_url_invalid_as_of() {
         .await
         .unwrap();
     assert!(!result.success);
+    assert_eq!(result.error_code.as_deref(), Some("EXECUTION_ERROR"));
+}
+
+fn executor_with_custom_tool(web: Arc<dyn WebServiceTrait>, endpoint: &str) -> FunctionExecutor {
+    let tool = CustomToolSettingsDto {
+        enabled: true,
+        name: "local_search".to_string(),
+        description: "A search service the user runs".to_string(),
+        endpoint: endpoint.to_string(),
+        query_param: "q".to_string(),
+        max_results_param: Some("limit".to_string()),
+        default_max_results: 5,
+    };
+    FunctionExecutor::new_with_custom_tools(
+        test_executor_services(
+            Arc::new(MockFunctionRegistry::new()) as Arc<dyn FunctionRegistryTrait>,
+            web,
+        ),
+        HashMap::from([(tool.name.clone(), tool)]),
+    )
+}
+
+async fn call_local_search(executor: &FunctionExecutor) -> FunctionResult {
+    executor
+        .execute(FunctionCall::new(
+            "call_local",
+            "local_search",
+            serde_json::json!({"query": "rust"}),
+        ))
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn wiki_tools_client_refuses_a_name_that_resolves_to_this_machine() {
+    let executor = FunctionExecutor::new(test_executor_services(
+        Arc::new(MockFunctionRegistry::new()) as Arc<dyn FunctionRegistryTrait>,
+        Arc::new(MockWebService::new()) as Arc<dyn WebServiceTrait>,
+    ));
+
+    guard_probe::assert_refuses_a_name_that_resolves_to_this_machine(&executor.http_client).await;
+}
+
+#[tokio::test]
+async fn wiki_tools_client_refuses_a_redirect_through_a_local_server() {
+    let executor = FunctionExecutor::new(test_executor_services(
+        Arc::new(MockFunctionRegistry::new()) as Arc<dyn FunctionRegistryTrait>,
+        Arc::new(MockWebService::new()) as Arc<dyn WebServiceTrait>,
+    ));
+
+    guard_probe::assert_refuses_a_redirect_through_a_local_server(&executor.http_client).await;
+}
+
+/// The web service here lets every URL through, so only the tool's client
+/// decides whether the endpoint's redirect is followed.
+#[tokio::test]
+async fn a_custom_tools_redirect_is_not_followed() {
+    let landing = guard_probe::local_page().await;
+    let endpoint = wiremock::MockServer::start().await;
+    guard_probe::redirect_every_request_to(&endpoint, format!("{}/elsewhere", landing.uri())).await;
+    let executor = executor_with_custom_tool(
+        Arc::new(MockLinksWebService { leads: Vec::new() }),
+        &format!("{}/search", endpoint.uri()),
+    );
+
+    let result = call_local_search(&executor).await;
+
+    assert_eq!(
+        guard_probe::requests_received(&landing).await,
+        0,
+        "the custom tool followed its endpoint's redirect"
+    );
+    assert_eq!(guard_probe::requests_received(&endpoint).await, 1);
+    assert!(
+        result
+            .error_message
+            .as_deref()
+            .is_some_and(|message| message.contains("302")),
+        "{result:?}"
+    );
+}
+
+/// The endpoint is one the user named, so being on this machine is no reason
+/// to refuse it, whatever the web service's guard says of such an address.
+#[tokio::test]
+async fn a_custom_tool_can_call_an_endpoint_on_this_machine() {
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let endpoint = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"results": []})))
+        .mount(&endpoint)
+        .await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let executor = executor_with_custom_tool(
+        Arc::new(WebService::new(data_dir.path()).unwrap()),
+        &format!("{}/search", endpoint.uri()),
+    );
+
+    let result = call_local_search(&executor).await;
+
+    assert!(
+        result.success,
+        "the user's own endpoint was refused: {:?}",
+        result.error_message
+    );
+    assert_eq!(guard_probe::requests_received(&endpoint).await, 1);
+}
+
+/// A URL the model chooses is read through the web service and its guard, so
+/// a name that resolves to this machine is refused before anything is sent.
+#[tokio::test]
+async fn fetch_url_content_refuses_a_name_that_resolves_to_this_machine() {
+    let server = guard_probe::local_page().await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let executor = FunctionExecutor::new(test_executor_services(
+        Arc::new(crate::features::function_calling::registry::init_function_registry().unwrap()),
+        Arc::new(WebService::new(data_dir.path()).unwrap()),
+    ));
+    let url = guard_probe::dotted_localhost(server.address().port());
+
+    let result = executor
+        .execute(FunctionCall::new(
+            "call_fetch",
+            "fetch_url_content",
+            serde_json::json!({ "url": url }),
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        guard_probe::requests_received(&server).await,
+        0,
+        "{url} reached the local server"
+    );
     assert_eq!(result.error_code.as_deref(), Some("EXECUTION_ERROR"));
 }

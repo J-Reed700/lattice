@@ -445,6 +445,46 @@ async fn test_restore_backup_success() {
     new_pool.close().await;
 }
 
+/// What a process meant to do to its files when the backup was taken is no
+/// guide to the files after a restore: they may since have been imported
+/// again by the database the restore replaces.
+#[tokio::test]
+async fn a_restored_database_keeps_no_file_records_of_the_one_it_came_from() {
+    let (pool, db_path, _dir) = create_test_pool().await;
+    sqlx::query(
+        "CREATE TABLE file_intents (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT NOT NULL, \
+         kind TEXT NOT NULL, name TEXT NOT NULL, run_id TEXT NOT NULL, created_at TEXT)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO file_intents (store, kind, name, run_id) \
+         VALUES ('library', 'import', ?, 'the run that took the backup')",
+    )
+    .bind("a".repeat(64))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let backup = PathBuf::from(adapter.create_backup(None).await.unwrap());
+
+    adapter.restore_backup(backup).await.unwrap();
+
+    let restored = connect_fixture_pool(&db_path).await;
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&restored)
+        .await
+        .unwrap();
+    let documents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+        .fetch_one(&restored)
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
+    assert_eq!(documents, 1, "the rest of the database is restored");
+    restored.close().await;
+}
+
 #[tokio::test]
 
 async fn test_restore_backup_validates_integrity() {

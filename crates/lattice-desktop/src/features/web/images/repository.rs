@@ -7,13 +7,15 @@
 //! source or image URL), leased to a composer draft (`draft:<id>`) until the
 //! user message that carries it claims it and its refs become `att-1…`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
+use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
+use crate::infrastructure::storage::{FileIntents, FileStore};
 use lattice_core::shared::error::{AppError, Result};
 
 fn db(error: sqlx::Error) -> AppError {
@@ -404,19 +406,58 @@ impl ImageRepository {
         .map_err(db)
     }
 
+    /// Deletes the rows and records, in the same transaction, that their
+    /// files were let go of: what lets a sweep free a file whose removal does
+    /// not finish now.
     pub async fn delete_ids(&self, ids: &[String]) -> Result<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
-        let mut delete: QueryBuilder<Sqlite> =
-            QueryBuilder::new("DELETE FROM chat_images WHERE id IN (");
-        let mut list = delete.separated(", ");
+        let placeholders = vec!["?"; ids.len()].join(", ");
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let record_sql = record_releases_sql(
+            FileStore::ChatImage,
+            "id || '.' || ext",
+            &format!("chat_images WHERE id IN ({placeholders})"),
+        );
+        let mut record = sqlx::query(&record_sql).bind(run_id());
         for id in ids {
-            list.push_bind(id);
+            record = record.bind(id);
         }
-        list.push_unseparated(")");
-        let done = delete.build().execute(&self.pool).await.map_err(db)?;
+        record.execute(&mut *tx).await.map_err(db)?;
+        let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders})");
+        let mut delete = sqlx::query(&delete_sql);
+        for id in ids {
+            delete = delete.bind(id);
+        }
+        let done = delete.execute(&mut *tx).await.map_err(db)?;
+        tx.commit().await.map_err(db)?;
         Ok(done.rows_affected())
+    }
+
+    /// The pictures recorded as let go of, by `<id>.<ext>`, with the ids of
+    /// their records.
+    pub async fn released(&self) -> Result<HashMap<String, Vec<i64>>> {
+        let mut released: HashMap<String, Vec<i64>> = HashMap::new();
+        for intent in self.intents().pending(FileStore::ChatImage).await? {
+            released.entry(intent.name).or_default().push(intent.id);
+        }
+        Ok(released)
+    }
+
+    /// Forget the records of pictures whose files are gone.
+    pub async fn forget_released(&self, names: &[String]) -> Result<()> {
+        self.intents()
+            .forget_releases(FileStore::ChatImage, names)
+            .await
+    }
+
+    pub async fn forget_records(&self, ids: &[i64]) -> Result<()> {
+        self.intents().forget(ids).await
+    }
+
+    fn intents(&self) -> FileIntents {
+        FileIntents::new(self.pool.clone())
     }
 
     /// `(id, ext)` of every row: the files the sweep must keep.

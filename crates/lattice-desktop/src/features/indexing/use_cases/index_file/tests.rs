@@ -21,6 +21,7 @@ impl ContentAddressedStoragePort for MockContentStorage {
             path: source_path.to_path_buf(),
             lease: lattice_core::application::ports::BlobLease::detached(&hash),
             hash,
+            created: true,
         })
     }
 
@@ -290,6 +291,10 @@ impl DocumentRepositoryPort for MockDocumentRepo {
         Ok(())
     }
 
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        <Self as DocumentRepositoryPort>::delete(self, document_id).await
+    }
+
     async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
         Ok(vec![])
     }
@@ -494,6 +499,7 @@ async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_duri
                 path: source_path.to_path_buf(),
                 lease: lattice_core::application::ports::BlobLease::detached(&hash),
                 hash,
+                created: true,
             })
         }
 
@@ -562,8 +568,10 @@ async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_duri
 /// what is wrong with the library once that import has committed and a
 /// startup sweep has run.
 async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool) -> Vec<String> {
+    use crate::features::indexing::library_gc::test_support::file_intents;
     use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
     use crate::infrastructure::storage::ContentAddressedStorage;
+    use crate::infrastructure::storage::{FileStore, IntentKind};
     use lattice_core::application::ports::RepositoryPort;
     use lattice_core::domain::value_objects::source_context::{
         SourceContext, SourceGroup, StructureMode,
@@ -637,6 +645,9 @@ async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool)
     let edited_text = "The second version, saved while the import ran.";
     let source = temp.path().join("watched.txt");
     fs::write(&source, edited_text).unwrap();
+    let edited_hash = crate::infrastructure::file_system::compute_file_sha256_async(&source)
+        .await
+        .unwrap();
     if edited_content_indexed {
         let blob = storage.import_file(&source).await.unwrap();
         repo.add_document(indexed(&blob.path, &blob.hash, edited_text, None));
@@ -677,13 +688,30 @@ async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool)
     drop(lease);
     let gate = SweepGate::default();
     gate.open();
-    LibraryGc::new(storage, repo.clone())
-        .sweep(&gate)
+    let (_pool, intents) = file_intents().await;
+    for hash in [&first_hash, &edited_hash] {
+        intents
+            .record(FileStore::Library, IntentKind::Release, hash)
+            .await
+            .unwrap();
+    }
+    LibraryGc::new(storage, repo.clone(), Arc::new(gate))
+        .with_intents(intents.clone())
+        .sweep()
         .await
         .unwrap();
 
     let rows = repo.find_all().await.unwrap();
     let mut problems = Vec::new();
+    if !intents
+        .pending(FileStore::Library)
+        .await
+        .unwrap()
+        .is_empty()
+    {
+        problems
+            .push("a release record is still pending, though every blob is referenced".to_string());
+    }
     for row in &rows {
         if blob_folder(row) != Some(row.checksum().as_str()) {
             problems.push(format!(

@@ -364,7 +364,7 @@ async fn a_picture_is_prepared_once_per_size_and_then_read_from_the_cache() {
 }
 
 #[tokio::test]
-async fn releasing_a_picture_removes_its_prepared_copies_and_the_sweep_takes_orphans() {
+async fn releasing_a_picture_takes_its_prepared_copies_and_keeps_ones_no_record_names() {
     let fx = fixture().await;
     let picture = fx
         .service
@@ -376,19 +376,19 @@ async fn releasing_a_picture_removes_its_prepared_copies_and_the_sweep_takes_orp
         .await
         .unwrap()
         .unwrap();
-    // A prepared file whose picture has no row, left by a crash.
-    let orphan = format!("{}-28x28.jpg", "e".repeat(32));
-    std::fs::write(fx.root().join("prepared").join(&orphan), b"x").unwrap();
+    // A prepared file whose picture has no row, and no record of its release.
+    let unnamed = format!("{}-28x28.jpg", "e".repeat(32));
+    std::fs::write(fx.root().join("prepared").join(&unnamed), b"x").unwrap();
 
     let removed = fx.service.remove_unclaimed_files().await.unwrap();
-    assert_eq!(removed, 1);
-    assert_eq!(fx.prepared_files().len(), 1);
+    assert_eq!(removed, 0);
+    assert_eq!(fx.prepared_files().len(), 2);
 
     fx.service
         .release_images(CONVERSATION, std::slice::from_ref(&picture.id))
         .await
         .unwrap();
-    assert!(fx.prepared_files().is_empty());
+    assert_eq!(fx.prepared_files(), [unnamed]);
 }
 
 #[tokio::test]

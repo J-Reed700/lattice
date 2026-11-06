@@ -24,10 +24,11 @@ use crate::features::function_calling::registry::{
 };
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::llm::instances::LlmInstances;
-use crate::features::web::services::web::WebService;
+use crate::features::web::services::web::{build_instance_client, public_web_client, WebService};
 use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
 use lattice_core::application::ports::EmbeddingPort as EmbeddingServiceTrait;
 use lattice_core::application::ports::SettingsSideEffectsPort;
+use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -331,6 +332,7 @@ impl Container {
         );
         tracing::debug!("AIModule initialized");
 
+        let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let indexing = Arc::new(
             super::modules::IndexingModule::new(
                 db_pool,
@@ -341,6 +343,7 @@ impl Container {
                     query_cache: query_cache.clone(),
                     index_observer: summary_tier.trigger().clone(),
                     extraction_workers,
+                    sweep_gate: Arc::clone(&sweep_gate),
                 },
             )
             .await?,
@@ -398,6 +401,8 @@ impl Container {
                 recent_documents_repository: library.recent_docs_repo().clone(),
                 file_storage: indexing.file_storage().clone(),
                 web_service: web_service.clone(),
+                http_client: public_web_client()?,
+                custom_tool_client: build_instance_client(WEB_REQUEST_TIMEOUT)?,
             },
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
@@ -424,7 +429,6 @@ impl Container {
 
         let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.db_pool().clone());
         let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
-        let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.db_pool().clone(),
             Arc::clone(&jobs),

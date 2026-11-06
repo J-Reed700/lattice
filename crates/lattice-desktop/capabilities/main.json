@@ -209,6 +209,8 @@
     "settings:allow-reset-settings",
     "settings:allow-export-settings",
     "settings:allow-import-settings",
+    "settings:allow-save-text-file",
+    "settings:allow-open-text-file",
     "settings:allow-get-system-theme",
     "settings:allow-validate-folder-path",
     "settings:allow-test-ollama-connection",

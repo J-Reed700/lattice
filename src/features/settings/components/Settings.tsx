@@ -6,13 +6,12 @@
 
 import { useEffect, useState } from 'react';
 
-import { save, open } from '@tauri-apps/plugin-dialog';
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { Archive, Boxes, ChevronRight, Download, FileText, FolderOpen, Globe, Layers3, MessageCircle, Palette, RotateCcw, Scale, ScanLine, Search, ShieldCheck, SlidersHorizontal, Upload, Volume2, Wrench, type LucideIcon } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
 import { SidebarHeader } from '@/components/ui';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { describeFailure } from '@/lib/errorHandling';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
@@ -29,6 +28,7 @@ import { SourcesTab } from './SourcesTab';
 import { SourceTrustSettings } from './SourceTrustSettings';
 import { SpacesTab } from './SpacesTab';
 import { VaultTab } from './VaultTab';
+import { useJsonFileDialogs } from '../hooks/useJsonFileDialogs';
 import { useSettingsTransfer } from '../hooks/useSettingsQuery';
 import './settings.css';
 
@@ -112,6 +112,7 @@ export function Settings() {
   const [isResetting, setIsResetting] = useState(false);
 
   const { resetSettings, exportSettings, importSettings } = useSettingsTransfer();
+  const { saveJsonFile, openJsonFile } = useJsonFileDialogs();
 
   // Other panes ask to jump here (e.g. "Browse catalog" from an empty
   // Downloaded list). Without this the request went nowhere.
@@ -143,22 +144,15 @@ export function Settings() {
   const handleExport = async () => {
     setIsExporting(true);
     try {
-      const path = await save({
-        defaultPath: 'lattice-settings.json',
-        filters: [
-          {
-            name: 'JSON',
-            extensions: ['json'],
-          },
-        ],
-      });
+      const result = await exportSettings();
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
 
-      if (path) {
-        const result = await exportSettings();
-        if (!result.ok) {
-          throw new Error(result.error);
-        }
-        await writeTextFile(path, result.data);
+      const saved = await saveJsonFile('lattice-settings.json', result.data);
+      if (!saved.ok) {
+        toast.error("Couldn't export settings", { message: describeFailure(saved), duration: 5000 });
+      } else if (saved.data) {
         toast.success('Settings exported successfully', { duration: 3000 });
       }
     } catch (error) {
@@ -172,19 +166,11 @@ export function Settings() {
   const handleImport = async () => {
     setIsImporting(true);
     try {
-      const path = await open({
-        multiple: false,
-        filters: [
-          {
-            name: 'JSON',
-            extensions: ['json'],
-          },
-        ],
-      });
-
-      if (path && typeof path === 'string') {
-        const json = await readTextFile(path);
-        const result = await importSettings(json);
+      const opened = await openJsonFile();
+      if (!opened.ok) {
+        toast.error("Couldn't import settings", { message: describeFailure(opened), duration: 5000 });
+      } else if (opened.data !== null) {
+        const result = await importSettings(opened.data);
 
         if (result.ok) {
           toast.success('Settings imported successfully', { duration: 3000 });

@@ -485,6 +485,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::settings::plugin::reset_settings,
             lattice::features::settings::plugin::export_settings,
             lattice::features::settings::plugin::import_settings,
+            lattice::features::settings::plugin::save_text_file::<tauri::Wry>,
+            lattice::features::settings::plugin::open_text_file::<tauri::Wry>,
             lattice::features::settings::plugin::validate_folder_path,
             lattice::features::settings::plugin::add_watch_folder,
             lattice::features::settings::plugin::remove_watch_folder,

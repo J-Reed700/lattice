@@ -10,6 +10,8 @@
 //! - `crate::features::settings::mapper` — SettingsMapper
 //! - `crate::features::settings::use_cases` — settings use cases
 //! - `crate::features::settings::repository::SettingsRepository`
+//! - `crate::features::settings::text_files` — save and open a text file the
+//!   user picks in the platform's file dialog
 //! - `crate::features::settings::plugin::init()` — Tauri plugin (also
 //!   hosts command impls directly)
 //!
@@ -24,4 +26,5 @@ pub mod mapper;
 pub mod plugin;
 pub mod privacy_gate;
 pub mod repository;
+pub mod text_files;
 pub mod use_cases;

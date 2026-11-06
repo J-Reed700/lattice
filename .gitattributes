@@ -1,0 +1,2 @@
+# sqlx checksums the migration bytes a build embeds, so every checkout must embed LF.
+crates/lattice-desktop/migrations/*.sql text eol=lf

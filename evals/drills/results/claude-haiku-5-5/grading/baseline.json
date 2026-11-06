@@ -1,0 +1,29 @@
+{
+  "model": "claude-haiku-5-5",
+  "runs": 3,
+  "failed": 1,
+  "ever_wrong": [
+    "20-go-false-claims-on-the-lines-of-two-issues/finding/0",
+    "20-go-false-claims-on-the-lines-of-two-issues/finding/1",
+    "20-go-false-claims-on-the-lines-of-two-issues/issue/1",
+    "28-java-two-findings-that-each-say-half/issue/1",
+    "31-rust-three-wrong-claims-every-issue-missed/finding/2",
+    "31-rust-three-wrong-claims-every-issue-missed/issue/0",
+    "38-python-a-general-comment-about-sending/finding/2",
+    "38-python-a-general-comment-about-sending/issue/0"
+  ],
+  "issues": {
+    "worst_agree": 118,
+    "total": 121,
+    "worst_rate": 0.9752066115702479,
+    "best_rate": 0.9919354838709677,
+    "spread": 2
+  },
+  "findings": {
+    "worst_agree": 109,
+    "total": 111,
+    "worst_rate": 0.9819819819819819,
+    "best_rate": 0.991304347826087,
+    "spread": 1
+  }
+}

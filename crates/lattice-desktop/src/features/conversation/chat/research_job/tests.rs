@@ -104,27 +104,7 @@ async fn first_attempt(runtime: &FakeRuntime) -> FirstAttempt {
         arguments: serde_json::json!({ "query": "lithium battery recycling" }),
     };
     FirstAttempt {
-        assembled: AssembledTurn {
-            user_message_id: question.id,
-            message_tokens: 8,
-            history_len: 0,
-            flags: SearchFlags::from_preferences(request.tool_preferences.as_ref()),
-            router: None,
-            input: vec![CompletionInput::Message {
-                role: "user".into(),
-                content: QUESTION.into(),
-            }],
-            tools: Vec::new(),
-            max_output_tokens: 1_024,
-            input_budget: 16_000,
-            memory_usage: None,
-            short_circuit_response: None,
-            sources: Vec::new(),
-            retrieval_trace: None,
-            pages_read: Default::default(),
-            steps: Vec::new(),
-            elapsed_ms: 50,
-        },
+        assembled: planned_turn(&request, question.id),
         round: ResearchRound {
             completed: 1,
             transcript: vec![
@@ -145,6 +125,47 @@ async fn first_attempt(runtime: &FakeRuntime) -> FirstAttempt {
         },
         request,
     }
+}
+
+/// The turn a research request plans, its question saved as `question`.
+fn planned_turn(request: &TurnRequest, question: String) -> AssembledTurn {
+    AssembledTurn {
+        user_message_id: question,
+        message_tokens: 8,
+        history_len: 0,
+        flags: SearchFlags::from_preferences(request.tool_preferences.as_ref()),
+        router: None,
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: QUESTION.into(),
+        }],
+        tools: Vec::new(),
+        max_output_tokens: 1_024,
+        input_budget: 16_000,
+        memory_usage: None,
+        short_circuit_response: None,
+        sources: Vec::new(),
+        retrieval_trace: None,
+        pages_read: Default::default(),
+        steps: Vec::new(),
+        elapsed_ms: 50,
+    }
+}
+
+/// A research job's request, and the `assembled` checkpoint a turn of that
+/// request saves once it has planned `question`, for tests outside this module
+/// that save jobs without running a turn.
+pub(crate) fn saved_by_a_turn(
+    chat: &str,
+    request_id: &str,
+    question: &str,
+) -> (serde_json::Value, serde_json::Value) {
+    let request = TurnRequest {
+        request_id: Some(request_id.to_string()),
+        ..research(chat)
+    };
+    let assembled = planned_turn(&request, question.to_string());
+    (encode(&request).unwrap(), encode(&assembled).unwrap())
 }
 
 /// Stands in for the turn the app was running: it saves what the turn had
@@ -198,6 +219,23 @@ async fn closed_after_one_round(pool: &sqlx::SqlitePool, attempt: &FirstAttempt)
         "a closing app keeps the job"
     );
     job.id
+}
+
+/// How the first attempt's question stands on the thread.
+async fn question_status(runtime: &FakeRuntime, attempt: &FirstAttempt) -> String {
+    let conversation = runtime
+        .conversations
+        .get_conversation(attempt.request.conversation_id.as_deref().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    conversation
+        .messages()
+        .iter()
+        .find(|message| message.id == attempt.assembled.user_message_id)
+        .unwrap()
+        .status
+        .clone()
 }
 
 #[tokio::test]
@@ -520,6 +558,46 @@ async fn a_pending_research_turn_keeps_its_request_for_the_picture_sweep() {
     assert_eq!(kept, [pending.request_id.unwrap()].into_iter().collect());
 }
 
+/// A research turn still pending or running resumes at a later start and
+/// answers the question it saved, so the startup sweep of interrupted turns
+/// leaves that question pending; a finished one has nothing left to answer.
+/// The question is read from the checkpoint a real turn saves.
+#[tokio::test]
+async fn a_pending_research_turn_keeps_its_question_for_the_turn_sweep() {
+    let pool = pool().await;
+    let attempt = first_attempt(&FakeRuntime::default()).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    let store = JobStore::new(pool);
+
+    let kept = resumable_question_ids(&store).await.unwrap();
+    assert_eq!(
+        kept,
+        [attempt.assembled.user_message_id.clone()]
+            .into_iter()
+            .collect()
+    );
+
+    store.cancel(&job_id).await.unwrap();
+    assert!(resumable_question_ids(&store).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_saved_research_question_that_cannot_be_read_is_left_out() {
+    let store = JobStore::new(pool().await);
+    let job = store
+        .submit(&research_job(&research("conversation-a")).unwrap())
+        .await
+        .unwrap();
+    store.claim(&job.id).await.unwrap();
+    let unreadable = serde_json::json!({ "question": "not the shape a turn saves" });
+    assert!(store
+        .put_checkpoint(&job.id, ASSEMBLED, &unreadable)
+        .await
+        .unwrap());
+
+    assert!(resumable_question_ids(&store).await.unwrap().is_empty());
+}
+
 /// The chat's model, which moves the chat to the default while it answers:
 /// a picker change during a turn must not reach the turn.
 struct ChosenThenChanged {
@@ -659,6 +737,328 @@ async fn a_research_turn_resumed_after_its_model_was_deleted_fails_and_never_fal
         job.error_message
     );
     assert!(default.requests().is_empty(), "the default never answers");
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// The app opens again: the research job is registered and delivered, and this
+/// waits for it to end.
+async fn reopened(
+    runtime: &FakeRuntime,
+    jobs: &Arc<JobRuntime>,
+    job_id: &str,
+) -> lattice_core::shared::runtime::jobs::JobRecord {
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(DeepResearchJob::new(runtime.share(), silent())),
+        job_config(),
+    )
+    .await
+    .unwrap();
+    finished(jobs, job_id).await
+}
+
+/// A stop that reaches the turn before it registers, as while the chat's model
+/// loads, ends it.
+#[tokio::test]
+async fn a_resumed_research_turn_stopped_before_it_registers_fails_its_question() {
+    let pool = pool().await;
+    let llm = Scripted::new([]);
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(llm.clone()),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    assert!(runtime.turn_cancellation.request_cancel(
+        attempt.request.conversation_id.as_deref().unwrap(),
+        attempt.request.request_id.as_deref(),
+    ));
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(
+        job.status,
+        JobStatus::Cancelled,
+        "a stopped turn does not resume"
+    );
+    assert!(llm.requests().is_empty(), "the model is never asked");
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// A turn cannot start when another holds its request id.
+#[tokio::test]
+async fn a_resumed_research_turn_that_finds_its_request_in_flight_fails_its_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(Scripted::new([])),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    assert!(runtime.turn_cancellation.begin_turn_within(
+        attempt.request.request_id.as_deref().unwrap(),
+        attempt.request.conversation_id.as_deref().unwrap(),
+        None,
+    ));
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    assert!(
+        job.error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("already in flight")),
+        "{:?}",
+        job.error_message
+    );
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// A saved request that names no request id cannot be resumed.
+#[tokio::test]
+async fn a_saved_research_request_that_names_no_request_fails_its_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(Scripted::new([])),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let mut attempt = first_attempt(&runtime).await;
+    attempt.request.request_id = None;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    assert!(
+        job.error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("names its conversation and request")),
+        "{:?}",
+        job.error_message
+    );
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// A journal that saves nothing and says whether the app is closing.
+struct Journal {
+    closing: bool,
+}
+
+#[async_trait]
+impl ResearchJournal for Journal {
+    async fn assembled(&self, _turn: &AssembledTurn) -> Result<()> {
+        Ok(())
+    }
+    async fn round(&self, _round: &ResearchRound) -> Result<()> {
+        Ok(())
+    }
+    async fn resumes_later(&self) -> bool {
+        self.closing
+    }
+}
+
+/// A resumed turn that cannot start because the app is closing resumes at the
+/// next start, so its question stays pending.
+#[tokio::test]
+async fn a_resumed_research_turn_that_cannot_start_as_the_app_closes_keeps_its_question() {
+    // No chat model is selected, so the turn cannot start.
+    let runtime = FakeRuntime::default();
+    let attempt = first_attempt(&runtime).await;
+    let journal = Journal { closing: true };
+
+    let ended = turn::run_stages(
+        &runtime,
+        attempt.request.clone(),
+        &silent(),
+        Some(Research {
+            journal: &journal,
+            cancel: tokio_util::sync::CancellationToken::new(),
+            saved: Some(Saved {
+                assembled: attempt.assembled.clone(),
+                round: None,
+            }),
+        }),
+    )
+    .await;
+
+    assert!(ended.is_err());
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "pending",
+        "the job resumes it at the next start"
+    );
+}
+
+/// A job running when the app stopped, with the request it was submitted with,
+/// the `assembled` checkpoint it saved and, if it finished one, its last round.
+async fn save_live_job(
+    store: &JobStore,
+    name: &str,
+    requested: serde_json::Value,
+    assembled: serde_json::Value,
+    round: Option<serde_json::Value>,
+) {
+    let job = store
+        .submit(&NewJob {
+            kind: DEEP_RESEARCH.into(),
+            subject_id: Some("conversation-a".into()),
+            operation_id: operation_id(name),
+            payload_hash: name.into(),
+            requested,
+            progress_total: 1,
+            message: "Waiting to research".into(),
+        })
+        .await
+        .unwrap();
+    // A job saves checkpoints only while it runs.
+    store.claim(&job.id).await.unwrap();
+    assert!(store
+        .put_checkpoint(&job.id, ASSEMBLED, &assembled)
+        .await
+        .unwrap());
+    if let Some(round) = round {
+        assert!(store.put_checkpoint(&job.id, ROUND, &round).await.unwrap());
+    }
+}
+
+/// A research turn resumes only if all it saved can be read as a resume reads
+/// it: its request, its `assembled` checkpoint and its last round.
+#[tokio::test]
+async fn a_question_is_kept_only_if_the_whole_saved_turn_can_be_read() {
+    let store = JobStore::new(pool().await);
+    let saved = |name: &str| saved_by_a_turn("conversation-a", name, &format!("question-{name}"));
+    let (requested, assembled) = saved("readable");
+    save_live_job(&store, "readable", requested, assembled, None).await;
+    let (_, assembled) = saved("request");
+    let unrelated = serde_json::json!({ "unrelated": true });
+    save_live_job(&store, "request", unrelated, assembled, None).await;
+    let (requested, mut assembled) = saved("assembled");
+    // Saved by an older build: the checkpoint lacks a field this one saves.
+    assembled.as_object_mut().unwrap().remove("pages_read");
+    save_live_job(&store, "assembled", requested, assembled, None).await;
+    let (requested, assembled) = saved("round");
+    let unreadable = serde_json::json!({ "completed": "many" });
+    save_live_job(&store, "round", requested, assembled, Some(unreadable)).await;
+
+    let kept = resumable_question_ids(&store).await.unwrap();
+
+    assert_eq!(
+        kept,
+        ["question-readable".to_string()].into_iter().collect()
+    );
+}
+
+/// A saved turn that cannot be read cannot resume: its job fails without
+/// asking a model, and the question it saved is left retryable.
+#[tokio::test]
+async fn a_research_job_whose_saved_turn_cannot_be_read_fails_with_its_question() {
+    let pool = pool().await;
+    let llm = Scripted::new([]);
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        llm: Some(llm.clone()),
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    // Saved by an older build: the checkpoint lacks a field this one saves.
+    let mut assembled = jobs
+        .store()
+        .checkpoint(&job_id, ASSEMBLED)
+        .await
+        .unwrap()
+        .unwrap();
+    assembled.as_object_mut().unwrap().remove("pages_read");
+    sqlx::query("UPDATE job_checkpoints SET data_json = ? WHERE job_id = ? AND key = ?")
+        .bind(assembled.to_string())
+        .bind(job_id.as_str())
+        .bind(ASSEMBLED)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let job = reopened(&runtime, &jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    assert!(
+        job.error_message
+            .as_deref()
+            .is_some_and(|error| error.contains("pages_read")),
+        "{:?}",
+        job.error_message
+    );
+    assert!(llm.requests().is_empty(), "the model is never asked");
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
+    jobs.close();
+    jobs.drain().await;
+}
+
+/// A stop that reaches a research job before it started cancels it, and the
+/// question it saved is left retryable.
+#[tokio::test]
+async fn stopping_a_research_job_that_never_started_fails_its_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+
+    let stopped = stop(
+        &runtime,
+        attempt.request.conversation_id.as_deref().unwrap(),
+        attempt.request.request_id.as_deref(),
+    )
+    .await
+    .unwrap();
+
+    assert!(stopped);
+    assert_eq!(
+        jobs.store().get(&job_id).await.unwrap().status,
+        JobStatus::Cancelled
+    );
+    assert_eq!(
+        question_status(&runtime, &attempt).await,
+        "failed",
+        "the question is left retryable"
+    );
     jobs.close();
     jobs.drain().await;
 }

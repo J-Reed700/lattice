@@ -198,6 +198,13 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
         ops::delete(&mut conn, document_id).await
     }
 
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        ops::delete_and_release_blob(&mut tx, document_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     async fn find_by_checksum(
         &self,
         checksum: &lattice_core::domain::value_objects::Checksum,

@@ -1,0 +1,520 @@
+{
+  "model": {
+    "name": "claude-haiku-5-5",
+    "provider": "anthropic",
+    "context_window": 131072
+  },
+  "drills": [
+    {
+      "name": "python-01",
+      "built": true,
+      "seconds": 77.5095203,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.check_then_act",
+            "why": "The edit replaces a direct membership check on self._payments with a check against a copy taken just before it. The check and the subsequent insert are still not atomic: no lock is held, and the copy is taken at the same point as the check, so two concurrent callers can still both pass the duplicate check before either writes. The race existed in the original code (check-then-insert with no lock), so the edit does not introduce it. The claimed consequence (concurrent duplicate registration silently overwriting a payment) was already possible in the original. The snapshot adds an O(n) copy but no new concurrency hazard beyond the pre-existing one."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "python-02",
+      "built": true,
+      "seconds": 97.4232447,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 3,
+        "proven_by_judge": 0,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "python-03",
+      "built": true,
+      "seconds": 88.2331209,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "python-04",
+      "built": true,
+      "seconds": 97.8795206,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 1,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "errors.partial_update_without_rollback",
+            "why": "The edit adds a pop of the key before reassigning it in the denied branch. The claimed pattern is a multi-step update without rollback where a failure partway leaves data half updated. The pop and the assignment are two dictionary operations, but the assignment cannot raise for a str key and a tuple value, and the claimed consequence (dropping stored state) requires a failure between them that the code path cannot produce. The edit therefore does not introduce a real partial-update hazard. The original code already has the same two-step structure in the denied path conceptually, though it is a single assignment with no separate removal, so the original does not have a two-step write that could leave the key missing. The edit adds a non-atomic remove-then-write sequence, but the consequence is theoretical, not a real defect introduced in practice, so the edit does not introduce exactly this problem in a way that can occur."
+          },
+          {
+            "pattern": "concurrency.missing_await",
+            "why": "The edit changes `self._clock()` to `self._clock`, so the clock callable is never invoked and `now` becomes a bound method object rather than a float. This is not a missing await: the code is synchronous, there is no async call, and the defect is a missing function call (wrong value). The claimed consequence is also wrong in detail: `now - last` with a method object and float raises TypeError, but the original code has no async calls at all so it cannot be a missing-await defect. The edit does introduce a bug, but it is a missing call on a sync callable, not the 'missing await' pattern, so the pattern is not exactly introduced; and the original lacks any missing-await problem."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "python-05",
+      "built": true,
+      "seconds": 109.7985366,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "python-06",
+      "built": true,
+      "seconds": 127.7888911,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.lock_held_across_slow_call",
+            "why": "The edit wraps the send call in a with-lock block, but the lock is a freshly created local threading.Lock() inside build_digests, so no other caller can ever contend for it; it does not make other callers wait on the SMTP round trip. The lock is held during send, which is technically a slow call under the lock, yet the claimed consequence (other callers waiting on the send and a stalled server freezing the batch pipeline) cannot happen because no other thread can acquire this lock. The original code has no lock at all, so the pattern is not present there. The edit introduces a lock held across a slow call in a literal sense, but the claimed consequence cannot occur, so the answer is no for introduction of the exact problem as claimed."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "python-07",
+      "built": true,
+      "seconds": 112.7932272,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 1,
+        "proven_by_judge": 1,
+        "dropped": [
+          {
+            "pattern": "errors.retry_not_idempotent",
+            "why": "The edit wraps the read-only list comprehension in a retry loop catching OSError. The search operation has no side effects on the product catalog; it only filters and returns a list. The claimed consequence requires the catalog iteration to cause side effects that are repeated on retry, but the pattern as defined concerns non-idempotent operations such as payments or inserts. The search itself is idempotent and the retry only re-iterates a possibly partially consumed iterable, which may be a problem for one-shot iterators but is not a repeated side-effecting operation by the code itself. The claimed consequence (catalog source sees repeated operations due to side effects on iteration) is speculative and not the defined pattern of retrying a side-effecting write without an idempotency key. The original code has no retry at all, so it lacks this issue."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "python-08",
+      "built": true,
+      "seconds": 112.6575234,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "javascript-01",
+      "built": true,
+      "seconds": 76.9381883,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.check_then_act",
+            "why": "The edit wraps the synchronous refundableAmount call in await Promise.resolve(...), adding a microtask yield between reading the remaining amount and the over-refund check. This does create a window where another concurrent requestRefund could run, but the original code already had the same check-then-act gap: the check reads refunds, then awaits gateway.refund before pushing the record, so two concurrent callers could both pass the check in the original too. The claimed consequence (double over-refund) therefore already existed before the edit; the edit does not introduce this pattern anew, it merely widens the timing slightly without changing the nature of the defect."
+          }
+        ],
+        "found_in_review": 3
+      }
+    },
+    {
+      "name": "javascript-02",
+      "built": true,
+      "seconds": 99.6419289,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.unsynchronised_shared_state",
+            "why": "The edit moves the hold sequence counter from a per-instance private field to a global variable on globalThis, so all store instances share it. The read-then-write pattern (read globalThis.holdSeq, add one, write back) is unsynchronised, which is the pattern in the abstract. However, the claimed consequence is about duplicate IDs causing overwrites that silently lose a reservation. In JavaScript, nextId() runs synchronously with no await between read and write, so on a single thread interleavings cannot occur; the consequence as claimed cannot happen in this runtime. The original code, with a per-instance counter, has no shared mutable state at all across instances, so it lacks the problem. The edit does introduce shared mutable global state, which is a legitimate concern in general, but the specific claimed consequence (lost reservations via interleaved read-write) is not reachable in single-threaded JavaScript, and the stated scenario is not what the edit exactly produces. Given strictness, the edit does introduce unsynchronised shared state, but the claimed consequence is not achievable, so answering yes for the edit introducing exactly this problem is questionable; I judge it as not exactly the claimed problem."
+          }
+        ],
+        "found_in_review": 5
+      }
+    },
+    {
+      "name": "javascript-03",
+      "built": true,
+      "seconds": 83.3480916,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.lock_ordering",
+            "why": "The edit only reorders two calls within login() so session creation happens before the throttle reset. Neither the session store nor the throttle uses any lock; both are plain synchronous Map-based objects in a single-threaded JavaScript runtime, and no lock acquisition exists in either the original or edited code. Therefore no lock ordering problem is introduced, and the original also has no locks, so the claimed deadlock cannot occur in either version."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "javascript-04",
+      "built": true,
+      "seconds": 107.3064975,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 4
+      }
+    },
+    {
+      "name": "javascript-05",
+      "built": true,
+      "seconds": 92.1158842,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "javascript-06",
+      "built": true,
+      "seconds": 95.9610528,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.lock_held_across_slow_call",
+            "why": "The original loop already awaits each mailer.send in sequence, so a hung or slow SMTP call already stalls every later recipient; the original holds no lock at all. The edit wraps each send in a shared promise chain (report.lock), which serializes sends the same way the await already did, so it does not add a new stall or deadlock. It does add a different defect: once one send rejects, report.lock stays rejected and every later .then is skipped, so all subsequent recipients fail with the earlier error instead of being attempted. That cascade is not the claimed lock-held-across-slow-call consequence."
+          }
+        ],
+        "found_in_review": 3
+      }
+    },
+    {
+      "name": "javascript-07",
+      "built": true,
+      "seconds": 112.4363597,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "resources.leaked_handle",
+            "why": "The edit adds a plain in-memory object with a close() method and calls reader.close() after the assertion. The 'reader' is not a real file, socket, or connection; it is just a JS object with a boolean flag, so no handle is acquired. The claimed consequence (handles leaking on assertion failure) cannot happen: nothing is opened, and if the assertion throws, the object is simply garbage collected. The original code had no leaked handle either, so the edit does not introduce the pattern."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "javascript-08",
+      "built": true,
+      "seconds": 95.5696803,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "typescript-01",
+      "built": true,
+      "seconds": 70.8307026,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "concurrency.check_then_act",
+            "why": "The edit adds a module-level inFlight Set keyed by captureId, checked and then added synchronously with no await between them. In JavaScript's single-threaded event loop, the has-check and add cannot interleave with another caller, so two concurrent refund requests cannot both pass the check. The claimed check-then-act race is not possible for this synchronous code. Moreover, the edit never removes captureIds from inFlight, so it would wrongly reject all later refunds on that capture, which is a different defect (a permanent lockout), not the over-refund described. The original code also has no such race; it is purely synchronous and has no shared mutable reservation at all, so it lacks the claimed over-refund consequence only in the sense that the consequence was not reachable via this path either. The edit does not introduce the claimed over-refund problem."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "typescript-02",
+      "built": true,
+      "seconds": 57.8353933,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "concurrency.unsynchronised_shared_state",
+            "why": "The edit hoists the onHand map to a module-level singleton shared by all ReservationBook instances, so one book's setOnHand and commit changes another's availability. This is cross-instance state leakage (a shared-state/isolation bug), not an unsynchronised concurrent read-modify-write problem. JavaScript is single-threaded and commit has no await, so interleaving lost updates within the event loop cannot occur from this edit. The original code has per-instance maps, so the sharing problem is not present there, and the claimed lost-update-by-interleaving consequence is not what the edit introduces."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "typescript-03",
+      "built": true,
+      "seconds": 114.0440716,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 5
+      }
+    },
+    {
+      "name": "typescript-04",
+      "built": true,
+      "seconds": 75.6373679,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 1,
+        "dropped": [
+          {
+            "pattern": "errors.partial_update_without_rollback",
+            "why": "The edit removes this.buckets.set(key, bucket) before the allow/deny decision. For a first-seen key, the new bucket is never stored in the map, so the consumed tokens are lost. The claimed consequence is that new keys are never stored and each request starts from a full bucket. However, the bug described is a missing persistence step, not a partial multi-step update that fails partway and leaves data half updated. The edit does not create a partial-update scenario; there is no multi-step change that can fail between steps. Additionally, the original code does not have this problem since it stores the bucket. The pattern (partial update without rollback) is not what the edit introduces, so the answer is no for introduction; the original lacks the bug, so cleanLacksIt is true."
+          },
+          {
+            "pattern": "concurrency.missing_await",
+            "why": "The edit wraps the synchronous prune result in expect(...).resolves, but prune returns a plain number, not a promise. Vitest's resolves on a non-promise fails with an error, and since the test does not await or return the assertion, the failure is not tied to the test properly. The original code has no missing await: prune is synchronous and its assertion runs immediately within the test. So the claimed consequence (assertion running after the test finishes) does not arise from the original, and the edit introduces a different problem (misuse of resolves on a non-promise), not a missing await in the original."
+          }
+        ],
+        "found_in_review": 3
+      }
+    },
+    {
+      "name": "typescript-05",
+      "built": true,
+      "seconds": 56.6444061,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "typescript-06",
+      "built": true,
+      "seconds": 55.8326253,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "concurrency.lock_held_across_slow_call",
+            "why": "The edit chains each send onto a shared promise (lock.held) so sends run strictly one after another, but the chain is only a sequential queue: each send is awaited before the next is queued, so the lock is never held across a call that other callers wait on in a way that differs from the original sequential loop. The original already awaited each sendWithRetry sequentially, including its backoff sleeps, so a slow SMTP call already stalled the run in the original code. The edit adds a promise chain whose only holder is this single loop, with no other callers awaiting the shared chain, so the claimed 'any caller awaiting the shared chain' and 'freeze all notifications' consequence does not arise from the edit. The problem described (lock held across slow call) is not truly a lock here; the sequential behavior existed before, so it is not newly introduced."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "typescript-07",
+      "built": true,
+      "seconds": 53.1329062,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "errors.retry_not_idempotent",
+            "why": "The edit adds a Vitest retry option { retry: 2 } to a pure test that only calls toQueryString and asserts on the returned string; there is no write or external call, so no side effect is retried and no non-idempotent operation exists. The claimed consequence (a write or external call being applied twice on retry) cannot happen here, and the original test had the same lack of side effects, so the pattern is absent before and after the edit."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "typescript-08",
+      "built": true,
+      "seconds": 51.7230406,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "security.sql_injection",
+            "why": "The edit adds a test-file helper that builds a SQL string by interpolating a region value directly into the query text. The helper is unused and lives in a test file, and the production code (csvExport.ts) contains no SQL at all. The claimed consequence, an attacker-controlled region reaching a query builder and returning all sales rows, requires this string to reach a real database through production code, which it does not. The original code also has no SQL injection, so the pattern is not present before the edit either. The edit does introduce an interpolated SQL string, but the defect is only a dead helper in a test file, so the claimed consequence cannot happen."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-01",
+      "built": true,
+      "seconds": 66.850764,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "concurrency.check_then_act",
+            "why": "The edit adds a duplicate copy of the same over-refund check immediately after the original one. The duplicate is redundant (dead code on the second evaluation, since the first return would already have fired), and it introduces no new concurrency behavior. The Plan function operates on a value copy of Capture and performs no shared-state check-then-act sequence in either version; the race described (two concurrent callers passing the balance check before recording a refund) would depend on the persistence layer, which is not shown and is unchanged by the edit. The original code already contains the same check-then-return pattern, so the claimed concurrency race is not introduced by this edit, and the claimed consequence (concurrent over-refunds) is not caused by the edit."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "go-02",
+      "built": true,
+      "seconds": 53.3496702,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-03",
+      "built": true,
+      "seconds": 85.725645,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 3
+      }
+    },
+    {
+      "name": "go-04",
+      "built": true,
+      "seconds": 64.6229942,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "go-05",
+      "built": true,
+      "seconds": 63.5053692,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "go-06",
+      "built": true,
+      "seconds": 58.5275126,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "resources.unbounded_growth",
+            "why": "The edit adds a history slice to the test-only fakeSender and appends each recipient on every Send call. This is unbounded growth in the sense that the slice is never trimmed, but it lives in a test fake that is created per test and discarded when the test ends; the claimed consequence of memory climbing in a long-running or high-volume process does not realistically apply to production code, and the original test file already had no such list. The production dispatcher code is unchanged. The edit does introduce an unbounded list pattern in test code, but the stated consequence (process killed from memory growth) cannot meaningfully happen for a short-lived test double with a handful of calls, so the problem as claimed is not a real defect here."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "go-07",
+      "built": true,
+      "seconds": 89.4057866,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 1,
+        "dropped": [
+          {
+            "pattern": "errors.retry_not_idempotent",
+            "why": "The edit adds a retry loop around a local no-op closure recordSearch that always returns nil, so the loop breaks on the first attempt and performs no write at all. There is no analytics write, no timeout, and no duplicate storage possible. The claimed consequence (retry storing the same query twice after a timeout) cannot happen in the edited code, and the original code had no retry either. Therefore the edit does not introduce the non-idempotent retry pattern, and the original lacks it too."
+          },
+          {
+            "pattern": "resources.missing_timeout",
+            "why": "The edit wraps the Search call in a goroutine and receives the result from an unbuffered channel with no timeout or select on a deadline. The claimed consequence is that if the goroutine panics before sending, the receive blocks forever. However, a panic in a goroutine that is not recovered crashes the entire test binary immediately rather than leaving the receive hanging, so the claimed hang-until-global-timeout scenario does not occur as described. The missing-timeout pattern (a receive with no time limit) is technically present in the edited code, since the receive has no deadline, but the original code has no such blocking receive at all, so the edit does introduce a receive without a time limit. The specific claimed consequence (silent hang from a panic) is incorrect because the unrecovered panic terminates the process. Under strict judgment the edit introduces an unbounded blocking wait pattern, but the stated consequence cannot happen as claimed."
+          }
+        ],
+        "found_in_review": 4
+      }
+    },
+    {
+      "name": "go-08",
+      "built": false,
+      "seconds": 56.519023,
+      "error": "The model's answer could not be used: Edit for resources.unbounded_result_set: `before` is not in internal/report/export.go. Copy it from the code exactly, character for character, indentation included."
+    }
+  ]
+}
