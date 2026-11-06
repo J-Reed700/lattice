@@ -243,6 +243,30 @@ fn a_reading_cut_at_its_limit_keeps_only_its_complete_lines() {
     );
 }
 
+/// A model lays a table's row out under its heading. Held to one unbroken copy,
+/// the note is dropped, and the passage that answers reads as if it said nothing.
+#[test]
+fn a_note_joining_a_heading_and_a_table_row_is_found_in_their_passage() {
+    let passages = Passages(BTreeMap::from([(
+        1,
+        Passage::new(
+            "## Actions\n\n| Action | Owner | Due |\n|---|---|---|\n| Close out the open drift report | Ilse Brantgard | 2031-10-25 |",
+        ),
+    )]));
+    assert_eq!(
+        locate(
+            "## Actions | Close out the open drift report | Ilse Brantgard | 2031-10-25",
+            &passages
+        ),
+        [1]
+    );
+    assert!(locate(
+        "## Actions | Close out the open drift report | Dagny Oreskel",
+        &passages
+    )
+    .is_empty());
+}
+
 #[test]
 fn a_note_is_found_in_the_passage_it_was_copied_from() {
     let passages = passages();
@@ -407,6 +431,26 @@ fn every_way_of_citing_a_passage_uses_it() {
         ),
         noted
     );
+}
+
+/// The passages shown again put the question far back in the message, with the
+/// last turn's question and answer before it. Measured on Haiku: without the
+/// question said again, a follow-up's reading can quote only a passage carried
+/// over from the last turn, and the answer repeats the last answer.
+#[tokio::test]
+async fn a_group_says_the_question_again_after_its_passages() {
+    let model = Model::new([reply(
+        &format!("[1] {KITCHEN}\n[2] {MILL}\n[3] {MÜHLE}\n[4] {MOLINO}"),
+        "stop",
+    )]);
+    read(&model, &planned(&[1, 2, 3, 4])).await.unwrap();
+    let sent = model.requests();
+    let message = sent[0].input[1].text();
+    let last_passage = message.rfind(MOLINO).expect("the passages shown again");
+    let said_again = message[last_passage..]
+        .find("My question is: \"Question: What happened?\"")
+        .is_some();
+    assert!(said_again, "{message}");
 }
 
 #[tokio::test]
