@@ -102,7 +102,7 @@ SCHEMA = {
                 "additionalProperties": False,
                 "properties": {
                     "id": {"type": "string"},
-                    "reason": {"type": "string", "maxLength": 512},
+                    "reason": {"type": "string"},
                     "verdict": {"type": "string", "enum": ["supported", "ambiguous", "unsupported"]},
                 },
                 "required": ["id", "verdict", "reason"],
