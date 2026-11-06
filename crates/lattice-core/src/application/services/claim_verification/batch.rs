@@ -232,9 +232,7 @@ mod tests {
             .trim()
             .to_string();
         assert!(reason.chars().count() > 600);
-        let response = format!("Reason: {reason}
-Source passage: none
-Verdict: unsupported");
+        let response = format!("Reason: {reason}\nSource passage: none\nVerdict: unsupported");
         let raw = json!({"checks":[{"id":"claim-0","response":response},{"id":"claim-1","response":response}]}).to_string();
         let result = resolve(&raw, &claims, &bank).unwrap();
         assert!(

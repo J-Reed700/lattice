@@ -111,8 +111,7 @@ fn explanation_keeps_the_reason_and_only_accepts_an_exact_source_quote() {
 #[test]
 fn a_reason_past_600_characters_is_kept_whole() {
     let evidence = ClaimEvidence {
-        text: "[1]
-The mill closed in 1887.".into(),
+        text: "[1]\nThe mill closed in 1887.".into(),
         quote: None,
     };
     let reason = "The passage gives a different year than the claim. "
@@ -121,8 +120,7 @@ The mill closed in 1887.".into(),
         .to_string();
     assert!(reason.chars().count() > 600);
     let parsed = parse_judge_explanation(
-        &format!("unsupported
-Reason: {reason}"),
+        &format!("unsupported\nReason: {reason}"),
         &evidence,
         ClaimVerdict::Unsupported,
     );
