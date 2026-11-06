@@ -52,7 +52,15 @@ pub fn prefer_float_weights() {
     std::env::set_var("CANDLE_DEQUANTIZE_ALL", "1");
 }
 
-pub fn limit_candle_threads() {}
+/// Holds candle's elementwise work to [`INFERENCE_THREADS`]. That work runs on a
+/// pool of candle's own, whichever rayon pool the caller is in, sized once from
+/// this variable and otherwise from the machine. Sets a process-wide variable,
+/// so call it first thing in `main`.
+pub fn limit_candle_threads() {
+    if std::env::var_os("CANDLE_NUM_THREADS").is_none() {
+        std::env::set_var("CANDLE_NUM_THREADS", INFERENCE_THREADS.to_string());
+    }
+}
 
 fn idle_expired(last_used: Instant, now: Instant, idle_ttl: Duration) -> bool {
     now.saturating_duration_since(last_used) >= idle_ttl
