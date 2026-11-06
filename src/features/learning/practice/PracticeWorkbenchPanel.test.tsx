@@ -192,9 +192,11 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(screen.getByRole('textbox', { name: 'Your response' })).toHaveValue(first.text);
   });
 
-  it('lets a response run as long as a chat message may', async () => {
-    renderWorkbench();
-    expect(await screen.findByRole('textbox', { name: 'Your response' })).toHaveAttribute('maxlength', String(LEARNER_TEXT_MAX_CHARS));
+  it('lets a guided answer run as long as a chat message may', async () => {
+    currentSession!.summary.taskKind = 'guided';
+    currentWorkspace.sessions = [{ ...currentSession!.summary }];
+    renderWorkbench(lesson, true);
+    expect(await screen.findByRole('textbox', { name: 'Your working' })).toHaveAttribute('maxlength', String(LEARNER_TEXT_MAX_CHARS));
   });
 
   it('enforces the Demonstrate aid contract and opens only frozen versions after submission', async () => {
