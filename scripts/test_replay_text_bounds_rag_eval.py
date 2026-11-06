@@ -62,5 +62,18 @@ class ReplaySchemas(unittest.TestCase):
         self.assertEqual({rule[2] for rule in rules}, {QUOTE_FLOOR})
 
 
+class ReplayQuoteCheck(unittest.TestCase):
+    def test_a_quote_past_1200_characters_that_the_excerpt_holds_holds(self):
+        excerpt = "A sentence of the reference that runs on and on. " * 40
+        quote = excerpt.strip()
+        self.assertGreater(len(quote), 1200)
+        self.assertTrue(lesson.quote_holds(quote, excerpt))
+
+    def test_a_quote_below_the_floor_or_absent_from_the_excerpt_does_not_hold(self):
+        excerpt = "A sentence of the reference that runs on and on."
+        self.assertFalse(lesson.quote_holds("A sentence of", excerpt))
+        self.assertFalse(lesson.quote_holds("Some other whole sentence that is not in it.", excerpt))
+
+
 if __name__ == "__main__":
     unittest.main()
