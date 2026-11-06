@@ -290,6 +290,23 @@ impl LibraryGc {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use crate::infrastructure::storage::FileIntents;
+
+    /// A migrated in-memory database and the records kept in it.
+    pub(crate) async fn file_intents() -> (sqlx::SqlitePool, FileIntents) {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let intents = FileIntents::new(pool.clone());
+        (pool, intents)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
@@ -459,13 +476,7 @@ mod tests {
         storage: &Arc<ContentAddressedStorage>,
         documents: &Arc<MockDocumentRepository>,
     ) -> (LibraryGc, FileIntents, sqlx::SqlitePool) {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
-            .await
-            .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        let intents = FileIntents::new(pool.clone());
+        let (pool, intents) = test_support::file_intents().await;
         let gc = LibraryGc::new(
             Arc::clone(storage) as Arc<dyn ContentAddressedStoragePort>,
             Arc::clone(documents) as Arc<dyn DocumentRepositoryPort>,
