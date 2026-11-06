@@ -373,7 +373,7 @@ for the full command.";
 /// Bump whenever scoring, corpus traversal, retry semantics, or trace meaning
 /// changes. A checkpoint from a different harness must never be mixed into a
 /// release result merely because it used the same model.
-const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-10-21.1";
+const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-11-06.1";
 
 impl EvalConfig {
     fn from_env() -> Self {
@@ -1887,7 +1887,7 @@ fn recoverable_failure_events(job_failed: bool, calls: &[CallRecord]) -> usize {
 }
 
 fn contains_marker(answer: &str, markers: &[String]) -> bool {
-    let lowered = answer.to_lowercase();
+    let lowered = answer.to_lowercase().replace('\u{2019}', "'");
     markers
         .iter()
         .any(|marker| lowered.contains(&marker.to_lowercase()))
