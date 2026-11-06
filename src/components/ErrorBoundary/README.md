@@ -121,7 +121,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 - `resetOnPropsChange`: Reset on any prop change
 - `isolate`: With no `fallback`, render a small inline "Error in {name}" card with a Retry button; without it the boundary renders nothing
 
-Every caught error goes to `logComponentError`. After more than five errors the
+Every caught error is recorded with `diagnostics.record`. After more than five errors the
 boundary refuses to reset, from keys or from **Try again**, to avoid a loop.
 
 ### Legacy feature boundaries
@@ -136,8 +136,7 @@ index. Nothing mounts them; use the section boundaries above.
 
 Full-screen display used by `RootErrorBoundary`: "Lattice ran into a
 problem.", a message from `getUserFriendlyMessage`, and **Try again**,
-**Reload** and **Copy details** buttons (plus **Download log** in
-development). **Show details** reveals the error name and message (sanitized in
+**Reload** and **Copy details** buttons. **Show details** reveals the error name and message (sanitized in
 production); the stack and component stack appear only in development.
 
 ```tsx
@@ -194,7 +193,8 @@ unexpected happened." when there is none; it never throws.
   characters with `[TOKEN]`;
 - file paths with `[PATH]`: Windows drive paths, UNC paths, Unix and `~/`
   paths, and relative paths with two or more slashes or any backslash. A path
-  runs on past spaces, so the rest of a clause may go with it.
+  runs on past spaces, so the rest of a clause may go with it. A path that
+  the log rules already turned into `[USER]/...` goes too.
 
 Plain text such as "Error: something went wrong" or "and/or" is untouched.
 In production **Show details** and **Copy details** use the same rules, and the
@@ -203,27 +203,26 @@ raw message. `redact` adds the user-folder rules the diagnostics log uses.
 
 ## Error Logging
 
-`src/utils/errorLogger.ts` is a compatibility facade over the local diagnostics
-store (`src/utils/diagnostics.ts`). Nothing leaves the machine.
+`src/utils/diagnostics.ts` is a local, bounded store of what went wrong.
+Nothing leaves the machine. Error boundaries, the global error handlers in
+`src/utils/globalDiagnostics.ts`, and the API layer write to it; Settings →
+Logs reads it.
 
 ```tsx
-import { logError, logComponentError } from '@/utils/errorLogger';
+import { diagnostics } from '@/utils/diagnostics';
 
-// Manual error logging
-logError(error, {
-  component: 'SearchInterface',
-  action: 'search',
-  additionalData: { filters },
-});
-
-// Component error logging (called automatically by error boundaries)
-logComponentError(error, errorInfo, 'MyComponent');
+diagnostics.record('error', error.message, 'SearchInterface', { filters });
+diagnostics.capture(error, 'Search');
 ```
 
-**Features:**
-- Entries are recorded in a bounded local store (300 entries; an immediate repeat bumps a count)
-- Messages and details are redacted (keys, tokens, prompts, queries, user paths)
-- `getRecentErrors`, `getErrorQueue`, `clearErrorQueue`, `exportErrorLog` and `downloadErrorLog` read or export the store
+- `record(level, message, source?, details?)` adds an entry. `capture(error, source, context?)` takes any thrown value, string or object, and records its message.
+- The store keeps the 300 most recent entries; an identical entry within five seconds bumps a count instead of adding a row.
+- Messages, sources and details are redacted by `redact` in `src/utils/redact.ts` before they are stored: secret fields, Bearer tokens, `api_key=` style values, secret query parameters, and the user folder in a path. Fields named like a secret, prompt, query, content or body are replaced whole.
+- `getSnapshot`, `subscribe`, `export`, `clear` and `flush` read, export, empty and persist the store.
+
+Log entries keep more detail than the screens do: paths, emails and IPs stay in
+the log, and the error screens and the unexpected-error toast strip them with
+`sanitizeErrorMessage`.
 
 ## Best Practices
 
@@ -256,7 +255,7 @@ Route boundaries need none: navigating away unmounts them.
 
 ```tsx
 // Good: rich context
-logError(error, { component: 'SearchInterface', action: 'search' });
+diagnostics.record('error', error.message, 'SearchInterface', { action: 'search' });
 
 // Bad: no context
 console.error(error);
@@ -303,11 +302,11 @@ Boundaries reset when:
 ### Development Mode
 - Stack and component stacks in the details panels
 - Boundaries also log to the console
-- **Download log** button on the full-page error
+- **Copy details** and the details panels show the raw message
 
 ### Production Mode
-- Sanitized messages in `FullPageError` details
-- No stack traces shown to users
+- Every message on an error screen goes through `sanitizeErrorMessage`, including the isolated and feature fallbacks and the unexpected-error toast
+- No stack traces shown to users; **Copy details** carries the stack with the message sanitized and user folders redacted
 - Logging stays in the local, redacted diagnostics store
 
 ## Accessibility

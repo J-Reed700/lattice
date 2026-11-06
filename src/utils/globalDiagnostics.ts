@@ -1,5 +1,5 @@
 import { diagnostics } from './diagnostics';
-import { redact } from './redact';
+import { redact, sanitizeErrorMessage } from './redact';
 import { toast } from '../stores/toastStore';
 
 
@@ -14,7 +14,7 @@ export function installGlobalDiagnostics(): () => void {
     lastNotice = Date.now();
     const latest = diagnostics.getSnapshot()[0];
     toast.error('An unexpected error occurred', {
-      message: latest?.message ?? 'Open Settings → Logs for details.',
+      message: sanitizeErrorMessage(latest?.message).trim() || 'Open Settings → Logs for details.',
       duration: 8000,
     });
   };

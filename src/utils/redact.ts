@@ -19,7 +19,7 @@ export function redact(text: string): string {
 const PATH_CHAR = String.raw`\p{L}\p{M}\p{N}_.~+,'()&#%!$=/\\\-`;
 const NAME_CHAR = String.raw`\p{L}\p{M}\p{N}_.~+,'()&#%!$=\-`;
 const PATH_REST = String.raw`(?:[${PATH_CHAR} ]*[${PATH_CHAR}])?`;
-const WORD_START = String.raw`(^|[\s"\[{])`;
+const WORD_START = String.raw`(^|[\s"\[{:;])`;
 
 const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'`)\]}>]+/gi, '[URL]'],
@@ -27,6 +27,7 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '[IP]'],
   [/(^|[^A-Za-z0-9_-])(?:0x)?[A-Fa-f0-9]{32,}(?![A-Za-z0-9_-])/g, '$1[TOKEN]'],
   [/(^|[^A-Za-z0-9_-])[A-Za-z0-9_-]{40,}(?![A-Za-z0-9_-])/g, '$1[TOKEN]'],
+  [new RegExp(String.raw`(^|[^\p{L}\p{N}])[\\/]?\[USER\][\\/][${PATH_CHAR}]${PATH_REST}`, 'gu'), '$1[PATH]'],
   [new RegExp(String.raw`(^|[^\p{L}\p{N}])[A-Za-z]:[\\/]${PATH_REST}`, 'gu'), '$1[PATH]'],
   [new RegExp(String.raw`(^|[^\p{L}\p{N}\\])\\\\[${NAME_CHAR}]${PATH_REST}`, 'gu'), '$1[PATH]'],
   [new RegExp(String.raw`(^|[\s"'(\[{=,:;])~?/[${PATH_CHAR}]${PATH_REST}`, 'gu'), '$1[PATH]'],
