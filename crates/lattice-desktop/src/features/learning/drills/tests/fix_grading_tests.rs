@@ -2,8 +2,8 @@
 //! judge when a run proves nothing, and the real built-in runtime.
 
 use super::support::{
-    fix_answer, last, messages, operator_fixed, proved, FakeRunner, ScriptedModel, KILLING_TEST,
-    LITERALS_AFTER, LITERALS_BEFORE, OPERATOR_AFTER, SUITE,
+    fix_answer, last, messages, operator_fixed, proved, raised_all, FakeRunner, ScriptedModel,
+    KILLING_TEST, LITERALS_AFTER, LITERALS_BEFORE, OPERATOR_AFTER, SUITE,
 };
 use crate::features::learning::drills::fix_grading::{choose, grade_fix, FixCase, StrategyKind};
 use crate::features::learning::drills::material::CodeMaterial;
@@ -72,18 +72,6 @@ fn runner_with_a_broken_suite() -> FakeRunner {
 
 fn ran(runner: &FakeRunner, test: &str) -> usize {
     runner.runs().iter().filter(|(_, ran)| ran == test).count()
-}
-
-/// An assessment in which every issue of the key was found.
-fn raised_all(drill: &Drill) -> Assessment {
-    Assessment {
-        issues: drill
-            .key
-            .iter()
-            .map(|_| (IssueOutcome::Found { finding: 0 }, "Found.".to_owned()))
-            .collect(),
-        findings: Vec::new(),
-    }
 }
 
 async fn grade(

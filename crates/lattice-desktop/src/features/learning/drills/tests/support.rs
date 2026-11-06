@@ -810,6 +810,18 @@ pub(super) fn review_assessment() -> Assessment {
     }
 }
 
+/// An assessment in which every issue of the key was found.
+pub(super) fn raised_all(drill: &Drill) -> Assessment {
+    Assessment {
+        issues: drill
+            .key
+            .iter()
+            .map(|_| (IssueOutcome::Found { finding: 0 }, "Found.".to_owned()))
+            .collect(),
+        findings: Vec::new(),
+    }
+}
+
 /// Puts the drill of [`proved`] into the bank, ready, as a finished build leaves it: with its suite, its runner and
 /// its evidence.
 pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {

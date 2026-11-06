@@ -6,10 +6,10 @@
 use super::support::{
     contradicted, course, explanation, explanation_answer, explanation_files, figure_mutation,
     fix_answer, idle_grader, last, no_verdict, passage_baseline, passage_build, passage_code,
-    passage_plant_answer, passage_spec, quiet, reversed_mutation, spacing_check, spacing_passage,
-    supported, system, unsupported, unsure, FakeGrader, ScriptedCheck, ScriptedModel, CHECK_MODEL,
-    CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH, MODEL, REVERSED, SECOND,
-    SLEEP, SMALLER_QUOTE, SPACING, THIRD, THIRD_PLANTED,
+    passage_plant_answer, passage_spec, quiet, raised_all, reversed_mutation, spacing_check,
+    spacing_passage, supported, system, unsupported, unsure, FakeGrader, ScriptedCheck,
+    ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH,
+    MODEL, REVERSED, SECOND, SLEEP, SMALLER_QUOTE, SPACING, THIRD, THIRD_PLANTED,
 };
 use crate::features::learning::drills::bank::{self, take, take_from, Shelf};
 use crate::features::learning::drills::build::{
@@ -1124,6 +1124,7 @@ async fn fix_of(
             learner: &learner,
             suite: None,
             source: Some(&source),
+            assessment: &raised_all(drill),
         },
     )
     .await?;
