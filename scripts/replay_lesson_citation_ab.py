@@ -57,8 +57,8 @@ RUBRIC = {
     "items": {
         "type": "object", "additionalProperties": False, "required": ["title", "description", "dimension"],
         "properties": {
-            "title": {"type": "string", "minLength": 3, "maxLength": 120},
-            "description": {"type": "string", "minLength": 30, "maxLength": 1000},
+            "title": {"type": "string", "minLength": 1},
+            "description": {"type": "string", "minLength": 1},
             "dimension": {"enum": ["recall", "explanation", "application", "transfer"]},
         },
     },
@@ -70,9 +70,9 @@ def schema(arm, sources):
     block_index = (
         {"type": ["integer", "null"], "minimum": 0, "maximum": sources - 1} if arm == "may_omit" else required_index
     )
-    quote = {"type": "string", "maxLength": 1200}
+    quote = {"type": "string"}
     if arm == "whole_sentence":
-        quote = {"type": "string", "minLength": 25, "maxLength": 1200}
+        quote = {"type": "string", "minLength": 25}
     return {
         "type": "object", "additionalProperties": False, "required": ["blocks", "questions"],
         "properties": {
@@ -83,7 +83,7 @@ def schema(arm, sources):
                     "kind": {"type": "string", "enum": ["explanation", "worked_example", "contrast", "check",
                                                          "guided_practice", "independent_practice", "reflection",
                                                          "recap"]},
-                    "title": {"type": "string", "maxLength": 160}, "body": {"type": "string", "minLength": 150},
+                    "title": {"type": "string"}, "body": {"type": "string", "minLength": 1},
                     "rubric": RUBRIC, "sourceIndex": block_index, "quote": quote,
                 },
             }},
@@ -92,11 +92,11 @@ def schema(arm, sources):
                 "required": ["kind", "prompt", "options", "correctIndex", "explanation", "sourceIndex", "quote"],
                 "properties": {
                     "kind": {"type": "string", "enum": ["practice", "quiz", "test"]},
-                    "prompt": {"type": "string", "maxLength": 1200},
+                    "prompt": {"type": "string"},
                     "options": {"type": "array", "minItems": 4, "maxItems": 4,
-                                "items": {"type": "string", "maxLength": 500}},
+                                "items": {"type": "string"}},
                     "correctIndex": {"type": "integer", "minimum": 0, "maximum": 3},
-                    "explanation": {"type": "string", "maxLength": 1600}, "sourceIndex": required_index, "quote": quote,
+                    "explanation": {"type": "string"}, "sourceIndex": required_index, "quote": quote,
                 },
             }},
         },
