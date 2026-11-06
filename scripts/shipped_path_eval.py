@@ -253,12 +253,14 @@ def cited_quotes(answer):
 
 
 def invented_quotes(answer, evidence):
-    """Cited quotes that no passage the turn read holds, word for word.
+    """Cited quotes that no passage the turn read holds, word for word, in its
+    content or in the document name and heading it is shown with.
 
     A rubric asks for the facts it names, so a right ticket inside a sentence
     no document contains passes it. Nothing but the passages decides this.
     """
-    passages = letters_and_digits(" ".join(entry.get("content") or "" for entry in evidence or []))
+    shown = (entry.get(field) or "" for entry in evidence or [] for field in ("file_name", "section", "content"))
+    passages = letters_and_digits(" ".join(shown))
     return [span for span in cited_quotes(answer) if letters_and_digits(span) not in passages]
 
 
