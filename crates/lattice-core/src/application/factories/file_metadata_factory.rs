@@ -63,32 +63,111 @@ impl FileMetadataFactory {
     ///
     /// This is a simplified implementation based on file extension.
     /// For production use, consider using the `infer` crate or magic bytes detection.
-    fn detect_mime_type(path: &Path) -> String {
-        match path.extension().and_then(|e| e.to_str()) {
+    pub fn detect_mime_type(path: &Path) -> String {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+
+        match ext.as_deref() {
+            // Documents
             Some("txt") => "text/plain",
+            Some("md") | Some("markdown") => "text/markdown",
             Some("pdf") => "application/pdf",
             Some("docx") => {
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             }
             Some("doc") => "application/msword",
+            Some("rtf") => "application/rtf",
+            Some("odt") => "application/vnd.oasis.opendocument.text",
             Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             Some("xls") => "application/vnd.ms-excel",
             Some("pptx") => {
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation"
             }
             Some("ppt") => "application/vnd.ms-powerpoint",
-            Some("md") => "text/markdown",
+
+            // Code - Rust
+            Some("rs") => "text/x-rust",
+            Some("toml") => "text/x-toml",
+
+            // Code - Web
+            Some("js") | Some("mjs") | Some("cjs") => "text/javascript",
+            Some("ts") => "text/typescript",
+            Some("tsx") => "text/typescript-jsx",
+            Some("jsx") => "text/javascript-jsx",
             Some("html") | Some("htm") => "text/html",
+            Some("css") => "text/css",
+            Some("scss") | Some("sass") => "text/x-scss",
+            Some("less") => "text/x-less",
+
+            // Code - Python
+            Some("py") | Some("pyw") | Some("pyi") => "text/x-python",
+
+            // Code - Systems
+            Some("c") => "text/x-c",
+            Some("h") => "text/x-c-header",
+            Some("cpp") | Some("cxx") | Some("cc") => "text/x-c++",
+            Some("hpp") | Some("hxx") | Some("hh") => "text/x-c++-header",
+            Some("go") => "text/x-go",
+
+            // Code - JVM
+            Some("java") => "text/x-java",
+            Some("kt") | Some("kts") => "text/x-kotlin",
+            Some("scala") => "text/x-scala",
+            Some("clj") | Some("cljs") | Some("cljc") => "text/x-clojure",
+
+            // Code - Other languages
+            Some("rb") | Some("rake") => "text/x-ruby",
+            Some("php") => "text/x-php",
+            Some("swift") => "text/x-swift",
+            Some("r") => "text/x-r",
+            Some("m") => "text/x-matlab",
+            Some("mm") => "text/x-objective-c",
+            Some("pl") | Some("pm") => "text/x-perl",
+            Some("lua") => "text/x-lua",
+            Some("hs") | Some("lhs") => "text/x-haskell",
+            Some("ex") | Some("exs") => "text/x-elixir",
+            Some("erl") | Some("hrl") => "text/x-erlang",
+
+            // Shell scripts
+            Some("sh") => "text/x-shellscript",
+            Some("bash") => "text/x-bash",
+            Some("zsh") => "text/x-zsh",
+            Some("fish") => "text/x-fish",
+            Some("ps1") | Some("psm1") => "text/x-powershell",
+            Some("bat") | Some("cmd") => "text/x-batch",
+
+            // Config/Data formats
             Some("json") => "application/json",
             Some("xml") => "application/xml",
+            Some("yaml") | Some("yml") => "text/x-yaml",
+            Some("ini") => "text/x-ini",
+            Some("conf") | Some("config") => "text/plain",
+
+            // Database
+            Some("sql") => "text/x-sql",
+            Some("graphql") | Some("gql") => "application/graphql",
+
+            // Data files
             Some("csv") => "text/csv",
-            Some("rtf") => "application/rtf",
-            Some("odt") => "application/vnd.oasis.opendocument.text",
+            Some("tsv") => "text/tab-separated-values",
+
+            // Audio
+            Some("mp3") => "audio/mpeg",
+            Some("wav") => "audio/wav",
+            Some("ogg") => "audio/ogg",
+            Some("flac") => "audio/flac",
+            Some("aac") => "audio/aac",
+            Some("m4a") => "audio/mp4",
+            Some("wma") => "audio/x-ms-wma",
+
+            // Images
             Some("png") => "image/png",
             Some("jpg") | Some("jpeg") => "image/jpeg",
             Some("gif") => "image/gif",
             Some("bmp") => "image/bmp",
-            Some("tiff") => "image/tiff",
+            Some("tiff") | Some("tif") => "image/tiff",
             Some("ico") => "image/x-icon",
             Some("webp") => "image/webp",
             Some("svg") => "image/svg+xml",
@@ -96,6 +175,17 @@ impl FileMetadataFactory {
             Some("heif") => "image/heif",
             Some("heif-sequence") => "image/heif-sequence",
             Some("heic-sequence") => "image/heic-sequence",
+
+            // Video
+            Some("mp4") => "video/mp4",
+            Some("mov") => "video/quicktime",
+            Some("avi") => "video/x-msvideo",
+            Some("mkv") => "video/x-matroska",
+            Some("webm") => "video/webm",
+            Some("flv") => "video/x-flv",
+            Some("wmv") => "video/x-ms-wmv",
+            Some("m4v") => "video/x-m4v",
+
             _ => "application/octet-stream",
         }
         .to_string()
@@ -134,8 +224,36 @@ mod tests {
             "text/plain"
         );
         assert_eq!(
+            FileMetadataFactory::detect_mime_type(Path::new("TEST.TXT")),
+            "text/plain"
+        );
+        assert_eq!(
             FileMetadataFactory::detect_mime_type(Path::new("test.pdf")),
             "application/pdf"
+        );
+        assert_eq!(
+            FileMetadataFactory::detect_mime_type(Path::new("test.PDF")),
+            "application/pdf"
+        );
+        assert_eq!(
+            FileMetadataFactory::detect_mime_type(Path::new("doc.md")),
+            "text/markdown"
+        );
+        assert_eq!(
+            FileMetadataFactory::detect_mime_type(Path::new("doc.markdown")),
+            "text/markdown"
+        );
+        assert_eq!(
+            FileMetadataFactory::detect_mime_type(Path::new("main.rs")),
+            "text/x-rust"
+        );
+        assert_eq!(
+            FileMetadataFactory::detect_mime_type(Path::new("script.py")),
+            "text/x-python"
+        );
+        assert_eq!(
+            FileMetadataFactory::detect_mime_type(Path::new("track.mp3")),
+            "audio/mpeg"
         );
         assert_eq!(
             FileMetadataFactory::detect_mime_type(Path::new("document.docx")),

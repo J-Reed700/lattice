@@ -87,6 +87,24 @@ describe('TangentSelection', () => {
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
   });
 
+  it('offers no tangent for a selection of only whitespace', () => {
+    const create = vi.fn();
+    render(<TangentSelectionContext.Provider value={{ create, creating: false }}>
+      <TangentSelection conversationId="parent" messageId="reply" enabled><p>Nile   flood</p></TangentSelection>
+    </TangentSelectionContext.Provider>);
+    const answer = screen.getByText('Nile flood');
+    const range = document.createRange();
+    range.setStart(answer.firstChild!, 4);
+    range.setEnd(answer.firstChild!, 7);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    fireEvent(document, new Event('selectionchange'));
+    expect(fireEvent.contextMenu(answer)).toBe(true);
+    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('offers no tangent for an unfinished reply and dismisses on Escape', () => {
     const create = vi.fn();
     const content = (enabled: boolean) => <TangentSelectionContext.Provider value={{ create, creating: false }}>

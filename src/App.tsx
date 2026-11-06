@@ -1,9 +1,7 @@
 import { RouterProvider } from 'react-router/dom';
 
-import { ErrorToastContainer } from './components/ErrorToast';
 import { ToastContainer } from './components/Toast';
 import { TooltipProvider } from './components/ui';
-import { ErrorProvider, useError } from './contexts/ErrorContext';
 import { FirstRunGate } from './features/model/components/FirstRun';
 import { useDownloadedModelsListener } from './features/model/hooks/useDownloadedModels';
 import { useDownloadsListener } from './features/model/hooks/useDownloads';
@@ -63,7 +61,6 @@ function App() {
 
   return (
     <TooltipProvider>
-      <ErrorProvider>
         <div inert={shutdown.isQuitting || undefined}>
           <AppContent />
         </div>
@@ -83,18 +80,14 @@ function App() {
         {/* Mounted after initialization, so the first-run check still runs
             once the database bridge has answered. */}
         <FirstRunGate />
-      </ErrorProvider>
     </TooltipProvider>
   );
 }
 
 function AppContent() {
-  const { errors, dismissError } = useError();
-
   return (
     <>
       <RouterProvider router={router} />
-      <ErrorToastContainer errors={errors} onDismiss={dismissError} position="top-right" />
       <ToastContainer />
     </>
   );

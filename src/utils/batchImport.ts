@@ -1,6 +1,8 @@
 import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { BatchJobStatus } from '@/types/api/batch';
 
+export const BATCH_IMPORT_JOBS_QUERY_KEY = ['batch-import-jobs'] as const;
+
 export async function startBatchUrlImport(
   urls: string[],
   options?: { extractArticle?: boolean },

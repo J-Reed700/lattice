@@ -1,26 +1,15 @@
-import { type FC } from 'react';
+import { lazy, Suspense } from 'react';
 
-import { PDFViewer as EmbeddedPDFViewer } from '@/features/reading/components/ContentViewer/renderers/PDFViewer';
-import type { PassageLocator, PassageMatchTier } from '@/types/conversation';
+import type { PDFViewerProps } from './PDFViewerImpl';
 
-interface PDFViewerProps {
-  filePath: string;
-  /** A cited passage to land on. The page is resolved by the embedded viewer. */
-  highlight?: PassageLocator | null;
-  onLocationResolved?: (_label: string) => void;
-  onMatch?: (_tier: PassageMatchTier) => void;
+const PDFViewerImpl = lazy(() => import('./PDFViewerImpl').then((module) => ({ default: module.PDFViewer })));
+
+export type { PDFViewerProps };
+
+export function PDFViewer(props: PDFViewerProps) {
+  return (
+    <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-text-muted">Loading PDF…</div>}>
+      <PDFViewerImpl {...props} />
+    </Suspense>
+  );
 }
-
-export const PDFViewer: FC<PDFViewerProps> = ({
-  filePath,
-  highlight,
-  onLocationResolved,
-  onMatch,
-}) => (
-  <EmbeddedPDFViewer
-    filePath={filePath}
-    highlight={highlight}
-    onLocationResolved={onLocationResolved}
-    onMatch={onMatch}
-  />
-);

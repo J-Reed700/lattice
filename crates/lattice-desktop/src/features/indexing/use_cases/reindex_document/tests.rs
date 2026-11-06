@@ -617,3 +617,188 @@ async fn test_reindex_with_different_strategy() {
         response.chunks_created
     );
 }
+
+#[tokio::test]
+async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as_code() {
+    struct CapturingUowDocumentRepo {
+        saved: Arc<Mutex<Option<Document>>>,
+    }
+
+    #[async_trait]
+    impl RepositoryPort<Document> for CapturingUowDocumentRepo {
+        async fn save(&self, entity: &Document) -> Result<()> {
+            *self.saved.lock().unwrap() = Some(entity.clone());
+            Ok(())
+        }
+        async fn find_by_id(&self, _id: &str) -> Result<Option<Document>> {
+            Ok(None)
+        }
+        async fn find_all(&self) -> Result<Vec<Document>> {
+            Ok(vec![])
+        }
+        async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<Document>> {
+            Ok(vec![])
+        }
+        async fn save_batch(&self, _entities: &[Document]) -> Result<()> {
+            Ok(())
+        }
+        async fn delete(&self, _id: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn delete_batch(&self, _ids: &[&str]) -> Result<()> {
+            Ok(())
+        }
+        async fn count(&self) -> Result<usize> {
+            Ok(0)
+        }
+        async fn exists(&self, _id: &str) -> Result<bool> {
+            Ok(false)
+        }
+    }
+
+    #[async_trait]
+    impl lattice_core::application::ports::DocumentRepositoryPort for CapturingUowDocumentRepo {
+        async fn find_by_checksum(
+            &self,
+            _checksum: &lattice_core::domain::value_objects::Checksum,
+        ) -> Result<Option<Document>> {
+            Ok(None)
+        }
+        async fn count_documents(&self) -> Result<i64> {
+            Ok(0)
+        }
+        async fn count_chunks(&self) -> Result<i64> {
+            Ok(0)
+        }
+        async fn find_file_path_by_id(&self, _document_id: &str) -> Result<String> {
+            Ok(String::new())
+        }
+        async fn find_id_by_path(&self, _file_path: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        async fn document_exists(&self, _document_id: &str) -> Result<bool> {
+            Ok(false)
+        }
+        async fn delete(&self, _document_id: &str) -> Result<()> {
+            Ok(())
+        }
+        async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
+            Ok(vec![])
+        }
+    }
+
+    struct CapturingUow {
+        saved: Arc<Mutex<Option<Document>>>,
+    }
+
+    #[async_trait]
+    impl lattice_core::application::ports::UnitOfWork for CapturingUow {
+        fn chunk_repository(
+            &self,
+        ) -> Result<Box<dyn lattice_core::application::ports::ChunkRepositoryPort + Send + '_>>
+        {
+            Err(AppError::InvalidState("not used".into()))
+        }
+        fn document_repository(
+            &self,
+        ) -> Result<Box<dyn lattice_core::application::ports::DocumentRepositoryPort + Send + '_>>
+        {
+            Ok(Box::new(CapturingUowDocumentRepo {
+                saved: self.saved.clone(),
+            }))
+        }
+        fn embedding_repository(&self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + '_>> {
+            Ok(Box::new(MockUowEmbeddingRepo))
+        }
+        fn system_repository(
+            &self,
+        ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>>
+        {
+            Err(AppError::InvalidState("not used".into()))
+        }
+        fn model_repository(
+            &self,
+        ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelRepositoryPort + '_>>
+        {
+            Err(AppError::InvalidState("not used".into()))
+        }
+        fn model_file_repository(
+            &self,
+        ) -> Result<
+            Box<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort + '_>,
+        > {
+            Err(AppError::InvalidState("not used".into()))
+        }
+        async fn commit(&mut self) -> Result<()> {
+            Ok(())
+        }
+        async fn rollback(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    struct CapturingUowFactory {
+        saved: Arc<Mutex<Option<Document>>>,
+    }
+
+    #[async_trait]
+    impl UnitOfWorkFactory for CapturingUowFactory {
+        async fn create(
+            &self,
+        ) -> Result<Box<dyn lattice_core::application::ports::UnitOfWork + Send>> {
+            Ok(Box::new(CapturingUow {
+                saved: self.saved.clone(),
+            }))
+        }
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("config.yaml");
+    let yaml_content = "server:\n  host: 127.0.0.1\n  port: 8080\n";
+    fs::write(&file_path, yaml_content).unwrap();
+
+    // Simulate a legacy row imported with "application/octet-stream"
+    let metadata = lattice_core::domain::value_objects::FileMetadata::new(
+        "config.yaml".to_string(),
+        "application/octet-stream".to_string(),
+        yaml_content.len() as i64,
+        chrono::Utc::now(),
+    )
+    .unwrap();
+    let checksum = lattice_core::domain::value_objects::Checksum::new("a".repeat(64)).unwrap();
+    let document = Document::from_file(
+        ValidatedFilePath::new(file_path).unwrap(),
+        metadata,
+        checksum,
+        yaml_content.to_string(),
+        ChunkingStrategy::FixedSize { size: 512 },
+    )
+    .unwrap();
+    let doc_id = document.id().to_string();
+
+    let repo = Arc::new(MockDocumentRepo::new());
+    repo.set_document(document);
+    let saved = Arc::new(Mutex::new(None));
+
+    let use_case = ReindexDocumentUseCase::new(
+        Arc::new(MockFileStorage {
+            content: yaml_content,
+        }),
+        Arc::new(MockEmbedder),
+        repo,
+        Arc::new(CapturingUowFactory {
+            saved: saved.clone(),
+        }),
+        Arc::new(MockVectorSearch::default()),
+    );
+
+    use_case.execute(doc_id).await.unwrap();
+
+    let persisted = saved
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("saved document in UoW");
+    assert_eq!(persisted.mime_type(), "text/x-yaml");
+    assert!(persisted.chunks().iter().all(|c| c.has_code()));
+}

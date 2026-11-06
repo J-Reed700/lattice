@@ -68,3 +68,6 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+export const INDEXED_FOLDERS_QUERY_KEY = ['indexed-folders'] as const;
+export const SETTINGS_QUERY_KEY = ['settings'] as const;

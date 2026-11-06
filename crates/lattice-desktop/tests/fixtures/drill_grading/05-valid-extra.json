@@ -1,0 +1,134 @@
+{
+  "name": "05-valid-extra",
+  "kind": "valid_extra",
+  "why": "The first finding sits on the lines of the race, which is why the hint pairs it with that issue, but it is about something else: a negative quantity gets past the stock check and adds stock. That is a real defect of the clean code too and the key does not hold it: a valid extra, and the race stays missed.",
+  "drill": {
+    "id": "inventory-reservations",
+    "language": "python",
+    "title": "Inventory reservations",
+    "files": [
+      {
+        "path": "inventory.py",
+        "text": "import sqlite3\nimport threading\n\nLOW_STOCK = 5\n\n\nclass Inventory:\n    \"\"\"Stock levels kept in SQLite and shared by the web workers.\"\"\"\n\n    def __init__(self, path):\n        self._db = sqlite3.connect(path, check_same_thread=False)\n        self._lock = threading.Lock()\n\n    def stock(self, sku):\n        row = self._db.execute(\n            f\"SELECT quantity FROM stock WHERE sku = '{sku}'\"\n        ).fetchone()\n        return row[0] if row else 0\n\n    def reserve(self, sku, quantity):\n        \"\"\"Take quantity units out of stock; False if there are too few.\"\"\"\n        if self.stock(sku) < quantity:\n            return False\n        with self._lock:\n            self._db.execute(\n                \"UPDATE stock SET quantity = quantity - ? WHERE sku = ?\",\n                (quantity, sku),\n            )\n            self._db.commit()\n            return True\n\n    def restock_gaps(self, history):\n        \"\"\"Differences between consecutive stock counts, oldest first.\"\"\"\n        gaps = []\n        for i in range(len(history)):\n            gaps.append(history[i + 1] - history[i])\n        return gaps\n\n    def low_stock(self, skus):\n        return [sku for sku in skus if self.stock(sku) <= LOW_STOCK]\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "inventory-sql-injection",
+        "pattern": "security.sql_injection",
+        "severity": "critical",
+        "span": {
+          "path": "inventory.py",
+          "start": 16,
+          "end": 16
+        },
+        "consequence": "A caller who controls the sku can end the quoted string and add SQL of their own, reading or changing any table.",
+        "fix": {
+          "path": "inventory.py",
+          "before": "f\"SELECT quantity FROM stock WHERE sku = '{sku}'\"",
+          "after": "\"SELECT quantity FROM stock WHERE sku = ?\", (sku,)"
+        },
+        "explanation": "stock() puts the sku into the SQL text with an f-string, so a sku that contains a quote can rewrite the query. Pass it as a bound parameter and the database never reads it as SQL.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the bound parameter with an f-string, and the clean code binds it."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "inventory-reserve-race",
+        "pattern": "concurrency.check_then_act",
+        "severity": "major",
+        "span": {
+          "path": "inventory.py",
+          "start": 22,
+          "end": 24
+        },
+        "consequence": "Two requests can both pass the stock check before either one updates it, so the same units are sold twice and the stock goes negative.",
+        "fix": {
+          "path": "inventory.py",
+          "before": "        if self.stock(sku) < quantity:\n            return False\n        with self._lock:",
+          "after": "        with self._lock:\n            if self.stock(sku) < quantity:\n                return False"
+        },
+        "explanation": "reserve() checks the stock before it takes the lock, so the check and the update are not one step. Two workers can both see enough stock and both take it. Hold the lock across the check and the update.",
+        "proof": {
+          "judged": {
+            "reason": "The edit moves the stock check out of the lock that guards the update, which the clean code holds across both."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "inventory-gaps-off-by-one",
+        "pattern": "correctness.off_by_one",
+        "severity": "major",
+        "span": {
+          "path": "inventory.py",
+          "start": 35,
+          "end": 35
+        },
+        "consequence": "On the last pass history[i + 1] is past the end of the list, so any call with a non-empty history raises IndexError.",
+        "fix": {
+          "path": "inventory.py",
+          "before": "for i in range(len(history)):",
+          "after": "for i in range(len(history) - 1):"
+        },
+        "explanation": "The loop reads history[i + 1], so it has to stop one short of the end. Running over every index reads past the last element.",
+        "proof": {
+          "judged": {
+            "reason": "The edit drops the - 1 from the loop bound, so the last pass indexes past the end."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "inventory.py",
+      "text": "import sqlite3\nimport threading\n\nLOW_STOCK = 5\n\n\nclass Inventory:\n    \"\"\"Stock levels kept in SQLite and shared by the web workers.\"\"\"\n\n    def __init__(self, path):\n        self._db = sqlite3.connect(path, check_same_thread=False)\n        self._lock = threading.Lock()\n\n    def stock(self, sku):\n        row = self._db.execute(\n            \"SELECT quantity FROM stock WHERE sku = ?\", (sku,)\n        ).fetchone()\n        return row[0] if row else 0\n\n    def reserve(self, sku, quantity):\n        \"\"\"Take quantity units out of stock; False if there are too few.\"\"\"\n        with self._lock:\n            if self.stock(sku) < quantity:\n                return False\n            self._db.execute(\n                \"UPDATE stock SET quantity = quantity - ? WHERE sku = ?\",\n                (quantity, sku),\n            )\n            self._db.commit()\n            return True\n\n    def restock_gaps(self, history):\n        \"\"\"Differences between consecutive stock counts, oldest first.\"\"\"\n        gaps = []\n        for i in range(len(history) - 1):\n            gaps.append(history[i + 1] - history[i])\n        return gaps\n\n    def low_stock(self, skus):\n        return [sku for sku in skus if self.stock(sku) <= LOW_STOCK]\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "inventory.py",
+        "start": 21,
+        "end": 23
+      },
+      "text": "reserve never checks that quantity is positive. A negative quantity passes the stock check, and the UPDATE then adds stock instead of taking it.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "inventory.py",
+        "start": 16,
+        "end": 16
+      },
+      "text": "The sku is put into the SQL with an f-string, so someone who controls it can inject SQL. Use a bound parameter.",
+      "severity": "critical"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      "missed",
+      "missed"
+    ],
+    "findings": [
+      "valid_extra",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

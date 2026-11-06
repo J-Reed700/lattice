@@ -15,6 +15,7 @@ describe('detectFileType', () => {
     ['/repo/report.docx', { type: 'docx', canPreview: true }],
     ['/repo/report.PDF', { type: 'pdf', canPreview: true }],
     ['/repo/photo.WebP', { type: 'image', canPreview: true }],
+    ['/repo/podcast.mp3', { type: 'audio', canPreview: true }],
     ['/repo/archive.zip', { type: 'unsupported', canPreview: false }],
     ['/repo/LICENSE', { type: 'unsupported', canPreview: false }],
     ['/repo/trailing.', { type: 'unsupported', canPreview: false }],
@@ -34,6 +35,7 @@ describe('detectFileType', () => {
 describe('isSupportedFileType', () => {
   it('reflects whether the detector has a preview implementation', () => {
     expect(isSupportedFileType('notes.md')).toBe(true);
+    expect(isSupportedFileType('song.wav')).toBe(true);
     expect(isSupportedFileType('archive.7z')).toBe(false);
   });
 });

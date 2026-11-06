@@ -8,8 +8,6 @@
 
 import React, { useState } from 'react';
 
-import { getUserFriendlyMessage, sanitizeErrorMessage } from '../../types/errors';
-import { downloadErrorLog } from '../../utils/errorLogger';
 
 export interface FullPageErrorProps {
   error: Error;
@@ -44,8 +42,8 @@ export function FullPageError({ error, errorInfo, resetError }: FullPageErrorPro
     });
   };
 
-  const userFriendlyMessage = getUserFriendlyMessage(error);
-  const displayMessage = isDevelopment ? error.message : sanitizeErrorMessage(error.message);
+  const userFriendlyMessage = error.message?.trim() || 'Something unexpected happened.';
+  const displayMessage = error.message;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg p-6">
@@ -63,11 +61,6 @@ export function FullPageError({ error, errorInfo, resetError }: FullPageErrorPro
           <button type="button" onClick={handleCopyError} className={ghostButton}>
             {copied ? 'Copied' : 'Copy details'}
           </button>
-          {isDevelopment ? (
-            <button type="button" onClick={downloadErrorLog} className={ghostButton}>
-              Download log
-            </button>
-          ) : null}
         </div>
 
         <div className="mt-8 border-t border-border-subtle pt-4">

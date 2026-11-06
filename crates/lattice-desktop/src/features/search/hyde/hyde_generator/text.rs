@@ -37,20 +37,6 @@ pub(super) fn is_followup_verdict(raw: &str) -> bool {
         .is_some_and(|word| word.trim_matches(|ch: char| !ch.is_alphanumeric()) == "1")
 }
 
-pub(super) fn compact_hyde_text(raw: &str) -> String {
-    const MAX_WORDS: usize = 90;
-    let words: Vec<&str> = raw.split_whitespace().collect();
-    if words.len() <= MAX_WORDS {
-        return raw.trim().to_string();
-    }
-    words
-        .iter()
-        .take(MAX_WORDS)
-        .copied()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn tokenize_guard_terms(text: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut current = String::new();

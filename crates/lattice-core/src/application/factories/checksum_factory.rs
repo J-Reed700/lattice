@@ -21,6 +21,14 @@ use std::path::Path;
 pub struct ChecksumFactory;
 
 impl ChecksumFactory {
+    /// Compute lower-case hex SHA-256 hash of a file by streaming its bytes.
+    pub fn compute_file_sha256_hex(path: &Path) -> std::io::Result<String> {
+        let mut file = std::fs::File::open(path)?;
+        let mut hasher = Sha256::new();
+        std::io::copy(&mut file, &mut hasher)?;
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
     /// Compute SHA-256 checksum from file path (with file I/O).
     ///
     /// This method performs file system operations, keeping file I/O out of the
@@ -30,12 +38,12 @@ impl ChecksumFactory {
     ///
     /// Returns an error if the file cannot be read.
     pub fn from_path(path: &Path) -> Result<Checksum> {
-        let content = std::fs::read(path).map_err(|e| AppError::Io {
+        let checksum_str = Self::compute_file_sha256_hex(path).map_err(|e| AppError::Io {
             message: format!("Failed to read file for checksum: {}", e),
             kind: format!("{:?}", e.kind()),
         })?;
 
-        Self::from_bytes(&content)
+        Checksum::new(checksum_str)
     }
 
     /// Compute SHA-256 checksum from byte content.

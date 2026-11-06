@@ -30,13 +30,13 @@
 // - We need dynamic model discovery from HuggingFace API
 // Until then, keep it simple with hardcoded constants.
 
+use crate::infrastructure::file_system::compute_file_sha256_async;
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use async_trait::async_trait;
 use lattice_core::domain::models::curated::CURATED_RERANKER;
 use lattice_core::shared::error::{AppError, Result, ResultExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -175,12 +175,12 @@ impl ModelManager {
         self
     }
 
-    fn emit_progress(&self, progress: DownloadProgress) {
+    fn emit_progress(&self, model_id: &str, progress: DownloadProgress) {
         if let Some(handle) = &self.app_handle {
             let bytes_per_second = progress.speed_mbps * 1_048_576.0;
 
             let payload = DownloadProgressPayload {
-                id: "bge-m3".to_string(),
+                id: model_id.to_string(),
                 bytes_downloaded: progress.bytes_downloaded,
                 total_bytes: if progress.total_bytes > 0 {
                     Some(progress.total_bytes)
@@ -196,7 +196,7 @@ impl ModelManager {
         }
     }
 
-    fn emit_complete(&self) {
+    fn emit_complete(&self, model_id: &str) {
         if let Some(handle) = &self.app_handle {
             let elapsed_seconds = self
                 .download_start_time
@@ -207,7 +207,7 @@ impl ModelManager {
             let total_bytes = self.bytes_downloaded.load(Ordering::Relaxed);
 
             let payload = DownloadCompletedPayload {
-                id: "bge-m3".to_string(),
+                id: model_id.to_string(),
                 total_bytes_completed: Some(total_bytes),
                 elapsed_seconds,
             };
@@ -216,10 +216,10 @@ impl ModelManager {
         }
     }
 
-    fn emit_error(&self, error: &str) {
+    fn emit_error(&self, model_id: &str, error: &str) {
         if let Some(handle) = &self.app_handle {
             let payload = DownloadFailedPayload {
-                id: "bge-m3".to_string(),
+                id: model_id.to_string(),
                 error: error.to_string(),
             };
 
@@ -244,12 +244,12 @@ impl ModelManager {
         tracing::info!("Models not found, initiating download...");
         match self.download_all_models().await {
             Ok(_) => {
-                self.emit_complete();
+                self.emit_complete("bge-m3");
                 self.reset_download_progress();
                 Ok(model_path)
             }
             Err(e) => {
-                self.emit_error(&e.to_string());
+                self.emit_error("bge-m3", &e.to_string());
                 self.reset_download_progress();
                 Err(e)
             }
@@ -287,7 +287,7 @@ impl ModelManager {
             }
 
             tracing::info!("Downloading {}...", filename);
-            self.download_with_retry(url, &target_path, filename, checksum)
+            self.download_with_retry(url, &target_path, filename, checksum, "bge-m3")
                 .await?;
 
             if self.is_cancelled.load(Ordering::Relaxed) {
@@ -304,12 +304,16 @@ impl ModelManager {
         target_path: &Path,
         filename: &str,
         expected_checksum: Option<&str>,
+        model_id: &str,
     ) -> Result<()> {
         let mut attempts = 0;
         let mut last_error = None;
 
         while attempts < MAX_RETRIES {
-            match self.download_file(url, target_path, filename).await {
+            match self
+                .download_file(url, target_path, filename, model_id)
+                .await
+            {
                 Ok(_) => {
                     if let Some(checksum) = expected_checksum {
                         if self.verify_checksum(target_path, checksum).await? {
@@ -346,7 +350,13 @@ impl ModelManager {
         Err(last_error.unwrap_or_else(|| AppError::Network("Max retries exceeded".to_string())))
     }
 
-    async fn download_file(&self, url: &str, target_path: &Path, filename: &str) -> Result<()> {
+    async fn download_file(
+        &self,
+        url: &str,
+        target_path: &Path,
+        filename: &str,
+        model_id: &str,
+    ) -> Result<()> {
         let temp_path = target_path.with_extension("tmp");
 
         let mut downloaded: u64 = 0;
@@ -475,14 +485,17 @@ impl ModelManager {
                     0
                 };
 
-                self.emit_progress(DownloadProgress {
-                    bytes_downloaded: downloaded,
-                    total_bytes: total_size,
-                    percentage,
-                    speed_mbps,
-                    eta_seconds: eta,
-                    current_file: filename.to_string(),
-                });
+                self.emit_progress(
+                    model_id,
+                    DownloadProgress {
+                        bytes_downloaded: downloaded,
+                        total_bytes: total_size,
+                        percentage,
+                        speed_mbps,
+                        eta_seconds: eta,
+                        current_file: filename.to_string(),
+                    },
+                );
 
                 tracing::debug!(
                     "{}: {:.2}% ({}/{} MB) @ {:.2} MB/s, ETA: {}s",
@@ -511,17 +524,7 @@ impl ModelManager {
     }
 
     async fn verify_checksum(&self, file_path: &Path, expected: &str) -> Result<bool> {
-        let path = file_path.to_path_buf();
-        let hash_hex = tokio::task::spawn_blocking(move || -> Result<String> {
-            let mut file =
-                std::fs::File::open(&path).context("Failed to read file for checksum")?;
-            let mut hasher = Sha256::new();
-            std::io::copy(&mut file, &mut hasher).context("Failed to read file for checksum")?;
-            Ok(hex::encode(hasher.finalize()))
-        })
-        .await
-        .map_err(|e| AppError::Other(format!("Checksum task failed: {e}")))??;
-
+        let hash_hex = compute_file_sha256_async(file_path).await?;
         Ok(hash_hex == expected)
     }
 
@@ -557,12 +560,12 @@ impl ModelManager {
         tracing::info!("Reranker model not found, initiating download...");
         match self.download_reranker_model(&gguf).await {
             Ok(()) => {
-                self.emit_complete();
+                self.emit_complete("qwen3-reranker-0.6b");
                 self.reset_download_progress();
                 Ok(gguf)
             }
             Err(e) => {
-                self.emit_error(&e.to_string());
+                self.emit_error("qwen3-reranker-0.6b", &e.to_string());
                 self.reset_download_progress();
                 Err(e)
             }
@@ -583,6 +586,7 @@ impl ModelManager {
             gguf,
             CURATED_RERANKER.file,
             Some(CURATED_RERANKER.sha256),
+            "qwen3-reranker-0.6b",
         )
         .await?;
 

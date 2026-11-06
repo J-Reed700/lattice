@@ -377,6 +377,40 @@ impl ConversationServiceTrait for MockConversationService {
         Ok(message)
     }
 
+    async fn add_message_with_metadata(
+        &self,
+        conversation_id: &str,
+        role: lattice_core::domain::conversation::MessageRole,
+        content: String,
+        tokens: i64,
+        status: String,
+        metadata: Option<String>,
+    ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
+        let mut conversations = self.conversations.write().unwrap();
+        let aggregate = conversations.get_mut(conversation_id).ok_or_else(|| {
+            lattice_core::shared::error::AppError::NotFound(format!(
+                "Conversation not found: {}",
+                conversation_id
+            ))
+        })?;
+
+        let mut new_aggregate = aggregate.clone();
+        new_aggregate.add_message_with_status(role, content.clone(), tokens, status)?;
+
+        let mut messages = new_aggregate.messages().to_vec();
+        let message = messages.last_mut().unwrap();
+        message.metadata = metadata;
+        let result = message.clone();
+        *aggregate = lattice_core::domain::conversation::ConversationAggregate::from_persistence(
+            new_aggregate.conversation().clone(),
+            messages,
+            new_aggregate.document_context().to_vec(),
+            new_aggregate.compaction().cloned(),
+        );
+
+        Ok(result)
+    }
+
     async fn update_message_status(&self, message_id: &str, status: String) -> Result<()> {
         let mut conversations = self.conversations.write().unwrap();
         for conversation in conversations.values_mut() {

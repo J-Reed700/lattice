@@ -2,14 +2,24 @@ import { type FC } from 'react';
 
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 // Import only needed languages for performance
+import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
+import c from 'react-syntax-highlighter/dist/esm/languages/hljs/c';
+import cpp from 'react-syntax-highlighter/dist/esm/languages/hljs/cpp';
+import csharp from 'react-syntax-highlighter/dist/esm/languages/hljs/csharp';
+import css from 'react-syntax-highlighter/dist/esm/languages/hljs/css';
 import go from 'react-syntax-highlighter/dist/esm/languages/hljs/go';
+import ini from 'react-syntax-highlighter/dist/esm/languages/hljs/ini';
 import java from 'react-syntax-highlighter/dist/esm/languages/hljs/java';
 import javascript from 'react-syntax-highlighter/dist/esm/languages/hljs/javascript';
 import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
 import markdown from 'react-syntax-highlighter/dist/esm/languages/hljs/markdown';
 import python from 'react-syntax-highlighter/dist/esm/languages/hljs/python';
 import rust from 'react-syntax-highlighter/dist/esm/languages/hljs/rust';
+import scss from 'react-syntax-highlighter/dist/esm/languages/hljs/scss';
+import sql from 'react-syntax-highlighter/dist/esm/languages/hljs/sql';
 import typescript from 'react-syntax-highlighter/dist/esm/languages/hljs/typescript';
+import xml from 'react-syntax-highlighter/dist/esm/languages/hljs/xml';
+import yaml from 'react-syntax-highlighter/dist/esm/languages/hljs/yaml';
 import { atomOneDark, atomOneLight } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
@@ -23,6 +33,16 @@ SyntaxHighlighter.registerLanguage('go', go);
 SyntaxHighlighter.registerLanguage('java', java);
 SyntaxHighlighter.registerLanguage('json', json);
 SyntaxHighlighter.registerLanguage('markdown', markdown);
+SyntaxHighlighter.registerLanguage('cpp', cpp);
+SyntaxHighlighter.registerLanguage('c', c);
+SyntaxHighlighter.registerLanguage('csharp', csharp);
+SyntaxHighlighter.registerLanguage('yaml', yaml);
+SyntaxHighlighter.registerLanguage('xml', xml);
+SyntaxHighlighter.registerLanguage('css', css);
+SyntaxHighlighter.registerLanguage('scss', scss);
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('ini', ini);
 
 interface TextViewerProps {
   content: string;

@@ -468,4 +468,70 @@ describe('toastStore - Zustand Implementation', () => {
       expect(useToastStore.getState().toasts).toHaveLength(0);
     });
   });
+
+  describe('pauseToast and resumeToast', () => {
+    it('pauses and resumes toast dismiss timer', () => {
+      const id = useToastStore.getState().addToast({
+        type: 'info',
+        title: 'Pause test',
+        duration: 3000,
+      });
+
+      expect(useToastStore.getState().toasts).toHaveLength(1);
+
+      // Advance halfway
+      act(() => {
+        vi.advanceTimersByTime(1500);
+      });
+      expect(useToastStore.getState().toasts).toHaveLength(1);
+
+      // Pause toast
+      act(() => {
+        useToastStore.getState().pauseToast(id);
+      });
+
+      // Advance past original 3000ms duration
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      // Still exists because paused
+      expect(useToastStore.getState().toasts).toHaveLength(1);
+
+      // Resume toast
+      act(() => {
+        useToastStore.getState().resumeToast(id);
+      });
+
+      // Advance 1000ms (still ~500ms remaining)
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(useToastStore.getState().toasts).toHaveLength(1);
+
+      // Advance remaining 600ms
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(useToastStore.getState().toasts).toHaveLength(0);
+    });
+
+    it('handles resume when already expired', () => {
+      const id = useToastStore.getState().addToast({
+        type: 'info',
+        title: 'Expire test',
+        duration: 1000,
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      // Even if pause called right before or during, resume on expired dismisses
+      act(() => {
+        useToastStore.getState().pauseToast(id);
+        useToastStore.getState().resumeToast(id);
+      });
+      expect(useToastStore.getState().toasts).toHaveLength(0);
+    });
+  });
+
 });

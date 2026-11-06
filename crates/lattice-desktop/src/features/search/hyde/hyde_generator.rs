@@ -41,7 +41,7 @@ use prompts::{
     WEB_SEARCH_QUERY_WITH_CONTEXT_TEMPLATE,
 };
 use text::{
-    build_retrieval_fallback, compact_hyde_text, has_placeholder_artifacts, is_followup_verdict,
+    build_retrieval_fallback, has_placeholder_artifacts, is_followup_verdict,
     looks_like_direct_answer, normalize_web_search_query, parse_research_followups,
     MAX_WEB_SEARCH_QUERY_WORDS,
 };
@@ -300,7 +300,7 @@ impl HyDEGenerator {
             AppError::Other(format!("HyDE generation failed: {}", e))
         })?;
 
-        let mut hyde_text = compact_hyde_text(hyde_text.trim());
+        let mut hyde_text = hyde_text.trim().to_string();
         if looks_like_direct_answer(&query, &hyde_text) {
             warn!(
                 query = %query,
@@ -364,7 +364,7 @@ impl HyDEGenerator {
             AppError::Other(format!("HyDE generation failed: {}", e))
         })?;
 
-        let mut hyde_text = compact_hyde_text(hyde_text.trim());
+        let mut hyde_text = hyde_text.trim().to_string();
         if looks_like_direct_answer(&query, &hyde_text) {
             warn!(
                 query = %query,
@@ -444,7 +444,7 @@ impl HyDEGenerator {
             AppError::Other(format!("HyDE generation failed: {}", e))
         })?;
 
-        let mut hyde_text = compact_hyde_text(hyde_text.trim());
+        let mut hyde_text = hyde_text.trim().to_string();
         if has_placeholder_artifacts(&hyde_text) {
             warn!(
                 query = %query,

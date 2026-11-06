@@ -3,13 +3,10 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
-pub(super) const MAX_TAG_NAME_LENGTH: usize = 50;
-
-/// Validated tag name with length constraints
+/// Validated tag name
 ///
 /// Tag names must be:
 /// - Non-empty
-/// - Maximum 50 characters
 /// - Contain valid characters
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Display)]
 #[serde(transparent)]
@@ -20,17 +17,10 @@ impl TagName {
     ///
     /// # Errors
     ///
-    /// Returns an error if the name is empty or too long
+    /// Returns an error if the name is empty
     pub fn new(name: String) -> Result<Self, DomainTypeError> {
         if name.is_empty() {
             return Err(DomainTypeError::EmptyValue);
-        }
-
-        if name.len() > MAX_TAG_NAME_LENGTH {
-            return Err(DomainTypeError::ValueTooLong(
-                name.len(),
-                MAX_TAG_NAME_LENGTH,
-            ));
         }
 
         Ok(Self(name))

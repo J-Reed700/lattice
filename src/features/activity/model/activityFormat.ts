@@ -1,16 +1,22 @@
 import type { ActivityEntryDto, ActivityProgress } from '@/lib/bindings';
+import {
+  formatBytes as canonicalFormatBytes,
+  formatTimeLeft as canonicalFormatTimeLeft,
+  progressPercent,
+} from '@/utils/formatters';
+
+export function formatBytes(bytes: number): string {
+  return canonicalFormatBytes(bytes, { fixedDecimals: true, decimals: 1 });
+}
+
+export { progressPercent };
 
 /**
  * Time left as people say it: "less than a minute", "about 12 min left",
  * "about 1 h 20 min left". Only ever given a time the backend measured.
  */
 export function formatTimeLeft(seconds: number): string {
-  if (seconds < 60) return 'less than a minute';
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `about ${minutes} min left`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest === 0 ? `about ${hours} h left` : `about ${hours} h ${rest} min left`;
+  return canonicalFormatTimeLeft(seconds, { suffix: true });
 }
 
 /** When a job put off by an outage tries again: "Tries again in about 3 min". */
@@ -24,28 +30,10 @@ export function formatRetry(retryAt: number, now: number): string {
   return rest === 0 ? `Tries again in about ${hours} h` : `Tries again in about ${hours} h ${rest} min`;
 }
 
-const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
-
-function formatBytes(bytes: number): string {
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${unit === 0 ? value : value.toFixed(1)} ${BYTE_UNITS[unit]}`;
-}
-
 /** "120 of 900 passages", "1.2 GB of 4.5 GB". */
 export function formatProgress(progress: ActivityProgress): string {
   if (progress.unit === 'bytes') return `${formatBytes(progress.done)} of ${formatBytes(progress.total)}`;
   return `${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} ${progress.unit}`;
-}
-
-/** Whole percent done, 0–100. */
-export function progressPercent(progress: ActivityProgress): number {
-  if (progress.total <= 0) return 0;
-  return Math.min(100, Math.round((progress.done / progress.total) * 100));
 }
 
 export const STATE_WORDS: Record<ActivityEntryDto['state'], string> = {

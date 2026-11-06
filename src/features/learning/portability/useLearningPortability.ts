@@ -1,4 +1,5 @@
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { open } from '@tauri-apps/plugin-dialog';
 
 import { useApi } from '@/contexts/ApiContext';
 import { invalidateLearningSourceDependents, refreshLearningProgramAfterImport } from '@/features/learning/api/learningInvalidation';
@@ -87,6 +88,18 @@ export const useSaveLearningPackAs = (programId: string) => {
   const api = useApi();
   return usePortabilityMutation<ExportLearningPackRequestDto, SaveLearningPackAsResultDto>(api.saveLearningPackAs, programId);
 };
+
+/** Prompt user to choose a course file (.lattice-learning) */
+export async function promptChooseCourseFile(): Promise<string | null> {
+  const chosen = await open({
+    multiple: false,
+    directory: false,
+    title: 'Choose a course file',
+    filters: [{ name: 'Lattice course', extensions: ['lattice-learning'] }],
+  });
+  if (!chosen || Array.isArray(chosen)) return null;
+  return chosen;
+}
 
 /** Import with no course open: preview, apply and cancel are not keyed by a program. */
 export function useImportCourse() {
