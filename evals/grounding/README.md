@@ -126,7 +126,7 @@ evidence verifies a claim the collection could not have supported before)
 and examples without passages are not exported: no passage was judged.
 
 `CheckerExamples::export` (in
-`src-tauri/src/features/learning/lessons/claim_reviews/checker_examples.rs`,
+`crates/lattice-desktop/src/features/learning/lessons/claim_reviews/checker_examples.rs`,
 behind the `export_learning_checker_examples` command) writes them in this
 file's format, one pair per example: `id`, `claim`, `passage` (the passages
 the checker compared, joined by a blank line), `label`, `difficulty` (the
@@ -136,10 +136,10 @@ label source) and `checker_model`. Save the file here as
 [`course-generation-testing.md`](../../docs/development/course-generation-testing.md)):
 
 ```bash
-cd src-tauri
+cd crates/lattice-desktop
 LATTICE_LLAMACPP_SETTINGS="$HOME/Library/Application Support/tech.lattice.app/settings.json" \
-LATTICE_CLAIM_PAIRS=$PWD/../evals/grounding/lesson-claims-<date>.jsonl \
-LATTICE_CLAIM_RESULTS=$PWD/../evals/grounding/results/<date>-lesson-claims-<checker>.jsonl \
+LATTICE_CLAIM_PAIRS=$PWD/../../evals/grounding/lesson-claims-<date>.jsonl \
+LATTICE_CLAIM_RESULTS=$PWD/../../evals/grounding/results/<date>-lesson-claims-<checker>.jsonl \
 LATTICE_CLAIM_CHECKER=<checker> \
   <binary> live_claim_pairs_eval --ignored --nocapture
 ```
