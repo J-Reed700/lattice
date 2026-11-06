@@ -5176,7 +5176,7 @@ issues: RevealedIssueDto[];
  */
 findings: RevealedFindingDto[]; score: CodeReviewScoreDto;
 /**
- * How well each key issue's pattern was recognised, one entry for each key issue.
+ * How well the patterns of the key's issues were recognised. A review-found issue that was not raised has none.
  */
 ratings: RatedPatternDto[];
 /**
