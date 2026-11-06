@@ -1,7 +1,7 @@
 {
   "name": "02-sounds-big-blames-the-wrong-study",
   "kind": "wrong_reason",
-  "why": "The first finding is on the median sentence and objects to what it makes a reader believe ('quick cooling nearly halves the time it takes to nod off'), but it blames a number taken from the bath follow-up, which is not what is wrong: the figure was changed from 11 to 31. Right sentence, wrong cause: half found, and the older-adults sentence is never mentioned. The second finding is a remark about the sensors disturbing sleep, not an error of the explanation: false positive.",
+  "why": "The first finding is on the median sentence and objects to what it makes a reader believe ('gets people to sleep far sooner'), but it blames the comparison the study made, which is not what is wrong: the figure was changed from 11 to 31, and the finding never says the figure is wrong. Right sentence, wrong cause: half found, and the older-adults sentence is never mentioned. The second finding is a remark about the sensors disturbing sleep, not an error of the explanation: false positive.",
   "source": {
     "versionId": "tallow-temperature-and-sleep-onset-v1",
     "startByte": 18432,
@@ -87,7 +87,7 @@
         "start": 5,
         "end": 5
       },
-      "text": "Reading this I would come away thinking that quick cooling nearly halves the time it takes to nod off, which is much more than a study like this could show. I think the sentence has taken its number from the bath follow-up by mistake.",
+      "text": "Reading this I would come away thinking that a quick fall in temperature gets people to sleep far sooner, which is much more than a study like this could show. I think the trouble is the comparison: the study set people who took a warm bath against people who did not, not fast fallers against slow ones.",
       "severity": null
     },
     {
