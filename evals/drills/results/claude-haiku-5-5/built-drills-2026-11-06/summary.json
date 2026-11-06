@@ -1,0 +1,508 @@
+{
+  "model": {
+    "name": "claude-haiku-5-5",
+    "provider": "anthropic",
+    "context_window": 131072
+  },
+  "drills": [
+    {
+      "name": "python-01",
+      "built": true,
+      "seconds": 73.6567646,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.check_then_act",
+            "why": "The edit only hoists the clock call into a local variable before the dict insert. The check-then-act sequence (membership check, then insert) is unchanged in both versions and neither version holds a lock, so the check-then-act race pattern already exists in the original code. The claimed consequence (clock call widening the window) is not a new hazard: the window between check and insert is essentially the same, since the clock call was already between check and insert in the original. The edit does not introduce the race; it was already present in the original, so editIntroducesIt is false. The original does have the race, so cleanLacksIt is false."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "python-02",
+      "built": true,
+      "seconds": 77.291244,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "python-03",
+      "built": true,
+      "seconds": 79.4389859,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.lock_ordering",
+            "why": "The edit wraps the success path in acquisitions of throttle._lock then store._lock. Neither class defines a _lock attribute in the original code, so this would raise AttributeError at runtime rather than create a deadlock. The edit introduces a missing-attribute crash, not an inconsistent lock ordering. The original code has no locks at all, so no lock ordering problem exists there. The claimed deadlock requires a second code path taking store lock before throttle lock, which does not exist in the shown code, and the locks themselves are not defined."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "python-04",
+      "built": true,
+      "seconds": 110.8337587,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 3,
+        "proven_by_judge": 0,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "python-05",
+      "built": true,
+      "seconds": 89.4879505,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "python-06",
+      "built": true,
+      "seconds": 104.3468992,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 3
+      }
+    },
+    {
+      "name": "python-07",
+      "built": true,
+      "seconds": 92.2078302,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "python-08",
+      "built": true,
+      "seconds": 94.0189128,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 1,
+        "proven_by_judge": 1,
+        "dropped": [
+          {
+            "pattern": "security.sql_injection",
+            "why": "The test did not separate the clean code from the mutation, even written again."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "javascript-01",
+      "built": true,
+      "seconds": 85.5309336,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.check_then_act",
+            "why": "The edit adds a second findRefundByKey check after the gateway await, just before saveRefund. This re-check narrows the window where a duplicate record could be saved, and it throws 'busy' if a record already exists. However, the gateway call still happens for both concurrent requests before either reaches the re-check, so both callers still call the gateway and the gateway refund is duplicated. The claimed consequence (two gateway refunds and over-refund) is not prevented by the edit; the original code already had the same check-then-act window around the gateway await, and the edit does not fully close it (the check-then-save gap between findRefundByKey and saveRefund is still non-atomic with no await-free guarantee). The edit does not introduce a new problem beyond the pre-existing race; it is a partial mitigation of the same pattern, and the original code had the same race, so the edit does not newly introduce it."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "javascript-02",
+      "built": true,
+      "seconds": 102.5847587,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 3,
+        "proven_by_judge": 0,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "javascript-03",
+      "built": true,
+      "seconds": 74.2860713,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 0,
+        "dropped": [
+          {
+            "pattern": "concurrency.lock_ordering",
+            "why": "The edit only reorders two statements inside _remove: the byUser lookup now happens before the sessions delete. Both are plain synchronous Map operations in a single-threaded JavaScript module with no locks at all, so no lock ordering exists and no deadlock is possible. The claimed consequence (no runtime deadlock) is correct, so the edit does not introduce the lock-ordering defect, and the original also lacks locks."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "javascript-04",
+      "built": true,
+      "seconds": 82.0215302,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "javascript-05",
+      "built": true,
+      "seconds": 110.3084246,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 2,
+        "proven_by_judge": 1,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "javascript-06",
+      "built": true,
+      "seconds": 96.835299,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 1,
+        "proven_by_judge": 2,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "javascript-07",
+      "built": true,
+      "seconds": 87.8440404,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 3,
+        "proven_by_judge": 0,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "javascript-08",
+      "built": true,
+      "seconds": 74.6696273,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 1,
+        "proven_by_judge": 1,
+        "dropped": [
+          {
+            "pattern": "security.sql_injection",
+            "why": "The edit adds a template-literal SQL string built by interpolating the cursor variable into a SELECT statement. However, the query string is never executed or passed to any database call; it is only assigned to an unused const. Also, `cursor` is referenced before its `let` declaration, which would throw a ReferenceError (temporal dead zone) at runtime, so the code fails before any query could exist. The SQL injection pattern requires a consequence where a crafted cursor alters a query that actually runs; here no query is sent to a database, so the claimed reading or altering of rows cannot happen. The original code has no SQL at all, so it lacks the problem. The edit introduces a string-concatenated SQL shape but not an exploitable injection, and it introduces a different defect (TDZ ReferenceError) instead."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "typescript-01",
+      "built": true,
+      "seconds": 74.6911227,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "errors.swallowed_exception",
+            "why": "The edit replaces a strict assertion that allocatePartialRefunds throws an insufficient-balance error with a try/catch that swallows any exception and has no assertion afterward. The test now passes whether or not the function throws, which matches the claimed consequence. However, the swallowed-exception pattern is about production code catching and ignoring an error so execution continues; here the catch is in a test, and the defect is really a test that asserts nothing (a missing expectation). The original test did not have this problem since expect(...).toThrow enforced the throw. The edit introduces the silent-pass weakness, which is a test-assertion defect rather than the production swallowed-exception pattern as defined, so it is not exactly this pattern."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "typescript-02",
+      "built": true,
+      "seconds": 63.4184577,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "typescript-03",
+      "built": true,
+      "seconds": 79.649735,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "typescript-04",
+      "built": true,
+      "seconds": 84.588891,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 1,
+        "dropped": [
+          {
+            "pattern": "errors.partial_update_without_rollback",
+            "why": "The edit moves the lastRefill update before the token credit, so the credit line recomputes elapsed time from the already-updated timestamp and always gets zero. The claimed consequence (buckets never refill) is real, but it comes from a logic ordering mistake, not from a multi-step change that fails partway and leaves data half-updated. No failure or exception can occur between the steps, so the defined pattern of partial update without rollback is not what the edit introduces. The original code computes elapsed before updating lastRefill and does not have this problem."
+          },
+          {
+            "pattern": "concurrency.missing_await",
+            "why": "The edit changes evictIdle to async returning Promise<number>. The body is unchanged and synchronous, so the count is still computed immediately and callers now receive a Promise. The claimed consequence (callers get a Promise instead of a count, and rejections go unhandled) is a change in return type that a caller not awaiting would hit, but the edit introduces an API change rather than a missing await inside the code; no await is omitted in the edited code, and the original code had no async call to miss. The original lacks the Promise return, and the edit introduces it, but the defined pattern is an un-awaited asynchronous call, which the edited code does not contain. The stated consequence of unhandled rejections also cannot arise, since the async body does not throw in normal operation and no call is made without await in the shown code. So the edit does not introduce exactly the missing_await pattern, and the original code does not have it either."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "typescript-05",
+      "built": true,
+      "seconds": 52.3295256,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "typescript-06",
+      "built": true,
+      "seconds": 66.7522496,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "concurrency.lock_held_across_slow_call",
+            "why": "The edit creates a per-call promise chain, but `tail` is a local variable initialized to a fresh resolved promise on every call, so each invocation of sendWithRetry has its own independent chain and never waits on other concurrent callers. Therefore no lock is shared across callers; the claimed serialization of all sends across queued notifications does not happen. Within a single call, the chain just awaits the previous promise which is already resolved, and release is called only on success; on a transient failure the release is never called, but the next attempt's previous is that unresolved promise, so the retry would hang forever. That is a self-deadlock within one call, not the cross-caller stall described. The original code has no lock at all, so it lacks the pattern. The edit introduces a hang-on-retry bug (a different problem from the claimed cross-caller queueing), and the claimed consequence of all sends queuing behind one another does not occur."
+          }
+        ],
+        "found_in_review": 2
+      }
+    },
+    {
+      "name": "typescript-07",
+      "built": true,
+      "seconds": 58.1250749,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "errors.retry_not_idempotent",
+            "why": "The edit adds test helpers in a test file: a saveProduct function that pushes to an in-memory array and never throws, plus saveWithRetry which retries on exception. Since saveProduct never throws, the retry loop never actually retries, so no duplicate insert can occur in practice. The claimed consequence (timeout hides a success, retry inserts duplicate into index) requires a real timeout and real index write; the in-memory helper cannot time out, and the retry path is unreachable with the current saveProduct. The original code had no such retry logic at all, so the pattern is not present there either. The edit does add a retry wrapper around a side-effecting write without an idempotency key, which matches the pattern's shape, but the stated consequence cannot happen with this code. Strictly, the consequence cannot occur, so the edit does not introduce this problem as a real defect."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "typescript-08",
+      "built": true,
+      "seconds": 55.1187123,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-01",
+      "built": true,
+      "seconds": 53.0752585,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 1,
+        "dropped": [
+          {
+            "pattern": "correctness.null_dereference",
+            "why": "The edit changes Validate's receiver from value Payment to pointer *Payment. The claimed consequence concerns a nil *Payment passed to Apply panicking in Validate. In the original code, Apply already has a pointer receiver and calls p.Validate; with a nil *Payment, Apply calls Validate via a value receiver, which dereferences the nil pointer and panics too. So the nil-pointer panic path exists in the original code as well, meaning the problem is not introduced by the edit. Also, the edit does not add a nil check, and the claimed panic is already present before the edit, so the edit does not introduce this problem."
+          },
+          {
+            "pattern": "concurrency.check_then_act",
+            "why": "The edit only splits the read-modify-write of p.Refunded into a local read and a write, which is semantically identical to the original p.Refunded += amount. The check-then-act race (Validate reads Remaining, then Apply writes Refunded with no lock or atomic) already exists in the original Apply method, so the edit does not introduce it. The original code therefore already has the problem, meaning the edit does not introduce it and the original does have it."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-02",
+      "built": true,
+      "seconds": 36.5581751,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-03",
+      "built": true,
+      "seconds": 87.7542381,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "errors.partial_update_without_rollback",
+            "why": "The edit moves the delete of the old session to after the new session is written and after the expiry check. In the edited code, the old session is removed only at the final step, and the only fallible path between the writes is the expiry return, which now happens before any write, so it cannot leave both tokens valid. The claimed consequence depends on a hypothetical future fallible step between the writes; the edited code has no such step, and the original code also has no fallible step between its writes and deletes (the expiry check already precedes the write in the edit). The edit does not introduce a partial-update failure where a stolen token keeps working. The original's delete-before-expiry-check ordering is a different issue (deleting then returning ErrExpired), not the claimed consequence. Thus the claimed rollback-style half-update consequence is not realized in the edited code, and the original code, while not transactional, does not exhibit the claimed both-tokens-valid outcome either."
+          }
+        ],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-04",
+      "built": true,
+      "seconds": 63.2500967,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "errors.lost_context",
+            "why": "The edit replaces the propagated error from NewBucket with the sentinel ErrInvalidRate in NewLimiter. Today NewBucket can only fail with ErrInvalidRate, so the message is unchanged and nothing is lost now; the claimed consequence is hypothetical (only if NewBucket gains another failure mode). The original code already returns err unwrapped, so it does not itself lack context in a way that matches the claimed consequence of a present defect. The edit does not introduce a current loss of cause, and the claimed future-only harm is not an actual present problem, so the edit does not introduce exactly this pattern now, and the original does not lack it in a demonstrable way."
+          }
+        ],
+        "found_in_review": 3
+      }
+    },
+    {
+      "name": "go-05",
+      "built": true,
+      "seconds": 56.7732309,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-06",
+      "built": true,
+      "seconds": 66.0245645,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 3,
+        "dropped": [],
+        "found_in_review": 0
+      }
+    },
+    {
+      "name": "go-07",
+      "built": true,
+      "seconds": 71.6947851,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "errors.retry_not_idempotent",
+            "why": "The edit adds a test-file helper insertWithRetry that retries s.insert without an idempotency key, which matches the retry pattern in form. However, the claimed consequence cannot occur as described: the fake catalogStore.insert never returns an error after appending, so the retry branch is never triggered by a hidden success; and the helper is not called from any test or production path. The claimed harm (duplicate rows in a real catalog store, duplicates in search results and inflated stock) is not realized by this code, since the store is an in-memory test double and the search code does not read it. The consequence is therefore not something the edited code can actually produce, so the edit does not introduce the exact problem with its claimed consequence. The original code had no insert/retry logic at all, so it lacks the problem."
+          }
+        ],
+        "found_in_review": 1
+      }
+    },
+    {
+      "name": "go-08",
+      "built": true,
+      "seconds": 76.9631935,
+      "model": "claude-haiku-5-5",
+      "counts": {
+        "planted": 3,
+        "proven_by_test": 0,
+        "proven_by_judge": 2,
+        "dropped": [
+          {
+            "pattern": "correctness.float_for_exact_values",
+            "why": "The edit changes the revenue formatting from fixed two decimals to shortest round-trip representation (precision -1). The float64 value itself is unchanged; the original code already holds revenue as binary float64 and formats it with 2 decimals, which rounds the displayed value and hides binary drift. With -1, values summed in binary floating point (e.g. 0.1+0.2) now print as 0.30000000000000004 in the CSV, which is the claimed consequence. However, the float-for-exact-values problem (Revenue as float64) already exists in the original code; the edit does not introduce the float storage, it only exposes the drift in output. The claimed consequence is about the exported text showing drift, which the edit newly causes, but the root pattern (float for money) was already present, so the original lacks the visible symptom but not the underlying pattern. Since the question asks whether the original lacks the problem, and the original does hold money as float64 and sums would drift, the original does have the defect in its design, so cleanLacksIt is false."
+          }
+        ],
+        "found_in_review": 1
+      }
+    }
+  ]
+}

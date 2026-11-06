@@ -1,0 +1,3879 @@
+{
+  "model": {
+    "name": "claude-haiku-5-5",
+    "provider": "anthropic",
+    "context_window": 131072
+  },
+  "cases": 40,
+  "failed": 0,
+  "issues": {
+    "total": 124,
+    "agree": 122,
+    "agreement": 0.9838709677419355,
+    "exact": 122,
+    "exact_agreement": 0.9838709677419355,
+    "confusion": {
+      "found": {
+        "found": 54
+      },
+      "half_found": {
+        "found": 1,
+        "half_found": 24
+      },
+      "missed": {
+        "half_found": 1,
+        "missed": 44
+      }
+    }
+  },
+  "findings": {
+    "total": 115,
+    "agree": 113,
+    "agreement": 0.9826086956521739,
+    "exact": 113,
+    "exact_agreement": 0.9826086956521739,
+    "confusion": {
+      "false_positive": {
+        "false_positive": 23,
+        "matches": 1,
+        "valid_extra": 1
+      },
+      "matches": {
+        "matches": 82
+      },
+      "valid_extra": {
+        "valid_extra": 8
+      }
+    }
+  },
+  "disagreements": [
+    {
+      "case": "20-go-false-claims-on-the-lines-of-two-issues",
+      "why": "Both false claims sit on the lines of an issue, so the hint pairs them with it, but neither is about it: json.NewDecoder is not deprecated (io/ioutil is), and Go's client stops after ten redirects, so neither claim is true, and neither concerns the ignored Decode error or the unclosed body. The rubric says 'a finding on an issue's lines that is about a different problem is not about that issue', so both are false positives and both issues stay missed. The third finding names the per-amount lookup in full: found.",
+      "kind": "issue",
+      "index": 1,
+      "issue": {
+        "id": "rates-decode-error-ignored",
+        "pattern": "errors.unchecked_return_value",
+        "severity": "major",
+        "span": {
+          "path": "rates.go",
+          "start": 36,
+          "end": 36
+        },
+        "consequence": "A response that is not valid JSON leaves body.Rates nil, and the caller is told that there is no rate for the pair, which hides that the service sent something broken.",
+        "fix": {
+          "path": "rates.go",
+          "before": "\t_ = json.NewDecoder(resp.Body).Decode(&body)",
+          "after": "\tif err := json.NewDecoder(resp.Body).Decode(&body); err != nil {\n\t\treturn 0, fmt.Errorf(\"decode %s/%s: %w\", base, quote, err)\n\t}"
+        },
+        "explanation": "Rate throws away the error that Decode returns, so a broken response is reported as a missing rate. Check the error and return it with the pair, as the other failures are.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the checked Decode with one whose error is assigned to the blank identifier, and the clean code returns it."
+          }
+        },
+        "origin": "planted"
+      },
+      "label": "missed",
+      "got": {
+        "half_found": {
+          "finding": 0
+        }
+      },
+      "reason": "Finding 1 points at the discarded decode error on this line, but its stated cause is that json.NewDecoder is deprecated. It never says the ignored error hides a broken response, so the issue is only half found.",
+      "review": [
+        {
+          "span": {
+            "path": "rates.go",
+            "start": 36,
+            "end": 36
+          },
+          "text": "json.NewDecoder is deprecated. Read the body with ioutil.ReadAll and call json.Unmarshal instead.",
+          "severity": "minor"
+        },
+        {
+          "span": {
+            "path": "rates.go",
+            "start": 26,
+            "end": 29
+          },
+          "text": "http.Get follows redirects without any limit, so a redirect loop hangs the call.",
+          "severity": "major"
+        },
+        {
+          "span": {
+            "path": "rates.go",
+            "start": 61,
+            "end": 61
+          },
+          "text": "ConvertAll calls Convert inside the loop, and every Convert makes its own request to the rates service for a rate that is the same every time, so a long list means a long run of needless requests. Fetch the rate once before the loop.",
+          "severity": "major"
+        }
+      ]
+    },
+    {
+      "case": "20-go-false-claims-on-the-lines-of-two-issues",
+      "why": "Both false claims sit on the lines of an issue, so the hint pairs them with it, but neither is about it: json.NewDecoder is not deprecated (io/ioutil is), and Go's client stops after ten redirects, so neither claim is true, and neither concerns the ignored Decode error or the unclosed body. The rubric says 'a finding on an issue's lines that is about a different problem is not about that issue', so both are false positives and both issues stay missed. The third finding names the per-amount lookup in full: found.",
+      "kind": "finding",
+      "index": 0,
+      "finding": {
+        "span": {
+          "path": "rates.go",
+          "start": 36,
+          "end": 36
+        },
+        "text": "json.NewDecoder is deprecated. Read the body with ioutil.ReadAll and call json.Unmarshal instead.",
+        "severity": "minor"
+      },
+      "label": "false_positive",
+      "got": {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      "reason": "It points at the line of issue 2, the ignored decode error, so it matches that issue. Its stated reason, that json.NewDecoder is deprecated, is false, so it names no real cause and the issue is only half found.",
+      "key": [
+        {
+          "id": "rates-body-not-closed",
+          "pattern": "resources.leaked_handle",
+          "severity": "major",
+          "span": {
+            "path": "rates.go",
+            "start": 26,
+            "end": 29
+          },
+          "consequence": "Every call to Rate leaves the response body open, so its connection is never returned to the pool or closed, and a program that keeps converting runs out of connections and file descriptors.",
+          "fix": {
+            "path": "rates.go",
+            "before": "\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}",
+            "after": "\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}\n\tdefer resp.Body.Close()"
+          },
+          "explanation": "Rate reads the response but never closes resp.Body, and Go keeps the connection busy until the body is closed. Put defer resp.Body.Close() right after the error check, so that it runs on every path out of the function.",
+          "proof": {
+            "judged": {
+              "reason": "The edit removes the deferred Close that the clean code puts right after the error check."
+            }
+          },
+          "origin": "planted"
+        },
+        {
+          "id": "rates-decode-error-ignored",
+          "pattern": "errors.unchecked_return_value",
+          "severity": "major",
+          "span": {
+            "path": "rates.go",
+            "start": 36,
+            "end": 36
+          },
+          "consequence": "A response that is not valid JSON leaves body.Rates nil, and the caller is told that there is no rate for the pair, which hides that the service sent something broken.",
+          "fix": {
+            "path": "rates.go",
+            "before": "\t_ = json.NewDecoder(resp.Body).Decode(&body)",
+            "after": "\tif err := json.NewDecoder(resp.Body).Decode(&body); err != nil {\n\t\treturn 0, fmt.Errorf(\"decode %s/%s: %w\", base, quote, err)\n\t}"
+          },
+          "explanation": "Rate throws away the error that Decode returns, so a broken response is reported as a missing rate. Check the error and return it with the pair, as the other failures are.",
+          "proof": {
+            "judged": {
+              "reason": "The edit replaces the checked Decode with one whose error is assigned to the blank identifier, and the clean code returns it."
+            }
+          },
+          "origin": "planted"
+        },
+        {
+          "id": "rates-lookup-in-loop",
+          "pattern": "performance.repeated_work_in_loop",
+          "severity": "major",
+          "span": {
+            "path": "rates.go",
+            "start": 59,
+            "end": 67
+          },
+          "consequence": "ConvertAll makes one request to the rates service for every amount, all for the same pair, so a long list is slow and may hit the service's rate limit, and the amounts can be converted at different rates if the rate moves during the loop.",
+          "fix": {
+            "path": "rates.go",
+            "before": "\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tvalue, err := c.Convert(cents, base, quote)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tconverted[i] = value\n\t}\n\treturn converted, nil",
+            "after": "\trate, err := c.Rate(base, quote)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tconverted[i] = scale(cents, rate)\n\t}\n\treturn converted, nil"
+          },
+          "explanation": "ConvertAll calls Convert inside the loop, and Convert fetches the rate each time, though the rate is the same for every amount. Look it up once before the loop and scale each amount with it.",
+          "proof": {
+            "judged": {
+              "reason": "The edit moves the rate lookup from before the loop into Convert, which the loop calls for every amount, and the clean code looks it up once."
+            }
+          },
+          "origin": "planted"
+        }
+      ]
+    },
+    {
+      "case": "20-go-false-claims-on-the-lines-of-two-issues",
+      "why": "Both false claims sit on the lines of an issue, so the hint pairs them with it, but neither is about it: json.NewDecoder is not deprecated (io/ioutil is), and Go's client stops after ten redirects, so neither claim is true, and neither concerns the ignored Decode error or the unclosed body. The rubric says 'a finding on an issue's lines that is about a different problem is not about that issue', so both are false positives and both issues stay missed. The third finding names the per-amount lookup in full: found.",
+      "kind": "finding",
+      "index": 1,
+      "finding": {
+        "span": {
+          "path": "rates.go",
+          "start": 26,
+          "end": 29
+        },
+        "text": "http.Get follows redirects without any limit, so a redirect loop hangs the call.",
+        "severity": "major"
+      },
+      "label": "false_positive",
+      "got": "valid_extra",
+      "reason": "Unlimited redirects is a real concern about http.Get, but it is not the unclosed response body that issue 1 plants, and it is not about issue 1's failure, so it is a valid extra rather than a match.",
+      "key": [
+        {
+          "id": "rates-body-not-closed",
+          "pattern": "resources.leaked_handle",
+          "severity": "major",
+          "span": {
+            "path": "rates.go",
+            "start": 26,
+            "end": 29
+          },
+          "consequence": "Every call to Rate leaves the response body open, so its connection is never returned to the pool or closed, and a program that keeps converting runs out of connections and file descriptors.",
+          "fix": {
+            "path": "rates.go",
+            "before": "\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}",
+            "after": "\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}\n\tdefer resp.Body.Close()"
+          },
+          "explanation": "Rate reads the response but never closes resp.Body, and Go keeps the connection busy until the body is closed. Put defer resp.Body.Close() right after the error check, so that it runs on every path out of the function.",
+          "proof": {
+            "judged": {
+              "reason": "The edit removes the deferred Close that the clean code puts right after the error check."
+            }
+          },
+          "origin": "planted"
+        },
+        {
+          "id": "rates-decode-error-ignored",
+          "pattern": "errors.unchecked_return_value",
+          "severity": "major",
+          "span": {
+            "path": "rates.go",
+            "start": 36,
+            "end": 36
+          },
+          "consequence": "A response that is not valid JSON leaves body.Rates nil, and the caller is told that there is no rate for the pair, which hides that the service sent something broken.",
+          "fix": {
+            "path": "rates.go",
+            "before": "\t_ = json.NewDecoder(resp.Body).Decode(&body)",
+            "after": "\tif err := json.NewDecoder(resp.Body).Decode(&body); err != nil {\n\t\treturn 0, fmt.Errorf(\"decode %s/%s: %w\", base, quote, err)\n\t}"
+          },
+          "explanation": "Rate throws away the error that Decode returns, so a broken response is reported as a missing rate. Check the error and return it with the pair, as the other failures are.",
+          "proof": {
+            "judged": {
+              "reason": "The edit replaces the checked Decode with one whose error is assigned to the blank identifier, and the clean code returns it."
+            }
+          },
+          "origin": "planted"
+        },
+        {
+          "id": "rates-lookup-in-loop",
+          "pattern": "performance.repeated_work_in_loop",
+          "severity": "major",
+          "span": {
+            "path": "rates.go",
+            "start": 59,
+            "end": 67
+          },
+          "consequence": "ConvertAll makes one request to the rates service for every amount, all for the same pair, so a long list is slow and may hit the service's rate limit, and the amounts can be converted at different rates if the rate moves during the loop.",
+          "fix": {
+            "path": "rates.go",
+            "before": "\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tvalue, err := c.Convert(cents, base, quote)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tconverted[i] = value\n\t}\n\treturn converted, nil",
+            "after": "\trate, err := c.Rate(base, quote)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tconverted[i] = scale(cents, rate)\n\t}\n\treturn converted, nil"
+          },
+          "explanation": "ConvertAll calls Convert inside the loop, and Convert fetches the rate each time, though the rate is the same for every amount. Look it up once before the loop and scale each amount with it.",
+          "proof": {
+            "judged": {
+              "reason": "The edit moves the rate lookup from before the loop into Convert, which the loop calls for every amount, and the clean code looks it up once."
+            }
+          },
+          "origin": "planted"
+        }
+      ]
+    },
+    {
+      "case": "28-java-two-findings-that-each-say-half",
+      "why": "Two findings on the renewal condition each say half of it: the first names the smell (too many clauses) and not why it matters, the second gives the consequence (every rule change means re-reading all of it) and not what is wrong with the code. Both match the issue. The rubric defines a find as 'a finding about it' that 'names its cause: what is wrong and why it matters', and it never says whether two findings can add up to one; read literally neither finding is a find, so the issue is half found, credited to the first because the two are equal ('the first when they are equal'). AMBIGUOUS: a reading that lets findings add up would label the issue found. The third finding names the operator slip in full: found. The comment and the negative fine are missed.",
+      "kind": "issue",
+      "index": 1,
+      "issue": {
+        "id": "desk-renewal-condition",
+        "pattern": "readability.complex_conditional",
+        "severity": "minor",
+        "span": {
+          "path": "LoanDesk.java",
+          "start": 18,
+          "end": 22
+        },
+        "consequence": "The four renewal rules and a nested ternary are packed into one negated condition, so a reader has to work out again each time when a renewal is allowed, and a change to one rule is easy to get wrong.",
+        "fix": {
+          "path": "LoanDesk.java",
+          "before": "    public Loan renew(Member member, Loan loan, LocalDate today) {\n        if (member.suspended()\n                || loan.renewals() >= (member.premium() ? MAX_RENEWALS + 1 : MAX_RENEWALS)\n                || loan.isOverdue(today)\n                || member.finesCents() >= BLOCKING_FINE_CENTS) {",
+          "after": "    private boolean mayRenew(Member member, Loan loan, LocalDate today) {\n        int allowed = member.premium() ? MAX_RENEWALS + 1 : MAX_RENEWALS;\n        return !member.suspended()\n                && loan.renewals() < allowed\n                && !loan.isOverdue(today)\n                && member.finesCents() < BLOCKING_FINE_CENTS;\n    }\n\n    public Loan renew(Member member, Loan loan, LocalDate today) {\n        if (!mayRenew(member, loan, today)) {"
+        },
+        "explanation": "renew puts all of the renewal rules, with a ternary for the premium allowance inside one of them, into a single if. Move them into a named method such as mayRenew, with the allowance as a local, so that the condition reads as one idea.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the call to the named method mayRenew with its rules written out inside the if, and the clean code names them."
+          }
+        },
+        "origin": "planted"
+      },
+      "label": {
+        "half_found": {
+          "finding": 0
+        }
+      },
+      "got": {
+        "found": {
+          "finding": 1
+        }
+      },
+      "reason": "Finding 2 says that a change to one renewal rule means re-reading the whole condition, which names the readability cost of the packed condition; finding 1 only says it has too many clauses, which is also about the complexity but gives the cause less fully. Finding 2 names the cause best.",
+      "review": [
+        {
+          "span": {
+            "path": "LoanDesk.java",
+            "start": 18,
+            "end": 22
+          },
+          "text": "This condition has far too many clauses.",
+          "severity": "minor"
+        },
+        {
+          "span": {
+            "path": "LoanDesk.java",
+            "start": 18,
+            "end": 22
+          },
+          "text": "Whenever one of the renewal rules changes, somebody has to re-read the whole of this to be sure that they got it right.",
+          "severity": "minor"
+        },
+        {
+          "span": {
+            "path": "LoanDesk.java",
+            "start": 12,
+            "end": 12
+          },
+          "text": "!today.isBefore(dueDate) is true on the due date itself, so a loan is overdue a day early.",
+          "severity": "major"
+        }
+      ]
+    }
+  ],
+  "detail_differences": [],
+  "results": [
+    {
+      "case": "01-find",
+      "kind": "find",
+      "seconds": 2.8101463,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: the sku is formatted directly into the SQL string so a crafted sku changes the query, which is SQL injection."
+          ],
+          [
+            "missed",
+            "No finding discusses the check-then-act race: the stock check happens outside the lock, so concurrent callers can both pass it."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: the loop runs one step too far so history[i + 1] reads past the end of the list and raises IndexError."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the off-by-one loop bound in restock_gaps that causes IndexError, matching issue 3."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the SQL injection from formatting sku into the query string, matching issue 1."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "02-right-line-wrong-reason",
+      "kind": "wrong_reason",
+      "seconds": 3.3571719,
+      "labels": {
+        "issues": [
+          "missed",
+          "missed",
+          {
+            "half_found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "The review made no finding about the SQL built by f-string interpolation on line 16."
+          ],
+          [
+            "missed",
+            "The review made no finding about the check-then-act race between the stock check and the locked update."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 is about the same loop on line 35 and says the loop is off by one, but its cause is wrong: it claims the loop stops early and misses the last gap, while the real defect is that history[i + 1] reads past the end on the last pass. The suggested fix range(len(history) + 1) would make the IndexError worse. The finding points at the issue's lines with a wrong cause, so it is half_found."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "It is about the off-by-one on line 35, which is issue 3, but it names the wrong failure (last gap never computed) and proposes a change that would raise IndexError. It does not state the real cause, so it earns only half credit and matches issue 3 without naming its cause."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "03-line-that-exposes-the-bug",
+      "kind": "exposing_line",
+      "seconds": 2.9443999,
+      "labels": {
+        "issues": [
+          "missed",
+          "missed",
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "The finding does not mention the SQL built from the sku string; the finding is about restock_gaps. No finding addresses the injection."
+          ],
+          [
+            "missed",
+            "The finding does not mention the check-then-act race in reserve; it is about restock_gaps only."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "The finding names the IndexError raised by history[i + 1] on the last index and says the loop must stop one short, which is the cause of the off-by-one: the loop bound is one too high."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies that the loop runs to the last index while history[i + 1] needs a next element, so the loop bound is one too high. This matches issue 3."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "04-vague-comment-on-the-right-line",
+      "kind": "vague",
+      "seconds": 2.0434881,
+      "labels": {
+        "issues": [
+          "missed",
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "The review has no finding about the SQL built by f-string interpolation on line 16; nothing names the injection."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 points at lines 22-24 and says only that the part feels wrong, without naming the check-then-act race or why it matters. That is a vague pointer, so it is half_found."
+          ],
+          [
+            "missed",
+            "No finding mentions the loop bound on line 35 or the IndexError it causes."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "The text only says the code feels wrong with no stated cause. It points at the lines of the check-then-act race but does not name it, so it matches issue 2 as a pointer without a cause."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "05-valid-extra",
+      "kind": "valid_extra",
+      "seconds": 2.5935612,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          "missed"
+        ],
+        "findings": [
+          "valid_extra",
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the f-string joining the sku into the SQL and says a caller can inject SQL, which is the cause of the injection issue."
+          ],
+          [
+            "missed",
+            "Finding 1 talks about negative quantities passing the stock check, not about the check and update being separated so concurrent callers can both pass. It does not name the race, so the issue is missed."
+          ],
+          [
+            "missed",
+            "No finding mentions the loop bound range(len(history)) or the history[i + 1] index running past the end of the list."
+          ]
+        ],
+        "findings": [
+          [
+            "valid_extra",
+            "A negative quantity is a real defect: the stock check passes and the UPDATE adds stock. The clean code has the same missing check, but this is a genuine input-validation risk in reserve, not a preference, so it is a valid extra finding not in the key."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly names the SQL injection caused by the f-string joining the sku into the query."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "06-false-positive",
+      "kind": "false_positive",
+      "seconds": 2.9115809,
+      "labels": {
+        "issues": [
+          "missed",
+          "missed",
+          {
+            "found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "The review never mentions the f-string SQL injection on line 16; finding 1 concerns a double call in low_stock, which is a different problem."
+          ],
+          [
+            "missed",
+            "The review does not mention the check-then-act race between the stock check outside the lock and the update; finding 1 is about a repeated call, not concurrency."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause precisely: the loop reads history[i + 1] on the last pass, past the end of the list, and must stop one short. That is the off-by-one defect."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "Calling self.stock twice per sku in low_stock is a performance remark about a list comprehension that does not change the result; it is a preference, not a defect in the sound clean code's behavior, and does not correspond to any planted issue."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "The finding correctly explains that the loop reads past the end of the list on the last iteration, which is the planted off-by-one error."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "07-one-finding-two-issues",
+      "kind": "two_issues",
+      "seconds": 3.0299626,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0,
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the missing idempotency key and explains that a timed-out attempt that already charged the card gets charged again on retry, which is the cause of the double charge."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 says the retry happens straight away with no wait between attempts, and that a struggling payment service gets three requests back to back. This names the lack of backoff as the cause of the overload."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0,
+                  1
+                ]
+              }
+            },
+            "The finding correctly identifies both the missing idempotency key causing duplicate charges and the absence of any delay between retries, both real defects in the code shown."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "08-duplicate",
+      "kind": "duplicate",
+      "seconds": 2.2623962,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: the POST has no idempotency key, so when a timeout hides a success the retry charges the customer twice. This is the planted issue's exact failure mode."
+          ],
+          [
+            "missed",
+            "No finding complains about the immediate retry with no backoff; both findings concern the missing idempotency key on the POST."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the missing idempotency key on the charge POST and the double-charge consequence on a timed-out success, matching issue 1."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Describes the same missing idempotency problem, that the charge can be applied twice because nothing identifies it as the same payment. This is a restatement of issue 1, so it matches that issue and earns no new credit."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "09-no-span",
+      "kind": "no_span",
+      "seconds": 2.5786749,
+      "labels": {
+        "issues": [
+          "missed",
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "The review never mentions that the retried POST lacks an idempotency key, so a timed-out charge that succeeded could be charged again. No finding addresses this cause."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the missing wait between attempts and explains that the struggling service gets hit three times in a row and a blip can become an outage. That is the cause the issue describes."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies the absence of any delay between retries and the resulting overload risk on a struggling payment service, which matches issue 2."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "10-mixed-review",
+      "kind": "mixed",
+      "seconds": 2.948916,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "half_found": {
+              "finding": 1
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the f-string formatting of sku into SQL as allowing crafted input to change the query, which is the injection cause; the quote names it directly."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 only says the method bothers the reviewer, with no cause; it points at the lines but names no check-then-act race, so it is at most half found."
+          ],
+          [
+            "missed",
+            "No finding mentions the loop bound range(len(history)) or the history[i + 1] index overrun; finding 4 concerns the lock at line 12, which is unrelated."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the SQL injection from building the query with an f-string on line 16 and proposes a bound parameter."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Vague remark that the method is suspicious; it does not name the race between the stock check and the update, so it only points at issue 2 without a cause."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Repeats the same SQL injection point as finding 1 without adding a new cause; it matches issue 1 as a duplicate."
+          ],
+          [
+            "false_positive",
+            "A lock is never released is false: the lock is used with a with-statement, which releases it automatically; the code is correct here."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "11-false-claim-on-an-issues-line",
+      "kind": "false_claim_on_issue_lines",
+      "seconds": 2.5236723,
+      "labels": {
+        "issues": [
+          "missed",
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "The review never mentions the SQL built by f-string interpolation of sku in stock(); no finding addresses injection."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the check-then-act race: the stock check runs before the lock so two threads can both pass it and oversell, which is the cause the issue describes."
+          ],
+          [
+            "missed",
+            "Finding 1 only says the loop variable i shadows an outer i. That is a different problem and does not identify the out-of-range history[i + 1] read on the last pass."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "Claims the loop variable shadows an outer i, which is not a real problem here: there is no outer i in the function and the shadowing claim is false. It misses the actual off-by-one at the loop bound, so it is a false positive."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies that the check precedes the lock, allowing two threads to pass the check and oversell, and gives the fix of moving the check inside the lock."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "12-typescript-find-wrong-severity-wrong-fix",
+      "kind": "find",
+      "seconds": 2.6885199,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the sequential awaits and the cause: the hidden-id request does not depend on the widgets, so the requests are serialized. Its suggested fix with Promise.race is wrong, but the cause is correctly stated."
+          ],
+          [
+            "missed",
+            "Review never mentions sort mutating the caller's array in ordered(); no finding is about line 21."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the missing await on saveLayout and states the cause: moveWidget returns before the save completes and a failed save's rejection is not caught, so the caller is told the move worked."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the unawaited saveLayout call and its consequence of an unhandled rejection and false success report."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the independent requests being awaited sequentially, though the suggested Promise.race fix is incorrect (Promise.all is needed) and the severity is overstated."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "13-typescript-slow-because-await-blocks",
+      "kind": "wrong_reason",
+      "seconds": 6.144097,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 is about lines 14-15, so it is about issue 3, but it gives a wrong cause: it says the awaits block the Node process and should move to a worker thread. It never identifies the sequential awaiting of independent requests as the reason loading takes longer, so the issue is only half found."
+          ],
+          [
+            "missed",
+            "No finding mentions the in-place sort of the caller's array on line 21 or its side effect on the caller's list."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the missing await on line 42 and states the cause: moveWidget resolves before the save is done, so a failed save becomes an unhandled rejection nobody sees."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Points at the sequential awaits on lines 14-15, which is issue 3, but claims the awaits block the Node process and should use a worker thread. Awaiting I/O does not block the event loop; the real problem is that independent requests run one after another. The finding matches issue 3 with a wrong cause."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the missing await on line 42 and its consequence of resolving before the save completes and an unseen unhandled rejection."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "14-typescript-sort-seen-from-its-caller",
+      "kind": "exposing_line",
+      "seconds": 2.8770889,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the sequential independent awaits and says the total wait is the sum of both, with Promise.all as the fix. This names the cause and consequence of issue 3."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 complains that ordered() sorts the caller's array in place, reordering the caller's list as a side effect. It names the cause (sort works in place on the received array instead of a copy) and why it matters (caller's list is reordered), matching issue 1. The finding is on line 25 which calls ordered, but it correctly identifies the in-place sort."
+          ],
+          [
+            "missed",
+            "No finding mentions the un-awaited saveLayout call on line 42 or the lost promise/error."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies that ordered() sorts the caller's array in place, which is issue 1."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the independent sequential awaits on lines 14-15 and the fix with Promise.all, matching issue 3."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "15-typescript-smells-found-half-and-missed",
+      "kind": "mixed",
+      "seconds": 3.3019147,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          "false_positive",
+          "valid_extra"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 says ordersFor takes a boolean flag, a code smell. It names the flag parameter as a smell but does not explain that the boolean selects behaviour or that call sites read as unexplained true/false. That is the cause of the issue, stated only briefly, so it is half_found."
+          ],
+          [
+            "missed",
+            "No finding mentions the nested conditions in discountPercent."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the bare literals 450 and 120 and explains that nobody can tell which is the base charge or the per-kilo price, so whoever changes the rates must guess which literal to touch. That is the cause stated in the key."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the unnamed magic numbers 450 and 120 in shippingCents and why that hurts maintenance."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Flags the boolean flag parameter of ordersFor as a smell, which matches the flag argument issue, though without explaining the call-site readability cause."
+          ],
+          [
+            "false_positive",
+            "Suggests rewriting the reduce as a for loop for readability. This is a style preference, not a real defect, so it is a false_positive."
+          ],
+          [
+            "valid_extra",
+            "Claims averageTotalCents returns NaN for an empty list. This is real: 0/0 is NaN. It is a genuine defect not in the key, so it is a valid extra."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "16-typescript-hard-to-read-says-nothing",
+      "kind": "vague",
+      "seconds": 5.0203889,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the flag parameter onlyOpen making calls read as ordersFor(orders, id, true) and says nobody can tell what true means without opening the function, and it says the function does two jobs. That is the cause the key states."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 says the discountPercent function is hard to read, which points at the nested lines but never names nesting or depth as the cause. It is a bare complaint that the code looks hard, so it is half_found."
+          ],
+          [
+            "missed",
+            "No finding mentions the literals 450 or 120 in shippingCents or any unnamed rate constant."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Says only that discountPercent is hard to read, with no cause such as nesting. It points at the nested lines, so it is about the deep nesting issue but without a named cause."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Names the boolean flag onlyOpen, explains that the call site reads as true without meaning and that the function does two jobs, and recommends splitting it. This matches the flag argument issue."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "17-typescript-style-preferences-are-not-issues",
+      "kind": "false_positive",
+      "seconds": 3.0151281,
+      "labels": {
+        "issues": [
+          "missed",
+          {
+            "half_found": {
+              "finding": 3
+            }
+          },
+          {
+            "found": {
+              "finding": 2
+            }
+          }
+        ],
+        "findings": [
+          "false_positive",
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "Finding 1 is about renaming a variable and finding 2 about reduce style; neither complains of the boolean flag parameter selecting behaviour inside ordersFor. The flag issue is not addressed by any finding."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 3
+              }
+            },
+            "Finding 4 says there are a lot of ifs in discountPercent, pointing at the nested conditions, but gives no cause (it does not say the nesting hides the rule or makes it hard to follow). It points at the issue's lines without naming why it matters."
+          ],
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names 450 and 120 as magic numbers and explains that a reader cannot tell which is the base charge and which is the price per kilo, or which to change when rates move. This names the cause of the issue."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "Suggests renaming a local variable for clarity; this is a style preference and does not name a real problem with the code."
+          ],
+          [
+            "false_positive",
+            "Complains about reduce with an inline arrow function being too clever; this is a style preference, not a defect, and does not match the flag parameter issue."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the magic numbers 450 and 120 and why they hurt maintainability."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Notes the many ifs in discountPercent without naming why this is a problem; it points at the nested-conditions issue but gives no cause."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "18-go-a-real-problem-the-key-does-not-hold",
+      "kind": "valid_extra",
+      "seconds": 3.2285485,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 2
+            }
+          }
+        ],
+        "findings": [
+          "valid_extra",
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the unclosed response body on the Rate call path and explains that connections and file descriptors leak with each call, which is the cause of the leaked handle."
+          ],
+          [
+            "missed",
+            "No finding mentions the discarded Decode error. Finding 1 is about the rate value being zero or negative, not the ignored decode failure."
+          ],
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the repeated rate lookup per amount in ConvertAll, causing a request per item, which is the repeated work the issue describes."
+          ]
+        ],
+        "findings": [
+          [
+            "valid_extra",
+            "The code does not reject a zero or negative rate, but the planted version's Rate path is not the defect; a service returning a non-positive rate is a plausible unvalidated input risk, so it is a real defect in this code that the key does not hold."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies that the response body is never closed on each Rate call, leaking connections, matching issue 1."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies that ConvertAll performs one rate request per amount instead of a single lookup, matching issue 3."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "19-go-mixed-review",
+      "kind": "mixed",
+      "seconds": 3.7116141000000002,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          "false_positive",
+          "valid_extra"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 is about the same lines but only says it is worried about resource usage, without naming the unclosed response body as the cause. That points at the issue's lines without giving its cause, so it is half_found."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: the Decode error is discarded with _ =, so a broken response becomes a misleading 'no rate' error instead of reporting the broken response. This matches the issue's consequence."
+          ],
+          [
+            "missed",
+            "No finding mentions that ConvertAll calls the rates service once per amount instead of fetching the rate once. Finding 5 and others concern other problems, so the issue is missed."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "The finding correctly identifies that the discarded Decode error hides a broken response, matching issue 2."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Vague worry about resource usage on the Get lines; it points at the unclosed response body but names no cause, so it only half-identifies issue 1."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Restates that Decode's error is ignored, matching the same issue as finding 1, which names the cause more fully."
+          ],
+          [
+            "false_positive",
+            "Suggesting http.DefaultClient is a style preference; the custom client with a timeout is a sound choice, so this is a false positive."
+          ],
+          [
+            "valid_extra",
+            "A zero rate from the service is a plausible sanity-check gap in the clean code too, and it is a real risk that Convert silently returns zero, so it is a valid extra problem not in the key."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "20-go-false-claims-on-the-lines-of-two-issues",
+      "kind": "false_claim_on_issue_lines",
+      "seconds": 8.3766668,
+      "labels": {
+        "issues": [
+          "missed",
+          "missed",
+          {
+            "found": {
+              "finding": 2
+            }
+          }
+        ],
+        "findings": [
+          "false_positive",
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "Finding 2 is about the same lines but complains about unlimited redirects, not the unclosed response body; that is a different problem, so the leaked body is not named by any finding."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 points at the discarded decode error on this line, but its stated cause is that json.NewDecoder is deprecated. It never says the ignored error hides a broken response, so the issue is only half found."
+          ],
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the cause: Convert is called inside the loop, each call makes its own request for the same rate, and the rate should be fetched once before the loop."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "It points at the line of issue 2, the ignored decode error, so it matches that issue. Its stated reason, that json.NewDecoder is deprecated, is false, so it names no real cause and the issue is only half found."
+          ],
+          [
+            "valid_extra",
+            "Unlimited redirects is a real concern about http.Get, but it is not the unclosed response body that issue 1 plants, and it is not about issue 1's failure, so it is a valid extra rather than a match."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the repeated rate lookup inside ConvertAll's loop, matching issue 3."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "21-go-the-same-race-said-twice-the-second-better",
+      "kind": "duplicate",
+      "seconds": 3.0926214,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 2
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the unlocked map write in Add, the missing use of mu, and the concurrent map writes crash that results, which is the cause and consequence of issue 1. Finding 1 only says Add is not safe, without naming the cause, so finding 2 is the best credit."
+          ],
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the empty batch where total is 0 and the integer divide by zero panic, which is the cause of issue 3."
+          ],
+          [
+            "missed",
+            "No finding mentions workers being 0 or negative, the unbuffered slots channel blocking, or make panicking. Finding 1 and finding 2 concern Add and finding 3 concerns Percent, so none is about the Process channel lines."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Says Add is not safe for several goroutines, which is the symptom of issue 1, but gives no cause such as the missing lock or the unsynchronised map write. Credit goes to finding 2, which names the cause better."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the unlocked map write in Add, the unused mutex, and the concurrent map writes failure, matching issue 1."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies the divide by zero panic when total is 0 for an empty batch, matching issue 3."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "22-go-the-race-seen-from-the-call",
+      "kind": "exposing_line",
+      "seconds": 3.7653157999999998,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "half_found": {
+              "finding": 2
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the exact cause: Add writes the map without taking mu, so Process's concurrent goroutines write the map simultaneously and Go aborts with 'concurrent map writes'. It gives the correct fix of locking mu."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 only says it is 'not sure' about the division in Percent. It points at the line but names no cause such as division by zero for an empty batch, so it is half_found."
+          ],
+          [
+            "missed",
+            "No finding mentions workers being zero or negative, the unbuffered channel blocking forever, or make panicking."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the unsynchronised map write in Add, which races across goroutines started by Process, and says it must lock mu."
+          ],
+          [
+            "false_positive",
+            "Passing id as a parameter is already done in the code, since the goroutine takes id as a parameter and shadows the loop variable. The claim is wrong, so it is a false positive."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Vague doubt about the division in Percent. It touches the line of issue 3, which is a real empty-batch division by zero, but gives no cause, so it is only a half-find of that issue."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "23-go-something-is-off-with-workers",
+      "kind": "vague",
+      "seconds": 2.5141312,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          {
+            "half_found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the unlocked map write in Add and the concurrent map writes crash from many goroutines, which is the cause of the planted issue."
+          ],
+          [
+            "missed",
+            "No finding mentions the division by zero when total is 0 in Percent."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 only says workers is used oddly, without naming that zero or negative workers blocks forever or panics. It points at the line but gives no cause."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Vague remark that workers is used wrongly; it does not name the zero or negative worker failure, so it only points at the issue's lines."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the unlocked map write in Add and the concurrent map writes crash, matching the planted race."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "24-java-concurrent-modification-blamed-on-threads",
+      "kind": "wrong_reason",
+      "seconds": 2.8853927,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the reference comparison on line 27 as the cause: != compares String references, so a category from a file or database is not recognised as BOOKS and gets taxed. This matches the planted cause and consequence."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 mentions ConcurrentModificationException but attributes it to another thread changing the list, which is wrong; the real cause is kept.remove inside the for-each over kept. It blames threading, so the cause is wrong and this is only half found."
+          ],
+          [
+            "missed",
+            "No finding mentions the repeated string concatenation in summary or its quadratic cost."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "The finding points at the loop lines and the exception but gives a wrong cause (another thread), so it is about issue 2 without naming its real cause of structural modification by the same thread. It is not a valid extra since the problem it points at is the issue's failure."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies that != compares references on line 27 and that books are wrongly taxed, with the fix to use equals."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "25-java-mixed-review",
+      "kind": "mixed",
+      "seconds": 3.0458736,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed",
+          {
+            "half_found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          "valid_extra",
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the identity comparison with != on strings and explains that a parsed category is a different object, so the books get taxed; this is the cause."
+          ],
+          [
+            "missed",
+            "No finding mentions removing from the list while iterating it or a ConcurrentModificationException; the withoutEmpty loop is not discussed."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 says summary could be more efficient on the same lines but does not name repeated concatenation or its quadratic copying cost as the cause; it is a vague remark that points at the issue's lines."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the reference comparison on String constants as the cause of books being taxed."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Only says summary could be more efficient, without naming the concatenation-in-loop cost; it points at the issue's lines with no stated cause."
+          ],
+          [
+            "valid_extra",
+            "largest throws IndexOutOfBoundsException on an empty list; this is a real defect in the code (lines.get(0) with no check), not in the clean version's intent, so it is a valid extra problem."
+          ],
+          [
+            "false_positive",
+            "Preference about using double instead of BigDecimal for money-like values; this is a style remark and using double for currency would be worse, so it is a false positive."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "26-java-empty-invoice",
+      "kind": "valid_extra",
+      "seconds": 3.1432739,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 3
+            }
+          },
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 2
+            }
+          }
+        ],
+        "findings": [
+          "valid_extra",
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 3
+              }
+            },
+            "Finding 4 is on the issue's line but only says it is not convinced, without naming identity versus value comparison or the consequence; it gives no cause, so it is only half found."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: kept is changed while the for-each loop iterates over it, so the iterator throws ConcurrentModificationException."
+          ],
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the cause: += in a loop copies everything built so far, so work grows with the square of the length."
+          ]
+        ],
+        "findings": [
+          [
+            "valid_extra",
+            "Calling largest on an empty list throwing IndexOutOfBoundsException is a real robustness issue in the clean code too, since lines.get(0) is unguarded, so it names a real problem the key does not hold."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Names the cause of the collection-modified-while-iterating issue precisely."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Names the cause of the repeated string concatenation issue precisely."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Vague remark on the comparison line that gives no cause; it points at issue 1 but does not explain that != compares object identity rather than text, so it matches issue 1 only as a pointer."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "27-java-mixed-review-with-a-negative-fine",
+      "kind": "mixed",
+      "seconds": 3.4257020000000002,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "half_found": {
+              "finding": 2
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                3
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: !today.isBefore(dueDate) is true on the due date, so loans count as overdue a day early and renewals on the last day are refused."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 only says the condition is hard to read, without explaining what is wrong or why it matters beyond readability; it points at the issue's lines but gives no real cause of the complexity problem beyond vague difficulty."
+          ],
+          [
+            "missed",
+            "No finding mentions the misleading comment about the price cap on line 28."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: returning a book before its due date makes daysLate negative, so the fine goes negative and the member is credited money instead of owing nothing."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  3
+                ]
+              }
+            },
+            "Correctly identifies that an early return yields a negative daysLate and a negative fine; the clamp suggestion addresses the boundary case."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies that the overdue check treats the due date itself as overdue, refusing renewals on the last day."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Says only that the renewal condition is hard to read, which matches the complex conditional issue on the same lines, though the cause is vague."
+          ],
+          [
+            "false_positive",
+            "Suggesting double for fines is a preference that conflicts with the integer-cents design; partial days are not a defect given the spec charges per whole day late, so this is a false positive."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "28-java-two-findings-that-each-say-half",
+      "kind": "duplicate",
+      "seconds": 3.328435,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 2
+            }
+          },
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          "missed",
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the cause: !today.isBefore(dueDate) is true on the due date itself, so loans are overdue a day early."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 says that a change to one renewal rule means re-reading the whole condition, which names the readability cost of the packed condition; finding 1 only says it has too many clauses, which is also about the complexity but gives the cause less fully. Finding 2 names the cause best."
+          ],
+          [
+            "missed",
+            "No finding mentions the fine cap, the misleading comment about the price of the book, or a cap that does not exist."
+          ],
+          [
+            "missed",
+            "No finding mentions a negative day count for books returned early or the resulting credit to the member."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "It complains that the condition has too many clauses, which is the complex-conditional problem of issue 2, stated only as a size complaint."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "It names the cause of issue 2: the single packed condition must be re-read to verify each rule, so changes are error-prone."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "It correctly identifies that the overdue check fires on the due date, which is the wrong comparison of issue 1."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "29-java-preferences-and-remarks-are-not-issues",
+      "kind": "false_positive",
+      "seconds": 3.5524442,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 2
+            }
+          },
+          {
+            "half_found": {
+              "finding": 4
+            }
+          },
+          {
+            "found": {
+              "finding": 3
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          "false_positive",
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the wrong comparison: !isBefore makes a loan overdue on its due date, refusing renewal that day, which is exactly the issue's consequence."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 4
+              }
+            },
+            "Finding 5 only says the condition is long, without naming the hard-to-follow meaning or the risk of changing one rule; it does not state a cause beyond length."
+          ],
+          [
+            {
+              "found": {
+                "finding": 3
+              }
+            },
+            "Finding 4 says the comment promises a price cap that fineCents never applies, naming the misleading comment as the cause."
+          ],
+          [
+            "missed",
+            "No finding mentions that returning a book early yields a negative daysLate and a negative fine; the only finding on line 30 is absent."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "Records as DTOs is a style preference; the record is a reasonable immutable value type, so this is not a defect."
+          ],
+          [
+            "false_positive",
+            "Reading a constant from configuration is a preference, not a defect in this code."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies that !isBefore treats the due date as overdue and refuses renewal that day."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies that the comment claims a price cap that the code does not implement."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Only remarks that the condition is long; it names no cause such as comprehension cost or fragility, so it only points at the issue's lines."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "30-rust-find-with-a-harmful-fix",
+      "kind": "find",
+      "seconds": 3.2008404,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 2
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 is on the line of the issue but only says the reading looks disliked; it gives no cause (that the failure is silently turned into an empty string and hidden). That points at the issue without naming its cause, so it is half_found."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause precisely: unwrap panics on a non-numeric or out-of-range port instead of returning an error, which is the consequence described in the key."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the boundary problem: workers = 0 is accepted and yields a pool with no workers, so jobs never run. It names the cause, so the issue is found."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies that unwrap on the port panics on bad input where an error is expected, matching issue 2. The suggested unwrap_or(8080) fallback is a questionable fix but the defect is real."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies that workers = 0 is accepted and produces a pool with no workers, matching issue 3."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Only states a dislike of the file reading line with no cause. It is about the lines of issue 1 but names no problem, so it points at the issue and is credited only as half_found above."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "31-rust-three-wrong-claims-every-issue-missed",
+      "kind": "false_positive",
+      "seconds": 3.1264248,
+      "labels": {
+        "issues": [
+          "missed",
+          "missed",
+          "missed"
+        ],
+        "findings": [
+          "false_positive",
+          "false_positive",
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "Finding 3 is on the same line but complains only about an unnecessary allocation from unwrap_or_default versus unwrap_or_else; it never says that the read failure is being silently turned into an empty string, so the real cause is not named."
+          ],
+          [
+            "missed",
+            "No finding mentions the unwrap on line 37 or the panic on a non-numeric or out-of-range port."
+          ],
+          [
+            "missed",
+            "No finding notes that workers = 0 is accepted; finding 2 is about lifetimes and the clean code's zero check was removed, which no finding addresses."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "The split_once claim is wrong: split_once splits only at the first '=', so the value keeps later '=' characters; the claim is false."
+          ],
+          [
+            "false_positive",
+            "The lifetime claim is wrong: the returned &'a str borrows from the text the map points into, not from the map itself, so nothing dangles; the code compiles and is sound."
+          ],
+          [
+            "false_positive",
+            "It names a real inefficiency of an eager default, but it does not say the error is hidden or that load proceeds on failure; it is a performance remark only and does not name issue 1's cause."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "32-rust-one-comment-two-issues",
+      "kind": "two_issues",
+      "seconds": 2.5117712,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0,
+                1
+              ]
+            }
+          },
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: unwrap_or_default turns a missing or unreadable file into an empty string, losing the real error and reporting the port as missing. This is exactly the planted error-as-success problem."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the unwrap on the port parse as a panic on a non-numeric port instead of returning ConfigError::Invalid, which is the cause of this issue."
+          ],
+          [
+            "missed",
+            "No finding mentions workers equal to zero being accepted. Finding 2 concerns required panicking on a missing key, which is false since required returns a Result."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0,
+                  1
+                ]
+              }
+            },
+            "Correctly identifies the swallowed file read error and the panic on the port parse, both real defects in the code shown."
+          ],
+          [
+            "false_positive",
+            "False: required returns Result via ok_or and does not panic on a missing key; the code is correct here."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "33-rust-total-wrong-because-of-the-cast",
+      "kind": "wrong_reason",
+      "seconds": 2.789959,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the >= comparison on line 14 and explains that a payment bringing a batch to exactly the limit is moved to the next batch, which is the cause stated in the issue."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 is about the u32 sum on lines 28-29, but it blames the u64::from conversion dropping high bits, which is wrong; the real cause is the u32 accumulator overflowing. It points at the issue's lines with a wrong cause, so it is half_found."
+          ],
+          [
+            "missed",
+            "No finding mentions the nested scan over earlier payments or its quadratic cost; the review never discusses performance of repeated_ids."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Points at the total computation on lines 28-29 and reports wrong large totals, which is the overflow failure, but gives the wrong cause (dropping high bits in the widening conversion) rather than the u32 accumulator overflowing."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies that >= on line 14 moves a payment that fills a batch exactly to the limit into the next batch, contrary to the at-most-limit intent."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "34-rust-a-general-comment-names-the-overflow",
+      "kind": "no_span",
+      "seconds": 3.440339,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 3
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 3
+              }
+            },
+            "Finding 4 says the batch limit check might be off, on the exact line, but gives no cause: it does not say that >= moves a payment that would fill a batch exactly to the limit into the next batch."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the u32 accumulation in total_cents, which overflows and wraps or panics, and says it should add in u64. This names the cause of the overflow, though it attributes it to total_cents, which is the same code as lines 28-29."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the quadratic scan over earlier payments on line 36 and explains that work grows with the square of the count, which is the cause of the issue."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Real overflow: total_cents sums u32 amounts into a u32 before widening, matching issue 2's defect on lines 28-29."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the quadratic scan of earlier payments in repeated_ids."
+          ],
+          [
+            "false_positive",
+            "largest uses max_by_key on an iterator, which returns None on an empty slice and does not panic; the claim is false."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Points at the batch limit comparison on line 14, the location of issue 1, but gives no cause, only that it might be off."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "35-sql-a-false-claim-about-the-null-comparison",
+      "kind": "false_claim_on_issue_lines",
+      "seconds": 3.5361637999999997,
+      "labels": {
+        "issues": [
+          "missed",
+          {
+            "half_found": {
+              "finding": 2
+            }
+          },
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "No finding mentions the hardcoded password in line 4; the reviewer never flags the secret in source."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 asks whether the migration should be in a transaction, which points at the lack of atomicity on lines 6-12 but gives no cause or consequence (no mention of partial commits or half-assigned tiers). It points at the issue without naming why it matters, so it is half_found."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: date(placed_at) wraps the indexed column in a function so the index cannot be used and the whole table is scanned. This matches the key's consequence."
+          ],
+          [
+            "missed",
+            "Finding 1 claims <> is invalid in PostgreSQL and must be !=, which is false since <> is standard SQL and valid. It does not identify the NULL comparison problem, so the issue is missed."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "Claims <> is not valid in PostgreSQL. This is false: <> is the standard inequality operator and PostgreSQL accepts it. It misses that NULL referrer_id rows are silently excluded."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies that date(placed_at) on the indexed column prevents index use and forces a full scan, matching issue 3."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Asks whether the migration should be a transaction, pointing at lines 6-12 which are the issue's lines, but gives no cause such as partial commit or unrecoverable re-run. Matches issue 2 as a pointer only, so half_found."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "36-sql-mixed-review",
+      "kind": "mixed",
+      "seconds": 4.0338835,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 4
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed",
+          {
+            "half_found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                3
+              ]
+            }
+          },
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 4
+              }
+            },
+            "Finding 5 names the hardcoded password in the script, sits on line 4, and explains that it is in version control for anyone to read and that changing it means editing a migration. That is the cause and consequence of the issue."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the missing transaction: if the index build or second UPDATE fails, the column and earlier tier changes stay committed, leaving the database half migrated. This matches the issue's failure mode."
+          ],
+          [
+            "missed",
+            "No finding mentions date(placed_at) on line 17 or the fact that it prevents use of the index. Finding 3 is about a comment style on line 14, which is unrelated."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 points at the NULL handling of the query on line 22, but only says it is unsure whether the NULL handling is right, without naming that NULL <> x is unknown and drops unreferred customers. That is a half find."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Names the missing transaction around the migration steps and the half-migrated result, which matches issue 2."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  3
+                ]
+              }
+            },
+            "Points at the NULL handling on the referrer_id comparison line, which is issue 4, but gives no cause."
+          ],
+          [
+            "false_positive",
+            "Advice to use block comments instead of line comments is a style preference, not a defect, and is not about any planted issue."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Says to wrap the migration in a transaction, which is the same problem as finding 1 and matches issue 2."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Names the hardcoded reporting role password in version control, which matches issue 1."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "37-python-one-comment-over-the-whole-file-two-issues",
+      "kind": "two_issues",
+      "seconds": 3.2452369,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "half_found": {
+              "finding": 2
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0,
+                2
+              ]
+            }
+          },
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the shared mutable default list (queue=[]) shared between calls so events pile up across digests, which is the cause of the issue."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 says datetime.now() looks suspicious without naming the cause (naive local time compared with aware datetimes, TypeError or offset issue). It points at the line but gives no cause."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the swallowed exception in send: a failed send is invisible and the caller believes the digest went out, which is the failure the issue describes."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0,
+                  2
+                ]
+              }
+            },
+            "Correctly identifies both the shared mutable default argument and the swallowed exception in send, each with its real consequence."
+          ],
+          [
+            "false_positive",
+            "Complains only about readability of a list comprehension, which is a style preference and not a defect."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Flags datetime.now() on the line of issue 2 as suspicious but does not state that it is naive and mismatches the timezone-aware event times, so the cause is not named."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "38-python-a-general-comment-about-sending",
+      "kind": "no_span",
+      "seconds": 7.1465505,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 2
+            }
+          },
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          "valid_extra"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 is on the issue's lines (line 7, the mutable default) and points at it, but gives no cause: it only says the default argument bothers the reviewer, without naming the shared list that persists across calls. That makes it half_found, with no quote."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 says datetime.now() gives a naive local time while the events are timezone-aware, so comparing them raises TypeError, and it names the fix. This names the cause of the naive-time problem."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 says send catches Exception and passes, so failures such as refused connections or timeouts are swallowed and the caller believes the email went out. This names the cause and consequence."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the swallowed exception in send, which hides delivery failures from the caller."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies the naive datetime.now() compared with timezone-aware event times, causing TypeError."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Points at the mutable default argument on issue 1's lines but gives no cause, so it is about issue 1 and only half-matches it."
+          ],
+          [
+            "valid_extra",
+            "Division by len(events) raises ZeroDivisionError on an empty list; this is a real defect in average_age_hours, which the key does not hold."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "39-javascript-a-false-alarm-and-a-preference",
+      "kind": "false_positive",
+      "seconds": 3.8872517,
+      "labels": {
+        "issues": [
+          "missed",
+          {
+            "half_found": {
+              "finding": 4
+            }
+          },
+          {
+            "found": {
+              "finding": 3
+            }
+          },
+          {
+            "found": {
+              "finding": 2
+            }
+          }
+        ],
+        "findings": [
+          "false_positive",
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                3
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "No finding mentions the closure capturing the shared var loop variable. Finding 2 is about a live NodeList growing, which is a different problem."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 4
+              }
+            },
+            "Finding 5 says only that something leaks, with no cause given: it does not name the listener that is never removed or why that matters, so it is at most a pointer to the issue's lines."
+          ],
+          [
+            {
+              "found": {
+                "finding": 3
+              }
+            },
+            "Finding 4 names loose equality, explaining that 0 == \"\" is true so revision 0 shows as 'Not saved yet', which is the cause and consequence of issue 4."
+          ],
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the missing await on canEdit, explaining the Promise is always truthy so the check never refuses anyone, which is the cause and consequence of issue 1."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "Splitting the return into two ifs is a style preference, not a defect; the code is correct as written."
+          ],
+          [
+            "false_positive",
+            "querySelectorAll returns a static NodeList, not a live one, so the claim is wrong and the loop cannot run forever; the code is correct here."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  3
+                ]
+              }
+            },
+            "Correctly identifies that the missing await makes the Promise always truthy so no user is refused, matching issue 1."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies loose equality causing 0 == \"\" to be true, so revision 0 shows as not saved, matching issue 4."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Vaguely says something leaks without naming the anonymous listener that is never removed, so it points at issue 3 without giving its cause."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "40-javascript-mixed-review",
+      "kind": "mixed",
+      "seconds": 3.7695927,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "half_found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 3
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                3
+              ]
+            }
+          },
+          "valid_extra"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the var-shared loop variable: every click handler shares one i, which ends at buttons.length, so run receives undefined. It names the cause, and the proposed fix of let is correct."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 says only that a listener is added to window on every call. It points at the issue's line but does not name the leak's cause, which is that the listener is never removed and keeps onWidth alive. This is a half-find."
+          ],
+          [
+            "missed",
+            "No finding mentions the loose == comparison or the revision 0 case."
+          ],
+          [
+            {
+              "found": {
+                "finding": 3
+              }
+            },
+            "Finding 4 names the missing await on canEdit: it is async, so the negation is applied to a Promise, always false, and nobody is refused. This is the cause and its consequence."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the var closure capture on loop variable i and the resulting undefined command."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Points at the addEventListener line on window, which is the lapsed listener issue, but gives no cause about removal or retained references."
+          ],
+          [
+            "false_positive",
+            "Renaming canEdit is a naming preference, not a defect in the code."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  3
+                ]
+              }
+            },
+            "Correctly identifies that the missing await makes the negation always false so no user is refused."
+          ],
+          [
+            "valid_extra",
+            "The split on a single space does give one for an empty string and miscounts repeated spaces, which is a real but unplanted defect in wordCount that the key does not hold. It is a genuine minor inaccuracy in the code."
+          ]
+        ]
+      }
+    }
+  ]
+}
