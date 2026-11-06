@@ -120,7 +120,15 @@ impl ImageStore {
             Err(error) => return error.kind() == std::io::ErrorKind::NotFound,
         };
         let mut gone = true;
-        while let Ok(Some(entry)) = entries.next_entry().await {
+        loop {
+            let entry = match entries.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::warn!(%error, image_id = id, "Could not list the prepared chat images");
+                    return false;
+                }
+            };
             let name = entry.file_name();
             let Some((owner, ..)) = name.to_str().and_then(recognised_prepared) else {
                 continue;
