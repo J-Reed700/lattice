@@ -6,6 +6,7 @@
 
 import React, { useState } from 'react';
 
+import { getUserFriendlyMessage } from '../../types/errors';
 
 export interface SectionErrorProps {
   error: Error;
@@ -19,7 +20,7 @@ export interface SectionErrorProps {
 export function SectionError({ error, errorInfo, resetError, sectionName = 'this section', onDismiss }: SectionErrorProps) {
   const [showDetails, setShowDetails] = useState(false);
   const isDevelopment = import.meta.env.DEV;
-  const userFriendlyMessage = error.message?.trim() || 'Something unexpected happened.';
+  const userFriendlyMessage = getUserFriendlyMessage(error);
   const hasTechnicalDetails = isDevelopment && Boolean(error.stack || errorInfo?.componentStack);
 
   return (

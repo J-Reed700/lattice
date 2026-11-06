@@ -8,6 +8,7 @@
 
 import React, { useState } from 'react';
 
+import { getUserFriendlyMessage, sanitizeErrorMessage } from '../../types/errors';
 
 export interface FullPageErrorProps {
   error: Error;
@@ -42,8 +43,8 @@ export function FullPageError({ error, errorInfo, resetError }: FullPageErrorPro
     });
   };
 
-  const userFriendlyMessage = error.message?.trim() || 'Something unexpected happened.';
-  const displayMessage = error.message;
+  const userFriendlyMessage = getUserFriendlyMessage(error);
+  const displayMessage = isDevelopment ? error.message : sanitizeErrorMessage(error.message);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg p-6">
