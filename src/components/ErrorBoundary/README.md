@@ -135,7 +135,7 @@ index. Nothing mounts them; use the section boundaries above.
 ### FullPageError
 
 Full-screen display used by `RootErrorBoundary`: "Lattice ran into a
-problem.", a friendly message from `getUserFriendlyMessage`, and **Try again**,
+problem.", a message from `getUserFriendlyMessage`, and **Try again**,
 **Reload** and **Copy details** buttons (plus **Download log** in
 development). **Show details** reveals the error name and message (sanitized in
 production); the stack and component stack appear only in development.
@@ -177,26 +177,29 @@ import { InlineError, CompactError } from '@/components/ErrorBoundary';
 <CompactError error={error} resetError={() => {}} />
 ```
 
-## Error Types
+## Private text on error screens
 
-`src/types/errors.ts` defines error classes that the fallbacks translate into
-user-facing copy via `getUserFriendlyMessage`; `sanitizeErrorMessage` strips
-sensitive detail from a message for production display.
+`src/utils/redact.ts` is the one place that decides what private text looks
+like. The fallbacks call `getUserFriendlyMessage(error)`, which returns the
+sanitized message, the sanitized text of a thrown string, or "Something
+unexpected happened." when there is none; it never throws.
 
-```tsx
-import {
-  NetworkError,       // (message, statusCode?, endpoint?)
-  AuthenticationError,
-  DatabaseError,      // (message, operation?, table?)
-  RenderError,
-  FileSystemError,
-  SearchError,
-  ConfigurationError,
-} from '@/types/errors';
-```
+`sanitizeErrorMessage` replaces, in this order:
 
-No code currently throws these; an error of any other type gets the generic
-message.
+- secrets: JSON fields such as `"token"`, `Bearer` tokens, `api_key=` and
+  `password=` values, and secret query parameters, with `[REDACTED]`;
+- URLs with a scheme, whole, with `[URL]`;
+- email addresses with `[EMAIL]` and IPv4 addresses with `[IP]`;
+- hex strings of 32 or more characters and opaque runs of 40 or more
+  characters with `[TOKEN]`;
+- file paths with `[PATH]`: Windows drive paths, UNC paths, Unix and `~/`
+  paths, and relative paths with two or more slashes or any backslash. A path
+  runs on past spaces, so the rest of a clause may go with it.
+
+Plain text such as "Error: something went wrong" or "and/or" is untouched.
+In production **Show details** and **Copy details** use the same rules, and the
+stack keeps its function names and line numbers. In development they show the
+raw message. `redact` adds the user-folder rules the diagnostics log uses.
 
 ## Error Logging
 

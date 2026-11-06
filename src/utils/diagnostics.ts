@@ -1,4 +1,6 @@
 /** Local, bounded diagnostics. Never let reporting break the operation being reported. */
+import { redact } from './redact';
+
 export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface DiagnosticEntry {
   id: string;
@@ -13,16 +15,6 @@ export interface DiagnosticEntry {
 const KEY = 'lattice-diagnostics-v1';
 const LIMIT = 300;
 const listeners = new Set<() => void>();
-
-export function redact(text: string): string {
-  return text
-    .replace(/("(?:api[_-]?key|token|password|secret|authorization|content|prompt|query|body)"\s*:\s*)"(?:\\.|[^"\\])*"/gi, '$1"[REDACTED]"')
-    .replace(/\b(Bearer\s+)[^\s"']+/gi, '$1[REDACTED]')
-    .replace(/((?:api[_-]?key|token|password|secret|authorization)\s*[=:]\s*)[^\s,;"']+/gi, '$1[REDACTED]')
-    .replace(/([?&](?:token|key|api_key|secret|password)=)[^&#\s]+/gi, '$1[REDACTED]')
-    .replace(/(?:\/Users\/|\/home\/)[^/\s]+/g, '/[USER]')
-    .replace(/[A-Z]:\\Users\\[^\\\s]+/gi, '[USER]');
-}
 
 function serialize(value: unknown): string {
   const seen = new WeakSet<object>();

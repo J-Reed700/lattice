@@ -1,4 +1,5 @@
-import { diagnostics, redact } from './diagnostics';
+import { diagnostics } from './diagnostics';
+import { redact } from './redact';
 import { toast } from '../stores/toastStore';
 
 

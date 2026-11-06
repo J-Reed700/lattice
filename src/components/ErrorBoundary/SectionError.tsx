@@ -6,7 +6,7 @@
 
 import React, { useState } from 'react';
 
-import { getUserFriendlyMessage } from '../../types/errors';
+import { getUserFriendlyMessage } from '../../utils/redact';
 
 export interface SectionErrorProps {
   error: Error;
