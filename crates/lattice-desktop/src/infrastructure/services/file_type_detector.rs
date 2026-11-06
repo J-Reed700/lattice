@@ -48,14 +48,29 @@ impl FileTypeDetector {
         matches!(
             ext.as_str(),
             // Documents
-            "txt" | "md" | "pdf" | "docx" | "doc" | "rtf" | "odt" |
-            // Code
-            "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "html" | "css" | "scss" |
-            "json" | "xml" | "yaml" | "yml" | "toml" | "sql" | "sh" | "bash" |
-            "c" | "cpp" | "h" | "hpp" | "java" | "go" | "rb" | "php" | "swift" |
-            "kt" | "scala" | "r" | "m" | "mm" | "cs" | "vb" | "fs" | "clj" |
+            "txt" | "md" | "markdown" | "pdf" | "docx" | "doc" | "rtf" | "odt" | "xlsx" | "pptx" |
+            // Code - Rust
+            "rs" | "toml" |
+            // Code - Web
+            "js" | "mjs" | "cjs" | "ts" | "tsx" | "jsx" | "html" | "htm" | "css" | "scss" | "sass" | "less" |
+            // Code - Python
+            "py" | "pyw" | "pyi" |
+            // Code - Systems
+            "c" | "h" | "cpp" | "cxx" | "cc" | "hpp" | "hxx" | "hh" | "go" |
+            // Code - JVM
+            "java" | "kt" | "kts" | "scala" | "clj" | "cljs" | "cljc" |
+            // Code - Other
+            "rb" | "rake" | "php" | "swift" | "r" | "m" | "mm" | "cs" | "vb" | "fs" | "ex" | "exs" | "erl" | "hrl" |
+            // Shell
+            "sh" | "bash" | "zsh" | "fish" | "ps1" | "psm1" | "bat" | "cmd" |
+            // Config/Data
+            "json" | "xml" | "yaml" | "yml" | "ini" | "conf" | "config" |
+            // Database
+            "sql" | "graphql" | "gql" |
             // Data
-            "csv" | "tsv"
+            "csv" | "tsv" |
+            // Audio
+            "mp3" | "wav" | "ogg" | "flac" | "aac" | "m4a" | "wma"
         )
     }
 
@@ -115,46 +130,78 @@ impl FileTypeDetector {
         match extension {
             // Documents
             "txt" => "text/plain",
-            "md" => "text/markdown",
+            "md" | "markdown" => "text/markdown",
             "pdf" => "application/pdf",
             "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "doc" => "application/msword",
             "rtf" => "application/rtf",
             "odt" => "application/vnd.oasis.opendocument.text",
+            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls" => "application/vnd.ms-excel",
+            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "ppt" => "application/vnd.ms-powerpoint",
 
-            // Code
+            // Code - Rust
             "rs" => "text/x-rust",
-            "py" => "text/x-python",
-            "js" => "text/javascript",
+            "toml" => "text/x-toml",
+
+            // Code - Web
+            "js" | "mjs" | "cjs" => "text/javascript",
             "ts" => "text/typescript",
-            "tsx" => "text/typescript",
-            "jsx" => "text/javascript",
-            "html" => "text/html",
+            "tsx" => "text/typescript-jsx",
+            "jsx" => "text/javascript-jsx",
+            "html" | "htm" => "text/html",
             "css" => "text/css",
-            "scss" => "text/x-scss",
-            "json" => "application/json",
-            "xml" => "application/xml",
-            "yaml" | "yml" => "application/x-yaml",
-            "toml" => "application/toml",
-            "sql" => "text/x-sql",
-            "sh" | "bash" => "text/x-shellscript",
+            "scss" | "sass" => "text/x-scss",
+            "less" => "text/x-less",
+
+            // Code - Python
+            "py" | "pyw" | "pyi" => "text/x-python",
+
+            // Code - Systems
             "c" => "text/x-c",
-            "cpp" => "text/x-c++",
-            "h" => "text/x-c",
-            "hpp" => "text/x-c++",
-            "java" => "text/x-java",
+            "h" => "text/x-c-header",
+            "cpp" | "cxx" | "cc" => "text/x-c++",
+            "hpp" | "hxx" | "hh" => "text/x-c++-header",
             "go" => "text/x-go",
-            "rb" => "text/x-ruby",
+
+            // Code - JVM
+            "java" => "text/x-java",
+            "kt" | "kts" => "text/x-kotlin",
+            "scala" => "text/x-scala",
+            "clj" | "cljs" | "cljc" => "text/x-clojure",
+
+            // Code - Other languages
+            "rb" | "rake" => "text/x-ruby",
             "php" => "text/x-php",
             "swift" => "text/x-swift",
-            "kt" => "text/x-kotlin",
-            "scala" => "text/x-scala",
             "r" => "text/x-r",
-            "m" | "mm" => "text/x-objective-c",
+            "m" => "text/x-matlab",
+            "mm" => "text/x-objective-c",
             "cs" => "text/x-csharp",
             "vb" => "text/x-vb",
             "fs" => "text/x-fsharp",
-            "clj" => "text/x-clojure",
+            "ex" | "exs" => "text/x-elixir",
+            "erl" | "hrl" => "text/x-erlang",
+
+            // Shell scripts
+            "sh" => "text/x-shellscript",
+            "bash" => "text/x-bash",
+            "zsh" => "text/x-zsh",
+            "fish" => "text/x-fish",
+            "ps1" | "psm1" => "text/x-powershell",
+            "bat" | "cmd" => "text/x-batch",
+
+            // Config/Data formats
+            "json" => "application/json",
+            "xml" => "application/xml",
+            "yaml" | "yml" => "text/x-yaml",
+            "ini" => "text/x-ini",
+            "conf" | "config" => "text/plain",
+
+            // Database
+            "sql" => "text/x-sql",
+            "graphql" | "gql" => "application/graphql",
 
             // Images
             "jpg" | "jpeg" => "image/jpeg",
@@ -255,6 +302,38 @@ mod tests {
         assert_eq!(
             FileTypeDetector::get_mime_type_from_extension("json"),
             "application/json"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("toml"),
+            "text/x-toml"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("yaml"),
+            "text/x-yaml"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("yml"),
+            "text/x-yaml"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("tsx"),
+            "text/typescript-jsx"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("jsx"),
+            "text/javascript-jsx"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("h"),
+            "text/x-c-header"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("hpp"),
+            "text/x-c++-header"
+        );
+        assert_eq!(
+            FileTypeDetector::get_mime_type_from_extension("bash"),
+            "text/x-bash"
         );
     }
 

@@ -198,6 +198,18 @@ mod tests {
             unimplemented!()
         }
 
+        async fn add_message_with_metadata(
+            &self,
+            _conversation_id: &str,
+            _role: lattice_core::domain::conversation::MessageRole,
+            _content: String,
+            _tokens: i64,
+            _status: String,
+            _metadata: Option<String>,
+        ) -> Result<lattice_core::domain::conversation::ConversationMessage> {
+            unimplemented!()
+        }
+
         async fn update_message_status(&self, _message_id: &str, _status: String) -> Result<()> {
             unimplemented!()
         }

@@ -36,12 +36,6 @@ pub const SECTION_SUMMARIES_HEADING: &str =
 /// summaries — its document summary already covers the same ground.
 pub const MIN_SECTIONS: usize = 3;
 
-/// Upper bound on a stored summary, after which the model is simply running on.
-const MAX_SUMMARY_CHARS: usize = 900;
-
-/// Topics are noun phrases, not sentences.
-const MAX_TOPIC_CHARS: usize = 60;
-
 /// Topics requested and kept.
 const MAX_TOPICS: usize = 5;
 
@@ -183,13 +177,13 @@ pub fn parse_summary_response(raw: &str) -> Option<SummaryDraft> {
 }
 
 fn sanitize(raw: RawSummaryResponse) -> Option<SummaryDraft> {
-    let summary = truncate_chars(raw.summary?.trim(), MAX_SUMMARY_CHARS);
+    let summary = raw.summary?.trim().to_string();
     if summary.is_empty() {
         return None;
     }
     let mut topics = Vec::new();
     for topic in raw.topics {
-        let topic = truncate_chars(topic.trim(), MAX_TOPIC_CHARS);
+        let topic = topic.trim().to_string();
         if topic.is_empty() || topics.contains(&topic) {
             continue;
         }
@@ -199,14 +193,6 @@ fn sanitize(raw: RawSummaryResponse) -> Option<SummaryDraft> {
         }
     }
     Some(SummaryDraft { summary, topics })
-}
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    let mut out: String = text.chars().take(max_chars).collect();
-    if out.len() < text.len() {
-        out = out.trim_end().to_string();
-    }
-    out
 }
 
 #[cfg(test)]
@@ -316,15 +302,15 @@ mod tests {
     }
 
     #[test]
-    fn long_summaries_and_topics_are_capped() {
-        let raw = format!(
-            r#"{{"summary":"{}","topics":["{}"]}}"#,
-            "x".repeat(4000),
-            "y".repeat(400)
-        );
+    fn a_long_summary_and_a_long_topic_are_kept_whole() {
+        let summary = "A sentence the model wrote at length. ".repeat(100);
+        let summary = summary.trim().to_string();
+        let topic = "a topic named at some length ".repeat(10);
+        let topic = topic.trim().to_string();
+        let raw = format!(r#"{{"summary":"{summary}","topics":["{topic}"]}}"#);
         let draft = parse_summary_response(&raw).unwrap();
-        assert_eq!(draft.summary.chars().count(), MAX_SUMMARY_CHARS);
-        assert_eq!(draft.topics[0].chars().count(), MAX_TOPIC_CHARS);
+        assert_eq!(draft.summary, summary);
+        assert_eq!(draft.topics, vec![topic]);
     }
 
     #[test]

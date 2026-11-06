@@ -16,7 +16,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 import { SuccessIcon, ErrorIcon, WarningIcon, InfoIcon, CloseIcon } from './ToastIcons';
-import { type Toast } from '../../stores/toastStore';
+import { useToastStore, type Toast } from '../../stores/toastStore';
 
 interface ToastItemProps {
   toast: Toast;
@@ -79,6 +79,7 @@ export const ToastItem: React.FC<ToastItemProps> = ({
       clearInterval(progressIntervalRef.current);
       progressIntervalRef.current = null;
     }
+    useToastStore.getState().pauseToast?.(toast.id);
     setIsExiting(true);
     dismissTimerRef.current = setTimeout(() => {
       onDismiss(toast.id);
@@ -128,12 +129,14 @@ export const ToastItem: React.FC<ToastItemProps> = ({
   const handleMouseEnter = () => {
     if (pauseOnHover) {
       setIsPaused(true);
+      useToastStore.getState().pauseToast?.(toast.id);
     }
   };
 
   const handleMouseLeave = () => {
     if (pauseOnHover) {
       setIsPaused(false);
+      useToastStore.getState().resumeToast?.(toast.id);
     }
   };
 

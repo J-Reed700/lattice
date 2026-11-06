@@ -117,9 +117,9 @@ impl TagServiceTrait for TagService {
     ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
-        if name.is_empty() || name.len() > 100 {
+        if name.is_empty() {
             return Err(lattice_core::shared::error::AppError::InvalidInput(
-                "Tag name must be 1-100 characters".into(),
+                "A tag needs a name".into(),
             ));
         }
 
@@ -140,9 +140,9 @@ impl TagServiceTrait for TagService {
         use crate::features::tags::repository::TagRepository;
 
         if let Some(n) = name {
-            if n.is_empty() || n.len() > 100 {
+            if n.is_empty() {
                 return Err(lattice_core::shared::error::AppError::InvalidInput(
-                    "Tag name must be 1-100 characters".into(),
+                    "A tag needs a name".into(),
                 ));
             }
         }
@@ -261,7 +261,7 @@ impl TagServiceTrait for TagService {
         let normalized_tags: Vec<String> = tag_names
             .into_iter()
             .map(|t| t.trim().to_lowercase())
-            .filter(|t| !t.is_empty() && t.len() <= 100)
+            .filter(|t| !t.is_empty())
             .collect();
 
         // Merge with existing tags
@@ -381,9 +381,9 @@ impl TagServiceTrait for TagService {
     ) -> Result<lattice_core::domain::entities::Tag, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
-        if name.is_empty() || name.len() > 100 {
+        if name.is_empty() {
             return Err(lattice_core::shared::error::AppError::InvalidInput(
-                "Tag name must be 1-100 characters".into(),
+                "A tag needs a name".into(),
             ));
         }
 
@@ -467,6 +467,80 @@ mod tests {
 
         let merged = TagService::merge_tags(existing, generated);
         assert_eq!(merged.len(), 2);
+    }
+
+    async fn pool_with_tags() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                color TEXT NOT NULL DEFAULT '#6366f1',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+             CREATE TABLE document_tags (document_id TEXT NOT NULL, tag_id TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (document_id, tag_id));",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    fn long_tag(suffix: &str) -> String {
+        format!("{}-{suffix}", ["a-tag-named-at-length"; 12].join("-"))
+    }
+
+    #[tokio::test]
+    async fn a_tag_named_at_length_is_created() {
+        let service = TagService::new(pool_with_tags().await);
+        let name = long_tag("created");
+
+        let created = service.create_tag(&name, None).await.unwrap();
+
+        assert_eq!(created.name().as_str(), name);
+    }
+
+    #[tokio::test]
+    async fn a_tag_is_renamed_to_a_name_of_any_length() {
+        let service = TagService::new(pool_with_tags().await);
+        let created = service.create_tag("short", None).await.unwrap();
+        let name = long_tag("renamed");
+
+        let updated = service
+            .update_tag(created.id().as_str(), Some(name.as_str()), None)
+            .await
+            .unwrap();
+
+        assert_eq!(updated.name().as_str(), name);
+    }
+
+    #[tokio::test]
+    async fn a_tag_named_at_length_is_found_or_created() {
+        let service = TagService::new(pool_with_tags().await);
+        let name = long_tag("found");
+
+        let tag = service.get_or_create(&name, "#6366f1").await.unwrap();
+
+        assert_eq!(tag.name().as_str(), name);
+    }
+
+    #[tokio::test]
+    async fn a_generated_tag_of_any_length_is_applied_not_dropped() {
+        let service = TagService::new(pool_with_tags().await);
+        let name = long_tag("applied");
+
+        let applied = service
+            .apply_tags("doc-1", vec![name.clone(), "short".to_string()])
+            .await
+            .unwrap();
+
+        let names: Vec<&str> = applied.iter().map(|tag| tag.name().as_str()).collect();
+        assert!(names.contains(&name.as_str()), "{names:?}");
+        assert!(names.contains(&"short"), "{names:?}");
     }
 
     #[tokio::test]

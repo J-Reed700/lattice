@@ -1005,6 +1005,39 @@ fn limits_are_enforced_before_anything_is_allocated() {
 }
 
 #[test]
+fn a_long_label_is_kept_not_refused() {
+    let messages = vec![message(
+        "m1",
+        1,
+        SourceRole::User,
+        "Do not deploy until I approve.",
+    )];
+    let sources = SourceIndex::new(&messages);
+    let label = "Do not deploy until the user approves, in any environment. ".repeat(10);
+
+    let validated = validate_patch(
+        &patch(
+            vec![constraint(
+                "c1",
+                &label,
+                vec![evidence(
+                    "m1",
+                    "Do not deploy until I approve.",
+                    "assertion",
+                )],
+            )],
+            vec![],
+        ),
+        &sources,
+        &[],
+        &[],
+    )
+    .expect("a long label is a label");
+
+    assert_eq!(validated.additions[0].label, label.trim());
+}
+
+#[test]
 fn parsing_accepts_one_fence_and_nothing_looser() {
     let body = r#"{"schema_version":1,"add":[],"transitions":[],"processed_segment_ids":[]}"#;
     assert!(parse_patch(body).is_ok());

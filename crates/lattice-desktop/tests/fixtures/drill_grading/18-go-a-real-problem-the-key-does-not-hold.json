@@ -1,0 +1,154 @@
+{
+  "name": "18-go-a-real-problem-the-key-does-not-hold",
+  "kind": "valid_extra",
+  "why": "The first finding names a real defect that the clean code has too and the key does not hold: Rate returns a rate of 0 or below as if it were real, and Convert then silently turns every amount into 0 or a negative amount. Its lines, the rate lookup, overlap no issue, and the rubric calls a finding about no issue a valid_extra when it 'names a real problem of this code that the key does not hold'. The other two findings name the unclosed body and the lookup repeated in the loop in full: found. The ignored Decode error is missed. Least certain label: the valid extra, which rests on a non-positive rate being a real risk and not a design choice.",
+  "drill": {
+    "id": "rates-client",
+    "language": "go",
+    "title": "Exchange rates client",
+    "files": [
+      {
+        "path": "rates.go",
+        "text": "package rates\n\nimport (\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"math\"\n\t\"net/http\"\n\t\"net/url\"\n\t\"time\"\n)\n\nconst baseURL = \"https://rates.example.test/v1\"\n\n// Client reads exchange rates from the rates service.\ntype Client struct {\n\thttp *http.Client\n}\n\nfunc NewClient() *Client {\n\treturn &Client{http: &http.Client{Timeout: 5 * time.Second}}\n}\n\n// Rate returns how many units of quote one unit of base buys.\nfunc (c *Client) Rate(base, quote string) (float64, error) {\n\tendpoint := fmt.Sprintf(\"%s/latest?base=%s&symbols=%s\", baseURL, url.QueryEscape(base), url.QueryEscape(quote))\n\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}\n\tif resp.StatusCode != http.StatusOK {\n\t\treturn 0, fmt.Errorf(\"rates service answered %d for %s/%s\", resp.StatusCode, base, quote)\n\t}\n\tvar body struct {\n\t\tRates map[string]float64 `json:\"rates\"`\n\t}\n\t_ = json.NewDecoder(resp.Body).Decode(&body)\n\trate, ok := body.Rates[quote]\n\tif !ok {\n\t\treturn 0, fmt.Errorf(\"no rate for %s/%s\", base, quote)\n\t}\n\treturn rate, nil\n}\n\nfunc scale(cents int64, rate float64) int64 {\n\treturn int64(math.Round(float64(cents) * rate))\n}\n\n// Convert turns cents of base into cents of quote, rounded to the nearest cent.\nfunc (c *Client) Convert(cents int64, base, quote string) (int64, error) {\n\trate, err := c.Rate(base, quote)\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\treturn scale(cents, rate), nil\n}\n\n// ConvertAll converts every amount with a single rate lookup.\nfunc (c *Client) ConvertAll(amounts []int64, base, quote string) ([]int64, error) {\n\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tvalue, err := c.Convert(cents, base, quote)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tconverted[i] = value\n\t}\n\treturn converted, nil\n}\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "rates-body-not-closed",
+        "pattern": "resources.leaked_handle",
+        "severity": "major",
+        "span": {
+          "path": "rates.go",
+          "start": 26,
+          "end": 29
+        },
+        "consequence": "Every call to Rate leaves the response body open, so its connection is never returned to the pool or closed, and a program that keeps converting runs out of connections and file descriptors.",
+        "fix": {
+          "path": "rates.go",
+          "before": "\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}",
+          "after": "\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}\n\tdefer resp.Body.Close()"
+        },
+        "explanation": "Rate reads the response but never closes resp.Body, and Go keeps the connection busy until the body is closed. Put defer resp.Body.Close() right after the error check, so that it runs on every path out of the function.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the deferred Close that the clean code puts right after the error check."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "rates-decode-error-ignored",
+        "pattern": "errors.unchecked_return_value",
+        "severity": "major",
+        "span": {
+          "path": "rates.go",
+          "start": 36,
+          "end": 36
+        },
+        "consequence": "A response that is not valid JSON leaves body.Rates nil, and the caller is told that there is no rate for the pair, which hides that the service sent something broken.",
+        "fix": {
+          "path": "rates.go",
+          "before": "\t_ = json.NewDecoder(resp.Body).Decode(&body)",
+          "after": "\tif err := json.NewDecoder(resp.Body).Decode(&body); err != nil {\n\t\treturn 0, fmt.Errorf(\"decode %s/%s: %w\", base, quote, err)\n\t}"
+        },
+        "explanation": "Rate throws away the error that Decode returns, so a broken response is reported as a missing rate. Check the error and return it with the pair, as the other failures are.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the checked Decode with one whose error is assigned to the blank identifier, and the clean code returns it."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "rates-lookup-in-loop",
+        "pattern": "performance.repeated_work_in_loop",
+        "severity": "major",
+        "span": {
+          "path": "rates.go",
+          "start": 59,
+          "end": 67
+        },
+        "consequence": "ConvertAll makes one request to the rates service for every amount, all for the same pair, so a long list is slow and may hit the service's rate limit, and the amounts can be converted at different rates if the rate moves during the loop.",
+        "fix": {
+          "path": "rates.go",
+          "before": "\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tvalue, err := c.Convert(cents, base, quote)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t\tconverted[i] = value\n\t}\n\treturn converted, nil",
+          "after": "\trate, err := c.Rate(base, quote)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tconverted[i] = scale(cents, rate)\n\t}\n\treturn converted, nil"
+        },
+        "explanation": "ConvertAll calls Convert inside the loop, and Convert fetches the rate each time, though the rate is the same for every amount. Look it up once before the loop and scale each amount with it.",
+        "proof": {
+          "judged": {
+            "reason": "The edit moves the rate lookup from before the loop into Convert, which the loop calls for every amount, and the clean code looks it up once."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "rates.go",
+      "text": "package rates\n\nimport (\n\t\"encoding/json\"\n\t\"fmt\"\n\t\"math\"\n\t\"net/http\"\n\t\"net/url\"\n\t\"time\"\n)\n\nconst baseURL = \"https://rates.example.test/v1\"\n\n// Client reads exchange rates from the rates service.\ntype Client struct {\n\thttp *http.Client\n}\n\nfunc NewClient() *Client {\n\treturn &Client{http: &http.Client{Timeout: 5 * time.Second}}\n}\n\n// Rate returns how many units of quote one unit of base buys.\nfunc (c *Client) Rate(base, quote string) (float64, error) {\n\tendpoint := fmt.Sprintf(\"%s/latest?base=%s&symbols=%s\", baseURL, url.QueryEscape(base), url.QueryEscape(quote))\n\tresp, err := c.http.Get(endpoint)\n\tif err != nil {\n\t\treturn 0, fmt.Errorf(\"fetch %s/%s: %w\", base, quote, err)\n\t}\n\tdefer resp.Body.Close()\n\tif resp.StatusCode != http.StatusOK {\n\t\treturn 0, fmt.Errorf(\"rates service answered %d for %s/%s\", resp.StatusCode, base, quote)\n\t}\n\tvar body struct {\n\t\tRates map[string]float64 `json:\"rates\"`\n\t}\n\tif err := json.NewDecoder(resp.Body).Decode(&body); err != nil {\n\t\treturn 0, fmt.Errorf(\"decode %s/%s: %w\", base, quote, err)\n\t}\n\trate, ok := body.Rates[quote]\n\tif !ok {\n\t\treturn 0, fmt.Errorf(\"no rate for %s/%s\", base, quote)\n\t}\n\treturn rate, nil\n}\n\nfunc scale(cents int64, rate float64) int64 {\n\treturn int64(math.Round(float64(cents) * rate))\n}\n\n// Convert turns cents of base into cents of quote, rounded to the nearest cent.\nfunc (c *Client) Convert(cents int64, base, quote string) (int64, error) {\n\trate, err := c.Rate(base, quote)\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\treturn scale(cents, rate), nil\n}\n\n// ConvertAll converts every amount with a single rate lookup.\nfunc (c *Client) ConvertAll(amounts []int64, base, quote string) ([]int64, error) {\n\trate, err := c.Rate(base, quote)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\tconverted := make([]int64, len(amounts))\n\tfor i, cents := range amounts {\n\t\tconverted[i] = scale(cents, rate)\n\t}\n\treturn converted, nil\n}\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "rates.go",
+        "start": 37,
+        "end": 41
+      },
+      "text": "Rate trusts whatever number the service sends. A rate of 0, or a negative one, is returned as if it were real, and Convert then turns every amount into 0 or a negative amount without an error. Reject a rate that is not above zero.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "rates.go",
+        "start": 26,
+        "end": 29
+      },
+      "text": "The response body is never closed. Every call to Rate leaves its connection open, so a loop of calls can run out of connections and file descriptors. Add defer resp.Body.Close() after the error check.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "rates.go",
+        "start": 61,
+        "end": 61
+      },
+      "text": "ConvertAll calls Convert for every amount, and Convert asks the rates service for the rate each time. A list of a thousand amounts makes a thousand requests for one and the same rate. Look the rate up once before the loop.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      "missed",
+      {
+        "found": {
+          "finding": 2
+        }
+      }
+    ],
+    "findings": [
+      "valid_extra",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            2
+          ]
+        }
+      }
+    ]
+  }
+}

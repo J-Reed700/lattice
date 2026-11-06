@@ -8,6 +8,7 @@
 
 import { type QueryClient } from '@tanstack/react-query';
 
+import { DOWNLOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useDownloadedModels';
 import { embeddingBlockReason } from '@/features/settings/components/ModelCatalog/catalogUtils';
 import { VaultAPI, type ApiClient } from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
@@ -68,7 +69,7 @@ export async function startModelDownload({
       title: 'Already downloaded',
       message: `${metadata.name} is on disk.`,
     });
-    voidAsync(() => queryClient.invalidateQueries({ queryKey: ['downloaded-models'] }))();
+    voidAsync(() => queryClient.invalidateQueries({ queryKey: DOWNLOADED_MODELS_QUERY_KEY }))();
     return { alreadyDownloaded: true };
   } else if (response.status === 'network_error') {
     addToast({

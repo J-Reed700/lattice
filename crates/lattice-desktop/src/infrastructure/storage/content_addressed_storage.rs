@@ -33,6 +33,7 @@
 //! what stops a delete arriving *after* the copy but *before* the document row
 //! commits from removing a blob that is about to be referenced.
 
+use crate::infrastructure::file_system::compute_file_sha256_async;
 use async_trait::async_trait;
 use lattice_core::application::ports::content_addressed_storage_port::{
     is_blob_hash, BlobLeases, BlobReferenceCheck, BlobRemoval, ContentAddressedStoragePort,
@@ -40,7 +41,6 @@ use lattice_core::application::ports::content_addressed_storage_port::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use parking_lot::Mutex;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -128,24 +128,7 @@ impl ContentAddressedStorage {
     /// - `AppError::FileNotFound` if file doesn't exist
     /// - `AppError::FileRead` if cannot read file
     async fn compute_file_hash(&self, path: &Path) -> Result<String> {
-        let content = fs::read(path).await.map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => AppError::FileNotFound {
-                path: path.to_string_lossy().to_string(),
-            },
-            std::io::ErrorKind::PermissionDenied => {
-                AppError::PermissionDenied(format!("Cannot read file: {}", path.display()))
-            }
-            _ => AppError::FileRead {
-                path: path.to_string_lossy().to_string(),
-                reason: e.to_string(),
-            },
-        })?;
-
-        let mut hasher = Sha256::new();
-        hasher.update(&content);
-        let hash = hasher.finalize();
-
-        Ok(format!("{:x}", hash))
+        compute_file_sha256_async(path).await
     }
 
     /// Get directory path for a hash.

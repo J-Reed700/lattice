@@ -453,7 +453,11 @@ fn refusal(error: &AppError) -> Option<&str> {
 /// `request` continued with the answer it drew and a request to answer again.
 /// Learning requests carry their whole user message in `task`, so moving it
 /// into the history keeps every message the first request sent.
-fn reask(mut request: GroundedRequest, rejected: &str, reason: &str) -> GroundedRequest {
+pub(in crate::features::learning) fn reask(
+    mut request: GroundedRequest,
+    rejected: &str,
+    reason: &str,
+) -> GroundedRequest {
     let task = std::mem::replace(
         &mut request.task,
         format!("{REASK} {reason} Answer the same task again, fixing that."),

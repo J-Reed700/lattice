@@ -1,4 +1,4 @@
-import { typeBucket } from '@/features/files/model/documentMetadata';
+import { typeBucket, isWebDocument } from '@/features/files/model/documentMetadata';
 import {
   type CustomCollection,
   type LibraryScope,
@@ -38,16 +38,6 @@ export const sortLibraryDocuments = (
 };
 
 export const normalizeToken = (value: string): string => value.trim().toLowerCase();
-const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
-const isWebDocument = (doc: DocumentMetadata): boolean => {
-  const normalizedCategory = normalizeToken(doc.category).replace(/[_-]+/g, ' ');
-  return (
-    normalizedCategory.includes('web article') ||
-    normalizedCategory === 'web' ||
-    isHttpUrl(doc.filePath) ||
-    doc.filePath.includes('/.lattice/web-archive/')
-  );
-};
 
 const collectDescendantCollectionIds = (
   collections: CustomCollection[],

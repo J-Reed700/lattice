@@ -1,4 +1,3 @@
-use super::tag_name::MAX_TAG_NAME_LENGTH;
 use super::*;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -28,15 +27,14 @@ fn test_document_id_empty_string_error() {
 fn test_tag_name_validation() {
     assert!(TagName::new("rust".to_string()).is_ok());
     assert!(TagName::new("".to_string()).is_err());
-
-    let long_name = "a".repeat(51);
-    assert!(TagName::new(long_name).is_err());
 }
 
 #[test]
-fn test_tag_name_max_length() {
-    let max_name = "a".repeat(50);
-    assert!(TagName::new(max_name).is_ok());
+fn a_tag_name_of_any_length_is_a_tag_name() {
+    let long_name = ["a-tag-named-at-length"; 12].join("-");
+    assert!(long_name.len() > 100);
+    let tag_name = TagName::new(long_name.clone()).unwrap();
+    assert_eq!(tag_name.as_str(), long_name);
 }
 
 #[test]
@@ -76,14 +74,9 @@ mod property_tests {
         prop::string::string_regex("[a-zA-Z0-9_-]{1,100}").expect("Valid regex")
     }
 
-    /// Generate valid tag names (within length limits)
+    /// Generate valid tag names
     fn valid_tag_name() -> impl Strategy<Value = String> {
         prop::string::string_regex("[a-zA-Z0-9_-]{1,50}").expect("Valid regex")
-    }
-
-    /// Generate too-long tag names
-    fn too_long_tag_name() -> impl Strategy<Value = String> {
-        prop::string::string_regex("[a-zA-Z]{51,100}").expect("Valid regex")
     }
 
     /// Generate valid file paths
@@ -267,45 +260,6 @@ mod property_tests {
             let result = TagName::new("".to_string());
             prop_assert!(result.is_err());
             prop_assert!(matches!(result, Err(DomainTypeError::EmptyValue)));
-        }
-
-        /// Property: Tag names exceeding max length are rejected
-        #[test]
-        fn prop_tag_name_rejects_too_long(
-            name in too_long_tag_name()
-        ) {
-            let result = TagName::new(name.clone());
-            prop_assert!(result.is_err(), "Tag name longer than 50 should be rejected");
-
-            if let Err(e) = result {
-                prop_assert!(
-                    matches!(e, DomainTypeError::ValueTooLong(_, _)),
-                    "Should return ValueTooLong error"
-                );
-            }
-        }
-
-        /// Property: Tag name at exactly max length is accepted
-        #[test]
-        fn prop_tag_name_max_length_accepted(
-            _seed in 0..100u32
-        ) {
-            let max_name = "a".repeat(MAX_TAG_NAME_LENGTH);
-            let result = TagName::new(max_name.clone());
-            prop_assert!(result.is_ok(), "Tag name at max length should be accepted");
-
-            let tag_name = result.unwrap();
-            prop_assert_eq!(tag_name.as_str().len(), MAX_TAG_NAME_LENGTH);
-        }
-
-        /// Property: Tag name one character over max is rejected
-        #[test]
-        fn prop_tag_name_over_max_rejected(
-            _seed in 0..100u32
-        ) {
-            let over_max = "a".repeat(MAX_TAG_NAME_LENGTH + 1);
-            let result = TagName::new(over_max);
-            prop_assert!(result.is_err());
         }
 
         /// Property: TagName Display shows the name

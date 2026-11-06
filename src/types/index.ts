@@ -13,15 +13,7 @@ export type RecentDocument = import('../lib/bindings').RecentDocument;
 // This matches DocumentMetadataDto from document_list.rs
 export type DocumentMetadata = import('../lib/bindings').DocumentMetadataDto;
 
-export interface IndexProgress {
-  totalFiles: number;
-  processed: number;
-  failed: number;
-  currentFile?: string;
-  status: IndexStatus;
-  percentage: number;
-  estimatedRemainingMs?: number;
-}
+export type { IndexProgress } from '../lib/bindings';
 
 export type IndexStatus = 'idle' | 'scanning' | 'processing' | 'complete' | 'error' | 'cancelled';
 

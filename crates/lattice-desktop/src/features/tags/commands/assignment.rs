@@ -15,13 +15,13 @@ use lattice_core::shared::error::{AppError, Result};
 ///
 /// # Errors
 ///
-/// * `AppError::InvalidInput` - Tag names invalid (empty or > 100 characters)
+/// * `AppError::InvalidInput` - Tag names invalid (empty)
 /// * `AppError::NotFound` - Document ID does not exist
 /// * `AppError::Other` - Use case execution failed (database error)
 ///
 /// # Security
 ///
-/// - **Input Validation**: Each tag name checked (1-100 characters)
+/// - **Input Validation**: Each tag name must not be empty
 ///
 /// # Tag Creation Behavior
 ///
@@ -33,7 +33,6 @@ use lattice_core::shared::error::{AppError, Result};
 /// # Tag Validation
 ///
 /// Each tag name must:
-/// - Be 1-100 characters long
 /// - Not be empty or whitespace-only
 /// - Follow same rules as `create_tag_ddd`
 pub async fn apply_tags_impl(
@@ -41,10 +40,8 @@ pub async fn apply_tags_impl(
     request: ApplyTagsRequestDto,
 ) -> Result<ApplyTagsResponseDto> {
     for name in &request.tag_names {
-        if name.is_empty() || name.len() > 100 {
-            return Err(AppError::InvalidInput(
-                "Each tag name must be 1-100 characters".into(),
-            ));
+        if name.is_empty() {
+            return Err(AppError::InvalidInput("A tag needs a name".into()));
         }
     }
 
@@ -92,4 +89,28 @@ pub async fn remove_tag_from_document_ddd(
     request: RemoveTagRequestDto,
 ) -> Result<()> {
     remove_tag_from_document_impl(container.inner(), request).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_tag_named_at_length_is_not_refused_for_its_length() {
+        let container = crate::tests::common::setup_test_container().await.unwrap();
+        let name = ["a-tag-named-at-length"; 12].join("-");
+
+        let result = apply_tags_impl(
+            &container,
+            ApplyTagsRequestDto {
+                document_id: "no-such-document".to_string(),
+                tag_names: vec![name],
+            },
+        )
+        .await;
+
+        if let Err(AppError::InvalidInput(message)) = result {
+            assert!(!message.contains("characters"), "{message}");
+        }
+    }
 }

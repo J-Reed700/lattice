@@ -31,7 +31,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () => ({ systemCapabilities: h.capabilities }) }));
 vi.mock('@/features/settings/hooks/useHuggingFaceTokenQuery', () => ({ useHuggingFaceTokenStatusQuery: () => ({ data: h.hfToken }) }));
-vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => h.downloaded }));
+vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
+  useDownloadedModels: () => h.downloaded,
+  DOWNLOADED_MODELS_QUERY_KEY: ['downloaded-models'],
+}));
 vi.mock('@/features/model/hooks/useDownloadState', () => ({
   useDownloadState: () => ({
     getActiveDownloadForModel: () => h.activeDownload,
@@ -252,6 +255,44 @@ describe('ModelDetailPanel', () => {
       renderPanel(recommendation({ category: 'Embedding', embedding_compatibility: { kind: 'unknown' } } as never));
       expect(screen.getAllByText('This architecture is not recognized by the local embedding runtime.').length).toBeGreaterThan(0);
       await waitFor(() => expect(h.downloaded.isModelDownloaded).toHaveBeenCalled());
+    });
+
+    it('shows Checking… while the download check is pending (even when isLoading is false) and ignores a stale result from another model', async () => {
+      const checkA = deferred<boolean>();
+      const checkB = deferred<boolean>();
+      Object.assign(h.downloaded, { isLoading: false, downloadedModels: [] });
+      h.downloaded.isModelDownloaded.mockImplementation((id: string) =>
+        id === 'saga-7b-q4' ? checkA.promise : checkB.promise,
+      );
+
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const view = render(
+        <QueryClientProvider client={client}>
+          <ModelDetailPanel model={recommendation({ id: 'saga-7b-q4', name: 'Saga 7B' })} onBack={vi.fn()} />
+        </QueryClientProvider>,
+      );
+
+      expect(screen.getByText('Checking…')).toBeInTheDocument();
+
+      view.rerender(
+        <QueryClientProvider client={client}>
+          <ModelDetailPanel model={recommendation({ id: 'other-7b-q4', name: 'Other 7B' })} onBack={vi.fn()} />
+        </QueryClientProvider>,
+      );
+
+      await act(async () => {
+        checkB.resolve(false);
+        await checkB.promise;
+      });
+      expect(await screen.findByRole('button', { name: 'Download' })).toBeEnabled();
+
+      // Late completion for the first model must not mark the second model as downloaded.
+      await act(async () => {
+        checkA.resolve(true);
+        await checkA.promise;
+      });
+      expect(screen.getByRole('button', { name: 'Download' })).toBeEnabled();
+      expect(screen.queryByText('Downloaded')).not.toBeInTheDocument();
     });
   });
 

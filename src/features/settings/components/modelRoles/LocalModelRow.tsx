@@ -12,7 +12,6 @@
 
 import { useEffect, useState } from 'react';
 
-import { formatDistanceToNow } from 'date-fns';
 import { Box, Flame, SlidersHorizontal, Trash2 } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -24,6 +23,7 @@ import type { RoleWarmupState, WarmupRole } from '@/features/model/stores/modelW
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
 import { modelRefForRow, tokensThatFit } from '@/utils/chatModelSelection';
+import { formatFileSize, formatRelativeDate } from '@/utils/formatters';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 import { LearningWindowNotice } from './LearningWindowNotice';
@@ -32,21 +32,6 @@ import { LocalVisionControl } from './LocalVisionControl';
 import { useModelRoles } from './ModelRolesContext';
 import { ActiveRoleBadge } from './RoleButton';
 import { canModelFulfillRole, isChatModelSelected, isLearningModel, isUtilityModel, ROLES } from './roleConfig';
-
-function formatFileSize(bytes: number): string {
-  const mb = bytes / (1024 * 1024);
-  if (mb < 1024) return `${mb.toFixed(0)} MB`;
-  return `${(mb / 1024).toFixed(1)} GB`;
-}
-
-function formatDate(iso: string | null): string | null {
-  if (!iso) return null;
-  try {
-    return formatDistanceToNow(new Date(iso), { addSuffix: true });
-  } catch {
-    return null;
-  }
-}
 
 interface Props {
   model: DownloadedModel;
@@ -162,8 +147,8 @@ export function LocalModelRow({ model }: Props) {
     }
   };
 
-  const downloaded = formatDate(model.downloaded_at);
-  const used = formatDate(model.last_used_at);
+  const downloaded = formatRelativeDate(model.downloaded_at);
+  const used = formatRelativeDate(model.last_used_at);
   const maxTokens = model.trained_context_length ?? null;
   // The window it loads with: the user's, else its maximum.
   const window = model.configured_context_length ?? llmSettings?.localContextWindow ?? maxTokens;

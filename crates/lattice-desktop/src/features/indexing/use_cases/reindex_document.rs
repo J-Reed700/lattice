@@ -187,19 +187,11 @@ impl ReindexDocumentUseCase {
         // Count words
         let word_count = metadata_extractor.count_words(&content);
 
+        document.set_mime_type(file_metadata.mime_type().to_string());
         document.set_language(language.clone());
         document.set_category(category);
         document.set_quality_score(quality_score);
         document.set_word_count(word_count);
-
-        let chunk_count = document.chunks().len();
-        for index in 0..chunk_count {
-            let chunk = document.chunks().get(index).ok_or_else(|| {
-                AppError::InvalidInput(format!("Chunk index {} out of bounds", index))
-            })?;
-            let token_count = metadata_extractor.count_tokens(chunk.content());
-            document.set_chunk_token_count(index, token_count);
-        }
 
         // 4. Generate new embeddings, chunked exactly as the import path chunks.
         let mut document = super::embedding_input::prepare_structured(

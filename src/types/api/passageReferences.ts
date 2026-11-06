@@ -6,15 +6,18 @@
  * list to mark citations that came from them. Imported directly rather than
  * through the `types` barrel so both tracks can declare it without colliding.
  */
-export type PassageReferenceDto = import('../../lib/bindings').PassageReferenceDto;
+export type {
+  CreatePassageReferenceRequestDto,
+  PassageReferenceDto,
+} from '../../lib/bindings';
 
 export interface CreatePassageReferenceRequest {
   documentId: string;
-  chunkId?: string;
+  chunkId?: string | null;
   filePath: string;
   fileName: string;
-  locator?: string;
+  locator?: string | null;
   text: string;
-  title?: string;
-  note?: string;
+  title?: string | null;
+  note?: string | null;
 }

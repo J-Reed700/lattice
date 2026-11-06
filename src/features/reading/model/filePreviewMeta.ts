@@ -15,7 +15,7 @@ type HeaderMetaSource = Pick<SourceWithMetadata, 'category' | 'fileSizeBytes'>;
  * The muted line under the file name: category, then size.
  *
  * A citation built from a passage reference or a compare cell carries neither
- * value. `formatFileSize(0)` renders "0.0 B", which is not "unknown" — it is a
+ * value. `formatFileSize(0)` renders "0 B", which is not "unknown" — it is a
  * measurement we never took. An unknown part is therefore left out entirely,
  * and a source with nothing to say gets no line at all.
  */

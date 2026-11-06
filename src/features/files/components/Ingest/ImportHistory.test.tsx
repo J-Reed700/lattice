@@ -12,7 +12,14 @@ import { jobFixture } from '@/tests/fixtures/jobs';
 
 import { ImportHistory } from './ImportHistory';
 
-const api = vi.hoisted(() => ({ listAllBatchJobs: vi.fn(), getBatchJobDetails: vi.fn(), retryFailedItems: vi.fn(), deleteBatchJob: vi.fn(), open: vi.fn() }));
+const api = vi.hoisted(() => ({
+  BATCH_IMPORT_JOBS_QUERY_KEY: ['batch-import-jobs'] as const,
+  listAllBatchJobs: vi.fn(),
+  getBatchJobDetails: vi.fn(),
+  retryFailedItems: vi.fn(),
+  deleteBatchJob: vi.fn(),
+  open: vi.fn(),
+}));
 vi.mock('@/utils/batchHistory', () => api);
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: api.open }));
 const events = vi.hoisted(() => new Map<string, Set<(event: { payload: unknown }) => void>>());

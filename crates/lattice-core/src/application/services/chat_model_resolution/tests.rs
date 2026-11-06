@@ -145,6 +145,23 @@ fn auto_names_the_first_model_the_loader_tries() {
 }
 
 #[test]
+fn auto_falls_through_when_llama_cpp_url_is_empty_even_with_model() {
+    let mut auto = settings(LLMProvider::Auto);
+    auto.llama_cpp.model = "qwen3.5-27b".into();
+    auto.llama_cpp.url = "".into();
+    assert_eq!(
+        default_chat_model(&auto, None).0.unwrap(),
+        ollama("qwen3:8b")
+    );
+
+    auto.llama_cpp.url = "   ".into();
+    assert_eq!(
+        default_chat_model(&auto, None).0.unwrap(),
+        ollama("qwen3:8b")
+    );
+}
+
+#[test]
 fn an_unset_learning_model_refuses_instead_of_borrowing_the_chat_default() {
     let error = resolve_learning(&settings(LLMProvider::Ollama)).unwrap_err();
     assert!(matches!(

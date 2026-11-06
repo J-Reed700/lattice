@@ -4,6 +4,7 @@ pub mod activity;
 pub mod assessment;
 pub mod canvas;
 pub mod dto;
+pub mod drills;
 pub mod lessons;
 mod model_call;
 pub(crate) mod model_requirements;

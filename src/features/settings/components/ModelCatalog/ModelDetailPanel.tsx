@@ -6,13 +6,13 @@
  * Download button is the only accent on the page.
  */
 
-import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
 
 import { useApi } from '@/contexts/ApiContext';
-import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { DOWNLOADED_MODELS_QUERY_KEY, useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
@@ -97,6 +97,9 @@ function NoteRow({ children, tone = 'default' }: { children: ReactNode; tone?: '
 
 export function ModelDetailPanel(props: ModelDetailPanelProps) {
   const [selected, setSelected] = useState<ModelMetadata>(props.model.model);
+  useEffect(() => {
+    setSelected(props.model.model);
+  }, [props.model.model]);
   const { systemCapabilities } = useModelCatalog({ autoLoadModels: false });
   return <div className="space-y-5">
     <button type="button" onClick={props.onBack} className={cn(GHOST_BUTTON_CLASS, 'gap-1.5 pl-1.5')}>
@@ -136,6 +139,8 @@ function ModelDetailContent({
     ? new Intl.NumberFormat(undefined).format(popularityLikes)
     : null;
   const {
+    downloadedModels = [],
+    isLoading: isModelsLoading,
     isModelDownloaded,
     setActiveChatModel,
     setActiveEmbeddingModel,
@@ -145,8 +150,16 @@ function ModelDetailContent({
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
   const addToast = useToastStore((state) => state.addToast);
   const queryClient = useQueryClient();
-  const [isDownloaded, setIsDownloaded] = useState(false);
-  const [isCheckingDownload, setIsCheckingDownload] = useState(true);
+
+  const isDownloadedFromList = downloadedModels.some(
+    (m) => m.id === metadata.id || m.model_id === metadata.id
+  );
+  const [checkedStatus, setCheckedStatus] = useState<{ modelId: string; downloaded: boolean } | null>(null);
+  const downloadedFromCheck = checkedStatus?.modelId === metadata.id ? checkedStatus.downloaded : null;
+  const isDownloaded = isDownloadedFromList || Boolean(downloadedFromCheck);
+  const isCheckingDownload =
+    Boolean(isModelsLoading) || (!isDownloadedFromList && Boolean(isModelDownloaded) && downloadedFromCheck === null);
+
   // Tracks the moment between click and the backend registering the download.
   // Without this, the button stays enabled for ~3s while the Tauri command
   // does its initial network/DB work, letting impatient users spam the button.
@@ -154,7 +167,6 @@ function ModelDetailContent({
   const [isSettingChatModel, setIsSettingChatModel] = useState(false);
   const [isSettingEmbeddingModel, setIsSettingEmbeddingModel] = useState(false);
   const [isSettingRouterModel, setIsSettingRouterModel] = useState(false);
-  const checkRequestRef = useRef(0);
 
   const { getActiveDownloadForModel, hasActiveDownloadForModel } = useDownloadState();
   const activeDownload = getActiveDownloadForModel(metadata.id);
@@ -173,34 +185,45 @@ function ModelDetailContent({
   const hasDownloadSource =
     Boolean(metadata.model_id && metadata.default_filename) || Boolean(metadata.download_url);
 
-  const checkDownloadStatus = useCallback(async () => {
-    const requestId = ++checkRequestRef.current;
+  useEffect(() => {
+    let active = true;
     const currentModelId = metadata.id;
-    setIsCheckingDownload(true);
-    try {
-      const downloaded = await isModelDownloaded(currentModelId);
-      if (checkRequestRef.current === requestId) {
-        setIsDownloaded(downloaded);
-      }
-    } catch (error) {
-      console.error('Failed to check download status:', error);
-    } finally {
-      if (checkRequestRef.current === requestId) {
-        setIsCheckingDownload(false);
-      }
+    if (isModelDownloaded && !isDownloadedFromList) {
+      void Promise.resolve(isModelDownloaded(currentModelId))
+        .then((res) => {
+          if (active && typeof res === 'boolean') {
+            setCheckedStatus({ modelId: currentModelId, downloaded: res });
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to check download status:', err);
+          if (active) {
+            setCheckedStatus({ modelId: currentModelId, downloaded: false });
+          }
+        });
     }
-  }, [isModelDownloaded, metadata.id]);
+    return () => {
+      active = false;
+    };
+  }, [isModelDownloaded, metadata.id, isDownloadedFromList]);
 
   // Re-check download status when download completes
   useEffect(() => {
-    if (activeDownload?.state === 'Completed') {
-      void checkDownloadStatus();
+    let active = true;
+    const currentModelId = metadata.id;
+    if (activeDownload?.state === 'Completed' && isModelDownloaded) {
+      void Promise.resolve(isModelDownloaded(currentModelId))
+        .then((res) => {
+          if (active && typeof res === 'boolean') {
+            setCheckedStatus({ modelId: currentModelId, downloaded: res });
+          }
+        })
+        .catch(() => {});
     }
-  }, [activeDownload?.state, checkDownloadStatus]);
-
-  useEffect(() => {
-    void checkDownloadStatus();
-  }, [checkDownloadStatus]);
+    return () => {
+      active = false;
+    };
+  }, [activeDownload?.state, isModelDownloaded, metadata.id]);
 
   const handleSetActiveChat = async () => {
     if (!isDownloaded) {
@@ -231,7 +254,7 @@ function ModelDetailContent({
           message: `${metadata.name} is active, but warm-up failed: ${getErrorMessage(warmError)}`,
         });
       }
-      voidAsync(() => queryClient.invalidateQueries({ queryKey: ['downloaded-models'] }))();
+      voidAsync(() => queryClient.invalidateQueries({ queryKey: DOWNLOADED_MODELS_QUERY_KEY }))();
     } catch (error) {
       addToast({
         type: 'error',
@@ -260,7 +283,7 @@ function ModelDetailContent({
         title: 'Embedding model updated',
         message: `${metadata.name} is prepared. Restart Lattice to use its search index.`,
       });
-      voidAsync(() => queryClient.invalidateQueries({ queryKey: ['downloaded-models'] }))();
+      voidAsync(() => queryClient.invalidateQueries({ queryKey: DOWNLOADED_MODELS_QUERY_KEY }))();
     } catch (error) {
       addToast({
         type: 'error',
@@ -315,7 +338,9 @@ function ModelDetailContent({
         addToast,
         queryClient,
       }, api);
-      if (alreadyDownloaded) setIsDownloaded(true);
+      if (alreadyDownloaded) {
+        setCheckedStatus({ modelId: metadata.id, downloaded: true });
+      }
     } finally {
       setIsStartingDownload(false);
     }

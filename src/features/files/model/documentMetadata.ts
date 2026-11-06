@@ -1,9 +1,10 @@
 import { type DocumentMetadata } from '@/types/fileBrowser';
 import { formatRelativeTime } from '@/utils/dateUtils';
+import { isHttpUrl } from '@/utils/sourcePreview';
 
 const normalizeToken = (value: string): string => value.trim().toLowerCase();
 
-export const isHttpUrl = (value: string): boolean => /^https?:\/\//i.test(value);
+export { isHttpUrl };
 
 export const isWebDocument = (doc: DocumentMetadata): boolean => {
   const normalizedCategory = normalizeToken(doc.category ?? '').replace(/[_-]+/g, ' ');
