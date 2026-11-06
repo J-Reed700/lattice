@@ -175,10 +175,20 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
             &mut ClaimChecks::default(),
         )
         .await?;
+        let read: Vec<_> = report
+            .findings
+            .iter()
+            .map(|finding| (finding.unit, &finding.statement, &finding.verdict))
+            .collect();
+        let written_over = report
+            .findings
+            .iter()
+            .find(|finding| finding.statement == BAD)
+            .unwrap_or_else(|| panic!("The rewritten sentence has no finding: {read:?}"));
         assert_eq!(
-            report.findings[1].verdict,
+            written_over.verdict,
             ClaimVerdict::Contradicted,
-            "Retained coverage must not approve factual content"
+            "Retained coverage must not approve factual content: {read:?}"
         );
         let (retained, _) = section_checkpoints::load(&model, &content).await?;
         assert_eq!(retained.len(), 5);
