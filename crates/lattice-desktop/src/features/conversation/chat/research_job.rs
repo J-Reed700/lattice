@@ -8,6 +8,7 @@
 //! to every window, and the answer lands in the conversation. The chat's stop
 //! button cancels the job: a stopped turn ends rather than resuming.
 use super::cancellation;
+use super::persistence::mark_user_message_failed;
 use super::ports::ChatRuntime;
 use super::turn::{
     self, AssembledTurn, Research, ResearchJournal, ResearchRound, Saved, TurnRequest,
@@ -20,7 +21,8 @@ use async_trait::async_trait;
 use lattice_core::application::services::completion_input::strip_images;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
-    JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, JobStore, NewJob, RecoveryPolicy,
+    JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStatus, JobStore, NewJob,
+    RecoveryPolicy,
 };
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -121,6 +123,83 @@ pub async fn resumable_request_ids(jobs: &JobStore) -> Result<std::collections::
         .collect())
 }
 
+/// A research job's request and the turn it saved, read as a resume reads
+/// them. A turn that has planned nothing yet has saved none.
+///
+/// # Errors
+///
+/// The job store could not be read, or what the job saved cannot be decoded,
+/// which is [`AppError::Serialization`].
+async fn saved_turn(jobs: &JobStore, job: &JobRecord) -> Result<(TurnRequest, Option<Saved>)> {
+    let request: TurnRequest = decode(job.requested.clone())?;
+    let Some(assembled) = jobs.checkpoint(&job.id, ASSEMBLED).await? else {
+        return Ok((request, None));
+    };
+    let assembled: AssembledTurn = decode(assembled)?;
+    let round: Option<ResearchRound> = jobs
+        .checkpoint(&job.id, ROUND)
+        .await?
+        .map(decode)
+        .transpose()?;
+    Ok((request, Some(Saved { assembled, round })))
+}
+
+/// The question a research turn saved pending on its thread, as its
+/// `assembled` checkpoint names it, however old the rest of that checkpoint is.
+#[derive(serde::Deserialize)]
+struct SavedQuestion {
+    user_message_id: String,
+}
+
+/// The question the `assembled` checkpoint of a research job names, if it has
+/// one.
+async fn saved_question(jobs: &JobStore, job_id: &str) -> Result<Option<String>> {
+    let Some(assembled) = jobs.checkpoint(job_id, ASSEMBLED).await? else {
+        return Ok(None);
+    };
+    Ok(Some(decode::<SavedQuestion>(assembled)?.user_message_id))
+}
+
+/// Fails the question a research job saved on its thread, if it saved one: the
+/// job runs no turn that would settle it.
+async fn fail_saved_question(container: &dyn ChatRuntime, jobs: &JobStore, job_id: &str) {
+    match saved_question(jobs, job_id).await {
+        Ok(Some(question)) => {
+            mark_user_message_failed(&container.conversation_service(), &question).await;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            warn!(job_id, %error, "Could not find the question of a research job that runs no turn");
+        }
+    }
+}
+
+/// The questions of research turns still pending or running whose saved turn
+/// can be read as a resume reads it, each saved pending on its thread: such a
+/// turn resumes at a later start and answers it, so the startup sweep of
+/// interrupted turns leaves it pending. A turn that has planned nothing yet has
+/// saved no question, and one whose saved turn cannot be read cannot resume.
+///
+/// # Errors
+///
+/// The job store could not be read.
+pub async fn resumable_question_ids(jobs: &JobStore) -> Result<std::collections::HashSet<String>> {
+    let mut questions = std::collections::HashSet::new();
+    for job in jobs.live(DEEP_RESEARCH).await? {
+        match saved_turn(jobs, &job).await {
+            Ok((_, Some(saved))) => {
+                questions.insert(saved.assembled.user_message_id);
+            }
+            Ok((_, None)) => {}
+            Err(error @ AppError::Serialization(_)) => {
+                warn!(job_id = job.id.as_str(), %error, "A research turn cannot resume: its saved turn cannot be read");
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(questions)
+}
+
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T> {
     serde_json::from_value(value).map_err(|error| AppError::Serialization(error.to_string()))
 }
@@ -216,11 +295,13 @@ pub(super) async fn stop(
             continue;
         }
         stopped = true;
-        // A job that never started has no turn to answer its command.
+        // A job that never started has no turn to answer its command or to
+        // settle its question.
         if job.status == JobStatus::Pending {
             if let Some(request_id) = job.operation_id.strip_prefix(&operation_id("")) {
                 waiters.take(request_id);
             }
+            fail_saved_question(container, jobs.store(), &job.id).await;
         }
     }
     Ok(stopped)
@@ -242,14 +323,25 @@ impl DeepResearchJob {
 #[async_trait]
 impl JobHandler for DeepResearchJob {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
-        let request: TurnRequest = decode(context.job().requested.clone())?;
+        let (request, saved) = match saved_turn(context.store(), context.job()).await {
+            Ok(turn) => turn,
+            Err(error @ AppError::Serialization(_)) => {
+                fail_saved_question(self.runtime.as_ref(), context.store(), context.id()).await;
+                return Ok(JobOutcome::Failed {
+                    code: "failed".into(),
+                    message: format!(
+                        "The saved research turn cannot be read, so it cannot resume: {error}"
+                    ),
+                });
+            }
+            Err(error) => return Err(error),
+        };
         let request_id = request.request_id.clone().unwrap_or_default();
         let waiters = self.runtime.research_waiters();
         let emit = waiters
             .emit(&request_id)
             .unwrap_or_else(|| Arc::clone(&self.emit));
         let journal = JobJournal { context };
-        let saved = journal.saved().await?;
         let answered = turn::run_stages(
             self.runtime.as_ref(),
             request,
@@ -306,21 +398,6 @@ struct JobJournal<'a> {
 }
 
 impl JobJournal<'_> {
-    async fn saved(&self) -> Result<Option<Saved>> {
-        let Some(assembled) = self.context.checkpoint(ASSEMBLED).await? else {
-            return Ok(None);
-        };
-        Ok(Some(Saved {
-            assembled: decode(assembled)?,
-            round: self
-                .context
-                .checkpoint(ROUND)
-                .await?
-                .map(decode)
-                .transpose()?,
-        }))
-    }
-
     /// A job that is no longer running takes no more saves, and its turn
     /// stops.
     async fn save(&self, key: &str, value: &serde_json::Value) -> Result<()> {
@@ -397,5 +474,7 @@ impl ResearchJournal for JobJournal<'_> {
     }
 }
 
+#[cfg(test)]
+pub(crate) use tests::saved_by_a_turn;
 #[cfg(test)]
 mod tests;

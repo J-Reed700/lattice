@@ -7,6 +7,8 @@
 
 import { AlertCircle, RefreshCw } from 'lucide-react';
 
+import { getUserFriendlyMessage } from '../../utils/redact';
+
 export interface InlineErrorProps {
   error: Error;
   resetError?: () => void;
@@ -20,7 +22,7 @@ export function InlineError({
   message,
   compact = false,
 }: InlineErrorProps) {
-  const displayMessage = message || error.message || 'An error occurred';
+  const displayMessage = message || getUserFriendlyMessage(error);
 
   if (compact) {
     return (

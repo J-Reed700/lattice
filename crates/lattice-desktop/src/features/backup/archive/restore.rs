@@ -217,6 +217,16 @@ impl ArchiveRestorer {
             "snapshot validated"
         );
 
+        // What the process that took the backup meant to do to its files is
+        // no guide to them now: the database this replaces may have claimed
+        // them again.
+        crate::infrastructure::storage::file_intents::forget_all_in(&extracted.db_path)
+            .await
+            .map_err(|e| {
+                ArchiveError::Database(format!(
+                    "could not clear the restored database's file records: {e}"
+                ))
+            })?;
         self.swap_database(&extracted.db_path).await?;
 
         let files_restored = self

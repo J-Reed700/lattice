@@ -20,4 +20,7 @@ pub use lookup::{
     find_checksum_by_id, find_file_path_by_id, find_id_by_path, list_checksums,
 };
 pub use parts::{fetch_chunks_for_document, fetch_tags_for_document, save_chunks, save_tags};
-pub use write::{delete, delete_batch_optimized, rename, save, save_aggregate, save_batch};
+pub use write::{
+    delete, delete_and_release_blob, delete_batch_optimized, rename, save, save_aggregate,
+    save_batch,
+};

@@ -5,16 +5,18 @@ use lattice_core::domain::download::DownloadError;
 use lattice_core::shared::fs::SweepGate;
 use std::path::Path;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
-/// Reconcile orphaned model files on app startup.
+/// Count, on app startup, the model directories no model record names, and
+/// keep them.
 ///
-/// Scans the models directory for files that have no corresponding database record.
-/// Deletes orphaned files to free up disk space.
-///
-/// Only files without a database record are deleted, and only once `gate` is
-/// open: a database that did not download the models has no record of any of
-/// them.
+/// That no row names a directory is no evidence it is garbage: the model
+/// manager keeps the reranker here with no row of its own, and a restored
+/// backup or a migration can lose rows of models still on disk. Nothing this
+/// app records names a directory here as let go of (a deleted model's own
+/// delete removes its directory), so none is removed; freeing that space is a
+/// user's decision. Returns how many were removed, which is none. Does nothing
+/// while `gate` is shut.
 pub async fn reconcile_orphaned_files(
     model_repo: Arc<DownloadedModelRepository>,
     models_dir: &Path,
@@ -24,19 +26,14 @@ pub async fn reconcile_orphaned_files(
         info!("Left the model directories alone: this database does not own the library files");
         return Ok(0);
     }
-    info!("Scanning for orphaned model files in: {:?}", models_dir);
-
     if !models_dir.exists() {
-        info!("Models directory does not exist, skipping orphaned file cleanup");
         return Ok(0);
     }
-
-    let mut cleaned = 0;
-    let mut total_size_freed: u64 = 0;
 
     let read_dir = std::fs::read_dir(models_dir)
         .map_err(|e| DownloadError::IoError(format!("Failed to read models directory: {}", e)))?;
 
+    let mut unexplained = 0usize;
     for entry in read_dir {
         let entry = match entry {
             Ok(e) => e,
@@ -45,93 +42,25 @@ pub async fn reconcile_orphaned_files(
                 continue;
             }
         };
-
-        let model_dir_path = entry.path();
-
-        // Skip if not a directory
-        if !model_dir_path.is_dir() {
+        let path = entry.path();
+        if !path.is_dir() {
             continue;
         }
-
-        let model_id = match model_dir_path.file_name().and_then(|n| n.to_str()) {
-            Some(name) => name,
-            None => {
-                warn!("Invalid model directory name: {:?}", model_dir_path);
-                continue;
-            }
+        let Some(model_id) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
         };
-
-        // An unreadable row must not end the pass, and must not read as
-        // "no such model" either: that would delete a directory still in use.
-        let model_exists = match model_repo.find_by_model_id(model_id).await {
-            Ok(model) => model.is_some(),
-            Err(e) => {
-                warn!(
-                    "Could not check model {} while looking for orphaned files; leaving {:?} alone: {}",
-                    model_id, model_dir_path, e
-                );
-                continue;
-            }
-        };
-
-        if !model_exists {
-            // Orphaned model directory found
-            warn!(
-                "Found orphaned model directory: {:?} (model_id: {})",
-                model_dir_path, model_id
-            );
-
-            // Calculate directory size before deletion
-            if let Ok(size) = calculate_dir_size(&model_dir_path) {
-                total_size_freed += size;
-            }
-
-            match std::fs::remove_dir_all(&model_dir_path) {
-                Ok(_) => {
-                    info!("Deleted orphaned model directory: {:?}", model_dir_path);
-                    cleaned += 1;
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to delete orphaned model directory {:?}: {}",
-                        model_dir_path, e
-                    );
-                }
-            }
+        // A row that cannot be read is still a row.
+        if let Ok(None) = model_repo.find_by_model_id(model_id).await {
+            unexplained += 1;
         }
     }
-
-    if cleaned > 0 {
-        let size_mb = total_size_freed as f64 / 1_048_576.0; // Convert to MB
+    if unexplained > 0 {
         info!(
-            "Cleaned up {} orphaned model director(ies), freed {:.2} MB",
-            cleaned, size_mb
+            unexplained,
+            "{} model folders no record explains; kept", unexplained
         );
-    } else {
-        info!("No orphaned model files found");
     }
-
-    Ok(cleaned)
-}
-
-/// Calculate total size of a directory recursively
-fn calculate_dir_size(path: &Path) -> std::io::Result<u64> {
-    let mut total_size = 0;
-
-    if path.is_dir() {
-        for entry in std::fs::read_dir(path)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.is_file() {
-                total_size += std::fs::metadata(&path)?.len();
-            } else if path.is_dir() {
-                total_size += calculate_dir_size(&path)?;
-            }
-        }
-    }
-
-    Ok(total_size)
+    Ok(0)
 }
 
 #[cfg(test)]
@@ -146,7 +75,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn orphan_cleanup_preserves_unreadable_and_valid_models_but_removes_orphans() {
+    async fn orphan_cleanup_keeps_every_directory_no_record_names() {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -173,15 +102,14 @@ mod tests {
             reconcile_orphaned_files(repo, dir.path(), &open_gate())
                 .await
                 .unwrap(),
-            1
+            0
         );
-        for id in ["pending", "installed"] {
+        for id in ["pending", "installed", "orphan"] {
             assert_eq!(
                 std::fs::read(dir.path().join(id).join("weights")).unwrap(),
                 b"model data"
             );
         }
-        assert!(!dir.path().join("orphan").exists());
     }
 
     #[tokio::test]

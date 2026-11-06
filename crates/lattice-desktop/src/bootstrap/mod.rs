@@ -25,3 +25,26 @@ pub fn show_error_dialog(app: &tauri::AppHandle, title: &str, message: &str) {
         .kind(MessageDialogKind::Error)
         .blocking_show();
 }
+
+#[cfg(test)]
+mod tests {
+    /// Without the claim the app would resolve a scratch home and show an
+    /// empty library, with nothing failing. `main` is not callable from a
+    /// test, so its source is what is checked.
+    #[test]
+    fn the_app_claims_the_users_home_before_it_runs() {
+        let main = include_str!("../main.rs");
+        let body = main
+            .split_once("fn main() {")
+            .map(|(_, body)| body)
+            .expect("main.rs has a main");
+        let claim = body
+            .find("roots::use_the_users_home();")
+            .expect("main claims the user's home");
+        let run = body.find("run_app()").expect("main runs the app");
+        assert!(
+            claim < run,
+            "main claims the user's home after the app runs"
+        );
+    }
+}

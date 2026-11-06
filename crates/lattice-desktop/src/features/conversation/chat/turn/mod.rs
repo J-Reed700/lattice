@@ -329,7 +329,9 @@ pub(super) async fn run_stages(
     .await
 }
 
-/// A research turn saved before a restart, carried on from its last round.
+/// A research turn saved before a restart, carried on from its last round. One
+/// that ends before it can conclude marks its question failed, unless it is
+/// stopping to resume at the next start.
 async fn resume_stages(
     container: &dyn ChatRuntime,
     request: &TurnRequest,
@@ -342,7 +344,19 @@ async fn resume_stages(
     let flow_start = Instant::now()
         .checked_sub(Duration::from_millis(saved.elapsed_ms()))
         .unwrap_or_else(Instant::now);
-    let turn = prepare::resume_turn(container, request, &saved, parent, emit).await?;
+    let turn = match prepare::resume_turn(container, request, &saved, parent, emit).await {
+        Ok(turn) => turn,
+        Err(error) => {
+            if !journal.resumes_later().await {
+                mark_user_message_failed(
+                    &container.conversation_service(),
+                    &saved.assembled.user_message_id,
+                )
+                .await;
+            }
+            return Err(error);
+        }
+    };
     let Saved { assembled, round } = saved;
     let AssembledTurn {
         user_message_id,

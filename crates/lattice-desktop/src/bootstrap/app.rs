@@ -328,11 +328,13 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     });
 
     // A question the last run quit under would show as in flight for good;
-    // fail it so it can be retried.
+    // fail it so it can be retried. The question of a research turn stays: its
+    // job is delivered again and answers it.
     let turns_pool = container.db_pool().clone();
+    let turns_jobs = Arc::clone(container.jobs());
     background.spawn(async move {
         use super::startup_reconciliation::reconcile_stuck_turns;
-        match reconcile_stuck_turns(&turns_pool).await {
+        match reconcile_stuck_turns(&turns_pool, turns_jobs.store()).await {
             Ok(count) if count > 0 => {
                 tracing::info!(count, "Marked interrupted conversation turns as failed");
             }
@@ -372,38 +374,32 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         crate::features::conversation::chat::resumable_research_requests(jobs.store()).await
     });
 
-    // Collect attachments whose conversation is gone. They are owned by a chat
-    // that no longer exists, so they are hidden from the library and reachable
-    // from no conversation's retrieval — nothing but this can free them. The
-    // delete happens before the blob sweep would run again, so their blobs go
-    // on the next startup.
+    // Collect attachments whose conversation was deleted while they could not
+    // be. They are owned by a chat that no longer exists, so they are hidden
+    // from the library and reachable from no conversation's retrieval; the
+    // conversation's delete recorded them, and nothing but this can free them.
+    // A conversation row gone without that record orphans nothing.
     let orphan_scope = container.document_scope();
     let orphan_delete = container.delete_document_use_case();
+    let orphan_intents =
+        crate::infrastructure::storage::FileIntents::new(container.db_pool().clone());
     background.spawn(async move {
-        let orphans = match orphan_scope.orphaned_conversation_owned_documents().await {
-            Ok(ids) => ids,
-            Err(error) => {
-                tracing::error!(%error, "Failed to look for attachments of deleted conversations");
-                return;
-            }
+        use super::startup_reconciliation::reconcile_orphaned_attachments;
+        let delete = |document_id: String| {
+            let orphan_delete = std::sync::Arc::clone(&orphan_delete);
+            async move { orphan_delete.execute(document_id).await.map(|_| ()) }
         };
-        if orphans.is_empty() {
-            return;
-        }
-        let mut deleted = 0usize;
-        for document_id in &orphans {
-            match orphan_delete.execute(document_id.clone()).await {
-                Ok(_) => deleted += 1,
-                Err(error) => {
-                    tracing::warn!(%error, document_id, "Could not delete an orphaned attachment")
-                }
+        match reconcile_orphaned_attachments(orphan_scope.as_ref(), &orphan_intents, delete).await {
+            Ok((0, _)) => {}
+            Ok((found, deleted)) => tracing::info!(
+                found,
+                deleted,
+                "Swept attachments left by deleted conversations"
+            ),
+            Err(error) => {
+                tracing::error!(%error, "Failed to sweep attachments of deleted conversations")
             }
         }
-        tracing::info!(
-            found = orphans.len(),
-            deleted,
-            "Swept attachments left by deleted conversations"
-        );
     });
 
     // App-wide shutdown signal. Cloned into every supervised task so

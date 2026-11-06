@@ -6,6 +6,7 @@ use super::dto::{
 };
 use super::file_job::FileImportRequest;
 use super::items::{BatchItem, BatchItems, ItemCounts};
+use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
 use lattice_core::shared::{
     error::{AppError, Result},
@@ -70,6 +71,7 @@ fn validate_url(url: &str) -> Result<()> {
             "URL must start with http:// or https://".into(),
         ));
     }
+    check_public_url(url)?;
     Ok(())
 }
 

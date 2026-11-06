@@ -4,6 +4,7 @@
 //! date, word count, reading time (200 WPM) and an excerpt.
 
 use crate::features::web::services::identity;
+use crate::features::web::services::web::{build_public_client, validate_url_resolved};
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -33,13 +34,16 @@ const JAVASCRIPT_HEAVY_SITES: &[&str] = &[
     "youtube.com",
 ];
 
+/// The longest a page fetch may take.
+const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Article extractor service implementation
 ///
 /// Extracts clean, readable article content from HTML using
 /// Mozilla's Readability.js algorithm (same as Firefox Reader Mode).
 /// Reads with browser-like headers (see `identity`).
 pub struct ArticleExtractorService {
-    /// HTTP client without a cookie jar
+    /// The public-web client, built by [`build_public_client`].
     client: Client,
 }
 
@@ -274,7 +278,6 @@ impl ArticleExtractorService {
         let final_url = response.url().to_string();
         if final_url != fetch_url {
             debug!("YouTube URL redirected to: {}", final_url);
-            self.validate_url(&final_url)?;
         }
 
         let html = response
@@ -293,86 +296,16 @@ impl ArticleExtractorService {
     /// or network configuration); app initialization then uses a disabled
     /// fallback service.
     pub fn new() -> Result<Self> {
-        let client = identity::client_builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| {
-                AppError::InternalError(format!(
-                    "HTTP client initialization failed: {}. This is typically caused by \
-                     SSL/TLS certificate issues or network configuration problems. \
-                     Article extraction from URLs will be unavailable.",
-                    e
-                ))
-            })?;
+        let client = build_public_client(FETCH_TIMEOUT).map_err(|e| match e {
+            AppError::InternalError(detail) => AppError::InternalError(format!(
+                "HTTP client initialization failed: {detail}. This is typically caused by \
+                 SSL/TLS certificate issues or network configuration problems. \
+                 Article extraction from URLs will be unavailable."
+            )),
+            other => other,
+        })?;
 
         Ok(Self { client })
-    }
-
-    /// Validate URL for security (SSRF prevention)
-    ///
-    /// Blocks:
-    /// - localhost and loopback addresses
-    /// - Private IP ranges (RFC 1918)
-    /// - Link-local addresses
-    /// - Metadata endpoints (169.254.169.254)
-    fn validate_url(&self, url: &str) -> Result<()> {
-        let parsed = url::Url::parse(url)
-            .map_err(|e| AppError::InvalidUrl(format!("Invalid URL: {}", e)))?;
-
-        // Check scheme (only allow http/https)
-        match parsed.scheme() {
-            "http" | "https" => {}
-            _ => {
-                return Err(AppError::InvalidUrl(format!(
-                    "Unsupported URL scheme: {}. Only http and https are allowed.",
-                    parsed.scheme()
-                )));
-            }
-        }
-
-        let host = parsed
-            .host_str()
-            .ok_or_else(|| AppError::InvalidUrl("URL must have a host".to_string()))?;
-
-        // Block localhost variants
-        let lowercase_host = host.to_lowercase();
-        if lowercase_host == "localhost"
-            || lowercase_host == "0.0.0.0"
-            || lowercase_host == "[::]"
-            || lowercase_host.starts_with("127.")
-        {
-            return Err(AppError::InvalidUrl(format!(
-                "Access to localhost blocked: {}",
-                host
-            )));
-        }
-
-        // Block private IP ranges (basic check)
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            use std::net::IpAddr;
-            let is_private = match ip {
-                IpAddr::V4(ipv4) => {
-                    ipv4.is_private()
-                        || ipv4.is_loopback()
-                        || ipv4.is_link_local()
-                        || ipv4.is_broadcast()
-                        || ipv4.is_documentation()
-                }
-                IpAddr::V6(ipv6) => {
-                    ipv6.is_loopback() || ipv6.is_multicast() || ipv6.is_unspecified()
-                }
-            };
-
-            if is_private {
-                return Err(AppError::InvalidUrl(format!(
-                    "Access to private/reserved IP blocked: {}",
-                    host
-                )));
-            }
-        }
-
-        debug!("URL validation passed: {}", url);
-        Ok(())
     }
 
     /// Resolve redirect-wrapper URLs by extracting nested HTTP(S) targets from query parameters.
@@ -471,7 +404,7 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
         }
 
         // Validate URL for security (SSRF prevention)
-        self.validate_url(&fetch_url)?;
+        validate_url_resolved(&fetch_url).await?;
 
         if self.is_youtube_url(&fetch_url) {
             return self.extract_youtube_article_from_url(&fetch_url).await;
@@ -537,11 +470,8 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
 
         // Get final URL (after redirects)
         let final_url = response.url().to_string();
-
-        // Re-validate final URL after redirects (prevents redirect-based SSRF)
         if final_url != fetch_url {
             debug!("URL redirected to: {}", final_url);
-            self.validate_url(&final_url)?;
         }
 
         let html = response

@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use crate::features::web::dto::{GetUrlPreviewRequestDto, UrlPreviewDto};
+use crate::features::web::services::web::check_public_url;
 use crate::features::web::WebCaptureServiceTrait;
 use lattice_core::application::contracts::web::UrlPreview;
 use lattice_core::shared::error::{AppError, Result};
@@ -27,12 +28,18 @@ impl GetUrlPreviewUseCase {
     ///
     /// Returns error if:
     /// - URL is invalid (not HTTP/HTTPS)
+    /// - URL is an address on this machine or a private network
     /// - Network request fails
     /// - HTML parsing fails
     /// - Metadata extraction fails
     pub async fn execute(&self, request: GetUrlPreviewRequestDto) -> Result<UrlPreviewDto> {
-        // 1. Validate URL (must be HTTP or HTTPS)
-        Self::validate_url(&request.url)?;
+        // 1. Validate URL (must be a public HTTP or HTTPS address)
+        if !request.url.starts_with("http://") && !request.url.starts_with("https://") {
+            return Err(AppError::InvalidInput(
+                "URL must start with http:// or https://".to_string(),
+            ));
+        }
+        check_public_url(&request.url)?;
 
         // 2. Delegate to web capture service
         // (Service handles: URL validation, fetch, metadata extraction)
@@ -43,25 +50,6 @@ impl GetUrlPreviewUseCase {
 
         // 3. Convert service result to DTO
         Ok(Self::convert_preview(preview))
-    }
-
-    /// Validates that the URL is HTTP or HTTPS.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::InvalidInput` if URL is not HTTP/HTTPS
-    fn validate_url(url: &str) -> Result<()> {
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err(AppError::InvalidInput(
-                "URL must start with http:// or https://".to_string(),
-            ));
-        }
-
-        if url.trim().is_empty() {
-            return Err(AppError::InvalidInput("URL cannot be empty".to_string()));
-        }
-
-        Ok(())
     }
 
     /// Converts the service layer's `UrlPreview` to the application DTO.
@@ -284,6 +272,44 @@ mod tests {
         match result.unwrap_err() {
             AppError::Network(msg) => assert_eq!(msg, "Connection refused"),
             _ => panic!("Expected Network error"),
+        }
+    }
+
+    async fn assert_refused_without_calling_the_service(url: &str) {
+        let service = Arc::new(MockWebCaptureService::new());
+        let use_case = GetUrlPreviewUseCase::new(service.clone());
+
+        let result = use_case
+            .execute(GetUrlPreviewRequestDto {
+                url: url.to_string(),
+            })
+            .await;
+
+        assert_eq!(
+            service.get_call_count(),
+            0,
+            "{url} was handed to the capture service"
+        );
+        assert!(
+            matches!(result, Err(AppError::InvalidUrl(_))),
+            "{url} must be refused as an invalid URL, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_refuses_an_ipv4_mapped_loopback_literal() {
+        assert_refused_without_calling_the_service("http://[::ffff:127.0.0.1]:8080/").await;
+    }
+
+    #[tokio::test]
+    async fn preview_refuses_localhost_written_with_a_trailing_dot() {
+        assert_refused_without_calling_the_service("http://localhost.:8080/").await;
+    }
+
+    #[tokio::test]
+    async fn preview_refuses_ipv6_loopback_unique_local_and_link_local_literals() {
+        for url in ["http://[::1]/", "http://[fd00::1]/", "http://[fe80::1]/"] {
+            assert_refused_without_calling_the_service(url).await;
         }
     }
 }

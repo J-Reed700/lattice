@@ -92,8 +92,11 @@ pub struct FunctionExecutor {
     /// Custom tools loaded from user settings.
     custom_tools: RwLock<HashMap<String, CustomToolSettingsDto>>,
 
-    /// Shared HTTP client for keyless API integrations.
+    /// The public-web client the Wikipedia tools read with.
     http_client: Client,
+
+    /// The client a custom tool's endpoint is called with.
+    custom_tool_client: Client,
 }
 
 /// The registry, services and repositories the built-in tools run against.
@@ -110,6 +113,12 @@ pub struct FunctionExecutorServices {
     pub recent_documents_repository: Arc<dyn RecentDocumentsRepositoryPort>,
     pub file_storage: Arc<dyn FileStoragePort>,
     pub web_service: Arc<dyn WebServiceTrait>,
+    /// The public-web client: its redirects and the names it resolves are held
+    /// to the address guard. For the Wikipedia tools.
+    pub http_client: Client,
+    /// The client for an endpoint the user named: it follows no redirect. For
+    /// custom tools.
+    pub custom_tool_client: Client,
 }
 
 impl FunctionExecutor {
@@ -136,6 +145,8 @@ impl FunctionExecutor {
             recent_documents_repository,
             file_storage,
             web_service,
+            http_client,
+            custom_tool_client,
         } = services;
         Self {
             registry,
@@ -151,7 +162,8 @@ impl FunctionExecutor {
             file_storage,
             web_service,
             custom_tools: RwLock::new(custom_tools),
-            http_client: Client::new(),
+            http_client,
+            custom_tool_client,
         }
     }
 }

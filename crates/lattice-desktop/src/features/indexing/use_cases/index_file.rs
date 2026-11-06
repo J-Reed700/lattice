@@ -45,6 +45,9 @@ pub struct PreparedDocument {
     /// True when this import copied the blob into the library for the first
     /// time, which is what makes a failure from here on leave an orphan.
     pub imported_new: bool,
+    /// The record written before the copy, cleared once the row commits or
+    /// the blob is given back.
+    pub import_intent: Option<i64>,
     /// Held from the copy until the document row commits. Dropping it any
     /// earlier lets a concurrent delete or sweep remove the blob this
     /// document is about to point at.
@@ -88,6 +91,10 @@ pub struct IndexFileUseCase {
     query_cache: Option<Arc<dyn SearchResultCachePort>>,
     /// Told when a document is committed; the summary tier queues it.
     index_observer: Option<Arc<dyn DocumentIndexObserver>>,
+    /// The library's collector, which records the blob an import is about to
+    /// write, so a startup sweep may collect it if the import never commits.
+    /// Without one, an import records nothing and gives no blob back.
+    library_gc: Option<Arc<LibraryGc>>,
 }
 
 impl IndexFileUseCase {
@@ -112,6 +119,28 @@ impl IndexFileUseCase {
             vector_search: None,
             query_cache: None,
             index_observer: None,
+            library_gc: None,
+        }
+    }
+
+    /// Record, and give back, the blobs imports write through `gc`, the
+    /// collector of the same library.
+    #[must_use]
+    pub fn with_library_gc(mut self, gc: Arc<LibraryGc>) -> Self {
+        self.library_gc = Some(gc);
+        self
+    }
+
+    /// The collector of this use case's library; without one configured, one
+    /// that keeps no records and whose gate is shut.
+    fn library_gc(&self) -> Arc<LibraryGc> {
+        match &self.library_gc {
+            Some(gc) => Arc::clone(gc),
+            None => Arc::new(LibraryGc::new(
+                Arc::clone(&self.content_storage),
+                Arc::clone(&self.document_repo),
+                Arc::default(),
+            )),
         }
     }
 
@@ -193,26 +222,21 @@ impl IndexFileUseCase {
     /// Hand back the blob an import copied but never referenced.
     ///
     /// Best effort by design: the import has already failed, and a blob left
-    /// behind is collected by the next startup sweep. Runs the same
-    /// [`LibraryGc`] path as deletion, so a blob another document shares is
-    /// still refused.
-    async fn release_failed_import(&self, hash: &str) {
-        let gc = LibraryGc::new(
-            Arc::clone(&self.content_storage),
-            Arc::clone(&self.document_repo),
-        );
-        match gc.release(hash).await {
-            Ok(removal) => tracing::info!(
-                %hash,
-                ?removal,
-                "Rolled back the library blob of a failed import"
-            ),
-            Err(error) => tracing::warn!(
-                %hash,
-                %error,
-                "Could not roll back a failed import's blob; the next startup sweep will collect it"
-            ),
-        }
+    /// behind is collected by the next startup sweep through its record. Runs
+    /// the same [`LibraryGc`] path as deletion, so a blob another document
+    /// shares is still refused.
+    async fn release_failed_import(&self, hash: &str, intent: Option<i64>) {
+        self.library_gc().import_failed(hash, intent).await;
+    }
+
+    /// Record that this import is about to write `hash`'s bytes.
+    async fn begin_import(&self, hash: &str) -> Result<Option<i64>> {
+        self.library_gc().begin_import(hash).await
+    }
+
+    /// The import that recorded `intent` no longer needs the record.
+    async fn end_import(&self, intent: Option<i64>) {
+        self.library_gc().end_import(intent).await;
     }
 
     /// Abandon a prepared document that will never be committed.
@@ -224,6 +248,7 @@ impl IndexFileUseCase {
     pub async fn discard_prepared(&self, prepared: PreparedDocument) {
         let PreparedDocument {
             imported_new,
+            import_intent,
             lease,
             ..
         } = prepared;
@@ -232,7 +257,8 @@ impl IndexFileUseCase {
         // caller's blob as still being imported.
         drop(lease);
         if imported_new {
-            self.release_failed_import(&library_hash).await;
+            self.release_failed_import(&library_hash, import_intent)
+                .await;
         }
     }
 
@@ -248,6 +274,7 @@ impl IndexFileUseCase {
             embeddings,
             library_path: _,
             imported_new,
+            import_intent,
             lease,
         } = prepared;
         let library_hash = lease.hash().to_string();
@@ -276,15 +303,17 @@ impl IndexFileUseCase {
             // error propagates.
             drop(lease);
             if imported_new {
-                self.release_failed_import(&library_hash).await;
+                self.release_failed_import(&library_hash, import_intent)
+                    .await;
             }
             rollback?;
             return Err(error);
         }
         uow.commit().await?;
         // The row is durable, so the document itself now protects the blob and
-        // this import's lease has done its job.
+        // this import's lease and record have done their job.
         drop(lease);
+        self.end_import(import_intent).await;
         if let Some(search) = self.vector_search.clone() {
             let stale_keys: Vec<_> = stale_chunk_ids
                 .iter()

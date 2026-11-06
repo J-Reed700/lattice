@@ -11,6 +11,7 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 
 import { diagnostics } from '../../utils/diagnostics';
+import { sanitizeErrorMessage } from '../../utils/redact';
 
 export interface ErrorBoundaryProps {
   children: ReactNode;
@@ -186,7 +187,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               Error in {this.props.name || 'component'}
             </p>
             <p className="text-xs text-[hsl(var(--danger-fg))] mb-3">
-              {fallbackError.message}
+              {sanitizeErrorMessage(fallbackError.message)}
             </p>
             <button
               onClick={this.reset}

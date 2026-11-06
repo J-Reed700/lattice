@@ -146,8 +146,8 @@ fn to_message_dto(
 }
 
 /// Free the picture files of messages a truncate or regenerate deleted.
-/// Their rows went with the messages by cascade, so nothing names the files
-/// any more; they go now rather than at the next start's sweep. A failure is
+/// Their rows went with the messages by cascade, which recorded the files as
+/// let go of; they go now rather than at the next start's sweep. A failure is
 /// logged: the sweep collects what is left.
 fn remove_unclaimed_pictures(runtime: &dyn ChatRuntime) {
     let images = runtime.chat_images();

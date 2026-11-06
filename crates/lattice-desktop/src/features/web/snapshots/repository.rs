@@ -437,6 +437,17 @@ impl SnapshotRepository {
             == 1)
     }
 
+    /// Ids of rows whose capture failed: a page left under one is an earlier
+    /// capture nothing shows.
+    pub async fn failed_ids(&self) -> Result<HashSet<String>> {
+        let ids: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM web_page_snapshots WHERE status = 'failed'")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db)?;
+        Ok(ids.into_iter().collect())
+    }
+
     /// Ids whose file must stay: pending (may be written any moment) and ready.
     pub async fn live_ids(&self) -> Result<HashSet<String>> {
         let ids: Vec<String> = sqlx::query_scalar(
