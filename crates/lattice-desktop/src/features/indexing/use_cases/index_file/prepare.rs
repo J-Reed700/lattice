@@ -67,15 +67,38 @@ impl IndexFileUseCase {
         }
 
         let already_in_library = self.content_storage.exists_by_hash(&content_hash).await?;
+        // Before the copy: a blob this import writes is never on disk without
+        // the record that lets a later start collect it. A copy that fails
+        // keeps the record for that reason.
+        let mut import_intent = if already_in_library {
+            None
+        } else {
+            self.begin_import(&content_hash).await?
+        };
         let ImportedBlob {
             path: library_path,
             hash: library_hash,
             lease,
+            created,
         } = self
             .content_storage
             .import_file(source_path.as_path())
             .await?;
-        let imported_new = !already_in_library;
+        if created && import_intent.is_none() {
+            // The blob went between the check and the copy, so this import
+            // wrote it again; record that now rather than not at all.
+            import_intent = match self.begin_import(&library_hash).await {
+                Ok(intent) => intent,
+                Err(error) => {
+                    tracing::warn!(%error, hash = %library_hash, "Could not record a blob this import wrote");
+                    None
+                }
+            };
+        } else if !created {
+            // Another import put the content there first: not this one's.
+            self.end_import(import_intent.take()).await;
+        }
+        let imported_new = created;
 
         // Everything from here on can fail. When it does and this import is
         // what put the blob on disk, the blob has to go back: nothing will
@@ -98,7 +121,8 @@ impl IndexFileUseCase {
                 // own caller's blob as still being imported.
                 drop(lease);
                 if imported_new {
-                    self.release_failed_import(&library_hash).await;
+                    self.release_failed_import(&library_hash, import_intent)
+                        .await;
                 }
                 return Err(error);
             }
@@ -110,6 +134,7 @@ impl IndexFileUseCase {
                 embeddings,
                 library_path: library_path.to_str().unwrap_or("").to_string(),
                 imported_new,
+                import_intent,
                 lease,
             },
         )))

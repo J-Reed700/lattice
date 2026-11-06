@@ -43,10 +43,9 @@ impl FunctionExecutor {
             }
 
             let request_url = parsed_url.to_string();
-            self.web_service.validate_url(&request_url)?;
 
             let response = self
-                .http_client
+                .custom_tool_client
                 .get(&request_url)
                 .header(ACCEPT, "application/json, text/plain;q=0.9, */*;q=0.8")
                 .header(ACCEPT_LANGUAGE, "en-US,en;q=0.9")

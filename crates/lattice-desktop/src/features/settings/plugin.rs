@@ -6,6 +6,7 @@ use crate::features::settings::dto::{
     ExportSettingsRequestDto, ImportSettingsRequestDto, SettingsCategory, SettingsDto,
     UpdateSettingsRequestDto,
 };
+use crate::features::settings::text_files::{self, FileFilterDto, NativeDialogs};
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::llm_port::InvalidationCause;
 use lattice_core::domain::models::model_ref::CloudProvider;
@@ -22,7 +23,7 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     plugin::{Builder, TauriPlugin},
-    Runtime, State, Theme,
+    AppHandle, Runtime, State, Theme,
 };
 use url::Url;
 
@@ -444,6 +445,39 @@ pub async fn import_settings(
     Ok(imported.settings)
 }
 
+/// Shows the platform's save dialog, offering `suggested_name`, and writes
+/// `contents` to the file the user picks. `false` when the user cancels.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_text_file<R: Runtime>(
+    app: AppHandle<R>,
+    suggested_name: String,
+    filters: Vec<FileFilterDto>,
+    contents: String,
+) -> Result<bool, ApiError> {
+    text_files::save(
+        &NativeDialogs::new(app),
+        &suggested_name,
+        &filters,
+        &contents,
+    )
+    .await
+    .map_err(ApiError::from)
+}
+
+/// Shows the platform's open dialog and returns the text of the file the user
+/// picks. `None` when the user cancels.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_text_file<R: Runtime>(
+    app: AppHandle<R>,
+    filters: Vec<FileFilterDto>,
+) -> Result<Option<String>, ApiError> {
+    text_files::open(&NativeDialogs::new(app), &filters)
+        .await
+        .map_err(ApiError::from)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn get_system_theme<R: Runtime>(window: tauri::Window<R>) -> Result<String, ApiError> {
@@ -617,6 +651,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             reset_settings,
             export_settings,
             import_settings,
+            save_text_file,
+            open_text_file,
             get_system_theme,
             validate_folder_path,
             test_ollama_connection,

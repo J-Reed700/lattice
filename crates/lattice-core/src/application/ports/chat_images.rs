@@ -66,11 +66,11 @@ pub trait ChatImagesPort: Send + Sync {
 
     async fn list_for_message(&self, message_id: &str) -> Result<Vec<ChatImageDto>>;
 
-    /// Delete the picture files no row claims, and return how many went.
-    /// Messages deleted without `release_message` — a truncated thread, a
-    /// regenerated answer — take their rows with them by cascade; this frees
-    /// their files then rather than at the next start's sweep. A turn's
-    /// leased pictures still have their rows, so they are kept.
+    /// Delete the picture files whose rows a delete recorded as let go of,
+    /// and return how many went. Messages deleted without `release_message`
+    /// — a truncated thread, a regenerated answer — take their rows with them
+    /// by cascade and record their files; this frees them then rather than at
+    /// the next start's sweep. A file no record names is kept.
     async fn remove_unclaimed_files(&self) -> Result<u64>;
 
     /// Give each copied message its own pictures: a new row and file per

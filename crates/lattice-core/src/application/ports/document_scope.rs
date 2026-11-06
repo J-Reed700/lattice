@@ -37,11 +37,13 @@ pub trait DocumentScopePort: Send + Sync {
     /// The documents this conversation owns, in insertion order.
     async fn documents_owned_by_conversation(&self, conversation_id: &str) -> Result<Vec<String>>;
 
-    /// Documents whose owning conversation no longer exists.
+    /// Documents whose owning conversation no longer exists, and whose
+    /// conversation's delete recorded them as let go of.
     ///
     /// Nothing can reach these — they are hidden from the library and from
     /// every conversation's scope — so the startup sweep deletes them. They
-    /// appear when a conversation is removed by a path that did not delete its
-    /// attachments first.
+    /// appear when an attachment could not be deleted with its conversation.
+    /// A conversation row that went without that record (a restored backup, a
+    /// migration) orphans nothing.
     async fn orphaned_conversation_owned_documents(&self) -> Result<Vec<String>>;
 }

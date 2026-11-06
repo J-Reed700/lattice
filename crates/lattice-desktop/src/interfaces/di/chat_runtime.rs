@@ -255,7 +255,7 @@ impl ChatPolicy for Container {
         delete_conversation_attachments(self, conversation_id).await;
         // The pictures' files before the rows that name them go with the
         // conversation. A failure is logged and the delete goes ahead; the
-        // startup sweep removes files no row claims.
+        // delete records the files left, and the startup sweep removes them.
         if let Err(error) = Container::chat_images(self)
             .release_conversation(conversation_id)
             .await
@@ -266,7 +266,8 @@ impl ChatPolicy for Container {
         self.conversation_service()
             .delete_conversation(conversation_id)
             .await?;
-        // Its snapshot rows went with it (cascade); their files go now.
+        // Its snapshot rows went with it (cascade), recorded as let go of;
+        // their files go now.
         self.web_page_snapshots()
             .sweep_in_background("conversation deleted");
 
