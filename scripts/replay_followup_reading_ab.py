@@ -147,17 +147,9 @@ def run(args):
         item, arm, repeat = task
         request = arm_request(item, arm)
         text, output = ask(request)
-        row = {
-            "model": model or request["model"],
-            "arm": arm,
-            "query": item["query"],
-            "seq": item["seq"],
-            "repeat": repeat,
-            "text": text,
-            "output": output,
-        }
+        row = {"arm": arm, "query": item["query"], "seq": item["seq"], "repeat": repeat, "text": text, "output": output}
         with lock, out.open("a", encoding="utf-8") as sink:
-            sink.write(json.dumps(row, ensure_ascii=False) + "\n")
+            sink.write(json.dumps({"model": model or request["model"], **row}, ensure_ascii=False) + "\n")
 
     tasks = [
         (item, arm, repeat)

@@ -194,13 +194,13 @@ def run(args):
 
     def one(task):
         name, scenario, seed = task
-        row = {"model": args.model, "arm": name, "scenario": scenario["name"], "seed": seed}
+        row = {"arm": name, "scenario": scenario["name"], "seed": seed}
         try:
             row.update(one_row(client, system, name, scenario, seed))
         except Exception as error:  # a 400 on a schema is itself a result
             row.update(error=f"{type(error).__name__}: {str(error)[:300]}")
         with lock, out.open("a", encoding="utf-8") as sink:
-            sink.write(json.dumps(row, ensure_ascii=False) + "\n")
+            sink.write(json.dumps({"model": args.model, **row}, ensure_ascii=False) + "\n")
 
     with futures.ThreadPoolExecutor(WORKERS) as pool:
         list(pool.map(one, tasks))
