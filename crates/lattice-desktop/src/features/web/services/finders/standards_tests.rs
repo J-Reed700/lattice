@@ -183,6 +183,42 @@ async fn w3c_finds_and_scores_specifications() {
     assert_eq!(outcome.leads[0].owner, Some(Origin::new("w3.org", None)));
 }
 
+/// The word "and" was enough for a specification to answer: every title with an
+/// "and" in it answered a 9B's search about PostgreSQL's planner (a course
+/// outline's research, 2026-11-06), and the web wave after the standards one never
+/// ran. These are three of the specifications that answered it.
+#[tokio::test]
+async fn w3c_answers_only_with_specifications_that_share_a_word_that_tells() {
+    let server = MockServer::start().await;
+    let json = r#"{"_embedded":{"specifications":[
+        {"title":"Action Sheets: A Modular Way of Defining Behavior for XML and HTML","shortname":"AS","shortlink":"https://www.w3.org/TR/AS/"},
+        {"title":"Techniques For Accessibility Evaluation And Repair Tools","shortname":"AERT","shortlink":"https://www.w3.org/TR/AERT/"},
+        {"title":"Composite Capabilities/Preference Profiles: Requirements and Architecture","shortname":"CCPP-ra","shortlink":"https://www.w3.org/TR/CCPP-ra/"},
+        {"title":"WebAssembly Core Specification","shortname":"wasm-core-1","shortlink":"https://www.w3.org/TR/wasm-core-1/"}
+    ]}}"#;
+    Mock::given(method("GET"))
+        .and(path("/specifications"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(json))
+        .mount(&server)
+        .await;
+    let finder = W3c::with_api(test_http(), server.uri());
+
+    let planner = finder
+        .find(
+            &test_need("PostgreSQL cost-based optimizer components and estimation methods"),
+            1,
+            &test_budget(),
+        )
+        .await;
+    let wasm = finder
+        .find(&test_need("WebAssembly and JavaScript"), 1, &test_budget())
+        .await;
+
+    assert_eq!(planner.result, FinderResult::Empty);
+    let urls: Vec<_> = wasm.leads.iter().map(|lead| lead.url.as_str()).collect();
+    assert_eq!(urls, ["https://www.w3.org/TR/wasm-core-1/"]);
+}
+
 #[tokio::test]
 async fn whatwg_index_matches_living_standards() {
     let finder = WhatwgIndex::new(test_http());
