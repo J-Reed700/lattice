@@ -133,11 +133,13 @@ fn main() -> Res<()> {
         .tempdir()?;
     let home = workdir.path().join("home");
     std::fs::create_dir_all(&home)?;
-    // Before any thread exists. It covers Unix only: on Windows `dirs` reads the
-    // profile folder, so `~/.lattice` is the real library here too. What keeps a
-    // run out of it is that a run imports nothing, deletes no conversation (that
-    // sweeps web snapshots against this fresh database) and has no vault.
+    // Before any thread exists. Windows finds the real home without `HOME`, so
+    // `LATTICE_HOME` is what keeps the run's files out of the real library.
     std::env::set_var("HOME", &home);
+    std::env::set_var(
+        lattice_core::shared::fs::roots::LATTICE_HOME_ENV,
+        home.join(".lattice"),
+    );
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

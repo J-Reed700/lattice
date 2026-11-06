@@ -10,6 +10,7 @@ use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use crate::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use crate::features::indexing::use_cases::IndexFileUseCase;
+use crate::features::indexing::LibraryGc;
 use crate::features::web::use_cases::IngestWebUrlUseCase;
 use crate::features::web::{WebIngestionResult, WebIngestionServiceTrait};
 use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
@@ -19,10 +20,11 @@ use crate::infrastructure::{
         database::{initialize_database, DatabaseConnection},
         repositories::{unit_of_work::SqliteUnitOfWorkFactory, DocumentRepositoryImpl},
     },
-    storage::ContentAddressedStorage,
+    storage::{ContentAddressedStorage, FileIntents},
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingPort;
+use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRuntime, JobStatus, JobStore, NewJob},
@@ -128,15 +130,27 @@ impl ImportHarness {
         initialize_database(db.pool()).await?;
         let uow = Arc::new(SqliteUnitOfWorkFactory::new(db.pool().clone()));
         let library = dir.join("library");
-        let indexer = Arc::new(configure(IndexFileUseCase::new(
-            Arc::new(ContentAddressedStorage::with_root(library.clone())),
-            Arc::new(SecureFileStorage::new()),
-            Arc::new(ContentExtractionAdapter::new()),
-            embedding.clone(),
-            Arc::new(DocumentRepositoryImpl::new(db.pool().clone())),
-            Arc::new(EmbeddingRepository::new(db.pool().clone())),
-            uow,
-        )));
+        let storage = Arc::new(ContentAddressedStorage::with_root(library.clone()));
+        let documents = Arc::new(DocumentRepositoryImpl::new(db.pool().clone()));
+        // The database owns this library, as the app's does once it starts.
+        let gate = SweepGate::default();
+        gate.open();
+        let library_gc = Arc::new(
+            LibraryGc::new(storage.clone(), documents.clone(), Arc::new(gate))
+                .with_intents(FileIntents::new(db.pool().clone())),
+        );
+        let indexer = Arc::new(configure(
+            IndexFileUseCase::new(
+                storage,
+                Arc::new(SecureFileStorage::new()),
+                Arc::new(ContentExtractionAdapter::new()),
+                embedding.clone(),
+                documents,
+                Arc::new(EmbeddingRepository::new(db.pool().clone())),
+                uow,
+            )
+            .with_library_gc(library_gc),
+        ));
         let ingestion = Arc::new(RecordingIngestion {
             pool: db.pool().clone(),
             ingested: parking_lot::Mutex::new(Vec::new()),
@@ -495,6 +509,53 @@ async fn an_import_the_app_left_running_resumes_with_its_unfinished_files() -> a
     Ok(())
 }
 
+/// The blob is on disk before its document exists; the record of the import
+/// is what lets a later start collect it if the import never commits.
+#[tokio::test]
+async fn an_import_records_its_blob_until_its_document_commits() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+    let paths = write_files(
+        dir.path(),
+        &[("paper.txt", "pause here while this document is prepared")],
+    );
+    harness.files(&paths, None).await?;
+    tokio::time::timeout(WAIT, harness.embedding.entered.notified()).await?;
+    assert_eq!(harness.blobs(), 1);
+    assert_eq!(
+        harness
+            .count("SELECT count(*) FROM file_intents WHERE store = 'library' AND kind = 'import'")
+            .await?,
+        1
+    );
+
+    harness.embedding.release.notify_one();
+    tokio::time::timeout(WAIT, async {
+        while harness
+            .count("SELECT count(*) FROM documents")
+            .await
+            .unwrap_or(0)
+            == 0
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    tokio::time::timeout(WAIT, async {
+        while harness
+            .count("SELECT count(*) FROM file_intents")
+            .await
+            .unwrap_or(1)
+            > 0
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    assert_eq!(harness.blobs(), 1);
+    Ok(())
+}
+
 #[tokio::test]
 async fn cancelling_mid_file_releases_its_library_blob_and_nothing_restarts_it(
 ) -> anyhow::Result<()> {
@@ -534,6 +595,11 @@ async fn cancelling_mid_file_releases_its_library_blob_and_nothing_restarts_it(
         "the blob copied for the cancelled file is released at cancel time"
     );
     assert_eq!(harness.count("SELECT count(*) FROM documents").await?, 0);
+    assert_eq!(
+        harness.count("SELECT count(*) FROM file_intents").await?,
+        0,
+        "the import's record goes with the blob it gave back"
+    );
     assert_eq!(
         harness.jobs.store().get(&job_id).await?.status,
         JobStatus::Cancelled

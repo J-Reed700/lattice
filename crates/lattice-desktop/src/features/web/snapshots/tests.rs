@@ -245,8 +245,10 @@ async fn non_web_urls_are_refused() {
         .is_err());
 }
 
+/// The rows went with their conversation, but not through the app's delete:
+/// nothing records the page as let go of, so the sweep keeps it.
 #[tokio::test]
-async fn rows_cascade_with_their_conversation_and_the_sweep_takes_the_file() {
+async fn a_page_whose_row_went_with_no_record_of_it_is_kept() {
     let f = fixture().await;
     let ready = f.ready().await;
     let file = f.root().join(format!("{}.html", ready.id));
@@ -256,23 +258,44 @@ async fn rows_cascade_with_their_conversation_and_the_sweep_takes_the_file() {
         .await
         .unwrap();
     assert!(f.service.list(CONVERSATION).await.unwrap().is_empty());
-    assert!(file.exists());
     let report = f.service.sweep().await.unwrap();
-    assert_eq!(report.removed_orphans, 1);
-    assert!(!file.exists());
+    assert_eq!(report.removed_orphans, 0);
+    assert!(file.exists(), "a page no record names is kept");
 }
 
 #[tokio::test]
-async fn sweep_removes_orphans_and_stale_parts_and_keeps_live_files() {
+async fn deleting_its_conversation_lets_the_sweep_take_a_page() {
+    let f = fixture().await;
+    let ready = f.ready().await;
+    let file = f.root().join(format!("{}.html", ready.id));
+    crate::features::conversation::repository::ConversationRepository::new(f.pool.clone())
+        .delete(CONVERSATION)
+        .await
+        .unwrap();
+    assert!(file.exists(), "the delete alone removes no file");
+
+    let report = f.service.sweep().await.unwrap();
+
+    assert_eq!(report.removed_orphans, 1);
+    assert!(!file.exists());
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(records, 0, "the record goes with its page");
+}
+
+#[tokio::test]
+async fn sweep_removes_stale_parts_and_keeps_live_pages_and_pages_no_record_names() {
     let f = fixture().await;
     let ready = f.ready().await;
     let root = f.root();
     let live = root.join(format!("{}.html", ready.id));
-    let orphan = root.join(format!("{}.html", new_id()));
+    let unnamed = root.join(format!("{}.html", new_id()));
     let stale = root.join(format!("{}.html.part", new_id()));
     let fresh = root.join(format!("{}.html.part", new_id()));
     let unrelated = root.join("notes.txt");
-    for path in [&orphan, &stale, &fresh, &unrelated] {
+    for path in [&unnamed, &stale, &fresh, &unrelated] {
         std::fs::write(path, b"x").unwrap();
     }
     std::fs::File::options()
@@ -283,10 +306,11 @@ async fn sweep_removes_orphans_and_stale_parts_and_keeps_live_files() {
         .unwrap();
 
     let report = f.service.sweep().await.unwrap();
-    assert_eq!(report.removed_orphans, 1);
+    assert_eq!(report.removed_orphans, 0);
     assert_eq!(report.removed_parts, 1);
     assert!(live.exists() && fresh.exists() && unrelated.exists());
-    assert!(!orphan.exists() && !stale.exists());
+    assert!(unnamed.exists(), "a page no record names is kept");
+    assert!(!stale.exists());
 }
 
 // --- protocol ------------------------------------------------------------
