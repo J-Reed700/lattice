@@ -166,7 +166,7 @@ def normalize(text):
 
 def quote_holds(quote, excerpt):
     quote = quote.strip()
-    return 25 <= len(quote) <= 1200 and len(quote.split()) >= 5 and normalize(quote) in normalize(excerpt)
+    return len(quote) >= 25 and len(quote.split()) >= 5 and normalize(quote) in normalize(excerpt)
 
 
 def summary(args):
