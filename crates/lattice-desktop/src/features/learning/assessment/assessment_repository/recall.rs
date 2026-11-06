@@ -38,8 +38,8 @@ fn card_for(
         Some((
             LearningRecallCardFormat::QuestionAnswer,
             LearningRecallContentDto {
-                prompt: prompt.chars().take(2_000).collect(),
-                answer: answer.chars().take(1_000).collect(),
+                prompt,
+                answer,
                 explanation: one_line.clone(),
                 options: vec![],
                 correct_option_index: None,
@@ -62,8 +62,8 @@ fn card_for(
             Some((
                 LearningRecallCardFormat::Cloze,
                 LearningRecallContentDto {
-                    answer: deletions.join(", ").chars().take(1_000).collect(),
-                    prompt: prompt.chars().take(2_000).collect(),
+                    answer: deletions.join(", "),
+                    prompt,
                     explanation: one_line,
                     options: vec![],
                     correct_option_index: None,
