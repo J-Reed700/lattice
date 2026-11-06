@@ -690,6 +690,10 @@ async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as
         async fn delete(&self, _document_id: &str) -> Result<()> {
             Ok(())
         }
+        async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+            <Self as lattice_core::application::ports::DocumentRepositoryPort>::delete(self, document_id)
+                .await
+        }
         async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
             Ok(vec![])
         }
