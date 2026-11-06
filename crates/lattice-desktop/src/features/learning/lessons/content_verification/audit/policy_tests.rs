@@ -114,7 +114,7 @@ fn general_knowledge_is_marked_for_contradiction_only() {
 }
 
 #[test]
-fn the_schema_names_the_labels_and_bounds_every_string() {
+fn the_schema_names_the_labels_and_bounds_the_counts() {
     let claims = vec![claim(
         "Water boils at 100 °C at sea level.",
         vec![shared()],
@@ -138,7 +138,6 @@ fn the_schema_names_the_labels_and_bounds_every_string() {
             "could_not_verify"
         ])
     );
-    assert_eq!(verdict["reason"]["maxLength"], json!(REASON_MAX_CHARS));
     assert_eq!(
         verdict["passagesUsed"]["maxItems"],
         json!(QUOTES_PER_VERDICT)
@@ -410,13 +409,13 @@ fn consent_names_a_cloud_provider_and_nothing_else_needs_it() {
 }
 
 #[test]
-fn the_answer_reservation_is_measured_from_the_schema_bounds() {
+fn the_answer_reservation_is_measured_from_the_planned_room() {
     let llm = ScriptedVerifier::answering(200_000, |_, _| json!({}));
     let reserve = verdict_reserve(&llm);
-    let bounded_text = REASON_MAX_CHARS + QUOTE_MAX_CHARS * QUOTES_PER_VERDICT;
+    let planned_text = REASON_ROOM_CHARS + QUOTE_ROOM_CHARS * QUOTES_PER_VERDICT;
     assert!(
-        reserve >= bounded_text / 4,
-        "{reserve} tokens cannot hold {bounded_text} characters"
+        reserve >= planned_text / 4,
+        "{reserve} tokens cannot hold {planned_text} characters"
     );
     assert!(envelope_reserve(&llm) > 0);
 }
