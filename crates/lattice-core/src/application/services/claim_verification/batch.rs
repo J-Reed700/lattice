@@ -88,7 +88,7 @@ fn resolve(raw: &str, claims: &[LocatedClaim], passages: &[String]) -> Option<Ve
             }
             Some(ClaimJudgment::Judged(JudgeOutcome {
                 verdict,
-                reason: Some(reason.chars().take(MAX_REASON_CHARS).collect()),
+                reason: Some(reason),
                 quote: if verdict == ClaimVerdict::Unsupported {
                     None
                 } else {
