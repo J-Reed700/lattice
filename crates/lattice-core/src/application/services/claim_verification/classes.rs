@@ -221,7 +221,7 @@ fn read_reply(text: &str) -> Option<(String, String)> {
         .and_then(|rest| rest.strip_suffix("```"))
         .unwrap_or(text);
     let reply: Reply = serde_json::from_str(json.trim()).ok()?;
-    let reason = truncate_chars(reply.reason.trim(), MAX_REASON_CHARS);
+    let reason = reply.reason.trim().to_owned();
     (!reason.is_empty()).then(|| (reply.verdict.trim().to_ascii_lowercase(), reason))
 }
 

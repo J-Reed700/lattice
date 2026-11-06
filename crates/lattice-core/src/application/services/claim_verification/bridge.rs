@@ -238,7 +238,7 @@ fn read_bridge(text: &str, shown: usize) -> Option<BridgeOutcome> {
     }
     Some(BridgeOutcome {
         parts,
-        reason: truncate_chars(reply.reason.trim(), MAX_REASON_CHARS),
+        reason: reply.reason.trim().to_owned(),
     })
 }
 
