@@ -1784,6 +1784,65 @@ async fn a_verified_claim_whose_source_was_replaced_is_reopened_before_anything_
     Ok(())
 }
 
+/// A claim that only waits for the user has no sentence left to show them once
+/// that sentence is written over: the words in its place are new, and are read.
+/// Carrying it on would put its saved "supported" on words nothing ever read.
+#[tokio::test]
+async fn a_sentence_written_over_while_its_claim_is_reopened_is_a_new_statement_and_is_read(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let reopened = claim(
+        &mut ledger,
+        "reopened",
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        SOURCED,
+    )
+    .await?;
+    let lesson = lesson_of(SENTENCE);
+    let claims = [(SENTENCE, SENTENCE)];
+    let pass = identified(&mut ledger, &Model::new(), &lesson, &claims, &[]).await?;
+    read_pass(&mut ledger, &Says::new(&[Outcome::Stands]), &pass, &lesson).await?;
+    let current = [LearningSourceDto {
+        id: "source-2".into(),
+        title: "The replacement".into(),
+        url: None,
+        excerpt: SENTENCE.into(),
+        acquired_at: 0,
+    }];
+    identified(&mut ledger, &Model::new(), &lesson, &claims, &current).await?;
+    assert!(matches!(
+        ledger.entry(&reopened).unwrap().state(),
+        ClaimState::Reopened { .. }
+    ));
+
+    // Something outside the pipeline writes over the sentence.
+    let model = Classes::new(&[]).classed(&[(HEADER, "sourced")]);
+    let lesson = lesson_of(HEADER);
+    let pass = identified(&mut ledger, &model, &lesson, &[(HEADER, HEADER)], &current).await?;
+
+    let written = pass.statements[0].id.clone();
+    assert_ne!(written, reopened, "its end was reached on another sentence");
+    assert!(matches!(
+        ledger.entry(&reopened).unwrap().state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    assert_eq!(node_of(&ledger, &written), Some("s.read"));
+    assert_eq!(
+        ledger
+            .due(&policy)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>(),
+        [written]
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_confirmed_claim_whose_sentence_or_bound_source_changed_is_reopened_before_anything_is_read(
 ) -> Result<()> {
