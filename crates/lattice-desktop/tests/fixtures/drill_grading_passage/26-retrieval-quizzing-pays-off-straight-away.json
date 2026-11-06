@@ -1,7 +1,7 @@
 {
   "name": "26-retrieval-quizzing-pays-off-straight-away",
   "kind": "wrong_reason",
-  "why": "The first finding is on the five-minute sentence and describes what it makes a reader believe ('quizzing pays off straight away'), but blames the order of the two tests, which is not the error (the groups are reversed): half found. The second says the study shows recall of facts only and that Idris warns against the claim about new problems: found.",
+  "why": "The first finding is on the five-minute sentence and describes what it makes a reader believe ('quizzing pays off straight away'), but blames the number of quizzes, which is not the error (the groups are reversed) and never says which group did better: half found. The second says the study shows recall of facts only and that Idris warns against the claim about new problems: found.",
   "source": {
     "versionId": "dunmere-retrieval-practice-v1",
     "startByte": 51380,
@@ -87,7 +87,7 @@
         "start": 7,
         "end": 7
       },
-      "text": "After this sentence I would believe that quizzing pays off straight away, which is not the usual picture. I think the sentence has mixed up which test came first.",
+      "text": "After this sentence I would believe that quizzing pays off straight away, which is not the usual picture. I think the trouble is the quizzes: two low-stakes quizzes are too few to show anything that soon.",
       "severity": null
     },
     {
