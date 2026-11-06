@@ -29,6 +29,10 @@ const STRIPPED: Array<[string, string, string]> = [
   ['Unix path with a space', '/home/bob/my notes.txt: denied', '[PATH]: denied'],
   ['home-relative path', '~/notes/a.txt', '[PATH]'],
   ['relative path, slashes', 'home/bob/notes.txt', '[PATH]'],
+  ['relative path after a colon', 'Failed:home/bob/notes.txt', 'Failed:[PATH]'],
+  ['relative backslash path after a semicolon', 'path;Users\\bob\\x.txt', 'path;[PATH]'],
+  ['log-redacted Unix path', 'Cannot open /[USER]/private/a.txt', 'Cannot open [PATH]'],
+  ['log-redacted Windows path', 'Cannot open [USER]\\secret.txt', 'Cannot open [PATH]'],
   ['relative path, backslashes', 'Users\\bob\\notes.txt', '[PATH]'],
   ['URL with host, port and query', 'https://private.example.net:8089/v1?x=1', '[URL]'],
   ['URL with an IP', 'http://192.168.1.4:8089/v1', '[URL]'],
@@ -149,7 +153,7 @@ describe('redactSecrets', () => {
   });
 
   it('leaves user folders alone', () => {
-    expect(redactSecrets('/Users/josh/x')).toBe('/Users/josh/x');
+    expect(redactSecrets('/Users/bob/x')).toBe('/Users/bob/x');
   });
 });
 
@@ -161,9 +165,9 @@ describe('redact', () => {
   });
 
   it('hides the user folder on Unix and Windows', () => {
-    expect(redact('/Users/josh/private')).toBe('/[USER]/private');
-    expect(redact('/home/josh/private')).toBe('/[USER]/private');
-    expect(redact('C:\\Users\\josh\\private')).toBe('[USER]\\private');
+    expect(redact('/Users/bob/private')).toBe('/[USER]/private');
+    expect(redact('/home/bob/private')).toBe('/[USER]/private');
+    expect(redact('C:\\Users\\bob\\private')).toBe('[USER]\\private');
   });
 
   it('leaves other text and paths alone', () => {

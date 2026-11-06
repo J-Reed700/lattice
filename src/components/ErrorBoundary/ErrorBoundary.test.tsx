@@ -7,7 +7,12 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { SANITIZED_MESSAGE, SENSITIVE_MESSAGE, SENSITIVE_PARTS } from '@/utils/__tests__/sensitiveMessage';
+import {
+  errorWithoutMessage,
+  SANITIZED_MESSAGE,
+  SENSITIVE_MESSAGE,
+  SENSITIVE_PARTS,
+} from '@/utils/__tests__/sensitiveMessage';
 
 import { ErrorBoundary } from './ErrorBoundary';
 import { FullPageError } from './FullPageError';
@@ -23,12 +28,6 @@ beforeEach(() => {
 
 // Component that throws an error
 const FALLBACK_MESSAGE = 'Something unexpected happened.';
-
-const errorWithoutMessage = (): Error => {
-  const error = new Error('placeholder');
-  Object.defineProperty(error, 'message', { value: undefined });
-  return error;
-};
 
 const errorWithStack = (): Error => {
   const error = new Error(SENSITIVE_MESSAGE);
@@ -148,6 +147,36 @@ describe('ErrorBoundary', () => {
     await waitFor(() => {
       expect(onReset).toHaveBeenCalled();
     });
+  });
+});
+
+describe('ErrorBoundary isolated fallback', () => {
+  const Thrower = ({ error }: { error: Error }): never => {
+    throw error;
+  };
+
+  it('strips sensitive text from the message', () => {
+    const { container } = render(
+      <ErrorBoundary isolate>
+        <Thrower error={new Error(SENSITIVE_MESSAGE)} />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByText(SANITIZED_MESSAGE)).toBeDefined();
+    for (const part of SENSITIVE_PARTS) {
+      expect(container.textContent).not.toContain(part);
+    }
+  });
+
+  it.each([errorWithoutMessage(), new Error('')])('renders without a message', (error) => {
+    render(
+      <ErrorBoundary isolate name="Widget">
+        <Thrower error={error} />
+      </ErrorBoundary>
+    );
+
+    expect(screen.getByText('Error in Widget')).toBeDefined();
+    expect(screen.getByText('Retry')).toBeDefined();
   });
 });
 
@@ -451,6 +480,16 @@ describe('SectionError', () => {
     );
 
     expect(screen.getByText(FALLBACK_MESSAGE)).toBeDefined();
+  });
+
+  it('offers no technical details in production', () => {
+    vi.stubEnv('DEV', false);
+    render(
+      <SectionError error={new Error(SENSITIVE_MESSAGE)} resetError={mockReset} sectionName="Search" />
+    );
+
+    expect(screen.queryByText('Show details')).toBeNull();
+    vi.unstubAllEnvs();
   });
 
   it('strips paths, tokens, emails, and IPs from the message', () => {

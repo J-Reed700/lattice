@@ -9,3 +9,9 @@ export const SENSITIVE_PARTS = [
   '192.168.1.42',
   'secret.txt',
 ];
+
+export const errorWithoutMessage = (): Error => {
+  const error = new Error('placeholder');
+  Object.defineProperty(error, 'message', { value: undefined });
+  return error;
+};
