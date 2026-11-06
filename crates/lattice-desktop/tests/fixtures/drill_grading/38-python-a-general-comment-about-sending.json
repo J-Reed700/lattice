@@ -1,0 +1,170 @@
+{
+  "name": "38-python-a-general-comment-about-sending",
+  "kind": "no_span",
+  "why": "The first comment has no lines selected and names the swallowed exception in full (send catches Exception and passes, so every failure is dropped and the caller thinks the email went out), so with no lines to overlap anything the cause alone decides: found. The second names the naive cutoff in full (a naive local time compared with timezone-aware times): found. The third is on the signature of add_event and says only that its default argument bothers the reviewer: it names no cause, which is the rubric's half_found for the shared list. The last names a real defect of the clean code that the key does not hold: average_age_hours divides by len(events), which is 0 for an empty digest, and raises ZeroDivisionError: valid extra.",
+  "drill": {
+    "id": "daily-digest",
+    "language": "python",
+    "title": "Daily digest email",
+    "files": [
+      {
+        "path": "digest.py",
+        "text": "import smtplib\nfrom datetime import datetime, timedelta, timezone\n\nMAX_LINES = 20\n\n\ndef add_event(event, queue=[]):\n    \"\"\"Append the event to queue and return it.\"\"\"\n    queue.append(event)\n    return queue\n\n\ndef stamp(event):\n    return event[\"at\"].astimezone(timezone.utc).isoformat(timespec=\"minutes\")\n\n\ndef render(events):\n    lines = [f\"{stamp(event)} {event['title']}\" for event in events]\n    return \"\\n\".join(lines[:MAX_LINES])\n\n\ndef recent(events):\n    \"\"\"Events from the last day; each event's \"at\" is a timezone-aware datetime.\"\"\"\n    cutoff = datetime.now() - timedelta(days=1)\n    return [event for event in events if event[\"at\"] >= cutoff]\n\n\ndef average_age_hours(events):\n    \"\"\"The mean age of the events, in hours.\"\"\"\n    now = datetime.now(timezone.utc)\n    total = sum((now - event[\"at\"]).total_seconds() for event in events)\n    return total / len(events) / 3600\n\n\ndef send(host, sender, recipient, body):\n    try:\n        with smtplib.SMTP(host, timeout=10) as smtp:\n            smtp.sendmail(sender, [recipient], body)\n    except Exception:\n        pass\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "digest-shared-default-list",
+        "pattern": "correctness.mutable_default_argument",
+        "severity": "major",
+        "span": {
+          "path": "digest.py",
+          "start": 7,
+          "end": 8
+        },
+        "consequence": "queue=[] is created once, when the function is defined, so every call that leaves queue out appends to the same list: events from one digest turn up in the next, and the list grows for as long as the process runs.",
+        "fix": {
+          "path": "digest.py",
+          "before": "def add_event(event, queue=[]):\n    \"\"\"Append the event to queue and return it.\"\"\"",
+          "after": "def add_event(event, queue=None):\n    \"\"\"Append the event to queue, or to a new list when none is given, and return it.\"\"\"\n    if queue is None:\n        queue = []"
+        },
+        "explanation": "The default list is built once and shared by every call that does not pass a queue. Default to None and make a new list inside the function.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the None default and the new list made inside the function with an empty list as the default, and the clean code makes a list per call."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "digest-naive-cutoff",
+        "pattern": "correctness.naive_datetime",
+        "severity": "major",
+        "span": {
+          "path": "digest.py",
+          "start": 24,
+          "end": 24
+        },
+        "consequence": "datetime.now() is a naive local time and the events carry timezone-aware times, so comparing them raises TypeError; if the events were naive UTC instead, the cutoff would be off by the machine's offset from UTC and would move with daylight saving.",
+        "fix": {
+          "path": "digest.py",
+          "before": "    cutoff = datetime.now() - timedelta(days=1)",
+          "after": "    cutoff = datetime.now(timezone.utc) - timedelta(days=1)"
+        },
+        "explanation": "recent builds its cutoff from the local clock with no time zone, but the events are timezone-aware, so the two cannot be compared. Take the current time in UTC with datetime.now(timezone.utc).",
+        "proof": {
+          "judged": {
+            "reason": "The edit drops timezone.utc from datetime.now, which makes the cutoff a naive local time."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "digest-send-swallows-errors",
+        "pattern": "errors.swallowed_exception",
+        "severity": "major",
+        "span": {
+          "path": "digest.py",
+          "start": 36,
+          "end": 40
+        },
+        "consequence": "Any failure to send, a refused connection, a rejected recipient or a timeout, is caught and dropped, so the caller believes the digest went out and nobody ever learns that it did not.",
+        "fix": {
+          "path": "digest.py",
+          "before": "    try:\n        with smtplib.SMTP(host, timeout=10) as smtp:\n            smtp.sendmail(sender, [recipient], body)\n    except Exception:\n        pass",
+          "after": "    with smtplib.SMTP(host, timeout=10) as smtp:\n        smtp.sendmail(sender, [recipient], body)"
+        },
+        "explanation": "send wraps the whole delivery in except Exception: pass, which discards every error. Let the failure propagate, or log it and re-raise, so that a digest that was not sent is noticed.",
+        "proof": {
+          "judged": {
+            "reason": "The edit wraps the delivery in a try whose except clause does nothing, and the clean code lets the error propagate."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "digest.py",
+      "text": "import smtplib\nfrom datetime import datetime, timedelta, timezone\n\nMAX_LINES = 20\n\n\ndef add_event(event, queue=None):\n    \"\"\"Append the event to queue, or to a new list when none is given, and return it.\"\"\"\n    if queue is None:\n        queue = []\n    queue.append(event)\n    return queue\n\n\ndef stamp(event):\n    return event[\"at\"].astimezone(timezone.utc).isoformat(timespec=\"minutes\")\n\n\ndef render(events):\n    lines = [f\"{stamp(event)} {event['title']}\" for event in events]\n    return \"\\n\".join(lines[:MAX_LINES])\n\n\ndef recent(events):\n    \"\"\"Events from the last day; each event's \"at\" is a timezone-aware datetime.\"\"\"\n    cutoff = datetime.now(timezone.utc) - timedelta(days=1)\n    return [event for event in events if event[\"at\"] >= cutoff]\n\n\ndef average_age_hours(events):\n    \"\"\"The mean age of the events, in hours.\"\"\"\n    now = datetime.now(timezone.utc)\n    total = sum((now - event[\"at\"]).total_seconds() for event in events)\n    return total / len(events) / 3600\n\n\ndef send(host, sender, recipient, body):\n    with smtplib.SMTP(host, timeout=10) as smtp:\n        smtp.sendmail(sender, [recipient], body)\n"
+    }
+  ],
+  "review": [
+    {
+      "span": null,
+      "text": "The digest can silently fail to send. send catches Exception and passes, so a refused connection, a rejected address or a timeout is swallowed and the caller thinks the email went out.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "digest.py",
+        "start": 24,
+        "end": 24
+      },
+      "text": "datetime.now() gives a naive local time, but the events' 'at' values are timezone-aware, so comparing them raises TypeError. Use datetime.now(timezone.utc).",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "digest.py",
+        "start": 7,
+        "end": 7
+      },
+      "text": "add_event's default argument bothers me.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "digest.py",
+        "start": 32,
+        "end": 32
+      },
+      "text": "average_age_hours divides by len(events), which is 0 when there are no events, so a digest with nothing in it raises ZeroDivisionError.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "half_found": {
+          "finding": 2
+        }
+      },
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            2
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "valid_extra"
+    ]
+  }
+}

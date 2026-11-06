@@ -1,0 +1,208 @@
+{
+  "name": "40-javascript-mixed-review",
+  "kind": "mixed",
+  "why": "A review as a learner might write it. The var in the loop is found: the finding says what is wrong (one shared i) and what happens (undefined commands); the lowest severity given for the missing await ('nit' for what is a critical hole) does not change what that finding names, so it is found as well. 'This adds a listener every time it is called' states what the code does but not why it matters (it can never be removed): half found; a lenient reading of 'names its cause' would call it found, and that is the least certain label here. Renaming canEdit is a preference: false positive. The last finding names a real defect of the clean code that the key does not hold: wordCount splits on one space, so an empty document counts as one word and every extra space as another: valid extra. The loose comparison is missed.",
+  "drill": {
+    "id": "editor-toolbar",
+    "language": "javascript",
+    "title": "Editor toolbar and saving",
+    "files": [
+      {
+        "path": "editor.js",
+        "text": "export function bindToolbar(root, commands, run) {\n  const buttons = root.querySelectorAll(\"button\");\n  for (var i = 0; i < buttons.length; i++) {\n    buttons[i].addEventListener(\"click\", () => run(commands[i]));\n  }\n}\n\nexport function watchWidth(onWidth) {\n  window.addEventListener(\"resize\", () => onWidth(window.innerWidth));\n}\n\nexport function statusText(doc) {\n  if (doc.revision == \"\") {\n    return \"Not saved yet\";\n  }\n  return `Saved as revision ${doc.revision}`;\n}\n\nexport async function canEdit(api, user, doc) {\n  const owner = await api.ownerOf(doc.id);\n  return owner === user.id || user.roles.includes(\"admin\");\n}\n\nexport async function save(api, user, doc, text) {\n  if (!canEdit(api, user, doc)) {\n    throw new Error(\"You may not edit this document\");\n  }\n  await api.save(doc.id, text);\n}\n\nexport function wordCount(text) {\n  return text.split(\" \").length;\n}\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "editor-var-in-click-loop",
+        "pattern": "correctness.loop_variable_capture",
+        "severity": "major",
+        "span": {
+          "path": "editor.js",
+          "start": 3,
+          "end": 3
+        },
+        "consequence": "var gives the loop a single i that every handler shares, and by the time anyone clicks a button the loop has finished with i equal to buttons.length, so every button runs commands[buttons.length], which is undefined.",
+        "fix": {
+          "path": "editor.js",
+          "before": "  for (var i = 0; i < buttons.length; i++) {",
+          "after": "  for (let i = 0; i < buttons.length; i++) {"
+        },
+        "explanation": "The click handlers close over i, and a var is function scoped, so all of them see its final value. Declare it with let, which makes a new i for every turn of the loop.",
+        "proof": {
+          "judged": {
+            "reason": "The edit changes let to var in the loop header, and the clean code gives every turn its own i."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "editor-resize-listener-never-removed",
+        "pattern": "resources.lapsed_listener",
+        "severity": "major",
+        "span": {
+          "path": "editor.js",
+          "start": 9,
+          "end": 9
+        },
+        "consequence": "The listener is an anonymous function that nobody keeps a reference to, so it can never be removed: every call adds another one, and each keeps onWidth and everything it refers to alive, and running on every resize, for as long as the page lives.",
+        "fix": {
+          "path": "editor.js",
+          "before": "  window.addEventListener(\"resize\", () => onWidth(window.innerWidth));",
+          "after": "  const listener = () => onWidth(window.innerWidth);\n  window.addEventListener(\"resize\", listener);\n  return () => window.removeEventListener(\"resize\", listener);"
+        },
+        "explanation": "watchWidth registers an anonymous arrow function and returns nothing, so the caller has no way to unregister it. Keep the function in a variable and return a function that removes it.",
+        "proof": {
+          "judged": {
+            "reason": "The edit registers an anonymous function and drops the cleanup function that the clean code returns, which holds the listener in a variable."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "editor-loose-empty-revision",
+        "pattern": "correctness.loose_equality",
+        "severity": "minor",
+        "span": {
+          "path": "editor.js",
+          "start": 13,
+          "end": 13
+        },
+        "consequence": "0 == \"\" is true in JavaScript, so a document that was saved as revision 0 is reported as 'Not saved yet'.",
+        "fix": {
+          "path": "editor.js",
+          "before": "  if (doc.revision == \"\") {",
+          "after": "  if (doc.revision === \"\") {"
+        },
+        "explanation": "== converts both sides to a common type first, and the empty string converts to 0. Compare with ===, so that only a revision that really is the empty string counts as unsaved.",
+        "proof": {
+          "judged": {
+            "reason": "The edit changes === to == in the comparison, and the clean code compares without conversion."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "editor-permission-promise-not-awaited",
+        "pattern": "concurrency.missing_await",
+        "severity": "critical",
+        "span": {
+          "path": "editor.js",
+          "start": 25,
+          "end": 25
+        },
+        "consequence": "canEdit is async, so calling it without await gives a Promise, which is always truthy: the negation is always false, the check never refuses anyone, and any user can save any document.",
+        "fix": {
+          "path": "editor.js",
+          "before": "  if (!canEdit(api, user, doc)) {",
+          "after": "  if (!(await canEdit(api, user, doc))) {"
+        },
+        "explanation": "save tests the Promise that canEdit returns instead of its answer. Await it, as in !(await canEdit(...)), so that the answer is what is tested.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the await in front of the canEdit call, and the clean code tests the awaited answer."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "editor.js",
+      "text": "export function bindToolbar(root, commands, run) {\n  const buttons = root.querySelectorAll(\"button\");\n  for (let i = 0; i < buttons.length; i++) {\n    buttons[i].addEventListener(\"click\", () => run(commands[i]));\n  }\n}\n\nexport function watchWidth(onWidth) {\n  const listener = () => onWidth(window.innerWidth);\n  window.addEventListener(\"resize\", listener);\n  return () => window.removeEventListener(\"resize\", listener);\n}\n\nexport function statusText(doc) {\n  if (doc.revision === \"\") {\n    return \"Not saved yet\";\n  }\n  return `Saved as revision ${doc.revision}`;\n}\n\nexport async function canEdit(api, user, doc) {\n  const owner = await api.ownerOf(doc.id);\n  return owner === user.id || user.roles.includes(\"admin\");\n}\n\nexport async function save(api, user, doc, text) {\n  if (!(await canEdit(api, user, doc))) {\n    throw new Error(\"You may not edit this document\");\n  }\n  await api.save(doc.id, text);\n}\n\nexport function wordCount(text) {\n  return text.split(\" \").length;\n}\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "editor.js",
+        "start": 3,
+        "end": 3
+      },
+      "text": "With var, every click handler shares one i. By the time anyone clicks, the loop has finished and i is buttons.length, so run(commands[i]) gets undefined. Use let.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "editor.js",
+        "start": 9,
+        "end": 9
+      },
+      "text": "This adds a listener to window every time it is called.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "editor.js",
+        "start": 19,
+        "end": 19
+      },
+      "text": "canEdit should be named isAllowedToEdit.",
+      "severity": "nit"
+    },
+    {
+      "span": {
+        "path": "editor.js",
+        "start": 25,
+        "end": 25
+      },
+      "text": "save never waits for canEdit. It is async, so !canEdit(...) is the negation of a Promise, which is always false and nobody is ever refused.",
+      "severity": "nit"
+    },
+    {
+      "span": {
+        "path": "editor.js",
+        "start": 32,
+        "end": 32
+      },
+      "text": "wordCount splits on a single space, so an empty document counts as one word and every extra space counts as another.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      {
+        "half_found": {
+          "finding": 1
+        }
+      },
+      "missed",
+      {
+        "found": {
+          "finding": 3
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      "false_positive",
+      {
+        "matches": {
+          "issues": [
+            3
+          ]
+        }
+      },
+      "valid_extra"
+    ]
+  }
+}

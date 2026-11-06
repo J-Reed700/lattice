@@ -7,6 +7,7 @@ import {
   BookOpen,
   Clock,
   FilePlus,
+  FileSearch,
   FileText,
   FolderOpen,
   FolderPlus,
@@ -401,6 +402,7 @@ export function CommandPalette() {
                   <CommandItem icon={FolderTree} label="Explorer" shortcut={`${cmd}6`} onSelect={goTo('/explorer')} />
                   <CommandItem icon={BookOpen} label="Studio" shortcut={`${cmd}7`} onSelect={goTo('/studio')} />
                   <CommandItem icon={Layers} label="Flashcards" onSelect={goTo('/studio?section=flashcards')} />
+                  <CommandItem icon={FileSearch} label="Code review drills" onSelect={goTo('/studio?drills=open')} />
                   <CommandItem icon={Plus} label="Import" shortcut={`${cmd}I`} onSelect={goToImport('files')} />
                   <CommandItem icon={SettingsIcon} label="Settings" shortcut={`${cmd},`} onSelect={goTo('/settings')} />
                 </Command.Group>
