@@ -476,3 +476,19 @@ fn the_part_wise_check_holds_less_than_the_consistency_check_and_more_than_the_s
         "{beside_strict} < {beside_part_wise} < {beside_consistency}"
     );
 }
+
+#[tokio::test]
+async fn a_reason_past_600_characters_is_kept_whole() {
+    let reason = "The passage states the first part. ".repeat(20).trim().to_string();
+    assert!(reason.chars().count() > 600);
+    let llm = Scripted::new(vec![Reply::Text(
+        json!({"parts": [stated("Quillet is a lexer.")], "verdict": "supported", "reason": reason})
+            .to_string(),
+    )]);
+    let outcome = judged(
+        checker(&llm, CheckPolicy::Bridge)
+            .check_bridge("Quillet is a lexer.", &passages())
+            .await,
+    );
+    assert_eq!(outcome.reason, reason);
+}

@@ -330,3 +330,18 @@ fn a_consistency_check_fits_the_window_only_beside_its_answer() {
     let room = checker.consistency_evidence_room("S.");
     assert!(room > 0 && room < 8_192, "{room}");
 }
+
+#[tokio::test]
+async fn a_reason_past_600_characters_is_kept_whole() {
+    let reason = "No passage says otherwise. ".repeat(30).trim().to_string();
+    assert!(reason.chars().count() > 600);
+    let llm = Scripted::new(vec![Reply::Text(
+        json!({"verdict": "consistent", "reason": reason}).to_string(),
+    )]);
+    let outcome = judged(
+        checker(&llm, CheckPolicy::Consistency)
+            .check_consistency("OCR reads pixels into text.", &passages())
+            .await,
+    );
+    assert_eq!(outcome.reason, reason);
+}
