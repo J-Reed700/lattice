@@ -49,6 +49,9 @@ fn sources() -> Vec<SourceDto> {
     ]
 }
 
+/// The turn's question, as the loop hands it to the reading.
+const QUESTION: &str = "Question: What happened?";
+
 /// The turn's message as the prompt builder closes it.
 fn message(labels: &[u32]) -> String {
     let passages = labels
@@ -188,6 +191,7 @@ async fn read(model: &Model, request: &CompletionRequest) -> Option<Notes> {
         model,
         request,
         &passages(),
+        QUESTION,
         &recorder,
         &CancellationToken::new(),
         &clock,
@@ -448,7 +452,7 @@ async fn a_group_says_the_question_again_after_its_passages() {
     let message = sent[0].input[1].text();
     let last_passage = message.rfind(MOLINO).expect("the passages shown again");
     let said_again = message[last_passage..]
-        .find("My question is: \"Question: What happened?\"")
+        .find(&format!("My question is: \"{QUESTION}\""))
         .is_some();
     assert!(said_again, "{message}");
 }
@@ -476,6 +480,7 @@ async fn a_group_is_read_on_the_planned_prompt_with_its_passages_shown_again() {
             "{passages_and_question}{}",
             GROUP_INSTRUCTION
                 .replace("{passages}", &shown)
+                .replace("{question}", QUESTION)
                 .replace("{last}", "4")
         ),
         "the message to its question, then the group shown again in place of the reading instruction"
@@ -688,6 +693,7 @@ async fn reading_of(reply_text: &str) -> Reading {
         &model,
         &planned(&[1, 2, 3, 4]),
         &passages(),
+        QUESTION,
         &recorder,
         &CancellationToken::new(),
         &clock,

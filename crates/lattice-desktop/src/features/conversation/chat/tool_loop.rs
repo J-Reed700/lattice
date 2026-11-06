@@ -248,6 +248,7 @@ pub(super) async fn run_agentic_tool_loop(
                 llm.as_ref(),
                 &native_request,
                 &passages,
+                question,
                 recorder,
                 &turn_cancel,
                 &clock,

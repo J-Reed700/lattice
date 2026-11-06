@@ -166,6 +166,7 @@ pub(super) async fn read_passages(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
     passages: &Passages,
+    question: &str,
     recorder: &TurnRecorder,
     cancel: &CancellationToken,
     clock: &TurnClock,
@@ -175,7 +176,7 @@ pub(super) async fn read_passages(
         "Reading the passages",
         Some(format!("{} passages", passages.len())),
     );
-    let mut lines = read_in_groups(llm, request, passages, cancel, clock).await?;
+    let mut lines = read_in_groups(llm, request, passages, question, cancel, clock).await?;
     if lines.is_empty() {
         warn!("The reading wrote no notes; answering without them");
         step.failed(Some("No notes".into()));
