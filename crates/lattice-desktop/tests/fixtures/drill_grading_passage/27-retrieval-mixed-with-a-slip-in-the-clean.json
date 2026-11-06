@@ -1,0 +1,179 @@
+{
+  "name": "27-retrieval-mixed-with-a-slip-in-the-clean",
+  "kind": "mixed",
+  "why": "The explanation itself says the rereading group reread four times, while the source says three: the first finding names that real error, a valid extra. '310 pupils, not 130.' is terse and correct: found. The long comment on the feedback sentence buries its cause ('he only thinks it would probably do so and says that was never tested'): found. The transfer sentence is missed. That 'shows' is too strong a word is a remark about wording on a faithful sentence: false positive.",
+  "source": {
+    "versionId": "dunmere-retrieval-practice-v1",
+    "startByte": 51380,
+    "endByte": 52327,
+    "title": "Learning Science 150, reader: The Dunmere schools study",
+    "text": "Retrieval practice means testing yourself on material rather than rereading it. In the Dunmere schools study, led by psychologist Calloway Idris, 310 pupils aged 11 to 12 studied a passage on volcanoes. One group reread the passage three times; the other read it once and then took two low-stakes quizzes on it. A week later, the quiz group recalled 64 percent of the key facts and the rereading group 41 percent. Idris stresses that on a test given five minutes after study the rereading group did slightly better, so the benefit appears only after a delay.\n\nThe quizzes gave no feedback, and Idris thinks that adding feedback would probably raise the quiz group's scores further, although this was not tested. The pupils all came from schools in one district, and teachers, not researchers, marked the tests. Idris cautions that the study shows retrieval practice helps recall of facts, and does not show that it helps pupils solve new problems."
+  },
+  "drill": {
+    "id": "dunmere-retrieval-practice",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Retrieval practice in the Dunmere schools",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Retrieval practice means testing yourself on material rather than rereading it.\nThe Dunmere schools study was led by the psychologist Calloway Idris.\nIt involved 130 pupils aged 11 to 12 who studied a passage on volcanoes.\nOne group reread the passage four times.\nThe other group read it once and then took two low-stakes quizzes on it.\nA week later the quiz group recalled 64 percent of the key facts and the rereading group 41 percent.\nOn a test given five minutes after study the rereading group did slightly better.\nSo, Idris stresses, the benefit appears only after a delay.\nThe quizzes gave no feedback.\nIdris has shown that adding feedback raises the quiz group's scores further.\nAll the pupils came from schools in one district, and teachers rather than researchers marked the tests.\nIdris cautions that the study shows retrieval practice helps recall of facts.\nIt also shows that retrieval practice helps pupils solve new problems.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "dunmere-retrieval-practice-n",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 3,
+          "end": 3
+        },
+        "consequence": "A reader takes the sample to be less than half its size and trusts the result less than the study warrants.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "It involved 130 pupils aged 11 to 12 who studied a passage on volcanoes.",
+          "after": "It involved 310 pupils aged 11 to 12 who studied a passage on volcanoes."
+        },
+        "explanation": "The study involved 310 pupils, not 130.",
+        "proof": {
+          "sourced": {
+            "quote": "310 pupils aged 11 to 12 studied a passage on volcanoes",
+            "planted": "contradicted",
+            "reason": "The source gives 310 pupils; the sentence gives 130."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "dunmere-retrieval-practice-feedback",
+        "pattern": "scope.dropped_qualifier",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 10,
+          "end": 10
+        },
+        "consequence": "A reader treats a guess as a result and thinks feedback is proven to help.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Idris has shown that adding feedback raises the quiz group's scores further.",
+          "after": "Idris thinks that adding feedback would probably raise the quiz group's scores further, although this was not tested."
+        },
+        "explanation": "Idris only thinks feedback would probably raise the scores; this was not tested.",
+        "proof": {
+          "sourced": {
+            "quote": "Idris thinks that adding feedback would probably raise the quiz group's scores further, although this was not tested",
+            "planted": "contradicted",
+            "reason": "The source says Idris thinks it probably would and that it was not tested; the sentence says he has shown it."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "dunmere-retrieval-practice-transfer",
+        "pattern": "scope.overgeneralisation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 13,
+          "end": 13
+        },
+        "consequence": "A reader takes a study of fact recall as evidence that quizzing improves problem solving, which Idris warns it does not show.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "It also shows that retrieval practice helps pupils solve new problems.",
+          "after": "It does not show that retrieval practice helps pupils solve new problems."
+        },
+        "explanation": "The study does not show that retrieval practice helps pupils solve new problems.",
+        "proof": {
+          "sourced": {
+            "quote": "does not show that it helps pupils solve new problems",
+            "planted": "contradicted",
+            "reason": "The source says the study does not show this; the sentence says it does."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Retrieval practice means testing yourself on material rather than rereading it.\nThe Dunmere schools study was led by the psychologist Calloway Idris.\nIt involved 310 pupils aged 11 to 12 who studied a passage on volcanoes.\nOne group reread the passage four times.\nThe other group read it once and then took two low-stakes quizzes on it.\nA week later the quiz group recalled 64 percent of the key facts and the rereading group 41 percent.\nOn a test given five minutes after study the rereading group did slightly better.\nSo, Idris stresses, the benefit appears only after a delay.\nThe quizzes gave no feedback.\nIdris thinks that adding feedback would probably raise the quiz group's scores further, although this was not tested.\nAll the pupils came from schools in one district, and teachers rather than researchers marked the tests.\nIdris cautions that the study shows retrieval practice helps recall of facts.\nIt does not show that retrieval practice helps pupils solve new problems.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 4,
+        "end": 4
+      },
+      "text": "The rereading group read the passage three times, not four.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 3,
+        "end": 3
+      },
+      "text": "It was 310 pupils, not 130.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 10,
+        "end": 10
+      },
+      "text": "I wanted to say something about the feedback paragraph. The quizzes gave no feedback, which fits what the passage says, and I think there is a reasonable point to be made about how feedback would help, but the explanation then states that Idris has shown that adding feedback raises the quiz group's scores, when he only thinks it would probably do so and says that was never tested. That turns a guess into a result.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 12,
+        "end": 12
+      },
+      "text": "'Shows' is too strong a word: a single study can only suggest that retrieval practice helps recall.",
+      "severity": "nit"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      {
+        "found": {
+          "finding": 2
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      "valid_extra",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}
