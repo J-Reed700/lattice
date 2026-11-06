@@ -29,6 +29,16 @@ describe('a check’s reveal', () => {
     expect(long.answer.endsWith('.…')).toBe(true);
   });
 
+  it('keeps a long question, first paragraph and remaining reasoning whole', () => {
+    const question = 'Why? '.repeat(600);
+    const first = 'An answer sentence. '.repeat(80);
+    const reasoning = 'Reasoning. '.repeat(400);
+    const card = checkCardContent({ question: `  ${question}  `, reveal: `${first}\n\n${reasoning}` });
+    expect(card.prompt).toBe(question.trim());
+    expect(card.answer).toBe(first.trim());
+    expect(card.explanation).toBe(reasoning.trim());
+  });
+
   it('clips at a sentence end, never mid-word', () => {
     expect(clip('Short.', 10)).toBe('Short.');
     expect(clip('First sentence here. Second sentence that is long.', 30)).toBe('First sentence here.…');

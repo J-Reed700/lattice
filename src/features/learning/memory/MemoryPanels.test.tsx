@@ -270,6 +270,23 @@ describe('Learning Studio notebook and recall', () => {
     await waitFor(() => expect(api.discardLearningCardDraft).toHaveBeenCalledTimes(2));
   });
 
+  it('does not cap the fields of a generated draft', () => {
+    mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({ drafts: [draft()] })} memoryLoading={false} onRetryMemory={() => undefined} />);
+    for (const name of ['Question', 'Answer', 'Why this answer works']) {
+      expect(screen.getByLabelText(name, { selector: 'textarea' })).not.toHaveAttribute('maxlength');
+    }
+  });
+
+  it('does not cap the fields of an accepted card being edited', async () => {
+    const user = userEvent.setup();
+    const notDue = { ...card, dueAt: Date.now() + 86_400_000 };
+    mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({ studyDeck: { id: 'deck-1', title: 'Recall', focus: 'Foundations', modelName: 'Model', createdAt: 1, cards: [notDue] }, acceptedCards: [{ cardId: card.id, lessonId: lesson.id, origin: 'generated', sourceIds: ['source-1'], acceptedAt: Date.now() }] })} memoryLoading={false} onRetryMemory={() => undefined} />);
+    await user.click(screen.getByRole('button', { name: `Edit accepted card: ${card.question}` }));
+    for (const name of ['Question', 'Answer', 'Explanation']) {
+      expect(screen.getByLabelText(name, { selector: 'textarea' })).not.toHaveAttribute('maxlength');
+    }
+  });
+
   it('hides accepted answers outside explicit editing', async () => {
     const user = userEvent.setup();
     const notDue = { ...card, dueAt: Date.now() + 86_400_000 };
