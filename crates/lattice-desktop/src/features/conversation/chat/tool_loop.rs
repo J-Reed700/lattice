@@ -513,9 +513,15 @@ pub(super) async fn run_agentic_tool_loop(
         } = round;
         if response.text.trim().is_empty() && response.tool_calls.is_empty() {
             if asked_again_for_nothing {
-                return Err(AppError::InvalidState(
-                    "Model returned no answer or tool calls".into(),
-                ));
+                return Err(if response.finish_reason == "refusal" {
+                    AppError::ModelRejected(
+                        "The model's safety filter stopped this answer twice. That can be a \
+                         mistake, so rewording the question or choosing another model may help."
+                            .into(),
+                    )
+                } else {
+                    AppError::InvalidState("Model returned no answer or tool calls".into())
+                });
             }
             asked_again_for_nothing = true;
             tracing::warn!(
@@ -754,6 +760,11 @@ fn elapsed_ms(start: Instant) -> u64 {
 /// grounding check knows it by this text: it is the app's line, not a claim.
 pub(in crate::features::conversation::chat) const CUT_SHORT_NOTE: &str =
     "\n\n_(The answer was cut short: the model reached its output limit.)_";
+
+/// Appended to an answer a safety classifier stopped, which can be a mistake:
+/// what came before the stop is all there is of it. The grounding check knows
+/// it by this text.
+pub(in crate::features::conversation::chat) const DECLINED_NOTE: &str = "\n\n_(The answer was cut short: the model's safety filter stopped it. That can be a mistake, so asking again or rewording may help.)_";
 
 /// Whether a round's answer stopped at the output limit, or an error when the
 /// round has nothing worth keeping: a cut-short answer is kept, but a cut-short

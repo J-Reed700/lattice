@@ -7,7 +7,7 @@
 use super::clock::TurnClock;
 use super::final_round::LeakedCallFilter;
 use super::written_calls::{run_written_calls, WrittenCalls};
-use super::{answer_was_cut_short, StreamEmitter, CUT_SHORT_NOTE};
+use super::{answer_was_cut_short, StreamEmitter, CUT_SHORT_NOTE, DECLINED_NOTE};
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{StepGuard, TurnRecorder, TurnStepKind};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
@@ -143,6 +143,10 @@ pub(super) async fn generate<'r>(
     )? {
         emitter.content(CUT_SHORT_NOTE)?;
         response.text.push_str(CUT_SHORT_NOTE);
+    }
+    if response.finish_reason == "refusal" && !response.text.trim().is_empty() {
+        emitter.content(DECLINED_NOTE)?;
+        response.text.push_str(DECLINED_NOTE);
     }
     Ok(Generation { response, step })
 }

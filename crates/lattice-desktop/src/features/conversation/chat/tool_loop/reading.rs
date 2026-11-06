@@ -6,7 +6,7 @@
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
-use super::{answer_was_cut_short, tool_schema_text, StreamEmitter, CUT_SHORT_NOTE};
+use super::{answer_was_cut_short, tool_schema_text, StreamEmitter, CUT_SHORT_NOTE, DECLINED_NOTE};
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::verification::cited_labels;
@@ -327,7 +327,7 @@ pub(super) async fn add_what_was_left_out(
     cancel: &CancellationToken,
     clock: &TurnClock,
 ) -> Result<()> {
-    if answer.ends_with(CUT_SHORT_NOTE) {
+    if answer.ends_with(CUT_SHORT_NOTE) || answer.ends_with(DECLINED_NOTE) {
         return Ok(());
     }
     let mut left = left_out(&notes.noted, &cited_labels(answer));
