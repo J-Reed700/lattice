@@ -373,7 +373,7 @@ for the full command.";
 /// Bump whenever scoring, corpus traversal, retry semantics, or trace meaning
 /// changes. A checkpoint from a different harness must never be mixed into a
 /// release result merely because it used the same model.
-const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-11-06.1";
+const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-11-06.2";
 
 impl EvalConfig {
     fn from_env() -> Self {
