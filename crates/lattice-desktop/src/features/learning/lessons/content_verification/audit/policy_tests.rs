@@ -154,6 +154,23 @@ fn the_schema_names_the_labels_and_bounds_every_string() {
     );
 }
 
+#[test]
+fn the_answer_schema_has_no_text_length_rule() {
+    use crate::features::learning::practice::practice_tests::text_length_rules;
+
+    let claims = vec![claim(
+        "Water boils at 100 °C at sea level.",
+        vec![shared()],
+        false,
+    )];
+    let rendered = render(&claims, &units(), &[item(0, vec![0], Context::Unit)]);
+
+    for web in [false, true] {
+        let schema = schema(&rendered, web);
+        assert!(text_length_rules(&schema).is_empty(), "{schema}");
+    }
+}
+
 fn read_one(answer: Value) -> Judged {
     let claims = vec![claim(
         "Water boils at 100 °C at sea level.",
