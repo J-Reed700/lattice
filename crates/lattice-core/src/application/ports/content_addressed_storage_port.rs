@@ -43,6 +43,9 @@ pub struct ImportedBlob {
     pub hash: String,
     /// Held from the copy until the referencing row commits.
     pub lease: BlobLease,
+    /// True when this import wrote the blob's bytes, false when the content
+    /// was already in the library.
+    pub created: bool,
 }
 
 impl fmt::Debug for ImportedBlob {
@@ -50,6 +53,7 @@ impl fmt::Debug for ImportedBlob {
         f.debug_struct("ImportedBlob")
             .field("path", &self.path)
             .field("hash", &self.hash)
+            .field("created", &self.created)
             .finish_non_exhaustive()
     }
 }
@@ -155,6 +159,8 @@ pub enum RetainReason {
     Leased,
     /// Nothing is stored under this hash.
     Missing,
+    /// This database does not own the library, so another may reference it.
+    NotOwned,
 }
 
 /// Outcome of a removal attempt.

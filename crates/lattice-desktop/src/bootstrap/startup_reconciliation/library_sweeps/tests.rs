@@ -16,6 +16,7 @@ use tempfile::TempDir;
 
 use super::super::reconcile_orphaned_files;
 use super::{open_gate_if_owner, LibrarySweeps};
+use crate::features::conversation::repository::ConversationRepository;
 use crate::features::indexing::library_owner::LibraryFiles;
 use crate::features::indexing::LibraryGc;
 use crate::features::web::images::{ChatImageService, ImageNetwork};
@@ -27,8 +28,9 @@ use crate::infrastructure::persistence::database::DatabaseConnection;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use crate::infrastructure::setup::setup_database;
-use crate::infrastructure::storage::ContentAddressedStorage;
+use crate::infrastructure::storage::{ContentAddressedStorage, FileIntents};
 use lattice_core::application::ports::ChatImagesPort;
+use lattice_core::shared::constants::RERANKER_MODEL_DIR;
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
@@ -82,10 +84,14 @@ fn sweeps_over(
     background: &Arc<BackgroundTasks>,
 ) -> LibrarySweeps {
     LibrarySweeps {
-        library_gc: Arc::new(LibraryGc::new(
-            Arc::new(ContentAddressedStorage::with_root(home.join("files"))),
-            Arc::new(DocumentRepositoryImpl::new(pool.clone())),
-        )),
+        library_gc: Arc::new(
+            LibraryGc::new(
+                Arc::new(ContentAddressedStorage::with_root(home.join("files"))),
+                Arc::new(DocumentRepositoryImpl::new(pool.clone())),
+                Arc::clone(gate),
+            )
+            .with_intents(FileIntents::new(pool.clone())),
+        ),
         snapshots: Arc::new(WebPageSnapshotService::new(
             pool.clone(),
             home.join("web-snapshots"),
@@ -253,6 +259,62 @@ fn filed(home: &Path) -> Option<String> {
         .map(|text| text.trim().to_string())
 }
 
+/// A record a process that has since ended wrote.
+async fn earlier_record(pool: &SqlitePool, store: &str, kind: &str, name: &str) {
+    sqlx::query(
+        "INSERT INTO file_intents (store, kind, name, run_id) VALUES (?, ?, ?, 'an earlier run')",
+    )
+    .bind(store)
+    .bind(kind)
+    .bind(name)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The file name's stem: the id a page or picture is stored under.
+fn id_of(path: &Path) -> String {
+    path.file_stem().unwrap().to_string_lossy().into_owned()
+}
+
+/// A chat, a tangent of `parent` when given, with one frozen page and one
+/// picture, rows and files.
+async fn chat_with_files(
+    pool: &SqlitePool,
+    home: &Path,
+    chat: &str,
+    parent: Option<&str>,
+) -> [PathBuf; 2] {
+    sqlx::query(
+        "INSERT INTO conversations (id, title, space_id, created_at, updated_at, tangent_parent_id)          VALUES (?, 'A chat', 'space_general', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', ?)",
+    )
+    .bind(chat)
+    .bind(parent)
+    .execute(pool)
+    .await
+    .unwrap();
+    let page = snapshot(home);
+    sqlx::query(
+        "INSERT INTO web_page_snapshots (id, conversation_id, normalized_url, requested_url,          status, created_at) VALUES (?, ?, 'https://example.com/', 'https://example.com/',          'ready', '2026-11-01T00:00:00Z')",
+    )
+    .bind(id_of(&page))
+    .bind(chat)
+    .execute(pool)
+    .await
+    .unwrap();
+    let picture = picture(home);
+    sqlx::query(
+        "INSERT INTO chat_images (id, conversation_id, request_id, ref, ext, mime, sha256,          byte_size, width, height, caption, origin, created_at)          VALUES (?, ?, ?, 'img-1', 'png', 'image/png', '', 4, 1, 1, '', 'page',          '2026-11-01T00:00:00Z')",
+    )
+    .bind(id_of(&picture))
+    .bind(chat)
+    .bind(chat)
+    .execute(pool)
+    .await
+    .unwrap();
+    [page, picture]
+}
+
 fn deleted(paths: &[PathBuf]) -> Vec<&PathBuf> {
     paths.iter().filter(|path| !path.exists()).collect()
 }
@@ -371,58 +433,88 @@ async fn a_database_whose_files_name_another_owner_sweeps_nothing() {
     assert_eq!(filed(home.path()).as_deref(), Some(A));
 }
 
+/// The owning database no longer has the row of a file it imported: a backup
+/// from before the import was restored, or a migration lost the row. Nothing
+/// it wrote says the file is garbage, so the file stays.
 #[tokio::test]
-async fn the_owning_database_still_collects_what_nothing_references() {
+async fn the_owning_database_keeps_an_imported_file_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
     let pool = migrated_pool().await;
     own(&pool, home.path(), A).await;
     let (hash, referenced) = imported_file(home.path(), "referenced here");
     reference(&pool, &hash, &referenced).await;
-    // An import that crashed before it committed, a frozen page and a picture
-    // whose rows are gone.
-    let (_, crashed) = imported_file(home.path(), "copied, never committed");
-    let orphans = [crashed, snapshot(home.path()), picture(home.path())];
+    let (_, unnamed) = imported_file(home.path(), "imported after the backup");
 
     start_up(&pool, home.path()).await;
 
-    let left: Vec<_> = orphans.iter().filter(|path| path.exists()).collect();
-    assert!(left.is_empty(), "the owner's sweep left {left:?}");
-    assert!(referenced.exists(), "a referenced file survives the sweep");
+    assert!(
+        unnamed.exists(),
+        "the startup sweep deleted a file no row names"
+    );
+    assert!(referenced.exists());
 }
 
 #[tokio::test]
-async fn the_owning_database_still_sweeps_snapshots_and_pictures_after_a_chat_delete() {
+async fn the_owning_database_keeps_a_frozen_page_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
     let pool = migrated_pool().await;
     own(&pool, home.path(), A).await;
-    let run = start_up(&pool, home.path()).await;
-    // What the deleted chat's rows named: nothing names these files now.
-    let orphans = [snapshot(home.path()), picture(home.path())];
+    let page = snapshot(home.path());
 
-    run.delete_a_chat(&pool).await;
+    start_up(&pool, home.path()).await;
 
-    let left: Vec<_> = orphans.iter().filter(|path| path.exists()).collect();
     assert!(
-        left.is_empty(),
-        "the sweep after a chat delete left {left:?}"
+        page.exists(),
+        "the startup sweep deleted a page no row names"
     );
 }
 
 #[tokio::test]
-async fn an_existing_install_with_documents_takes_its_files_on_upgrade_and_sweeps() {
+async fn the_owning_database_keeps_a_picture_its_rows_no_longer_name() {
     let home = TempDir::new().unwrap();
     let pool = migrated_pool().await;
-    // Before this version nothing recorded who owns the files.
+    own(&pool, home.path(), A).await;
+    let picture = picture(home.path());
+
+    start_up(&pool, home.path()).await;
+
+    assert!(
+        picture.exists(),
+        "the startup sweep deleted a picture no row names"
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_chat_keeps_the_pages_and_pictures_no_row_names() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let run = start_up(&pool, home.path()).await;
+    // Files whose rows went some other way than this chat's delete.
+    let unnamed = [snapshot(home.path()), picture(home.path())];
+
+    run.delete_a_chat(&pool).await;
+
+    let gone = deleted(&unnamed);
+    assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
+}
+
+#[tokio::test]
+async fn an_existing_install_takes_its_files_on_upgrade_and_keeps_what_no_record_names() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    // Before this version nothing recorded who owns the files, or which of
+    // them an import left behind.
     let (hash, referenced) = imported_file(home.path(), "referenced here");
     reference(&pool, &hash, &referenced).await;
-    let (_, crashed) = imported_file(home.path(), "copied, never committed");
+    let (_, unexplained) = imported_file(home.path(), "copied, never committed");
 
     start_up(&pool, home.path()).await;
 
     let id = recorded(&pool).await.expect("the database took the files");
     assert_eq!(filed(home.path()).as_deref(), Some(id.as_str()));
-    assert!(!crashed.exists(), "what nothing references is collected");
-    assert!(referenced.exists(), "a referenced file survives the sweep");
+    assert!(unexplained.exists(), "a file no record names is kept");
+    assert!(referenced.exists());
 }
 
 #[tokio::test]
@@ -449,14 +541,18 @@ async fn a_fresh_database_beside_a_models_directory_keeps_every_model() {
 }
 
 #[tokio::test]
-async fn the_owning_database_still_removes_a_model_directory_no_row_names() {
+async fn the_owning_database_keeps_a_model_directory_no_row_names() {
     let home = TempDir::new().unwrap();
     let models = TempDir::new().unwrap();
     let pool = migrated_pool().await;
     own(&pool, home.path(), A).await;
     installed(&pool, models.path(), "installed").await;
-    let kept = model_directory(models.path(), "installed");
-    let orphan = model_directory(models.path(), "orphan");
+    let kept = [
+        model_directory(models.path(), "installed"),
+        // The model manager downloads the reranker here with no row of its own.
+        model_directory(models.path(), RERANKER_MODEL_DIR),
+        model_directory(models.path(), "row-lost"),
+    ];
 
     let run = start_up(&pool, home.path()).await;
     let removed = reconcile_orphaned_files(
@@ -467,7 +563,142 @@ async fn the_owning_database_still_removes_a_model_directory_no_row_names() {
     .await
     .unwrap();
 
-    assert_eq!(removed, 1);
-    assert!(!orphan.exists(), "a directory no row names is removed");
-    assert!(kept.exists(), "an installed model is kept");
+    assert_eq!(removed, 0);
+    let gone = deleted(&kept);
+    assert!(gone.is_empty(), "the model cleanup deleted {gone:?}");
+}
+
+/// What the owning database's own records name goes at startup: an import an
+/// earlier run never committed, and a page and a picture a delete let go of
+/// whose removal did not finish. What no record names stays.
+#[tokio::test]
+async fn the_owning_database_collects_what_its_records_name() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let (hash, crashed) = imported_file(home.path(), "copied, never committed");
+    earlier_record(&pool, "library", "import", &hash).await;
+    let page = snapshot(home.path());
+    earlier_record(&pool, "web_snapshot", "release", &id_of(&page)).await;
+    let released_picture = picture(home.path());
+    let name = released_picture
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    earlier_record(&pool, "chat_image", "release", &name).await;
+    let collected = [crashed, page, released_picture];
+    let (_, unnamed_file) = imported_file(home.path(), "no record names me");
+    let unnamed = [unnamed_file, snapshot(home.path()), picture(home.path())];
+
+    start_up(&pool, home.path()).await;
+
+    let left: Vec<_> = collected.iter().filter(|path| path.exists()).collect();
+    assert!(left.is_empty(), "the owner's sweep left {left:?}");
+    let gone = deleted(&unnamed);
+    assert!(gone.is_empty(), "the owner's sweep deleted {gone:?}");
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
+}
+
+#[tokio::test]
+async fn deleting_a_chat_through_the_app_frees_its_pages_and_pictures() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let run = start_up(&pool, home.path()).await;
+    let chats_files = chat_with_files(&pool, home.path(), "chat", None).await;
+    let unnamed = [snapshot(home.path()), picture(home.path())];
+
+    ConversationRepository::new(pool.clone())
+        .delete("chat")
+        .await
+        .unwrap();
+    run.sweeps.snapshots.sweep().await.unwrap();
+    run.sweeps.images.remove_unclaimed_files().await.unwrap();
+
+    let left: Vec<_> = chats_files.iter().filter(|path| path.exists()).collect();
+    assert!(left.is_empty(), "the deleted chat left {left:?}");
+    let gone = deleted(&unnamed);
+    assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");
+}
+
+#[tokio::test]
+async fn deleting_a_chat_frees_the_pages_and_pictures_of_its_tangents() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    own(&pool, home.path(), A).await;
+    let run = start_up(&pool, home.path()).await;
+    let mut files = chat_with_files(&pool, home.path(), "chat", None)
+        .await
+        .to_vec();
+    files.extend(chat_with_files(&pool, home.path(), "tangent", Some("chat")).await);
+    files.extend(chat_with_files(&pool, home.path(), "nested", Some("tangent")).await);
+
+    ConversationRepository::new(pool.clone())
+        .delete("chat")
+        .await
+        .unwrap();
+    run.sweeps.snapshots.sweep().await.unwrap();
+    run.sweeps.images.remove_unclaimed_files().await.unwrap();
+
+    let left: Vec<_> = files.iter().filter(|path| path.exists()).collect();
+    assert!(
+        left.is_empty(),
+        "the deleted chat and its tangents left {left:?}"
+    );
+}
+
+/// A second database beside the owner's library lets go of a blob its own
+/// rows named; the owner's rows may name it too, so it stays.
+#[tokio::test]
+async fn a_database_that_does_not_own_the_library_removes_no_blob_it_lets_go_of() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    std::fs::write(home.path().join("owner"), A).unwrap();
+    let (hash, shared) = imported_file(home.path(), "a document both databases hold");
+    let run = start_up(&pool, home.path()).await;
+    assert!(!run.gate.is_open());
+
+    run.sweeps.library_gc.release(&hash).await.unwrap();
+    assert!(shared.exists(), "a release deleted the owner's blob");
+    run.sweeps.library_gc.import_failed(&hash, None).await;
+    assert!(shared.exists(), "a failed import deleted the owner's blob");
+}
+
+/// A database that does not own the library never acts on its records, so its
+/// start clears them, and touches no file.
+#[tokio::test]
+async fn a_database_that_does_not_own_the_library_clears_its_records_and_keeps_the_files() {
+    let home = TempDir::new().unwrap();
+    let pool = migrated_pool().await;
+    std::fs::write(home.path().join("owner"), A).unwrap();
+    let (hash, blob) = imported_file(home.path(), "let go of here");
+    earlier_record(&pool, "library", "release", &hash).await;
+    let page = snapshot(home.path());
+    earlier_record(&pool, "web_snapshot", "release", &id_of(&page)).await;
+    let released_picture = picture(home.path());
+    let name = released_picture
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    earlier_record(&pool, "chat_image", "release", &name).await;
+    let files = [blob, page, released_picture];
+
+    start_up(&pool, home.path()).await;
+
+    let gone = deleted(&files);
+    assert!(
+        gone.is_empty(),
+        "a database that does not own them deleted {gone:?}"
+    );
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
 }

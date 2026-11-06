@@ -214,6 +214,13 @@ async fn archive_round_trip_restores_database() {
 
     let db_path = app_data.join("lattice.db");
     let pool = seeded_pool(&db_path, 3).await;
+    // An import in flight when the backup is taken.
+    sqlx::raw_sql(
+        "CREATE TABLE file_intents (id INTEGER PRIMARY KEY, store TEXT, kind TEXT, name TEXT,          run_id TEXT);          INSERT INTO file_intents (store, kind, name, run_id)          VALUES ('library', 'import', 'blob', 'the run that took the backup');",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     // Outside app_data, as `validate_destination` insists.
     let destination = tempfile::tempdir().unwrap();
@@ -349,6 +356,16 @@ async fn archive_round_trip_restores_database() {
     );
 
     assert_eq!(document_count(&target_db).await, 3, "rows should be back");
+    let restored = connect_fixture_pool(&target_db).await;
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&restored)
+        .await
+        .unwrap();
+    restored.close().await;
+    assert_eq!(
+        records, 0,
+        "a restore keeps no file records of the backup's run"
+    );
     assert_eq!(
         std::fs::read(target_files_root.join(REFERENCED_BLOB).join("paper.pdf")).unwrap(),
         b"pdf bytes"

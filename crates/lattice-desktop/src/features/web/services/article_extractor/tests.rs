@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::web::services::web::guard_probe;
 
 #[tokio::test]
 async fn test_extract_article_basic() {
@@ -261,4 +262,42 @@ fn test_is_youtube_url_variants() {
     assert!(service.is_youtube_url("https://youtu.be/abc123"));
     assert!(service.is_youtube_url("https://m.youtube.com/watch?v=abc123"));
     assert!(!service.is_youtube_url("https://example.com/watch?v=abc123"));
+}
+
+#[tokio::test]
+async fn url_import_refuses_an_ipv4_mapped_loopback_literal() {
+    let service = ArticleExtractorService::new().unwrap();
+    let server = guard_probe::local_page().await;
+    let url = guard_probe::mapped_loopback(server.address().port());
+
+    let result = service.extract_article_from_url(&url).await;
+
+    guard_probe::assert_refused_without_contact(&server, &url, &result).await;
+}
+
+#[tokio::test]
+async fn url_import_refuses_localhost_written_with_a_trailing_dot() {
+    let service = ArticleExtractorService::new().unwrap();
+    let server = guard_probe::local_page().await;
+    let url = guard_probe::dotted_localhost(server.address().port());
+
+    let result = service.extract_article_from_url(&url).await;
+
+    guard_probe::assert_refused_without_contact(&server, &url, &result).await;
+}
+
+/// Drives the import's own client: `extract_article_from_url` refuses the
+/// local address this redirect starts from before it sends anything.
+#[tokio::test]
+async fn url_import_client_refuses_a_redirect_through_a_local_server() {
+    let service = ArticleExtractorService::new().unwrap();
+
+    guard_probe::assert_refuses_a_redirect_through_a_local_server(&service.client).await;
+}
+
+#[tokio::test]
+async fn url_import_client_refuses_a_name_that_resolves_to_this_machine() {
+    let service = ArticleExtractorService::new().unwrap();
+
+    guard_probe::assert_refuses_a_name_that_resolves_to_this_machine(&service.client).await;
 }

@@ -213,16 +213,23 @@ impl ChatImageService {
             .ok_or_else(|| AppError::NotFound(format!("chat image {id} vanished after insert")))
     }
 
-    /// Deletes the rows, then their files. A file left behind by a failed
-    /// removal has no row, so the next startup sweep takes it.
+    /// Deletes the rows, recording their files as let go of, then the files.
+    /// A file a removal left behind keeps its record, so a later sweep takes
+    /// it.
     async fn release_rows(&self, rows: Vec<ImageRow>) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
         let ids: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
         self.repository.delete_ids(&ids).await?;
+        let mut gone = Vec::with_capacity(rows.len());
         for row in rows {
-            self.store.remove(&row.id, &row.ext).await;
+            if self.store.remove(&row.id, &row.ext).await {
+                gone.push(row.file_name());
+            }
+        }
+        if let Err(error) = self.repository.forget_released(&gone).await {
+            tracing::warn!(%error, "Could not clear the records of released pictures; the next sweep clears them");
         }
         Ok(())
     }

@@ -509,8 +509,18 @@ impl BackupPort for BackupAdapter {
         // Use temp file + rename for atomicity
         let temp_path = self.db_path.with_extension("db.restoring");
 
-        match tokio::fs::copy(&path, &temp_path).await {
-            Ok(_) => {
+        let copied = match tokio::fs::copy(&path, &temp_path).await {
+            Ok(_) => crate::infrastructure::storage::file_intents::forget_all_in(&temp_path)
+                .await
+                .map_err(|e| {
+                    std::io::Error::other(format!(
+                        "could not clear the restored database's file records: {e}"
+                    ))
+                }),
+            Err(e) => Err(e),
+        };
+        match copied {
+            Ok(()) => {
                 // Atomic rename
                 match tokio::fs::rename(&temp_path, &self.db_path).await {
                     Ok(_) => {
@@ -538,6 +548,7 @@ impl BackupPort for BackupAdapter {
             }
             Err(e) => {
                 error!("Failed to copy backup file: {}", e);
+                let _ = tokio::fs::remove_file(&temp_path).await;
                 // Rollback: restore from safety backup if needed
                 let mut note = String::new();
                 if current_backup.exists() && !self.db_path.exists() {
