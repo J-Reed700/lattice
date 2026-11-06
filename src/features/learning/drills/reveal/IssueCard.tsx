@@ -1,10 +1,10 @@
 import { useId } from 'react';
 
-import { Check, CircleDot, FileCode, X, type LucideIcon } from 'lucide-react';
+import { Check, CircleDot, FileCode, Minus, X, type LucideIcon } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { FixDiff } from '@/features/learning/drills/reveal/FixDiff';
-import { ISSUE_OUTCOME, lineLabel } from '@/features/learning/drills/reveal/revealCopy';
+import { ALSO_VALID_NOT_RAISED, ISSUE_OUTCOME, lineLabel } from '@/features/learning/drills/reveal/revealCopy';
 import type { RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
 import { eyebrow, jumpButton, panel, sectionHeading } from '@/features/learning/drills/reveal/revealStyle';
 import { severityLabel, severityTone } from '@/features/learning/drills/severity';
@@ -29,8 +29,9 @@ export function IssueCard({ entry, credited, onShow }: {
 }) {
   const { issue, number } = entry;
   const titleId = useId();
-  const outcome = ISSUE_OUTCOME[issue.outcome];
-  const OutcomeIcon = OUTCOME_ICON[issue.outcome];
+  const notRaised = issue.alsoValid && issue.outcome === 'missed';
+  const outcome = notRaised ? ALSO_VALID_NOT_RAISED : ISSUE_OUTCOME[issue.outcome];
+  const OutcomeIcon = notRaised ? Minus : OUTCOME_ICON[issue.outcome];
   const where = lineLabel(issue.span);
   return (
     <article aria-labelledby={titleId} className={`${panel} p-5 sm:p-6`}>
@@ -86,31 +87,60 @@ export function IssueCard({ entry, credited, onShow }: {
   );
 }
 
-/** Every key issue, most severe first, each numbered as the learner's comments refer to it. */
+function IssueCards({ ranked, findings, onShow }: {
+  ranked: readonly RankedIssue[];
+  findings: readonly RevealedFindingDto[];
+  onShow: (entry: RankedIssue) => void;
+}) {
+  return (
+    <ol className="space-y-4">
+      {ranked.map((entry) => {
+        const credit = entry.issue.finding;
+        const comment: RevealedFindingDto | undefined = credit === null ? undefined : findings[credit];
+        return (
+          <li key={entry.issue.id}>
+            <IssueCard
+              entry={entry}
+              credited={credit === null ? null : { number: credit + 1, text: comment?.text ?? '' }}
+              onShow={onShow}
+            />
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/**
+ * Every planted issue, most severe first, then the also-valid ones a blind review raised, each numbered as the
+ * learner's comments refer to it.
+ */
 export function IssueList({ ranked, findings, onShow }: {
   ranked: readonly RankedIssue[];
   findings: readonly RevealedFindingDto[];
   onShow: (entry: RankedIssue) => void;
 }) {
   const headingId = useId();
+  const alsoValidId = useId();
+  const planted = ranked.filter((entry) => !entry.issue.alsoValid);
+  const alsoValid = ranked.filter((entry) => entry.issue.alsoValid);
   return (
-    <section aria-labelledby={headingId} className="space-y-3">
-      <h2 id={headingId} className={sectionHeading}>Issues, most severe first</h2>
-      <ol className="space-y-4">
-        {ranked.map((entry) => {
-          const credit = entry.issue.finding;
-          const comment: RevealedFindingDto | undefined = credit === null ? undefined : findings[credit];
-          return (
-            <li key={entry.issue.id}>
-              <IssueCard
-                entry={entry}
-                credited={credit === null ? null : { number: credit + 1, text: comment?.text ?? '' }}
-                onShow={onShow}
-              />
-            </li>
-          );
-        })}
-      </ol>
-    </section>
+    <>
+      <section aria-labelledby={headingId} className="space-y-3">
+        <h2 id={headingId} className={sectionHeading}>Issues, most severe first</h2>
+        <IssueCards ranked={planted} findings={findings} onShow={onShow} />
+      </section>
+      {alsoValid.length > 0 && (
+        <section aria-labelledby={alsoValidId} className="space-y-3">
+          <div>
+            <h2 id={alsoValidId} className={sectionHeading}>Also valid</h2>
+            <p className="mt-1 text-sm text-text-secondary">
+              A blind review raised these too. They were not planted, so raising one counts for you and leaving one costs nothing.
+            </p>
+          </div>
+          <IssueCards ranked={alsoValid} findings={findings} onShow={onShow} />
+        </section>
+      )}
+    </>
   );
 }

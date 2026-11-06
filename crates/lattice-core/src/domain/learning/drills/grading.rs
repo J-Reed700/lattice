@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::drill::{weight, KeyIssue, LineSpan, Severity};
+use super::drill::{weight, KeyIssue, LineSpan, Origin, Severity};
 use super::edits::overlaps;
 
 /// One comment of a learner's review: the lines it is on, when it selects
@@ -173,32 +173,45 @@ pub fn overlapping(findings: &[Finding], key: &[KeyIssue]) -> Vec<(usize, usize)
     pairs
 }
 
-/// The key's positions in the order issues are numbered for the judge and the learner: the most severe first, ties
-/// by position.
+/// The key's positions in the order issues are numbered for the judge and the learner: the planted issues first, then
+/// those found in review, each group the most severe first, ties by position.
 pub fn display_order(key: &[KeyIssue]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..key.len()).collect();
-    order.sort_by_key(|&position| std::cmp::Reverse(key.get(position).map(|issue| issue.severity)));
+    order.sort_by_key(|&position| {
+        key.get(position).map(|issue| {
+            (
+                issue.origin == Origin::FoundInReview,
+                std::cmp::Reverse(issue.severity),
+            )
+        })
+    });
     order
 }
 
-/// How a review fared, as its parts: no single number stands for it.
+fn is_planted(issue: &KeyIssue) -> bool {
+    issue.origin == Origin::Planted
+}
+
+/// How a review fared, as its parts: no single number stands for it. An issue found in review costs the learner
+/// nothing: `found`, `half_found`, `missed`, `by_severity` and `weighted_recall` count the planted issues alone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Score {
     pub found: usize,
     pub half_found: usize,
     pub missed: usize,
+    /// Findings the judge called valid extras, and findings that name only issues found in review.
     pub valid_extras: usize,
     pub false_positives: usize,
-    /// One tally per severity present in the key, the most severe first.
+    /// One tally per severity present among the planted issues, the most severe first.
     pub by_severity: Vec<SeverityTally>,
-    /// What the review found of the key, each issue weighing what its severity
-    /// does and a half found one half as much: 1.0 for an empty key.
+    /// What the review found of the planted issues, each weighing what its severity does and a half found one half as
+    /// much: 1.0 when none is planted.
     pub weighted_recall: f64,
     /// The share of findings that match an issue or are a valid extra: none
     /// when there are no findings.
     pub precision: Option<f64>,
-    /// The first finding found an issue of the key's highest severity: a half
-    /// find, or a find credited to a later finding, is not leading with it.
+    /// The first finding found an issue of at least the highest severity of the planted issues: a half find, or a
+    /// find credited to a later finding, is not leading with it.
     pub led_with_the_most_severe: bool,
 }
 
@@ -228,7 +241,11 @@ pub fn score(key: &[KeyIssue], findings: &[Finding], assessment: &Assessment) ->
     let mut missed = 0;
     let mut earned = 0.0;
     let mut possible = 0.0;
-    for (issue, outcome) in key.iter().zip(&outcomes) {
+    for (issue, outcome) in key
+        .iter()
+        .zip(&outcomes)
+        .filter(|(issue, _)| is_planted(issue))
+    {
         let worth = f64::from(weight(issue.severity));
         possible += worth;
         match outcome {
@@ -252,6 +269,9 @@ pub fn score(key: &[KeyIssue], findings: &[Finding], assessment: &Assessment) ->
     let mut false_positives = 0;
     for finding in 0..findings.len() {
         match assessment.findings.get(finding).map(|(outcome, _)| outcome) {
+            Some(FindingOutcome::Matches { issues }) if only_found_in_review(key, issues) => {
+                valid_extras += 1;
+            }
             Some(FindingOutcome::Matches { .. }) => matching += 1,
             Some(FindingOutcome::ValidExtra) => valid_extras += 1,
             Some(FindingOutcome::FalsePositive) | None => false_positives += 1,
@@ -264,7 +284,7 @@ pub fn score(key: &[KeyIssue], findings: &[Finding], assessment: &Assessment) ->
         valid_extras,
         false_positives,
         by_severity,
-        weighted_recall: if key.is_empty() {
+        weighted_recall: if possible == 0.0 {
             1.0
         } else {
             earned / possible
@@ -278,7 +298,15 @@ pub fn score(key: &[KeyIssue], findings: &[Finding], assessment: &Assessment) ->
     }
 }
 
-/// How the key's issues of one severity fared, when the key has any.
+/// Whether a finding names issues and every one of them was found in review.
+fn only_found_in_review(key: &[KeyIssue], issues: &[usize]) -> bool {
+    !issues.is_empty()
+        && issues
+            .iter()
+            .all(|&issue| key.get(issue).is_some_and(|known| !is_planted(known)))
+}
+
+/// How the planted issues of one severity fared, when the key has any.
 fn tally(severity: Severity, key: &[KeyIssue], outcomes: &[IssueOutcome]) -> Option<SeverityTally> {
     let mut counts = SeverityTally {
         severity,
@@ -289,7 +317,7 @@ fn tally(severity: Severity, key: &[KeyIssue], outcomes: &[IssueOutcome]) -> Opt
     for (_, outcome) in key
         .iter()
         .zip(outcomes)
-        .filter(|(issue, _)| issue.severity == severity)
+        .filter(|(issue, _)| is_planted(issue) && issue.severity == severity)
     {
         counts.total += 1;
         match outcome {
@@ -301,14 +329,19 @@ fn tally(severity: Severity, key: &[KeyIssue], outcomes: &[IssueOutcome]) -> Opt
     (counts.total > 0).then_some(counts)
 }
 
-/// Whether an issue of the key's highest severity was found by the first
-/// finding.
+/// Whether the first finding found an issue, planted or not, of at least the highest severity of the planted issues.
+/// A key with no planted issue has none.
 fn led_with_the_most_severe(
     key: &[KeyIssue],
     findings: &[Finding],
     assessment: &Assessment,
 ) -> bool {
-    let Some(highest) = key.iter().map(|issue| issue.severity).max() else {
+    let Some(highest) = key
+        .iter()
+        .filter(|issue| is_planted(issue))
+        .map(|issue| issue.severity)
+        .max()
+    else {
         return false;
     };
     if findings.is_empty() {
@@ -317,6 +350,6 @@ fn led_with_the_most_severe(
     key.iter()
         .zip(&assessment.issues)
         .any(|(issue, (outcome, _))| {
-            issue.severity == highest && matches!(outcome, IssueOutcome::Found { finding: 0 })
+            issue.severity >= highest && matches!(outcome, IssueOutcome::Found { finding: 0 })
         })
 }

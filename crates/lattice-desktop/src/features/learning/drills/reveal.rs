@@ -108,14 +108,11 @@ fn reveal_of(attempt: &Attempt, stored: &StoredDrill) -> Result<CodeReviewReveal
             }
         })
         .collect();
-    let ratings = stored
-        .drill
-        .key
+    let ratings = ratings
         .iter()
-        .zip(ratings)
-        .map(|(issue, rated)| RatedPatternDto {
+        .map(|rated| RatedPatternDto {
             pattern: rated.pattern.clone(),
-            pattern_name: name_of(&issue.pattern),
+            pattern_name: name_of(&rated.pattern),
             rating: rated.rating,
         })
         .collect();
