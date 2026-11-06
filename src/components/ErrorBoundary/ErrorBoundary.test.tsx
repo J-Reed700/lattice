@@ -7,6 +7,8 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+import { SANITIZED_MESSAGE, SENSITIVE_MESSAGE, SENSITIVE_PARTS } from '@/utils/__tests__/sensitiveMessage';
+
 import { ErrorBoundary } from './ErrorBoundary';
 import { FullPageError } from './FullPageError';
 import { InlineError } from './InlineError';
@@ -20,6 +22,21 @@ beforeEach(() => {
 });
 
 // Component that throws an error
+const FALLBACK_MESSAGE = 'Something unexpected happened.';
+
+const errorWithoutMessage = (): Error => {
+  const error = new Error('placeholder');
+  Object.defineProperty(error, 'message', { value: undefined });
+  return error;
+};
+
+const errorWithStack = (): Error => {
+  const error = new Error(SENSITIVE_MESSAGE);
+  error.stack = `Error: ${SENSITIVE_MESSAGE}
+    at renderWidget (app.js:10:5)`;
+  return error;
+};
+
 const ThrowError = ({ shouldThrow = true }: { shouldThrow?: boolean }) => {
   if (shouldThrow) {
     throw new Error('Test error');
@@ -188,16 +205,6 @@ describe('SectionErrorBoundary', () => {
   });
 });
 
-const SENSITIVE_MESSAGE =
-  'Failed for alice@example.com with token 0123456789abcdef0123456789abcdef at 192.168.1.42: C:\\Users\\alice\\secret.txt';
-const SANITIZED_MESSAGE = 'Failed for [EMAIL] with token [TOKEN] at [IP]: [PATH]';
-const SENSITIVE_PARTS = [
-  'alice@example.com',
-  '0123456789abcdef0123456789abcdef',
-  '192.168.1.42',
-  'secret.txt',
-];
-
 describe('FullPageError', () => {
   const mockError = new Error('Test error message');
   const mockErrorInfo = {
@@ -310,6 +317,61 @@ describe('FullPageError', () => {
       }
     });
 
+    it('renders the fallback line for an error with no message', () => {
+      render(
+        <FullPageError
+          error={errorWithoutMessage()}
+          errorInfo={mockErrorInfo}
+          resetError={mockReset}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Show details'));
+
+      expect(screen.getByText(FALLBACK_MESSAGE)).toBeDefined();
+    });
+
+    describe('Copy details', () => {
+      const copy = async () => {
+        const writeText = vi.fn().mockResolvedValue(undefined);
+        Object.defineProperty(navigator, 'clipboard', {
+          value: { writeText },
+          configurable: true,
+        });
+        render(
+          <FullPageError
+            error={errorWithStack()}
+            errorInfo={mockErrorInfo}
+            resetError={mockReset}
+          />
+        );
+        fireEvent.click(screen.getByText('Copy details'));
+        await screen.findByText('Copied');
+        return writeText.mock.calls[0][0] as string;
+      };
+
+      it('holds no sensitive text in production but keeps the stack frames', async () => {
+        vi.stubEnv('DEV', false);
+
+        const copied = await copy();
+
+        for (const part of SENSITIVE_PARTS) {
+          expect(copied).not.toContain(part);
+        }
+        expect(copied).toContain(SANITIZED_MESSAGE);
+        expect(copied).toContain('renderWidget');
+      });
+
+      it('stays raw in development', async () => {
+        vi.stubEnv('DEV', true);
+
+        const copied = await copy();
+
+        expect(copied).toContain(SENSITIVE_MESSAGE);
+        expect(copied).toContain('renderWidget');
+      });
+    });
+
     it('shows the raw message in development details', () => {
       vi.stubEnv('DEV', true);
       render(
@@ -383,6 +445,14 @@ describe('SectionError', () => {
     expect(screen.getByText(/Couldn't load/i)).toBeDefined();
   });
 
+  it('renders the fallback line for an error with no message', () => {
+    render(
+      <SectionError error={errorWithoutMessage()} resetError={mockReset} sectionName="Search" />
+    );
+
+    expect(screen.getByText(FALLBACK_MESSAGE)).toBeDefined();
+  });
+
   it('strips paths, tokens, emails, and IPs from the message', () => {
     const { container } = render(
       <SectionError
@@ -412,6 +482,23 @@ describe('InlineError', () => {
     );
 
     expect(screen.getByText(/Inline error/i)).toBeDefined();
+  });
+
+  it('renders the fallback line for an error with no message', () => {
+    render(<InlineError error={errorWithoutMessage()} resetError={mockReset} />);
+
+    expect(screen.getByText(FALLBACK_MESSAGE)).toBeDefined();
+  });
+
+  it.each([false, true])('strips sensitive text from the message (compact: %s)', (compact) => {
+    const { container } = render(
+      <InlineError error={new Error(SENSITIVE_MESSAGE)} resetError={mockReset} compact={compact} />
+    );
+
+    expect(screen.getByText(SANITIZED_MESSAGE)).toBeDefined();
+    for (const part of SENSITIVE_PARTS) {
+      expect(container.textContent).not.toContain(part);
+    }
   });
 
   it('shows custom message if provided', () => {
