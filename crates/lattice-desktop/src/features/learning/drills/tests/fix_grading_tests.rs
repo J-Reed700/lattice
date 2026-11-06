@@ -12,7 +12,8 @@ use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::practice::practice_tests::text_length_rules;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{
-    DecidedBy, Drill, DrillFile, FixOutcome, IssueFix, Material, Proof, SuiteVerdict,
+    Assessment, DecidedBy, Drill, DrillFile, FixOutcome, IssueFix, IssueOutcome, Material, Origin,
+    Proof, SuiteVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
@@ -73,12 +74,35 @@ fn ran(runner: &FakeRunner, test: &str) -> usize {
     runner.runs().iter().filter(|(_, ran)| ran == test).count()
 }
 
+/// An assessment in which every issue of the key was found.
+fn raised_all(drill: &Drill) -> Assessment {
+    Assessment {
+        issues: drill
+            .key
+            .iter()
+            .map(|_| (IssueOutcome::Found { finding: 0 }, "Found.".to_owned()))
+            .collect(),
+        findings: Vec::new(),
+    }
+}
+
 async fn grade(
     model: &ScriptedModel,
     runner: Option<&FakeRunner>,
     suite: Option<&str>,
     drill: &Drill,
     learner: &[DrillFile],
+) -> Result<Vec<IssueFix>> {
+    grade_assessed(model, runner, suite, drill, learner, &raised_all(drill)).await
+}
+
+async fn grade_assessed(
+    model: &ScriptedModel,
+    runner: Option<&FakeRunner>,
+    suite: Option<&str>,
+    drill: &Drill,
+    learner: &[DrillFile],
+    assessment: &Assessment,
 ) -> Result<Vec<IssueFix>> {
     let cancel = CancellationToken::new();
     let tools = Tools {
@@ -94,6 +118,7 @@ async fn grade(
             learner,
             suite,
             source: None,
+            assessment,
         },
     )
     .await
@@ -532,6 +557,7 @@ async fn files_the_runtime_refuses_prove_nothing_so_the_judge_decides() -> Resul
             learner: &learner,
             suite: Some(SUITE),
             source: None,
+            assessment: &raised_all(&drill),
         },
     )
     .await?;
@@ -587,6 +613,102 @@ async fn the_results_follow_the_key_in_order_one_for_each_issue() -> Result<()> 
     Ok(())
 }
 
+/// The stocked drill with its second issue, the literals, found in review, and an assessment in which the learner
+/// found the operator and `literals` says what became of the other, when it says anything.
+fn with_a_review_found_issue(literals: Option<IssueOutcome>) -> (Drill, Assessment) {
+    let mut drill = drill();
+    drill.key[1].origin = Origin::FoundInReview;
+    let mut issues = vec![(IssueOutcome::Found { finding: 0 }, "Found.".to_owned())];
+    issues.extend(literals.map(|outcome| (outcome, "Said.".to_owned())));
+    let assessment = Assessment {
+        issues,
+        findings: Vec::new(),
+    };
+    (drill, assessment)
+}
+
+fn positions(results: &[IssueFix]) -> Vec<usize> {
+    results.iter().map(|result| result.issue).collect()
+}
+
+#[tokio::test]
+async fn a_review_found_issue_the_learner_did_not_raise_gets_no_result_and_no_model_call(
+) -> Result<()> {
+    for literals in [Some(IssueOutcome::Missed), None] {
+        let (drill, assessment) = with_a_review_found_issue(literals);
+        let model = ScriptedModel::new(Vec::<String>::new());
+        let runner = FakeRunner::passing();
+        let results = grade_assessed(
+            &model,
+            Some(&runner),
+            Some(SUITE),
+            &drill,
+            &unchanged(),
+            &assessment,
+        )
+        .await?;
+        assert_eq!(positions(&results), [0], "{literals:?}");
+        assert!(model.requests().is_empty(), "{literals:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_review_found_issue_the_learner_raised_gets_a_result() -> Result<()> {
+    for raised in [
+        IssueOutcome::Found { finding: 0 },
+        IssueOutcome::HalfFound { finding: 0 },
+    ] {
+        let (drill, assessment) = with_a_review_found_issue(Some(raised));
+        let model = ScriptedModel::new([fix_answer("not", "The literals are as they were.")]);
+        let runner = FakeRunner::passing();
+        let results = grade_assessed(
+            &model,
+            Some(&runner),
+            Some(SUITE),
+            &drill,
+            &unchanged(),
+            &assessment,
+        )
+        .await?;
+        assert_eq!(positions(&results), [0, 1], "{raised:?}");
+        assert_eq!(model.requests().len(), 1, "{raised:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planted_issue_is_graded_whatever_the_assessment_says_of_it() -> Result<()> {
+    let drill = drill();
+    let missed_both = Assessment {
+        issues: vec![
+            (IssueOutcome::Missed, "Not named.".to_owned()),
+            (IssueOutcome::Missed, "Not named.".to_owned()),
+        ],
+        findings: Vec::new(),
+    };
+    let no_outcomes = Assessment {
+        issues: Vec::new(),
+        findings: Vec::new(),
+    };
+    for assessment in [&missed_both, &no_outcomes] {
+        let model = ScriptedModel::new([fix_answer("not", "The literals are as they were.")]);
+        let runner = FakeRunner::passing();
+        let results = grade_assessed(
+            &model,
+            Some(&runner),
+            Some(SUITE),
+            &drill,
+            &unchanged(),
+            assessment,
+        )
+        .await?;
+        assert_eq!(positions(&results), [0, 1]);
+        assert_eq!(model.requests().len(), 1, "the judged planted issue");
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_key_with_no_issue_has_no_result_and_runs_only_the_suite() -> Result<()> {
     let mut bare = drill();
@@ -630,6 +752,7 @@ mod real_runtime {
                 learner,
                 suite: Some(SUITE),
                 source: None,
+                assessment: &raised_all(&drill),
             },
         )
         .await
@@ -1251,6 +1374,7 @@ mod beside {
                 learner: &learner,
                 suite: Some(SUITE),
                 source: None,
+                assessment: &raised_all(&drill),
             },
         )
         .await?;

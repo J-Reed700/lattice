@@ -165,7 +165,7 @@ describe('DrillReveal, a source written in markdown', () => {
 describe('DrillReveal, a graded review of an explanation', () => {
   it('counts the issues in the explanation', () => {
     setup();
-    expect(screen.getByRole('heading', { name: 'Of the 1 issue in the explanation' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Of the 1 planted issue in the explanation' })).toBeInTheDocument();
   });
 
   it('shows what the source says on the issue, with the sentence it is in named as a sentence', () => {

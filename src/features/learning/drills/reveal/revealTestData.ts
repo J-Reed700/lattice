@@ -91,6 +91,7 @@ export const MAGIC_NUMBER: RevealedIssueDto = {
   outcome: 'missed',
   finding: null,
   reason: 'No comment mentions the literals.',
+  alsoValid: false,
 };
 
 export const WRONG_OPERATOR: RevealedIssueDto = {
@@ -113,6 +114,7 @@ export const WRONG_OPERATOR: RevealedIssueDto = {
   outcome: 'found',
   finding: 0,
   reason: 'Your comment names the operator.',
+  alsoValid: false,
 };
 
 export const STALE_STATE: RevealedIssueDto = {
@@ -134,6 +136,29 @@ export const STALE_STATE: RevealedIssueDto = {
   outcome: 'half_found',
   finding: 1,
   reason: 'Your comment is on the right line but is about speed, not about hits that never expire.',
+  alsoValid: false,
+};
+
+/** Raised by a blind review, not planted: the key holds it after the planted issues. */
+export const UNBOUNDED_GROWTH: RevealedIssueDto = {
+  id: 'review-1',
+  pattern: 'resources.unbounded_growth',
+  patternName: 'Unbounded growth',
+  severity: 'critical',
+  span: { path: 'src/limiter.py', start: 21, end: 21 },
+  consequence: 'Every key ever seen stays in memory.',
+  explanation: 'The dictionary only grows. Drop keys whose window has passed.',
+  fix: {
+    path: 'src/limiter.py',
+    lines: [
+      { kind: 'removed', text: '        self.hits.pop(key, None)' },
+      { kind: 'added', text: '        self.hits.clear()' },
+    ],
+  },
+  outcome: 'missed',
+  finding: null,
+  reason: 'No comment mentions the growth.',
+  alsoValid: true,
 };
 
 export const ISSUES: RevealedIssueDto[] = [MAGIC_NUMBER, WRONG_OPERATOR, STALE_STATE];

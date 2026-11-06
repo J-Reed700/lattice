@@ -12,13 +12,14 @@ use crate::features::learning::drills::dto::{
     CodeReviewSpanDto, FindingResultKind, IssueResultKind, ReviewMaterialDto, StartedCodeReviewDto,
 };
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD, DRILL_GRADING};
+use crate::features::learning::drills::reveal;
 use crate::features::learning::drills::review;
 use crate::features::learning::persistence::db;
 use crate::features::learning::plugin::code_review_languages;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, Material, PatternRating, Proof,
-    LANGUAGES,
+    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, IssueRating, Material, Origin,
+    PatternRating, Proof, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -637,5 +638,72 @@ async fn every_language_the_screen_offers_starts_at_every_size_it_offers() -> Re
             );
         }
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_issue_a_blind_review_raised_is_revealed_as_also_valid_and_a_planted_one_is_not(
+) -> Result<()> {
+    let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let grader = FakeGrader::new(review_assessment());
+    waiting.grade(&model, None, &grader).await?;
+    let (attempt, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    stored.drill.key[1].origin = Origin::FoundInReview;
+
+    let revealed = reveal::result_of(&attempt, &stored)?
+        .reveal
+        .expect("a graded review is revealed");
+    assert!(!revealed.issues[0].also_valid);
+    assert!(revealed.issues[1].also_valid);
+    let shown = serde_json::to_value(&revealed.issues).expect("a DTO is JSON");
+    assert_eq!(shown[0]["alsoValid"], false);
+    assert_eq!(shown[1]["alsoValid"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ratings_are_revealed_as_stored_whatever_their_number_against_the_key() -> Result<()> {
+    let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let grader = FakeGrader::new(review_assessment());
+    waiting.grade(&model, None, &grader).await?;
+    let (mut attempt, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    stored.drill.key[1].origin = Origin::FoundInReview;
+    let rating = |pattern: &str, rating| IssueRating {
+        pattern: pattern.to_owned(),
+        rating,
+    };
+
+    // An attempt graded before review-found issues stopped being rated holds one rating for each key issue.
+    attempt.ratings = Some(vec![
+        rating(OPERATOR, PatternRating::Easy),
+        rating(LITERALS, PatternRating::Again),
+    ]);
+    let both = reveal::result_of(&attempt, &stored)?
+        .reveal
+        .expect("a graded review is revealed");
+    assert_eq!(
+        both.ratings
+            .iter()
+            .map(|rated| (rated.pattern.as_str(), rated.rating))
+            .collect::<Vec<_>>(),
+        [
+            (OPERATOR, PatternRating::Easy),
+            (LITERALS, PatternRating::Again)
+        ]
+    );
+
+    // One that has fewer ratings than the key has issues names each rating's own pattern.
+    attempt.ratings = Some(vec![rating(LITERALS, PatternRating::Good)]);
+    let one = reveal::result_of(&attempt, &stored)?
+        .reveal
+        .expect("a graded review is revealed");
+    assert_eq!(one.ratings.len(), 1);
+    assert_eq!(one.ratings[0].pattern, LITERALS);
+    assert_eq!(
+        one.ratings[0].pattern_name,
+        pattern(LITERALS).expect("a pattern").name
+    );
     Ok(())
 }

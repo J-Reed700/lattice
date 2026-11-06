@@ -225,7 +225,7 @@ pub struct CodeReviewRevealDto {
     /// Every finding of the learner's, in the order they made them.
     pub findings: Vec<RevealedFindingDto>,
     pub score: CodeReviewScoreDto,
-    /// How well each key issue's pattern was recognised, one entry for each key issue.
+    /// How well the patterns of the key's issues were recognised. A review-found issue that was not raised has none.
     pub ratings: Vec<RatedPatternDto>,
     /// What came of the learner's fix for each key issue, when they wrote one.
     pub fix: Option<Vec<IssueFix>>,
@@ -296,6 +296,8 @@ pub struct RevealedIssueDto {
     pub finding: Option<usize>,
     /// The judge's reason for the outcome.
     pub reason: String,
+    /// Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
+    pub also_valid: bool,
 }
 
 /// One finding of the learner's, with what came of it.

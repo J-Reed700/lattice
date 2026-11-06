@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::catalogue::{patterns_for, Family, Pattern};
-use super::drill::{KeyIssue, Material};
+use super::drill::{KeyIssue, Material, Origin};
 use super::grading::{Assessment, IssueOutcome};
 
 /// How well a pattern was recognised, in the words recall's schedule takes.
@@ -36,19 +36,24 @@ pub struct IssueRating {
     pub rating: PatternRating,
 }
 
-/// The rating of each key issue's pattern under an assessment, one for each issue in the key's order. An issue the
-/// assessment has no outcome for counts as missed, as `score` counts it.
+/// The rating of each key issue's pattern under an assessment, in the key's order. An issue the assessment has no
+/// outcome for counts as missed, as `score` counts it. A missed issue found in review gives no rating, because it was
+/// never proven; one that was found or half found is rated like a planted issue.
 pub fn ratings(key: &[KeyIssue], assessment: &Assessment) -> Vec<IssueRating> {
     key.iter()
         .enumerate()
-        .map(|(position, issue)| IssueRating {
-            pattern: issue.pattern.clone(),
-            rating: rating(
-                &assessment
-                    .issues
-                    .get(position)
-                    .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome),
-            ),
+        .filter_map(|(position, issue)| {
+            let outcome = assessment
+                .issues
+                .get(position)
+                .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome);
+            if issue.origin == Origin::FoundInReview && outcome == IssueOutcome::Missed {
+                return None;
+            }
+            Some(IssueRating {
+                pattern: issue.pattern.clone(),
+                rating: rating(&outcome),
+            })
         })
         .collect()
 }

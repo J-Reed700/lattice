@@ -14,8 +14,8 @@ use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::generation::parse_json;
 use crate::features::learning::model_call;
 use lattice_core::domain::learning::drills::{
-    apply, patterns_for, validate, Drill, DrillFile, Edit, Finding, FindingOutcome, KeyIssue,
-    LineSpan, Origin, Pattern, Proof, Severity,
+    apply, overlaps, patterns_for, validate, Drill, DrillFile, Edit, Finding, FindingOutcome,
+    KeyIssue, LineSpan, Origin, Pattern, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -193,13 +193,15 @@ impl DrillBuild<'_> {
             else {
                 continue;
             };
-            let known = planted.iter().chain(&extras).any(|issue| issue.fix == fix);
-            if known {
-                continue;
-            }
             let Some(span) = lines_of(&proved.files, &fix.path, &fix.before) else {
                 continue;
             };
+            let known = planted.iter().chain(&extras).any(|issue| {
+                issue.fix == fix || (issue.pattern == pattern && overlaps(&issue.span, &span))
+            });
+            if known {
+                continue;
+            }
             extras.push(KeyIssue {
                 id: format!("review-{}", extras.len() + 1),
                 pattern,
