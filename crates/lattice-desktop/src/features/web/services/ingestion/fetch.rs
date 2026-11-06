@@ -3,6 +3,7 @@
 
 use super::extract::{ExtractionStrategy, YtDlpMetadata};
 use super::WebIngestionService;
+use crate::features::web::services::web::validate_url_resolved;
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::shared::error::{AppError, Result};
 use std::fs;
@@ -170,6 +171,7 @@ impl WebIngestionService {
     }
 
     async fn download_audio_for_asr(&self, url: &str, directory: &Path) -> Result<PathBuf> {
+        validate_url_resolved(url).await?;
         let command_future = Command::new(&self.config.yt_dlp_binary)
             .arg("-f")
             .arg("bestaudio/best")
@@ -367,6 +369,7 @@ impl WebIngestionService {
     }
 
     async fn extract_video_metadata_with_ytdlp(&self, url: &str) -> Result<CleanArticle> {
+        validate_url_resolved(url).await?;
         let temp_dir = TempDirectoryGuard::new("lattice-ytdlp")?;
 
         let command_future = Command::new(&self.config.yt_dlp_binary)

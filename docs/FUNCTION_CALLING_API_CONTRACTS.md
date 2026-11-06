@@ -291,10 +291,13 @@ tool, such as a function name that fails input validation.
 - **Vault scoping**: in chat, library tools go through `scoped_document_tools`.
   Its test `every_vault_tool_is_scoped` fails when a tool is added to the
   registry without being classified as vault-reading or not.
-- **Private-address guard (CWE-918)**: `fetch_url_content` and custom tools
-  refuse non-http(s) URLs and hosts that resolve to loopback, private or
-  link-local addresses, at the first request, on every redirect, and in the
-  client's resolver (`features/web/services/web.rs`).
+- **Private-address guard (CWE-918)**: `fetch_url_content` refuses
+  non-http(s) URLs and hosts that resolve to loopback, private or link-local
+  addresses, at the first request, on every redirect, and in the client's
+  resolver (`features/web/services/web.rs`). `wiki_search` and `wiki_summary`
+  read with the same client. A custom tool calls the endpoint the user
+  configured, which may be on this machine or network, with a client that
+  follows no redirect.
 - **Size limits**: page bodies, search bodies and Wikipedia responses have byte
   caps, and `get_document` pages its output.
 - **Not implemented**: there are no per-tool rate limits and no tool-specific
