@@ -1985,6 +1985,13 @@ async fn a_commit_conflict_is_retried_once_from_a_fresh_snapshot() {
     assert_eq!(port.errors(), Vec::<String>::new());
 }
 
+/// Measured, not style: without this sentence Qwen3.8-27B answers `add: []` for
+/// windows holding the user's rule, and the rule never reaches memory.
+#[test]
+fn the_extractor_is_told_what_an_empty_add_means() {
+    assert!(super::prompts::EXTRACTOR_SYSTEM.contains("Every requirement, goal, decision, fact, preference or unresolved question the user states goes in add; add is empty only when no segment holds one."));
+}
+
 #[tokio::test]
 async fn a_review_that_cannot_be_obtained_records_ambiguity_rather_than_support() {
     let messages = four_turns();
