@@ -1038,6 +1038,28 @@ fn a_long_label_is_kept_not_refused() {
 }
 
 #[test]
+fn a_valid_patch_past_64_kib_is_not_refused_for_its_size() {
+    let quote = "Do not deploy until I approve it in writing. ".repeat(14);
+    let additions: Vec<ProposedItem> = (0..MAX_OPERATIONS_PER_RESPONSE)
+        .map(|index| {
+            constraint(
+                &format!("c{index}"),
+                &format!("Do not deploy service {index} until the user approves."),
+                (0..MAX_EVIDENCE_PER_ITEM)
+                    .map(|_| evidence("m1", &quote, "assertion"))
+                    .collect(),
+            )
+        })
+        .collect();
+    let raw = serde_json::to_string(&patch(additions, vec![])).unwrap();
+    assert!(raw.len() > 64 * 1024);
+
+    let parsed = parse_patch(&raw).expect("size alone is not a reason to refuse a patch");
+
+    assert_eq!(parsed.add.len(), MAX_OPERATIONS_PER_RESPONSE);
+}
+
+#[test]
 fn parsing_accepts_one_fence_and_nothing_looser() {
     let body = r#"{"schema_version":1,"add":[],"transitions":[],"processed_segment_ids":[]}"#;
     assert!(parse_patch(body).is_ok());
