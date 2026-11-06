@@ -347,7 +347,6 @@ Initial limits, all named configuration constants with tests:
 - One fresh-snapshot retry after a commit conflict.
 - At most 32 proposed additions/transitions per response; batches may produce more across the full job.
 - At most 4 evidence spans per item; 2,048 UTF-8 bytes per proposed span. Over-limit evidence cannot be silently clipped.
-- 64 KiB maximum structured output response before parsing.
 - At most 256 source messages or 1 MiB source bytes processed in one automatic foreground compaction attempt. Hitting this work cap returns resumable progress/error; it does not skip the remaining source range.
 
 Do not persist incomplete candidate ledger changes as active. For a large manual rebuild, intermediate fully validated chunks may be committed as staging data under a run ID, invisible to readers until the final atomic activation. Staging is optional in v1; without it, a canceled attempt restarts from the last committed watermark. No requirement to finish arbitrary archive sizes in one five-minute call.

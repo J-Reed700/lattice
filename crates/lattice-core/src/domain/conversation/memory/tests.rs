@@ -995,13 +995,6 @@ fn limits_are_enforced_before_anything_is_allocated() {
         .code(),
         "quote_too_long"
     );
-
-    assert_eq!(
-        parse_patch(&"x".repeat(MAX_PROPOSAL_BYTES + 1))
-            .unwrap_err()
-            .code(),
-        "response_too_large"
-    );
 }
 
 #[test]
