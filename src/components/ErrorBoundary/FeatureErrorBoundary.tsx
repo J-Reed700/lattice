@@ -2,9 +2,9 @@ import React from 'react';
 
 import { RefreshCw } from 'lucide-react';
 
+import { ErrorBoundary } from './ErrorBoundary';
 import { sanitizeErrorMessage } from '../../utils/redact';
 
-import { ErrorBoundary } from './ErrorBoundary';
 
 interface FeatureErrorFallbackProps {
   error: Error;

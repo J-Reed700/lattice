@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { getUserFriendlyMessage, redact, redactSecrets, sanitizeErrorMessage } from '../redact';
-
 import { SANITIZED_MESSAGE, SENSITIVE_MESSAGE } from './sensitiveMessage';
 
 const OPAQUE_KEY = `key-${'Zq8x'.repeat(11)}`;
