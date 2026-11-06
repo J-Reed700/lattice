@@ -11,12 +11,20 @@ import replay_memory_extract_ab as replay
 
 
 class PromptTests(unittest.TestCase):
-    def test_the_sentence_can_be_put_in_and_taken_out(self):
-        system = replay.extractor_system()
-        with_it = replay.with_sentence(system)
-        self.assertIn(f"{replay.BEFORE_SENTENCE} {replay.SENTENCE}", with_it)
-        self.assertEqual(replay.with_sentence(with_it), with_it)
-        self.assertNotIn(replay.SENTENCE, replay.without_sentence(with_it))
+    def test_each_arm_holds_its_own_wording_whichever_the_tree_holds(self):
+        tree = replay.extractor_system()
+        for system in (tree, replay.arm_system(tree, replay.SENTENCE), replay.arm_system(tree, replay.DIRECT)):
+            bare = replay.arm_system(system)
+            self.assertNotIn(replay.SENTENCE, bare)
+            self.assertNotIn(replay.DIRECT, bare)
+            for wording in (replay.SENTENCE, replay.DIRECT):
+                arm = replay.arm_system(system, wording)
+                self.assertEqual(arm.count(f"{replay.BEFORE_SENTENCE} {wording}"), 1)
+                self.assertEqual(len(arm), len(bare) + len(wording) + 1)
+
+    def test_every_arm_names_only_settings_the_replay_knows(self):
+        for arm in replay.ARMS.values():
+            self.assertLessEqual({key for key in arm if key.startswith("_")}, {"_adds", "_bounded_label"})
 
     def test_a_payload_ends_with_the_passages_and_the_task(self):
         segments, _ = replay.window("early_restriction", 1)

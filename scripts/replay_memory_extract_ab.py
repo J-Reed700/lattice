@@ -8,11 +8,12 @@ window's message ids depend only on the family and the seed, so every arm sees t
 An answer is `hit` for each text the family requires that an item's evidence quotes, and `empty` when `add` is empty.
 
 Arms:
-  with_sentence     the extractor's prompt holding "Return only JSON matching the requested schema..."
-  without_sentence  the same prompt without it
-  repeat_1.1        without the sentence, repeat_penalty 1.1 as before #43
-  effort_none       without the sentence, reasoning_effort "none" as before #43
-  bounded_label     without the sentence, the label's maxLength 200 as before #301
+  direct            the extractor's prompt saying what belongs in `add` and when it is empty, as shipped
+  with_sentence     holding "Return only JSON matching the requested schema..." instead, as before #43
+  without_sentence  holding neither, as #43 left it
+  repeat_1.1        holding neither, repeat_penalty 1.1 as before #43
+  effort_none       holding neither, reasoning_effort "none" as before #43
+  bounded_label     holding neither, the label's maxLength 200 as before #301
 
   python -X utf8 -I -u scripts/replay_memory_extract_ab.py --out OUT [--llama URL | --claude MODEL] [--arms A,B] [--families F,G]
   python -X utf8 -I scripts/replay_memory_extract_ab.py --summary OUT
@@ -38,6 +39,7 @@ OVERLAP_CHARS = 256
 MIN_SEGMENT_DIVISOR = 4
 OUTPUT_TOKENS = 8192
 SENTENCE = "Return only JSON matching the requested schema, with no commentary, explanation, or markdown outside it."
+DIRECT = "Every requirement, goal, decision, fact, preference or unresolved question the user states goes in add; add is empty only when no segment holds one."
 BEFORE_SENTENCE = "Never classify an action request as a decision."
 # How many segments the release baseline's first extraction batch holds, read from its traces.
 FIRST_WINDOW = {
@@ -55,11 +57,12 @@ FIRST_WINDOW = {
     "narrowed_constraint": 6,
 }
 ARMS = {
-    "with_sentence": {"_sentence": True},
-    "without_sentence": {"_sentence": False},
-    "repeat_1.1": {"_sentence": False, "repeat_penalty": 1.1},
-    "effort_none": {"_sentence": False, "reasoning_effort": "none"},
-    "bounded_label": {"_sentence": False, "_bounded_label": True},
+    "direct": {"_adds": DIRECT},
+    "with_sentence": {"_adds": SENTENCE},
+    "without_sentence": {},
+    "repeat_1.1": {"repeat_penalty": 1.1},
+    "effort_none": {"reasoning_effort": "none"},
+    "bounded_label": {"_bounded_label": True},
 }
 
 
@@ -69,15 +72,12 @@ def extractor_system(path=PROMPTS):
     return literal.replace('\\"', '"').replace("\\n", "\n")
 
 
-def with_sentence(system):
-    if SENTENCE in system:
-        return system
-    assert system.count(BEFORE_SENTENCE) == 1
-    return system.replace(BEFORE_SENTENCE, f"{BEFORE_SENTENCE} {SENTENCE}")
-
-
-def without_sentence(system):
-    return system.replace(f" {SENTENCE}", "")
+def arm_system(system, adds=None):
+    bare = system.replace(f" {SENTENCE}", "").replace(f" {DIRECT}", "")
+    if adds is None:
+        return bare
+    assert bare.count(BEFORE_SENTENCE) == 1
+    return bare.replace(BEFORE_SENTENCE, f"{BEFORE_SENTENCE} {adds}")
 
 
 def sorted_keys(value):
@@ -319,7 +319,7 @@ def run(args):
                     if (name, family, seed) in done:
                         continue
                     arm = ARMS[name]
-                    prompt = with_sentence(system) if arm["_sentence"] else without_sentence(system)
+                    prompt = arm_system(system, arm.get("_adds"))
                     body = llama_body(model, prompt, user, arm)
                     if args.claude:
                         answer = claude.call(body, "extract")
@@ -361,7 +361,7 @@ def main():
     ap.add_argument("--out")
     ap.add_argument("--summary")
     ap.add_argument("--seeds", type=int, default=6)
-    ap.add_argument("--arms", default="with_sentence,without_sentence")
+    ap.add_argument("--arms", default="direct,without_sentence")
     ap.add_argument("--families", default=",".join(FIRST_WINDOW))
     ap.add_argument("--llama", default=os.environ.get("LLAMA", "http://127.0.0.1:8089"))
     ap.add_argument("--claude", help="ask this Claude model, as cloud.rs sends it, instead of the llama-server")
