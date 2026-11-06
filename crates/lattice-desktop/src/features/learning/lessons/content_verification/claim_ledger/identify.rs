@@ -411,8 +411,7 @@ impl ClaimLedger {
         let Some(entry) = self.entry(id) else {
             return false;
         };
-        if entry.state().is_settled() || entry.state().awaits_user() || entry.classified().is_none()
-        {
+        if entry.state().is_the_users_decision() || entry.classified().is_none() {
             return false;
         }
         let location = entry.location();
@@ -425,9 +424,9 @@ impl ClaimLedger {
     /// finds another statement, `statement`: a repair the job checkpointed
     /// when one of `repairs` is for the claim's section and the lesson those
     /// repairs started from held the sentence, something outside the pipeline
-    /// otherwise. None for a claim one of `repairs` is for, one the user holds
-    /// or edited, a code example's, one whose sentence stands, and one that
-    /// states the same.
+    /// otherwise. None for a claim one of `repairs` is for, one that holds the
+    /// user's decision or that they edited, a code example's, one whose sentence
+    /// stands, and one that states the same.
     fn written_over<'r>(
         &self,
         candidate: &Value,
@@ -438,8 +437,7 @@ impl ClaimLedger {
             return None;
         }
         let entry = self.entry(id)?;
-        if entry.state().is_settled() || entry.state().awaits_user() || entry.classified().is_none()
-        {
+        if entry.state().is_the_users_decision() || entry.classified().is_none() {
             return None;
         }
         let location = entry.location();

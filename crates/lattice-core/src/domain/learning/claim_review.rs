@@ -380,6 +380,15 @@ impl ClaimState {
         )
     }
 
+    /// Holds a decision of the user's: settled, or reopened from one. A queued
+    /// claim, or a machine's check reopened, only waits for them.
+    pub fn is_the_users_decision(&self) -> bool {
+        match self {
+            Self::Reopened { previous, .. } => previous.is_the_users_decision(),
+            state => state.is_settled(),
+        }
+    }
+
     /// The failure an Open or Queued claim carries.
     pub fn verdict(&self) -> Option<&VerdictKind> {
         match self {
