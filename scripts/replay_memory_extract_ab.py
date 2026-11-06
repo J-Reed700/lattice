@@ -8,12 +8,17 @@ window's message ids depend only on the family and the seed, so every arm sees t
 An answer is `hit` for each text the family requires that an item's evidence quotes, and `empty` when `add` is empty.
 
 Arms:
-  direct            the extractor's prompt saying what belongs in `add` and when it is empty, as shipped
-  with_sentence     holding "Return only JSON matching the requested schema..." instead, as before #43
-  without_sentence  holding neither, as #43 left it
-  repeat_1.1        holding neither, repeat_penalty 1.1 as before #43
-  effort_none       holding neither, reasoning_effort "none" as before #43
-  bounded_label     holding neither, the label's maxLength 200 as before #301
+  direct              the extractor's prompt saying what belongs in `add` and when it is empty, as shipped
+  direct_end          the same sentence at the prompt's end
+  with_sentence       holding "Return only JSON matching the requested schema..." instead, as before #43
+  sentence_end        that sentence at the prompt's end
+  short               holding "Return only JSON."
+  schema              holding "Return JSON matching the requested schema."
+  without_sentence    holding none of them, as #43 left it
+  repeat_1.1          holding none, repeat_penalty 1.1 as before #43
+  effort_none         holding none, reasoning_effort "none" as before #43
+  bounded_label       holding none, the label's maxLength 200 as before #301
+  request_2026_09_26  all that request's settings: with_sentence, repeat_1.1, effort_none and bounded_label
 
   python -X utf8 -I -u scripts/replay_memory_extract_ab.py --out OUT [--llama URL | --claude MODEL] [--arms A,B] [--families F,G]
   python -X utf8 -I scripts/replay_memory_extract_ab.py --summary OUT
@@ -58,11 +63,16 @@ FIRST_WINDOW = {
 }
 ARMS = {
     "direct": {"_adds": DIRECT},
+    "direct_end": {"_ends": DIRECT},
     "with_sentence": {"_adds": SENTENCE},
+    "sentence_end": {"_ends": SENTENCE},
+    "short": {"_adds": "Return only JSON."},
+    "schema": {"_adds": "Return JSON matching the requested schema."},
     "without_sentence": {},
     "repeat_1.1": {"repeat_penalty": 1.1},
     "effort_none": {"reasoning_effort": "none"},
     "bounded_label": {"_bounded_label": True},
+    "request_2026_09_26": {"_adds": SENTENCE, "repeat_penalty": 1.1, "reasoning_effort": "none", "_bounded_label": True},
 }
 
 
@@ -72,8 +82,10 @@ def extractor_system(path=PROMPTS):
     return literal.replace('\\"', '"').replace("\\n", "\n")
 
 
-def arm_system(system, adds=None):
+def arm_system(system, adds=None, ends=None):
     bare = system.replace(f" {SENTENCE}", "").replace(f" {DIRECT}", "")
+    if ends:
+        return f"{bare.rstrip()} {ends}"
     if adds is None:
         return bare
     assert bare.count(BEFORE_SENTENCE) == 1
@@ -319,7 +331,7 @@ def run(args):
                     if (name, family, seed) in done:
                         continue
                     arm = ARMS[name]
-                    prompt = arm_system(system, arm.get("_adds"))
+                    prompt = arm_system(system, arm.get("_adds"), arm.get("_ends"))
                     body = llama_body(model, prompt, user, arm)
                     if args.claude:
                         answer = claude.call(body, "extract")

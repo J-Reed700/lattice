@@ -24,7 +24,12 @@ class PromptTests(unittest.TestCase):
 
     def test_every_arm_names_only_settings_the_replay_knows(self):
         for arm in replay.ARMS.values():
-            self.assertLessEqual({key for key in arm if key.startswith("_")}, {"_adds", "_bounded_label"})
+            self.assertLessEqual({key for key in arm if key.startswith("_")}, {"_adds", "_ends", "_bounded_label"})
+
+    def test_an_arm_at_the_end_closes_the_prompt(self):
+        system = replay.arm_system(replay.extractor_system(), ends=replay.DIRECT)
+        self.assertTrue(system.endswith(f" {replay.DIRECT}"))
+        self.assertEqual(system.count(replay.DIRECT), 1)
 
     def test_a_payload_ends_with_the_passages_and_the_task(self):
         segments, _ = replay.window("early_restriction", 1)
