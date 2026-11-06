@@ -12,8 +12,9 @@ use std::sync::OnceLock;
 use crate::shared::error::{AppError, Result};
 
 /// When set and not empty, replaces `~/.lattice` as the parent of every root
-/// below. A second copy of the app on one machine sets it to a folder of its
-/// own, so neither collects the other's files.
+/// below, and puts the default vault at `<LATTICE_HOME>/Lattice` instead of
+/// `~/Lattice`. A second copy of the app on one machine sets it to a folder of
+/// its own, so neither collects or writes into the other's files.
 pub const LATTICE_HOME_ENV: &str = "LATTICE_HOME";
 
 static USERS_HOME: AtomicBool = AtomicBool::new(false);
@@ -28,8 +29,8 @@ pub fn use_the_users_home() {
 /// `$LATTICE_HOME`, else `~/.lattice` for the app and a scratch home for any
 /// other process: the parent of every root below.
 fn lattice_home() -> Result<PathBuf> {
-    if let Some(home) = std::env::var_os(LATTICE_HOME_ENV).filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(home));
+    if let Some(home) = lattice_home_override() {
+        return Ok(home);
     }
     if !USERS_HOME.load(Ordering::SeqCst) {
         return Ok(scratch_home().clone());
@@ -37,6 +38,13 @@ fn lattice_home() -> Result<PathBuf> {
     let home = dirs::home_dir()
         .ok_or_else(|| AppError::InvalidState("Cannot determine home directory".to_string()))?;
     Ok(home.join(".lattice"))
+}
+
+/// `$LATTICE_HOME`, when set and not empty.
+fn lattice_home_override() -> Option<PathBuf> {
+    std::env::var_os(LATTICE_HOME_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
 }
 
 /// One per process, under the system temp folder, laid out as a home is.
@@ -70,13 +78,16 @@ pub fn web_snapshots_root() -> Result<PathBuf> {
     Ok(lattice_home()?.join("web-snapshots"))
 }
 
-/// The markdown vault: the configured path, or `<home>/Lattice` when the
-/// setting is empty. Only the app's home is the user's; any other process
-/// gets `Lattice` beside its scratch lattice home.
+/// The markdown vault: the configured path, or when the setting is empty
+/// `<LATTICE_HOME>/Lattice` if that is set, else `~/Lattice` for the app and
+/// `Lattice` beside the scratch lattice home for any other process.
 pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
     let trimmed = configured.trim();
     if !trimmed.is_empty() {
         return Some(PathBuf::from(trimmed));
+    }
+    if let Some(home) = lattice_home_override() {
+        return Some(home.join("Lattice"));
     }
     if !USERS_HOME.load(Ordering::SeqCst) {
         return scratch_home().parent().map(|home| home.join("Lattice"));
