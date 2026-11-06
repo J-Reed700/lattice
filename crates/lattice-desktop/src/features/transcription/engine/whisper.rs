@@ -52,6 +52,8 @@ pub fn prefer_float_weights() {
     std::env::set_var("CANDLE_DEQUANTIZE_ALL", "1");
 }
 
+pub fn limit_candle_threads() {}
+
 fn idle_expired(last_used: Instant, now: Instant, idle_ttl: Duration) -> bool {
     now.saturating_duration_since(last_used) >= idle_ttl
 }
