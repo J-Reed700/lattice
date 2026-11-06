@@ -101,9 +101,15 @@ impl LessonVerificationReport {
                     .get(source.id.as_str())
                     .is_some_and(|version| version.content_sha256 == source.sha256)
             });
-        let teaching_claims = self
-            .findings
-            .iter()
+        // A statement the model sorted Internal ends as no claim: the learner reads it as lesson text alone.
+        let claims = || {
+            self.findings.iter().filter(|finding| {
+                finding
+                    .class
+                    .is_none_or(|classed| classed.class != Class::Internal)
+            })
+        };
+        let teaching_claims = claims()
             .filter(|finding| finding.unit < lesson.blocks.len())
             .map(|finding| {
                 let passages = finding
@@ -193,10 +199,8 @@ impl LessonVerificationReport {
             retrieval_mode: self.retrieval_mode.clone(),
             embedding_model: self.embedding_model.clone(),
             content_sha256: self.content_sha256.clone(),
-            claim_count: self.findings.len(),
-            confirmed_count: self
-                .findings
-                .iter()
+            claim_count: claims().count(),
+            confirmed_count: claims()
                 .filter(|finding| matches!(finding.resolution, Some(Resolution::Confirmed { .. })))
                 .count(),
             executed_examples: self.executions.len(),
