@@ -84,6 +84,14 @@ class MechanicalChecks(unittest.TestCase):
                        'I searched for "ERR-0001 runbook error code owner" and it is 14 days [1].'):
             self.assertEqual(spe.mechanical(rubric(), turn(answer))["invented_quotes"], [], answer)
 
+    def test_a_cited_quote_of_the_document_name_or_heading_a_passage_shows_is_held(self):
+        passage = [{"content": "## Actions\nIlse Brantgard owns the drift report, due 2031-10-25.",
+                    "file_name": "Merridew platform sync \u2014 week 11.md",
+                    "section": "Merridew platform sync \u2014 week 11 > Actions"}]
+        for answer in ('It is 14 days, in the minutes for "Merridew platform sync \u2014 week 11" [1].',
+                       'It is 14 days, under "Merridew platform sync \u2014 week 11 > Actions" [1].'):
+            self.assertEqual(spe.mechanical(rubric(), turn(answer, evidence=passage))["invented_quotes"], [], answer)
+
     def test_invented_citation_number_fails(self):
         checks = spe.mechanical(rubric(), turn("14 days [1][3]."))
         self.assertEqual(checks["invalid_citations"], [3])
