@@ -426,10 +426,11 @@ fn the_answer_reservation_is_measured_from_the_planned_room() {
 fn a_reason_and_quote_longer_than_the_planned_room_are_read_whole() {
     let text = "Pure water boils at 100 °C at sea level. ".repeat(20);
     let quote = text.trim().to_string();
-    let reason = "The passage says so at length. ".repeat(30).trim().to_string();
-    assert!(
-        quote.chars().count() > QUOTE_ROOM_CHARS && reason.chars().count() > REASON_ROOM_CHARS
-    );
+    let reason = "The passage says so at length. "
+        .repeat(30)
+        .trim()
+        .to_string();
+    assert!(quote.chars().count() > QUOTE_ROOM_CHARS && reason.chars().count() > REASON_ROOM_CHARS);
     let claims = vec![claim(
         "Water boils at 100 °C at sea level.",
         vec![passage("v1", &text)],

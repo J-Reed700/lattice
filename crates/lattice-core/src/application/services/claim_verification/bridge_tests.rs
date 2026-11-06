@@ -479,7 +479,10 @@ fn the_part_wise_check_holds_less_than_the_consistency_check_and_more_than_the_s
 
 #[tokio::test]
 async fn a_reason_past_600_characters_is_kept_whole() {
-    let reason = "The passage states the first part. ".repeat(20).trim().to_string();
+    let reason = "The passage states the first part. "
+        .repeat(20)
+        .trim()
+        .to_string();
     assert!(reason.chars().count() > 600);
     let llm = Scripted::new(vec![Reply::Text(
         json!({"parts": [stated("Quillet is a lexer.")], "verdict": "supported", "reason": reason})
