@@ -98,6 +98,9 @@ mod tests {
     /// [`CLAIMED`] as its value makes the child claim the user's home first.
     const PROBE: &str = "LATTICE_ROOTS_PROBE";
     const CLAIMED: &str = "claimed";
+    /// The vault setting the child passes to `resolve_vault_root`; unset means
+    /// none configured.
+    const CONFIGURED_VAULT: &str = "LATTICE_ROOTS_CONFIGURED_VAULT";
 
     /// What a child process resolved: the name of each root and where it is.
     /// The variable is set only on the child, never on the process running the
@@ -154,23 +157,38 @@ mod tests {
         ] {
             println!("ROOT\t{name}\t{}", root.unwrap().display());
         }
-        if let Some(vault) = resolve_vault_root("") {
+        let configured = std::env::var(CONFIGURED_VAULT).unwrap_or_default();
+        if let Some(vault) = resolve_vault_root(&configured) {
             println!("VAULT\t{}", vault.display());
         }
     }
 
     /// The vault a child process resolves when none is configured.
     fn default_vault_of_child(probe: &str) -> Option<PathBuf> {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        vault_of_child(probe, None, "")
+    }
+
+    /// The vault a child process resolves for `configured`, with
+    /// `LATTICE_HOME` set to `home` or removed.
+    fn vault_of_child(probe: &str, home: Option<&str>, configured: &str) -> Option<PathBuf> {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
             .args([
                 "--exact",
                 "shared::fs::roots::tests::print_roots",
                 "--nocapture",
             ])
-            .env(PROBE, probe)
-            .env_remove(LATTICE_HOME_ENV)
-            .output()
-            .unwrap();
+            .env(PROBE, probe);
+        if configured.is_empty() {
+            child.env_remove(CONFIGURED_VAULT);
+        } else {
+            child.env(CONFIGURED_VAULT, configured);
+        }
+        match home {
+            Some(value) => child.env(LATTICE_HOME_ENV, value),
+            None => child.env_remove(LATTICE_HOME_ENV),
+        };
+        let output = child.output().unwrap();
         String::from_utf8_lossy(&output.stdout)
             .lines()
             .find_map(|line| {
@@ -198,6 +216,48 @@ mod tests {
             "the default vault is the user's at {}",
             vault.display()
         );
+    }
+
+    #[test]
+    fn lattice_home_moves_the_default_vault_for_every_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let second = dir.path().join("second");
+        for probe in [CLAIMED, "1"] {
+            assert_eq!(
+                vault_of_child(probe, Some(second.to_str().unwrap()), ""),
+                Some(second.join("Lattice")),
+                "probe {probe}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_lattice_home_leaves_the_default_vault_as_if_unset() {
+        let users = dirs::home_dir().unwrap().join("Lattice");
+        assert_eq!(
+            vault_of_child(CLAIMED, Some(""), ""),
+            Some(users.clone()),
+            "a claimed process"
+        );
+        let vault = vault_of_child("1", Some(""), "").expect("a default vault");
+        assert_ne!(vault, users);
+        assert!(vault.ends_with("Lattice"));
+    }
+
+    #[test]
+    fn a_configured_vault_wins_over_lattice_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let second = dir.path().join("second");
+        let configured = dir.path().join("mine");
+        for probe in [CLAIMED, "1"] {
+            for home in [None, Some(second.to_str().unwrap())] {
+                assert_eq!(
+                    vault_of_child(probe, home, configured.to_str().unwrap()),
+                    Some(configured.clone()),
+                    "probe {probe}, home {home:?}"
+                );
+            }
+        }
     }
 
     fn all_under(home: &Path) -> Vec<(String, PathBuf)> {
