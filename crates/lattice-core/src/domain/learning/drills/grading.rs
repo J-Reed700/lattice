@@ -284,10 +284,10 @@ pub fn score(key: &[KeyIssue], findings: &[Finding], assessment: &Assessment) ->
         valid_extras,
         false_positives,
         by_severity,
-        weighted_recall: if possible == 0.0 {
-            1.0
-        } else {
+        weighted_recall: if possible > 0.0 {
             earned / possible
+        } else {
+            1.0
         },
         precision: if findings.is_empty() {
             None

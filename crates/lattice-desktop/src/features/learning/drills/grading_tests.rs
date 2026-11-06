@@ -877,6 +877,7 @@ async fn an_odd_key_and_review_are_still_shown_whole() -> Result<()> {
         span("orders.py", 2, 2),
         "It is odd.",
     ));
+    scene.drill.key[3].origin = Origin::FoundInReview;
     scene.findings = vec![
         finding(
             Some(span("ghost.py", 1, 2)),

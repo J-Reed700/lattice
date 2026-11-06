@@ -188,9 +188,7 @@ pub struct CodeReviewRevealDto {
     /// Every finding of the learner's, in the order they made them.
     pub findings: Vec<RevealedFindingDto>,
     pub score: CodeReviewScoreDto,
-    /// How well the patterns of the key's issues were recognised, one entry for each rated issue: an attempt graded
-    /// before review-found issues stopped being rated holds one for every key issue, and a review-found issue that was
-    /// not raised has none.
+    /// How well the patterns of the key's issues were recognised. A review-found issue that was not raised has none.
     pub ratings: Vec<RatedPatternDto>,
     /// What came of the learner's fix for each key issue, when they wrote one.
     pub fix: Option<Vec<IssueFix>>,
