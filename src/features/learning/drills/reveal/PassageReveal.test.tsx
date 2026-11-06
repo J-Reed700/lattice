@@ -34,6 +34,7 @@ const ISSUE: RevealedIssueDto = {
   outcome: 'found',
   finding: 0,
   reason: 'Your comment names the figure.',
+  alsoValid: false,
 };
 
 const FIX: IssueFix = {

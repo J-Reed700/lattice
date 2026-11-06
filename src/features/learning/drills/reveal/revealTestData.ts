@@ -155,6 +155,7 @@ export const UNBOUNDED_GROWTH: RevealedIssueDto = {
       { kind: 'added', text: '        self.hits.clear()' },
     ],
   },
+  sourceQuote: null,
   outcome: 'missed',
   finding: null,
   reason: 'No comment mentions the growth.',
