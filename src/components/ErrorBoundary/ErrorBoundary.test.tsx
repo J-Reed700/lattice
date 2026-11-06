@@ -5,7 +5,7 @@
  */
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { ErrorBoundary } from './ErrorBoundary';
 import { FullPageError } from './FullPageError';
@@ -188,6 +188,16 @@ describe('SectionErrorBoundary', () => {
   });
 });
 
+const SENSITIVE_MESSAGE =
+  'Failed for alice@example.com with token 0123456789abcdef0123456789abcdef at 192.168.1.42: C:\\Users\\alice\\secret.txt';
+const SANITIZED_MESSAGE = 'Failed for [EMAIL] with token [TOKEN] at [IP]: [PATH]';
+const SENSITIVE_PARTS = [
+  'alice@example.com',
+  '0123456789abcdef0123456789abcdef',
+  '192.168.1.42',
+  'secret.txt',
+];
+
 describe('FullPageError', () => {
   const mockError = new Error('Test error message');
   const mockErrorInfo = {
@@ -259,6 +269,62 @@ describe('FullPageError', () => {
 
     expect(screen.getByText(/Copy/i)).toBeDefined();
   });
+
+  it('strips paths, tokens, emails, and IPs from the user-facing error message', () => {
+    const sensitiveError = new Error(
+      'Failed for alice@example.com with token 0123456789abcdef0123456789abcdef at 192.168.1.42: C:\\Users\\alice\\secret.txt'
+    );
+    render(
+      <FullPageError
+        error={sensitiveError}
+        errorInfo={mockErrorInfo}
+        resetError={mockReset}
+      />
+    );
+
+    expect(
+      screen.getByText('Failed for [EMAIL] with token [TOKEN] at [IP]: [PATH]')
+    ).toBeDefined();
+  });
+
+  describe('details', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('shows no sensitive text in production details', () => {
+      vi.stubEnv('DEV', false);
+      const { container } = render(
+        <FullPageError
+          error={new Error(SENSITIVE_MESSAGE)}
+          errorInfo={mockErrorInfo}
+          resetError={mockReset}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Show details'));
+
+      expect(screen.getAllByText(SANITIZED_MESSAGE)).toHaveLength(2);
+      for (const part of SENSITIVE_PARTS) {
+        expect(container.textContent).not.toContain(part);
+      }
+    });
+
+    it('shows the raw message in development details', () => {
+      vi.stubEnv('DEV', true);
+      render(
+        <FullPageError
+          error={new Error(SENSITIVE_MESSAGE)}
+          errorInfo={mockErrorInfo}
+          resetError={mockReset}
+        />
+      );
+
+      fireEvent.click(screen.getByText('Show details'));
+
+      expect(screen.getByText(SENSITIVE_MESSAGE)).toBeDefined();
+    });
+  });
 });
 
 describe('SectionError', () => {
@@ -315,6 +381,21 @@ describe('SectionError', () => {
     );
 
     expect(screen.getByText(/Couldn't load/i)).toBeDefined();
+  });
+
+  it('strips paths, tokens, emails, and IPs from the message', () => {
+    const { container } = render(
+      <SectionError
+        error={new Error(SENSITIVE_MESSAGE)}
+        resetError={mockReset}
+        sectionName="Search"
+      />
+    );
+
+    expect(screen.getByText(SANITIZED_MESSAGE)).toBeDefined();
+    for (const part of SENSITIVE_PARTS) {
+      expect(container.textContent).not.toContain(part);
+    }
   });
 });
 
