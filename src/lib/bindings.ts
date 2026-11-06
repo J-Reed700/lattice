@@ -9289,7 +9289,11 @@ finding: number | null;
 /**
  * The judge's reason for the outcome.
  */
-reason: string }
+reason: string;
+/**
+ * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
+ */
+alsoValid: boolean }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**

@@ -10,7 +10,7 @@ use super::dto::{
 };
 use super::repository::StoredDrill;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, FindingOutcome, IssueOutcome, KeyIssue,
+    line_diff, pattern, FindingOutcome, IssueOutcome, KeyIssue, Origin,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -155,6 +155,7 @@ fn revealed_issue(issue: &KeyIssue, outcome: IssueOutcome, reason: String) -> Re
         outcome: kind,
         finding,
         reason,
+        also_valid: issue.origin == Origin::FoundInReview,
     }
 }
 

@@ -21,8 +21,8 @@ use crate::features::learning::generation::parse_json;
 use crate::features::learning::lessons::structured_call::complete_checked;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{
-    apply, overlaps, pattern, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck, IssueFix,
-    KeyIssue, LineSpan, Origin, Proof, SuiteVerdict,
+    apply, overlaps, pattern, Assessment, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck,
+    IssueFix, KeyIssue, LineSpan, Origin, Proof, SuiteVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -39,6 +39,8 @@ pub(in crate::features::learning) struct FixCase<'a> {
     pub learner: &'a [DrillFile],
     /// The hidden suite, in a runner language.
     pub suite: Option<&'a str>,
+    /// The judge's assessment of the learner's review.
+    pub assessment: &'a Assessment,
 }
 
 /// The result for every key issue, in the key's order. A run cancelled while grading is an error, which the job

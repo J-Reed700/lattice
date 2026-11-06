@@ -245,6 +245,8 @@ pub struct RevealedIssueDto {
     pub finding: Option<usize>,
     /// The judge's reason for the outcome.
     pub reason: String,
+    /// Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
+    pub also_valid: bool,
 }
 
 /// One finding of the learner's, with what came of it.
