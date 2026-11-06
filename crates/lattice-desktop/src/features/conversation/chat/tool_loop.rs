@@ -288,6 +288,9 @@ pub(super) async fn run_agentic_tool_loop(
     }
     let mut condensed = 0;
     let mut iteration = first_round;
+    // A reply with nothing in it is asked for once more: Claude's classifiers
+    // can stop one after its thinking, and the next may not be.
+    let mut asked_again_for_nothing = false;
     // A forced round runs even after the last: the round it stands in for was
     // cut short, not finished.
     while iteration < max_tool_rounds || forced.is_some() {
@@ -509,9 +512,24 @@ pub(super) async fn run_agentic_tool_loop(
             step: generate_step,
         } = round;
         if response.text.trim().is_empty() && response.tool_calls.is_empty() {
-            return Err(AppError::InvalidState(
-                "Model returned no answer or tool calls".into(),
-            ));
+            if asked_again_for_nothing {
+                return Err(AppError::InvalidState(
+                    "Model returned no answer or tool calls".into(),
+                ));
+            }
+            asked_again_for_nothing = true;
+            tracing::warn!(
+                finish_reason = %response.finish_reason,
+                "The model returned nothing; asking again"
+            );
+            generate_step.failed(Some("The model returned nothing".into()));
+            recorder.note(
+                TurnStepKind::Retry,
+                "Asking again for the answer",
+                None,
+                Some("the model returned nothing".into()),
+            );
+            continue;
         }
         tracing::info!(input_tokens = response.input_tokens, output_tokens = response.output_tokens, finish_reason = %response.finish_reason, "Native LLM completion");
         // The round that produces the answer reports the turn's usage.
