@@ -108,6 +108,27 @@ fn explanation_keeps_the_reason_and_only_accepts_an_exact_source_quote() {
     assert_eq!(rejected.quote, None);
 }
 
+#[test]
+fn a_reason_past_600_characters_is_kept_whole() {
+    let evidence = ClaimEvidence {
+        text: "[1]
+The mill closed in 1887.".into(),
+        quote: None,
+    };
+    let reason = "The passage gives a different year than the claim. "
+        .repeat(14)
+        .trim()
+        .to_string();
+    assert!(reason.chars().count() > 600);
+    let parsed = parse_judge_explanation(
+        &format!("unsupported
+Reason: {reason}"),
+        &evidence,
+        ClaimVerdict::Unsupported,
+    );
+    assert_eq!(parsed.reason.as_deref(), Some(reason.as_str()));
+}
+
 /// The case that kept failing: one page says "6-8 hours" around char
 /// 10,000 and "south-facing" around char 11,900. A sentence joining the two
 /// must be judged against both, not against whichever window scored best.
