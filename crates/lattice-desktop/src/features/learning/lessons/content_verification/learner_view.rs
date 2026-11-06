@@ -306,17 +306,19 @@ mod tests {
     }
 
     #[test]
-    fn a_statement_the_model_called_internal_reaches_the_learner_with_no_class() {
+    fn a_statement_the_model_called_internal_is_not_shown_or_counted_as_a_checked_claim() {
         let (lesson, mut report) = fixture();
-        report.findings[0].class = Some(Classed {
+        report.findings.push(report.findings[0].clone());
+        report.findings[1].class = Some(Classed {
             class: Class::Internal,
             by: ClassifiedBy::Model,
         });
 
-        let claim = &report.learner_view(&lesson, &[]).unwrap().teaching_claims[0];
+        let view = report.learner_view(&lesson, &[]).unwrap();
 
-        assert_eq!(claim.class, None);
-        assert_eq!(claim.verdict, "supported");
+        assert_eq!(view.teaching_claims.len(), 1);
+        assert_eq!(view.teaching_claims[0].class, None);
+        assert_eq!(view.claim_count, 1);
     }
 
     #[test]
