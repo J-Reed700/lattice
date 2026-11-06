@@ -720,6 +720,65 @@ mod tests {
         Ok(())
     }
 
+    /// `ScriptedModel` with a window of `.1` tokens.
+    struct Window<'a>(&'a ScriptedModel, usize);
+
+    #[async_trait::async_trait]
+    impl LLMPort for Window<'_> {
+        async fn complete(
+            &self,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            self.0.complete(request).await
+        }
+        fn model_name(&self) -> &str {
+            self.0.model_name()
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            self.0.count_tokens(text)
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.1
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// The review carries the lesson beside the writer's prompt, whose
+    /// excerpts filled the room the writer had: on a 9B's 32k window the
+    /// review of a PostgreSQL lesson did not fit, and the lesson failed after
+    /// an hour of checked work (2026-11-06). Six excerpts of 2,000 tokens
+    /// here, the lesson citing the fifth, in a window that holds some.
+    #[tokio::test]
+    async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_first(
+    ) -> Result<()> {
+        let sources: Vec<_> = (0..6)
+            .map(|index| json!({"sourceIndex":index,"title":format!("Source {index}"),"url":null,"excerpt":"x ".repeat(4000)}))
+            .collect();
+        let mut lesson = candidate();
+        lesson["blocks"][1]["sourceIndex"] = json!(4);
+        let scripted = model(vec![
+            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])}),
+        ]);
+        let window = Window(&scripted, 13_000);
+
+        review(
+            &window,
+            "Review instructional quality.",
+            json!({"authoringContext":{"goal":"Read query plans.","sources":sources}}),
+            &lesson,
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
+
+        let sent = scripted.prompts.lock().unwrap()[0].clone();
+        assert!(sent.contains("Source 4"));
+        assert!(!sent.contains("Source 5"));
+        Ok(())
+    }
+
     #[test]
     fn the_review_schema_bounds_no_text_but_a_blank() {
         let (_, passages) = review_candidate(&candidate());
