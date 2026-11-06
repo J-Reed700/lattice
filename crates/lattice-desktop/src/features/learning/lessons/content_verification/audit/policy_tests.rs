@@ -419,3 +419,41 @@ fn the_answer_reservation_is_measured_from_the_planned_room() {
     );
     assert!(envelope_reserve(&llm) > 0);
 }
+
+/// Guards that pass before and after the schema stopped bounding the text:
+/// the reader never cut a reason or a quote, and must not start to.
+#[test]
+fn a_reason_and_quote_longer_than_the_planned_room_are_read_whole() {
+    let text = "Pure water boils at 100 °C at sea level. ".repeat(20);
+    let quote = text.trim().to_string();
+    let reason = "The passage says so at length. ".repeat(30).trim().to_string();
+    assert!(
+        quote.chars().count() > QUOTE_ROOM_CHARS && reason.chars().count() > REASON_ROOM_CHARS
+    );
+    let claims = vec![claim(
+        "Water boils at 100 °C at sea level.",
+        vec![passage("v1", &text)],
+        false,
+    )];
+    let rendered = render(&claims, &units(), &[item(0, vec![0], Context::Unit)]);
+    let answer = json!({"verdicts": [{
+        "claim": "C1",
+        "verdict": "supported",
+        "reason": reason,
+        "passagesUsed": [{"passage": "P1", "quote": quote}]
+    }]});
+
+    let judged = read(&answer.to_string(), &rendered, &[])
+        .unwrap()
+        .remove(0)
+        .unwrap();
+
+    assert_eq!(judged.reason, reason);
+    assert_eq!(
+        judged.result,
+        CheckResult::Supported {
+            source_version_id: "v1".into(),
+            supporting_quote: quote
+        }
+    );
+}
