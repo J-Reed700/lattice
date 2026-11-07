@@ -8,6 +8,7 @@ import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan'
 import { LessonPreparationStatus, type ReviewOpener } from '@/features/learning/lessons/LessonPreparationProgress';
 import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
 import type { LearningGenerationJob } from '@/lib/bindings';
+import { expectPlainError, findAlertWith } from '@/tests/plainErrors';
 
 
 const api = vi.hoisted(() => ({ plan: vi.fn(), cancel: vi.fn(), retry: vi.fn(), review: vi.fn() }));
@@ -45,15 +46,19 @@ describe('Durable lesson preparation progress', () => {
   it('shows a saved connection interruption and resumes without a manual retry', async () => {
     let current: LearningGenerationJob = { ...job, status: 'pending',
       error: 'The model or network is temporarily unavailable. Preparation retries automatically while Lattice is open.',
+      errorCode: 'NETWORK_ERROR',
       progressMessage: 'Connection interrupted; saved work will resume automatically',
     };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
     const view = show();
     expect(await screen.findByRole('status')).toHaveTextContent('Preparation will resume automatically');
     expect(screen.getByText('Waiting to retry')).toBeVisible();
+    const waitingSentence = "Can't reach the model server. Lattice keeps trying.";
+    const notice = await findAlertWith(waitingSentence);
+    expect(within(notice).getByText(/Your work is kept\./)).toBeVisible();
+    await expectPlainError(notice, { headline: waitingSentence, raw: 'Preparation retries automatically while Lattice is open.' });
     await openDetails();
     expect(screen.getByRole('heading', { name: 'Preparation interrupted' })).toBeVisible();
-    expect(screen.getByText(/Preparation retries automatically/)).toBeVisible();
     expect(screen.getByRole('button', { name: 'Pause lesson preparation' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
     expect(screen.queryByText('Waiting for a preparation slot')).not.toBeInTheDocument();
