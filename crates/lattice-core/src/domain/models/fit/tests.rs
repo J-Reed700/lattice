@@ -797,9 +797,11 @@ fn a_curated_candidate_is_priced_from_its_pinned_shape_and_cpu_weights() {
 
     let candidate = Candidate::from_curated(model);
 
+    let projector = model.vision.as_ref().map_or(0, |v| v.projector_bytes);
+    assert!(projector > 0);
     assert_eq!(
         candidate.gpu_weight_bytes,
-        model.size_bytes - pinned.cpu_weight_bytes
+        model.size_bytes - pinned.cpu_weight_bytes + projector
     );
     assert_eq!(candidate.shape, Some(pinned.shape));
     assert_eq!(candidate.download_bytes, model.size_bytes);
@@ -869,5 +871,106 @@ fn every_curated_gguf_pins_a_shape_and_its_cpu_weight_bytes() {
             "{}",
             model.id
         );
+    }
+}
+
+fn gib(bytes: u64) -> String {
+    format!("{:.2}", bytes as f64 / GIB as f64)
+}
+
+fn reference_machines() -> Vec<(&'static str, MachineProfile)> {
+    vec![
+        ("RTX 4080 alone (16 GiB)", rtx_4080()),
+        (
+            "RTX 4070 Laptop (8 GiB) beside an Iris Xe",
+            machine(
+                vec![
+                    accelerator(
+                        "NVIDIA GeForce RTX 4070 Laptop GPU",
+                        7948 * (1 << 20),
+                        AcceleratorKind::Dedicated,
+                        Backend::Vulkan,
+                    ),
+                    accelerator(
+                        "Intel(R) Iris(R) Xe Graphics",
+                        32581 * (1 << 20),
+                        AcceleratorKind::Integrated,
+                        Backend::Vulkan,
+                    ),
+                ],
+                32 * GIB,
+            ),
+        ),
+        (
+            "Apple M-series, 21 GiB working set",
+            machine(
+                vec![accelerator(
+                    "Apple M3 Pro",
+                    21 * GIB,
+                    AcceleratorKind::Unified,
+                    Backend::Metal,
+                )],
+                32 * GIB,
+            ),
+        ),
+        ("processor only, 32 GiB RAM", processor_only()),
+    ]
+}
+
+#[test]
+#[ignore = "prints the recommended lists for reference machines; run with --ignored --nocapture"]
+fn prints_the_recommended_lists_for_reference_machines() {
+    let catalog: Vec<Candidate> = curated_chat_models()
+        .iter()
+        .map(Candidate::from_curated)
+        .collect();
+    for (label, profile) in reference_machines() {
+        for quantized in [false, true] {
+            println!(
+                "== {label}, KV cache quantization {}",
+                if quantized { "on" } else { "off" }
+            );
+            let list = Recommender::new(Companions::default_pair(), quantized)
+                .recommend(&profile, &catalog);
+            for (position, rec) in list.iter().enumerate() {
+                println!(
+                    "{:>2}. {} {:?} needs {} GiB of {} GiB budget, labels {:?}",
+                    position + 1,
+                    rec.id,
+                    rec.verdict.kind,
+                    gib(rec.verdict.needs),
+                    gib(rec.verdict.budget),
+                    rec.labels
+                );
+            }
+        }
+    }
+
+    let placement = choose_placement(&rtx_4080(), &Companions::default_pair());
+    println!(
+        "== every curated chat entry on the RTX 4080, budget {} GiB",
+        gib(placement.budget_bytes())
+    );
+    for quantized in [false, true] {
+        for model in &catalog {
+            let price = |window: u32| {
+                footprint(
+                    model.gpu_weight_bytes,
+                    model.shape.as_ref(),
+                    window,
+                    ServerBuffers::chat(quantized),
+                )
+                .total()
+            };
+            println!(
+                "KV quantization {:>3}: {} needs {} GiB at {} tokens, {} GiB at {}",
+                if quantized { "on" } else { "off" },
+                model.id,
+                gib(price(COMFORTABLE_WINDOW_TOKENS)),
+                COMFORTABLE_WINDOW_TOKENS,
+                gib(price(MINIMUM_WINDOW_TOKENS)),
+                MINIMUM_WINDOW_TOKENS
+            );
+        }
     }
 }

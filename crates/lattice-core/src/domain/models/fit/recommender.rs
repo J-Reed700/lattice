@@ -1,7 +1,9 @@
 use super::companions::Companions;
+use super::footprint::{footprint, ServerBuffers, COMFORTABLE_WINDOW_TOKENS};
 use super::machine::MachineProfile;
+use super::placement::choose_placement;
 use super::shape::ModelShape;
-use super::verdict::FitVerdict;
+use super::verdict::{fit, FitKind, FitVerdict};
 use crate::domain::models::curated::CuratedChatModel;
 
 /// One result file a model was measured in.
@@ -17,6 +19,27 @@ pub enum Evidence {
     Measured { suites: &'static [MeasuredSuite] },
     Untested,
 }
+
+/// The catalog entry Lattice has measured.
+const MEASURED_CHAT_MODEL_ID: &str = "qwen3.5-9b-q4_k_m";
+
+const MEASURED_SUITES: &[MeasuredSuite] = &[
+    MeasuredSuite {
+        name: "Course generation (local 9B recipe)",
+        result_file: "evals/courses/recipes/course-eval-9b-local.json",
+    },
+    MeasuredSuite {
+        name: "Memory families",
+        result_file: "evals/conversation-memory/results/qwen3.5-9b-local/2026-09-26-invariant-families.md",
+    },
+    MeasuredSuite {
+        name: "Grounded chat, shipped path",
+        result_file: "evals/retrieval/results/chat/qwen3.5-9b-local/2026-10-13-shipped-path-desktop-path-v1-default-roles.scored.jsonl.summary.json",
+    },
+];
+
+/// Models below this many parameters are not offered at under four bits.
+const SMALL_MODEL_PARAMETERS_B: f32 = 20.0;
 
 /// A model the recommender may offer.
 #[derive(Debug, Clone, PartialEq)]
@@ -41,8 +64,48 @@ pub struct Candidate {
 
 impl Candidate {
     /// A catalog entry as a candidate.
-    pub fn from_curated(_model: &CuratedChatModel) -> Candidate {
-        todo!("stage 2")
+    pub fn from_curated(model: &CuratedChatModel) -> Candidate {
+        let pinned = model.pinned();
+        let projector_bytes = model
+            .vision
+            .as_ref()
+            .map_or(0, |vision| vision.projector_bytes);
+        Candidate {
+            id: model.id.into(),
+            name: model.name.into(),
+            quantization: model.quantization.into(),
+            quantization_bits: model.quantization_bits,
+            parameters_b: model.parameters_b,
+            active_parameters_b: model.active_parameters_b,
+            download_bytes: model.size_bytes,
+            gpu_weight_bytes: model
+                .size_bytes
+                .saturating_sub(pinned.cpu_weight_bytes)
+                .saturating_add(projector_bytes),
+            shape: Some(pinned.shape),
+            rank: model.rank,
+            evidence: if model.id == MEASURED_CHAT_MODEL_ID {
+                Evidence::Measured {
+                    suites: MEASURED_SUITES,
+                }
+            } else {
+                Evidence::Untested
+            },
+        }
+    }
+
+    fn is_offered(&self) -> bool {
+        self.quantization_bits >= 4 || self.parameters_b >= SMALL_MODEL_PARAMETERS_B
+    }
+
+    fn needs_at_comfortable_window(&self, buffers: ServerBuffers) -> u64 {
+        footprint(
+            self.gpu_weight_bytes,
+            self.shape.as_ref(),
+            COMFORTABLE_WINDOW_TOKENS,
+            buffers,
+        )
+        .total()
     }
 }
 
@@ -88,9 +151,76 @@ impl Recommender {
     /// The models to offer on `profile`, best first.
     pub fn recommend(
         &self,
-        _profile: &MachineProfile,
-        _catalog: &[Candidate],
+        profile: &MachineProfile,
+        catalog: &[Candidate],
     ) -> Vec<Recommendation> {
-        todo!("stage 2")
+        let placement = choose_placement(profile, &self.companions);
+        let buffers = ServerBuffers::chat(self.kv_cache_quantization);
+        let judged: Vec<(&Candidate, FitVerdict)> = catalog
+            .iter()
+            .filter(|candidate| candidate.is_offered())
+            .map(|candidate| {
+                let verdict = fit(
+                    candidate.gpu_weight_bytes,
+                    candidate.shape.as_ref(),
+                    buffers,
+                    placement.as_ref(),
+                );
+                (candidate, verdict)
+            })
+            .collect();
+        let of_kind = |kind: FitKind| {
+            judged
+                .iter()
+                .filter(|(_, verdict)| verdict.kind == kind)
+                .collect::<Vec<_>>()
+        };
+        let mut kept = of_kind(FitKind::Fits);
+        if kept.is_empty() {
+            kept = of_kind(FitKind::Tight);
+        }
+        kept.sort_by(|(a, _), (b, _)| {
+            b.rank
+                .cmp(&a.rank)
+                .then(
+                    a.needs_at_comfortable_window(buffers)
+                        .cmp(&b.needs_at_comfortable_window(buffers)),
+                )
+                .then_with(|| a.id.cmp(&b.id))
+        });
+
+        let fastest = kept
+            .iter()
+            .map(|(candidate, _)| candidate)
+            .min_by(|a, b| a.active_parameters_b.total_cmp(&b.active_parameters_b))
+            .map(|candidate| candidate.id.clone());
+        let smallest = kept
+            .iter()
+            .map(|(candidate, _)| candidate)
+            .min_by_key(|candidate| candidate.download_bytes)
+            .map(|candidate| candidate.id.clone());
+
+        kept.iter()
+            .enumerate()
+            .map(|(index, (candidate, verdict))| {
+                let mut labels = Vec::new();
+                if index == 0 {
+                    labels.push(Label::Best);
+                }
+                if fastest.as_deref() == Some(candidate.id.as_str()) {
+                    labels.push(Label::Fastest);
+                }
+                if smallest.as_deref() == Some(candidate.id.as_str()) {
+                    labels.push(Label::SmallestDownload);
+                }
+                Recommendation {
+                    id: candidate.id.clone(),
+                    name: candidate.name.clone(),
+                    verdict: verdict.clone(),
+                    evidence: candidate.evidence,
+                    labels,
+                }
+            })
+            .collect()
     }
 }

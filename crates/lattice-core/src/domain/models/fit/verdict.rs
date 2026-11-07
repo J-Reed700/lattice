@@ -1,4 +1,6 @@
-use super::footprint::ServerBuffers;
+use super::footprint::{
+    footprint, ServerBuffers, COMFORTABLE_WINDOW_TOKENS, MINIMUM_WINDOW_TOKENS,
+};
 use super::placement::Placement;
 use super::shape::ModelShape;
 
@@ -45,10 +47,26 @@ pub struct FitVerdict {
 /// The one rule: does a model holding `gpu_weight_bytes`, with `shape`, fit `placement`, priced by
 /// `footprint` with `buffers`.
 pub fn fit(
-    _gpu_weight_bytes: u64,
-    _shape: Option<&ModelShape>,
-    _buffers: ServerBuffers,
-    _placement: &dyn Placement,
+    gpu_weight_bytes: u64,
+    shape: Option<&ModelShape>,
+    buffers: ServerBuffers,
+    placement: &dyn Placement,
 ) -> FitVerdict {
-    todo!("stage 2")
+    let budget = placement.budget_bytes();
+    let needs_at = |window: u32| footprint(gpu_weight_bytes, shape, window, buffers).total();
+    let comfortable = needs_at(COMFORTABLE_WINDOW_TOKENS);
+    let minimum = needs_at(MINIMUM_WINDOW_TOKENS);
+    let (kind, needs) = if comfortable <= budget {
+        (FitKind::Fits, comfortable)
+    } else if minimum <= budget {
+        (FitKind::Tight, minimum)
+    } else {
+        (FitKind::TooLarge, minimum)
+    };
+    FitVerdict {
+        kind,
+        needs,
+        budget,
+        device: placement.device(),
+    }
 }

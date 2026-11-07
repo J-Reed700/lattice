@@ -1,4 +1,5 @@
 use super::companions::Companions;
+use super::footprint::FIT_TARGET_BYTES;
 use super::machine::{Accelerator, AcceleratorKind, MachineProfile};
 use super::verdict::{DeviceKind, FitDevice};
 
@@ -17,8 +18,8 @@ pub trait Placement: std::fmt::Debug {
     fn device(&self) -> FitDevice;
 }
 
-/// A dedicated card: its memory less the display reserve, less the companions when no integrated GPU
-/// takes them.
+/// A dedicated card: its memory less llama.cpp's fit target and the display reserve, less the
+/// companions when no integrated GPU takes them.
 #[derive(Debug, Clone)]
 pub struct DedicatedGpu {
     pub card: Accelerator,
@@ -42,6 +43,7 @@ impl Placement for DedicatedGpu {
     fn budget_bytes(&self) -> u64 {
         self.card
             .total_bytes
+            .saturating_sub(FIT_TARGET_BYTES)
             .saturating_sub(DISPLAY_RESERVE_BYTES)
             .saturating_sub(self.companions_on_card_bytes)
     }
