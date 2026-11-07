@@ -866,10 +866,7 @@ async fn shared_file_pool(directory: &std::path::Path) -> Result<SqlitePool> {
         .connect_with(options)
         .await
         .map_err(db)?;
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(db)?;
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     Ok(pool)
 }
 
