@@ -820,3 +820,110 @@ fn a_value_longer_than_the_bytes_left_cannot_be_skipped() {
         None
     );
 }
+
+#[test]
+fn the_parser_fills_the_shape_the_core_prices_servers_from() {
+    let info = qwen35_9b_header().read();
+
+    assert_eq!(info.shape.block_count, Some(32));
+    assert_eq!(info.shape.head_count_kv, Some(4.into()));
+    assert_eq!(info.shape.key_length, Some(256));
+    assert_eq!(info.shape.full_attention_interval, Some(4));
+    assert_eq!(info.shape.feed_forward_length, Some(12_288));
+    assert_eq!(info.shape.ssm_inner_size, Some(4096));
+
+    let gemma = gemma4_12b_header().read();
+    assert_eq!(
+        gemma.shape.head_count_kv,
+        Some(lattice_core::domain::models::fit::PerLayer::Layers(
+            gemma4_12b_kv_heads()
+        ))
+    );
+    assert_eq!(gemma.shape.sliding_window, Some(1024));
+    assert_eq!(gemma.shape.sliding_window_pattern, Some(gemma4_pattern(48)));
+}
+
+#[test]
+fn a_header_is_read_from_any_seekable_reader() {
+    let file = qwen35_9b_header()
+        .tensors(&[("output.weight", 0), ("token_embd.weight", 1_000)], 5_000)
+        .write();
+    let bytes = std::fs::read(file.path()).unwrap();
+
+    let from_reader = read_model_info_from(std::io::Cursor::new(&bytes), bytes.len() as u64);
+
+    assert_eq!(from_reader, read_model_info(file.path()));
+    assert!(from_reader.unwrap().shape.block_count.is_some());
+}
+
+#[test]
+fn the_runtime_prices_a_server_with_the_cores_footprint() {
+    use crate::features::llm::engine::sidecar_manager::{resident_bytes_of, ServerBuffers};
+    use lattice_core::domain::models::fit::{footprint, ServerBuffers as CoreBuffers};
+
+    let file = qwen35_9b_header()
+        .tensors(&[("output.weight", 0), ("token_embd.weight", 1_000)], 5_000)
+        .write();
+    let length = std::fs::metadata(file.path()).unwrap().len();
+    let info = read_model_info(file.path()).unwrap();
+    let window = 32_768;
+
+    let runtime = resident_bytes_of(file.path(), window, ServerBuffers::chat(false));
+    let core = footprint(
+        length - info.cpu_weight_bytes,
+        Some(&info.shape),
+        window,
+        CoreBuffers::chat(false),
+    )
+    .total();
+
+    assert_eq!(runtime, core);
+    assert!(core > length - info.cpu_weight_bytes);
+}
+
+async fn header_of(client: &reqwest::Client, url: &str) -> Option<GgufModelInfo> {
+    let mut want: u64 = 16 << 20;
+    let mut last: Option<GgufModelInfo> = None;
+    loop {
+        let response = client
+            .get(url)
+            .header("Range", format!("bytes=0-{}", want - 1))
+            .send()
+            .await
+            .ok()?
+            .error_for_status()
+            .ok()?;
+        let total = response
+            .headers()
+            .get("content-range")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.rsplit('/').next())
+            .and_then(|length| length.parse::<u64>().ok())?;
+        let bytes = response.bytes().await.ok()?;
+        let info = read_model_info_from(std::io::Cursor::new(bytes.to_vec()), total)?;
+        if last.as_ref() == Some(&info) || want >= total {
+            return Some(info);
+        }
+        last = Some(info);
+        want *= 2;
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs the network: reads each curated GGUF's header from Hugging Face"]
+async fn the_catalogs_pinned_shapes_and_cpu_weights_are_what_the_runtime_reader_reads() {
+    let client = reqwest::Client::new();
+
+    for file in lattice_core::domain::models::curated::curated_gguf_files() {
+        let info = header_of(&client, &file.url)
+            .await
+            .unwrap_or_else(|| panic!("could not read the header of {}", file.name));
+
+        assert_eq!(info.shape, file.pinned.shape, "{}", file.name);
+        assert_eq!(
+            info.cpu_weight_bytes, file.pinned.cpu_weight_bytes,
+            "{}",
+            file.name
+        );
+    }
+}

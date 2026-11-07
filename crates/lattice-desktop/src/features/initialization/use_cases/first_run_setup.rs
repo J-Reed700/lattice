@@ -429,7 +429,7 @@ mod tests {
             .iter()
             .map(Candidate::from_curated)
             .collect();
-        Recommender::new(Companions::default_pair())
+        Recommender::new(Companions::default_pair(), false)
             .recommend(profile, &catalog)
             .remove(0)
             .id

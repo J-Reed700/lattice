@@ -8,17 +8,20 @@ mod footprint;
 mod machine;
 mod placement;
 mod recommender;
+mod shape;
 mod verdict;
 
 pub use companions::{CompanionServer, Companions};
 pub use footprint::{
-    Footprint, GgufHeader, COMFORTABLE_WINDOW_TOKENS, MINIMUM_WINDOW_TOKENS, RUNTIME_OVERHEAD_BYTES,
+    footprint, Footprint, ServerBuffers, COMFORTABLE_WINDOW_TOKENS, FIT_TARGET_BYTES,
+    MINIMUM_WINDOW_TOKENS,
 };
 pub use machine::{Accelerator, AcceleratorKind, Backend, MachineProfile};
 pub use placement::{
     choose_placement, DedicatedGpu, Placement, ProcessorOnly, UnifiedMemory, DISPLAY_RESERVE_BYTES,
 };
 pub use recommender::{Candidate, Evidence, Label, MeasuredSuite, Recommendation, Recommender};
+pub use shape::{ModelShape, PerLayer, PinnedModel, MICRO_BATCH_TOKENS};
 pub use verdict::{fit, FitVerdict};
 
 #[cfg(test)]

@@ -4,6 +4,7 @@
 //! rope-scale. Only the key/value header and the tensor list are parsed; an
 //! unreadable file yields `None` and the caller sizes from hardware alone.
 
+use lattice_core::domain::models::fit::ModelShape;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::Path;
@@ -121,6 +122,8 @@ pub struct GgufModelInfo {
     pub file_type: Option<u32>,
     /// Bytes of the file that stay in RAM however many layers are offloaded.
     pub cpu_weight_bytes: u64,
+    /// The memory facts above in the core's one description, which prices a server.
+    pub shape: ModelShape,
 }
 
 /// llama.cpp stores keys and values as f16 by default: two bytes an element.
@@ -354,6 +357,12 @@ pub fn file_supports_tool_calling(path: &Path, info: Option<&GgufModelInfo>) -> 
         .and_then(|name| name.to_str())
         .is_some_and(lattice_core::domain::models::curated::chat_model_file_supports_tool_calling)
         || info.is_some_and(GgufModelInfo::supports_tool_calling)
+}
+
+/// Read what the GGUF header says about a model from any seekable reader of a file `file_len`
+/// bytes long, such as a header fetched by HTTP range request.
+pub fn read_model_info_from<R: Read + Seek>(_reader: R, _file_len: u64) -> Option<GgufModelInfo> {
+    todo!("stage 2")
 }
 
 /// Read what the GGUF header says about a model.

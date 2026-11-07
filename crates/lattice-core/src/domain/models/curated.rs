@@ -17,6 +17,7 @@
 //! - Community adoption
 //! - Quantization availability
 
+use crate::domain::models::fit::PinnedModel;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata};
 
 mod chat;
@@ -32,7 +33,9 @@ pub use chat::{
     get_curated_llm_models, recommend_chat_model_for_ram, ChatModelVision, CuratedChatModel,
     CuratedVision, CHAT_PROJECTOR_FILE, TOOL_CALLING_CAPABILITY,
 };
-pub use embedding::{embedding_model_supports_matryoshka, get_curated_embedding_models};
+pub use embedding::{
+    curated_embedding_pinned, embedding_model_supports_matryoshka, get_curated_embedding_models,
+};
 pub use ocr::{
     get_curated_ocr_models, CuratedOcrModel, CURATED_OCR_MODELS, OCR_MODEL_FILE, OCR_PROJECTOR_FILE,
 };
@@ -44,6 +47,20 @@ pub use speech::{
 };
 pub use transcription::get_curated_transcription_models;
 pub use transcription::VOICE_TRANSCRIPTION_MODEL_ID;
+
+/// One curated GGUF file with the memory facts pinned for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CuratedGguf {
+    pub name: String,
+    /// Where the file is downloaded from.
+    pub url: String,
+    pub pinned: PinnedModel,
+}
+
+/// Every curated chat, embedding and reranker GGUF, with its pinned memory facts.
+pub fn curated_gguf_files() -> Vec<CuratedGguf> {
+    todo!("stage 2")
+}
 
 /// Get all curated models across all categories.
 ///

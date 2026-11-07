@@ -6,8 +6,9 @@ use crate::interfaces::dto::{
 };
 use lattice_core::domain::models::curated::{curated_chat_models, get_curated_llm_models};
 use lattice_core::domain::models::fit::{
-    choose_placement, fit, Accelerator, AcceleratorKind, Backend, Candidate, Companions, Evidence,
-    FitVerdict, Footprint, Label, Recommendation, Recommender, COMFORTABLE_WINDOW_TOKENS,
+    choose_placement, fit, footprint, Accelerator, AcceleratorKind, Backend, Candidate, Companions,
+    Evidence, FitVerdict, Label, ModelShape, Recommendation, Recommender, ServerBuffers,
+    COMFORTABLE_WINDOW_TOKENS, MINIMUM_WINDOW_TOKENS,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -57,11 +58,11 @@ fn expected(profile: &MachineProfile) -> Vec<Recommendation> {
         .iter()
         .map(Candidate::from_curated)
         .collect();
-    Recommender::new(Companions::default_pair()).recommend(profile, &catalog)
+    Recommender::new(Companions::default_pair(), false).recommend(profile, &catalog)
 }
 
 async fn recommend(profile: &MachineProfile) -> Vec<RecommendationDto> {
-    recommend_chat_models(&FixedMachineProfile(profile.clone())).await
+    recommend_chat_models(&FixedMachineProfile(profile.clone()), false).await
 }
 
 #[tokio::test]
@@ -276,13 +277,13 @@ fn speed_follows_the_active_parameters() {
 }
 
 struct StubHeaders {
-    header: Option<GgufHeader>,
+    header: Option<GgufFacts>,
     asked: Mutex<Vec<(String, String)>>,
     calls: AtomicUsize,
 }
 
 impl StubHeaders {
-    fn new(header: Option<GgufHeader>) -> Self {
+    fn new(header: Option<GgufFacts>) -> Self {
         Self {
             header,
             asked: Mutex::new(Vec::new()),
@@ -293,30 +294,50 @@ impl StubHeaders {
 
 #[async_trait]
 impl GgufHeaderSource for StubHeaders {
-    async fn header(&self, repo: &str, file: &str, _revision: Option<&str>) -> Option<GgufHeader> {
+    async fn header(&self, repo: &str, file: &str, _revision: Option<&str>) -> Option<GgufFacts> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.asked
             .lock()
             .unwrap()
             .push((repo.to_string(), file.to_string()));
-        self.header
+        self.header.clone()
     }
 }
 
-fn header(weights_bytes: u64) -> GgufHeader {
-    GgufHeader {
-        weights_bytes,
-        full_attention_layers: 8,
-        full_attention_kv_heads: 4,
-        full_attention_key_length: 256,
-        full_attention_value_length: 256,
-        sliding_layers: 0,
-        sliding_kv_heads: 0,
-        sliding_key_length: 0,
-        sliding_value_length: 0,
-        sliding_window_tokens: 0,
-        recurrent_state_bytes: 0,
+/// The sizing keys of `Qwen3.5-9B-Q4_K_M.gguf`.
+fn qwen35_9b_shape() -> ModelShape {
+    ModelShape {
+        block_count: Some(32),
+        head_count: Some(16.into()),
+        head_count_kv: Some(4.into()),
+        key_length: Some(256),
+        value_length: Some(256),
+        embedding_length: Some(4096),
+        feed_forward_length: Some(12_288),
+        full_attention_interval: Some(4),
+        ssm_conv_kernel: Some(4),
+        ssm_state_size: Some(128),
+        ssm_group_count: Some(16),
+        ssm_inner_size: Some(4096),
+        ..Default::default()
     }
+}
+
+fn facts(gpu_weight_bytes: u64) -> GgufFacts {
+    GgufFacts {
+        gpu_weight_bytes,
+        shape: qwen35_9b_shape(),
+    }
+}
+
+fn price(facts: &GgufFacts, window: u32, quantized: bool) -> u64 {
+    footprint(
+        facts.gpu_weight_bytes,
+        Some(&facts.shape),
+        window,
+        ServerBuffers::chat(quantized),
+    )
+    .total()
 }
 
 fn curated_row(id: &str) -> ModelMetadata {
@@ -343,20 +364,44 @@ fn hugging_face_row(size_gb: f64) -> ModelMetadata {
 }
 
 #[tokio::test]
-async fn a_curated_row_is_judged_from_its_own_footprint_without_reading_a_header() {
+async fn a_curated_row_is_judged_from_its_own_pinned_facts_without_reading_a_header() {
     let profile = rtx_4080();
     let headers = StubHeaders::new(None);
     let model = curated_chat_models()
         .iter()
         .find(|m| m.id == NINE_B)
         .unwrap();
+    let pinned = Candidate::from_curated(model);
     let placement = choose_placement(&profile, &Companions::default_pair());
-    let want = FitVerdictDto::from_verdict(&fit(&model.footprint(), placement.as_ref()), &profile);
+    let want = FitVerdictDto::from_verdict(
+        &fit(
+            pinned.gpu_weight_bytes,
+            pinned.shape.as_ref(),
+            ServerBuffers::chat(false),
+            placement.as_ref(),
+        ),
+        &profile,
+    );
 
-    let got = row_fit(&curated_row(NINE_B), &profile, &headers).await;
+    let got = row_fit(&curated_row(NINE_B), &profile, &headers, false).await;
 
     assert_eq!(got, Some(want));
     assert_eq!(headers.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_rows_verdict_follows_the_kv_cache_setting() {
+    let profile = rtx_4080();
+    let headers = StubHeaders::new(None);
+
+    let plain = row_fit(&curated_row(NINE_B), &profile, &headers, false)
+        .await
+        .unwrap();
+    let quantized = row_fit(&curated_row(NINE_B), &profile, &headers, true)
+        .await
+        .unwrap();
+
+    assert!(quantized.needs_bytes < plain.needs_bytes);
 }
 
 #[tokio::test]
@@ -365,7 +410,13 @@ async fn a_curated_row_and_the_recommended_list_give_one_verdict() {
     let list = recommend(&profile).await;
     let nine = list.iter().find(|r| r.model_id == NINE_B).unwrap();
 
-    let row = row_fit(&curated_row(NINE_B), &profile, &StubHeaders::new(None)).await;
+    let row = row_fit(
+        &curated_row(NINE_B),
+        &profile,
+        &StubHeaders::new(None),
+        false,
+    )
+    .await;
 
     assert_eq!(row.as_ref(), Some(&nine.verdict));
 }
@@ -374,7 +425,7 @@ async fn a_curated_row_and_the_recommended_list_give_one_verdict() {
 async fn a_hugging_face_row_has_no_verdict_until_its_header_is_read() {
     let headers = StubHeaders::new(None);
 
-    let got = row_fit(&hugging_face_row(5.0), &rtx_4080(), &headers).await;
+    let got = row_fit(&hugging_face_row(5.0), &rtx_4080(), &headers, false).await;
 
     assert_eq!(got, None);
     assert_eq!(
@@ -389,17 +440,19 @@ async fn a_hugging_face_row_has_no_verdict_until_its_header_is_read() {
 #[tokio::test]
 async fn a_hugging_face_row_has_an_exact_verdict_once_its_header_is_read() {
     let profile = rtx_4080();
-    let file_header = header(5_000_000_000);
-    let headers = StubHeaders::new(Some(file_header));
+    let file_facts = facts(5_000_000_000);
+    let headers = StubHeaders::new(Some(file_facts.clone()));
     let placement = choose_placement(&profile, &Companions::default_pair());
-    let footprint = Footprint::from_header(&file_header);
 
-    let got = row_fit(&hugging_face_row(5.0), &profile, &headers)
+    let got = row_fit(&hugging_face_row(5.0), &profile, &headers, false)
         .await
         .unwrap();
 
     assert_eq!(got.kind, FitKindDto::Fits);
-    assert_eq!(got.needs_bytes, footprint.at(COMFORTABLE_WINDOW_TOKENS));
+    assert_eq!(
+        got.needs_bytes,
+        price(&file_facts, COMFORTABLE_WINDOW_TOKENS, false)
+    );
     assert_eq!(got.budget_bytes, placement.budget_bytes());
     assert_eq!(got.device.name, RTX_4080);
 }
@@ -408,15 +461,16 @@ async fn a_hugging_face_row_has_an_exact_verdict_once_its_header_is_read() {
 async fn the_size_guess_does_not_feed_a_hugging_face_verdict() {
     let profile = rtx_4080();
     // The row's guess (1 GB listed, 4 GB minimum) says it fits anywhere; its header says 60 GB.
-    let headers = StubHeaders::new(Some(header(60_000_000_000)));
+    let file_facts = facts(60_000_000_000);
+    let headers = StubHeaders::new(Some(file_facts.clone()));
 
-    let got = row_fit(&hugging_face_row(1.0), &profile, &headers)
+    let got = row_fit(&hugging_face_row(1.0), &profile, &headers, false)
         .await
         .unwrap();
 
     assert_eq!(got.kind, FitKindDto::TooLarge);
     assert_eq!(
         got.needs_bytes,
-        Footprint::from_header(&header(60_000_000_000)).at(8_192)
+        price(&file_facts, MINIMUM_WINDOW_TOKENS, false)
     );
 }

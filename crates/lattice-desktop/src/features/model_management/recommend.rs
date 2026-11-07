@@ -3,7 +3,7 @@
 
 use crate::interfaces::dto::{FitVerdictDto, RecommendationDto};
 use async_trait::async_trait;
-use lattice_core::domain::models::fit::{GgufHeader, MachineProfile};
+use lattice_core::domain::models::fit::{MachineProfile, ModelShape};
 use lattice_core::domain::models::selection::ModelMetadata;
 
 /// Builds the profile of this computer. A probe that cannot reach the backend answers with a
@@ -24,16 +24,28 @@ impl MachineProfileProbe for FixedMachineProfile {
     }
 }
 
-/// Reads a GGUF file's header (a range request, cached by repository, file and revision).
-/// `None` while it cannot be read.
+/// What a parsed GGUF header gives the one memory model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GgufFacts {
+    /// What the device holds of the file: its bytes less those that stay in system RAM.
+    pub gpu_weight_bytes: u64,
+    pub shape: ModelShape,
+}
+
+/// Reads a GGUF file's header (a range request, cached by repository, file and revision) with the
+/// runtime's reader. `None` while it cannot be read.
 #[async_trait]
 pub trait GgufHeaderSource: Send + Sync {
-    async fn header(&self, repo: &str, file: &str, revision: Option<&str>) -> Option<GgufHeader>;
+    async fn header(&self, repo: &str, file: &str, revision: Option<&str>) -> Option<GgufFacts>;
 }
 
 /// The recommended chat models for this machine, best first: the core recommender over the curated
-/// catalog and the default companions, mapped to the wire types.
-pub async fn recommend_chat_models(_probe: &dyn MachineProfileProbe) -> Vec<RecommendationDto> {
+/// catalog and the default companions, priced with the user's KV cache setting
+/// (`kv_cache_quantization`), mapped to the wire types.
+pub async fn recommend_chat_models(
+    _probe: &dyn MachineProfileProbe,
+    _kv_cache_quantization: bool,
+) -> Vec<RecommendationDto> {
     todo!("stage 2")
 }
 
@@ -44,6 +56,7 @@ pub async fn row_fit(
     _model: &ModelMetadata,
     _profile: &MachineProfile,
     _headers: &dyn GgufHeaderSource,
+    _kv_cache_quantization: bool,
 ) -> Option<FitVerdictDto> {
     todo!("stage 2")
 }
