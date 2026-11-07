@@ -5,7 +5,6 @@
  */
 
 
-import type { SystemCapabilities } from '@/types/api/models';
 import type { ModelCategory, ModelMetadata, SearchFilters } from '@/types/modelCatalog';
 
 import { modelQuantization } from './quantization';
@@ -101,89 +100,4 @@ export function embeddingBlockReason(metadata: Pick<ModelMetadata, 'category' | 
   return compatibility.kind === 'incompatible'
     ? compatibility.reason
     : 'This architecture is not recognized by the local embedding runtime.';
-}
-
-export type ModelFitVerdict = 'fits' | 'tight' | 'too-large';
-
-export interface ModelFit {
-  verdict: ModelFitVerdict;
-  /** One line for the tooltip: "Needs 8 GB · 22 GB usable". */
-  reason: string;
-  /** Memory the model may actually use, in GB. Exposed for tests and the detail panel. */
-  usableMemoryGb: number;
-}
-
-export const FIT_LABEL: Record<ModelFitVerdict, string> = {
-  fits: 'Fits',
-  tight: 'Tight',
-  'too-large': 'Too large',
-};
-
-/**
- * "8", "13.5", "22.4" — at most one decimal, and never a trailing ".0".
- * A model that needs 8 GB should not read "Needs 8.0 GB".
- */
-function formatGb(value: number): string {
-  const rounded = Math.round(value * 10) / 10;
-  return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(1);
-}
-
-/**
- * One word about whether a model will run on this machine.
- *
- * Usable memory:
- *  - Apple Silicon is unified memory — the GPU allocates out of system RAM, so
- *    there is no second pool. `vram_gb` is `null` on that platform today; we
- *    ignore it even if a future probe reports one, and budget 70% of total RAM,
- *    leaving the OS and the rest of the app the other 30%.
- *  - A discrete GPU with acceleration and a known positive VRAM figure: the
- *    VRAM, because that is the pool the model is loaded into.
- *  - Everything else (no acceleration, unknown VRAM): 70% of total RAM.
- *
- * Returns null — no word at all — when the machine or the model's requirement
- * is unknown. A guess dressed as a verdict is worse than silence.
- */
-export function computeModelFit(
-  model: Pick<ModelMetadata, 'minimum_ram_gb' | 'size_gb'>,
-  capabilities: SystemCapabilities | null | undefined,
-): ModelFit | null {
-  if (capabilities == null) return null;
-
-  const totalRam = capabilities.total_ram_gb;
-  if (!Number.isFinite(totalRam) || totalRam <= 0) return null;
-
-  const needed = model.minimum_ram_gb;
-  if (!Number.isFinite(needed) || needed <= 0) return null;
-
-  const vram = capabilities.vram_gb;
-  const usable =
-    capabilities.gpu_type === 'AppleSilicon'
-      ? 0.7 * totalRam
-      : capabilities.gpu_acceleration !== 'None' && vram != null && vram > 0
-        ? vram
-        : 0.7 * totalRam;
-
-  // Disk gate. A failed disk probe (0 or non-finite) skips the gate rather than
-  // condemning every model on the machine.
-  const freeDisk = capabilities.available_disk_gb;
-  const sizeGb = model.size_gb;
-  if (
-    Number.isFinite(sizeGb) &&
-    sizeGb > 0 &&
-    Number.isFinite(freeDisk) &&
-    freeDisk > 0 &&
-    sizeGb > freeDisk
-  ) {
-    return {
-      verdict: 'too-large',
-      reason: `Needs ${formatGb(sizeGb)} GB on disk · ${formatGb(freeDisk)} GB free`,
-      usableMemoryGb: usable,
-    };
-  }
-
-  const reason = `Needs ${formatGb(needed)} GB · ${formatGb(usable)} GB usable`;
-
-  if (needed <= 0.8 * usable) return { verdict: 'fits', reason, usableMemoryGb: usable };
-  if (needed <= usable) return { verdict: 'tight', reason, usableMemoryGb: usable };
-  return { verdict: 'too-large', reason, usableMemoryGb: usable };
 }

@@ -88,7 +88,7 @@ describe('ModelListView', () => {
     h.tokenStatus = { isSet: true };
     const onAddToken = vi.fn();
     render(<ModelListView models={[rec('local-a'), rec('repo/b'), rec('busy'), rec('fresh')]} loading={false} onAddToken={onAddToken} onModelSelect={vi.fn()} {...nav} overview={false} />, { wrapper });
-    expect(h.rows['local-a']).toMatchObject({ isDownloaded: true, compact: false, hasHfToken: true, onAddToken, capabilities: h.capabilities });
+    expect(h.rows['local-a']).toMatchObject({ isDownloaded: true, compact: false, hasHfToken: true, onAddToken });
     expect(h.rows['repo/b'].isDownloaded).toBe(true);
     expect(h.rows.busy.activeDownload).toEqual({ state: 'Downloading' });
     expect(h.rows.fresh).toMatchObject({ isDownloaded: false, isStarting: false, activeDownload: undefined });

@@ -19,6 +19,7 @@ const { stub } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () => h.catalog }));
+vi.mock('@/features/model/hooks/useRecommendedChatModels', () => ({ useRecommendedChatModels: () => ({ data: undefined }) }));
 vi.mock('@/features/model/stores/modelCatalogStore', () => ({ useModelCatalogStore: () => h.store }));
 vi.mock('./ModelDetailPanel', () => ({ ModelDetailPanel: stub('ModelDetailPanel') }));
 vi.mock('./ModelFilterPanel', () => ({ ModelFilterPanel: stub('ModelFilterPanel') }));
@@ -28,12 +29,12 @@ vi.mock('./SystemCapabilitiesCard', () => ({ SystemCapabilitiesCard: stub('Syste
 vi.mock('./CatalogManagementSection', () => ({ CatalogManagementSection: stub('CatalogManagementSection') }));
 
 const model = (id: string, overrides: Record<string, unknown> = {}) => ({
-  id, name: id, category: 'LLM', size_gb: 4, minimum_ram_gb: 8, capabilities: ['chat'], performance_tier: 'Balanced',
+  id, name: id, category: 'LLM', size_gb: 4, capabilities: ['chat'], performance_tier: 'Balanced',
   embedding_dimensions: null, default_filename: `${id}-Q4_K_M.gguf`, supported_quantizations: [], ...overrides,
 });
 
 const rec = (id: string, overrides: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) => ({
-  model: model(id, overrides), ranking_score: 50, popularity_downloads: 100, popularity_likes: 10, ...extra,
+  model: model(id, overrides), popularity_downloads: 100, popularity_likes: 10, ...extra,
 });
 
 const noFilters = { category: null, max_size_gb: null, min_downloads: null, required_capabilities: [], embedding_dimensions: null };
@@ -47,9 +48,9 @@ describe('ModelCatalogBrowser', () => {
       selectedModel: null,
       systemCapabilities: { total_ram_gb: 15.6, gpu_acceleration: 'Metal', gpu_type: 'AppleSilicon', vram_gb: null, available_disk_gb: 500 },
       compatibleModels: [
-        rec('basil', { size_gb: 2 }, { ranking_score: 60, popularity_downloads: 10, popularity_likes: 5 }),
-        rec('anise', { size_gb: 9 }, { ranking_score: 40, popularity_downloads: 1000, popularity_likes: 1 }),
-        rec('cumin', { size_gb: 0 }, { ranking_score: 80, popularity_downloads: null, popularity_likes: 50 }),
+        rec('basil', { size_gb: 2 }, { popularity_downloads: 10, popularity_likes: 5 }),
+        rec('anise', { size_gb: 9 }, { popularity_downloads: 1000, popularity_likes: 1 }),
+        rec('cumin', { size_gb: 0 }, { popularity_downloads: null, popularity_likes: 50 }),
       ],
       searchResults: [],
       compatibleModelsLoading: false,
@@ -98,18 +99,18 @@ describe('ModelCatalogBrowser', () => {
     ['name', ['anise', 'basil', 'cumin']],
     ['size_asc', ['basil', 'anise', 'cumin']],
     ['size_desc', ['anise', 'basil', 'cumin']],
-    ['recommended', ['cumin', 'basil', 'anise']],
+    ['recommended', ['basil', 'anise', 'cumin']],
   ])('sorts by %s', (sortBy, order) => {
     h.catalog.sortBy = sortBy;
     render(<ModelCatalogBrowser />);
     expect(listed()).toEqual(order);
   });
 
-  it('breaks popularity ties by ranking score', () => {
-    h.catalog.compatibleModels = [rec('low', {}, { ranking_score: 1 }), rec('high', {}, { ranking_score: 9 })];
+  it('keeps the backend’s order for models that tie', () => {
+    h.catalog.compatibleModels = [rec('second'), rec('first')];
     h.catalog.sortBy = 'likes';
     render(<ModelCatalogBrowser />);
-    expect(listed()).toEqual(['high', 'low']);
+    expect(listed()).toEqual(['second', 'first']);
   });
 
   it('filters by category, size, downloads, capability and embedding width', () => {
@@ -139,11 +140,12 @@ describe('ModelCatalogBrowser', () => {
     expect(listed().sort()).toEqual(['chatty', 'e5', 'mystery']);
   });
 
-  it('filters by precision and by fit', () => {
+  it('filters by precision and by the backend’s fit verdict', () => {
+    const verdict = (kind: string) => ({ kind, needsBytes: 1, budgetBytes: 2, device: { name: 'GPU', kind: 'dedicated', totalBytes: 2 } });
     h.catalog.compatibleModels = [
-      rec('small', { default_filename: 'small-Q4_K_M.gguf', minimum_ram_gb: 4 }),
-      rec('tight', { default_filename: 'tight-Q8_0.gguf', minimum_ram_gb: 10.5 }),
-      rec('huge', { default_filename: 'huge-Q8_0.gguf', minimum_ram_gb: 64 }),
+      rec('small', { default_filename: 'small-Q4_K_M.gguf' }, { fit: verdict('fits') }),
+      rec('tight', { default_filename: 'tight-Q8_0.gguf' }, { fit: verdict('tight') }),
+      rec('huge', { default_filename: 'huge-Q8_0.gguf' }, { fit: verdict('too_large') }),
     ];
     h.store = { ...h.store, quantizationFilter: 'Q8_0' };
     const first = render(<ModelCatalogBrowser />);
@@ -158,20 +160,20 @@ describe('ModelCatalogBrowser', () => {
     expect(listed().sort()).toEqual(['small', 'tight']);
   });
 
-  it('shows search results scored by relevance', () => {
+  it('shows search results in the order the search returned them', () => {
     h.catalog.searchQuery = 'thyme';
     h.catalog.searchLoading = true;
     h.catalog.searchError = 'rate limited';
     h.catalog.searchResults = [
-      { model: model('thyme-a'), relevance_score: 0.4, popularity_downloads: 5 },
       { model: model('thyme-b'), relevance_score: 0.9 },
+      { model: model('thyme-a'), relevance_score: 0.4, popularity_downloads: 5 },
     ];
     h.catalog.sortBy = 'recommended';
     render(<ModelCatalogBrowser />);
     expect(screen.getByRole('heading', { name: 'Search results' })).toBeInTheDocument();
-    expect(listed()).toEqual(['thyme-a', 'thyme-b']);
+    expect(listed()).toEqual(['thyme-b', 'thyme-a']);
     expect(h.props.ModelListView).toMatchObject({ loading: true, error: 'rate limited', overview: false });
-    expect(h.props.ModelListView.models[1]).toMatchObject({ ranking_score: 0.9, popularity_downloads: null, popularity_likes: null });
+    expect(h.props.ModelListView.models[0]).toMatchObject({ popularity_downloads: null, popularity_likes: null });
     expect(screen.queryByRole('button', { name: 'Browse all models' })).not.toBeInTheDocument();
   });
 
