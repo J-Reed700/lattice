@@ -28,15 +28,15 @@ pub(in crate::features::learning) struct Round<'r> {
     searches: Vec<&'r mut NeedSearch<'static>>,
 }
 
-impl Round<'_> {
+impl<'r> Round<'r> {
     pub(in crate::features::learning) fn len(&self) -> usize {
         self.searches.len()
     }
 
     pub(in crate::features::learning) fn iter_mut(
         &mut self,
-    ) -> impl Iterator<Item = &mut NeedSearch<'static>> {
-        self.searches.iter_mut().map(|search| &mut **search)
+    ) -> std::slice::IterMut<'_, &'r mut NeedSearch<'static>> {
+        self.searches.iter_mut()
     }
 
     /// The (query, kind, page) of each search, in order.
