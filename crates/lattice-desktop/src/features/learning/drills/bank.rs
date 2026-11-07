@@ -13,64 +13,6 @@ use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
 use serde_json::json;
 use sqlx::{SqliteConnection, SqlitePool};
 
-/// Realistic areas of backend and frontend code that a drill can be about. A drill without a domain of its own takes
-/// the one of these used least recently for its language.
-pub const DOMAINS: &[&str] = &[
-    "payments and refunds",
-    "inventory and stock reservations",
-    "user sessions and login",
-    "rate limiting",
-    "file uploads",
-    "notifications and email",
-    "search and filtering",
-    "reporting and CSV export",
-    "job scheduling",
-    "caching",
-    "feature flags",
-    "webhook delivery",
-    "shopping cart and checkout",
-    "order fulfilment",
-    "audit logging",
-    "pagination",
-    "roles and permissions",
-    "invoicing",
-    "subscriptions and billing",
-    "data import",
-    "configuration loading",
-    "form validation in a user interface",
-    "state management in a user interface",
-    "data tables with sorting and filtering",
-    "API clients with retries",
-    "message queue consumers",
-    "analytics events",
-    "image thumbnails",
-    "booking and availability",
-    "leaderboards",
-    "chat messages",
-    "URL shortening",
-    "password reset",
-    "API keys and tokens",
-    "background workers",
-    "data migrations",
-    "currency conversion",
-    "dates and time zones",
-];
-
-/// The domain used least recently: one never used first, then the one whose latest drill is oldest, ties in the
-/// order of [`DOMAINS`]. `used` holds, for each domain a drill was built for, when the latest was.
-pub fn least_recently_used(used: &[(String, i64)]) -> &'static str {
-    DOMAINS
-        .iter()
-        .copied()
-        .min_by_key(|domain| {
-            used.iter()
-                .filter(|(name, _)| name == domain)
-                .map(|(_, at)| *at)
-                .max()
-        })
-        .unwrap_or("backend services")
-}
-
 /// What the bank keeps one ready drill of: code in one language, or passages of one course.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shelf<'a> {
@@ -100,12 +42,6 @@ impl<'a> Shelf<'a> {
             Self::Course(program_id) => format!("passage:{program_id}"),
         }
     }
-}
-
-/// The domain the next drill of `language` is about.
-pub async fn next_domain(pool: &SqlitePool, language: &str) -> Result<String> {
-    let used = repository::domain_uses(pool, language).await?;
-    Ok(least_recently_used(&used).to_owned())
 }
 
 /// Queues a `learning.drill_build` job for `spec` and returns its id. The operation ID derives from `seed`, so

@@ -242,20 +242,6 @@ pub(in crate::features::learning) async fn mark_taken_in(
         == 1)
 }
 
-/// For each domain used for `language`, when a drill of it was last built.
-pub(in crate::features::learning) async fn domain_uses(
-    pool: &SqlitePool,
-    language: &str,
-) -> Result<Vec<(String, i64)>> {
-    sqlx::query_as::<_, (String, i64)>(
-        "SELECT domain,max(created_at) FROM learning_drills WHERE language=? GROUP BY domain",
-    )
-    .bind(language)
-    .fetch_all(pool)
-    .await
-    .map_err(db)
-}
-
 fn read(row: &SqliteRow) -> Result<StoredDrill> {
     let files: Vec<DrillFile> = decode(&row.get::<String, _>("files_json"))?;
     let key: Vec<KeyIssue> = decode(&row.get::<String, _>("key_json"))?;

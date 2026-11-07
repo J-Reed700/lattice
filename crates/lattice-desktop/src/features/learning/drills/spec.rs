@@ -1,4 +1,4 @@
-//! What one drill is built for: the material, the area of code or the topic of a passage, the size and the patterns to
+//! What one drill is built for: the material, the lesson of the course it is built from, the size and the patterns to
 //! plant.
 
 use lattice_core::domain::learning::drills::{pattern, Material, Pattern, LANGUAGES};
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 pub struct DrillSpec {
     /// What is reviewed.
     pub material: Material,
-    /// What the code is about, or the topic a passage is about. `None`: the bank picks a domain for code, and a
-    /// passage may be about anything in the course's sources.
+    /// The topic the learner asked for. No writer reads it: a drill is about its lesson, and the writers take the
+    /// lesson's title as its domain.
     pub domain: Option<String>,
     /// The size the learner chose, a target for the prompt: lines of code, or sentences of an explanation.
     pub lines: u32,

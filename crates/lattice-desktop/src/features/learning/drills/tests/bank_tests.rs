@@ -1,12 +1,9 @@
-//! The bank: one drill ready per language, the build of the next queued when one is taken, and the rotation of
-//! domains.
+//! The bank: one drill ready per language, and the build of the next queued when one is taken.
 
 use super::support::{
     code, files, held_back, planted, proved, quiet, review, schedule_pattern, spec, MODEL, SUITE,
 };
-use crate::features::learning::drills::bank::{
-    least_recently_used, next_domain, queue_build, take, DOMAINS,
-};
+use crate::features::learning::drills::bank::{queue_build, take};
 use crate::features::learning::drills::build::Evidence;
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD};
 use crate::features::learning::drills::repository::{self, DrillStatus, NewDrill};
@@ -85,7 +82,7 @@ async fn with_nothing_ready_nothing_is_given_and_nothing_is_queued() -> Result<(
         &pool,
         "other",
         "javascript",
-        DOMAINS[0],
+        "payments and refunds",
         1,
         40,
         &["readability.magic_number"],
@@ -103,7 +100,7 @@ async fn the_oldest_ready_drill_of_the_language_is_taken_and_marked() -> Result<
         &pool,
         "newer",
         "python",
-        DOMAINS[1],
+        "inventory and stock reservations",
         200,
         40,
         &["readability.magic_number"],
@@ -113,7 +110,7 @@ async fn the_oldest_ready_drill_of_the_language_is_taken_and_marked() -> Result<
         &pool,
         "older",
         "python",
-        DOMAINS[0],
+        "payments and refunds",
         100,
         40,
         &["readability.magic_number"],
@@ -123,7 +120,7 @@ async fn the_oldest_ready_drill_of_the_language_is_taken_and_marked() -> Result<
         &pool,
         "elsewhere",
         "javascript",
-        DOMAINS[0],
+        "payments and refunds",
         50,
         40,
         &["readability.magic_number"],
@@ -163,7 +160,7 @@ async fn taking_a_drill_queues_the_next_build_with_its_size_and_the_targets_of_t
         &pool,
         "older",
         "python",
-        DOMAINS[0],
+        "payments and refunds",
         100,
         70,
         &[
@@ -216,7 +213,7 @@ async fn a_pattern_due_in_the_schedule_is_the_first_the_next_build_plants() -> R
         &pool,
         "older",
         "python",
-        DOMAINS[0],
+        "payments and refunds",
         100,
         70,
         &[
@@ -357,86 +354,4 @@ fn a_lesson_must_say_something_and_be_of_a_course() {
             "{bad:?}"
         );
     }
-}
-
-#[test]
-fn the_domain_used_least_recently_comes_first_and_ties_keep_the_order_of_the_list() {
-    assert_eq!(least_recently_used(&[]), DOMAINS[0]);
-    assert_eq!(
-        least_recently_used(&[(DOMAINS[0].to_owned(), 10)]),
-        DOMAINS[1]
-    );
-    assert_eq!(
-        least_recently_used(&[(DOMAINS[1].to_owned(), 10), (DOMAINS[0].to_owned(), 20)]),
-        DOMAINS[2],
-        "one never used comes before any used"
-    );
-    let all_used = |at: &dyn Fn(usize) -> i64| -> Vec<(String, i64)> {
-        DOMAINS
-            .iter()
-            .enumerate()
-            .map(|(position, domain)| ((*domain).to_owned(), at(position)))
-            .collect()
-    };
-    assert_eq!(
-        least_recently_used(&all_used(&|_| 5)),
-        DOMAINS[0],
-        "ties: list order"
-    );
-    assert_eq!(
-        least_recently_used(&all_used(&|position| 100 - position as i64)),
-        DOMAINS[DOMAINS.len() - 1],
-        "the oldest latest use"
-    );
-    // The latest use of a domain counts, not its first.
-    let mut twice = all_used(&|position| position as i64);
-    twice.push((DOMAINS[0].to_owned(), 1_000));
-    assert_eq!(least_recently_used(&twice), DOMAINS[1]);
-}
-
-#[test]
-fn the_domains_are_distinct_and_say_something() {
-    for (position, domain) in DOMAINS.iter().enumerate() {
-        assert!(!domain.trim().is_empty());
-        assert!(
-            !DOMAINS[position + 1..].contains(domain),
-            "{domain} is listed twice"
-        );
-    }
-}
-
-#[tokio::test]
-async fn the_next_domain_of_a_language_follows_the_drills_it_already_has() -> Result<()> {
-    let pool = pool().await?;
-    assert_eq!(next_domain(&pool, "python").await?, DOMAINS[0]);
-    insert(
-        &pool,
-        "a",
-        "python",
-        DOMAINS[0],
-        1,
-        40,
-        &["readability.magic_number"],
-    )
-    .await?;
-    insert(
-        &pool,
-        "b",
-        "python",
-        DOMAINS[1],
-        2,
-        40,
-        &["readability.magic_number"],
-    )
-    .await?;
-    assert_eq!(next_domain(&pool, "python").await?, DOMAINS[2]);
-    assert_eq!(
-        next_domain(&pool, "javascript").await?,
-        DOMAINS[0],
-        "each language has its own"
-    );
-    // A drill that is taken still counts as the domain's latest use.
-    take(&pool, "python").await?;
-    assert_eq!(next_domain(&pool, "python").await?, DOMAINS[2]);
-    Ok(())
 }

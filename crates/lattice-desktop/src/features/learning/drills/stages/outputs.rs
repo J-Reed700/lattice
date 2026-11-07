@@ -123,7 +123,7 @@ impl Baseline {
             tests: code.tests.clone(),
             suite: code.suite.clone(),
             source: code.source.clone(),
-            brief: None,
+            brief: code.brief.clone(),
         }
     }
 }
@@ -327,7 +327,7 @@ impl Evidence {
                 extras: blind.extras.iter().map(|issue| issue.id.clone()).collect(),
                 trail: blind.trail.clone(),
             },
-            brief: None,
+            brief: code.brief.clone(),
         }
     }
 }
