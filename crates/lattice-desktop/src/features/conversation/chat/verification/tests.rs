@@ -534,6 +534,25 @@ fn metadata_fits_the_ui_schema_and_keeps_true_counts() {
     assert_eq!(ids, (1..=24).collect::<Vec<u64>>());
 }
 
+#[test]
+fn metadata_keeps_a_reason_past_1000_utf16_units_whole() {
+    let reason = "🙂".repeat(900);
+    let claims = vec![ClaimAssessment {
+        sentence: "A claim.".into(),
+        citation_ids: vec![1],
+        verdict: ClaimVerdict::Unsupported,
+        evidence_quote: None,
+        method: VerificationMethod::Lexical,
+        confidence: None,
+        reason: Some(reason.clone()),
+        unverified_reason: None,
+    }];
+
+    let metadata = GroundingReport::from_assessments(claims, false).metadata_json();
+
+    assert_eq!(metadata["claimVerdicts"][0]["reason"], reason.as_str());
+}
+
 /// A claim the judge never settled is unchecked, not whatever overlap said
 /// about it. It went to the judge because overlap could not settle it: these
 /// "hardier bushes" and "sturdier stems" are nowhere in a source that only

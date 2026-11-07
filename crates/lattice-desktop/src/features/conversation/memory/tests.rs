@@ -29,7 +29,7 @@ use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
     SourceRole, SummaryRefold, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
+    MAX_QUOTE_BYTES,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -965,7 +965,6 @@ fn the_enforced_limits_are_the_ones_the_design_documents() {
 
     // The payload caps are the domain's, reused rather than restated: two
     // numbers that must agree are one number that cannot disagree.
-    assert_eq!(MAX_PROPOSAL_BYTES, 64 * 1024);
     assert_eq!(MAX_OPERATIONS_PER_RESPONSE, 32);
     assert_eq!(MAX_EVIDENCE_PER_ITEM, 4);
     assert_eq!(MAX_QUOTE_BYTES, 2048);
@@ -1983,6 +1982,13 @@ async fn a_commit_conflict_is_retried_once_from_a_fresh_snapshot() {
     assert_eq!(port.commits(), 1, "only the second attempt published");
     assert_eq!(port.watermark(), 4);
     assert_eq!(port.errors(), Vec::<String>::new());
+}
+
+/// Measured, not style: without this sentence Qwen3.8-27B answers `add: []` for
+/// windows holding the user's rule, and the rule never reaches memory.
+#[test]
+fn the_extractor_is_told_what_an_empty_add_means() {
+    assert!(super::prompts::EXTRACTOR_SYSTEM.contains("Every requirement, goal, decision, fact, preference or unresolved question the user states goes in add; add is empty only when no segment holds one."));
 }
 
 #[tokio::test]

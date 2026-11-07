@@ -10,7 +10,7 @@ use super::dto::{
 };
 use super::repository::StoredDrill;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, FindingOutcome, IssueOutcome, KeyIssue,
+    line_diff, pattern, FindingOutcome, IssueOutcome, KeyIssue, Origin,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -108,14 +108,11 @@ fn reveal_of(attempt: &Attempt, stored: &StoredDrill) -> Result<CodeReviewReveal
             }
         })
         .collect();
-    let ratings = stored
-        .drill
-        .key
+    let ratings = ratings
         .iter()
-        .zip(ratings)
-        .map(|(issue, rated)| RatedPatternDto {
+        .map(|rated| RatedPatternDto {
             pattern: rated.pattern.clone(),
-            pattern_name: name_of(&issue.pattern),
+            pattern_name: name_of(&rated.pattern),
             rating: rated.rating,
         })
         .collect();
@@ -155,6 +152,7 @@ fn revealed_issue(issue: &KeyIssue, outcome: IssueOutcome, reason: String) -> Re
         outcome: kind,
         finding,
         reason,
+        also_valid: issue.origin == Origin::FoundInReview,
     }
 }
 

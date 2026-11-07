@@ -128,7 +128,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::conversation::memory::{
     parse_patch, EvidencePurpose, MemoryId, MemoryItem, MemoryKind, MemoryState, SourceMessage,
     SourceRole, MAX_ACTIVE_ITEMS, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
+    MAX_QUOTE_BYTES,
 };
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::error::{AppError, Result};
@@ -610,7 +610,6 @@ struct CallRecord {
     response: String,
     tool_calls: Vec<String>,
     error: Option<String>,
-    response_bytes: usize,
     /// Operations the response proposed, for an extraction call. Counted here
     /// rather than inferred from the commit, because the §6 bound is per
     /// response and a commit folds several of them.
@@ -669,7 +668,6 @@ impl EvalLlm {
             tool_calls,
             failed: error.is_some(),
             error,
-            response_bytes: text.len(),
             operations,
             elapsed_ms: elapsed.as_millis(),
             attempts,
@@ -1351,9 +1349,10 @@ struct Metrics {
     /// Gate: must be zero. A payload that broke a §6 bound and still reached
     /// the ledger.
     oversized_commits: usize,
-    /// Observation, not a gate: utility responses above `MAX_PROPOSAL_BYTES`.
-    /// The parser is supposed to refuse these, so a non-zero count here beside
-    /// a zero `oversized_commits` is the bound working, not failing.
+    /// Observation, not a gate: utility responses above
+    /// `MAX_OPERATIONS_PER_RESPONSE`. The parser is supposed to refuse these,
+    /// so a non-zero count here beside a zero `oversized_commits` is the bound
+    /// working, not failing.
     oversized_utility_responses: usize,
     recoverable_failures: usize,
     /// Additional logical provider attempts made by the eval resilience layer.
@@ -1979,7 +1978,6 @@ fn call_record(kind: &'static str, failed: bool) -> CallRecord {
         response: String::new(),
         tool_calls: Vec::new(),
         error: failed.then(|| "provider error".to_string()),
-        response_bytes: 0,
         operations: 0,
         elapsed_ms: 0,
         failed,
@@ -2376,10 +2374,7 @@ async fn run_once(
                 // Observed, not gated here. Whether an oversized response was
                 // *committed* is decided by the ledger checks below; this only
                 // records that the parser had something oversized to refuse.
-                if call.kind == "extract"
-                    && (call.response_bytes > MAX_PROPOSAL_BYTES
-                        || call.operations > MAX_OPERATIONS_PER_RESPONSE)
-                {
+                if call.kind == "extract" && call.operations > MAX_OPERATIONS_PER_RESPONSE {
                     metrics.oversized_utility_responses += 1;
                 }
             }

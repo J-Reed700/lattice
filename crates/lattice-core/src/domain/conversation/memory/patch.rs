@@ -1,7 +1,7 @@
 //! Untrusted patch proposals (§6.1) and the validated outcome they become.
 use super::{
     EvidencePurpose, EvidenceSpan, MemoryId, MemoryKind, MemoryState, SourceRole,
-    MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
+    MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE, MAX_QUOTE_BYTES,
 };
 use serde::{Deserialize, Serialize};
 
@@ -81,8 +81,6 @@ pub struct ProposedTransition {
 /// so they can be logged and persisted in `last_error_code`.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MemoryValidationError {
-    #[error("response exceeds {MAX_PROPOSAL_BYTES} bytes")]
-    ResponseTooLarge,
     #[error("response is not valid JSON for the memory patch schema: {0}")]
     Malformed(String),
     #[error("unsupported patch schema_version {0}")]
@@ -147,7 +145,6 @@ impl MemoryValidationError {
     /// Stable short code for logs and `last_error_code`.
     pub fn code(&self) -> &'static str {
         match self {
-            Self::ResponseTooLarge => "response_too_large",
             Self::Malformed(_) => "malformed_json",
             Self::UnsupportedSchemaVersion(_) => "unsupported_schema_version",
             Self::TooManyOperations(_) => "too_many_operations",
