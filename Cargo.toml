@@ -1,7 +1,9 @@
 # The Rust workspace. The desktop app is `crates/lattice-desktop` (the Tauri
 # shell, features and infrastructure); `crates/lattice-core` holds the domain,
-# ports and contracts it depends on. `crates/lattice-sync` is a separate
-# workspace with its own lockfile.
+# ports and contracts it depends on. `crates/lattice-learning` is Learning
+# Studio's engine, on `crates/lattice-index` (the passage and vector indexes)
+# and `crates/lattice-store` (workspace notes). `crates/lattice-sync` is a
+# separate workspace with its own lockfile.
 [workspace]
 resolver = "2"
 members = ["crates/lattice-core", "crates/lattice-desktop", "crates/lattice-index", "crates/lattice-learning", "crates/lattice-store"]
