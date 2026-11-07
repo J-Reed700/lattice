@@ -434,8 +434,30 @@ fn pending_patterns_are_chosen_only_when_nothing_else_is_left() {
     let states: Vec<PatternDue> = held.iter().map(|id| pending(id, Some(0))).collect();
     let chosen = targets(&material, &states, 10, held.len());
     assert_eq!(chosen.len(), held.len());
-    assert!(ids(&chosen).iter().all(|id| !held.contains(id)));
+    assert!(
+        ids(&chosen).iter().all(|id| !held.contains(id)),
+        "a family whose only pattern is pending waits: {:?}",
+        ids(&chosen)
+    );
     let everything = targets(&material, &states, 10, usize::MAX);
     assert_eq!(everything.len(), patterns_for(&material).count());
-    assert!(held.iter().all(|id| ids(&everything).contains(id)));
+    let rest = everything.len() - held.len();
+    assert_eq!(
+        ids(&everything).get(rest..),
+        Some(held.as_slice()),
+        "the pending patterns come last"
+    );
+}
+
+#[test]
+fn a_pending_pattern_is_planted_only_after_every_other_pattern() {
+    let material = Material::code("python");
+    let first = first_python_pattern();
+    let states = [pending(first, Some(0))];
+    let total = patterns_for(&material).count();
+    let all_but_one = targets(&material, &states, 10, total - 1);
+    assert_eq!(all_but_one.len(), total - 1);
+    assert!(!ids(&all_but_one).contains(&first));
+    let all = targets(&material, &states, 10, total);
+    assert_eq!(ids(&all).last(), Some(&first));
 }
