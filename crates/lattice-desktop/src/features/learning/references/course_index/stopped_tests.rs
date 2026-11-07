@@ -4,7 +4,7 @@
 
 use super::tests::{builds, course, indexes, pages};
 use super::*;
-use lattice_index::passage_index::testing::{FakeEmbedder, FixedEmbedders};
+use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
 use lattice_core::shared::runtime::jobs::{JobStatus, RecoveryPolicy};
 use lattice_core::shared::Result;
 use std::time::Duration;

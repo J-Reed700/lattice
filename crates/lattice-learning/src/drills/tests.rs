@@ -22,4 +22,4 @@ mod review_tests;
 mod runner_tests;
 mod schema_tests;
 mod store_tests;
-mod support;
+use super::test_support as support;

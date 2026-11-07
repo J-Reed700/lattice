@@ -6,10 +6,9 @@
 )]
 use super::*;
 use crate::content_verification::tests::{fixture_completion, fixture_prompts};
-use crate::features::{
-    learning::{lessons::course_generation_tests::ScriptedModel, repository::LearningRepository},
-    web::mocks::MockWebService,
-};
+use crate::lessons::course_generation_tests::ScriptedModel;
+use crate::repository::LearningRepository;
+use lattice_core::application::ports::MockWebService;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };

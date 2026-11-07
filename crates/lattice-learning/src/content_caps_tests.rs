@@ -130,7 +130,7 @@ async fn snapshot_passages_reach_text_past_the_former_prefixes() -> Result<()> {
 async fn a_need_search_pages_while_new_results_appear_and_search_need_reads_one_page() -> Result<()>
 {
     use lattice_core::application::contracts::web::WebSearchResult;
-    let web = crate::features::web::mocks::MockWebService::new();
+    let web = lattice_core::application::ports::MockWebService::new();
     web.set_search_results(
         (0..30)
             .map(|i| WebSearchResult {

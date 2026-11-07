@@ -535,12 +535,10 @@ async fn a_learning_model_refused_for_memory_fails_once_naming_what_holds_it() {
 
 #[tokio::test]
 async fn a_lesson_job_fails_once_when_the_bundled_server_cannot_start() {
-    use crate::features::llm::engine::types::LLMError;
+    use lattice_core::shared::error::server_cannot_start;
     let settled = run_with_model(Arc::new(|| {
         Box::pin(async {
-            Err(AppError::from(LLMError::SidecarBinaryUnusable(
-                "llama-server.exe was not found".into(),
-            )))
+            Err(server_cannot_start("llama-server.exe was not found"))
         })
     }))
     .await;
@@ -563,12 +561,11 @@ async fn a_lesson_job_fails_once_when_the_bundled_server_cannot_start() {
 
 #[tokio::test]
 async fn a_lesson_job_waits_for_a_server_that_is_still_starting() {
-    use crate::features::llm::engine::types::LLMError;
     let settled = run_with_model(Arc::new(|| {
         Box::pin(async {
-            Err(AppError::from(LLMError::ClientUnavailable(
+            Err(AppError::ServiceNotAvailable(
                 "llama-server is still starting".into(),
-            )))
+            ))
         })
     }))
     .await;

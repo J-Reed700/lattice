@@ -15,7 +15,6 @@ use crate::drills::jobs::{spec_of, DRILL_BUILD, DRILL_GRADING};
 use crate::drills::reveal;
 use crate::drills::review;
 use crate::persistence::db;
-use crate::plugin::code_review_languages;
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{
     line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, IssueRating, Material, Origin,
@@ -617,21 +616,16 @@ async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn the_languages_the_screen_offers_are_the_catalogues_in_its_order() {
-    assert_eq!(code_review_languages(), LANGUAGES);
-}
-
 /// The sizes of the screen's Short, Standard and Long: about this many lines, with this many patterns to plant.
 const SCREEN_SIZES: [(u32, u32); 3] = [(40, 3), (80, 4), (140, 5)];
 
 #[tokio::test]
 async fn every_language_the_screen_offers_starts_at_every_size_it_offers() -> Result<()> {
     let pool = pool().await?;
-    for language in code_review_languages() {
+    for language in LANGUAGES {
         for (lines, count) in SCREEN_SIZES {
             let started =
-                review::start(&pool, &code(&language), AttemptMode::Practice, lines, count).await?;
+                review::start(&pool, &code(language), AttemptMode::Practice, lines, count).await?;
             assert!(
                 matches!(started.dto, StartedCodeReviewDto::Building { .. }),
                 "{language} {lines} {count}: {started:?}"

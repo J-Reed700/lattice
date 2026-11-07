@@ -486,28 +486,33 @@ fn the_fixture_view_of_an_answer_step_is_the_one_step_task() {
 /// checks the literal bounds, including schemas whose calls have no fixture.
 #[test]
 fn no_learning_schema_literal_exceeds_the_grammar_repetition_limit() -> Result<()> {
-    use crate::features::conversation::memory::prompts::GRAMMAR_REPETITION_LIMIT;
+    use lattice_core::application::ports::llm_port::GRAMMAR_REPETITION_LIMIT;
     let pattern = regex::Regex::new(r#""(maxLength|maxItems|minLength|minItems)"\s*:\s*(\d+)"#)
         .map_err(|error| AppError::InternalError(error.to_string()))?;
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let roots = [
+        concat!(env!("CARGO_MANIFEST_DIR"), "/src"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../lattice-desktop/src"),
+    ];
     let mut scanned = 0;
-    for entry in walkdir::WalkDir::new(root) {
-        let entry = entry.map_err(|error| AppError::InternalError(error.to_string()))?;
-        if entry.path().extension().and_then(|ext| ext.to_str()) != Some("rs") {
-            continue;
-        }
-        scanned += 1;
-        let source = std::fs::read_to_string(entry.path())?;
-        for found in pattern.captures_iter(&source) {
-            let bound: usize = found
-                .get(2)
-                .and_then(|digits| digits.as_str().parse().ok())
-                .unwrap_or(usize::MAX);
-            assert!(
-                bound <= GRAMMAR_REPETITION_LIMIT,
-                "{} sets a schema bound of {bound}, above llama.cpp's grammar limit of {GRAMMAR_REPETITION_LIMIT}",
-                entry.path().display()
-            );
+    for root in roots {
+        for entry in walkdir::WalkDir::new(root) {
+            let entry = entry.map_err(|error| AppError::InternalError(error.to_string()))?;
+            if entry.path().extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            scanned += 1;
+            let source = std::fs::read_to_string(entry.path())?;
+            for found in pattern.captures_iter(&source) {
+                let bound: usize = found
+                    .get(2)
+                    .and_then(|digits| digits.as_str().parse().ok())
+                    .unwrap_or(usize::MAX);
+                assert!(
+                    bound <= GRAMMAR_REPETITION_LIMIT,
+                    "{} sets a schema bound of {bound}, above llama.cpp's grammar limit of {GRAMMAR_REPETITION_LIMIT}",
+                    entry.path().display()
+                );
+            }
         }
     }
     assert!(scanned > 50, "the learning sources were not found");

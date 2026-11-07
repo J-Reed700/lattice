@@ -23,7 +23,7 @@ use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
@@ -426,14 +426,12 @@ impl ClaimReviewService {
             if !in_section_body(entry) {
                 return Err(AppError::InvalidInput(ONLY_SECTION.into()));
             }
-            return sqlx::query_scalar(
-                "SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?",
+            return published_edit::section_body(
+                &self.pool,
+                lesson_id,
+                entry.location().unit_index,
             )
-            .bind(lesson_id)
-            .bind(i64::try_from(entry.location().unit_index).unwrap_or(i64::MAX))
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
+            .await?
             .ok_or_else(|| AppError::NotFound("The claim's section is not in the lesson.".into()));
         }
         let draft = self

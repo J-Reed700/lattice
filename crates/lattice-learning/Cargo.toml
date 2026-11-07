@@ -39,7 +39,6 @@ tempfile = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 unicode-normalization = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
@@ -54,6 +53,7 @@ futures = { workspace = true }
 rand = { workspace = true }
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }
 walkdir = "2.5"
 wiremock = "0.6"
 

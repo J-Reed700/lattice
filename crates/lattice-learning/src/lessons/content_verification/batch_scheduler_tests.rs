@@ -3,6 +3,7 @@ use super::bridge_tests::{citing, STATED};
 use super::readings_tests::{claim, driven, paged, read_observed, world_of};
 use super::*;
 use crate::curriculum_repository::LESSON_PREPARATION;
+pub(in crate::lessons) use crate::content_verification::test_support::setup;
 use crate::{
     curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
     dto::AcceptLearningProgramRequestDto, lesson_drafts,
@@ -68,9 +69,9 @@ impl LLMPort for BatchModel {
             }
             if self.window_holds.is_some_and(|holds| size > holds) {
                 let window = self.max_context_tokens();
-                return Err(crate::features::llm::scheduler::rejection::window_refusal(
+                return Err(lattice_core::application::ports::llm_port::window_refusal(
                     self.model_name(),
-                    crate::features::llm::scheduler::rejection::RequestSize {
+                    lattice_core::application::ports::llm_port::RequestSize {
                         prompt_tokens: window + 831,
                         counted_exactly: true,
                         ..Default::default()
@@ -311,35 +312,6 @@ fn sections(sections: usize, claims: usize) -> Inventory {
             })
             .collect(),
     }
-}
-pub(in crate::lessons) async fn setup(
-    pool: &sqlx::SqlitePool,
-) -> Result<(LearningCurriculumRepository, String, String)> {
-    let programs = LearningRepository::new(pool.clone());
-    let program = crate::tests::fixture();
-    programs.create(&program).await?;
-    programs
-        .accept(&AcceptLearningProgramRequestDto {
-            program_id: program.summary.id.clone(),
-            expected_revision: 0,
-            title: program.summary.title.clone(),
-        })
-        .await?;
-    let program = programs.get(&program.summary.id).await?;
-    let lesson_id = program.modules[0].lessons[0].id.clone();
-    let repo = LearningCurriculumRepository::new(pool.clone());
-    let job = repo
-        .start_job(&StartLearningGenerationJobRequestDto {
-            operation_id: uuid::Uuid::new_v4().to_string(),
-            program_id: program.summary.id,
-            expected_revision: program.summary.revision,
-            kind: LearningGenerationJobKind::LessonPreparation,
-            request_json: json!({"lessonIds":[lesson_id]}).to_string(),
-            progress_total: 1,
-        })
-        .await?;
-    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
-    Ok((repo, job.id, lesson_id))
 }
 
 #[tokio::test]

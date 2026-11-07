@@ -6,8 +6,31 @@ use super::{
     study_repository::StudyRepository,
     study_service as service,
 };
-use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    SqlitePool,
+};
 use serde_json::json;
+
+async fn open(path: std::path::PathBuf) -> lattice_core::shared::error::Result<SqlitePool> {
+    let database = |e: sqlx::Error| lattice_core::shared::error::AppError::Database(e.to_string());
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .pragma("foreign_keys", "ON")
+        .pragma("journal_mode", "WAL")
+        .pragma("synchronous", "NORMAL");
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(options)
+        .await
+        .map_err(database)?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    Ok(pool)
+}
 
 const PASSAGE: &str = "A petition and an appeal address different procedural issues. Study the stated conditions before selecting a procedure.";
 fn source() -> StudySourceDto {
@@ -199,16 +222,15 @@ fn study_rejects_unknown_persisted_card_formats() {
 #[tokio::test]
 async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = DatabaseConnection::new(dir.path().join("study.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
+    let db = open(dir.path().join("study.db")).await?;
+    let repo = StudyRepository::new(db.clone());
     let d = deck();
     repo.save(&d).await?;
     let c = &d.cards[0];
     sqlx::query("UPDATE study_cards SET source_json=? WHERE id=?")
         .bind(serde_json::to_string(&c.source)?)
         .bind(&c.id)
-        .execute(db.pool())
+        .execute(&db)
         .await?;
     assert_eq!(
         repo.get(&d.id).await?.cards[0].citations.len(),
@@ -262,7 +284,7 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
         explanation: "Revised explanation".into(),
     };
     service::update_card(&repo, edit).await?;
-    let reopened = StudyRepository::new(db.pool().clone()).get(&d.id).await?;
+    let reopened = StudyRepository::new(db.clone()).get(&d.id).await?;
     assert_eq!(
         reopened.cards[0].options[0],
         "The complete stated conditions"
@@ -274,7 +296,7 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
     assert!(repo.get(&d.id).await.is_err());
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM study_reviews")
-            .fetch_one(db.pool())
+            .fetch_one(&db)
             .await?,
         0
     );
@@ -284,9 +306,8 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
 #[tokio::test]
 async fn a_card_is_edited_at_any_length() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = DatabaseConnection::new(dir.path().join("long-edit.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
+    let db = open(dir.path().join("long-edit.db")).await?;
+    let repo = StudyRepository::new(db.clone());
     let d = deck();
     repo.save(&d).await?;
     let edit = UpdateStudyCardRequestDto {
@@ -307,9 +328,8 @@ async fn a_card_is_edited_at_any_length() -> anyhow::Result<()> {
 async fn question_answer_reviews_reject_choices_and_replay_only_matching_payloads(
 ) -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = DatabaseConnection::new(dir.path().join("qa-study.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
+    let db = open(dir.path().join("qa-study.db")).await?;
+    let repo = StudyRepository::new(db.clone());
     let mut d = deck();
     let card = d
         .cards
@@ -354,13 +374,12 @@ async fn question_answer_reviews_reject_choices_and_replay_only_matching_payload
 async fn conversation_claims_keep_verified_answers_and_resolve_their_citations(
 ) -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
-    let db = DatabaseConnection::new(dir.path().join("conversation-study.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
+    let db = open(dir.path().join("conversation-study.db")).await?;
+    let repo = StudyRepository::new(db.clone());
     let conversation_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO conversations (id,title) VALUES (?,'Research notes')")
         .bind(&conversation_id)
-        .execute(db.pool())
+        .execute(&db)
         .await?;
     let source = |number: i64, name: &str, content: &str| {
         json!({
@@ -401,7 +420,7 @@ async fn conversation_claims_keep_verified_answers_and_resolve_their_citations(
         .bind(&conversation_id)
         .bind("The second supported fact follows from beta evidence [2]. The first supported fact follows from alpha evidence [1]. An unsupported assertion [1].")
         .bind(metadata.to_string())
-        .execute(db.pool())
+        .execute(&db)
         .await?;
 
     let claims = repo.conversation_claims(&conversation_id).await?;
@@ -454,84 +473,6 @@ async fn passages_stay_within_selected_documents_and_focus() -> anyhow::Result<(
             .await
             .is_err()
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() -> anyhow::Result<()>
-{
-    use crate::features::llm::llama_cpp::LlamaCppLlm;
-    use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
-    use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
-    let dir = tempfile::tempdir()?;
-    let db = DatabaseConnection::new(dir.path().join("biology.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
-    let id = uuid::Uuid::new_v4().to_string();
-    let passage = "Photosynthesis converts light energy into chemical energy. Chlorophyll absorbs the light used in photosynthesis.";
-    let library = FakeLibrary::default().with_document(&id, &[passage]);
-    let response = json!({"cards":[
-        {"question":"Which energy conversion occurs in photosynthesis?","options":["Light to chemical energy","Chemical to light energy","Heat to sound","Sound to light","Heat to motion"],"correctIndex":0,"explanation":"The first sentence names light as the input and chemical energy as the output.","sourceIndex":0,"quote":"Photosynthesis converts light energy into chemical energy.","topic":"Energy conversion"},
-        {"question":"What absorbs the light used in photosynthesis?","options":["Water","Chlorophyll","Oxygen","Glucose","Carbon dioxide"],"correctIndex":1,"explanation":"The second sentence identifies chlorophyll as the light absorber.","sourceIndex":0,"quote":"Chlorophyll absorbs the light used in photosynthesis.","topic":"Chlorophyll"}
-    ]}).to_string();
-    let server = MockServer::start().await;
-    Mock::given(path("/v1/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
-            "data: {}\n\ndata: [DONE]\n\n",
-            json!({"choices":[{"delta":{"content":response},"finish_reason":"stop"}]})
-        )))
-        .expect(2)
-        .mount(&server)
-        .await;
-    let llm = LlamaCppLlm::new(&LLMSettingsDto {
-        llama_cpp: LlamaCppSettingsDto {
-            url: server.uri(),
-            model: "test".into(),
-            auth_header_name: String::new(),
-            auth_header_value: String::new(),
-        },
-        ..Default::default()
-    })?;
-    for goal in ["", "High school biology exam"] {
-        let deck = service::generate_deck(
-            &repo,
-            &library,
-            &llm,
-            GenerateStudyDeckRequestDto {
-                title: "Biology".into(),
-                document_ids: vec![id.clone()],
-                focus: "photosynthesis".into(),
-                study_goal: goal.into(),
-                count: 2,
-            },
-        )
-        .await?;
-        let saved = repo.get(&deck.id).await?;
-        assert_eq!(saved.study_goal, goal);
-        assert_eq!(saved.cards.len(), 2);
-        assert!(saved
-            .cards
-            .iter()
-            .all(|card| card.source.file_name == format!("{id}.md")
-                && passage.contains(&card.source.excerpt)));
-    }
-    let requests = server.received_requests().await.unwrap();
-    let body: serde_json::Value = serde_json::from_slice(&requests[1].body)?;
-    let prompt: serde_json::Value =
-        serde_json::from_str(body["messages"][1]["content"].as_str().unwrap())?;
-    assert_eq!(prompt["learningGoal"], "High school biology exam");
-    assert_eq!(prompt["passages"][0]["text"], passage);
-    let system = body["messages"][0]["content"]
-        .as_str()
-        .unwrap()
-        .to_lowercase();
-    assert!(!system.contains("patent") && !system.contains("mpep"));
-    assert_eq!(body["stream"], true);
-    // Learning asks for "low" effort; on llama.cpp that is no switch, so the
-    // request turns thinking off explicitly and sends no level with it.
-    assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
-    assert!(body.get("reasoning_effort").is_none());
-    assert!(body["response_format"]["json_schema"]["schema"].is_object());
     Ok(())
 }
 

@@ -45,6 +45,7 @@ mod prove;
 pub(crate) mod store;
 
 pub(crate) use outputs::*;
+pub use outputs::{BlindReview, DroppedMutation, Evidence, ModelCall, SourcePassage, Trail};
 
 /// Names every checkpoint of a build; a change to what the stages save must not resume a build saved under the old
 /// shape.

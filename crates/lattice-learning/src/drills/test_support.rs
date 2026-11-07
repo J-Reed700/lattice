@@ -34,7 +34,7 @@ use std::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 /// The name the scripted model gives.
-pub(super) const MODEL: &str = "scripted-drill-model";
+pub const MODEL: &str = "scripted-drill-model";
 
 /// The role and the text of each message a request carries.
 pub(super) fn messages(request: &CompletionRequest) -> Vec<(String, String)> {
@@ -408,10 +408,10 @@ pub(super) fn files() -> Vec<DrillFile> {
 }
 
 /// The hidden suite.
-pub(super) const SUITE: &str = "from src.config import default_limiter\nfrom src.limiter import RateLimiter\n\nnow = [0]\nlimiter = RateLimiter(2, 10, lambda: now[0])\nassert limiter.allow(\"a\")\nassert limiter.allow(\"a\")\nassert not limiter.allow(\"a\")\nnow[0] = 11\nassert limiter.allow(\"a\")\nassert default_limiter(lambda: 0).allow(\"k\")\n";
+pub const SUITE: &str = "from src.config import default_limiter\nfrom src.limiter import RateLimiter\n\nnow = [0]\nlimiter = RateLimiter(2, 10, lambda: now[0])\nassert limiter.allow(\"a\")\nassert limiter.allow(\"a\")\nassert not limiter.allow(\"a\")\nnow[0] = 11\nassert limiter.allow(\"a\")\nassert default_limiter(lambda: 0).allow(\"k\")\n";
 
 /// A test that passes on the clean limiter and fails on the one with the operator changed.
-pub(super) const KILLING_TEST: &str = "from src.limiter import RateLimiter\n\nlimiter = RateLimiter(1, 10, lambda: 0)\nassert limiter.allow(\"a\")\nassert not limiter.allow(\"a\"), \"a second call inside the window must be refused\"\n";
+pub const KILLING_TEST: &str = "from src.limiter import RateLimiter\n\nlimiter = RateLimiter(1, 10, lambda: 0)\nassert limiter.allow(\"a\")\nassert not limiter.allow(\"a\"), \"a second call inside the window must be refused\"\n";
 
 pub(super) const OPERATOR_BEFORE: &str = "        if len(recent) >= self.limit:\n";
 pub(super) const OPERATOR_AFTER: &str = "        if len(recent) > self.limit:\n";
@@ -419,8 +419,8 @@ pub(super) const LITERALS_BEFORE: &str =
     "    return RateLimiter(DEFAULT_LIMIT, DEFAULT_WINDOW, clock)\n";
 pub(super) const LITERALS_AFTER: &str = "    return RateLimiter(100, 60, clock)\n";
 
-pub(super) const OPERATOR: &str = "correctness.wrong_operator";
-pub(super) const LITERALS: &str = "readability.magic_number";
+pub const OPERATOR: &str = "correctness.wrong_operator";
+pub const LITERALS: &str = "readability.magic_number";
 
 pub(super) fn spec() -> DrillSpec {
     DrillSpec {
@@ -460,7 +460,7 @@ pub(super) fn operator_mutation() -> Mutation {
     }
 }
 
-pub(super) fn literals_mutation() -> Mutation {
+pub fn literals_mutation() -> Mutation {
     Mutation {
         pattern: LITERALS.into(),
         edit: literals_edit(),
@@ -526,7 +526,7 @@ pub(super) fn judge_answer(confirmed: bool) -> String {
     .to_string()
 }
 
-pub(super) fn code() -> CleanCode {
+pub fn code() -> CleanCode {
     CleanCode {
         drill_id: "00000000-0000-4000-8000-000000000001".into(),
         title: "A sliding-window rate limiter".into(),
@@ -539,7 +539,7 @@ pub(super) fn code() -> CleanCode {
     }
 }
 
-pub(super) fn review() -> CleanReview {
+pub fn review() -> CleanReview {
     CleanReview {
         files: files(),
         repairs: Vec::new(),
@@ -551,7 +551,7 @@ pub(super) fn baseline() -> Baseline {
     Baseline::new(&code(), &review())
 }
 
-pub(super) fn planted() -> Planted {
+pub fn planted() -> Planted {
     Planted {
         mutations: vec![operator_mutation(), literals_mutation()],
         trail: Trail::default(),
@@ -559,7 +559,7 @@ pub(super) fn planted() -> Planted {
 }
 
 /// Both mutations proven: the first killed, the second judged.
-pub(super) fn proved() -> Proved {
+pub fn proved() -> Proved {
     let edits = vec![operator_edit(), literals_edit()];
     let (changed, spans) = apply(&files(), &edits).unwrap_or_default();
     Proved {
@@ -711,7 +711,7 @@ impl Harness {
 }
 
 /// A blind review that found nothing and judged nothing.
-pub(super) fn quiet() -> BlindReview {
+pub fn quiet() -> BlindReview {
     BlindReview {
         findings: Vec::new(),
         assessment: None,
@@ -824,7 +824,7 @@ pub(super) fn raised_all(drill: &Drill) -> Assessment {
 
 /// Puts the drill of [`proved`] into the bank, ready, as a finished build leaves it: with its suite, its runner and
 /// its evidence.
-pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
+pub async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
     let proved = proved();
     let drill = Drill {
         id: id.into(),

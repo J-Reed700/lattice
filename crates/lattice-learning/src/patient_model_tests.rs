@@ -231,7 +231,7 @@ const COULD_NOT_START: &str = "The model server could not start: llama-server.ex
     Reinstall Lattice, or choose another model in Settings.";
 
 fn bundled_server_cannot_run() -> AppError {
-    crate::features::llm::engine::types::LLMError::SidecarBinaryUnusable(SERVER_FAULT.into()).into()
+    lattice_core::shared::error::server_cannot_start(SERVER_FAULT)
 }
 
 #[tokio::test]
@@ -282,11 +282,10 @@ async fn an_outline_stops_at_once_when_the_bundled_server_cannot_start() {
 
 #[tokio::test]
 async fn a_server_that_is_starting_busy_or_unreachable_is_still_waited_for() {
-    use crate::features::llm::engine::types::LLMError;
     let outages: [fn() -> AppError; 4] = [
         || AppError::ServiceNotAvailable("503: loading model".into()),
-        || LLMError::ClientUnavailable("llama-server is still starting".into()).into(),
-        || LLMError::Network("connection reset".into()).into(),
+        || AppError::ServiceNotAvailable("llama-server is still starting".into()),
+        || AppError::Network("connection reset".into()),
         || AppError::RateLimitExceeded("the server is busy".into()),
     ];
     for outage in outages {

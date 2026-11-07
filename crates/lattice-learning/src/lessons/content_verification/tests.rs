@@ -183,7 +183,7 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
 /// survives llama.cpp's repetition limit, so the server holds the shape, and
 /// none of its messages also asks for the format in words.
 fn assert_schema_request_holds_the_shape(request: &CompletionRequest, schema: &Value) {
-    use crate::features::conversation::memory::prompts::{
+    use lattice_core::application::ports::llm_port::{
         largest_repetition_bound, GRAMMAR_REPETITION_LIMIT,
     };
     let (bound, path) = largest_repetition_bound(schema);

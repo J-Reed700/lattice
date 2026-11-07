@@ -376,8 +376,8 @@ pub(crate) async fn audit(
     Ok(Coverage { units: audited })
 }
 
-#[cfg(test)]
-pub(crate) async fn live_mapping_fixture(
+#[cfg(any(test, feature = "test-support"))]
+pub async fn live_mapping_fixture(
     llm: &dyn LLMPort,
     fixture: &Value,
 ) -> Result<Value> {

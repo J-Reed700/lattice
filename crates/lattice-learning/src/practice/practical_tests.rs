@@ -1,6 +1,6 @@
 use crate::{
     assessment_engine::LearningRubricCriterion,
-    dto::{AcceptLearningProgramRequestDto, LearningPracticeMode},
+    dto::LearningPracticeMode,
     lab_runtime::{LearningContainerEngine, LearningLabLimits},
     practical_dto::*,
     practical_generation::{GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole},
@@ -39,44 +39,9 @@ fn workspace_cleanup_requires_a_matching_invocation_marker() -> Result<()> {
 }
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
-
-fn id() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
+use super::test_support::{fixture, fixture_on_pool, id};
 
 use crate::persistence::db;
-
-async fn fixture_on_pool(pool: SqlitePool) -> Result<(SqlitePool, String, String, String)> {
-    let program = crate::tests::fixture();
-    let program_id = program.summary.id.clone();
-    let module_id = program.modules[0].id.clone();
-    let lesson_id = program.modules[0].lessons[0].id.clone();
-    let programs = LearningRepository::new(pool.clone());
-    programs.create(&program).await?;
-    programs
-        .accept(&AcceptLearningProgramRequestDto {
-            program_id: program_id.clone(),
-            expected_revision: 0,
-            title: program.summary.title,
-        })
-        .await?;
-    let outcome_id = id();
-    sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,NULL,?,?,0,?)")
-        .bind(&outcome_id)
-        .bind(&program_id)
-        .bind(&module_id)
-        .bind("Apply the central idea")
-        .bind("Use the module idea in a practical setting.")
-        .bind(chrono::Utc::now().timestamp_millis())
-        .execute(&pool)
-        .await
-        .map_err(db)?;
-    Ok((pool, program_id, lesson_id, outcome_id))
-}
-
-async fn fixture() -> Result<(SqlitePool, String, String, String)> {
-    fixture_on_pool(crate::tests::pool().await?).await
-}
 
 fn generated() -> GeneratedPracticalActivity {
     GeneratedPracticalActivity {
@@ -841,7 +806,7 @@ async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() 
     let programs = LearningRepository::new(pool.clone());
     let research_ids = crate::interview_research::research_interview_target(
         &TestResearchLLM(serde_json::json!({"needs":[]})),
-        &crate::features::web::mocks::MockWebService::new(),
+        &lattice_core::application::ports::MockWebService::new(),
         &crate::source_library::LearningSourceLibraryRepository::new(
             pool.clone(),
         ),
@@ -1069,7 +1034,7 @@ impl lattice_core::application::ports::LLMPort for TestResearchLLM {
 async fn interview_research_ingests_context_and_web_pages_idempotently() -> Result<()> {
     use crate::practice::interview_research;
     use crate::references::source_library::LearningSourceLibraryRepository;
-    use crate::features::web::mocks::MockWebService;
+    use lattice_core::application::ports::MockWebService;
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
 
     let (pool, program_id, _lesson_id, _) = fixture().await?;
@@ -1225,7 +1190,7 @@ async fn interview_research_ingests_context_and_web_pages_idempotently() -> Resu
 async fn interview_research_rejects_redirects_outside_structured_site_scope() -> Result<()> {
     use crate::practice::interview_research;
     use crate::source_library::LearningSourceLibraryRepository;
-    use crate::features::web::mocks::MockWebService;
+    use lattice_core::application::ports::MockWebService;
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     let (pool, program_id, _, _) = fixture().await?;
     let library = LearningSourceLibraryRepository::new(pool);
@@ -1741,23 +1706,6 @@ async fn a_learners_long_practical_request_is_held_to_the_chat_limit() -> Result
         )
         .await;
         assert_eq!(made.is_ok(), accepted, "{what}: {:?}", made.err());
-    }
-    Ok(())
-}
-
-/// The commands take a `State<Container>`, which no test here builds, so the
-/// boundary's own numbers are read from its source.
-#[test]
-fn the_command_boundary_carries_no_cap_of_its_own_on_a_learners_text() -> Result<()> {
-    let source = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../lattice-desktop/src/features/learning/plugin/practical.rs"
-    ))?;
-    for cap in ["4_000", "4000", "8_000", "8000"] {
-        assert!(
-            !source.contains(cap),
-            "plugin/practical.rs still holds a learner's text to {cap}, not the chat limit"
-        );
     }
     Ok(())
 }

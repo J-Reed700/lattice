@@ -38,12 +38,12 @@ mod class_checks;
 mod classify;
 pub(crate) use classify::{figures, needs_citation, Givens, CITED_KINDS};
 mod coverage;
-#[cfg(test)]
-pub(crate) use coverage::live_mapping_fixture;
+#[cfg(any(test, feature = "test-support"))]
+pub use coverage::live_mapping_fixture;
 mod claim_reuse;
 mod evidence_checks;
-#[cfg(test)]
-pub(crate) use evidence_checks::page_budget;
+#[cfg(any(test, feature = "test-support"))]
+pub use evidence_checks::page_budget;
 use evidence_checks::{
     same_passage, Reach, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
 };
@@ -62,15 +62,15 @@ mod portability;
 mod quote_claims;
 mod readings;
 mod resolution;
-#[cfg(test)]
-pub(crate) use inventory::revisions::live_revision_fixture;
-#[cfg(test)]
-pub(crate) async fn live_inventory_fixture(
+#[cfg(any(test, feature = "test-support"))]
+pub use inventory::revisions::live_revision_fixture;
+#[cfg(any(test, feature = "test-support"))]
+pub async fn live_inventory_fixture(
     llm: &dyn LLMPort,
     content: &[Value],
 ) -> Result<Value> {
-    let pool = crate::tests::pool().await?;
-    let (_, job, _) = tests::batch_scheduler_tests::setup(&pool).await?;
+    let pool = crate::test_support::pool().await?;
+    let (_, job, _) = test_support::setup(&pool).await?;
     crate::lesson_progress::run(
         &lattice_core::shared::runtime::jobs::JobContext::detached(
             &lattice_core::shared::runtime::jobs::JobStore::new(pool.clone()),
@@ -103,6 +103,8 @@ pub(crate) use rounds::Rounds;
 mod section_checkpoints;
 mod sections;
 mod support_gate;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
@@ -603,8 +605,8 @@ fn canonicalize_evidence(evidence: &mut [EvidencePassage]) {
     });
 }
 
-#[cfg(test)]
-pub(crate) async fn live_retrieved_passages(
+#[cfg(any(test, feature = "test-support"))]
+pub async fn live_retrieved_passages(
     llm: &dyn LLMPort,
     claim: &str,
     references: &ReferenceCollection<'_>,
@@ -641,8 +643,8 @@ pub async fn judge_batch_for_publication(
         .await
 }
 
-#[cfg(test)]
-pub(crate) async fn live_coverage_fixture(
+#[cfg(any(test, feature = "test-support"))]
+pub async fn live_coverage_fixture(
     llm: &dyn LLMPort,
     data: &Value,
     progress: &crate::outline_progress::OutlineProgress,

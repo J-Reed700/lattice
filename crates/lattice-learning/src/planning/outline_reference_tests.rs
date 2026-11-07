@@ -13,7 +13,7 @@ use crate::{
     repository::LearningRepository,
     service,
 };
-use crate::features::web::mocks::MockWebService;
+use lattice_core::application::ports::MockWebService;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
 };

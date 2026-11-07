@@ -7,6 +7,8 @@
 //! every text it embeds, and a test can slow it, hold it at a gate, cancel a
 //! build after some batches (a cut) or make it fail (a model that stops).
 
+#![allow(clippy::indexing_slicing)]
+
 use super::live::EmbedderSource;
 use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingPort;

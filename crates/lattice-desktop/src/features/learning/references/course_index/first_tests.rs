@@ -6,9 +6,9 @@
 
 use super::tests::{builds, course, indexes};
 use super::*;
-use crate::tests;
-use lattice_index::passage_index::build::BATCH_SIZE;
-use lattice_index::passage_index::testing::{BatchGate, FakeEmbedder, FixedEmbedders};
+use crate::features::learning::tests;
+use crate::infrastructure::passage_index::build::BATCH_SIZE;
+use crate::infrastructure::passage_index::testing::{BatchGate, FakeEmbedder, FixedEmbedders};
 use lattice_core::shared::{AppError, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
@@ -30,7 +30,7 @@ pub(super) async fn pool(dir: &Path) -> Result<SqlitePool> {
         .connect_with(options)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
+    sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;

@@ -76,7 +76,7 @@ async fn workspaces_batch_snapshots_without_mixing_canvases_or_programs() -> Res
     let other = active_program(&pool).await?;
     let repo = LearningCanvasRepository::new(pool);
     let (empty, reads) =
-        crate::test_support::query_counts::count_reads(repo.workspace(&program.summary.id)).await;
+        lattice_core::shared::testing::query_counts::count_reads(repo.workspace(&program.summary.id)).await;
     assert!(empty?.canvases.is_empty());
     assert_eq!(reads, 2);
     let mut expected = std::collections::HashMap::new();
@@ -115,7 +115,7 @@ async fn workspaces_batch_snapshots_without_mixing_canvases_or_programs() -> Res
         }
     }
     let (workspace, reads) =
-        crate::test_support::query_counts::count_reads(repo.workspace(&program.summary.id)).await;
+        lattice_core::shared::testing::query_counts::count_reads(repo.workspace(&program.summary.id)).await;
     let workspace = workspace?;
     assert_eq!(reads, 3);
     assert_eq!(workspace.canvases.len(), 3);

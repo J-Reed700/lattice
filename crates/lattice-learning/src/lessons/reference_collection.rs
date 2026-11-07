@@ -593,6 +593,8 @@ mod pages;
 mod ranking;
 mod snapshots;
 mod subject;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub(crate) use snapshots::{snapshot_passages, snapshot_room};
 pub(crate) use subject::shared_terms;
 
