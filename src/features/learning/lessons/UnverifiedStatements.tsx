@@ -56,6 +56,7 @@ function Statement({ item, programId, lessonId, revision, claim, onReview }: {
     void act({ action: 'edit', before: claim.location.quote, after });
   };
   const busy = resolve.isPending;
+  const sameSentence = text.trim() === (claim?.location.quote ?? '').trim();
 
   return (
     <li>
@@ -73,7 +74,7 @@ function Statement({ item, programId, lessonId, revision, claim, onReview }: {
           <label htmlFor={`${id}-reason`} className="block text-xs font-medium text-text-secondary">A source disagrees with this. Why is it right?</label>
           <textarea id={`${id}-reason`} autoFocus rows={2} value={text} onChange={(event) => setText(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
           <div className="mt-2 flex gap-2">
-            <Button type="button" size="sm" disabled={busy} onClick={confirm}>Save</Button>
+            <Button type="button" size="sm" disabled={busy || !text.trim()} onClick={confirm}>Save</Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
           </div>
         </div>
@@ -83,7 +84,7 @@ function Statement({ item, programId, lessonId, revision, claim, onReview }: {
           <label htmlFor={`${id}-edit`} className="block text-xs font-medium text-text-secondary">Your version</label>
           <textarea id={`${id}-edit`} autoFocus rows={3} value={text} onChange={(event) => setText(event.target.value)} className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
           <div className="mt-2 flex gap-2">
-            <Button type="button" size="sm" disabled={busy} onClick={save}>Save</Button>
+            <Button type="button" size="sm" disabled={busy || !text.trim() || sameSentence} onClick={save}>Save</Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setForm(null)}>Cancel</Button>
           </div>
         </div>
