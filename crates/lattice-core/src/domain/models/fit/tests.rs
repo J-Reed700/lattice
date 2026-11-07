@@ -1007,16 +1007,22 @@ fn a_card_beside_an_integrated_gpu_holds_no_desktop_so_only_the_fit_target_comes
 }
 
 #[test]
-fn the_9b_fits_an_8_gib_laptop_card_beside_an_integrated_gpu() {
+fn the_9b_is_tight_on_an_8_gib_laptop_card_with_an_f16_cache_and_fits_with_a_quantized_one() {
     let nine = curated("qwen3.5-9b-q4_k_m");
+    let on_laptop = |quantized: bool| {
+        Recommender::new(Companions::default_pair(), quantized).recommend(
+            &laptop_card_beside_an_integrated_gpu(),
+            std::slice::from_ref(&nine),
+        )
+    };
 
-    let list = Recommender::new(Companions::default_pair(), false).recommend(
-        &laptop_card_beside_an_integrated_gpu(),
-        std::slice::from_ref(&nine),
-    );
+    let f16 = on_laptop(false);
+    let quantized = on_laptop(true);
 
-    assert_eq!(ids(&list), ["qwen3.5-9b-q4_k_m"]);
-    assert_eq!(list[0].verdict.kind, FitKind::Fits);
+    assert_eq!(ids(&f16), ["qwen3.5-9b-q4_k_m"]);
+    assert_eq!(f16[0].verdict.kind, FitKind::Tight);
+    assert_eq!(ids(&quantized), ["qwen3.5-9b-q4_k_m"]);
+    assert_eq!(quantized[0].verdict.kind, FitKind::Fits);
 }
 
 #[test]
@@ -1092,4 +1098,11 @@ fn a_32_gib_processor_only_machine_is_not_given_a_thorough_model_as_best() {
         .iter()
         .all(|r| by_id(&r.id).active_parameters_b <= 14.0));
     assert_eq!(list[0].id, want.id);
+}
+
+#[test]
+fn every_curated_chat_entry_says_what_it_is_for() {
+    for model in curated_chat_models() {
+        assert!(!model.use_for.trim().is_empty(), "{}", model.id);
+    }
 }

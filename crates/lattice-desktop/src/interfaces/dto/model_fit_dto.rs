@@ -88,6 +88,8 @@ pub struct RecommendationDto {
     pub model_id: String,
     pub name: String,
     pub description: String,
+    /// One plain sentence on what the model is for.
+    pub use_for: String,
     pub download_bytes: u64,
     pub verdict: FitVerdictDto,
     pub labels: Vec<RecommendationLabelDto>,

@@ -219,6 +219,8 @@ pub struct CuratedChatModel {
     /// The vision projector the repository publishes, if any. Read it
     /// through [`chat_model_vision`].
     pub vision: Option<CuratedVision>,
+    /// One plain sentence on what the model is for, shown on its card.
+    pub use_for: &'static str,
 }
 
 /// What a model's KV cache costs on top of its weights, from its GGUF header,
@@ -419,6 +421,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 668_227_264,
@@ -447,6 +450,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 672_423_616,
@@ -482,6 +486,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 990_372_672,
@@ -513,6 +518,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_166_080,
@@ -552,6 +558,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: true,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_165_984,
@@ -587,6 +594,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 175_115_840,
@@ -619,6 +627,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_166_080,
@@ -651,6 +660,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_166_080,
@@ -686,6 +696,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 175_115_840,
@@ -724,6 +735,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-bf16.gguf",
             projector_bytes: 931_145_952,
@@ -760,6 +772,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 1_193_058_784,
@@ -796,6 +809,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 175_115_840,
@@ -834,6 +848,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 927_607_488,
@@ -869,6 +884,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 1_193_058_784,
@@ -906,6 +922,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 899_283_680,

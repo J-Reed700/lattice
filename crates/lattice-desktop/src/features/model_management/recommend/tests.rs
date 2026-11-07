@@ -86,6 +86,8 @@ async fn the_recommended_list_is_the_core_recommenders_in_its_order() {
             .unwrap();
         assert_eq!(dto.name, rec.name);
         assert_eq!(dto.description, entry.description);
+        assert!(!dto.use_for.is_empty(), "{}", rec.id);
+        assert_eq!(dto.use_for, model.use_for);
         assert_eq!(dto.download_bytes, model.size_bytes);
         assert_eq!(
             dto.verdict,
