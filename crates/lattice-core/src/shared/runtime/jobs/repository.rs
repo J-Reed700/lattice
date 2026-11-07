@@ -14,6 +14,10 @@ const RESUMING: &str = "Resuming saved work";
 const STOPPED_BY_RESTART: &str = "The app closed before this job finished.";
 const STILL_RUNNING: &str = "Cancel this job before deleting it.";
 const ERROR_LIMIT: usize = 2000;
+/// The error code of a job that stopped the app on two launches with nothing saved between.
+pub const STOPPED_THE_APP: &str = "stopped_the_app";
+const STOPPED_THE_APP_MESSAGE: &str =
+    "This stopped Lattice twice, so it was not resumed. Retry it to try again.";
 
 fn db(error: sqlx::Error) -> AppError {
     match error {
@@ -490,11 +494,14 @@ impl JobStore {
             ));
         }
         let stamp = now();
-        sqlx::query("UPDATE jobs SET progress_current=?,progress_message=?,heartbeat_at=?,activity_json=coalesce(?,activity_json) WHERE id=? AND status='running'")
+        sqlx::query("UPDATE jobs SET progress_current=?,progress_message=?,heartbeat_at=?,activity_json=coalesce(?,activity_json),saved_work=saved_work+? WHERE id=? AND status='running'")
             .bind(i64::from(current))
             .bind(message)
             .bind(stamp)
             .bind(activity.map(encode).transpose()?)
+            .bind(i64::from(
+                current != job.progress_current || message != job.progress_message,
+            ))
             .bind(id)
             .execute(&mut *tx)
             .await
@@ -536,7 +543,7 @@ impl JobStore {
             return Ok(false);
         }
         let staged = update(job.staged_result)?;
-        sqlx::query("UPDATE jobs SET staged_result_json=? WHERE id=? AND status='running'")
+        sqlx::query("UPDATE jobs SET staged_result_json=?,saved_work=saved_work+1 WHERE id=? AND status='running'")
             .bind(encode(&staged)?)
             .bind(id)
             .execute(&mut *tx)
@@ -592,16 +599,24 @@ impl JobStore {
         key: &str,
         data: &serde_json::Value,
     ) -> Result<bool> {
-        Ok(sqlx::query("INSERT INTO job_checkpoints(job_id,key,data_json,updated_at) SELECT id,?,?,? FROM jobs WHERE id=? AND status='running' ON CONFLICT(job_id,key) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at")
+        let saved = sqlx::query("INSERT INTO job_checkpoints(job_id,key,data_json,updated_at) SELECT id,?,?,? FROM jobs WHERE id=? AND status='running' ON CONFLICT(job_id,key) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at")
             .bind(key)
             .bind(encode(data)?)
             .bind(now())
             .bind(id)
-            .execute(connection)
+            .execute(&mut *connection)
             .await
             .map_err(db)?
             .rows_affected()
-            == 1)
+            == 1;
+        if saved {
+            sqlx::query("UPDATE jobs SET saved_work=saved_work+1 WHERE id=?")
+                .bind(id)
+                .execute(connection)
+                .await
+                .map_err(db)?;
+        }
+        Ok(saved)
     }
 
     pub async fn complete(&self, id: &str, result_ref: &str, message: &str) -> Result<bool> {
@@ -638,6 +653,17 @@ impl JobStore {
 
     pub async fn fail(&self, id: &str, code: &str, message: &str) -> Result<bool> {
         let mut tx = self.immediate().await?;
+        let failed = Self::fail_in(&mut tx, id, code, message).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(failed)
+    }
+
+    async fn fail_in(
+        connection: &mut SqliteConnection,
+        id: &str,
+        code: &str,
+        message: &str,
+    ) -> Result<bool> {
         let stamp = now();
         let failed = sqlx::query("UPDATE jobs SET status='failed',finished_at=?,heartbeat_at=?,error_code=?,error_message=?,progress_message='Failed',result_ref=NULL WHERE id=? AND status='running'")
             .bind(stamp)
@@ -645,15 +671,14 @@ impl JobStore {
             .bind(code)
             .bind(message.chars().take(ERROR_LIMIT).collect::<String>())
             .bind(id)
-            .execute(&mut *tx)
+            .execute(&mut *connection)
             .await
             .map_err(db)?
             .rows_affected()
             == 1;
         if failed {
-            record_event(&mut tx, id, JobStatus::Failed, "Failed", stamp).await?;
+            record_event(connection, id, JobStatus::Failed, "Failed", stamp).await?;
         }
-        tx.commit().await.map_err(db)?;
         Ok(failed)
     }
 
@@ -668,7 +693,7 @@ impl JobStore {
         }
         let stamp = now();
         let delay = i64::try_from(backoff.delay(job.retry_count).as_millis()).unwrap_or(i64::MAX);
-        sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=?,error_message=?,progress_message=?,heartbeat_at=?,activity_json=coalesce(?,activity_json),retry_not_before=?,retry_count=retry_count+1 WHERE id=? AND status='running'")
+        sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=?,error_message=?,progress_message=?,heartbeat_at=?,activity_json=coalesce(?,activity_json),retry_not_before=?,retry_count=retry_count+1,unsaved_starts=0 WHERE id=? AND status='running'")
             .bind(&deferral.code)
             .bind(deferral.message.chars().take(ERROR_LIMIT).collect::<String>())
             .bind(&deferral.progress_message)
@@ -714,7 +739,7 @@ impl JobStore {
         message: &str,
     ) -> Result<bool> {
         let stamp = now();
-        let suspended = sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=NULL,error_message=NULL,progress_message=?,heartbeat_at=? WHERE id=? AND status='running'")
+        let suspended = sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=NULL,error_message=NULL,progress_message=?,heartbeat_at=?,unsaved_starts=0 WHERE id=? AND status='running'")
             .bind(message)
             .bind(stamp)
             .bind(id)
@@ -760,19 +785,33 @@ impl JobStore {
     /// live worker by age: a model call may take hours.
     pub async fn recover(&self, kind: &str, policy: RecoveryPolicy) -> Result<Vec<String>> {
         let mut tx = self.immediate().await?;
-        let running: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM jobs WHERE kind=? AND status='running' ORDER BY created_at,rowid",
+        let running: Vec<(String, i64, i64, i64)> = sqlx::query_as(
+            "SELECT id,saved_work,recovery_mark,unsaved_starts FROM jobs WHERE kind=? AND status='running' ORDER BY created_at,rowid",
         )
         .bind(kind)
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
-        for id in &running {
+        for (id, saved_work, mark, unsaved_starts) in &running {
             match policy {
-                RecoveryPolicy::Requeue => Self::suspend_in(&mut tx, id, RESUMING).await?,
+                RecoveryPolicy::Requeue if saved_work == mark && *unsaved_starts > 0 => {
+                    Self::fail_in(&mut tx, id, STOPPED_THE_APP, STOPPED_THE_APP_MESSAGE).await?
+                }
+                RecoveryPolicy::Requeue => {
+                    let resumed = Self::suspend_in(&mut tx, id, RESUMING).await?;
+                    sqlx::query(
+                        "UPDATE jobs SET recovery_mark=saved_work,unsaved_starts=1 WHERE id=?",
+                    )
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db)?;
+                    resumed
+                }
                 RecoveryPolicy::Interrupt => Self::interrupt_in(&mut tx, id).await?,
             };
         }
+        let running = running.into_iter().map(|(id, ..)| id).collect();
         tx.commit().await.map_err(db)?;
         Ok(running)
     }
