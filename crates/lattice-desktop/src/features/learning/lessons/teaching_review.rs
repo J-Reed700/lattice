@@ -445,7 +445,7 @@ async fn review_sections(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
-    use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+    use crate::features::learning::lessons::course_generation_tests::{ScriptedModel, Windowed};
 
     fn check(index: usize) -> Value {
         json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
@@ -815,31 +815,6 @@ mod tests {
         Ok(())
     }
 
-    /// `ScriptedModel` with a window of `.1` tokens.
-    struct Window<'a>(&'a ScriptedModel, usize);
-
-    #[async_trait::async_trait]
-    impl LLMPort for Window<'_> {
-        async fn complete(
-            &self,
-            request: &lattice_core::application::ports::llm_port::CompletionRequest,
-        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
-            self.0.complete(request).await
-        }
-        fn model_name(&self) -> &str {
-            self.0.model_name()
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            self.0.count_tokens(text)
-        }
-        fn max_context_tokens(&self) -> usize {
-            self.1
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-    }
-
     /// The review carries the lesson beside the writer's prompt, whose
     /// excerpts filled the room the writer had: on a 9B's 32k window the
     /// review of a PostgreSQL lesson did not fit, and the lesson failed after
@@ -856,7 +831,7 @@ mod tests {
         let scripted = model(vec![
             json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])}),
         ]);
-        let window = Window(&scripted, 13_000);
+        let window = Windowed(&scripted, 13_000);
 
         review(
             &window,

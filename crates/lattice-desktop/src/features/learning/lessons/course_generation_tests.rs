@@ -557,6 +557,31 @@ impl ScriptedModel {
     }
 }
 
+/// [`ScriptedModel`] with a window of `.1` tokens.
+pub(in crate::features::learning) struct Windowed<'a>(
+    pub(in crate::features::learning) &'a ScriptedModel,
+    pub(in crate::features::learning) usize,
+);
+
+#[async_trait::async_trait]
+impl LLMPort for Windowed<'_> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.1
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
 /// Prefix of a scripted evidence-linking reply. How many batches a run makes
 /// and which items each holds depend on retrieval, so the reply is built from
 /// the prompt: the sentinel maps item paths to the passage text to choose and
