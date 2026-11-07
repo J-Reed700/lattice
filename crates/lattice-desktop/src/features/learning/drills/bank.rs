@@ -252,6 +252,7 @@ pub(in crate::features::learning) async fn take_topic_in(
             Shelf::Language(_) => None,
             Shelf::Course(program_id) => Some(program_id.to_owned()),
         },
+        lesson_id: None,
     };
     let next_build = queue_build_in(connection, &next, &format!("next:{}", drill.drill.id)).await?;
     Ok(Some(Taken { drill, next_build }))

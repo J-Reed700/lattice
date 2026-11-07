@@ -22,6 +22,7 @@ mod repository_tests;
 mod resume_tests;
 mod review_tests;
 mod runner_tests;
+mod schedule_store_tests;
 mod schema_tests;
 mod store_tests;
 mod support;

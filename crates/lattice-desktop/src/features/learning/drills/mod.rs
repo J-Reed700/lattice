@@ -18,6 +18,7 @@ pub mod repository;
 mod reveal;
 pub mod review;
 pub(in crate::features::learning) mod runner;
+pub(in crate::features::learning) mod schedules;
 pub mod spec;
 
 #[cfg(test)]

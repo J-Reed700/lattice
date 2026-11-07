@@ -20,6 +20,7 @@ fn go_spec() -> DrillSpec {
         lines: 30,
         patterns: vec![OPERATOR.into(), LITERALS.into()],
         program_id: None,
+        lesson_id: None,
     }
 }
 

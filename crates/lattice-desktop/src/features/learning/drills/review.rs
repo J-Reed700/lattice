@@ -63,6 +63,7 @@ pub async fn start(
         lines,
         patterns,
         program_id,
+        lesson_id: None,
     };
     spec.validate()?;
     let shelf = Shelf::of(&spec)?;

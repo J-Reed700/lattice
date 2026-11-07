@@ -1,7 +1,9 @@
 //! The bank: one drill ready per language, the build of the next queued when one is taken, and the rotation of
 //! domains.
 
-use super::support::{code, files, planted, proved, quiet, review, spec, MODEL, SUITE};
+use super::support::{
+    code, files, held_back, planted, proved, quiet, review, schedule_pattern, spec, MODEL, SUITE,
+};
 use crate::features::learning::drills::bank::{
     least_recently_used, next_domain, queue_build, take, DOMAINS,
 };
@@ -9,11 +11,12 @@ use crate::features::learning::drills::build::Evidence;
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD};
 use crate::features::learning::drills::repository::{self, DrillStatus, NewDrill};
 use crate::features::learning::drills::spec::DrillSpec;
-use crate::features::learning::persistence::db;
+use crate::features::learning::persistence::{db, now};
 use crate::features::learning::tests::pool;
-use lattice_core::domain::learning::drills::{targets, Drill, Material};
+use lattice_core::domain::learning::drills::{targets, Drill, Material, PatternDue};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
+use serde_json::json;
 use sqlx::SqlitePool;
 
 /// Puts a ready drill of `language` into the bank, built at `at`, from a spec with `lines` and `patterns`.
@@ -177,10 +180,15 @@ async fn taking_a_drill_queues_the_next_build_with_its_size_and_the_targets_of_t
     assert_eq!(job.subject_id.as_deref(), Some("python"));
     assert_eq!(job.status, JobStatus::Pending);
     let queued = spec_of(&job)?;
-    let expected: Vec<String> = targets(&Material::code("python"), &[], 0, 3)
-        .iter()
-        .map(|pattern| pattern.id.to_owned())
-        .collect();
+    let expected: Vec<String> = targets(
+        &Material::code("python"),
+        &held_back(&taken.drill.drill),
+        0,
+        3,
+    )
+    .iter()
+    .map(|pattern| pattern.id.to_owned())
+    .collect();
     assert_eq!(
         queued,
         DrillSpec {
@@ -189,6 +197,7 @@ async fn taking_a_drill_queues_the_next_build_with_its_size_and_the_targets_of_t
             lines: 70,
             patterns: expected,
             program_id: None,
+            lesson_id: None,
         }
     );
     assert_eq!(
@@ -197,6 +206,51 @@ async fn taking_a_drill_queues_the_next_build_with_its_size_and_the_targets_of_t
         "the taken drill's number of patterns"
     );
     assert_eq!(builds(&pool).await?, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pattern_due_in_the_schedule_is_the_first_the_next_build_plants() -> Result<()> {
+    let pool = pool().await?;
+    insert(
+        &pool,
+        "older",
+        "python",
+        DOMAINS[0],
+        100,
+        70,
+        &[
+            "readability.magic_number",
+            "correctness.wrong_operator",
+            "errors.swallowed_exception",
+        ],
+    )
+    .await?;
+    let due = "concurrency.check_then_act";
+    schedule_pattern(&pool, "code:python", due, 1).await?;
+    schedule_pattern(&pool, "code:rust", "correctness.off_by_one", 1).await?;
+    let taken = take(&pool, "python").await?.expect("a ready drill");
+
+    let queued = spec_of(&JobStore::new(pool.clone()).get(&taken.next_build).await?)?;
+    assert_eq!(queued.patterns.first().map(String::as_str), Some(due));
+    let mut states = held_back(&taken.drill.drill);
+    states.push(PatternDue {
+        pattern: due.to_owned(),
+        due_at: Some(1),
+        pending: false,
+    });
+    let expected: Vec<String> = targets(&Material::code("python"), &states, now(), 3)
+        .iter()
+        .map(|pattern| pattern.id.to_owned())
+        .collect();
+    assert_eq!(queued.patterns, expected);
+    for held in held_back(&taken.drill.drill) {
+        assert!(
+            !queued.patterns.contains(&held.pattern),
+            "{} is held back while its drill is out",
+            held.pattern
+        );
+    }
     Ok(())
 }
 
@@ -250,6 +304,59 @@ async fn a_spec_that_names_no_drill_is_refused_before_a_job_is_queued() -> Resul
     }
     assert_eq!(builds(&pool).await?, 0);
     Ok(())
+}
+
+#[test]
+fn a_spec_without_a_lesson_reads_as_none_and_one_with_a_lesson_round_trips() {
+    let plain = serde_json::to_value(spec()).expect("a spec is JSON");
+    assert!(plain.get("lessonId").is_none(), "{plain}");
+    let read: DrillSpec = serde_json::from_value(plain).expect("a spec without a lesson");
+    assert_eq!(read, spec());
+    assert_eq!(read.lesson_id, None);
+
+    let old = json!({
+        "language": "python",
+        "domain": null,
+        "lines": 40,
+        "patterns": ["correctness.wrong_operator"],
+        "programId": null,
+    });
+    let read: DrillSpec = serde_json::from_value(old).expect("a spec from before lessons");
+    assert_eq!(read.lesson_id, None);
+
+    let built = DrillSpec {
+        program_id: Some("course".into()),
+        lesson_id: Some("lesson".into()),
+        ..spec()
+    };
+    let stored = serde_json::to_value(&built).expect("a spec is JSON");
+    assert_eq!(stored["lessonId"], "lesson");
+    let read: DrillSpec = serde_json::from_value(stored).expect("a spec with a lesson");
+    assert_eq!(read, built);
+}
+
+#[test]
+fn a_lesson_must_say_something_and_be_of_a_course() {
+    let built = DrillSpec {
+        program_id: Some("course".into()),
+        lesson_id: Some("lesson".into()),
+        ..spec()
+    };
+    assert!(built.validate().is_ok());
+    let blank = DrillSpec {
+        lesson_id: Some("  ".into()),
+        ..built.clone()
+    };
+    let no_course = DrillSpec {
+        program_id: None,
+        ..built
+    };
+    for bad in [blank, no_course] {
+        assert!(
+            matches!(bad.validate(), Err(AppError::InvalidInput(_))),
+            "{bad:?}"
+        );
+    }
 }
 
 #[test]

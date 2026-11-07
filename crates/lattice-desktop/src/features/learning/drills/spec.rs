@@ -21,6 +21,9 @@ pub struct DrillSpec {
     /// For code, the course whose topic gave the domain, when one did; for a passage, the course whose sources it is
     /// taken from.
     pub program_id: Option<String>,
+    /// The lesson of the course the drill is built from; `None` in specs from before drills were built from lessons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lesson_id: Option<String>,
 }
 
 /// A spec as stored: new ones hold a `material`, the ones from before passages hold the language of their code.
@@ -33,6 +36,8 @@ struct StoredSpec {
     lines: u32,
     patterns: Vec<String>,
     program_id: Option<String>,
+    #[serde(default)]
+    lesson_id: Option<String>,
 }
 
 impl TryFrom<StoredSpec> for DrillSpec {
@@ -50,13 +55,15 @@ impl TryFrom<StoredSpec> for DrillSpec {
             lines: stored.lines,
             patterns: stored.patterns,
             program_id: stored.program_id,
+            lesson_id: stored.lesson_id,
         })
     }
 }
 
 impl DrillSpec {
     /// Whether the spec names code in a language drills are written in, or a passage of a named course; a size; a
-    /// domain that says something when it is given; and at least one pattern, each in the catalogue, applying to the
+    /// domain that says something when it is given; a lesson, when it names one, that says something and is of a
+    /// course; and at least one pattern, each in the catalogue, applying to the
     /// material and listed once.
     pub fn validate(&self) -> Result<()> {
         match &self.material {
@@ -87,6 +94,18 @@ impl DrillSpec {
             return Err(AppError::InvalidInput(
                 "A drill's domain cannot be blank.".into(),
             ));
+        }
+        if let Some(lesson_id) = &self.lesson_id {
+            if lesson_id.trim().is_empty() {
+                return Err(AppError::InvalidInput(
+                    "A drill's lesson cannot be blank.".into(),
+                ));
+            }
+            if self.course().is_none() {
+                return Err(AppError::InvalidInput(
+                    "A drill built from a lesson names the course the lesson is of.".into(),
+                ));
+            }
         }
         if self.patterns.is_empty() {
             return Err(AppError::InvalidInput(

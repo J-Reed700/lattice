@@ -489,6 +489,7 @@ async fn live_build_eval() -> Result<()> {
                     .collect(),
                 material,
                 program_id: None,
+                lesson_id: None,
             };
             tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
                 pattern: pattern.clone(),
@@ -667,6 +668,7 @@ async fn live_passage_build_eval() -> Result<()> {
                 .collect(),
             material,
             program_id: Some(course.clone()),
+            lesson_id: None,
         };
         tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
             pattern: pattern.clone(),

@@ -5,11 +5,12 @@
 
 use super::support::{
     contradicted, course, explanation, explanation_answer, explanation_files, figure_mutation,
-    fix_answer, idle_grader, last, no_verdict, passage_baseline, passage_build, passage_code,
-    passage_plant_answer, passage_spec, quiet, raised_all, reversed_mutation, spacing_check,
-    spacing_passage, supported, system, unsupported, unsure, FakeGrader, ScriptedCheck,
-    ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH,
-    MODEL, REVERSED, SECOND, SLEEP, SMALLER_QUOTE, SPACING, THIRD, THIRD_PLANTED,
+    fix_answer, held_back, idle_grader, last, no_verdict, passage_baseline, passage_build,
+    passage_code, passage_plant_answer, passage_spec, quiet, raised_all, reversed_mutation,
+    spacing_check, spacing_passage, supported, system, unsupported, unsure, FakeGrader,
+    ScriptedCheck, ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST,
+    FIRST_PLANTED, FOURTH, MODEL, REVERSED, SECOND, SLEEP, SMALLER_QUOTE, SPACING, THIRD,
+    THIRD_PLANTED,
 };
 use crate::features::learning::drills::bank::{self, take, take_from, Shelf};
 use crate::features::learning::drills::build::{
@@ -1489,7 +1490,7 @@ async fn the_table_holds_a_language_for_code_and_a_source_for_a_passage() -> Res
     .map_err(db)?;
     assert_eq!(null, 0, "a passage has no language");
     let index: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='learning_drills_course_bank'",
+        "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='learning_drills_shelf'",
     )
     .fetch_one(&pool)
     .await
@@ -1597,7 +1598,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
     let job = JobStore::new(pool.clone()).get(&taken.next_build).await?;
     assert_eq!(job.subject_id, Some(format!("passage:{first}")));
     let queued = spec_of(&job)?;
-    let expected: Vec<String> = targets(&Material::Passage, &[], 0, 2)
+    let expected: Vec<String> = targets(&Material::Passage, &held_back(&taken.drill.drill), 0, 2)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();
@@ -1609,6 +1610,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
             lines: 4,
             patterns: expected,
             program_id: Some(first.clone()),
+            lesson_id: None,
         }
     );
 

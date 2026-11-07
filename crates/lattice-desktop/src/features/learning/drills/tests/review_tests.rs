@@ -3,8 +3,8 @@
 
 use super::support::{
     extra_finding, files, fix_answer, operator_finding, operator_fixed, proved, review_assessment,
-    stock, FakeGrader, FakeRunner, ScriptedModel, Waiting, KILLING_TEST, LITERALS, MODEL, OPERATOR,
-    SUITE,
+    schedule_pattern, stock, FakeGrader, FakeRunner, ScriptedModel, Waiting, KILLING_TEST,
+    LITERALS, MODEL, OPERATOR, SUITE,
 };
 use crate::features::learning::drills::attempts::{self, AttemptMode, AttemptStatus};
 use crate::features::learning::drills::dto::{
@@ -272,6 +272,22 @@ async fn with_no_drill_ready_a_build_is_queued_and_the_learner_is_told() -> Resu
         .collect();
     assert_eq!(spec.patterns, wanted);
     assert_eq!(jobs_of(&pool, DRILL_BUILD).await?, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn with_none_ready_the_build_queued_plants_a_pattern_the_schedule_has_due_first() -> Result<()>
+{
+    let pool = pool().await?;
+    let due = "concurrency.check_then_act";
+    schedule_pattern(&pool, "code:python", due, 1).await?;
+    let started = review::start(&pool, &code("python"), AttemptMode::Practice, 50, 2).await?;
+    let StartedCodeReviewDto::Building { job_id } = &started.dto else {
+        panic!("none was ready");
+    };
+    let spec = spec_of(&JobStore::new(pool.clone()).get(job_id).await?)?;
+    assert_eq!(spec.patterns.len(), 2);
+    assert_eq!(spec.patterns.first().map(String::as_str), Some(due));
     Ok(())
 }
 

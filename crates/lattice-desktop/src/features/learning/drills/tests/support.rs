@@ -23,7 +23,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
     apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, LineSpan,
-    Material, Proof, Severity,
+    Material, PatternDue, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
@@ -429,6 +429,7 @@ pub(super) fn spec() -> DrillSpec {
         lines: 40,
         patterns: vec![OPERATOR.into(), LITERALS.into()],
         program_id: None,
+        lesson_id: None,
     }
 }
 
@@ -1152,6 +1153,7 @@ pub(super) fn passage_spec(program_id: &str) -> DrillSpec {
         lines: 4,
         patterns: vec![FIGURE.into(), REVERSED.into()],
         program_id: Some(program_id.into()),
+        lesson_id: None,
     }
 }
 
@@ -1275,4 +1277,37 @@ pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
         .create(&program)
         .await?;
     Ok(program.summary.id)
+}
+
+/// The patterns of a drill's key, each once and in the key's order, as the schedule holds them back while the drill
+/// is out: pending, with no date.
+pub(super) fn held_back(drill: &Drill) -> Vec<PatternDue> {
+    let mut held: Vec<PatternDue> = Vec::new();
+    for issue in &drill.key {
+        if held.iter().all(|state| state.pattern != issue.pattern) {
+            held.push(PatternDue {
+                pattern: issue.pattern.clone(),
+                due_at: None,
+                pending: true,
+            });
+        }
+    }
+    held
+}
+
+/// A row in the pattern schedule of `material` (`code:python`, `passage`) for `pattern`, due at `due_at`.
+pub(super) async fn schedule_pattern(
+    pool: &SqlitePool,
+    material: &str,
+    pattern: &str,
+    due_at: i64,
+) -> Result<()> {
+    sqlx::query("INSERT INTO learning_drill_pattern_schedules(material,pattern_id,stability,difficulty,last_reviewed_at,due_at,interval_days,review_count,lapses) VALUES(?,?,1.0,5.0,0,?,1,1,0)")
+        .bind(material)
+        .bind(pattern)
+        .bind(due_at)
+        .execute(pool)
+        .await
+        .map(drop)
+        .map_err(db)
 }

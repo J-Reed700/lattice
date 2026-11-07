@@ -55,12 +55,16 @@ async fn the_tables_and_their_indexes_exist() -> Result<()> {
     .await
     .map_err(db)?;
     for name in [
+        "learning_drill_lesson_fits",
+        "learning_drill_lesson_fits_lesson",
+        "learning_drill_lesson_schedules",
+        "learning_drill_lesson_schedules_lesson",
+        "learning_drill_pattern_schedules",
         "learning_drill_patterns",
         "learning_drill_patterns_pattern",
         "learning_drills",
-        "learning_drills_bank",
-        "learning_drills_domains",
-        "learning_drills_program",
+        "learning_drills_lesson",
+        "learning_drills_shelf",
     ] {
         assert!(
             names.iter().any(|found| found == name),
@@ -224,12 +228,8 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
     let pool = pool().await?;
     for (sql, index) in [
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE language='python' AND status='ready' ORDER BY created_at,rowid LIMIT 1",
-            "learning_drills_bank",
-        ),
-        (
-            "EXPLAIN QUERY PLAN SELECT domain,max(created_at) FROM learning_drills WHERE language='python' GROUP BY domain",
-            "learning_drills_domains",
+            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language='python' AND status='ready' ORDER BY created_at,rowid LIMIT 1",
+            "learning_drills_shelf",
         ),
         (
             "EXPLAIN QUERY PLAN SELECT drill_id FROM learning_drill_patterns WHERE pattern_id='errors.swallowed_exception'",
@@ -237,7 +237,11 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
         ),
         (
             "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p'",
-            "learning_drills_program",
+            "learning_drills_shelf",
+        ),
+        (
+            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE lesson_id='l'",
+            "learning_drills_lesson",
         ),
     ] {
         let plan: Vec<String> = sqlx::query(sql)

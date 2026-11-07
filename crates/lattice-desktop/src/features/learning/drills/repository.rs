@@ -61,6 +61,8 @@ pub struct StoredDrill {
     pub domain: String,
     /// The course whose topic gave the domain, or whose source a passage is from, while the course exists.
     pub program_id: Option<String>,
+    /// The lesson the drill was built from, while it exists.
+    pub lesson_id: Option<String>,
     pub suite: Option<String>,
     /// The passage an explanation was written from: `None` for code.
     pub source: Option<SourcePassage>,
@@ -73,7 +75,7 @@ pub struct StoredDrill {
 }
 
 /// Writes a drill, ready, with a row for each pattern its key holds. The course it names is kept only if it still
-/// exists. Call inside the transaction that completes the build.
+/// exists, and the lesson only if it is a lesson of that course. Call inside the transaction that completes the build.
 pub(in crate::features::learning) async fn insert_in(
     connection: &mut SqliteConnection,
     new: &NewDrill<'_>,
@@ -86,6 +88,7 @@ pub(in crate::features::learning) async fn insert_in(
             .map_err(db)?,
         None => None,
     };
+    let lesson_id: Option<String> = None;
     let source = match (&new.drill.material, new.source) {
         (Material::Code { .. }, None) => None,
         (Material::Passage, Some(source)) => Some(encode(source)?),
@@ -100,7 +103,7 @@ pub(in crate::features::learning) async fn insert_in(
             ))
         }
     };
-    sqlx::query("INSERT INTO learning_drills(id,material,language,source_json,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,NULL)")
+    sqlx::query("INSERT INTO learning_drills(id,material,language,source_json,title,domain,program_id,lesson_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,NULL)")
         .bind(&new.drill.id)
         .bind(material_name(&new.drill.material))
         .bind(new.drill.material.language())
@@ -108,6 +111,7 @@ pub(in crate::features::learning) async fn insert_in(
         .bind(&new.drill.title)
         .bind(new.domain)
         .bind(program_id)
+        .bind(lesson_id)
         .bind(encode(new.spec)?)
         .bind(encode(new.clean_files)?)
         .bind(encode(&new.drill.files)?)
@@ -137,7 +141,7 @@ pub(in crate::features::learning) async fn insert_in(
 }
 
 /// The columns `read` reads.
-const COLUMNS: &str = "id,material,language,source_json,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at";
+const COLUMNS: &str = "id,material,language,source_json,title,domain,program_id,lesson_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at";
 
 /// The name a material is stored under.
 fn material_name(material: &Material) -> &'static str {
@@ -273,6 +277,7 @@ fn read(row: &SqliteRow) -> Result<StoredDrill> {
         spec: decode(&row.get::<String, _>("spec_json"))?,
         domain: row.get("domain"),
         program_id: row.get("program_id"),
+        lesson_id: row.get("lesson_id"),
         suite: row.get("suite"),
         source,
         runner: row.get("runner"),
