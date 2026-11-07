@@ -43,10 +43,15 @@ describe('Learning Studio versioned recall', () => {
     renderPanel();
     await user.click(await screen.findByRole('button', { name: 'Create a typed card' }));
     await user.selectOptions(screen.getByLabelText('Card format'), 'cloze');
-    await user.type(screen.getByRole('textbox', { name: 'Card prompt' }), 'A {{stable operation ID}} prevents duplicates.');
-    await user.type(screen.getByRole('textbox', { name: 'Card answer' }), 'stable operation ID');
-    await user.type(screen.getByRole('textbox', { name: 'Card explanation' }), 'A replay reuses its original request.');
-    await user.type(screen.getByRole('textbox', { name: 'Cloze deletions' }), 'stable operation ID');
+    for (const [name, text] of [
+      ['Card prompt', 'A {{stable operation ID}} prevents duplicates.'],
+      ['Card answer', 'stable operation ID'],
+      ['Card explanation', 'A replay reuses its original request.'],
+      ['Cloze deletions', 'stable operation ID'],
+    ] as const) {
+      await user.click(screen.getByRole('textbox', { name }));
+      await user.paste(text);
+    }
     await user.click(screen.getByLabelText(/Operations guide · v1/));
     await user.click(screen.getByRole('button', { name: 'Save card version' }));
     expect((await screen.findAllByRole('alert')).some((alert) => alert.textContent?.includes('Connection interrupted'))).toBe(true);
