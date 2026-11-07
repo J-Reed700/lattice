@@ -164,6 +164,10 @@ impl CourseProgress for IndexingStages {
         ));
     }
 
+    fn embedding(&mut self, _already: usize, _total: usize) {
+        self.started = Some(std::time::Instant::now());
+    }
+
     fn embedded(&mut self, done: usize, total: usize) {
         let started = *self.started.get_or_insert_with(std::time::Instant::now);
         let percent = done.saturating_mul(100) / total.max(1);
