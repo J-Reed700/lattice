@@ -1465,23 +1465,21 @@ mod builds {
         manager.close().await;
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_build_that_stopped_the_app_stays_failed_until_the_learner_retries_it() {
+    /// A job database holding a build of `root` that the runtime failed for
+    /// stopping the app, and that build's id.
+    async fn stopped_build(root: &Path) -> (SqlitePool, String) {
         use lattice_core::shared::runtime::jobs::{JobStore, NewJob, RecoveryPolicy};
-        let rig = Rig::new();
-        let embedder = FakeEmbedder::new("model-a");
-        let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
         let pool = jobs_database().await;
         let store = JobStore::new(pool.clone());
         let id = store
             .submit(&NewJob {
                 kind: FOLDER_INDEX.into(),
-                subject_id: Some(text(&root)),
+                subject_id: Some(text(root)),
                 operation_id: "stopped".into(),
-                payload_hash: text(&root),
+                payload_hash: text(root),
                 requested: json!({
-                    "root": text(&root),
-                    "indexRoot": text(&root),
+                    "root": text(root),
+                    "indexRoot": text(root),
                     "wipePrefix": false,
                 }),
                 progress_total: 100,
@@ -1500,7 +1498,44 @@ mod builds {
         let stopped = store.get(&id).await.unwrap();
         assert_eq!(stopped.status, JobStatus::Failed);
         assert_eq!(stopped.error_code.as_deref(), Some("stopped_the_app"));
+        (pool, id)
+    }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_explicit_rebuild_runs_a_build_that_stopped_the_app_and_a_reopen_does_not() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
+        let (pool, id) = stopped_build(&root).await;
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .await;
+        open_settled(&manager, &root).await;
+        manager.close().await;
+        open_settled(&manager, &root).await;
+        let reopened = builds_of(&manager, &root).await;
+        assert_eq!(
+            reopened
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+            [id.as_str()],
+            "a reopen queues nothing"
+        );
+
+        manager.rebuild(&text(&root)).await.unwrap();
+        let done = finished(&manager, &root).await;
+        assert_ne!(done.id, id, "Rebuild submits a new build");
+        assert_eq!(done.status, JobStatus::Completed);
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_that_stopped_the_app_stays_failed_until_the_learner_retries_it() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
+        let (pool, id) = stopped_build(&root).await;
         let manager = rig
             .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
             .await;
