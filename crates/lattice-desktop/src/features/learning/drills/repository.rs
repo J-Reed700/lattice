@@ -162,14 +162,6 @@ pub(in crate::features::learning) async fn oldest_ready_in(
         .transpose()
 }
 
-/// The oldest ready drill on a passage of the course `program_id` that was built for no topic.
-pub(in crate::features::learning) async fn oldest_ready_of_course_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-) -> Result<Option<StoredDrill>> {
-    oldest_ready_of_course_topic_in(connection, program_id, None).await
-}
-
 /// The oldest ready drill on a passage of the course `program_id` that was built for `topic`, as typed in any case
 /// and with any space around it, or for no topic when there is none.
 pub(in crate::features::learning) async fn oldest_ready_of_course_topic_in(

@@ -1035,7 +1035,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     );
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_of_course_in(&mut connection, &program)
+    let stored = repository::oldest_ready_of_course_topic_in(&mut connection, &program, None)
         .await?
         .expect("the drill is in the course's bank");
     drop(connection);
