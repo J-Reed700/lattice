@@ -520,6 +520,10 @@ impl ClaimLedgerEntry {
                         | ClaimState::Queued { .. }
                         | ClaimState::Reopened { .. }
                         | ClaimState::Unverified { .. }
+                        | ClaimState::Removed {
+                            by: Actor::Machine,
+                            ..
+                        }
                 ) {
                     return Err(self.refuse(&record.event));
                 }

@@ -3,7 +3,7 @@
 //! the ends; a review supplies the steps. The preparation job is one review
 //! (`repair_loop`); a scripted one in the tests is another, so the loop's end
 //! and its stop are tested without a model.
-use super::claim_ledger::{Decision, Waiting};
+use super::claim_ledger::{self, Decision, Waiting};
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
@@ -43,6 +43,19 @@ pub(super) enum Audit {
         claims: usize,
         reason: Option<Box<StopReason>>,
     },
+}
+
+/// The statements the machine did all it could for and could not settle,
+/// which the lesson publishes not verified.
+pub(super) enum Unsettled {
+    /// The statements a round that moved nothing left waiting.
+    Waiting(Vec<ClaimId>),
+    /// The statements whose checker answers could not be read.
+    Unreadable(Vec<ClaimId>),
+    /// The statements no one has settled and only the user could.
+    AwaitingUser,
+    /// The claims the machine ended whose sentences the lesson still holds.
+    Ended,
 }
 
 /// How a lesson's rounds end.
@@ -125,6 +138,14 @@ pub(super) trait Review: Send {
     /// Settles the sections after the cuts. A lesson that cannot keep its
     /// shape stops, and that stop is the error.
     async fn settle(&mut self) -> Result<Settled>;
+    /// Publishes `unsettled` not verified, with the reason each carries: how
+    /// many statements it marked. None means nothing was left to mark and the
+    /// lesson ends as it did before.
+    async fn publish_unverified(
+        &mut self,
+        policy: &dyn AcceptancePolicy,
+        unsettled: Unsettled,
+    ) -> Result<usize>;
     /// The last guard (acceptance design §2.9): the stop for a sentence the
     /// lesson still holds that a claim the machine ended stood on, and how
     /// many such claims there are.
@@ -211,12 +232,33 @@ pub(super) async fn run<F>(
                 // A pass that moved no statement and changed nothing would go
                 // round again as it was.
                 if review.stepped() == stepped && review.draft() == draft {
+                    // An outage is a stop; a round that reached the web and
+                    // moved nothing publishes what waits, not verified.
+                    if !unreached {
+                        let claims = waiting.iter().map(|waits| waits.claim.clone()).collect();
+                        let marked = review
+                            .publish_unverified(policy, Unsettled::Waiting(claims))
+                            .await?;
+                        if marked > 0 {
+                            continue;
+                        }
+                    }
                     let verdict = Verdict::NoProgress { waiting, unreached };
                     return review.finish(verdict).await;
                 }
                 review.again(&waiting);
             }
-            Decision::Stop(reason) => return review.finish(Verdict::Stop(*reason)).await,
+            Decision::Stop(reason) => {
+                if reason.code == claim_ledger::UNREADABLE && !stopped.is_empty() {
+                    let marked = review
+                        .publish_unverified(policy, Unsettled::Unreadable(stopped.clone()))
+                        .await?;
+                    if marked > 0 {
+                        continue;
+                    }
+                }
+                return review.finish(Verdict::Stop(*reason)).await;
+            }
             Decision::Publish => {
                 // The last sync point: an edit made during this pass is
                 // applied and verified before anything publishes.
@@ -234,6 +276,9 @@ pub(super) async fn run<F>(
                 // The last guard (acceptance design §2.9): the lesson holds no
                 // sentence that a claim the machine ended stood on.
                 if let Some((reason, claims)) = review.ended_but_standing() {
+                    if review.publish_unverified(policy, Unsettled::Ended).await? > 0 {
+                        continue;
+                    }
                     let reason = Some(reason);
                     return review.finish(Verdict::Hold { claims, reason }).await;
                 }
@@ -256,6 +301,13 @@ pub(super) async fn run<F>(
                 return review.finish(Verdict::Publish).await;
             }
             Decision::NeedsReview(claims) => {
+                if review
+                    .publish_unverified(policy, Unsettled::AwaitingUser)
+                    .await?
+                    > 0
+                {
+                    continue;
+                }
                 let reason = None;
                 return review.finish(Verdict::Hold { claims, reason }).await;
             }

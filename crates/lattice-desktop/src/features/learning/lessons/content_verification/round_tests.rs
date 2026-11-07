@@ -121,6 +121,14 @@ struct ScriptedReview {
     /// The rounds begun.
     rounds: usize,
     calls: Vec<Call>,
+    /// The statements whose answers cannot be read, reported by the next read.
+    unreadable: Vec<ClaimId>,
+    /// A claim the machine ended whose sentence the lesson still holds.
+    standing: Option<(StopReason, usize)>,
+    /// The statements published not verified, in the order they were marked.
+    unverified: Vec<String>,
+    /// Whether any statement can be marked not verified.
+    marks: bool,
 }
 
 impl ScriptedReview {
@@ -131,6 +139,17 @@ impl ScriptedReview {
             stepped: 0,
             rounds: 0,
             calls: Vec::new(),
+            unreadable: Vec::new(),
+            standing: None,
+            unverified: Vec::new(),
+            marks: true,
+        }
+    }
+
+    fn unmarkable(self) -> Self {
+        Self {
+            marks: false,
+            ..self
         }
     }
 
@@ -237,7 +256,7 @@ impl Review for ScriptedReview {
     async fn read(&mut self, policy: &dyn AcceptancePolicy) -> Result<Vec<ClaimId>> {
         let read = self.read_on(policy);
         self.log("read", read);
-        Ok(Vec::new())
+        Ok(std::mem::take(&mut self.unreadable))
     }
 
     async fn unmend(&mut self) -> Result<Option<String>> {
@@ -356,8 +375,38 @@ impl Review for ScriptedReview {
         Ok(Settled::Done)
     }
 
+    async fn publish_unverified(
+        &mut self,
+        _policy: &dyn AcceptancePolicy,
+        unsettled: Unsettled,
+    ) -> Result<usize> {
+        let claims = match unsettled {
+            Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => claims,
+            Unsettled::Ended => {
+                let marked = usize::from(self.marks && self.standing.take().is_some());
+                if marked > 0 {
+                    self.unverified.push("ended".to_owned());
+                }
+                return Ok(marked);
+            }
+            Unsettled::AwaitingUser => Vec::new(),
+        };
+        if !self.marks {
+            return Ok(0);
+        }
+        let mut marked = 0;
+        for statement in &mut self.statements {
+            if claims.contains(&statement.claim) {
+                statement.walked = Walked::Stopped;
+                self.unverified.push(statement.claim.0.clone());
+                marked += 1;
+            }
+        }
+        Ok(marked)
+    }
+
     fn ended_but_standing(&self) -> Option<(StopReason, usize)> {
-        None
+        self.standing.clone()
     }
 
     async fn excise(&mut self) -> Result<()> {
@@ -501,6 +550,86 @@ async fn a_round_that_moves_nothing_stops_naming_what_each_statement_waits_for()
     );
     assert_eq!(review.rounds, 3);
     assert_eq!(review.statements[0].walked, Walked::Ended(End::Resolved));
+}
+
+#[tokio::test]
+async fn a_round_that_reached_the_web_and_moved_nothing_publishes_what_waits_not_verified() {
+    let policy = StandardPolicy::new();
+    let moved = Scripted::at(
+        "moved",
+        (Class::Sourced, "s.recite"),
+        [Outcome::Done, Outcome::Stands],
+    );
+    let deferred = Scripted::at("deferred", (Class::Sourced, "s.recite"), []).stuck();
+    let mut review = ScriptedReview::new(vec![moved, deferred]);
+
+    let ended = run(&mut review, &policy).await.unwrap();
+
+    assert_eq!(ended, Ended::Published);
+    assert_eq!(review.unverified, ["deferred"]);
+    assert_eq!(review.statements[0].walked, Walked::Ended(End::Resolved));
+    // It was settled and published once, after the statement was marked.
+    let settled = review.calls.iter().filter(|call| call.phase == "settle");
+    assert_eq!(settled.count(), 1, "{:?}", review.calls);
+}
+
+#[tokio::test]
+async fn a_round_that_cannot_mark_what_waits_stops_as_it_did() {
+    let policy = StandardPolicy::new();
+    let deferred = Scripted::at("deferred", (Class::Sourced, "s.recite"), []).stuck();
+    let mut review = ScriptedReview::new(vec![deferred]).unmarkable();
+
+    let ended = run(&mut review, &policy).await.unwrap();
+
+    assert_eq!(
+        ended,
+        Ended::NoProgress {
+            waiting: vec![("deferred".to_owned(), "s.recite", Step::Recite)],
+            unreached: false,
+        }
+    );
+    assert!(review.unverified.is_empty());
+}
+
+#[tokio::test]
+async fn statements_whose_answers_cannot_be_read_are_published_not_verified() {
+    let policy = StandardPolicy::new();
+    let silent = Scripted::at("silent", (Class::Sourced, "s.read"), []).stuck();
+    let mut review = ScriptedReview::new(vec![silent]);
+    review.unreadable = vec![ClaimId("silent".to_owned())];
+
+    let ended = run(&mut review, &policy).await.unwrap();
+
+    assert_eq!(ended, Ended::Published);
+    assert_eq!(review.unverified, ["silent"]);
+}
+
+#[tokio::test]
+async fn a_claim_the_machine_ended_whose_sentence_stands_is_published_not_verified_or_held() {
+    let policy = StandardPolicy::new();
+    let standing = || {
+        Some((
+            StopReason {
+                code: "ended_claim_stands".into(),
+                message: String::new(),
+                fix: String::new(),
+                at: 0,
+                request: None,
+            },
+            1,
+        ))
+    };
+    let mut review = ScriptedReview::new(vec![]);
+    review.standing = standing();
+
+    assert_eq!(run(&mut review, &policy).await.unwrap(), Ended::Published);
+    assert_eq!(review.unverified, ["ended"]);
+
+    let mut review = ScriptedReview::new(vec![]).unmarkable();
+    review.standing = standing();
+
+    assert_eq!(run(&mut review, &policy).await.unwrap(), Ended::Held(1));
+    assert!(review.unverified.is_empty());
 }
 
 #[tokio::test]

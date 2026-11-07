@@ -5,7 +5,7 @@
 //! design §2.3, §2.6).
 use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger, CutOf};
 use super::super::repair_work::{withdraw, withdraw_resolved};
-use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label};
+use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label, unpublishable};
 use super::super::*;
 use super::goal_words;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
@@ -197,6 +197,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
         .cloned()
         .ok_or_else(|| invalid("Missing repair candidate."))?;
     let before = lesson.clone();
+    let cuts_before = ledger.cuts.clone();
     let (mut taken, mut refused, mut narrowed) = (Vec::new(), Vec::new(), Vec::new());
     for (key, example) in [("failedClaims", false), ("exampleClaims", true)] {
         for id in last(context, key) {
@@ -286,6 +287,25 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
         .filter(|id| taken.contains(id) || refused.contains(id) || vanished(id))
         .cloned()
         .collect();
+    // Cuts that would leave the lesson unpublishable are not made: the
+    // statements keep their sentences and are published not verified.
+    let statements: Vec<ClaimId> = taken
+        .iter()
+        .chain(&refused)
+        .filter(|id| ledger.is_statement(id))
+        .cloned()
+        .collect();
+    if !statements.is_empty()
+        && statements.len() == taken.len() + refused.len()
+        && (unpublishable(&lesson, &ledger.cuts).is_some()
+            || (refused.is_empty() && ledger.nothing_left(&cut)))
+    {
+        ledger.cuts = cuts_before;
+        withdraw(context, |id| statements.contains(id));
+        ledger.drop_repairs(&statements).await?;
+        ledger.save_cuts().await?;
+        return Ok(ledger.publish_unverified(&statements, None).await?);
+    }
     withdraw(context, |id| cut.contains(id) || goes(id));
     if let Some(slot) = context.get_mut("candidate") {
         *slot = lesson;

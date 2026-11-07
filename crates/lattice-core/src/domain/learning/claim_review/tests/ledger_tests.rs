@@ -1427,3 +1427,41 @@ fn a_contradicted_claim_published_not_verified_still_needs_a_note_to_confirm() {
         .unwrap();
     assert!(matches!(entry.state(), ClaimState::Confirmed { .. }));
 }
+
+#[test]
+fn a_claim_the_machine_ended_is_published_not_verified_when_its_sentence_stands_but_not_one_the_user_removed(
+) {
+    let mut ended = claim("ended");
+    ended
+        .append(machine(2), checked(Some(VerdictKind::Contradicted), "v1"))
+        .unwrap();
+    ended
+        .append(
+            machine(3),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        ended.state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+
+    ended
+        .append(machine(4), not_verified(UnverifiedReason::Contradicted))
+        .unwrap();
+
+    assert_eq!(
+        ended.state(),
+        &ClaimState::Unverified {
+            at: 4,
+            reason: UnverifiedReason::Contradicted
+        }
+    );
+    assert_eq!(end_state([&ended]), LessonReviewState::Ready);
+}

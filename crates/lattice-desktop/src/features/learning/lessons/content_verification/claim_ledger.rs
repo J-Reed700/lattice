@@ -21,11 +21,13 @@ mod readings;
 mod receipts;
 mod stops;
 mod successor;
+mod unverified;
 mod written;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};
 pub(super) use position::StepKind;
+pub(super) use stops::UNREADABLE;
 pub(super) use successor::Rewrites;
 
 use super::provenance_gate::ProvenanceGate;
