@@ -456,8 +456,6 @@ function ModelDetailContent({
 
       <DetailSection title="Specifications">
         <DetailRow label="Size" value={size ?? 'Unknown'} />
-        <DetailRow label="Estimated minimum memory" value={metadata.minimum_ram_gb > 0 ? `${metadata.minimum_ram_gb.toFixed(1)} GB` : 'Unknown'} />
-        <DetailRow label="Estimated comfortable memory" value={metadata.recommended_ram_gb > 0 ? `${metadata.recommended_ram_gb.toFixed(1)} GB` : 'Unknown'} />
         <DetailRow label="Catalog context estimate" value={`${metadata.context_length.toLocaleString()} tokens`} />
         {isEmbeddingCategory && metadata.embedding_dimensions ? (
           <DetailRow label="Dimensions" value={metadata.embedding_dimensions} />

@@ -55,6 +55,10 @@ export function ModelRow({
   const blockReason = embeddingBlockReason(metadata);
   const isDownloadable =
     Boolean(metadata.model_id && metadata.default_filename) || Boolean(metadata.download_url);
+  const detailLine = [
+    metadata.license && metadata.license !== 'unknown' ? metadata.license : null,
+    hasModelVersions(metadata) ? `Listed version: ${modelQuantization(metadata) ?? 'see files'}` : null,
+  ].filter(Boolean).join(' · ');
   const verdict = fit && fit !== 'unknown' ? fit : null;
   const FitIcon = verdict?.kind === 'fits' ? CircleCheck : TriangleAlert;
   const downloads = formatCompact(model.popularity_downloads);
@@ -146,11 +150,7 @@ export function ModelRow({
           {metadata.capabilities.includes(VISION_CAPABILITY) ? <SeesImagesMark /> : null}
           <span>{compact ? compactMeta : modelMetaLine(metadata, model.popularity_downloads)}</span>
         </div>
-        {!compact ? <p className="mt-1 text-xs text-text-muted">
-          {metadata.minimum_ram_gb > 0 ? `Est. memory ${metadata.minimum_ram_gb.toFixed(1)} GB` : 'Memory estimate unavailable'}
-          {metadata.license && metadata.license !== 'unknown' ? ` · ${metadata.license}` : ''}
-          {hasModelVersions(metadata) ? ` · Listed version: ${modelQuantization(metadata) ?? 'see files'}` : ''}
-        </p> : null}
+        {!compact && detailLine ? <p className="mt-1 text-xs text-text-muted">{detailLine}</p> : null}
       </button>
       <div className="flex shrink-0 flex-col items-end gap-2 pt-0.5">
         {hasModelVersions(metadata) ? <button type="button" onClick={onSelect} className="text-sm text-accent hover:underline" aria-label={`Versions of ${metadata.name}`}>Versions</button> : null}

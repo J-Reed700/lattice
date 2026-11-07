@@ -87,7 +87,7 @@ export function ModelVariantPicker({ model, selected, onSelect }: Props) {
             </span>
             <span className="mt-1 block text-xs text-text-secondary">{quantizationDescription(quantization)}</span>
             <span className="mt-1 block break-all font-mono text-xs text-text-muted">{file.default_filename}</span>
-            <span className="mt-2 block text-xs text-text-secondary">{file.minimum_ram_gb > 0 ? `Est. memory ${file.minimum_ram_gb.toFixed(1)} GB` : 'Memory estimate unavailable'}{fit !== undefined ? ` · ${fitLabel(fit)}` : ''}</span>
+            {fit !== undefined ? <span className="mt-2 block text-xs text-text-secondary">{fitLabel(fit)}</span> : null}
           </button>;
         })}
       </div>
