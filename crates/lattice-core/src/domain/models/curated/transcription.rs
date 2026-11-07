@@ -40,8 +40,6 @@ pub fn get_curated_transcription_models() -> Vec<ModelMetadata> {
                           Good on clear English speech; misses names and accents."
                 .into(),
             size_gb: 0.042,
-            minimum_ram_gb: 1.0,
-            recommended_ram_gb: 2.0,
             context_length: 448,
             performance_tier: PerformanceTier::Fast,
             supported_quantizations: vec!["Q8_0".into()],
@@ -84,8 +82,6 @@ pub fn get_curated_transcription_models() -> Vec<ModelMetadata> {
                           accents and crosstalk; needs about 430 MB of disk."
                 .into(),
             size_gb: 0.43,
-            minimum_ram_gb: 2.0,
-            recommended_ram_gb: 4.0,
             context_length: 448,
             performance_tier: PerformanceTier::Balanced,
             supported_quantizations: vec!["Q8_0".into()],

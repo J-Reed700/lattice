@@ -1,9 +1,9 @@
-use lattice_core::application::ports::system_info::SystemInfoPort;
-use lattice_core::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
+use crate::features::model_management::recommend::{recommend_chat_models, MachineProfileProbe};
 use lattice_core::domain::models::embedding_defaults::default_embedding_model;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -29,26 +29,16 @@ pub struct FirstRunStatusResponse {
 
 pub struct CheckFirstRunStatusUseCase {
     repository: Arc<dyn DownloadedModelRepository>,
-    /// Without a probe, falls back to the small-tier chat recommendation.
-    system_info: Option<Arc<dyn SystemInfoPort>>,
+    /// Builds this computer's profile, which the chat model is recommended for.
+    probe: Arc<dyn MachineProfileProbe>,
 }
 
 impl CheckFirstRunStatusUseCase {
-    pub fn new(repository: Arc<dyn DownloadedModelRepository>) -> Self {
-        Self {
-            repository,
-            system_info: None,
-        }
-    }
-
-    pub fn with_system_info(
+    pub fn new(
         repository: Arc<dyn DownloadedModelRepository>,
-        system_info: Arc<dyn SystemInfoPort>,
+        probe: Arc<dyn MachineProfileProbe>,
     ) -> Self {
-        Self {
-            repository,
-            system_info: Some(system_info),
-        }
+        Self { repository, probe }
     }
 
     pub async fn execute(&self) -> Result<FirstRunStatusResponse> {
@@ -97,35 +87,24 @@ impl CheckFirstRunStatusUseCase {
         }
     }
 
+    /// The model the recommender puts first for this computer, with a fresh install's KV cache
+    /// setting; none when nothing fits.
     async fn chat_recommendation(&self) -> Option<RecommendedModel> {
-        // These tiers describe system RAM. Backend/vendor identity does not
-        // establish whether GPU memory is dedicated: AMD APUs, for example,
-        // expose ROCm while sharing RAM. Do not add an unverified GPU budget.
-        // Probe failure falls through to the small-tier recommendation.
-        let system_ram_gb = match &self.system_info {
-            Some(probe) => match probe.get_system_info().await {
-                Ok(info) => info.total_ram_gb,
-                Err(e) => {
-                    warn!(error = %e, "First-run hardware probe failed; using small-tier default");
-                    0.0
-                }
-            },
-            None => 0.0,
-        };
-
-        let chat_id = recommend_chat_model_for_ram(system_ram_gb);
-        debug!(system_ram_gb, chat_id, "Chat model recommendation resolved");
-
-        get_curated_llm_models()
+        let top = recommend_chat_models(self.probe.as_ref(), &BTreeMap::new())
+            .await
             .into_iter()
-            .find(|m| m.id == chat_id)
-            .map(|m| RecommendedModel {
-                model_id: m.id,
-                display_name: m.name,
-                // The pinned file size, not `size_gb` read back as GiB, which
-                // overstated every download by 7%.
-                estimated_size_bytes: m.total_size_bytes,
-            })
+            .next();
+        match &top {
+            Some(top) => debug!(chat_id = %top.model_id, "Chat model recommendation resolved"),
+            None => warn!("No chat model fits this computer; recommending none"),
+        }
+        top.map(|top| RecommendedModel {
+            model_id: top.model_id,
+            display_name: top.name,
+            // The pinned file size, not `size_gb` read back as GiB, which
+            // overstated every download by 7%.
+            estimated_size_bytes: top.download_bytes,
+        })
     }
 }
 
@@ -211,7 +190,7 @@ mod tests {
     #[tokio::test]
     async fn test_first_run_when_registry_empty_needs_setup() {
         let repo = setup_repo().await;
-        let use_case = CheckFirstRunStatusUseCase::new(repo);
+        let use_case = CheckFirstRunStatusUseCase::new(repo, processor_only_probe());
 
         let response = use_case.execute().await.expect("execute should succeed");
 
@@ -234,7 +213,7 @@ mod tests {
         let embedding = make_local_embedding_model("test-embed-1");
         repo.save(&embedding).await.expect("save embedding model");
 
-        let use_case = CheckFirstRunStatusUseCase::new(repo);
+        let use_case = CheckFirstRunStatusUseCase::new(repo, processor_only_probe());
         let response = use_case.execute().await.expect("execute should succeed");
 
         assert!(!response.needs_setup);
@@ -249,7 +228,7 @@ mod tests {
         let chat = make_local_chat_model("test-chat-1");
         repo.save(&chat).await.expect("save chat model");
 
-        let use_case = CheckFirstRunStatusUseCase::new(repo);
+        let use_case = CheckFirstRunStatusUseCase::new(repo, processor_only_probe());
         let response = use_case.execute().await.expect("execute should succeed");
 
         assert!(response.needs_setup);
@@ -295,7 +274,7 @@ mod tests {
         .expect("insert pending embedding row");
 
         let pending_repo = Arc::new(DownloadedModelRepository::new(pool));
-        let use_case = CheckFirstRunStatusUseCase::new(pending_repo);
+        let use_case = CheckFirstRunStatusUseCase::new(pending_repo, processor_only_probe());
         let response = use_case.execute().await.expect("execute should succeed");
 
         assert!(
@@ -308,86 +287,106 @@ mod tests {
         );
 
         // Sanity: empty `repo` still also reports needs_setup.
-        let baseline = CheckFirstRunStatusUseCase::new(repo)
+        let baseline = CheckFirstRunStatusUseCase::new(repo, processor_only_probe())
             .execute()
             .await
             .expect("baseline execute");
         assert!(baseline.needs_setup);
     }
 
-    #[tokio::test]
-    async fn gpu_memory_never_promotes_a_system_ram_tier() {
-        use lattice_core::application::ports::system_info::{
-            ComputeType, GpuInfo, MockSystemInfoPort,
-        };
+    fn processor_only_probe() -> Arc<dyn MachineProfileProbe> {
+        Arc::new(
+            crate::features::model_management::recommend::FixedMachineProfile(machine(Vec::new())),
+        )
+    }
 
-        let repo = setup_repo().await;
-        // Exercise the actual onboarding response, including an AMD APU, which is
-        // not a discrete GPU.
-        for (ram, expected) in [
-            (4.0, "qwen3.5-2b-q4_k_m"),
-            (8.0, "qwen3.5-4b-q4_k_m"),
-            (16.0, "qwen3.5-9b-q4_k_m"),
-        ] {
-            for (name, compute_type) in [
-                ("Apple M3", ComputeType::Metal),
-                ("AMD Radeon 780M integrated", ComputeType::Rocm),
-                ("AMD Radeon RX 7900", ComputeType::Rocm),
-                ("Intel integrated graphics", ComputeType::None),
-                ("NVIDIA RTX", ComputeType::Cuda),
-            ] {
-                let probe = Arc::new(MockSystemInfoPort::new());
-                probe.set_ram(ram);
-                probe.set_gpu(Some(GpuInfo {
-                    name: name.into(),
-                    vram_gb: Some(24.0),
-                    compute_type,
-                }));
-                let result = CheckFirstRunStatusUseCase::with_system_info(repo.clone(), probe)
-                    .execute()
-                    .await
-                    .unwrap();
-                assert_eq!(
-                    result.chat_model.unwrap().model_id,
-                    expected,
-                    "{name}, {ram} GB"
-                );
-            }
+    fn machine(
+        accelerators: Vec<lattice_core::domain::models::fit::Accelerator>,
+    ) -> lattice_core::domain::models::fit::MachineProfile {
+        lattice_core::domain::models::fit::MachineProfile {
+            accelerators,
+            system_ram_bytes: 32 << 30,
+            models_volume_free_bytes: 500 << 30,
+            os: "windows".into(),
         }
     }
 
+    fn rtx_4080_profile() -> lattice_core::domain::models::fit::MachineProfile {
+        use lattice_core::domain::models::fit::{Accelerator, AcceleratorKind, Backend};
+        machine(vec![Accelerator {
+            name: "NVIDIA GeForce RTX 4080".into(),
+            total_bytes: 16 << 30,
+            kind: AcceleratorKind::Dedicated,
+            backend: Backend::Cuda,
+        }])
+    }
+
+    fn top_recommendation(profile: &lattice_core::domain::models::fit::MachineProfile) -> String {
+        use lattice_core::domain::models::curated::curated_chat_models;
+        use lattice_core::domain::models::fit::{Candidate, Companions, Recommender};
+        let catalog: Vec<Candidate> = curated_chat_models()
+            .iter()
+            .map(Candidate::from_curated)
+            .collect();
+        Recommender::new(Companions::default_pair())
+            .recommend(profile, &catalog)
+            .remove(0)
+            .id
+    }
+
     #[tokio::test]
-    async fn test_chat_recommendation_uses_hardware_probe_when_available() {
-        use lattice_core::application::ports::system_info::MockSystemInfoPort;
+    async fn first_run_names_the_top_recommendation_as_the_chat_model() {
+        use crate::features::model_management::recommend::FixedMachineProfile;
+        let profile = rtx_4080_profile();
+        let probe = Arc::new(FixedMachineProfile(profile.clone()));
 
-        let repo = setup_repo().await;
+        let response = CheckFirstRunStatusUseCase::new(setup_repo().await, probe)
+            .execute()
+            .await
+            .expect("execute should succeed");
 
-        // Low-end probe (4 GB RAM, no GPU) → the smallest tier.
-        let low_end_probe = std::sync::Arc::new(MockSystemInfoPort::low_end());
-        let low_end_use_case =
-            CheckFirstRunStatusUseCase::with_system_info(repo.clone(), low_end_probe);
-        let low_end_response = low_end_use_case.execute().await.expect("low-end execute");
+        let chat = response.chat_model.expect("a chat model is offered");
+        assert_eq!(chat.model_id, top_recommendation(&profile));
+    }
+
+    #[tokio::test]
+    async fn first_run_with_a_machine_probe_still_offers_the_embedding_model() {
+        use crate::features::model_management::recommend::FixedMachineProfile;
+        let probe = Arc::new(FixedMachineProfile(rtx_4080_profile()));
+
+        let response = CheckFirstRunStatusUseCase::new(setup_repo().await, probe)
+            .execute()
+            .await
+            .expect("execute should succeed");
+
+        assert!(response.needs_setup);
         assert_eq!(
-            low_end_response
-                .chat_model
-                .as_ref()
-                .map(|m| m.model_id.as_str()),
-            Some("qwen3.5-2b-q4_k_m"),
-            "4 GB box should get the small-tier chat model"
+            response.recommended_model_id.as_deref(),
+            Some(default_embedding_model().curated_id)
         );
-
-        // Default probe (16 GB RAM, no GPU) → the >= 16 GB tier.
-        let default_probe = std::sync::Arc::new(MockSystemInfoPort::new());
-        let default_use_case =
-            CheckFirstRunStatusUseCase::with_system_info(repo.clone(), default_probe);
-        let default_response = default_use_case.execute().await.expect("default execute");
+        assert!(response.embedding_model.is_some());
+        let chat = response.chat_model.as_ref().expect("chat model");
+        let embedding = response.embedding_model.as_ref().expect("embedding model");
         assert_eq!(
-            default_response
-                .chat_model
-                .as_ref()
-                .map(|m| m.model_id.as_str()),
-            Some("qwen3.5-9b-q4_k_m"),
-            "16 GB box should get the high-tier chat model"
+            response.total_estimated_size_bytes,
+            Some(chat.estimated_size_bytes + embedding.estimated_size_bytes)
         );
+    }
+
+    #[tokio::test]
+    async fn first_run_without_a_usable_card_still_recommends_a_chat_model() {
+        use crate::features::model_management::recommend::FixedMachineProfile;
+        let profile = machine(Vec::new());
+        let probe = Arc::new(FixedMachineProfile(profile.clone()));
+
+        let response = CheckFirstRunStatusUseCase::new(setup_repo().await, probe)
+            .execute()
+            .await
+            .expect("a failed device probe is not an error");
+
+        assert!(response.needs_setup);
+        let chat = response.chat_model.expect("a chat model is offered");
+        assert_eq!(chat.model_id, top_recommendation(&profile));
+        assert!(response.embedding_model.is_some());
     }
 }

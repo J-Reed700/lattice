@@ -30,7 +30,7 @@ use lattice_core::shared::http::reqwest_client_builder;
 
 mod hub_client;
 
-pub use hub_client::HuggingFaceAdapter;
+pub use hub_client::{HuggingFaceAdapter, HUB_USER_AGENT};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct HuggingFaceSibling {

@@ -62,7 +62,6 @@ fn test_external_metadata_to_domain_llm() {
 
     assert_eq!(domain.category, ModelCategory::LLM);
     assert!(domain.size_gb > 0.0);
-    assert!(domain.minimum_ram_gb >= 4.0);
     assert!(domain.capabilities.contains(&"chat".into()));
 }
 

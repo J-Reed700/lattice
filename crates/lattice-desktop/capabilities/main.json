@@ -50,6 +50,8 @@
     "learning:allow-get-learning-generation-job",
     "model:allow-get-all-recommended-models",
     "model:allow-get-compatible-models",
+    "model:allow-recommend-chat-models",
+    "model:allow-read-model-fits",
     "model:allow-search-model-catalog",
     "model:allow-get-model-variants",
     "model:allow-get-model-download-path",

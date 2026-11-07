@@ -3,6 +3,7 @@
 //! Data Transfer Objects for model catalog commands.
 //! These types are exposed to the frontend via Tauri IPC and Specta type generation.
 
+use super::model_fit_dto::FitVerdictDto;
 use serde::{Deserialize, Serialize};
 
 /// Model category DTO for frontend.
@@ -51,34 +52,6 @@ impl From<crate::features::model_management::domain::PerformanceTier> for Perfor
             crate::features::model_management::domain::PerformanceTier::Fast => Self::Fast,
             crate::features::model_management::domain::PerformanceTier::Balanced => Self::Balanced,
             crate::features::model_management::domain::PerformanceTier::Accurate => Self::Accurate,
-        }
-    }
-}
-
-/// Compatibility level DTO for frontend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub enum CompatibilityLevelDto {
-    /// Model will NOT run
-    Incompatible,
-    /// Model may run poorly
-    Poor,
-    /// Model will run acceptably
-    Good,
-    /// Model will run well
-    Excellent,
-}
-
-impl From<crate::features::model_management::domain::CompatibilityLevel> for CompatibilityLevelDto {
-    fn from(domain: crate::features::model_management::domain::CompatibilityLevel) -> Self {
-        match domain {
-            crate::features::model_management::domain::CompatibilityLevel::Incompatible => {
-                Self::Incompatible
-            }
-            crate::features::model_management::domain::CompatibilityLevel::Poor => Self::Poor,
-            crate::features::model_management::domain::CompatibilityLevel::Good => Self::Good,
-            crate::features::model_management::domain::CompatibilityLevel::Excellent => {
-                Self::Excellent
-            }
         }
     }
 }
@@ -141,10 +114,6 @@ pub struct ModelMetadataDto {
     pub description: String,
     /// Size in GB
     pub size_gb: f64,
-    /// Minimum RAM in GB
-    pub minimum_ram_gb: f64,
-    /// Recommended RAM in GB
-    pub recommended_ram_gb: f64,
     /// Context length in tokens
     pub context_length: u32,
     /// Performance tier
@@ -174,6 +143,11 @@ pub struct ModelMetadataDto {
     /// models. Frontend uses this to disable + badge incompatible rows so
     /// users don't waste a 1GB+ download on a model that won't load.
     pub embedding_compatibility: Option<EmbeddingCompatibilityDto>,
+    /// Whether this model fits this computer, judged by the backend. Null
+    /// while the file's header is unread, and for models that are not chat
+    /// models.
+    #[serde(default)]
+    pub fit: Option<FitVerdictDto>,
 }
 
 /// Frontend mirror of `EmbeddingCompatibility`.
@@ -218,8 +192,6 @@ impl From<crate::features::model_management::domain::ModelMetadata> for ModelMet
             category: domain.category.into(),
             description: domain.description,
             size_gb: domain.size_gb,
-            minimum_ram_gb: domain.minimum_ram_gb,
-            recommended_ram_gb: domain.recommended_ram_gb,
             context_length: domain.context_length,
             performance_tier: domain.performance_tier.into(),
             supported_quantizations: domain.supported_quantizations,
@@ -233,78 +205,25 @@ impl From<crate::features::model_management::domain::ModelMetadata> for ModelMet
             total_size_bytes: domain.total_size_bytes,
             embedding_dimensions: domain.embedding_dimensions,
             embedding_compatibility: domain.embedding_compatibility.map(Into::into),
+            fit: None,
         }
     }
 }
 
-/// Compatibility score DTO for frontend.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-pub struct CompatibilityScoreDto {
-    /// Overall compatibility level
-    pub compatibility_level: CompatibilityLevelDto,
-    /// Overall score (0-100)
-    pub overall_score: f64,
-    /// RAM score (0-100)
-    pub ram_score: f64,
-    /// GPU score (0-100)
-    pub gpu_score: f64,
-    /// Disk score (0-100)
-    pub disk_score: f64,
-    /// Estimated tokens/second (LLMs only)
-    pub estimated_tokens_per_second: Option<f64>,
-    /// Estimated loading time in seconds
-    pub estimated_loading_time_seconds: f64,
-    /// Recommendations
-    pub recommendations: Vec<String>,
-    /// Blockers
-    pub blockers: Vec<String>,
-}
-
-impl From<crate::features::model_management::domain::CompatibilityScore> for CompatibilityScoreDto {
-    fn from(domain: crate::features::model_management::domain::CompatibilityScore) -> Self {
-        Self {
-            compatibility_level: domain.compatibility_level.into(),
-            overall_score: domain.overall_score,
-            ram_score: domain.ram_score,
-            gpu_score: domain.gpu_score,
-            disk_score: domain.disk_score,
-            estimated_tokens_per_second: domain.estimated_tokens_per_second,
-            estimated_loading_time_seconds: domain.estimated_loading_time_seconds,
-            recommendations: domain.recommendations,
-            blockers: domain.blockers,
-        }
-    }
-}
-
-/// Model recommendation DTO for frontend.
+/// A catalog row, with whether it fits this computer.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct ModelRecommendationDto {
     /// Model metadata
     pub model: ModelMetadataDto,
-    /// Compatibility analysis
-    pub compatibility: CompatibilityScoreDto,
-    /// Ranking score (0-100)
-    pub ranking_score: f64,
     /// Popularity metric from upstream provider (downloads)
     #[serde(default)]
     pub popularity_downloads: Option<u64>,
     /// Popularity metric from upstream provider (likes)
     #[serde(default)]
     pub popularity_likes: Option<u64>,
-}
-
-impl From<crate::features::model_management::domain::ModelRecommendation>
-    for ModelRecommendationDto
-{
-    fn from(domain: crate::features::model_management::domain::ModelRecommendation) -> Self {
-        Self {
-            model: domain.model.into(),
-            compatibility: domain.compatibility.into(),
-            ranking_score: domain.ranking_score,
-            popularity_downloads: None,
-            popularity_likes: None,
-        }
-    }
+    /// Whether this model fits this computer; null until its header is read.
+    #[serde(default)]
+    pub fit: Option<FitVerdictDto>,
 }
 
 /// Model search result DTO for frontend.

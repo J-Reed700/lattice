@@ -1302,15 +1302,14 @@ test('catalog offers category previews, bounded pages, and honest search results
           model: {
             id, name: variants > 1 ? `${name} · ${quantization}` : name, category,
             description: 'A model available in the catalog.', size_gb: 1 + index + variant / 10,
-            minimum_ram_gb: 4, recommended_ram_gb: 8, context_length: 32768,
+            context_length: 32768,
             performance_tier: 'Balanced', supported_quantizations: category === 'LLM' ? [quantization] : [],
             capabilities: ['chat'], download_url: `https://huggingface.co/catalog/${id}`,
             license: 'Apache-2.0', requires_auth: false, model_id: `catalog/${id}`,
             default_filename: `${id}.gguf`, files: [], total_size_bytes: 1000000000,
             embedding_dimensions: category === 'Embedding' ? 384 : null, embedding_compatibility: null,
           },
-          compatibility: { compatibility_level: 'Good', overall_score: 80, ram_score: 90, gpu_score: 80, disk_score: 90, estimated_tokens_per_second: null, estimated_loading_time_seconds: 3, recommendations: [], blockers: [] },
-          ranking_score: 80 - index, popularity_downloads: 100000 - index * 1000 - variant, popularity_likes: 100,
+          popularity_downloads: 100000 - index * 1000 - variant, popularity_likes: 100,
         } satisfies Fixture<CommandResult<'get_all_recommended_models'>[number]>;
       })
     ));
@@ -1328,7 +1327,7 @@ test('catalog offers category previews, bounded pages, and honest search results
         const base = models.find(({ model }) => model.model_id === (args as { repoId: string }).repoId)!.model;
         return ['Q4_K_M', 'Q5_K_M', 'Q8_0', 'BF16'].map((quant, index) => ({
           ...base, id: `${base.id}-${quant}`, default_filename: `model-${quant}.gguf`,
-          supported_quantizations: [quant], size_gb: 4 + index * 3, minimum_ram_gb: (4 + index * 3) * 1.5,
+          supported_quantizations: [quant], size_gb: 4 + index * 3,
         }));
       },
       download_model: (args) => {
