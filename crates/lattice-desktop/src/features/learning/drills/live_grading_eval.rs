@@ -538,7 +538,10 @@ fn every_labelled_passage_case_holds_together() -> Result<()> {
         );
         for issue in &case.drill.key {
             let Proof::Sourced { quote, .. } = &issue.proof else {
-                panic!("{}: {stem}: a passage issue is proven by the source", issue.id);
+                panic!(
+                    "{}: {stem}: a passage issue is proven by the source",
+                    issue.id
+                );
             };
             assert!(
                 source.text.contains(quote.as_str()),
@@ -562,7 +565,10 @@ fn every_labelled_passage_case_holds_together() -> Result<()> {
         let count = cases.iter().filter(|(_, case)| case.kind == kind).count();
         assert!(count >= 2, "there are fewer than two cases of kind {kind}");
     }
-    let mixed = cases.iter().filter(|(_, case)| case.kind == "mixed").count();
+    let mixed = cases
+        .iter()
+        .filter(|(_, case)| case.kind == "mixed")
+        .count();
     assert!(mixed >= 4, "there are fewer than four mixed cases");
     for (stem, case) in &cases {
         assert!(shows_its_kind(case), "{stem} is not a {} case", case.kind);
