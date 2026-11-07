@@ -106,6 +106,7 @@ fn main() {
                     "clear_active_utility_model",
                     "detect_system_capabilities",
                     "recommend_chat_models",
+                    "read_model_fits",
                     "get_compatible_models",
                     "get_all_recommended_models",
                     "search_model_catalog",

@@ -126,3 +126,13 @@ pub struct RecommendationDto {
     pub evidence: EvidenceDto,
     pub speed: SpeedClassDto,
 }
+
+/// A GGUF file on Hugging Face: the repository, the file in it and the revision to read, the
+/// default branch when absent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelFileRefDto {
+    pub repo: String,
+    pub file: String,
+    pub revision: Option<String>,
+}

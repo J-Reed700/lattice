@@ -25,6 +25,7 @@ pub mod commands;
 pub mod commands_extra;
 pub mod di;
 pub mod domain;
+pub mod header_source;
 pub mod huggingface_adapter;
 pub mod machine_probe;
 pub mod model_manager;

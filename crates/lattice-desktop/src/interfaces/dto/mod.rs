@@ -6,6 +6,6 @@ pub use model_catalog_dto::{
     ModelSearchResultDto, ModelSourceDto, PerformanceTierDto,
 };
 pub use model_fit_dto::{
-    DeviceKindDto, EvidenceDto, FitDeviceDto, FitKindDto, FitVerdictDto, RecommendationDto,
-    RecommendationLabelDto, SpeedClassDto,
+    DeviceKindDto, EvidenceDto, FitDeviceDto, FitKindDto, FitVerdictDto, ModelFileRefDto,
+    RecommendationDto, RecommendationLabelDto, SpeedClassDto,
 };

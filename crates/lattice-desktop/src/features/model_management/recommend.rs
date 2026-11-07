@@ -7,9 +7,10 @@ use crate::interfaces::dto::{
 use async_trait::async_trait;
 use lattice_core::domain::models::curated::curated_chat_models;
 use lattice_core::domain::models::fit::{
-    Candidate, Companions, Evidence, Label, MachineProfile, ModelShape, Recommender, SpeedClass,
+    choose_placement, fit, Candidate, Companions, Evidence, Label, MachineProfile, ModelShape,
+    Recommender, ServerBuffers, SpeedClass,
 };
-use lattice_core::domain::models::selection::ModelMetadata;
+use lattice_core::domain::models::selection::{ModelCategory, ModelMetadata};
 
 /// Builds the profile of this computer. A probe that cannot reach the backend answers with a
 /// processor-only profile rather than failing.
@@ -30,7 +31,7 @@ impl MachineProfileProbe for FixedMachineProfile {
 }
 
 /// What a parsed GGUF header gives the one memory model.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GgufFacts {
     /// What the device holds of the file: its bytes less those that stay in system RAM.
     pub gpu_weight_bytes: u64,
@@ -95,16 +96,65 @@ fn evidence(evidence: Evidence) -> EvidenceDto {
     }
 }
 
-/// The verdict for one catalog row. A curated row is judged from its own footprint; any other chat
-/// row from its GGUF header; `None` while that header is unread, or when the row is not a chat
+/// The verdict for one catalog row. A curated row is judged from its own pinned facts; any other
+/// chat row from its GGUF header; `None` while that header is unread, or when the row is not a chat
 /// model. The row's size estimates never feed it.
 pub async fn row_fit(
-    _model: &ModelMetadata,
-    _profile: &MachineProfile,
-    _headers: &dyn GgufHeaderSource,
-    _kv_cache_quantization: bool,
+    model: &ModelMetadata,
+    profile: &MachineProfile,
+    headers: &dyn GgufHeaderSource,
+    kv_cache_quantization: bool,
 ) -> Option<FitVerdictDto> {
-    todo!("stage 2")
+    if model.category != ModelCategory::LLM {
+        return None;
+    }
+    file_fit(
+        model.model_id.as_deref()?,
+        model.default_filename.as_deref()?,
+        None,
+        profile,
+        headers,
+        kv_cache_quantization,
+    )
+    .await
+}
+
+/// The verdict for the GGUF `file` of `repo` at `revision`: a curated file from its pinned facts,
+/// any other from its header, which `headers` reads when it is not yet known.
+pub async fn file_fit(
+    repo: &str,
+    file: &str,
+    revision: Option<&str>,
+    profile: &MachineProfile,
+    headers: &dyn GgufHeaderSource,
+    kv_cache_quantization: bool,
+) -> Option<FitVerdictDto> {
+    let placement = choose_placement(profile, &Companions::default_pair());
+    let buffers = ServerBuffers::chat(kv_cache_quantization);
+    let curated = curated_chat_models()
+        .iter()
+        .find(|model| model.repo.eq_ignore_ascii_case(repo) && model.file == file);
+    let verdict = match curated {
+        Some(model) => {
+            let candidate = Candidate::from_curated(model);
+            fit(
+                candidate.gpu_weight_bytes,
+                candidate.shape.as_ref(),
+                buffers,
+                placement.as_ref(),
+            )
+        }
+        None => {
+            let facts = headers.header(repo, file, revision).await?;
+            fit(
+                facts.gpu_weight_bytes,
+                Some(&facts.shape),
+                buffers,
+                placement.as_ref(),
+            )
+        }
+    };
+    Some(FitVerdictDto::from(&verdict))
 }
 
 #[cfg(test)]

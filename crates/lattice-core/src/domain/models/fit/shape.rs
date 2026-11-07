@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 /// A header value that is either one number for every layer or one number per layer. llama.cpp
 /// accepts both for head counts, and Gemma 4 writes its KV-head count per layer because its global
 /// layers have fewer heads than its sliding ones.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PerLayer {
     Uniform(u32),
     Layers(Vec<u32>),
@@ -65,7 +67,7 @@ struct LayerCache {
 
 /// What a GGUF header says about the memory a server of it holds. The one description the runtime
 /// and the recommender price a model from.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelShape {
     /// Transformer layers, counting any multi-token-prediction blocks at the end
     /// (`nextn_predict_layers`).

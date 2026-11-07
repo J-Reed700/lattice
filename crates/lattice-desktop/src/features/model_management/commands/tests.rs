@@ -101,3 +101,65 @@ fn test_map_cpu_architecture() {
             | lattice_core::domain::CpuArchitecture::X86_64
     ));
 }
+
+fn row_of(id: &str) -> ModelRecommendationDto {
+    let model = lattice_core::domain::models::curated::get_curated_llm_models()
+        .into_iter()
+        .find(|m| m.id == id)
+        .expect("in the catalog");
+    ModelRecommendationDto {
+        model: model.into(),
+        popularity_downloads: None,
+        popularity_likes: None,
+        fit: None,
+    }
+}
+
+#[test]
+fn the_recommenders_models_come_first_in_its_order_and_the_rest_keep_theirs() {
+    let mut rows = vec![
+        row_of("qwen3.5-2b-q4_k_m"),
+        row_of("qwen3.5-4b-q4_k_m"),
+        row_of("qwen3.5-9b-q4_k_m"),
+        row_of("gemma-4-12b-it-q4_k_m"),
+    ];
+
+    order_by_recommendation(
+        &mut rows,
+        &[
+            "gemma-4-12b-it-q4_k_m".to_string(),
+            "qwen3.5-2b-q4_k_m".to_string(),
+        ],
+    );
+
+    let ids: Vec<_> = rows.iter().map(|row| row.model.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "gemma-4-12b-it-q4_k_m",
+            "qwen3.5-2b-q4_k_m",
+            "qwen3.5-4b-q4_k_m",
+            "qwen3.5-9b-q4_k_m"
+        ]
+    );
+}
+
+#[test]
+fn a_file_reference_cannot_leave_its_repository() {
+    assert!(is_plain_repo("unsloth/Qwen3.5-9B-GGUF"));
+    for repo in ["", "a", "a/b/c", "../b", "a/..", "a/b c"] {
+        assert!(!is_plain_repo(repo), "{repo:?}");
+    }
+    assert!(is_plain_file("Qwen3.5-9B-Q4_K_M.gguf"));
+    assert!(is_plain_file("folder/model.gguf"));
+    for file in [
+        "",
+        "../x.gguf",
+        "a//b.gguf",
+        "a\\b.gguf",
+        "/abs.gguf",
+        "a/./b.gguf",
+    ] {
+        assert!(!is_plain_file(file), "{file:?}");
+    }
+}

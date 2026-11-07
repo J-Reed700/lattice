@@ -85,6 +85,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // Catalog/discovery commands
             crate::features::model_management::commands::detect_system_capabilities,
             crate::features::model_management::commands::recommend_chat_models,
+            crate::features::model_management::commands::read_model_fits,
             crate::features::model_management::commands::get_compatible_models,
             crate::features::model_management::commands::get_all_recommended_models,
             crate::features::model_management::commands::search_model_catalog,

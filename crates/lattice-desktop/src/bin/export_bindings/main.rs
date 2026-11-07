@@ -254,6 +254,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             // Catalog/discovery commands
             lattice::features::model_management::commands::detect_system_capabilities,
             lattice::features::model_management::commands::recommend_chat_models,
+            lattice::features::model_management::commands::read_model_fits,
             lattice::features::model_management::commands::get_compatible_models,
             lattice::features::model_management::commands::get_all_recommended_models,
             lattice::features::model_management::commands::search_model_catalog,

@@ -101,6 +101,21 @@ impl Container {
         )
     }
 
+    /// Reads and keeps the GGUF headers of Hugging Face files, so a catalog row's fit is judged from
+    /// the file itself.
+    pub fn gguf_header_source(
+        &self,
+    ) -> std::sync::Arc<crate::features::model_management::header_source::HuggingFaceHeaderSource>
+    {
+        let cache = dirs::cache_dir()
+            .map(|path| path.join("lattice"))
+            .unwrap_or_else(|| self.core.data_dir().join("cache"))
+            .join("gguf-headers");
+        std::sync::Arc::new(
+            crate::features::model_management::header_source::HuggingFaceHeaderSource::new(cache),
+        )
+    }
+
     /// The manager that fetches and inspects the models kept under
     /// [`Self::models_path`].
     pub fn model_manager(
