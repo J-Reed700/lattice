@@ -12,15 +12,12 @@ use lattice_core::domain::sourcing::{
 };
 use url::Url;
 
-use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp};
+use super::mediawiki::{self, MAX_BODY_BYTES};
+use super::{answered, cause_of, failed, Fetched, FinderHttp};
 use crate::features::web::services::identity;
 use crate::features::web::services::web::MIN_SITE_REQUEST_INTERVAL;
 
-/// Results asked for per page: MediaWiki's own default `srlimit`.
-pub(crate) const RESULTS_PER_PAGE: usize = 10;
-
-/// Largest decoded API response accepted.
-const MAX_BODY_BYTES: usize = 1024 * 1024;
+pub(crate) use mediawiki::RESULTS_PER_PAGE;
 
 const API: &str = "https://en.wikipedia.org/w/api.php";
 const ARTICLE_BASE: &str = "https://en.wikipedia.org/wiki/";
@@ -197,62 +194,6 @@ impl Wikipedia {
     }
 }
 
-/// What a search payload holds: article leads, or the API's own error.
-fn leads_from(payload: &serde_json::Value, page: usize) -> Result<Vec<Lead>, FailureCause> {
-    if let Some(error) = payload.get("error") {
-        let code = error
-            .get("code")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown");
-        // `ratelimited` is the API's 429 delivered in a 200.
-        return Err(if code == "ratelimited" {
-            FailureCause::Status {
-                code: 429,
-                retry_after: None,
-            }
-        } else {
-            FailureCause::Parse(format!("API error {code}"))
-        });
-    }
-    let Some(items) = payload
-        .get("query")
-        .and_then(|query| query.get("search"))
-        .and_then(serde_json::Value::as_array)
-    else {
-        return Err(FailureCause::Parse("no search results field".to_string()));
-    };
-    let mut leads = Vec::new();
-    for item in items {
-        let title = item
-            .get("title")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .trim();
-        let Ok(url) = Url::parse(&format!("{ARTICLE_BASE}{}", title.replace(' ', "_"))) else {
-            continue;
-        };
-        if title.is_empty() {
-            continue;
-        }
-        let snippet = item
-            .get("snippet")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("")
-            .replace("<span class=\"searchmatch\">", "")
-            .replace("</span>", "")
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
-        let rank = rank_of(page, RESULTS_PER_PAGE, leads.len());
-        leads.push(Lead {
-            title: Some(title.to_string()),
-            snippet: (!snippet.is_empty()).then_some(snippet),
-            ..Lead::page(url, ID, rank)
-        });
-    }
-    Ok(leads)
-}
-
 #[async_trait]
 impl SourceFinder for Wikipedia {
     fn descriptor(&self) -> &FinderDescriptor {
@@ -264,32 +205,13 @@ impl SourceFinder for Wikipedia {
             let (_leads, outcome) = self.external_links(&need.query).await;
             return outcome;
         }
-        let started = Instant::now();
-        let query = urlencoding::encode(need.query.trim()).into_owned();
-        let offset = rank_of(page, RESULTS_PER_PAGE, 0).saturating_sub(1);
-        let url = format!(
-            "{}?action=query&format=json&utf8=1&list=search&srprop=snippet&srsearch={query}&srlimit={RESULTS_PER_PAGE}&sroffset={offset}",
-            self.api
-        );
-        let headers =
-            identity::declared_client_headers(self.http.contact.as_deref(), "application/json");
-        let body = match self.http.get(&url, headers, MAX_BODY_BYTES).await {
-            Fetched::Body(body) => body,
-            other => return failed(&self.descriptor, cause_of(other), started),
-        };
-        let payload = match serde_json::from_str::<serde_json::Value>(&body) {
-            Ok(payload) => payload,
-            Err(error) => {
-                return failed(
-                    &self.descriptor,
-                    FailureCause::Parse(error.to_string()),
-                    started,
-                )
-            }
-        };
-        match leads_from(&payload, page) {
-            Ok(leads) => answered(&self.descriptor, leads, started),
-            Err(cause) => failed(&self.descriptor, cause, started),
+        mediawiki::Search {
+            http: &self.http,
+            api: &self.api,
+            article_base: ARTICLE_BASE,
+            descriptor: &self.descriptor,
         }
+        .run(&need.query, page)
+        .await
     }
 }
