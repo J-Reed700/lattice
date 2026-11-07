@@ -111,7 +111,21 @@ fn local_without_an_active_row_has_no_default() {
     assert!(matches!(
         error,
         AppError::AiModelsNotInstalled(message)
-            if message == "No chat model is selected in Settings → Models"
+            if message == "No chat model is selected in Settings → Downloaded"
+    ));
+}
+
+#[test]
+fn auto_without_any_model_names_where_to_choose_one_and_where_to_add_a_server() {
+    let mut auto = settings(LLMProvider::Auto);
+    auto.model = String::new();
+    auto.llama_cpp.model = String::new();
+    auto.ollama_url = String::new();
+    let error = default_chat_model(&auto, None).0.unwrap_err();
+    assert!(matches!(
+        error,
+        AppError::AiModelsNotInstalled(message)
+            if message == "No chat model is selected in Settings → Downloaded, and no llama.cpp or Ollama server is configured in Settings → Chat"
     ));
 }
 
@@ -167,7 +181,7 @@ fn an_unset_learning_model_refuses_instead_of_borrowing_the_chat_default() {
     assert!(matches!(
         error,
         AppError::InvalidConfig(message)
-            if message == "No Learning model is set. Choose one in Settings → Models under Learning."
+            if message == "No Learning model is set. Choose one in Settings → Downloaded."
     ));
 }
 
@@ -199,7 +213,7 @@ fn an_unset_verifier_model_refuses_instead_of_borrowing_another_role() {
     assert!(matches!(
         error,
         AppError::InvalidConfig(message)
-            if message == "No Verifier model is set. Choose one in Settings → Models under Verifier."
+            if message == "No Verifier model is set. Choose one in Settings → Downloaded."
     ));
 }
 

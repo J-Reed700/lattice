@@ -1696,7 +1696,7 @@ fn a_hint_tells_the_user_the_numbers_and_the_fix() {
         "{text}"
     );
     assert!(
-        text.ends_with(" tokens fit. Lower its context length in Settings → Models."),
+        text.ends_with(" tokens fit. Lower its context length in Settings → Downloaded."),
         "{text}"
     );
 }
@@ -2112,6 +2112,9 @@ fn a_server_that_cannot_draft_and_see_at_once_names_the_two_switches() {
     assert_eq!(refused.kind, AttemptFailure::Refused);
     assert!(refused.message.contains("Vision"));
     assert!(refused.message.contains("Speculative decoding"));
+    assert!(refused
+        .message
+        .ends_with("for this model in Settings → Downloaded."));
     assert!(matches!(
         refused.into_llm_error(),
         LLMError::InvalidConfig(_)

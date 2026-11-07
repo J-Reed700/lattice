@@ -59,6 +59,11 @@ describe('Verifier audit switch', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('tells an unset Verifier to choose one on the Downloaded tab', async () => {
+    show({ ...off, destination: null, consentRequiredFor: null });
+    expect(await screen.findByText('No Verifier model is set. Choose one in Settings → Downloaded.')).toBeInTheDocument();
+  });
+
   it('describes audit progress in batches and tokens', () => {
     const audit = { lessonId: 'lesson-1', verifierModel: 'cloud:anthropic/claude-x', batchesDone: 2, batchesPlanned: 7, inputTokens: 48_200, outputTokens: 1_200, lastError: null, webNote: null, startedAt: 1, finishedAt: null };
     expect(auditLine({ ...audit, state: 'running' })).toBe('Auditing with cloud:anthropic/claude-x · batch 3 of 7 · 48,200 tokens sent · 1,200 received');

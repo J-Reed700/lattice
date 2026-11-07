@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { toast } from '@/stores/toastStore';
 
-import { Settings } from './Settings';
+import { Settings, tabGroups } from './Settings';
 
 
 const mockSaveTextFile = vi.hoisted(() => vi.fn());
@@ -313,6 +313,13 @@ describe('Settings', () => {
       expect(mockResetSettings).not.toHaveBeenCalled();
       expect(screen.queryByText('Reset all settings?')).not.toBeInTheDocument();
     });
+  });
+
+  it('keeps the model role pickers on the tab labelled Downloaded, which the guidance sentences name', () => {
+    const tabs = tabGroups.flatMap((group) => group.tabs);
+
+    expect(tabs.find((tab) => tab.id === 'downloaded-models')?.label).toBe('Downloaded');
+    expect(tabs.find((tab) => tab.id === 'models')?.label).toBe('Models');
   });
 
   it('does not announce autosave', () => {

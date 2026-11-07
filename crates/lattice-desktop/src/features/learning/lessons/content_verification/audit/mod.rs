@@ -140,11 +140,11 @@ impl AuditStop {
                  again to audit it."
                     .into()
             }
-            Self::NoVerifier => "Choose one in Settings → Models under Verifier, or turn the \
+            Self::NoVerifier => "Choose one in Settings → Downloaded, or turn the \
                                  audit off for this course."
                 .into(),
             Self::Unavailable { .. } => {
-                "Fix the Verifier in Settings → Models, or turn the audit off for this course."
+                "Fix the Verifier in Settings → Downloaded, or turn the audit off for this course."
                     .into()
             }
             Self::ConsentMissing { provider }
