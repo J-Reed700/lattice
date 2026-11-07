@@ -1,4 +1,4 @@
-import type { RecommendationDto, RecommendationLabelDto } from '@/lib/bindings';
+import type { RecommendationDto, RecommendationLabelDto, SpeedClassDto } from '@/lib/bindings';
 
 import { SeesImagesMark } from './SeesImagesMark';
 import { formatGib, fitUsage } from '../utils/fitText';
@@ -7,6 +7,12 @@ const LABEL_TEXT: Record<RecommendationLabelDto, string> = {
   best: 'Best for this computer',
   fastest: 'Fastest',
   smallest_download: 'Smallest download',
+};
+
+const SPEED_TEXT: Record<SpeedClassDto, string> = {
+  fast: 'Fast',
+  balanced: 'Medium',
+  thorough: 'Slower',
 };
 
 const BADGE_CLASS = 'rounded-md bg-accent-muted px-1.5 py-0.5 text-[11px] font-medium text-accent';
@@ -45,7 +51,7 @@ export function RecommendationCardBody({ recommendation, seesImages = false }: R
       {verdict.device.kind === 'processor' ? (
         <span className="block text-xs text-warning-fg">Runs on the processor: slower</span>
       ) : null}
-      <span className="block text-xs text-text-muted">Speed: {recommendation.speed}</span>
+      <span className="block text-xs text-text-muted">Speed: {SPEED_TEXT[recommendation.speed]}</span>
     </span>
   );
 }
