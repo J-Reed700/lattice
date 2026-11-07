@@ -1,0 +1,1190 @@
+//! Opt-in full production-worker exercise against an explicitly chosen library.
+//! This retries and publishes the chosen job through repositories, so callers
+//! must deliberately select the database. No model responses are mocked.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+use super::*;
+use crate::review_findings::{FindingKind, ReviewFinding};
+use crate::features::llm::llama_cpp::LlamaCppLlm;
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::LLMPort;
+
+#[path = "live_claim_pairs_eval.rs"]
+mod claim_pairs;
+#[path = "live_course_e2e.rs"]
+mod course_e2e;
+#[path = "live_course_eval.rs"]
+mod course_eval;
+#[path = "live_small_lesson.rs"]
+mod small;
+#[path = "live_web_trace.rs"]
+mod web_trace;
+
+/// The embedding model a live run was given, loaded once, or none. The course
+/// indexes of a live run read it through this.
+struct GivenModel(Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>>);
+
+#[async_trait::async_trait]
+impl lattice_index::passage_index::EmbedderSource for GivenModel {
+    async fn embedder(&self) -> Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>> {
+        self.0.clone()
+    }
+}
+
+/// The configured model as the app reaches it, every answer
+/// recorded under `directory`.
+struct ObservedModel {
+    inner: Arc<dyn LLMPort>,
+    directory: std::path::PathBuf,
+    call: std::sync::atomic::AtomicUsize,
+}
+
+#[tokio::test]
+#[ignore = "compares serial and batched verification with a live model; never writes to the library"]
+async fn live_batched_verification_matches_individual_checks_and_measures_cost() -> Result<()> {
+    use crate::content_verification::{
+        judge_batch_for_publication, judge_for_publication,
+    };
+    use lattice_core::application::services::claim_verification::{
+        ClaimJudgment, ClaimVerdict, LocatedClaim,
+    };
+    use std::sync::atomic::Ordering;
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
+    let mut cases: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "content_verification/claim_prerequisite_cases.json"
+    ))?;
+    // The checker supports what a passage states; whether that support is
+    // enough is the provenance gate's (`provenance_gate_tests`).
+    cases.extend(serde_json::from_str::<Vec<serde_json::Value>>(
+        include_str!("content_verification/sufficiency_cases.json"),
+    )?);
+    // Evidence present for a different claim must not fill this claim's gap.
+    cases.insert(0,serde_json::json!({"claim":"The measured value of sample A is 12.","passages":["Sample A was measured."],"expected":"unsupported"}));
+    cases.insert(1,serde_json::json!({"claim":"The measured value of sample A is 12.","passages":["The measured value of sample A is 12."],"expected":"supported"}));
+    let claims: Vec<_> = cases
+        .iter()
+        .map(|case| LocatedClaim {
+            claim: case["claim"].as_str().unwrap().into(),
+            passages: case["passages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_owned())
+                .collect(),
+        })
+        .collect();
+    fn label(result: &ClaimJudgment) -> &'static str {
+        match result {
+            ClaimJudgment::Judged(finding) => match finding.verdict {
+                ClaimVerdict::Supported => "supported",
+                ClaimVerdict::Unsupported => "unsupported",
+                ClaimVerdict::Contradicted => "contradicted",
+                ClaimVerdict::Unverified => "unverified",
+            },
+            _ => "unusable",
+        }
+    }
+    let mut runs = Vec::new();
+    let modes = match std::env::var("LATTICE_BATCH_BENCH_MODE").as_deref() {
+        Ok("batch") => vec![true],
+        Ok("serial") => vec![false],
+        _ => vec![false, true],
+    };
+    for batched in modes {
+        let started = std::time::Instant::now();
+        let before = model.call.load(Ordering::SeqCst);
+        let mut outcomes = Vec::new();
+        if batched {
+            for batch in claims.chunks(8) {
+                outcomes.extend(judge_batch_for_publication(&model, batch).await?.judgments);
+            }
+        } else {
+            for claim in &claims {
+                let ranking: Vec<usize> = (0..claim.passages.len()).collect();
+                outcomes.push(
+                    judge_for_publication(&model, &claim.claim, &claim.passages, &ranking)
+                        .await
+                        .judgment,
+                );
+            }
+        }
+        let failures: Vec<_> = cases
+            .iter()
+            .zip(&outcomes)
+            .enumerate()
+            .filter_map(|(index, (case, result))| {
+                let actual = label(result);
+                let expected = case["expected"].as_str().unwrap();
+                let valid = if expected == "not_supported" {
+                    matches!(actual, "unsupported" | "contradicted")
+                } else {
+                    actual == expected
+                };
+                (!valid).then_some(
+                    serde_json::json!({"case":index,"expected":expected,"actual":actual}),
+                )
+            })
+            .collect();
+        let result = serde_json::json!({"mode":if batched {"batch"}else{"serial"},"seconds":started.elapsed().as_secs_f64(),"calls":model.call.load(Ordering::SeqCst)-before,"outcomes":outcomes.iter().map(label).collect::<Vec<_>>(),"failures":failures});
+        println!("Verification benchmark: {result}");
+        runs.push(result);
+        std::fs::write(
+            directory.join("benchmark.json"),
+            serde_json::to_vec_pretty(&runs)?,
+        )?;
+    }
+    assert!(
+        runs.iter()
+            .all(|run| run["failures"].as_array().unwrap().is_empty()),
+        "A verification benchmark case failed; see benchmark.json"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live settings and an artifact directory; makes real model requests"]
+async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missing_ones(
+) -> Result<()> {
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
+    let mut cases = Vec::new();
+    for (text, selected, omitted, unrelated) in [
+        (
+            "DNA stores genetic information. RNA uses uracil.",
+            "DNA stores genetic information.",
+            "RNA uses uracil.",
+            "DNA contains nucleotides.",
+        ),
+        (
+            "Yeast produces carbon dioxide, which can leaven dough.",
+            "Yeast is a microorganism.",
+            "Yeast produces carbon dioxide, which can leaven dough.",
+            "Flour is an ingredient in this dough.",
+        ),
+    ] {
+        for complete in [true, false] {
+            cases.push((serde_json::json!({"units":[{"index":0,"kind":"teaching",
+                "passages":[{"id":"target","field":"/body","text":text}],
+                "claims":[{"id":"selected","statement":selected},{"id":"unselected","statement":if complete { omitted } else { unrelated }}]}],
+                "mapping":{"target":{"claimIds":["selected"],"nonFactualReason":"","missingClaims":[]}}}), complete));
+        }
+    }
+    // An optional recorded teaching passage reproduces a real mapping omission.
+    // Its expected result is supplied only to this test, never to the model.
+    if let Ok(path) = std::env::var("LATTICE_MAPPING_FIXTURE") {
+        let recorded: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+        let expected = recorded["expectedComplete"].as_bool().unwrap();
+        cases.push((recorded["fixture"].clone(), expected));
+    }
+    for (index, (fixture, expected)) in cases.into_iter().enumerate() {
+        let result =
+            crate::content_verification::live_mapping_fixture(&model, &fixture)
+                .await?;
+        std::fs::write(
+            directory.join(format!("mapping-{index}.json")),
+            serde_json::to_vec_pretty(&result)?,
+        )?;
+        assert_eq!(
+            result[0]["complete"].as_bool(),
+            Some(expected),
+            "Mapping fixture {index}"
+        );
+        println!("Mapping fixture {index} passed (complete={expected})");
+    }
+    Ok(())
+}
+
+impl ObservedModel {
+    /// Exercise the explicitly configured Learning role on saved-course
+    /// replays. Credentials stay in the normal environment/keyring path.
+    async fn learning(
+        settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
+        directory: std::path::PathBuf,
+    ) -> Result<Self> {
+        use lattice_core::application::contracts::settings::LLMProvider;
+        use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
+        let mut config = settings.clone();
+        match &settings.learning_model {
+            Some(ModelRef::Cloud { provider, model }) => {
+                let (name, provider) = match provider {
+                    CloudProvider::Openai => ("openai", LLMProvider::Openai),
+                    CloudProvider::Anthropic => ("anthropic", LLMProvider::Anthropic),
+                    CloudProvider::Google => ("google", LLMProvider::Google),
+                };
+                config.provider = provider;
+                config.model = model.clone();
+                let key = crate::infrastructure::security::keyring_storage::SecureStorage::new()
+                    .cloud_api_key(name)?
+                    .ok_or_else(|| {
+                        AppError::InvalidConfig(format!(
+                            "No {name} API key saved for the Learning eval"
+                        ))
+                    })?;
+                let schedulers = crate::features::llm::scheduler::SchedulerRegistry::default();
+                let inner =
+                    crate::features::llm::cloud::CloudLlm::new(&config, key)?.schedule(&schedulers);
+                Ok(Self::observing(inner, directory, 0))
+            }
+            Some(ModelRef::LlamaCpp { model }) => {
+                config.llama_cpp.model = model.clone();
+                Self::new(&config, directory, 0).await
+            }
+            _ => Err(AppError::InvalidConfig(
+                "Saved-course replay requires a cloud or llama.cpp Learning model.".into(),
+            )),
+        }
+    }
+
+    /// `settings`' llama.cpp model as the app's factory builds it: behind its
+    /// server's scheduler, which measures the backend's pace and calibrates the
+    /// token estimate, with the server's tokenizer for exact counts. Calls are
+    /// numbered from `first_call`.
+    async fn new(
+        settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
+        directory: std::path::PathBuf,
+        first_call: usize,
+    ) -> Result<Self> {
+        let schedulers = crate::features::llm::scheduler::SchedulerRegistry::default();
+        let inner = LlamaCppLlm::new(settings)?.schedule(&schedulers).await;
+        Ok(Self::observing(inner, directory, first_call))
+    }
+
+    fn observing(
+        inner: Arc<dyn LLMPort>,
+        directory: std::path::PathBuf,
+        first_call: usize,
+    ) -> Self {
+        Self {
+            inner,
+            directory,
+            call: std::sync::atomic::AtomicUsize::new(first_call),
+        }
+    }
+
+    fn record(
+        &self,
+        call: usize,
+        request: &CompletionRequest,
+        response: &CompletionResponse,
+    ) -> Result<()> {
+        std::fs::write(
+            self.directory.join(format!("call-{call}.json")),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "model":self.inner.model_name(),
+                "input":request.input,"answer":response.text,"finishReason":response.finish_reason,
+                "inputTokens":response.input_tokens,"outputTokens":response.output_tokens,
+                "firstTokenLogprobs":response.first_token_logprobs
+            }))?,
+        )?;
+        println!(
+            "Live call {call} completed: {} input / {} output tokens, {}",
+            response.input_tokens, response.output_tokens, response.finish_reason
+        );
+        Ok(())
+    }
+}
+#[async_trait::async_trait]
+impl LLMPort for ObservedModel {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let call = self.call.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let response = self.inner.complete(request).await?;
+        self.record(call, request, &response)?;
+        Ok(response)
+    }
+    async fn complete_with_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        let call = self.call.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let response = self.inner.complete_with_progress(request, on_text).await?;
+        self.record(call, request, &response)?;
+        Ok(response)
+    }
+
+    async fn complete_with_retry_progress(
+        &self,
+        request: &CompletionRequest,
+        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
+    ) -> Result<CompletionResponse> {
+        let call = self.call.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let response = self
+            .inner
+            .complete_with_retry_progress(request, on_text, on_retry)
+            .await?;
+        self.record(call, request, &response)?;
+        Ok(response)
+    }
+
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn chars_per_token(&self) -> f64 {
+        self.inner.chars_per_token()
+    }
+    async fn count_tokens_exact(&self, text: &str) -> Result<usize> {
+        self.inner.count_tokens_exact(text).await
+    }
+    fn counts_tokens_exactly(&self) -> bool {
+        self.inner.counts_tokens_exactly()
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
+        self.inner.pace()
+    }
+    fn requests(&self) -> Option<lattice_core::application::ports::llm_port::RequestLoad> {
+        self.inner.requests()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.inner.is_ready().await
+    }
+}
+
+/// A backend that reports each answer's timing, as llama-server does: it
+/// reads 400 prompt tokens a second and writes 20.
+struct TimedBackend;
+
+#[async_trait::async_trait]
+impl LLMPort for TimedBackend {
+    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
+        Ok(CompletionResponse {
+            timing: Some(lattice_core::application::ports::llm_port::ServedTiming {
+                prompt_tokens: 30_000,
+                prompt_seconds: 75.0,
+                output_tokens: 172,
+                output_seconds: 8.6,
+            }),
+            ..CompletionResponse::from_text("supported")
+        })
+    }
+    fn model_name(&self) -> &str {
+        "timed"
+    }
+    fn max_context_tokens(&self) -> usize {
+        32_768
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The model measures its pace from its first answer, and the page that pace
+/// sizes is a small part of the window.
+/// A saved call is read back long after the run, when nothing else says which
+/// model wrote it.
+#[tokio::test]
+async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
+    use lattice_core::application::ports::llm_port::CompletionInput;
+    let directory = tempfile::tempdir()?;
+    let model = ObservedModel::observing(Arc::new(TimedBackend), directory.path().to_path_buf(), 0);
+    model
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "Check this claim.".into(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.path().join("call-0.json"))?)?;
+    assert_eq!(saved["model"], "timed");
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()> {
+    use crate::content_verification::page_budget;
+    use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
+    use lattice_core::application::ports::llm_port::CompletionInput;
+    let directory = tempfile::tempdir()?;
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "timed",
+        BackendCapacity::concurrent(1),
+    ));
+    let model = ObservedModel::observing(
+        Arc::new(ScheduledLlm::new(Arc::new(TimedBackend), scheduler, 512)),
+        directory.path().to_path_buf(),
+        0,
+    );
+    assert_eq!(model.pace(), None, "nothing is measured before an answer");
+    model
+        .complete(&CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "Check this claim.".into(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let pace = model
+        .pace()
+        .expect("the backend's own timing measures the pace");
+    // 172 answer tokens a claim × 400 prompt tokens/s ÷ 20 output tokens/s.
+    let page = page_budget(Some(pace), Some(172.0)).expect("a measured pace sizes a page");
+    assert_eq!(page, 3_440);
+    assert!(
+        page * 8 < model.max_context_tokens(),
+        "a page is a small part of the window, not the window"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires explicit live settings, evidence cases and artifact directory"]
+async fn live_source_passage_judgments() -> Result<()> {
+    use lattice_core::application::{
+        ports::llm_port::SamplingOverride,
+        services::claim_verification::{CheckPolicy, ClaimChecker, ClaimJudgment},
+    };
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
+    let cases: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_CLAIM_CASES").unwrap(),
+    )?)?;
+    let policy = match std::env::var("LATTICE_CLAIM_POLICY").as_deref() {
+        Ok("fidelity") => CheckPolicy::Fidelity,
+        Ok("strict" | "publication") | Err(_) => CheckPolicy::Strict,
+        Ok(other) => panic!("Unknown claim-check policy: {other}"),
+    };
+    let checker = ClaimChecker::new(&model, SamplingOverride::deterministic(), 512, policy);
+    // Optional real-library retrieval exercises the same evidence windows used
+    // by publication. Fixture verdicts still never enter a model request.
+    let retrieval = if let Ok(program) = std::env::var("LATTICE_CLAIM_PROGRAM") {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
+                    .foreign_keys(true)
+                    .create_if_missing(false),
+            )
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Some((pool, program))
+    } else {
+        None
+    };
+    // The course index lives in the app; these runners rank by keyword.
+    let references = if let Some((pool, program)) = &retrieval {
+        let sources = LearningRepository::new(pool.clone())
+            .verification_sources(program)
+            .await?;
+        Some(
+            crate::reference_collection::ReferenceCollection::lexical(
+                &sources,
+            )?,
+        )
+    } else {
+        None
+    };
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for case in cases {
+        let passages: Vec<String> = if let Some(references) = &references {
+            crate::content_verification::live_retrieved_passages(
+                &model,
+                case["claim"].as_str().unwrap(),
+                references,
+            )
+            .await?
+        } else {
+            serde_json::from_value(case["passages"].clone())?
+        };
+        let judgment = if std::env::var("LATTICE_CLAIM_POLICY").as_deref() == Ok("publication") {
+            crate::content_verification::judge_for_publication(
+                &model,
+                case["claim"].as_str().unwrap(),
+                &passages,
+                &(0..passages.len()).collect::<Vec<_>>(),
+            )
+            .await
+            .judgment
+        } else if let Some(context) = case.get("context") {
+            if case["contextKind"] == "teaching" {
+                checker
+                    .check_fidelity_in_teaching_context(
+                        case["claim"].as_str().unwrap(),
+                        &passages,
+                        &context.to_string(),
+                    )
+                    .await
+            } else {
+                checker
+                    .check_fidelity_in_context(
+                        case["claim"].as_str().unwrap(),
+                        &passages,
+                        &context.to_string(),
+                    )
+                    .await
+            }
+        } else {
+            checker
+                .check_passages_without_deadline(case["claim"].as_str().unwrap(), &passages)
+                .await
+        };
+        let ClaimJudgment::Judged(outcome) = judgment else {
+            panic!("No valid evidence verdict: {judgment:?}")
+        };
+        let verdict = serde_json::to_value(outcome.verdict)?;
+        results.push(serde_json::json!({"claim":case["claim"],"verdict":verdict,"reason":outcome.reason,"quote":outcome.quote,"confidence":outcome.confidence}));
+        std::fs::write(
+            directory.join("judgments.json"),
+            serde_json::to_vec_pretty(&results)?,
+        )?;
+        let matches = if case["expected"] == "not_supported" {
+            matches!(
+                outcome.verdict,
+                lattice_core::application::services::claim_verification::ClaimVerdict::Unsupported
+                    | lattice_core::application::services::claim_verification::ClaimVerdict::Contradicted
+            )
+        } else {
+            verdict == case["expected"]
+        };
+        if !matches {
+            failures.push(format!(
+                "{}: expected {}, received {}",
+                case["claim"], case["expected"], verdict
+            ));
+        }
+        if let Some(quote) = outcome.quote {
+            assert!(passages.iter().any(|p| p == &quote));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires explicit live settings and artifact directory; uses committed source-selection controls by default"]
+async fn live_reference_selection() -> Result<()> {
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
+    let cases: Vec<serde_json::Value> = match std::env::var("LATTICE_REFERENCE_CASES") {
+        Ok(path) => serde_json::from_slice(&std::fs::read(path)?)?,
+        Err(_) => {
+            serde_json::from_str(include_str!("live_fixtures/reference_scope_controls.json"))?
+        }
+    };
+    for (index, case) in cases.into_iter().enumerate() {
+        let results: Vec<lattice_core::application::contracts::web::WebSearchResult> =
+            serde_json::from_value(case["results"].clone())?;
+        // The fixtures hold results alone: each is a plain web search's.
+        let results = results
+            .into_iter()
+            .map(
+                |result| crate::references::web_research::Candidate {
+                    result,
+                    kind: lattice_core::domain::sourcing::NeedKind::Web,
+                    owner: None,
+                },
+            )
+            .collect();
+        let chosen = crate::content_verification::research::select_references(
+            &model,
+            case["topic"].as_str().unwrap(),
+            case["query"].as_str().unwrap(),
+            case["gaps"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+            results,
+        )
+        .await?;
+        let mut urls: Vec<_> = chosen.into_iter().map(|result| result.url).collect();
+        std::fs::write(
+            directory.join(format!("selection-{index}.json")),
+            serde_json::to_vec_pretty(&urls)?,
+        )?;
+        urls.sort();
+        let mut expected: Vec<String> = serde_json::from_value(case["expectedUrls"].clone())?;
+        expected.sort();
+        assert_eq!(urls, expected);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires explicit live settings, a recorded teaching review and artifact directory"]
+async fn live_teaching_review_evidence_scope() -> Result<()> {
+    use lattice_core::application::ports::llm_port::CompletionInput;
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
+    let recorded: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_TEACHING_REVIEW_CALL").unwrap(),
+    )?)?;
+    let input: Vec<CompletionInput> = serde_json::from_value(recorded["input"].clone())?;
+    let message = |role: &str| {
+        input
+            .iter()
+            .find_map(|item| match item {
+                CompletionInput::Message {
+                    role: found,
+                    content,
+                } if found == role => Some(content.clone()),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let system = format!(
+        "{}\n{}",
+        message("system"),
+        crate::teaching::LESSON_REVIEW_EVIDENCE_SCOPE
+    );
+    let progress = crate::outline_progress::OutlineProgress::default();
+    let prompt: serde_json::Value = serde_json::from_str(&message("user"))?;
+    let mut candidate = prompt["candidate"].clone();
+    for block in candidate["blocks"].as_array_mut().unwrap() {
+        let body: String = block["bodyPassages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|passage| passage["text"].as_str().unwrap())
+            .collect();
+        block.as_object_mut().unwrap().remove("bodyPassages");
+        block.as_object_mut().unwrap().remove("index");
+        block["body"] = serde_json::json!(body);
+    }
+    let issues = crate::teaching_review::review(
+        &model,
+        &system,
+        prompt,
+        &candidate,
+        Some(&progress),
+        crate::teaching_review::LengthRule::Fail,
+    )
+    .await?;
+    std::fs::write(
+        directory.join("replay-issues.json"),
+        serde_json::to_vec_pretty(&issues)?,
+    )?;
+    // Other concrete defects (for example an attached citation mismatch) must
+    // remain reportable. This replay only targets the original false objection
+    // that RUSTUP_AUTO_INSTALL is absent from the authoring excerpts.
+    let stale_excerpt_objection = issues.iter().any(|issue| {
+        let issue = issue.note.to_lowercase();
+        issue.contains("rustup_auto_install")
+            && [
+                "not present",
+                "not provided",
+                "not described",
+                "absent",
+                "no source",
+                "unsupported",
+            ]
+            .iter()
+            .any(|phrase| issue.contains(phrase))
+    });
+
+    // Evidence scope must not excuse a demonstrably wrong worked result.
+    let wrong = serde_json::json!({"blocks":[{"kind":"explanation","title":"Adding whole numbers","body":"To add two whole numbers, combine their quantities. Worked example: start with two apples and add two more apples. The total is five apples, so 2 + 2 = 5. This is ordinary integer addition, with no rounding or special convention.","rubric":[]}],"questions":[]});
+    let issues = crate::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, Some(&progress), crate::teaching_review::LengthRule::Fail).await?;
+    std::fs::write(
+        directory.join("incorrect-example-issues.json"),
+        serde_json::to_vec_pretty(&issues)?,
+    )?;
+    assert!(
+        !issues.is_empty(),
+        "The evidence-scope clarification excused a concrete arithmetic error"
+    );
+    assert!(
+        !stale_excerpt_objection,
+        "The reviewer again treated partial authoring excerpts as the entire evidence collection"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live settings, a recorded coverage audit and artifact directory"]
+async fn live_passage_coverage_preserves_complete_assertions() -> Result<()> {
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
+    let recorded: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_COVERAGE_CALL").unwrap(),
+    )?)?;
+    let input = recorded["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["role"] == "user")
+        .unwrap()["content"]
+        .as_str()
+        .unwrap();
+    let input: serde_json::Value = serde_json::from_str(input)?;
+    let indices: Vec<usize> =
+        serde_json::from_str(&std::env::var("LATTICE_COVERAGE_UNITS").unwrap())?;
+    let units: Vec<_> = indices.iter().map(|index| {
+        let claims = input["inventory"].as_array().unwrap().iter().find(|unit| unit["index"].as_u64()==Some(*index as u64)).unwrap();
+        serde_json::json!({"content":input["units"][*index]["content"],"statements":claims["statements"],"nonFactualReason":claims["nonFactualReason"]})
+    }).collect();
+    let required: serde_json::Value = serde_json::from_str(
+        &std::env::var("LATTICE_COVERAGE_REQUIRED_MISSING").unwrap_or_else(|_| "{}".into()),
+    )?;
+    let mut cases = vec![
+        serde_json::json!({"units":units,"expectedIncomplete":(0..indices.len()).collect::<Vec<_>>(),"requiredMissingTerms":required}),
+    ];
+    cases.extend(serde_json::from_str::<Vec<serde_json::Value>>(
+        include_str!("content_verification/coverage_scope_cases.json"),
+    )?);
+    let progress = crate::outline_progress::OutlineProgress::default();
+    for (index, case) in cases.into_iter().enumerate() {
+        let report = crate::content_verification::live_coverage_fixture(
+            &model, &case, &progress,
+        )
+        .await?;
+        std::fs::write(
+            directory.join(format!("coverage-{index}.json")),
+            serde_json::to_vec_pretty(&report)?,
+        )?;
+        let incomplete: Vec<_> = report["units"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|unit| unit["complete"] == false)
+            .map(|unit| unit["index"].clone())
+            .collect();
+        assert_eq!(
+            serde_json::json!(incomplete),
+            case["expectedIncomplete"],
+            "Coverage case {index}"
+        );
+        if let Some(required) = case["requiredMissingTerms"].as_object() {
+            for (unit, terms) in required {
+                let unit: usize = unit.parse().unwrap();
+                let reason = report["units"][unit]["reason"]
+                    .as_str()
+                    .unwrap()
+                    .to_lowercase();
+                for term in terms.as_array().unwrap() {
+                    assert!(reason.contains(&term.as_str().unwrap().to_lowercase()), "Coverage case {index}, unit {unit} missed the specific regression: {reason}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires live settings, saved draft, review call, database and artifact directory"]
+async fn live_review_findings_require_evidence() -> Result<()> {
+    use crate::{reference_collection::ReferenceCollection, review_evidence};
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let model = ObservedModel::new(&config, directory.clone(), 0).await?;
+    let draft: crate::lesson_drafts::Draft = serde_json::from_slice(
+        &std::fs::read(std::env::var("LATTICE_REVIEW_DRAFT").unwrap())?,
+    )?;
+    let recorded: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_TEACHING_REVIEW_CALL").unwrap(),
+    )?)?;
+    let review: serde_json::Value = serde_json::from_str(recorded["answer"].as_str().unwrap())?;
+    let issues: Vec<ReviewFinding> =
+        serde_json::from_value::<Vec<String>>(review["issues"].clone())?
+            .into_iter()
+            .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+            .collect();
+    let authoring = serde_json::from_str(&draft.authoring.unwrap().prompt)?;
+    let candidate = serde_json::from_str(&draft.candidate)?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
+        .foreign_keys(true)
+        .create_if_missing(false);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(options)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let program = std::env::var("LATTICE_REVIEW_PROGRAM").unwrap();
+    let sources = LearningRepository::new(pool.clone())
+        .verification_sources(&program)
+        .await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let progress = crate::outline_progress::OutlineProgress::default();
+    let accepted = review_evidence::check(
+        &model,
+        &issues,
+        &authoring,
+        &candidate,
+        &references,
+        Some(&progress),
+    )
+    .await?;
+    std::fs::write(
+        directory.join("accepted-replay-issues.json"),
+        serde_json::to_vec_pretty(&accepted)?,
+    )?;
+    assert!(
+        accepted.is_empty(),
+        "False reviewer assertions triggered editing: {accepted:?}"
+    );
+    // The expected findings live only in test data and are never sent to the model.
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_str(include_str!("content_verification/review_scope_cases.json"))?;
+    for (index, case) in cases.into_iter().enumerate() {
+        let sources = serde_json::from_value::<
+            Vec<crate::dto::LearningSourceDto>,
+        >(case["sources"].clone())?;
+        let references = ReferenceCollection::lexical(&sources)?;
+        let issues: Vec<ReviewFinding> =
+            serde_json::from_value::<Vec<String>>(case["issues"].clone())?
+                .into_iter()
+                .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
+                .collect();
+        let accepted = review_evidence::check(
+            &model,
+            &issues,
+            &case["requirements"],
+            &case["candidate"],
+            &references,
+            Some(&progress),
+        )
+        .await?;
+        std::fs::write(
+            directory.join(format!("accepted-control-{index}.json")),
+            serde_json::to_vec_pretty(&accepted)?,
+        )?;
+        let expected: Vec<String> = serde_json::from_value(case["expected"].clone())?;
+        assert_eq!(
+            accepted.into_iter().map(|f| f.note).collect::<Vec<_>>(),
+            expected
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "enqueues a retry in LATTICE_LESSON_DATABASE; stop its native worker before running"]
+async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
+    use crate::{
+        curriculum::LearningGenerationJobStatus as Status,
+        plan_dto::LearningGenerationJobActionRequestDto,
+    };
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
+        .foreign_keys(true)
+        .create_if_missing(false);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let old = repo
+        .job(&std::env::var("LATTICE_LESSON_JOB").unwrap())
+        .await?;
+    assert!(matches!(
+        old.status,
+        Status::Failed | Status::Interrupted | Status::Cancelled
+    ));
+    assert!(
+        !repo
+            .jobs(&old.program_id)
+            .await?
+            .iter()
+            .any(|job| matches!(job.status, Status::Pending | Status::Running)),
+        "Another job is active"
+    );
+    let program = LearningRepository::new(pool.clone())
+        .get(&old.program_id)
+        .await?;
+    let job = repo
+        .retry_job(&LearningGenerationJobActionRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: old.program_id,
+            job_id: old.id,
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert_eq!(job.status, Status::Pending);
+    println!("Native lesson retry queued: {}", job.id);
+    pool.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "writes to LATTICE_LESSON_DATABASE; requires settings, stopped/held job and artifact directory"]
+async fn live_retry_saved_lesson_through_publication() -> Result<()> {
+    use crate::{
+        curriculum::LearningGenerationJobStatus, dto::LearningSourcePolicy,
+        plan_dto::LearningGenerationJobActionRequestDto,
+    };
+    let _ = tracing_subscriber::fmt().with_env_filter("lattice::features::learning=info,lattice_core::application::services::claim_verification=warn").try_init();
+    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
+    )?)?;
+    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
+    std::fs::create_dir_all(&directory)?;
+    let observed = if std::env::var("LATTICE_USE_LEARNING_MODEL").as_deref() == Ok("1") {
+        ObservedModel::learning(&config, directory.clone()).await?
+    } else {
+        ObservedModel::new(&config, directory.clone(), 0).await?
+    };
+    let checker_name = observed.model_name().to_owned();
+    let llm: Arc<dyn LLMPort> = Arc::new(observed);
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(std::env::var("LATTICE_LESSON_DATABASE").unwrap())
+        .foreign_keys(true)
+        .create_if_missing(false);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(options)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let old = repo
+        .job(&std::env::var("LATTICE_LESSON_JOB").unwrap())
+        .await?;
+    // Explicitly recover only the selected orphan after a crashed test process.
+    // Never run this option while its original worker is still alive.
+    if std::env::var("LATTICE_LESSON_RECOVER_ORPHAN").as_deref() == Ok("1") {
+        assert_eq!(old.status, LearningGenerationJobStatus::Running);
+        lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
+            .interrupt(&old.id)
+            .await?;
+    }
+    let program = LearningRepository::new(pool.clone())
+        .get(&old.program_id)
+        .await?;
+    assert!(
+        !repo.jobs(&old.program_id).await?.iter().any(|j| matches!(
+            j.status,
+            LearningGenerationJobStatus::Pending | LearningGenerationJobStatus::Running
+        )),
+        "Another job is active"
+    );
+    // Explicit cleanup of captures produced by a failed research run. Keep the
+    // immutable snapshots/tombstones and use the same repository operation as
+    // the source UI; never mutate job approval or lesson content here.
+    if let Ok(path) = std::env::var("LATTICE_REMOVE_RESEARCH_SOURCES") {
+        let removals: Vec<
+            crate::portability_dto::DeleteLearningSourceRequestDto,
+        > = serde_json::from_slice(&std::fs::read(path)?)?;
+        let library =
+            crate::source_library::LearningSourceLibraryRepository::new(
+                pool.clone(),
+            );
+        for removal in removals {
+            assert_eq!(removal.program_id, old.program_id);
+            library.delete_source(&removal).await?;
+            println!("Removed irrelevant research capture {}", removal.source_id);
+        }
+    }
+    let source_pool = pool.clone();
+    let web_dir = tempfile::tempdir()?;
+    // A copied index and the configured embedding artifact exercise the same
+    // hybrid retrieval as the app. Never point these at the live index.
+    let courses = if let Ok(indexes) = std::env::var("LATTICE_LESSON_INDEXES") {
+        let gguf = std::env::var("LATTICE_LESSON_EMBEDDING").map_err(|_| {
+            AppError::InvalidConfig("Hybrid replay needs LATTICE_LESSON_EMBEDDING".into())
+        })?;
+        let model =
+            crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf))
+                .await?;
+        Some(
+            crate::references::course_index::CourseIndexes::new(
+                indexes.into(),
+                pool.clone(),
+                Arc::new(GivenModel(Some(Arc::new(model)))),
+                Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
+                lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone()),
+                Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
+                Arc::default(),
+            ),
+        )
+    } else {
+        None
+    };
+    assert!(
+        !repo.verifier_audit(&old.program_id).await?.on,
+        "This replay has no Verifier audit adapter; it must not bypass an enabled audit"
+    );
+    let worker = LessonGenerationWorker {
+        runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+        research_web: Some(Arc::new(
+            crate::features::web::services::web::WebService::new(web_dir.path())?,
+        )),
+        verifier: None,
+        pool: pool.clone(),
+        load_llm: Arc::new(move || {
+            let llm = llm.clone();
+            Box::pin(async move { Ok(pinned_for_test(llm)) })
+        }),
+        courses,
+        refresh_sources: Arc::new(move |program_id| {
+            let pool = source_pool.clone();
+            Box::pin(async move {
+                let workspace = crate::source_library::LearningSourceLibraryRepository::new(pool).workspace(&program_id).await?;
+                assert!(
+                    workspace
+                        .sources
+                        .iter()
+                        .all(|s| s.freshness_policy != LearningSourcePolicy::BeforeUse),
+                    "This runner requires pinned sources; use native app for before-use refresh"
+                );
+                Ok(())
+            })
+        }),
+    };
+    let job = if old.status == LearningGenerationJobStatus::Completed {
+        let lesson_id = old
+            .result_id
+            .as_deref()
+            .and_then(|result| result.strip_prefix("needs_review:"))
+            .and_then(|lessons| lessons.split(',').next())
+            .ok_or_else(|| {
+                AppError::InvalidInput("The completed job is not held for review".into())
+            })?;
+        let service =
+            crate::lessons::claim_reviews::service::ClaimReviewService::new(
+                pool.clone(),
+            )
+            .with_checker_model(Some(checker_name));
+        let review = service.review(&old.program_id, lesson_id).await?.unwrap();
+        std::fs::write(
+            directory.join("review-before.json"),
+            serde_json::to_vec_pretty(&review)?,
+        )?;
+        assert!(
+            review.changed_since_stop,
+            "the actual held review must recognize the checker/policy change"
+        );
+        service
+            .resume(
+                &old.program_id,
+                lesson_id,
+                program.summary.revision,
+                uuid::Uuid::new_v4().to_string(),
+            )
+            .await?
+    } else {
+        repo.retry_job(&LearningGenerationJobActionRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: old.program_id,
+            job_id: old.id,
+            expected_revision: program.summary.revision,
+        })
+        .await?
+    };
+    std::fs::write(directory.join("job-id.txt"), &job.id)?;
+    println!("Live lesson job {} started", job.id);
+    // The app resumes a deferred outage (a rate limit, an overloaded or
+    // unreachable provider) from its saved checks; so does this run, a few
+    // times, rather than reporting one 529 as a failed publication. A refusal
+    // waiting cannot change (a rejected key) fails the job, not defers it.
+    let mut attempts = 0;
+    let result = loop {
+        attempts += 1;
+        super::run_attempt(worker.clone(), &job.id).await?;
+        let result = repo.job(&job.id).await?;
+        if result.status != LearningGenerationJobStatus::Pending || attempts == 6 {
+            break result;
+        }
+        let not_before: Option<i64> =
+            sqlx::query_scalar("SELECT retry_not_before FROM jobs WHERE id=?")
+                .bind(&job.id)
+                .fetch_one(&pool)
+                .await
+                .map_err(|error| AppError::Database(error.to_string()))?;
+        let wait = not_before
+            .map(|at| at - chrono::Utc::now().timestamp_millis())
+            .unwrap_or(0)
+            .clamp(1_000, 300_000);
+        println!(
+            "Attempt {attempts} deferred ({:?}); resuming in {}s",
+            result.error,
+            wait / 1_000
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(wait as u64)).await;
+    };
+    std::fs::write(
+        directory.join("result.json"),
+        serde_json::to_vec_pretty(&result)?,
+    )?;
+    let held: Vec<String> = sqlx::query_scalar(
+        "SELECT lesson_id FROM learning_lesson_reviews WHERE job_id=? AND state='needs_review'",
+    )
+    .bind(&job.id)
+    .fetch_all(&pool)
+    .await
+    .map_err(|error| AppError::Database(error.to_string()))?;
+    for lesson in &held {
+        let review =
+            crate::lessons::claim_reviews::service::ClaimReviewService::new(
+                pool.clone(),
+            )
+            .review(&job.program_id, lesson)
+            .await?;
+        std::fs::write(
+            directory.join(format!("review-after-{lesson}.json")),
+            serde_json::to_vec_pretty(&review)?,
+        )?;
+    }
+    assert_eq!(
+        result.status,
+        LearningGenerationJobStatus::Completed,
+        "Full live worker did not publish: {:?}",
+        result
+    );
+    assert!(held.is_empty(), "Completed with held lessons is not successful publication: {held:?}; see review-after files");
+    let published = LearningRepository::new(pool).get(&job.program_id).await?;
+    std::fs::write(
+        directory.join("program.json"),
+        serde_json::to_vec_pretty(&published)?,
+    )?;
+    println!(
+        "Published verified lesson through the production worker: {}",
+        job.id
+    );
+    Ok(())
+}

@@ -4,7 +4,7 @@
 # workspace with its own lockfile.
 [workspace]
 resolver = "2"
-members = ["crates/lattice-core", "crates/lattice-desktop"]
+members = ["crates/lattice-core", "crates/lattice-desktop", "crates/lattice-index", "crates/lattice-learning", "crates/lattice-store"]
 # Vendored third-party crates stay out of workspace lints, fmt and tests.
 exclude = ["crates/vendor"]
 

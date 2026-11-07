@@ -1,0 +1,789 @@
+use crate::recall::{study_dto::*, study_repository::StudyRepository};
+use crate::source_selector::LearningQuoteMatchStatus;
+use crate::{
+    dto::GetLearningSourceVersionRequestDto,
+    portability_dto::*,
+    recall_repository::LearningRecallRepository,
+    repository::LearningRepository,
+    source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
+    tests,
+};
+use lattice_core::shared::error::Result;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use std::str::FromStr;
+
+fn id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+async fn file_pool(path: &std::path::Path) -> Result<sqlx::SqlitePool> {
+    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?
+        .create_if_missing(true)
+        .foreign_keys(true);
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))
+}
+
+async fn active_program(
+    pool: &sqlx::SqlitePool,
+) -> Result<crate::dto::LearningProgramDto> {
+    let repo = LearningRepository::new(pool.clone());
+    let program = tests::fixture();
+    repo.create(&program).await?;
+    repo.accept(
+        &crate::dto::AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        },
+    )
+    .await?;
+    repo.get(&program.summary.id).await
+}
+
+#[tokio::test]
+async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let memory = LearningRepository::new(pool.clone());
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    memory
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let recall = LearningRecallRepository::new(pool.clone());
+    let card_id = id();
+    let save = SaveLearningRecallCardRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        card_id: card_id.clone(),
+        expected_content_revision: None,
+        format: LearningRecallCardFormat::MultipleChoice,
+        content: LearningRecallContentDto {
+            prompt: "Which option is correct?".into(),
+            answer: "Choice B".into(),
+            explanation: "The second choice is supported.".into(),
+            options: vec!["Choice A".into(), "Choice B".into()],
+            correct_option_index: Some(1),
+            language: None,
+            cloze_deletions: vec![],
+        },
+        source_version_ids: vec![],
+        change_reason: "Initial card".into(),
+    };
+    recall.save_card(&save).await?;
+    let review = ReviewLearningRecallCardRequestDto {
+        review_id: id(),
+        program_id: program.summary.id.clone(),
+        card_id: card_id.clone(),
+        expected_review_count: 0,
+        rating: StudyRating::Hard,
+        selected_option: Some(1),
+    };
+    let reviewed = recall.review_card(&review).await?;
+    assert_eq!(
+        reviewed
+            .cards
+            .first()
+            .map(|card| card.scheduler.review_count),
+        Some(1)
+    );
+    let replay = recall.review_card(&review).await?;
+    assert_eq!(
+        replay.cards.first().map(|card| card.scheduler.review_count),
+        Some(1)
+    );
+    let mut changed = review.clone();
+    changed.expected_review_count = 1;
+    assert!(recall.review_card(&changed).await.is_err());
+    let mut changed_rating = review.clone();
+    changed_rating.rating = StudyRating::Easy;
+    assert!(recall.review_card(&changed_rating).await.is_err());
+
+    let first = reviewed
+        .cards
+        .first()
+        .map(|card| card.scheduler.clone())
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("recall card".into()))?;
+    assert!(first.stability.is_some() && first.difficulty.is_some());
+    assert!(first.interval_days >= 1);
+    assert_eq!(
+        first.last_reviewed_at,
+        Some(
+            first.due_at
+                - first.interval_days * crate::recall::schedule::DAY_MS
+        )
+    );
+
+    // The deck view reviews the same card through the same scheduler.
+    let study = StudyRepository::new(pool.clone());
+    let studied = study
+        .review(
+            &ReviewStudyCardRequestDto {
+                review_id: id(),
+                card_id: card_id.clone(),
+                expected_reviews: 1,
+                rating: StudyRating::Good,
+                selected_option: Some(1),
+            },
+            first.due_at,
+        )
+        .await?;
+    assert_eq!(studied.review_count, 2);
+    // A card saved without source versions still opens in the deck view.
+    assert_eq!(studied.source.file_name, "Personal recall card");
+    let after = recall.workspace(&program.summary.id).await?;
+    let schedule = after
+        .cards
+        .first()
+        .map(|card| card.scheduler.clone())
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("recall card".into()))?;
+    assert_eq!(schedule.review_count, 2);
+    assert_eq!(schedule.due_at, studied.due_at);
+    assert!(schedule.due_at > first.due_at);
+    assert_eq!(after.cards.first().map(|card| card.versions.len()), Some(1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_tombstone_reimport_selector_search_and_recall_history_persist() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let sources = LearningSourceLibraryRepository::new(pool.clone());
+    let source_id = id();
+    let first_version = id();
+    sources
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &first_version,
+                program_id: &program.summary.id,
+                kind: crate::dto::LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "My text",
+                requested_url: None,
+                freshness: crate::dto::LearningSourcePolicy::Fixed,
+            },
+            CapturedLearningSource {
+                title: "Source title".into(),
+                publisher: None,
+                requested_url: None,
+                resolved_url: None,
+                text: "A prefix 🦀 repeated rule. A second 🦀 repeated rule. Recall safely.".into(),
+                truncated: false,
+                extraction_version: "test_v1".into(),
+                signals: crate::references::trust::capture::not_extracted(
+                    "test fixture",
+                ),
+            },
+            "first-source".into(),
+        )
+        .await?;
+
+    let recall = LearningRecallRepository::new(pool.clone());
+    let selector_text = "🦀 repeated rule";
+    let text = "A prefix 🦀 repeated rule. A second 🦀 repeated rule. Recall safely.";
+    let start = text.rfind(selector_text).unwrap_or_default();
+    let selector_id = id();
+    let selector_req = CreateLearningSourceSelectorRequestDto {
+        operation_id: id(),
+        selector_id: selector_id.clone(),
+        program_id: program.summary.id.clone(),
+        source_id: source_id.clone(),
+        source_version_id: first_version.clone(),
+        start_byte: start,
+        end_byte: start + selector_text.len(),
+    };
+    let created = recall.create_selector(&selector_req).await?;
+    assert_eq!(created.candidate_count, 2);
+    assert_eq!(
+        created.match_status,
+        LearningQuoteMatchStatus::ContextDisambiguated
+    );
+    let loaded = recall
+        .get_selector(&program.summary.id, &selector_id)
+        .await?;
+    assert_eq!(loaded.match_status, created.match_status);
+    assert_eq!(loaded.candidate_count, created.candidate_count);
+    assert_eq!(loaded.start_byte, created.start_byte);
+    assert_eq!(loaded.end_byte, created.end_byte);
+    let matched = recall
+        .match_selector(&MatchLearningSourceSelectorRequestDto {
+            program_id: program.summary.id.clone(),
+            selector_id: selector_id.clone(),
+            target_version_id: first_version.clone(),
+        })
+        .await?;
+    assert_eq!(matched.start_byte, Some(start));
+    let other = active_program(&pool).await?;
+    assert!(recall
+        .get_selector(&other.summary.id, &selector_id)
+        .await
+        .is_err());
+    // Without a course index the sources are ranked by their words, and the
+    // results say so.
+    let search = recall
+        .search_sources(
+            &SearchLearningSourcesSemanticallyRequestDto {
+                program_id: program.summary.id.clone(),
+                query: "repeated rule".into(),
+                limit: 10,
+            },
+            None,
+        )
+        .await?;
+    assert!(!search.is_empty());
+    assert_eq!(
+        search.first().map(|item| item.retrieval_kind.as_str()),
+        Some("lexical")
+    );
+
+    let deletion = DeleteLearningSourceRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: source_id.clone(),
+        expected_revision: 0,
+        reason: "No longer using this source".into(),
+    };
+    sources.delete_source(&deletion).await?;
+    assert!(sources
+        .workspace(&program.summary.id)
+        .await?
+        .sources
+        .iter()
+        .all(|source| source.id != source_id));
+    let old = sources
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program.summary.id.clone(),
+            source_id: source_id.clone(),
+            version_id: first_version.clone(),
+        })
+        .await?;
+    assert!(old.full_text.contains("Recall safely"));
+
+    let new_version = id();
+    sources
+        .reimport_source(&ReimportLearningSourceRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            source_id: source_id.clone(),
+            version_id: new_version.clone(),
+            expected_revision: 1,
+            replacement_text: Some("Fresh replacement body.".into()),
+        })
+        .await?;
+    let workspace = sources.workspace(&program.summary.id).await?;
+    let reimported = workspace
+        .sources
+        .iter()
+        .find(|source| source.id == source_id)
+        .expect("reimported source is visible again");
+    assert_eq!(
+        reimported.active_version_id.as_deref(),
+        Some(new_version.as_str())
+    );
+    assert_eq!(reimported.versions.len(), 2);
+    let fallback = recall
+        .search_sources(
+            &SearchLearningSourcesSemanticallyRequestDto {
+                program_id: program.summary.id.clone(),
+                query: "replacement body".into(),
+                limit: 10,
+            },
+            None,
+        )
+        .await?;
+    assert_eq!(
+        fallback.first().map(|item| item.version.id.as_str()),
+        Some(new_version.as_str())
+    );
+
+    let card_id = id();
+    let card = SaveLearningRecallCardRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        card_id: card_id.clone(),
+        expected_content_revision: None,
+        format: LearningRecallCardFormat::QuestionAnswer,
+        content: LearningRecallContentDto {
+            prompt: "Explain the repeated rule.".into(),
+            answer: "It is a stable rule.".into(),
+            explanation: String::new(),
+            options: vec![],
+            correct_option_index: None,
+            language: None,
+            cloze_deletions: vec![],
+        },
+        source_version_ids: vec![new_version.clone()],
+        change_reason: "Manual recall".into(),
+    };
+    recall.save_card(&card).await?;
+    let mut edit = card.clone();
+    edit.operation_id = id();
+    edit.expected_content_revision = Some(1);
+    edit.content.answer = "A changed answer.".into();
+    edit.change_reason = "Clarified answer".into();
+    recall.save_card(&edit).await?;
+    let card_item = recall
+        .workspace(&program.summary.id)
+        .await?
+        .cards
+        .into_iter()
+        .find(|item| item.id == card_id);
+    assert_eq!(card_item.as_ref().map(|item| item.versions.len()), Some(2));
+    assert_eq!(
+        card_item.and_then(|item| item.source_version_ids.first().cloned()),
+        Some(new_version)
+    );
+
+    let mut similar_card = card.clone();
+    similar_card.operation_id = id();
+    similar_card.card_id = id();
+    similar_card.content.prompt = "Explain the repeated rule carefully.".into();
+    similar_card.content.answer = "The rule remains stable.".into();
+    similar_card.change_reason = "Add related recall prompt".into();
+    recall.save_card(&similar_card).await?;
+    let suggestions = recall.workspace(&program.summary.id).await?.duplicates;
+    let suggestion = suggestions
+        .iter()
+        .find(|item| item.status == LearningRecallDuplicateStatus::Pending)
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState(
+                "Expected a duplicate suggestion".into(),
+            )
+        })?;
+    let decide = DecideLearningRecallDuplicateRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        suggestion_id: suggestion.id.clone(),
+        accept: false,
+    };
+    let decided = recall.decide_duplicate(&decide).await?;
+    assert!(decided.duplicates.iter().any(|item| {
+        item.id == decide.suggestion_id && item.status == LearningRecallDuplicateStatus::Dismissed
+    }));
+    let replay = recall.decide_duplicate(&decide).await?;
+    assert!(replay
+        .duplicates
+        .iter()
+        .any(|item| item.id == decide.suggestion_id));
+    let mut changed_decision = decide.clone();
+    changed_decision.accept = true;
+    assert!(recall.decide_duplicate(&changed_decision).await.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn deck_cards_without_a_recall_profile_join_recall_with_their_schedule() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let memory = LearningRepository::new(pool.clone());
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    memory
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let deck_id: String =
+        sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
+            .bind(&program.summary.id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    let card_id = id();
+    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,review_count,format) VALUES(?,?,?,?,?,?,?,?,?,?,1,?)")
+        .bind(&card_id).bind(&deck_id).bind("Accepted question").bind("Yes")
+        .bind("[\"No\",\"Yes\"]").bind(1_i64).bind("Old note")
+        .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
+        .bind("multiple_choice")
+        .execute(&pool).await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    let review_id = id();
+    sqlx::query("INSERT INTO study_reviews(id,card_id,reviewed_at,rating,mode,correct,selected_option) VALUES(?,?,?,?,?,?,?)")
+        .bind(&review_id).bind(&card_id).bind(100_i64).bind("good").bind("quiz")
+        .bind(1_i64).bind(1_i64)
+        .execute(&pool).await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+
+    let workspace = LearningRecallRepository::new(pool.clone())
+        .workspace(&program.summary.id)
+        .await?;
+    let card = workspace.cards.iter().find(|card| card.id == card_id);
+    assert_eq!(card.map(|card| card.scheduler.review_count), Some(1));
+    assert_eq!(card.map(|card| card.versions.len()), Some(1));
+    let preserved: i64 = sqlx::query_scalar("SELECT count(*) FROM study_reviews WHERE id=?")
+        .bind(review_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    assert_eq!(preserved, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn recall_card_and_immutable_version_survive_database_reopen() -> Result<()> {
+    let directory = tempfile::tempdir()
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    let path = directory.path().join("learning-recall.sqlite");
+    let pool = file_pool(&path).await?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    let program = active_program(&pool).await?;
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    LearningRepository::new(pool.clone())
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let card_id = id();
+    LearningRecallRepository::new(pool.clone())
+        .save_card(&SaveLearningRecallCardRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            card_id: card_id.clone(),
+            expected_content_revision: None,
+            format: LearningRecallCardFormat::QuestionAnswer,
+            content: LearningRecallContentDto {
+                prompt: "Persisted question".into(),
+                answer: "Persisted answer".into(),
+                explanation: String::new(),
+                options: vec![],
+                correct_option_index: None,
+                language: None,
+                cloze_deletions: vec![],
+            },
+            source_version_ids: vec![],
+            change_reason: "Initial card".into(),
+        })
+        .await?;
+    pool.close().await;
+
+    let reopened = file_pool(&path).await?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&reopened)
+        .await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    let workspace = LearningRecallRepository::new(reopened)
+        .workspace(&program.summary.id)
+        .await?;
+    let saved = workspace.cards.iter().find(|card| card.id == card_id);
+    assert_eq!(
+        saved.map(|card| card.content.prompt.as_str()),
+        Some("Persisted question")
+    );
+    assert_eq!(saved.map(|card| card.versions.len()), Some(1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn typed_recall_formats_round_trip_through_canonical_study_rows() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    LearningRepository::new(pool.clone())
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let formats = [
+        (
+            LearningRecallCardFormat::Cloze,
+            LearningRecallContentDto {
+                prompt: "A glacier moves slowly.".into(),
+                answer: "glacier".into(),
+                explanation: String::new(),
+                options: vec![],
+                correct_option_index: None,
+                language: None,
+                cloze_deletions: vec!["glacier".into()],
+            },
+        ),
+        (
+            LearningRecallCardFormat::Reverse,
+            LearningRecallContentDto {
+                prompt: "Definition: a body of ice that moves slowly.".into(),
+                answer: "glacier".into(),
+                explanation: String::new(),
+                options: vec![],
+                correct_option_index: None,
+                language: None,
+                cloze_deletions: vec![],
+            },
+        ),
+        (
+            LearningRecallCardFormat::CodePrediction,
+            LearningRecallContentDto {
+                prompt: "What does `Vec::new()` create?".into(),
+                answer: "An empty vector.".into(),
+                explanation: String::new(),
+                options: vec![],
+                correct_option_index: None,
+                language: Some("Rust".into()),
+                cloze_deletions: vec![],
+            },
+        ),
+        (
+            LearningRecallCardFormat::Reconstruction,
+            LearningRecallContentDto {
+                prompt: "Reconstruct the rule from memory.".into(),
+                answer: "State the rule in your own words.".into(),
+                explanation: String::new(),
+                options: vec![],
+                correct_option_index: None,
+                language: None,
+                cloze_deletions: vec![],
+            },
+        ),
+    ];
+    let recall = LearningRecallRepository::new(pool.clone());
+    let mut saved = Vec::new();
+    for (format, content) in formats {
+        let card_id = id();
+        recall
+            .save_card(&SaveLearningRecallCardRequestDto {
+                operation_id: id(),
+                program_id: program.summary.id.clone(),
+                card_id: card_id.clone(),
+                expected_content_revision: None,
+                format,
+                content,
+                source_version_ids: vec![],
+                change_reason: "Format round trip".into(),
+            })
+            .await?;
+        saved.push(card_id);
+    }
+    let workspace = recall.workspace(&program.summary.id).await?;
+    for card_id in saved {
+        assert!(workspace.cards.iter().any(|card| card.id == card_id));
+    }
+    assert!(workspace.cards.iter().any(|card| {
+        card.format == LearningRecallCardFormat::CodePrediction
+            && card.content.language.as_deref() == Some("Rust")
+    }));
+    Ok(())
+}
+
+#[test]
+fn recall_content_rejects_invalid_keys_and_format_metadata() {
+    let mut content = LearningRecallContentDto {
+        prompt: "A prompt with deletion".into(),
+        answer: "expected".into(),
+        explanation: String::new(),
+        options: vec!["A".into(), "B".into()],
+        correct_option_index: Some(0),
+        language: None,
+        cloze_deletions: vec![],
+    };
+    assert!(
+        crate::recall::recall_content::validate_content(
+            LearningRecallCardFormat::MultipleChoice,
+            &content
+        )
+        .is_err()
+    );
+    content.options = vec![];
+    content.correct_option_index = None;
+    content.cloze_deletions = vec!["deletion".into(), "deletion".into()];
+    assert!(
+        crate::recall::recall_content::validate_content(
+            LearningRecallCardFormat::Cloze,
+            &content
+        )
+        .is_err()
+    );
+    content.cloze_deletions = vec![];
+    content.language = Some("rust".into());
+    assert!(
+        crate::recall::recall_content::validate_content(
+            LearningRecallCardFormat::QuestionAnswer,
+            &content
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn recall_content_is_checked_for_blank_text_never_for_how_long_it_is() {
+    use crate::recall::recall_content::validate_content;
+    let choice = "An option that restates the condition in full. ".repeat(20);
+    let plain = LearningRecallContentDto {
+        prompt: "What does the stated rule require of the reader? ".repeat(60),
+        answer: "It requires the reader to check the stated conditions. ".repeat(25),
+        explanation: "The passage says so in its own words. ".repeat(100),
+        options: vec![],
+        correct_option_index: None,
+        language: None,
+        cloze_deletions: vec![],
+    };
+    let multiple_choice = LearningRecallContentDto {
+        prompt: "Which option restates the condition?".into(),
+        answer: choice.clone(),
+        explanation: String::new(),
+        options: vec![choice, "Another option".into()],
+        correct_option_index: Some(0),
+        language: None,
+        cloze_deletions: vec![],
+    };
+    let code = LearningRecallContentDto {
+        prompt: "What does this print?".into(),
+        answer: "42".into(),
+        explanation: String::new(),
+        options: vec![],
+        correct_option_index: None,
+        language: Some("A programming language whose name runs on and on forever".into()),
+        cloze_deletions: vec![],
+    };
+    for (what, format, content) in [
+        (
+            "a prompt, an answer and an explanation past their old ceilings",
+            LearningRecallCardFormat::QuestionAnswer,
+            plain,
+        ),
+        (
+            "an option past its old ceiling",
+            LearningRecallCardFormat::MultipleChoice,
+            multiple_choice,
+        ),
+        (
+            "a language name past its old ceiling",
+            LearningRecallCardFormat::CodePrediction,
+            code,
+        ),
+    ] {
+        let checked = validate_content(format, &content);
+        assert!(checked.is_ok(), "{what}: {checked:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_recall_card_of_any_length_is_saved_and_read_back() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    LearningRepository::new(pool.clone())
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let long = |sentence: &str, count: usize| sentence.repeat(count).trim().to_owned();
+    let choice = long("An option that restates the condition in full. ", 20);
+    let multiple_choice = LearningRecallContentDto {
+        prompt: long("What does the stated rule require of the reader? ", 60),
+        answer: choice.clone(),
+        explanation: long("The passage says so in its own words. ", 100),
+        options: vec![choice, "Another option".into()],
+        correct_option_index: Some(0),
+        language: None,
+        cloze_deletions: vec![],
+    };
+    let code = LearningRecallContentDto {
+        prompt: "What does this print?".into(),
+        answer: "42".into(),
+        explanation: String::new(),
+        options: vec![],
+        correct_option_index: None,
+        language: Some("A programming language whose name runs on and on forever".into()),
+        cloze_deletions: vec![],
+    };
+    let recall = LearningRecallRepository::new(pool.clone());
+    let mut saved = Vec::new();
+    for (format, content) in [
+        (LearningRecallCardFormat::MultipleChoice, multiple_choice),
+        (LearningRecallCardFormat::CodePrediction, code),
+    ] {
+        let card_id = id();
+        recall
+            .save_card(&SaveLearningRecallCardRequestDto {
+                operation_id: id(),
+                program_id: program.summary.id.clone(),
+                card_id: card_id.clone(),
+                expected_content_revision: None,
+                format,
+                content: content.clone(),
+                source_version_ids: vec![],
+                change_reason: "A long card".into(),
+            })
+            .await?;
+        saved.push((card_id, content));
+    }
+    let workspace = recall.workspace(&program.summary.id).await?;
+    for (card_id, content) in saved {
+        let card = workspace.cards.iter().find(|card| card.id == card_id);
+        assert_eq!(card.map(|card| &card.content), Some(&content));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_accepted_deck_card_with_a_long_option_joins_recall() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    LearningRepository::new(pool.clone())
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let deck_id: String =
+        sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
+            .bind(&program.summary.id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    let wrong = "An option that restates the condition in full. "
+        .repeat(15)
+        .trim()
+        .to_owned();
+    let options = serde_json::json!([wrong, "Yes"]).to_string();
+    let card_id = id();
+    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,review_count,format) VALUES(?,?,?,?,?,?,?,?,?,?,0,?)")
+        .bind(&card_id).bind(&deck_id).bind("Accepted question").bind("Yes")
+        .bind(&options).bind(1_i64).bind("Old note")
+        .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
+        .bind("multiple_choice")
+        .execute(&pool).await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+
+    let workspace = LearningRecallRepository::new(pool.clone())
+        .workspace(&program.summary.id)
+        .await?;
+    let card = workspace.cards.iter().find(|card| card.id == card_id);
+    assert_eq!(
+        card.and_then(|card| card.content.options.first().map(String::as_str)),
+        Some(wrong.as_str())
+    );
+    Ok(())
+}

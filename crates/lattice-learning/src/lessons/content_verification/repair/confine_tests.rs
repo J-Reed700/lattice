@@ -1,0 +1,271 @@
+use super::*;
+use serde_json::json;
+
+fn sentence(field: &str, quote: &str) -> Protected {
+    Protected {
+        unit: 0,
+        field: field.into(),
+        quote: quote.into(),
+    }
+}
+
+const VERIFIED: &str = "Water boils at 100 °C at sea level.";
+const FAILED: &str = "Salt lowers the boiling point.";
+const OTHER: &str = "Stir while it heats.";
+
+fn section(body: &str) -> Value {
+    json!({ "kind": "explanation", "title": "Boiling", "body": body })
+}
+
+#[test]
+fn confinement_reverts_changes_outside_the_failed_sentences_and_keeps_protected_bytes() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    // The edit fixes the failed sentence, and also rewords the verified
+    // one, the unrelated one and the title.
+    let after = json!({
+        "kind": "explanation",
+        "title": "Boiling water",
+        "body": "Water boils at 100 degrees at sea level. Salt raises the boiling point slightly. Stir it as it heats.",
+    });
+    let confined = confine(
+        &before,
+        &after,
+        &[sentence("body", FAILED)],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap()
+    .section;
+    assert_eq!(
+        confined["body"],
+        format!("{VERIFIED} Salt raises the boiling point slightly. {OTHER}")
+    );
+    assert_eq!(confined["title"], "Boiling", "no claim's field changed");
+    assert_eq!(confined["kind"], "explanation");
+
+    // The regenerated-section fallback is confined the same way: a section
+    // returned whole keeps everything but the failed sentence.
+    let regenerated = json!({
+        "kind": "explanation",
+        "title": "A new title",
+        "body": format!("{VERIFIED} Salt barely raises the boiling point. {OTHER}"),
+    });
+    let confined = confine(
+        &before,
+        &regenerated,
+        &[sentence("body", FAILED)],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap()
+    .section;
+    assert_eq!(confined["title"], "Boiling");
+    assert_eq!(confined["body"], regenerated["body"]);
+    // A section rewritten whole shares one change between the failed sentence
+    // and the passed one: it stands as it was, and the failed sentence is put
+    // back.
+    let rewritten_whole = section("Boiling happens at 100 °C. Salt barely raises it.");
+    let confined = confine(
+        &before,
+        &rewritten_whole,
+        &[sentence("body", FAILED)],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap();
+    assert_eq!(confined.section, before);
+    assert_eq!(confined.put_back.len(), 1);
+    assert_eq!(confined.put_back[0].target, sentence("body", FAILED));
+}
+
+/// What a correction is told when it was put back for a change it shared with
+/// the sentences `passed`.
+fn put_back_for(passed: &str) -> String {
+    format!("The correction also changed a sentence that passed its check (\"{passed}\"), so it was put back; change only this sentence.")
+}
+
+#[test]
+fn an_edit_that_merges_a_failed_and_a_protected_sentence_is_put_back_and_its_target_is_listed_with_why(
+) {
+    let before = section(&format!("{VERIFIED} {FAILED}"));
+    let merged = section("Water boils at 100 °C, a little higher with salt.");
+    let failed = sentence("body", FAILED);
+
+    let confined = confine(
+        &before,
+        &merged,
+        std::slice::from_ref(&failed),
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap();
+
+    // The merged change is put back whole, and the section stands as it was.
+    assert_eq!(confined.section, before);
+    assert_eq!(
+        confined.put_back,
+        vec![PutBack {
+            target: failed,
+            reason: put_back_for(VERIFIED),
+        }]
+    );
+}
+
+#[test]
+fn only_the_targets_a_put_back_change_touched_are_listed_and_the_others_corrections_stand() {
+    const SECOND_FAILED: &str = "Stirring makes the water boil sooner.";
+    const FIXED: &str = "Salt raises the boiling point slightly.";
+    let before = section(&format!("{FAILED} {OTHER} {VERIFIED} {SECOND_FAILED}"));
+    // The first failed sentence is corrected on its own; the second is merged
+    // with the passed sentence before it.
+    let after = section(&format!(
+        "{FIXED} {OTHER} Water boils at 100 °C at sea level whether or not it is stirred."
+    ));
+    let (first, second) = (sentence("body", FAILED), sentence("body", SECOND_FAILED));
+
+    let confined = confine(
+        &before,
+        &after,
+        &[first, second.clone()],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        confined.section["body"],
+        format!("{FIXED} {OTHER} {VERIFIED} {SECOND_FAILED}")
+    );
+    assert_eq!(
+        confined.put_back,
+        vec![PutBack {
+            target: second,
+            reason: put_back_for(VERIFIED),
+        }]
+    );
+}
+
+#[test]
+fn every_passed_sentence_a_put_back_change_rewrote_is_named_in_its_reason() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let merged = section("Water boils at 100 °C, and salt changes that as you stir.");
+
+    let confined = confine(
+        &before,
+        &merged,
+        &[sentence("body", FAILED)],
+        &[sentence("body", VERIFIED), sentence("body", OTHER)],
+    )
+    .unwrap();
+
+    assert_eq!(confined.section, before);
+    assert_eq!(
+        confined.put_back[0].reason,
+        put_back_for(&format!("{VERIFIED}\", \"{OTHER}"))
+    );
+}
+
+#[test]
+fn a_removed_failed_sentence_and_an_inserted_qualifier_beside_it_are_kept() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let removed = section(&format!("{VERIFIED} {OTHER}"));
+    let confined = confine(&before, &removed, &[sentence("body", FAILED)], &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["body"], format!("{VERIFIED} {OTHER}"));
+
+    let qualified = section(&format!(
+        "{VERIFIED} {FAILED} In most kitchens it does not matter. {OTHER}"
+    ));
+    let confined = confine(&before, &qualified, &[sentence("body", FAILED)], &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined, qualified);
+}
+
+#[test]
+fn a_failed_sentence_repeated_outside_its_quote_is_repaired_where_it_repeats() {
+    // The claim's quote (its inventory passage) holds only the first copy of
+    // the failed sentence; the repair takes out both.
+    let before = section(&format!("{FAILED} {OTHER} {FAILED} {VERIFIED}"));
+    let quote = format!("{FAILED} {OTHER}");
+    let removed = section(&format!("{OTHER} {VERIFIED}"));
+    let confined = confine(
+        &before,
+        &removed,
+        &[sentence("body", &quote)],
+        &[sentence("body", VERIFIED)],
+    )
+    .unwrap()
+    .section;
+    assert_eq!(confined["body"], format!("{OTHER} {VERIFIED}"));
+
+    // A repeat inside a protected claim's quote stays as it was.
+    let confined = confine(
+        &before,
+        &removed,
+        &[sentence("body", &quote)],
+        &[sentence("body", &format!("{FAILED} {VERIFIED}"))],
+    )
+    .unwrap()
+    .section;
+    assert_eq!(confined["body"], format!("{OTHER} {FAILED} {VERIFIED}"));
+}
+
+#[test]
+fn a_failed_sentence_is_repaired_beside_verified_ones_in_the_same_passage() {
+    // The case that broke (claim sources design §18.1): one biology
+    // paragraph, the extractor's one passage, holds a failed claim between
+    // two verified ones. Each is located through `fields::locate` from the
+    // passage and its statement.
+    use crate::lessons::content_verification::locate;
+    const PASSAGE: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation. They carry their own circular DNA, passed down from the mother. A typical human cell holds exactly twelve mitochondria. Their inner membrane folds into cristae that enlarge its surface.";
+    const TWELVE: &str = "A typical human cell holds exactly twelve mitochondria.";
+    let before = section(PASSAGE);
+    let lesson = json!({ "blocks": [before.clone()], "questions": [] });
+    let located = |statement: &str| {
+        let location = locate(&lesson, 0, PASSAGE, Some(statement));
+        sentence(&location.field, &location.quote)
+    };
+    let v1 = located("Mitochondria make most of a cell's ATP by oxidative phosphorylation.");
+    let failed = located("A typical human cell contains exactly twelve mitochondria.");
+    let v2 =
+        located("The inner mitochondrial membrane folds into cristae that enlarge its surface.");
+    assert_eq!(failed, sentence("body", TWELVE));
+    assert!(v1.quote.starts_with("Mitochondria produce") && v2.quote.starts_with("Their inner"));
+
+    let fixed = PASSAGE.replace(
+        TWELVE,
+        "A human cell holds hundreds to thousands of mitochondria.",
+    );
+    let after = section(&fixed);
+    let confined = confine(
+        &before,
+        &after,
+        std::slice::from_ref(&failed),
+        &[v1.clone(), v2.clone()],
+    )
+    .unwrap();
+    assert_eq!(confined.section["body"], fixed, "the repair is accepted");
+    assert!(confined.put_back.is_empty());
+    for verified in [&v1, &v2] {
+        assert!(confined.section["body"]
+            .as_str()
+            .unwrap()
+            .contains(&verified.quote));
+    }
+
+    // A verified claim the locator could not narrow keeps its passage, which
+    // holds the failed sentence too: the repair of that sentence is put back,
+    // and the failed sentence is listed with the passage it shared the change
+    // with.
+    let unlocated = sentence("body", PASSAGE);
+    let confined = confine(
+        &before,
+        &after,
+        std::slice::from_ref(&failed),
+        &[unlocated, v2],
+    )
+    .unwrap();
+    assert_eq!(confined.section, before);
+    let [back] = confined.put_back.as_slice() else {
+        panic!("the failed sentence is put back: {:?}", confined.put_back);
+    };
+    assert_eq!(back.target, failed);
+    assert_eq!(back.reason, put_back_for(PASSAGE));
+}
