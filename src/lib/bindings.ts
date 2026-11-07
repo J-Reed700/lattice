@@ -7384,7 +7384,12 @@ label?: string | null;
  * The parts a Sourced statement's cited passage was read as, which say
  * what a passage states and what is common knowledge beside it.
  */
-parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null }
+parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null;
+/**
+ * The claim behind this statement, for acting on it; none in a report
+ * from before findings named theirs.
+ */
+claimId?: string | null }
 /**
  * One part of a statement as the part-wise check read it.
  */
