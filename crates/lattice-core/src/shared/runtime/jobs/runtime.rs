@@ -1,8 +1,8 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
 use super::arrivals::{poll_once, Arrival, Arrivals};
 use super::{
-    Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob,
-    RecoveryPolicy,
+    repository::STOPPED_THE_APP, Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome,
+    JobRecord, JobStatus, JobStore, NewJob, RecoveryPolicy,
 };
 use crate::shared::{
     error::{AppError, Result},
@@ -335,7 +335,8 @@ impl JobRuntime {
         if self.kind(kind).is_some() {
             return Err(duplicate());
         }
-        let recovered = self.store().recover(kind, config.recovery).await?;
+        let recovered = self.store().recover_settling(kind, config.recovery).await?;
+        let told = handler.clone();
         {
             let mut kinds = self.kinds.write().unwrap_or_else(PoisonError::into_inner);
             if kinds.contains_key(kind) {
@@ -350,12 +351,34 @@ impl JobRuntime {
                 }),
             );
         }
-        for id in recovered {
+        for id in &recovered.stopped {
+            self.tell_failed(&told, id, STOPPED_THE_APP).await;
+        }
+        for id in recovered.settled {
             self.events.publish(&id).await;
         }
         self.start_dispatcher();
         self.wake.notify_one();
         Ok(())
+    }
+
+    /// Tells `handler` that the runtime failed job `id` with `code`, after the
+    /// failure was stored. A hook that fails or panics is logged, never fatal.
+    async fn tell_failed(&self, handler: &Arc<dyn JobHandler>, id: &str, code: &str) {
+        let job = match self.store().get(id).await {
+            Ok(job) if job.status == JobStatus::Failed => job,
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(job_id = id, %error, "Could not read a failed job to tell its handler");
+                return;
+            }
+        };
+        if let Err(payload) = std::panic::AssertUnwindSafe(handler.failed_by_runtime(&job, code))
+            .catch_unwind()
+            .await
+        {
+            tracing::error!(job_id = id, panic = %panic_text(payload.as_ref()), "A job handler panicked while told its job failed");
+        }
     }
 
     fn start_dispatcher(self: &Arc<Self>) {
@@ -514,6 +537,7 @@ impl JobRuntime {
             events: self.events.clone(),
             cancel: cancel.clone(),
         };
+        let mut panicked = false;
         let outcome = match std::panic::AssertUnwindSafe(kind.handler.run(&context))
             .catch_unwind()
             .await
@@ -521,10 +545,16 @@ impl JobRuntime {
             Ok(outcome) => outcome,
             Err(payload) => {
                 tracing::error!(job_id = id, kind = %context.job().kind, panic = %panic_text(payload.as_ref()), "A job handler panicked");
-                Ok(JobOutcome::Failed {
-                    code: INTERNAL_ERROR.into(),
-                    message: INTERNAL_ERROR_MESSAGE.into(),
-                })
+                // A panic on the way out of a cancellation is the stop, as an error is.
+                if cancel.is_cancelled() {
+                    Ok(JobOutcome::Stopped)
+                } else {
+                    panicked = true;
+                    Ok(JobOutcome::Failed {
+                        code: INTERNAL_ERROR.into(),
+                        message: INTERNAL_ERROR_MESSAGE.into(),
+                    })
+                }
             }
         };
         if outcome.is_ok() || cancel.is_cancelled() {
@@ -551,8 +581,10 @@ impl JobRuntime {
             Err(_) if cancel.is_cancelled() => self.stop(id, kind.config).await,
             Err(error) => self.record_failure(id, &kind, &error).await,
         };
-        if let Err(error) = finalized {
-            tracing::warn!(job_id = id, %error, "Could not finalize job");
+        match finalized {
+            Ok(()) if panicked => self.tell_failed(&kind.handler, id, INTERNAL_ERROR).await,
+            Ok(()) => {}
+            Err(error) => tracing::warn!(job_id = id, %error, "Could not finalize job"),
         }
         self.events.publish(id).await;
     }
@@ -766,7 +798,7 @@ impl JobRuntime {
     /// Suspends every job still running, in one statement, and returns how
     /// many. For an orderly exit that did not wait for every worker.
     pub async fn suspend_running(&self) -> Result<usize> {
-        Ok(0)
+        self.store().suspend_all_running().await
     }
 
     /// Waits until no worker is running or waiting for `id`.
