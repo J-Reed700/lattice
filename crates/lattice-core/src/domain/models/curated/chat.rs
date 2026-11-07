@@ -1,6 +1,6 @@
 //! Curated chat models: the catalog, what a model file supports, and what its context window costs in memory.
 
-use crate::domain::models::fit::Footprint;
+use crate::domain::models::fit::{Footprint, COMFORTABLE_WINDOW_TOKENS, MINIMUM_WINDOW_TOKENS};
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
@@ -223,31 +223,10 @@ struct KvFootprint {
     windowed_bytes: u64,
 }
 
-/// Compute buffers, the recurrent state of hybrid layers and the server
-/// itself. llama.cpp's output buffer alone is `vocab * batch * 4` bytes, about
-/// half a gigabyte for these 250K-token vocabularies at the default batch.
-const RUNTIME_OVERHEAD_BYTES: u64 = 1_000_000_000;
-
-/// The window behind `minimum_ram_gb`: the sidecar's default context when it
-/// cannot size one from the hardware (`DEFAULT_GPU_CONTEXT_SIZE`), and room
-/// for retrieved passages plus a conversation.
-const MINIMUM_WINDOW_TOKENS: u64 = 8_192;
-
-/// The window behind `recommended_ram_gb`: the largest one the sidecar's
-/// automatic sizing chooses (`AUTO_MAX_CONTEXT_SIZE`).
-const COMFORTABLE_WINDOW_TOKENS: u64 = 32_768;
-
 /// Memory the model holds while serving `window_tokens` of context, in GB
 /// (10^9 bytes, as Hugging Face sizes are), rounded up to a tenth.
-///
-/// This is the figure the catalog shows as "Est. memory" and the one
-/// `computeModelFit` compares with 70% of the machine's RAM.
-fn memory_estimate_gb(weights_bytes: u64, kv: KvFootprint, window_tokens: u64) -> f64 {
-    let bytes = weights_bytes
-        + kv.windowed_bytes
-        + kv.per_token_bytes * window_tokens
-        + RUNTIME_OVERHEAD_BYTES;
-    (bytes as f64 / 100_000_000.0).ceil() / 10.0
+fn memory_estimate_gb(footprint: Footprint, window_tokens: u64) -> f64 {
+    (footprint.at(window_tokens) as f64 / 100_000_000.0).ceil() / 10.0
 }
 
 /// Every entry of the chat catalog.
@@ -258,7 +237,12 @@ pub fn curated_chat_models() -> &'static [CuratedChatModel] {
 impl CuratedChatModel {
     /// What this entry holds in accelerator memory, from its pinned header values.
     pub fn footprint(&self) -> Footprint {
-        todo!("stage 2")
+        Footprint {
+            weights_bytes: self.size_bytes,
+            kv_per_token_bytes: self.kv.per_token_bytes,
+            windowed_kv_bytes: self.kv.windowed_bytes,
+            recurrent_state_bytes: 0,
+        }
     }
 
     fn metadata(&self) -> ModelMetadata {
@@ -277,12 +261,8 @@ impl CuratedChatModel {
             category: ModelCategory::LLM,
             description: self.description.into(),
             size_gb: self.size_bytes as f64 / 1_000_000_000.0,
-            minimum_ram_gb: memory_estimate_gb(self.size_bytes, self.kv, MINIMUM_WINDOW_TOKENS),
-            recommended_ram_gb: memory_estimate_gb(
-                self.size_bytes,
-                self.kv,
-                COMFORTABLE_WINDOW_TOKENS,
-            ),
+            minimum_ram_gb: memory_estimate_gb(self.footprint(), MINIMUM_WINDOW_TOKENS),
+            recommended_ram_gb: memory_estimate_gb(self.footprint(), COMFORTABLE_WINDOW_TOKENS),
             context_length: self.context_length,
             performance_tier: self.performance_tier,
             supported_quantizations: vec![self.quantization.into()],
@@ -646,6 +626,9 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
         .collect()
 }
 
+/// Deprecated: first run recommends through `fit::Recommender`, which counts
+/// the graphics card and the companions; this reads system RAM alone.
+///
 /// First-run chat-model tier, by system RAM. One family, sized to the
 /// machine: a model that does not fit swaps, and a first chat that swaps looks
 /// broken.

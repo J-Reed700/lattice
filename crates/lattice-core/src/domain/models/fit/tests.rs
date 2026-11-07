@@ -565,3 +565,36 @@ fn the_one_estimator_keeps_the_catalogs_numbers_for_every_curated_entry() {
         assert_eq!(footprint.weights_bytes, model.size_bytes, "{}", model.id);
     }
 }
+
+#[test]
+fn an_integrated_gpu_alone_is_treated_as_the_processor() {
+    let profile = machine(
+        vec![accelerator(
+            "Intel(R) UHD Graphics",
+            16 * GIB,
+            AcceleratorKind::Integrated,
+            Backend::Vulkan,
+        )],
+        32 * GIB,
+    );
+    let placement = choose_placement(&profile, &companions());
+
+    assert!(placement.is_slow());
+    assert_eq!(placement.device_total_bytes(), 32 * GIB);
+    assert_eq!(
+        placement.budget_bytes(),
+        choose_placement(&processor_only(), &companions()).budget_bytes()
+    );
+}
+
+#[test]
+fn the_default_companions_are_the_curated_embedder_and_reranker() {
+    let pair = Companions::default_pair();
+
+    assert_eq!(pair.embedding.slots, 4);
+    assert_eq!(pair.embedding.window_tokens, 2_048);
+    assert_eq!(pair.reranker.slots, 1);
+    assert_eq!(pair.reranker.window_tokens, 4_096);
+    assert!(pair.embedding.footprint.weights_bytes > 1_000_000_000);
+    assert!(pair.bytes() > 3_000_000_000);
+}
