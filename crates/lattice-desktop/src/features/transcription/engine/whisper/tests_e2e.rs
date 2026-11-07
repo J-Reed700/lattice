@@ -37,6 +37,7 @@ fn env_path(key: &str) -> PathBuf {
 /// Load the model straight from a directory, no repository lookup.
 fn load_from_dir(dir: PathBuf) -> LoadedWhisper {
     prefer_float_weights();
+    limit_candle_threads();
     let resolved = ResolvedModel {
         model_id: "e2e-whisper".to_string(),
         name: "Whisper (e2e)".to_string(),

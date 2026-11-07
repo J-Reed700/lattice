@@ -30,6 +30,8 @@ export const ISSUE_OUTCOME: Record<IssueResultKind, Words> = {
   missed: { label: 'Missed', tone: BAD },
 };
 
+export const ALSO_VALID_NOT_RAISED: Words = { label: 'Not raised', tone: NOTE };
+
 export const FINDING_OUTCOME: Record<FindingResultKind, Words> = {
   matches: { label: 'Matches', tone: GOOD },
   valid_extra: { label: 'Valid extra', tone: NOTE },

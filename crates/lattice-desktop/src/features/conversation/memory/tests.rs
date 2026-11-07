@@ -29,7 +29,7 @@ use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
     SourceRole, SummaryRefold, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
+    MAX_QUOTE_BYTES,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -965,7 +965,6 @@ fn the_enforced_limits_are_the_ones_the_design_documents() {
 
     // The payload caps are the domain's, reused rather than restated: two
     // numbers that must agree are one number that cannot disagree.
-    assert_eq!(MAX_PROPOSAL_BYTES, 64 * 1024);
     assert_eq!(MAX_OPERATIONS_PER_RESPONSE, 32);
     assert_eq!(MAX_EVIDENCE_PER_ITEM, 4);
     assert_eq!(MAX_QUOTE_BYTES, 2048);

@@ -5206,7 +5206,7 @@ issues: RevealedIssueDto[];
  */
 findings: RevealedFindingDto[]; score: CodeReviewScoreDto;
 /**
- * How well each key issue's pattern was recognised, one entry for each key issue.
+ * How well the patterns of the key's issues were recognised. A review-found issue that was not raised has none.
  */
 ratings: RatedPatternDto[];
 /**
@@ -9391,7 +9391,11 @@ finding: number | null;
 /**
  * The judge's reason for the outcome.
  */
-reason: string }
+reason: string;
+/**
+ * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
+ */
+alsoValid: boolean }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**

@@ -152,6 +152,7 @@ fn main() {
     // a test or an eval gets a scratch home unless it sets LATTICE_HOME.
     lattice_core::shared::fs::roots::use_the_users_home();
     lattice::features::transcription::engine::prefer_float_weights();
+    lattice::features::transcription::engine::limit_candle_threads();
     lattice::infrastructure::crash::install_panic_hook();
     // This entrypoint exists only in an instrumented, isolated test package.
     // Exercise the installed executable's signing policy and bundled assets

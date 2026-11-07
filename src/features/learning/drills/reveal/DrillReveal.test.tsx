@@ -15,6 +15,7 @@ import {
   STALE_AFTER,
   STALE_BEFORE,
   STALE_STATE,
+  UNBOUNDED_GROWTH,
   gradedResult,
   revealOf,
   ungradedResult,
@@ -50,7 +51,7 @@ describe('DrillReveal, a graded review', () => {
 
     it('counts the issues found, half found and missed, and by severity', () => {
       setup();
-      expect(within(region(TITLE)).getByRole('heading', { name: 'Of the 3 issues in the code' })).toBeInTheDocument();
+      expect(within(region(TITLE)).getByRole('heading', { name: 'Of the 3 planted issues' })).toBeInTheDocument();
       expect(figure('Found')).toHaveTextContent(/^1$/);
       expect(figure('Half found')).toHaveTextContent(/^1$/);
       expect(figure('Missed')).toHaveTextContent(/^1$/);
@@ -212,6 +213,53 @@ describe('DrillReveal, a graded review', () => {
         }),
       ).toBeInTheDocument();
       expect(within(card('Magic number')).queryByText(/Credited to/)).toBeNull();
+    });
+  });
+
+  describe('the also-valid issues', () => {
+    const withAlsoValid = (issue = UNBOUNDED_GROWTH) =>
+      gradedResult({ reveal: revealOf({ issues: [...ISSUES, issue] }) });
+
+    it('lists them after the planted issues, numbered on from them', () => {
+      setup(withAlsoValid());
+      const planted = within(region('Issues, most severe first'))
+        .getAllByRole('article')
+        .map((article) => within(article).getByRole('heading', { level: 3 }).textContent);
+      expect(planted).toEqual(['Stale state', 'Wrong operator or comparison', 'Magic number']);
+      const also = within(region('Also valid'));
+      expect(also.getAllByRole('article')).toHaveLength(1);
+      expect(also.getByRole('heading', { level: 3, name: 'Unbounded growth' })).toBeInTheDocument();
+      expect(also.getByText('Issue 4')).toBeInTheDocument();
+      expect(
+        also.getByText(
+          'A blind review raised these too. They were not planted, so raising one counts for you and leaving one costs nothing.',
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('says one the learner did not raise was not raised, and never that it was missed', () => {
+      setup(withAlsoValid());
+      const unraised = within(card('Unbounded growth'));
+      expect(unraised.getByText('Not raised')).toBeInTheDocument();
+      expect(unraised.queryByText('Missed')).toBeNull();
+    });
+
+    it('shows one the learner raised as found', () => {
+      setup(withAlsoValid({ ...UNBOUNDED_GROWTH, outcome: 'found', finding: 0 }));
+      const raised = within(card('Unbounded growth'));
+      expect(raised.getByText('Found')).toBeInTheDocument();
+      expect(raised.queryByText('Not raised')).toBeNull();
+    });
+
+    it('has no second section when the key holds none', () => {
+      setup();
+      expect(screen.queryByRole('region', { name: 'Also valid' })).toBeNull();
+    });
+
+    it('counts the planted issues alone in the summary', () => {
+      setup(withAlsoValid());
+      expect(within(region(TITLE)).getByRole('heading', { name: 'Of the 3 planted issues' })).toBeInTheDocument();
+      expect(within(region(TITLE)).getByText('Real problems beyond the planted ones.')).toBeInTheDocument();
     });
   });
 
@@ -450,6 +498,26 @@ describe('DrillReveal, a graded review', () => {
         .getAllByRole('listitem')
         .map((item) => item.textContent);
       expect(items).toEqual(['Stale stateHard', 'Wrong operator or comparisonEasy', 'Magic numberAgain']);
+    });
+
+    it('lists each rating under its own pattern when the also-valid issues have none', () => {
+      const [magic, wrong, stale] = ISSUES;
+      setup(
+        gradedResult({
+          reveal: revealOf({ issues: [magic, UNBOUNDED_GROWTH, wrong, stale] }),
+        }),
+      );
+      const items = within(region('Patterns this drill practised'))
+        .getAllByRole('listitem')
+        .map((item) => item.textContent);
+      expect(items).toEqual(['Stale stateHard', 'Wrong operator or comparisonEasy', 'Magic numberAgain']);
+    });
+
+    it('says an also-valid issue that was not raised gives no rating', () => {
+      setup();
+      expect(
+        within(region('Patterns this drill practised')).getByText(/An also-valid issue you did not raise gives no rating\./),
+      ).toBeInTheDocument();
     });
 
     it('is left out when there are no ratings', () => {
