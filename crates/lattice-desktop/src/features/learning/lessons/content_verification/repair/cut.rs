@@ -199,7 +199,10 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
     let before = lesson.clone();
     let cuts_before = ledger.cuts.clone();
     let (mut taken, mut refused, mut narrowed) = (Vec::new(), Vec::new(), Vec::new());
-    for (key, example) in [("failedClaims", false), ("exampleClaims", true)] {
+    // The lesson and its cuts once the examples' cuts are made and the
+    // statements' are not.
+    let mut after_examples = None;
+    for (key, example) in [("exampleClaims", true), ("failedClaims", false)] {
         for id in last(context, key) {
             let Some(place) = ledger.entry(&id).map(|entry| entry.location().clone()) else {
                 continue;
@@ -254,6 +257,9 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
                 }
             }
         }
+        if example {
+            after_examples = Some((lesson.clone(), ledger.cuts.clone()));
+        }
     }
     // A narrowed statement is not cut: the model takes it out of its sentence
     // in this repair, and the pass after it records what became of it.
@@ -263,16 +269,67 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
     }
     // A claim whose text went with a cut sentence is no work any more: the
     // pass after the repair finds it gone.
-    let vanished = |id: &ClaimId| {
-        ledger.entry(id).is_some_and(|entry| {
-            let place = entry.location();
-            let holds = |whole: &Value| {
-                field_text(whole, place.unit_index, &place.field)
-                    .is_some_and(|text| text.contains(&place.quote))
-            };
-            holds(&before) && !holds(&lesson)
-        })
+    let cut_by = |ledger: &ClaimLedger, lesson: &Value, taken: &[ClaimId], refused: &[ClaimId]| {
+        let vanished = |id: &ClaimId| {
+            ledger.entry(id).is_some_and(|entry| {
+                let place = entry.location();
+                let holds = |whole: &Value| {
+                    field_text(whole, place.unit_index, &place.field)
+                        .is_some_and(|text| text.contains(&place.quote))
+                };
+                holds(&before) && !holds(lesson)
+            })
+        };
+        ledger
+            .entries()
+            .iter()
+            .map(|entry| entry.claim_id())
+            .filter(|id| taken.contains(id) || refused.contains(id) || vanished(id))
+            .cloned()
+            .collect::<Vec<ClaimId>>()
     };
+    let mut cut = cut_by(ledger, &lesson, &taken, &refused);
+    // Cuts that would leave the lesson unpublishable are not made: the
+    // statements keep their sentences and are published not verified. The
+    // examples' own cuts are made, unless they alone would leave it so; an
+    // example is never marked.
+    let statements: Vec<ClaimId> = taken
+        .iter()
+        .chain(&refused)
+        .filter(|id| ledger.is_statement(id))
+        .cloned()
+        .collect();
+    let mut marked = 0;
+    if !statements.is_empty()
+        && (unpublishable(&lesson, &ledger.cuts).is_some()
+            || (refused.is_empty() && ledger.nothing_left(&cut)))
+    {
+        let example_ids: Vec<ClaimId> = taken
+            .iter()
+            .chain(&refused)
+            .filter(|id| !statements.contains(id))
+            .cloned()
+            .collect();
+        let (lesson_ex, cuts_ex) =
+            after_examples.unwrap_or_else(|| (before.clone(), cuts_before.clone()));
+        let all_cuts = std::mem::replace(&mut ledger.cuts, cuts_ex);
+        let examples_refused = refused.iter().any(|id| !statements.contains(id));
+        let examples_stop = !example_ids.is_empty()
+            && (unpublishable(&lesson_ex, &ledger.cuts).is_some()
+                || (!examples_refused && ledger.nothing_left(&example_ids)));
+        if examples_stop {
+            ledger.cuts = all_cuts;
+        } else {
+            taken.retain(|id| !statements.contains(id));
+            refused.retain(|id| !statements.contains(id));
+            lesson = lesson_ex;
+            withdraw(context, |id| statements.contains(id));
+            ledger.drop_repairs(&statements).await?;
+            ledger.save_cuts().await?;
+            marked = ledger.publish_unverified(&statements, None).await?;
+            cut = cut_by(ledger, &lesson, &taken, &refused);
+        }
+    }
     // A claim in a section that goes is no work either: the section's
     // statements leave the checks and end removed with it.
     let goes = |id: &ClaimId| {
@@ -280,32 +337,6 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
             .entry(id)
             .is_some_and(|entry| ledger.cuts.going.contains_key(&entry.location().unit_index))
     };
-    let cut: Vec<ClaimId> = ledger
-        .entries()
-        .iter()
-        .map(|entry| entry.claim_id())
-        .filter(|id| taken.contains(id) || refused.contains(id) || vanished(id))
-        .cloned()
-        .collect();
-    // Cuts that would leave the lesson unpublishable are not made: the
-    // statements keep their sentences and are published not verified.
-    let statements: Vec<ClaimId> = taken
-        .iter()
-        .chain(&refused)
-        .filter(|id| ledger.is_statement(id))
-        .cloned()
-        .collect();
-    if !statements.is_empty()
-        && statements.len() == taken.len() + refused.len()
-        && (unpublishable(&lesson, &ledger.cuts).is_some()
-            || (refused.is_empty() && ledger.nothing_left(&cut)))
-    {
-        ledger.cuts = cuts_before;
-        withdraw(context, |id| statements.contains(id));
-        ledger.drop_repairs(&statements).await?;
-        ledger.save_cuts().await?;
-        return Ok(ledger.publish_unverified(&statements, None).await?);
-    }
     withdraw(context, |id| cut.contains(id) || goes(id));
     if let Some(slot) = context.get_mut("candidate") {
         *slot = lesson;
@@ -341,7 +372,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn last_a
             .map_or_else(String::new, Value::to_string);
         return Err(ledger.stop_cut_out(&cut, &text).await?);
     }
-    Ok(taken.len() + refused.len())
+    Ok(taken.len() + refused.len() + marked)
 }
 
 #[cfg(test)]
