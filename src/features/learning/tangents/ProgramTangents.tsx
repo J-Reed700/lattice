@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { ExternalLink, GitBranch, Search, X } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
+import { TangentDock, TangentExpandButton } from '@/features/chat/components/tangents/TangentDock';
 import { CourseTangentChat } from '@/features/learning/tangents/CourseTangentChat';
 import {
   StudyTangentsContext,
@@ -198,16 +199,10 @@ export function ProgramTangents({
         <div className="tangent-main">{children}</div>
 
         {panelOpen && (
-          <aside
+          <TangentDock
             id={`course-tangents-${program.summary.id}`}
-            aria-label="Course tangents"
-            className="tangent-sidebar tangent-panel-slot"
-            onKeyDown={(event) => {
-              if (event.key === 'Escape' && !event.defaultPrevented) {
-                event.stopPropagation();
-                closeTangentsDrawer();
-              }
-            }}
+            label="Course tangents"
+            onClose={closeTangentsDrawer}
           >
             {activeTangent ? (
               <CourseTangentChat
@@ -235,9 +230,12 @@ export function ProgramTangents({
                       </span>
                     )}
                   </div>
-                  <IconButton label="Close tangents" onClick={closeTangentsDrawer}>
-                    <X className="h-4 w-4" />
-                  </IconButton>
+                  <div className="flex items-center gap-1">
+                    <TangentExpandButton />
+                    <IconButton label="Close tangents" onClick={closeTangentsDrawer}>
+                      <X className="h-4 w-4" />
+                    </IconButton>
+                  </div>
                 </header>
 
                 <div className="shrink-0 border-b border-border-subtle p-3 space-y-2.5">
@@ -346,7 +344,7 @@ export function ProgramTangents({
                 </div>
               </div>
             )}
-          </aside>
+          </TangentDock>
         )}
       </div>
     </StudyTangentsContext.Provider>

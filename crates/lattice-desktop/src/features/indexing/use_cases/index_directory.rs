@@ -229,6 +229,7 @@ fn discover_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::testing::links::{self, LinkKind};
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
@@ -261,24 +262,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_symlink_to_a_parent_folder_is_not_followed() {
+    fn link_to_a_parent_folder_is_not_followed(kind: LinkKind) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let sub = root.join("sub");
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("note.md"), "a").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(root, sub.join("loop")).unwrap();
-        #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(root, sub.join("loop")).unwrap();
+        if !links::link_dir(kind, root, &sub.join("loop")).unwrap() {
+            return;
+        }
 
         let files = discover_files(root, true, None).unwrap();
 
         assert_eq!(
             names(&files, root),
-            vec![PathBuf::from("sub").join("note.md")]
+            vec![PathBuf::from("sub").join("note.md")],
+            "a {kind} back to a parent folder must not be followed"
         );
+    }
+
+    #[test]
+    fn a_symlink_to_a_parent_folder_is_not_followed() {
+        link_to_a_parent_folder_is_not_followed(LinkKind::Symlink);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_to_a_parent_folder_is_not_followed() {
+        link_to_a_parent_folder_is_not_followed(LinkKind::Junction);
     }
 
     #[test]

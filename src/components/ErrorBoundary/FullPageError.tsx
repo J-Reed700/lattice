@@ -8,8 +8,7 @@
 
 import React, { useState } from 'react';
 
-import { getUserFriendlyMessage, sanitizeErrorMessage } from '../../types/errors';
-import { downloadErrorLog } from '../../utils/errorLogger';
+import { getUserFriendlyMessage, redact, sanitizeErrorMessage } from '../../utils/redact';
 
 export interface FullPageErrorProps {
   error: Error;
@@ -22,17 +21,24 @@ const secondaryButton =
 const ghostButton =
   'inline-flex h-8 items-center rounded-md px-2 text-sm text-text-secondary transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary';
 
+function withoutRawMessage(text: string, message: unknown): string {
+  const hidden = typeof message === 'string' && message !== '' ? text.split(message).join(sanitizeErrorMessage(message)) : text;
+  return redact(hidden);
+}
+
 export function FullPageError({ error, errorInfo, resetError }: FullPageErrorProps) {
   const [showDetails, setShowDetails] = useState(false);
   const [copied, setCopied] = useState(false);
   const isDevelopment = import.meta.env.DEV;
 
   const handleCopyError = () => {
+    const stack = error.stack || 'N/A';
+    const componentStack = errorInfo?.componentStack || 'N/A';
     const errorDetails = [
       `Error: ${error.name}`,
-      `Message: ${error.message}`,
-      `Stack: ${error.stack || 'N/A'}`,
-      `Component Stack: ${errorInfo?.componentStack || 'N/A'}`,
+      `Message: ${isDevelopment ? error.message : sanitizeErrorMessage(error.message)}`,
+      `Stack: ${isDevelopment ? stack : withoutRawMessage(stack, error.message)}`,
+      `Component Stack: ${isDevelopment ? componentStack : redact(componentStack)}`,
       `Timestamp: ${new Date().toISOString()}`,
       `URL: ${window.location.href}`,
       `User Agent: ${navigator.userAgent}`,
@@ -63,11 +69,6 @@ export function FullPageError({ error, errorInfo, resetError }: FullPageErrorPro
           <button type="button" onClick={handleCopyError} className={ghostButton}>
             {copied ? 'Copied' : 'Copy details'}
           </button>
-          {isDevelopment ? (
-            <button type="button" onClick={downloadErrorLog} className={ghostButton}>
-              Download log
-            </button>
-          ) : null}
         </div>
 
         <div className="mt-8 border-t border-border-subtle pt-4">

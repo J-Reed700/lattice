@@ -22,6 +22,10 @@ let launches = 0;
 const expectedTitle = 'Compatibility café 7319';
 const expectedBody = 'Cedar compatibility café 7319. This must survive closing immediately.';
 let collectionId;
+const spokenWords = 'The quick brown fox jumps over the lazy dog.';
+// Startup sweeps the library folders for anything its database doesn't know,
+// and a test library's database knows nothing.
+const scratchHome = path.join(output, 'lattice-home');
 
 async function invoke(command, args = {}) {
   const response = await browser.executeAsync((command, args, done) => {
@@ -29,6 +33,26 @@ async function invoke(command, args = {}) {
       .then(value => done({ ok: true, value }))
       .catch(error => done({ ok: false, failure: error }));
   }, command, args);
+  assert.equal(response.ok, true, `${command}: ${JSON.stringify(response.failure)}`);
+  return response.value;
+}
+
+// One WebDriver request gives up after connectionRetryTimeout, so a command that
+// can take longer starts in the page and is polled until it settles.
+async function invokeLong(command, args = {}, timeout = 180_000) {
+  const key = `latticeInvoke${Date.now()}${Math.random().toString(36).slice(2)}`;
+  await browser.execute((command, args, key) => {
+    window[key] = { done: false };
+    window.__TAURI__.core.invoke(command, args)
+      .then(value => { window[key] = { done: true, ok: true, value }; })
+      .catch(error => { window[key] = { done: true, ok: false, failure: error }; });
+  }, command, args, key);
+  let response;
+  await browser.waitUntil(async () => {
+    response = await browser.execute(key => window[key], key);
+    return response?.done === true;
+  }, { timeout, interval: 1_000, timeoutMsg: `${command} did not settle within ${timeout}ms` });
+  await browser.execute(key => { delete window[key]; }, key);
   assert.equal(response.ok, true, `${command}: ${JSON.stringify(response.failure)}`);
   return response.value;
 }
@@ -44,7 +68,27 @@ async function displayedElement(selector, timeout = 30_000) {
   return browser.$(selector);
 }
 
-async function launch() {
+/** A capture file for WebView2's fake microphone: quiet, the clip, then quiet. */
+function captureFile({ pcm, sampleRate }) {
+  const quiet = seconds => Buffer.alloc(Math.round(sampleRate * seconds) * 2);
+  const data = Buffer.concat([quiet(2), Buffer.from(pcm, 'base64'), quiet(30)]);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVEfmt ', 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+async function launch(env = {}) {
   assert.ok(!app, 'The previous app process must be closed before relaunch');
   if (process.platform === 'darwin') {
     const session = execFileSync('/usr/sbin/ioreg', ['-n', 'Root', '-d1', '-l'], {
@@ -60,7 +104,7 @@ async function launch() {
   const log = openSync(path.join(reports, `app-${++launches}.log`), 'w');
   app = spawn(manifest.binary, [], {
     cwd: path.dirname(manifest.binary),
-    env: { ...process.env, TAURI_WEBDRIVER_PORT: String(port),
+    env: { ...process.env, ...env, TAURI_WEBDRIVER_PORT: String(port), LATTICE_HOME: scratchHome,
       ...(process.platform === 'darwin' && process.env.LATTICE_NATIVE_LEAK_SCAN === '1'
         ? { MallocStackLogging: '1' } : {}),
     },
@@ -152,6 +196,16 @@ async function closeNormally() {
   browser = undefined;
 }
 
+async function stopApp() {
+  if (app && app.exitCode === null) {
+    app.kill();
+    for (let attempt = 0; attempt < 50 && app.exitCode === null && app.signalCode === null; attempt++) await delay(100);
+    if (app.exitCode === null && app.signalCode === null) app.kill('SIGKILL');
+  }
+  app = undefined;
+  browser = undefined;
+}
+
 test('packaged desktop: onboarding, registered learning reads, file access, journal edits and restart persistence', { timeout: 480_000 }, async t => {
   // Re-running a candidate starts with an empty test library. Preserve the old
   // directory for debugging; the strict identity check excludes real user data.
@@ -160,9 +214,12 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       : process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local/share');
   assert.ok(dataRoot, 'Cannot locate the test application data directory');
   const dataDir = path.join(dataRoot, manifest.identifier);
-  await rename(dataDir, `${dataDir}.previous-${Date.now()}`).catch(error => {
-    if (error.code !== 'ENOENT') throw error;
-  });
+  const previous = `previous-${Date.now()}`;
+  for (const folder of [dataDir, scratchHome]) {
+    await rename(folder, `${folder}.${previous}`).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
   const step = async (name, action) => {
     let failure;
     await t.test(name, async () => {
@@ -368,11 +425,95 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
     }
     throw error;
   } finally {
-    if (app && app.exitCode === null) {
-      app.kill();
-      for (let attempt = 0; attempt < 50 && app.exitCode === null && app.signalCode === null; attempt++) await delay(100);
-      if (app.exitCode === null && app.signalCode === null) app.kill('SIGKILL');
-    }
+    await stopApp();
     await writeFile(path.join(reports, 'result.json'), JSON.stringify(results, null, 2));
+  }
+});
+
+async function pageSays(text, timeout) {
+  await browser.waitUntil(() => browser.execute(wanted => document.body.innerText.includes(wanted), text), {
+    timeout, timeoutMsg: `The page never said "${text}"`,
+  });
+}
+
+async function openChatWithMic() {
+  await (await browser.$('button[aria-label="Chat"]')).click();
+  const skip = await browser.$('button=Not now');
+  if (await skip.isDisplayed().catch(() => false)) await skip.click();
+  await browser.waitUntil(async () => {
+    if (await (await browser.$('button[aria-label="Start a voice conversation"]')).isExisting()) return true;
+    const create = await browser.$('button[aria-label="Create new conversation"]');
+    if (await create.isExisting()) await create.click().catch(() => undefined);
+    return false;
+  }, { timeout: 30_000, timeoutMsg: 'The mic never appeared in a chat' });
+  return displayedElement('button[aria-label="Start a voice conversation"]');
+}
+
+/** Downloads a model through the app; false when the network or the host won't give it. */
+async function downloaded(modelId, isReady) {
+  const { status } = await invoke('plugin:model|download_model', { modelId });
+  if (status === 'network_error' || status === 'failed') return false;
+  const deadline = Date.now() + 300_000;
+  while (Date.now() < deadline) {
+    if (await isReady()) return true;
+    await delay(2000);
+  }
+  return false;
+}
+
+test('packaged desktop: the mic says what is missing, then hears a recording through WebView2 and Whisper', { timeout: 840_000 }, async () => {
+  const voice = { steps: [] };
+  try {
+    await launch();
+    await (await openChatWithMic()).click();
+    await pageSays('Download Whisper first', 30_000);
+    await displayedElement('button[aria-label="Start a voice conversation"]');
+    voice.steps.push('missing-model-message');
+
+    if (process.platform !== 'win32') {
+      voice.skipped = 'The fake microphone is a WebView2 argument, so the rest runs on Windows only.';
+      await closeNormally();
+      return;
+    }
+
+    const speech = () => invoke('plugin:speech|get_speech_status');
+    const hearing = await downloaded('whisper-tiny-q8', async () => (await invoke('plugin:transcription|get_transcription_status')).modelReady);
+    const voices = hearing && await downloaded((await speech()).modelId, async () => (await speech()).modelReady);
+    if (!voices) {
+      voice.skipped = 'Whisper or Kokoro could not be downloaded here, so only the message about them was checked.';
+      await closeNormally();
+      return;
+    }
+    voice.steps.push('models-downloaded');
+
+    const capture = path.join(reports, 'spoken.wav');
+    const { defaultVoice } = await speech();
+    // The first sentence loads the voice as well as reading.
+    await browser.setTimeout({ script: 180_000 });
+    await writeFile(capture, captureFile(await invokeLong('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 })));
+    await closeNormally();
+
+    // No --use-fake-ui-for-media-stream: the app's own permission handler has to let this through.
+    await launch({
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
+        `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=${capture} --autoplay-policy=no-user-gesture-required`,
+    });
+    await (await openChatWithMic()).click();
+    await pageSays('Listening…', 60_000);
+    voice.steps.push('webview2-opened-the-mic');
+    // This test library has no chat model, so what was heard waits in the composer.
+    const composerText = async () => (await browser.$('textarea[aria-label="Message composer"]')).getValue();
+    await browser.waitUntil(async () => /brown fox/i.test(await composerText()), {
+      timeout: 240_000, timeoutMsg: 'Whisper never put the recording in the composer',
+    });
+    voice.transcript = await composerText();
+    assert.match(voice.transcript, /lazy dog/i);
+    await displayedElement('button[aria-label="Start a voice conversation"]');
+    voice.steps.push('whisper-heard-it');
+    await browser.saveScreenshot(path.join(reports, 'voice-composer.png'));
+    await closeNormally();
+  } finally {
+    await stopApp();
+    await writeFile(path.join(reports, 'voice-result.json'), JSON.stringify(voice, null, 2));
   }
 });

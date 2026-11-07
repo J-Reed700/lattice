@@ -7,6 +7,7 @@
 use super::super::claim_ledger::ClaimLedger;
 use super::super::*;
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState};
+use lattice_core::shared::text::segmentation::common_subsequence;
 use lattice_core::shared::text::sentences;
 use std::collections::HashSet;
 
@@ -178,39 +179,6 @@ impl<'t> Pieces<'t> {
     }
 }
 
-/// The longest common subsequence of two sentence lists, as matched index
-/// pairs in order.
-fn aligned(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
-    let width = b.len() + 1;
-    let mut table = vec![0usize; (a.len() + 1) * width];
-    let cell = |table: &[usize], i: usize, j: usize| table.get(i * width + j).copied().unwrap_or(0);
-    for (i, x) in a.iter().enumerate().rev() {
-        for (j, y) in b.iter().enumerate().rev() {
-            let value = if x == y {
-                cell(&table, i + 1, j + 1) + 1
-            } else {
-                cell(&table, i + 1, j).max(cell(&table, i, j + 1))
-            };
-            if let Some(slot) = table.get_mut(i * width + j) {
-                *slot = value;
-            }
-        }
-    }
-    let (mut i, mut j, mut pairs) = (0, 0, Vec::new());
-    while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
-        if x == y {
-            pairs.push((i, j));
-            i += 1;
-            j += 1;
-        } else if cell(&table, i + 1, j) >= cell(&table, i, j + 1) {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    pairs
-}
-
 /// Whether the byte range `(start, end)` of `text` overlaps any occurrence
 /// of one of `quotes`.
 fn overlaps_any(text: &str, (start, end): (usize, usize), quotes: &[String]) -> bool {
@@ -235,7 +203,7 @@ fn confine_text(
     let (old, new) = (Pieces::of(before), Pieces::of(after));
     let old_sentences = old.sentences(before);
     let new_sentences = new.sentences(after);
-    let pairs = aligned(&old_sentences, &new_sentences);
+    let pairs = common_subsequence(&old_sentences, &new_sentences);
     let overlaps = |k: usize, set: &[String]| {
         old.units
             .get(k)

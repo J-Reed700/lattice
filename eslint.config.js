@@ -90,13 +90,8 @@ const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
   'src/features/explorer/components/ExplorerPage.tsx',
   'src/features/files/components/Ingest/ImportHistory.tsx',
   'src/features/journal/components/JournalPickerMenu.tsx',
-  'src/features/reading/components/ContentViewer/renderers/HTMLViewer.tsx',
-  'src/features/reading/components/SourceReaderBody.tsx',
   'src/features/settings/components/AITab/ModelsTab.tsx',
-  'src/features/settings/components/AITab/ToolsTab.tsx',
   'src/features/settings/components/IndexingTab.tsx',
-  'src/features/settings/components/LogsTab.tsx',
-  'src/features/settings/components/Settings.tsx',
   'src/features/settings/components/VaultTab.tsx',
 ], (text) =>
   /\bfrom\s+['"]@tauri-apps\/plugin-|\bimport\(\s*['"]@tauri-apps\/plugin-/.test(text) ||
@@ -455,7 +450,7 @@ export default [
   // through a hook or a shared helper. VIEW_NATIVE_ALLOWLIST holds the files
   // that predate the rule.
   {
-    files: ['src/components/**/*.{ts,tsx}', 'src/features/*/components/**/*.{ts,tsx}'],
+    files: ['src/components/**/*.{ts,tsx}', 'src/features/*/components/**/*.{ts,tsx}', 'src/features/learning/**/*.tsx'],
     ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}', '**/*.stories.{ts,tsx}', ...VIEW_NATIVE_ALLOWLIST],
     rules: {
       'no-restricted-syntax': ['error', ...VIEW_NATIVE_SELECTORS],
@@ -473,7 +468,7 @@ export default [
     },
   },
   {
-    files: ['src/components/**/*.{ts,tsx}', 'src/features/*/components/**/*.{ts,tsx}'],
+    files: ['src/components/**/*.{ts,tsx}', 'src/features/*/components/**/*.{ts,tsx}', 'src/features/learning/**/*.tsx'],
     ignores: ['**/__tests__/**', '**/*.test.{ts,tsx}', '**/*.stories.{ts,tsx}', ...GLOBAL_CHAT_MODEL_OWNERS, ...VIEW_NATIVE_ALLOWLIST],
     rules: {
       'no-restricted-syntax': ['error', ...VIEW_NATIVE_SELECTORS, ...GLOBAL_CHAT_MODEL_SELECTORS],

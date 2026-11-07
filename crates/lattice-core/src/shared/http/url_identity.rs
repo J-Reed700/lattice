@@ -27,7 +27,7 @@ pub fn normalize_web_source_url(url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::identity;
+    use super::{identity, normalize_web_source_url};
 
     #[test]
     fn canonicalizes_only_url_components_with_defined_equivalence() {
@@ -46,6 +46,14 @@ mod tests {
         assert_ne!(
             identity("https://example.com/?Q=A"),
             identity("https://example.com/?q=a")
+        );
+    }
+
+    #[test]
+    fn normalize_web_source_url_trims_and_lowercases() {
+        assert_eq!(
+            normalize_web_source_url(" HTTPS://Example.COM/Path/To/Resource "),
+            "https://example.com/path/to/resource"
         );
     }
 }

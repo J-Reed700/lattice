@@ -32,6 +32,18 @@ pub struct TranscriptDto {
     pub text: String,
 }
 
+/// What was said in a recording made in the app.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscribedSpeechDto {
+    /// The words, empty when the recording was not speech.
+    pub text: String,
+    /// Language tag reported by the model.
+    pub language: String,
+    /// Length of the recording.
+    pub duration_ms: u64,
+}
+
 /// Whether transcription is available right now.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +52,22 @@ pub struct TranscriptionStatusDto {
     pub model_ready: bool,
     /// Display name of the model that would be used.
     pub model_name: Option<String>,
+    /// What to download for a voice conversation.
+    pub voice_model: VoiceModelDto,
+}
+
+/// The transcription model offered for a voice conversation.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceModelDto {
+    /// Catalog id, to start the download with.
+    pub model_id: String,
+    /// Display name.
+    pub model_name: String,
+    /// Size of the download.
+    pub download_bytes: f64,
+    /// Licence of the weights.
+    pub license: String,
 }
 
 impl TranscriptDto {

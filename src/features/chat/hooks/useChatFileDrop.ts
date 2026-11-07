@@ -56,7 +56,10 @@ export function useChatFileDrop(
       const ratio = window.devicePixelRatio || 1;
       const x = position.x / ratio;
       const y = position.y / ratio;
-      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      if (!(x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom)) return false;
+      // A panel laid over this one, a tangent over the chat, takes the drop.
+      const top = document.elementFromPoint?.(x, y);
+      return !top || element.contains(top);
     },
     [panelRef]
   );

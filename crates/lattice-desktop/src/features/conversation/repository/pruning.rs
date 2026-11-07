@@ -1,6 +1,7 @@
 //! Removing messages: explicit pruning, truncation and taking back a turn.
 
 use super::ConversationRepository;
+use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -182,6 +183,23 @@ impl ConversationRepository {
         }
 
         let placeholders = vec!["?"; message_ids.len()].join(",");
+
+        // The pictures that go with the messages by cascade, recorded as let
+        // go of in the same transaction, so their files can be freed.
+        let record_sql = record_releases_sql(
+            FileStore::ChatImage,
+            "id || '.' || ext",
+            &format!("chat_images WHERE conversation_id = ? AND message_id IN ({placeholders})"),
+        );
+        let mut record = sqlx::query(&record_sql)
+            .bind(run_id())
+            .bind(conversation_id);
+        for id in message_ids {
+            record = record.bind(id);
+        }
+        record.execute(&mut **tx).await.map_err(|e| {
+            AppError::Database(format!("Failed to record released pictures: {}", e))
+        })?;
 
         // Bookmarks first: `conversation_message_bookmarks` only cascades when
         // SQLite foreign keys are enabled, and a dangling bookmark is worse

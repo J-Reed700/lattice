@@ -316,7 +316,7 @@ def main():
         '--validate-only', action='store_true',
         help='validate the dataset without requiring a model run')
     args = parser.parse_args()
-    dataset = json.loads(args.dataset.read_text())
+    dataset = json.loads(args.dataset.read_text(encoding="utf-8"))
     validate_dataset(dataset)
     if args.validate_only:
         if args.run is not None:
@@ -345,7 +345,7 @@ def main():
         return
     if args.run is None:
         parser.error('run is required unless --validate-only is used')
-    runs = [json.loads(line) for line in args.run.read_text().splitlines() if line.strip()]
+    runs = [json.loads(line) for line in args.run.read_text(encoding="utf-8").splitlines() if line.strip()]
     print(json.dumps(
         score(dataset, runs, args.k, args.abstain_threshold, args.abstain_field),
         indent=2, allow_nan=False))

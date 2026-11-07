@@ -5,6 +5,7 @@ use super::*;
 use crate::features::backup::archive::format::{
     Manifest, DB_ENTRY, FORMAT_VERSION, MANIFEST_ENTRY,
 };
+use lattice_core::shared::testing::links;
 use std::io;
 use std::io::Cursor;
 use tempfile::tempdir;
@@ -314,10 +315,9 @@ fn fixture() -> Fixture {
         &vault_root.join("excluded").join("secret.md"),
         b"must not ship",
     );
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(
-        vault_root.join("notes").join("sub").join(NOTE_NAME),
-        vault_root.join("shortcut.md"),
+    links::link_file(
+        &vault_root.join("notes").join("sub").join(NOTE_NAME),
+        &vault_root.join("shortcut.md"),
     )
     .unwrap();
 

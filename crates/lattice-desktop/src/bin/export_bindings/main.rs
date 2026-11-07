@@ -222,6 +222,11 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::create_learning_tangent,
             lattice::features::learning::plugin::list_learning_tangents,
             lattice::features::learning::plugin::set_conversation_course,
+            lattice::features::learning::plugin::start_code_review_drill,
+            lattice::features::learning::plugin::submit_code_review,
+            lattice::features::learning::plugin::code_review_result,
+            lattice::features::learning::plugin::regrade_code_review,
+            lattice::features::learning::plugin::code_review_languages,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,
@@ -479,6 +484,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::settings::plugin::reset_settings,
             lattice::features::settings::plugin::export_settings,
             lattice::features::settings::plugin::import_settings,
+            lattice::features::settings::plugin::save_text_file::<tauri::Wry>,
+            lattice::features::settings::plugin::open_text_file::<tauri::Wry>,
             lattice::features::settings::plugin::validate_folder_path,
             lattice::features::settings::plugin::add_watch_folder,
             lattice::features::settings::plugin::remove_watch_folder,
@@ -511,6 +518,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::corpus_shape::commands::list_clusters,
             // Transcription plugin (2 commands)
             lattice::features::transcription::plugin::transcribe_file,
+            lattice::features::transcription::plugin::transcribe_speech,
             lattice::features::transcription::plugin::get_transcription_status,
             lattice::features::speech::plugin::get_speech_status,
             lattice::features::speech::plugin::synthesize_speech,

@@ -2,6 +2,7 @@
 
 use super::parts::{save_chunks, save_tags};
 use crate::infrastructure::persistence::mappers::DocumentModel;
+use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
@@ -13,6 +14,22 @@ pub async fn save(conn: &mut SqliteConnection, entity: &DocumentEntity) -> Resul
     // Saving only the document row causes FK failures when embeddings are saved
     // against chunk IDs that were never persisted.
     save_aggregate(conn, entity).await
+}
+
+/// [`delete`], recording first, in the same transaction, that the document's
+/// library blob was let go of.
+pub async fn delete_and_release_blob(conn: &mut SqliteConnection, id: &str) -> Result<()> {
+    sqlx::query(&record_releases_sql(
+        FileStore::Library,
+        "checksum",
+        "documents WHERE id = ?",
+    ))
+    .bind(run_id())
+    .bind(id)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to record a library release: {}", e)))?;
+    delete(conn, id).await
 }
 
 pub async fn delete(conn: &mut SqliteConnection, id: &str) -> Result<()> {

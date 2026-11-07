@@ -150,7 +150,7 @@ class Fixture(unittest.TestCase):
         self.tmp.cleanup()
 
     def write_set(self, rows, bank):
-        self.rows_path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        self.rows_path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
         g.write_json(self.bank_path, bank)
 
     def scored(self, extra=()):
@@ -230,10 +230,10 @@ class Scoring(Fixture):
         self.assertEqual((scored["bio-partial"]["points_earned"], scored["bio-partial"]["points_possible"]), (2, 4.0))
         report = sps.compare([list(scored.values())], [list(scored.values())], kind="both")
         self.assertEqual(report["paired"], 8)
-        manifest = json.loads((out / "scored.jsonl.manifest.json").read_text())
+        manifest = json.loads((out / "scored.jsonl.manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["settings"]["grader"]["model"], "fake-9b")
         self.assertFalse(manifest["settings"]["frozen"])
-        exact = json.loads((out / "deterministic.json").read_text())
+        exact = json.loads((out / "deterministic.json").read_text(encoding="utf-8"))
         self.assertEqual((exact["recorded"], exact["mismatches"]), (3, ["chem-ms-partial"]))
         with self.assertRaises(SystemExit):
             g.score("test-v1", self.root / "grades.json", out, self.registry)
@@ -304,7 +304,7 @@ class RationaleChecks(unittest.TestCase):
 
 class Labels(Fixture):
     def label_all(self, out, verdicts, points):
-        labels = json.loads((out / "calibration-labels.json").read_text())
+        labels = json.loads((out / "calibration-labels.json").read_text(encoding="utf-8"))
         for item in labels["items"]:
             item["human_verdict"] = verdicts.get(item["query_id"])
             item["human_points"] = points.get(item["query_id"])
@@ -326,7 +326,7 @@ class Labels(Fixture):
         self.label_all(out, human, {"bio-correct": 4, "bio-partial": 2, "bio-wrong": 0, "bio-copy": 1,
                                     "bio-contest": 4, "chem-paraphrase": 1, "chem-contest": 1})
         report = sps.calibration_score(load_jsonl(out / "scored.jsonl"), json.loads((out / "calibration-labels.json")
-                                                                                   .read_text()))
+                                                                                   .read_text(encoding="utf-8")))
         self.assertEqual(report["labelled"], 7)
         self.assertEqual(report["judge_accuracy"]["estimate"], 6 / 7)
         self.assertEqual(report["false_fail_rate"]["estimate"], 1 / 5)
@@ -372,14 +372,14 @@ class Labels(Fixture):
 class ReasonBar(Fixture):
     def test_the_bar_is_fixed_when_the_run_is_scored(self):
         out = self.scored()
-        manifest = json.loads((out / "scored.jsonl.manifest.json").read_text())
+        manifest = json.loads((out / "scored.jsonl.manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["settings"]["reason_bar"], g.REASON_BAR)
-        self.assertEqual(json.loads((out / "run.json").read_text())["reason_bar"], g.REASON_BAR)
+        self.assertEqual(json.loads((out / "run.json").read_text(encoding="utf-8"))["reason_bar"], g.REASON_BAR)
         strict = self.root / "results" / "strict"
         g.score("test-v1", self.root / "grades.json", strict, self.registry, {"min_accepted_share": 0.9})
-        bar = json.loads((strict / "scored.jsonl.manifest.json").read_text())["settings"]["reason_bar"]
+        bar = json.loads((strict / "scored.jsonl.manifest.json").read_text(encoding="utf-8"))["settings"]["reason_bar"]
         self.assertEqual(bar, {"max_fabricated": 0, "min_accepted_share": 0.9})
-        self.assertNotEqual(json.loads((strict / "scored.jsonl.manifest.json").read_text())["run_id"], manifest["run_id"])
+        self.assertNotEqual(json.loads((strict / "scored.jsonl.manifest.json").read_text(encoding="utf-8"))["run_id"], manifest["run_id"])
         with self.assertRaises(SystemExit):
             g.score("test-v1", self.root / "grades.json", self.root / "bad", self.registry, {"min_accepted_share": 2})
         self.assertEqual(g.reason_bar({"reason_bar": {"max_fabricated": 2}}), {"max_fabricated": 2,
@@ -415,7 +415,7 @@ class Contests(Fixture):
         out = self.scored(steady)
         contest = g.contest_stability(out)
         self.assertEqual(contest["rows_short_of_seeds"], [])
-        bio = json.loads((out / "grades.json").read_text())
+        bio = json.loads((out / "grades.json").read_text(encoding="utf-8"))
         for entry in bio["grades"]:
             if entry["row_id"] == "bio-contest" and entry["pass"] == "regrade":
                 entry["points_earned"] = 2
@@ -431,7 +431,7 @@ class Report(Fixture):
         self.assertEqual(summary["couldnt_grade"], 1)
         self.assertEqual(summary["rationale"]["unexplained_markdowns"], 0)
         self.assertEqual(summary["rationale"]["copies_reference"]["rows"], 1)
-        page = (out / "summary.md").read_text()
+        page = (out / "summary.md").read_text(encoding="utf-8")
         self.assertIn("# Quiz grading: test-v1 (draft set: not frozen, not quotable)", page)
         self.assertIn("1. **Agreement with a person**: not labelled yet", page)
         self.assertIn("5. **Contest stability**: 1/5 regrades changed the verdict (20.0%, limit 10%): unstable", page)
@@ -440,7 +440,7 @@ class Report(Fixture):
     def test_labels_from_another_run_of_the_set(self):
         baseline = self.scored()
         g.label(baseline)
-        labels = json.loads((baseline / "calibration-labels.json").read_text())
+        labels = json.loads((baseline / "calibration-labels.json").read_text(encoding="utf-8"))
         for item in labels["items"]:
             item["human_verdict"], item["human_points"] = "fail", 0
         g.write_json(baseline / "calibration-labels.json", labels)
@@ -449,7 +449,7 @@ class Report(Fixture):
         g.score("test-v1", self.root / "grades.json", candidate, self.registry)
         summary = g.report(candidate, baseline / "calibration-labels.json")
         self.assertEqual(summary["calibration"]["labelled"], 7)
-        (baseline / "scored.jsonl").write_text("")
+        (baseline / "scored.jsonl").write_text("", encoding="utf-8")
         with self.assertRaises(SystemExit):
             g.report(candidate, baseline / "calibration-labels.json")
 
@@ -491,12 +491,12 @@ class Personas(Fixture):
         drafted, _ = personas.generate("test-v1", call, "w", draft, items={"hist.order"}, registry=self.registry)
         drafted[0]["reviewed"] = True
         drafted[0]["expected"] = {"path": "deterministic", "points": 0.0}  # a stale expectation is recomputed
-        draft.write_text("".join(json.dumps(r) + "\n" for r in drafted))
+        draft.write_text("".join(json.dumps(r) + "\n" for r in drafted), encoding="utf-8")
         self.assertEqual(personas.merge(draft, "test-v1", self.registry), (1, len(drafted) - 1))
         self.assertEqual(g.validate(self.registry), {"test-v1": []})
         self.assertEqual(load_jsonl(self.rows_path)[-1]["id"], drafted[0]["id"])
         bad = [{**drafted[1], "reviewed": True, "persona": "angry"}]
-        draft.write_text(json.dumps(bad[0]) + "\n")
+        draft.write_text(json.dumps(bad[0]) + "\n", encoding="utf-8")
         with self.assertRaises(SystemExit):
             personas.merge(draft, "test-v1", self.registry)
 

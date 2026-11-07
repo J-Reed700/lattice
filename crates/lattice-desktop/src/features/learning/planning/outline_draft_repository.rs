@@ -2,7 +2,7 @@
 use crate::features::learning::{
     dto::*,
     outline_draft::OutlineDraft,
-    repository::{insert_source, LearningRepository},
+    repository::{compare_sources, insert_source, reference_of, LearningRepository},
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -38,6 +38,8 @@ impl LearningRepository {
         draft.bind_program(program)?;
         draft.stamp();
         let state = serde_json::to_string(draft)?;
+        let comparisons =
+            compare_sources(&self.pool, &program.summary.id, sources, references).await?;
         let mut tx = self.pool.begin().await?;
         let changed = sqlx::query("UPDATE learning_programs SET revision=revision+1,current_lesson_id=? WHERE id=? AND revision=? AND status='draft'")
             .bind(program.modules.first().and_then(|m|m.lessons.first()).map(|l|&l.id)).bind(&program.summary.id).bind(program.summary.revision).execute(&mut *tx).await?;
@@ -66,12 +68,13 @@ impl LearningRepository {
                 }
             }
         }
-        for source in sources {
+        for (source, comparison) in sources.iter().zip(&comparisons) {
             insert_source(
                 &mut tx,
                 &program.summary.id,
                 source,
-                references.iter().find(|r| r.source_id == source.id),
+                reference_of(references, source),
+                comparison,
             )
             .await?;
         }

@@ -17,6 +17,7 @@ use crate::infrastructure::persistence::repositories::{
     ChunkRepositoryImpl, DocumentRepositoryImpl,
 };
 use crate::infrastructure::storage::content_addressed_storage::ContentAddressedStorage;
+use crate::infrastructure::storage::FileIntents;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
@@ -61,6 +62,9 @@ pub struct IndexingShared {
     pub query_cache: Arc<dyn SearchResultCachePort>,
     pub index_observer: Arc<dyn DocumentIndexObserver>,
     pub extraction_workers: ExtractionWorkers,
+    /// Open once startup finds this database owns the library; until then
+    /// no blob is removed.
+    pub sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,
 }
 
 /// What indexing writes through that other features own, built by the
@@ -84,6 +88,7 @@ pub fn build(
         query_cache,
         index_observer,
         extraction_workers,
+        sweep_gate,
     } = shared;
     let IndexingPorts {
         embedding: indexing_embedding,
@@ -94,6 +99,7 @@ pub fn build(
         Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
     let chunk_repo =
         Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn ChunkRepositoryPort>;
+    let file_intents = FileIntents::new(db_pool.clone());
     let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
 
     let content_storage =
@@ -110,10 +116,14 @@ pub fn build(
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
 
     let indexing_state = Arc::new(crate::features::indexing::engine::IndexingState::new());
-    let library_gc = Arc::new(LibraryGc::new(
-        Arc::clone(&content_storage),
-        document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-    ));
+    let library_gc = Arc::new(
+        LibraryGc::new(
+            Arc::clone(&content_storage),
+            document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
+            sweep_gate,
+        )
+        .with_intents(file_intents),
+    );
 
     let index_file_use_case = Arc::new(
         IndexFileUseCase::new(
@@ -127,7 +137,8 @@ pub fn build(
         )
         .with_vector_search(vector_search.clone())
         .with_query_cache(Arc::clone(&query_cache))
-        .with_index_observer(Arc::clone(&index_observer)),
+        .with_index_observer(Arc::clone(&index_observer))
+        .with_library_gc(Arc::clone(&library_gc)),
     );
     let index_directory_use_case = Arc::new(IndexDirectoryUseCase::new(
         index_file_use_case.clone(),

@@ -21,6 +21,7 @@ impl ContentAddressedStoragePort for MockContentStorage {
             path: source_path.to_path_buf(),
             lease: lattice_core::application::ports::BlobLease::detached(&hash),
             hash,
+            created: true,
         })
     }
 
@@ -290,6 +291,10 @@ impl DocumentRepositoryPort for MockDocumentRepo {
         Ok(())
     }
 
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
+        <Self as DocumentRepositoryPort>::delete(self, document_id).await
+    }
+
     async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
         Ok(vec![])
     }
@@ -477,4 +482,410 @@ async fn test_index_file_with_chunking() {
     // The 1000-byte file has no headings, so it is one structure span that the
     // embedder splits into 1000 / 100 windows.
     assert_eq!(response.chunks_created, 10);
+}
+
+#[tokio::test]
+async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_during_copy() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    struct MutatingContentStorage;
+
+    #[async_trait]
+    impl ContentAddressedStoragePort for MutatingContentStorage {
+        async fn import_file(&self, source_path: &Path) -> Result<ImportedBlob> {
+            let hash = "b".repeat(64);
+            Ok(ImportedBlob {
+                path: source_path.to_path_buf(),
+                lease: lattice_core::application::ports::BlobLease::detached(&hash),
+                hash,
+                created: true,
+            })
+        }
+
+        async fn exists_by_hash(&self, _hash: &str) -> Result<bool> {
+            Ok(false)
+        }
+
+        async fn get_path_by_hash(&self, _hash: &str) -> Result<Option<std::path::PathBuf>> {
+            Ok(None)
+        }
+
+        fn owns(&self, _path: &Path) -> bool {
+            false
+        }
+
+        async fn list_hashes(&self) -> Result<Vec<String>> {
+            Ok(Vec::new())
+        }
+
+        async fn remove_if_unreferenced(
+            &self,
+            _hash: &str,
+            _refs: &dyn lattice_core::application::ports::BlobReferenceCheck,
+        ) -> Result<lattice_core::application::ports::BlobRemoval> {
+            Ok(lattice_core::application::ports::BlobRemoval::Retained(
+                lattice_core::application::ports::RetainReason::Missing,
+            ))
+        }
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("watched.txt");
+    fs::write(&file_path, "Watched content").unwrap();
+
+    let use_case = IndexFileUseCase::new(
+        Arc::new(MutatingContentStorage),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(MockEmbedder),
+        Arc::new(MockDocumentRepo),
+        Arc::new(MockEmbeddingRepo),
+        Arc::new(MockUnitOfWorkFactory),
+    );
+
+    let outcome = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: file_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap();
+
+    let PrepareForIndexingOutcome::Prepared(prepared) = outcome else {
+        panic!("expected Prepared outcome");
+    };
+    assert_eq!(prepared.document.checksum().as_str(), &"b".repeat(64));
+}
+
+/// Files a document under one source group, then imports the same file under
+/// another after an editor saved it between the import's two hashes. Returns
+/// what is wrong with the library once that import has committed and a
+/// startup sweep has run.
+async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool) -> Vec<String> {
+    use crate::features::indexing::library_gc::test_support::file_intents;
+    use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;
+    use crate::infrastructure::storage::ContentAddressedStorage;
+    use crate::infrastructure::storage::{FileStore, IntentKind};
+    use lattice_core::application::ports::RepositoryPort;
+    use lattice_core::domain::value_objects::source_context::{
+        SourceContext, SourceGroup, StructureMode,
+    };
+    use lattice_core::domain::value_objects::{Checksum, ChunkingStrategy, FileMetadata};
+    use lattice_core::shared::fs::SweepGate;
+    use lattice_core::shared::types::ValidatedFilePath;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn group(id: &str, title: &str) -> SourceContext {
+        SourceContext {
+            group: SourceGroup {
+                id: id.to_string(),
+                title: title.to_string(),
+                edition: None,
+                description: None,
+                ordered: false,
+                structure: StructureMode::default(),
+            },
+            position: 0,
+        }
+    }
+
+    fn indexed(blob: &Path, hash: &str, text: &str, context: Option<SourceContext>) -> Document {
+        let metadata = FileMetadata::new(
+            "watched.txt".to_string(),
+            "text/plain".to_string(),
+            text.len() as i64,
+            chrono::Utc::now(),
+        )
+        .unwrap();
+        let mut document = Document::from_file(
+            ValidatedFilePath::new(blob.to_path_buf()).unwrap(),
+            metadata,
+            Checksum::new(hash.to_string()).unwrap(),
+            text.to_string(),
+            ChunkingStrategy::FixedSize { size: 64 },
+        )
+        .unwrap();
+        document.set_source_context(context);
+        document.mark_indexed();
+        document
+    }
+
+    fn blob_folder(document: &Document) -> Option<&str> {
+        document.file_path().parent()?.file_name()?.to_str()
+    }
+
+    let temp = TempDir::new().unwrap();
+    let library_root = temp.path().join("lib");
+    let storage = Arc::new(ContentAddressedStorage::with_root(library_root.clone()));
+    let repo = Arc::new(MockDocumentRepository::new());
+    let first_group = group("11111111-1111-4111-8111-111111111111", "First group");
+    let second_group = group("22222222-2222-4222-8222-222222222222", "Second group");
+
+    // `MockFileStorage` hashes every file to this, as the first import of the
+    // file's content did, so that import's blob sits in this folder.
+    let first_hash = "a".repeat(64);
+    let first_text = "The first version of the file.";
+    let first_blob = library_root.join(&first_hash).join("watched.txt");
+    fs::create_dir_all(first_blob.parent().unwrap()).unwrap();
+    fs::write(&first_blob, first_text).unwrap();
+    repo.add_document(indexed(
+        &first_blob,
+        &first_hash,
+        first_text,
+        Some(first_group.clone()),
+    ));
+
+    let edited_text = "The second version, saved while the import ran.";
+    let source = temp.path().join("watched.txt");
+    fs::write(&source, edited_text).unwrap();
+    let edited_hash = crate::infrastructure::file_system::compute_file_sha256_async(&source)
+        .await
+        .unwrap();
+    if edited_content_indexed {
+        let blob = storage.import_file(&source).await.unwrap();
+        repo.add_document(indexed(&blob.path, &blob.hash, edited_text, None));
+    }
+
+    let use_case = IndexFileUseCase::new(
+        storage.clone(),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(MockEmbedder),
+        repo.clone(),
+        Arc::new(MockEmbeddingRepo),
+        Arc::new(MockUnitOfWorkFactory),
+    );
+    let request = IndexFileRequestDto {
+        path: source.to_str().unwrap().to_string(),
+        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+            size: 512,
+        },
+        tags: None,
+        metadata: Some(std::collections::HashMap::from([(
+            "source_context".to_string(),
+            serde_json::to_string(&second_group).unwrap(),
+        )])),
+        space_id: None,
+    };
+    let PrepareForIndexingOutcome::Prepared(prepared) =
+        use_case.prepare_for_indexing(request).await.unwrap()
+    else {
+        panic!("a file filed under another group is prepared, not a duplicate");
+    };
+
+    // The commit's only write is this save of the prepared document.
+    let PreparedDocument {
+        document, lease, ..
+    } = *prepared;
+    repo.save(&document).await.unwrap();
+    drop(lease);
+    let gate = SweepGate::default();
+    gate.open();
+    let (_pool, intents) = file_intents().await;
+    for hash in [&first_hash, &edited_hash] {
+        intents
+            .record(FileStore::Library, IntentKind::Release, hash)
+            .await
+            .unwrap();
+    }
+    LibraryGc::new(storage, repo.clone(), Arc::new(gate))
+        .with_intents(intents.clone())
+        .sweep()
+        .await
+        .unwrap();
+
+    let rows = repo.find_all().await.unwrap();
+    let mut problems = Vec::new();
+    if !intents
+        .pending(FileStore::Library)
+        .await
+        .unwrap()
+        .is_empty()
+    {
+        problems
+            .push("a release record is still pending, though every blob is referenced".to_string());
+    }
+    for row in &rows {
+        if blob_folder(row) != Some(row.checksum().as_str()) {
+            problems.push(format!(
+                "{} has checksum {} but its file is {}",
+                row.id().as_str(),
+                row.checksum(),
+                row.file_path().display()
+            ));
+        }
+        if !row.file_path().exists() {
+            problems.push(format!(
+                "{} points at {}, which is gone after the startup sweep",
+                row.id().as_str(),
+                row.file_path().display()
+            ));
+        }
+    }
+    match rows
+        .iter()
+        .find(|row| row.checksum().as_str() == first_hash)
+    {
+        Some(row) if row.source_context() == Some(&first_group) => {}
+        Some(_) => problems.push("the first document was filed under another group".to_string()),
+        None => problems.push(format!(
+            "no document references {first_hash}, the blob of the first import"
+        )),
+    }
+    let edited: Vec<_> = rows
+        .iter()
+        .filter(|row| row.checksum().as_str() != first_hash)
+        .collect();
+    match edited.as_slice() {
+        [row] if row.source_context() == Some(&second_group) => {}
+        _ => problems.push(format!(
+            "{} documents hold the edited content; expected one, filed under the second group",
+            edited.len()
+        )),
+    }
+    problems
+}
+
+#[tokio::test]
+async fn reimport_of_a_source_edited_during_the_copy_keeps_the_existing_document_on_its_blob() {
+    let problems = reimport_of_a_file_edited_during_the_copy(false).await;
+
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+#[tokio::test]
+async fn reimport_of_a_source_edited_during_the_copy_reuses_the_document_of_the_edited_content() {
+    let problems = reimport_of_a_file_edited_during_the_copy(true).await;
+
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+#[tokio::test]
+async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_fake_code_sections()
+{
+    use std::fs;
+    use tempfile::TempDir;
+
+    struct TokenizerCountEmbedder {
+        token_count: usize,
+    }
+
+    #[async_trait]
+    impl EmbeddingPort for TokenizerCountEmbedder {
+        async fn embed_single(&self, _text: &str) -> Result<Vec<f32>> {
+            Ok(vec![0.1, 0.2, 0.3])
+        }
+
+        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
+        }
+
+        fn split_text(
+            &self,
+            passage: &str,
+            _prefix: &str,
+        ) -> Result<Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>>
+        {
+            Ok(vec![
+                lattice_core::application::ports::embedding_port::EmbeddingTextChunk {
+                    start: 0,
+                    end: passage.len(),
+                    text: passage.to_string(),
+                    token_count: self.token_count,
+                },
+            ])
+        }
+
+        fn dimension(&self) -> usize {
+            3
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let use_case = IndexFileUseCase::new(
+        Arc::new(MockContentStorage),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(TokenizerCountEmbedder { token_count: 14 }),
+        Arc::new(MockDocumentRepo),
+        Arc::new(MockEmbeddingRepo),
+        Arc::new(MockUnitOfWorkFactory),
+    );
+
+    // 1. C code with #include must not get a fake section label "include <stdio.h>"
+    let c_path = temp_dir.path().join("main.c");
+    fs::write(
+        &c_path,
+        "#include <stdio.h>\nint main(void) { return 0; }\n",
+    )
+    .unwrap();
+    let PrepareForIndexingOutcome::Prepared(c_prepared) = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: c_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected Prepared outcome for C file");
+    };
+    assert_eq!(c_prepared.document.chunks()[0].section(), None);
+    assert!(c_prepared.document.chunks()[0].has_code());
+
+    // 2. YAML file keeps has_code == true and canonical mime_type
+    let yaml_path = temp_dir.path().join("config.yaml");
+    fs::write(&yaml_path, "server:\n  host: localhost\n  port: 8080\n").unwrap();
+    let PrepareForIndexingOutcome::Prepared(yaml_prepared) = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: yaml_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected Prepared outcome for YAML file");
+    };
+    assert_eq!(yaml_prepared.document.mime_type(), "text/x-yaml");
+    assert!(yaml_prepared.document.chunks()[0].has_code());
+
+    // 3. CJK text with no spaces keeps the tokenizer's token_count (14, not 1)
+    let cjk_path = temp_dir.path().join("notes.txt");
+    fs::write(&cjk_path, "人工智能正在改变软件工程的未来").unwrap();
+    let PrepareForIndexingOutcome::Prepared(cjk_prepared) = use_case
+        .prepare_for_indexing(IndexFileRequestDto {
+            path: cjk_path.to_str().unwrap().to_string(),
+            chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+                size: 512,
+            },
+            tags: None,
+            metadata: None,
+            space_id: None,
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("expected Prepared outcome for CJK file");
+    };
+    assert_eq!(cjk_prepared.document.chunks()[0].token_count(), 14);
 }

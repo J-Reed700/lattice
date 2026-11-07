@@ -60,6 +60,9 @@ pub(in crate::features::conversation) struct BackgroundVerification {
     /// Only the answer's cited sentences are claims about the sources, as in
     /// an Explorer turn (`GroundingVerifier::cited_only`).
     pub verifies_cited_only: bool,
+    /// Sentences that only run a tutor's session are no claims
+    /// (`GroundingVerifier::without_session_talk`).
+    pub drops_session_talk: bool,
     pub tuning: LLMVerificationSettingsDto,
     /// Stands in as the judge when no utility model is configured.
     pub chat_llm: Arc<dyn LLMPort>,
@@ -127,7 +130,8 @@ impl BackgroundVerification {
         };
         let verifier = GroundingVerifier::new(judge_llm)
             .with_tuning(&self.tuning)
-            .cited_only(self.verifies_cited_only);
+            .cited_only(self.verifies_cited_only)
+            .without_session_talk(self.drops_session_talk);
         let response = self.response.clone();
         let report = tokio::select! {
             biased;
@@ -288,6 +292,7 @@ mod tests {
             response: "A completed answer.".to_string(),
             sources: vec![],
             verifies_cited_only: false,
+            drops_session_talk: false,
             tuning: LLMVerificationSettingsDto::default(),
             chat_llm: Arc::new(MockLLMPort::new()),
             turn: Some(turn),

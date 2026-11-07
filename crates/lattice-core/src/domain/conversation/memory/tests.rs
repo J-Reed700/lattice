@@ -995,13 +995,61 @@ fn limits_are_enforced_before_anything_is_allocated() {
         .code(),
         "quote_too_long"
     );
+}
 
-    assert_eq!(
-        parse_patch(&"x".repeat(MAX_PROPOSAL_BYTES + 1))
-            .unwrap_err()
-            .code(),
-        "response_too_large"
-    );
+#[test]
+fn a_long_label_is_kept_not_refused() {
+    let messages = vec![message(
+        "m1",
+        1,
+        SourceRole::User,
+        "Do not deploy until I approve.",
+    )];
+    let sources = SourceIndex::new(&messages);
+    let label = "Do not deploy until the user approves, in any environment. ".repeat(10);
+
+    let validated = validate_patch(
+        &patch(
+            vec![constraint(
+                "c1",
+                &label,
+                vec![evidence(
+                    "m1",
+                    "Do not deploy until I approve.",
+                    "assertion",
+                )],
+            )],
+            vec![],
+        ),
+        &sources,
+        &[],
+        &[],
+    )
+    .expect("a long label is a label");
+
+    assert_eq!(validated.additions[0].label, label.trim());
+}
+
+#[test]
+fn a_valid_patch_past_64_kib_is_not_refused_for_its_size() {
+    let quote = "Do not deploy until I approve it in writing. ".repeat(14);
+    let additions: Vec<ProposedItem> = (0..MAX_OPERATIONS_PER_RESPONSE)
+        .map(|index| {
+            constraint(
+                &format!("c{index}"),
+                &format!("Do not deploy service {index} until the user approves."),
+                (0..MAX_EVIDENCE_PER_ITEM)
+                    .map(|_| evidence("m1", &quote, "assertion"))
+                    .collect(),
+            )
+        })
+        .collect();
+    let raw = serde_json::to_string(&patch(additions, vec![])).unwrap();
+    assert!(raw.len() > 64 * 1024);
+
+    let parsed = parse_patch(&raw).expect("size alone is not a reason to refuse a patch");
+
+    assert_eq!(parsed.add.len(), MAX_OPERATIONS_PER_RESPONSE);
 }
 
 #[test]

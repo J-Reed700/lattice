@@ -36,13 +36,15 @@ export const activitySnapshotQueryOptions = () =>
     queryFn: async () => unwrapApiResult(await apiCall<ActivitySnapshotDto>('activity_snapshot')),
     // Kept current by the events below, not by refetching on a clock.
     staleTime: Infinity,
+    // Nothing listens while Iris is hidden, so a snapshot cached before she is shown again may be old.
+    refetchOnMount: 'always',
   });
 
 /**
  * Everything running, paused or waiting, read again after every event that
  * may have moved it. Reads never overlap: events that land during a read are
  * answered by one more read after it. Mount it once; the returned `refresh`
- * reads again on demand (when the drawer opens).
+ * reads again on demand (when Iris's card opens).
  */
 export function useActivitySnapshot() {
   const client = useQueryClient();

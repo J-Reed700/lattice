@@ -36,6 +36,8 @@ fn env_path(key: &str) -> PathBuf {
 
 /// Load the model straight from a directory, no repository lookup.
 fn load_from_dir(dir: PathBuf) -> LoadedWhisper {
+    prefer_float_weights();
+    limit_candle_threads();
     let resolved = ResolvedModel {
         model_id: "e2e-whisper".to_string(),
         name: "Whisper (e2e)".to_string(),
@@ -168,6 +170,17 @@ impl TranscriptionPort for DirectWhisperPort {
         })
     }
 
+    async fn transcribe_samples(&self, samples: Vec<f32>) -> Result<Transcript, AppError> {
+        let mut loaded = load_from_dir(self.dir.clone());
+        let duration_ms = samples.len() as u64 * 1_000 / 16_000;
+        let (segments, language) = transcribe_pcm(&mut loaded, &samples)?;
+        Ok(Transcript {
+            segments,
+            language,
+            duration_ms,
+        })
+    }
+
     async fn is_ready(&self) -> Result<bool, AppError> {
         Ok(true)
     }
@@ -175,6 +188,19 @@ impl TranscriptionPort for DirectWhisperPort {
     async fn active_model_name(&self) -> Result<Option<String>, AppError> {
         Ok(Some("Whisper (e2e)".to_string()))
     }
+}
+
+/// The encoder is the slow step on a CPU, so a clip under 30 s must pay for it once.
+#[test]
+#[ignore = "needs a downloaded whisper model; set LATTICE_WHISPER_E2E_DIR + LATTICE_WHISPER_E2E_AUDIO"]
+fn a_short_clip_costs_one_encoder_pass() {
+    let mut loaded = load_from_dir(env_path("LATTICE_WHISPER_E2E_DIR"));
+    let audio = env_path("LATTICE_WHISPER_E2E_AUDIO");
+    let decoded = decode_to_mono_16k(&audio, MAX_AUDIO_SECS).expect("audio failed to decode");
+
+    transcribe_pcm(&mut loaded, &decoded.samples).expect("transcription failed");
+
+    assert_eq!(loaded.encoder_passes, 1);
 }
 
 /// The ingest path end to end: adapter → transcript text with `[m:ss–m:ss]`

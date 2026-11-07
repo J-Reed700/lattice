@@ -1,5 +1,6 @@
 //! Tests for the backup adapter.
 use super::*;
+use lattice_core::shared::testing::links::{self, LinkKind};
 use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::tempdir;
 
@@ -278,34 +279,41 @@ async fn test_create_backup_allows_valid_path_in_backup_dir() {
     pool.close().await;
 }
 
-#[tokio::test]
-
-async fn test_create_backup_rejects_symlink_escape() {
+async fn create_backup_rejects_a_link_escape(kind: LinkKind) {
     let (pool, db_path, _dir) = create_test_pool().await;
     let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
+    let link_path = backup_dir.join("escape_link");
+    let target_path = db_path.parent().unwrap().parent().unwrap();
 
-        let symlink_path = backup_dir.join("escape_link");
-        let target_path = db_path.parent().unwrap().parent().unwrap();
+    if links::link_dir(kind, target_path, &link_path).unwrap() {
+        let malicious_path = link_path.join("evil.db");
 
-        if symlink(target_path, &symlink_path).is_ok() {
-            let malicious_path = symlink_path.join("evil.db");
+        let result = adapter.create_backup(Some(malicious_path)).await;
 
-            let result = adapter.create_backup(Some(malicious_path)).await;
+        assert!(
+            result.is_err(),
+            "a {kind} out of the backup folder must be refused"
+        );
 
-            assert!(result.is_err());
-
-            fs::remove_file(&symlink_path).ok();
-        }
+        fs::remove_file(&link_path).ok();
     }
 
     pool.close().await;
+}
+
+#[tokio::test]
+async fn test_create_backup_rejects_symlink_escape() {
+    create_backup_rejects_a_link_escape(LinkKind::Symlink).await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn test_create_backup_rejects_junction_escape() {
+    create_backup_rejects_a_link_escape(LinkKind::Junction).await;
 }
 
 #[tokio::test]
@@ -435,6 +443,46 @@ async fn test_restore_backup_success() {
     assert_eq!(membership_count, 1);
 
     new_pool.close().await;
+}
+
+/// What a process meant to do to its files when the backup was taken is no
+/// guide to the files after a restore: they may since have been imported
+/// again by the database the restore replaces.
+#[tokio::test]
+async fn a_restored_database_keeps_no_file_records_of_the_one_it_came_from() {
+    let (pool, db_path, _dir) = create_test_pool().await;
+    sqlx::query(
+        "CREATE TABLE file_intents (id INTEGER PRIMARY KEY AUTOINCREMENT, store TEXT NOT NULL, \
+         kind TEXT NOT NULL, name TEXT NOT NULL, run_id TEXT NOT NULL, created_at TEXT)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO file_intents (store, kind, name, run_id) \
+         VALUES ('library', 'import', ?, 'the run that took the backup')",
+    )
+    .bind("a".repeat(64))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let backup = PathBuf::from(adapter.create_backup(None).await.unwrap());
+
+    adapter.restore_backup(backup).await.unwrap();
+
+    let restored = connect_fixture_pool(&db_path).await;
+    let records: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM file_intents")
+        .fetch_one(&restored)
+        .await
+        .unwrap();
+    let documents: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+        .fetch_one(&restored)
+        .await
+        .unwrap();
+    assert_eq!(records, 0);
+    assert_eq!(documents, 1, "the rest of the database is restored");
+    restored.close().await;
 }
 
 #[tokio::test]

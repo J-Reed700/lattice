@@ -1,0 +1,139 @@
+{
+  "schema": "lattice-tutor-course/1",
+  "note": "A synthetic course on a made-up job queue, so a claim can only come from its passages: no model knows Tidewell, and every number and name here is invented.",
+  "title": "Running a Tidewell queue",
+  "goal": "Operate a Tidewell queue and explain its delivery guarantees in a job interview.",
+  "prior_knowledge": "Has used a message queue from application code. Has never operated one.",
+  "sources": [
+    {
+      "key": "handbook",
+      "title": "Tidewell Delivery Handbook",
+      "text": "Leases\n\nA Tidewell worker never owns a job. It holds a lease on it. When a worker asks for work, the broker hands it one job and starts a lease of 45 seconds. A worker that needs longer calls renew, and the handbook asks workers to renew when two thirds of the lease has passed, which is at 30 seconds for the default lease. Renewals can carry a job to at most 15 minutes in total; after that the broker refuses the renewal with the code lease_ceiling and the job goes back on the queue.\n\nA lease is not a lock. It records who the broker expects to be working on a job, and nothing stops a slow worker from carrying on after its lease has expired. While that worker is still running, the broker can hand the same job to a second worker. Two workers can therefore run the same job at the same time, and Tidewell makes no promise that they will not.\n\nAcknowledgements\n\nA worker ends a lease in one of three ways. An ack removes the job from the queue for good. A nack returns the job at once and counts as a failed attempt. Saying nothing lets the lease expire, which the handbook calls a silent expiry: the job returns to the queue and that also counts as a failed attempt. A silent expiry is the slowest failure a worker can have, because the job sits unusable until the whole lease has run out. Workers should nack as soon as they know they cannot finish.\n\nAttempts and the backoff ladder\n\nEvery job carries an attempt count, and max_attempts defaults to 5. After a failed attempt the job waits on the backoff ladder before it is offered again. The ladder has four rungs of 2 seconds, 8 seconds, 32 seconds and 128 seconds, each four times the one before. Tidewell adds jitter of plus or minus 10 percent to every rung, so that a burst of failures does not come back all at once.\n\nThe holding pen\n\nA job that fails its fifth attempt is not deleted. It moves to the holding pen, a separate store with no consumers, and is kept there for 14 days. Nothing retries a job in the pen on its own. An operator looks at it and runs tw pen replay, which puts the job back on its queue with its attempt count at zero, or tw pen drop, which removes it. After 14 days the broker removes a job from the pen and writes one line to the audit log.\n\nDelivery guarantee\n\nTidewell delivers at least once. A duplicate comes from one of two places: a lease that expired while the first worker was still running, or an ack that was lost on its way to the broker. A producer can set a dedupe_key on a job, and the broker refuses a second job with the same key for 24 hours. A dedupe_key stops a producer from enqueueing twice. It does nothing about a worker running a job twice, so a worker's own effects must be safe to repeat."
+    },
+    {
+      "key": "lanes",
+      "title": "Tidewell Lanes and Ordering Reference",
+      "text": "Lanes\n\nA Tidewell queue is cut into 64 lanes. The broker picks a job's lane by hashing its lane_key, so jobs with the same lane_key always land in the same lane. A job with no lane_key goes to the lane with the fewest waiting jobs. Order is kept inside a lane and only there: two jobs in different lanes can run in any order, even when one was enqueued hours before the other.\n\nA consumer group runs one job at a time from each lane. Sixty-four lanes therefore give a group at most 64 jobs in flight, however many workers it has, and adding a sixty-fifth worker to a group adds nothing.\n\nHead stalls\n\nA job that fails stays at the head of its lane. It waits out its rung of the backoff ladder there, and every job behind it in that lane waits too. The reference calls this a head stall. A head stall lasts until the job is acked or moves to the holding pen, so a poison job with the default settings can hold a lane for the sum of the ladder, 170 seconds, plus the time its five attempts take to fail. An unordered queue has no head stall: there, a job in backoff steps aside and later jobs go past it. A queue is made unordered by setting ordering=off, which keeps the lanes for load spreading and drops the promise of order. Only lanes on an ordered queue stall.\n\nThe usual cure for a head stall is to shrink max_attempts on ordered queues, to 3 in most runbooks, so that a poison job reaches the pen sooner.\n\nFence numbers\n\nEach time the broker grants a lease it issues a fence number, one higher than the last it issued for that job. A worker sends its fence number with every write to a downstream store, and a store that supports fencing keeps the highest number it has seen for that job and refuses any write that carries a lower one. It answers such a write with the code stale_fence.\n\nFence numbers answer a different question from leases. A lease says who the broker expects to be working on a job. A fence number says whose writes still count. When a slow worker carries on after its lease has expired and a second worker takes the job, the two run at once; the lease cannot stop that. The second worker's fence number is higher, so once the store has seen it, the slow worker's writes are refused. A fence number protects the data, not the worker's time: the slow worker still burns its CPU until it notices the refusal.\n\nFence numbers only help where the store checks them. A store that ignores them, or an effect outside any store such as sending an email, gets no protection, and needs a dedupe key of its own.\n\nRebalancing\n\nWhen a worker joins or leaves a consumer group, the broker moves lanes between workers. A lane being moved gets a handoff window of 10 seconds, during which nothing new starts from it, so that the old owner can finish. A job still running when the window closes keeps its lease, but the next job in the lane starts on the new owner. That is the one time two jobs from a lane can overlap, and it is why a group that scales up and down all day sees more out-of-order finishes than a steady one."
+    },
+    {
+      "key": "runbook",
+      "title": "Tidewell Operator Runbook",
+      "text": "Drain and quiesce\n\nTwo commands stop work, and they stop different things. tw drain stops the broker granting new leases on a queue. Producers can still enqueue, and jobs pile up safely behind the drain. Jobs already leased carry on for up to 300 seconds, and any still running then are released back to the queue, with no attempt counted against them. Use drain before restarting workers or deploying a new worker version.\n\ntw quiesce does all that drain does and also refuses producers: an enqueue during a quiesce gets a 429 with the header retry-after. Use quiesce before a broker upgrade or a storage migration, when nothing may change on disk. Run tw resume to end either one. A common mistake is to quiesce for a worker deploy, which pushes errors onto every producer for no benefit.\n\nWatermarks\n\nThe broker watches the disk under its journal against two watermarks. At the soft watermark, 70 percent full, it keeps accepting jobs but adds a slow-down hint to every enqueue response, and well-behaved producers back off. At the hard watermark, 90 percent full, it refuses every enqueue with a 507. The refusal lifts only at the recovery mark, 60 percent, and not as soon as the disk falls below 90: the gap stops the broker flapping between accepting and refusing.\n\nCompaction frees journal space and runs at 02:00 local time. It can also be started with tw compact, but on a disk past 85 percent it may fail for lack of room to write the new segment, so the runbook says to free space by dropping old pen jobs first.\n\nCapacity\n\nPlan one broker shard for every 4,000 jobs per second at peak, and keep 20 percent of a shard's throughput free for retries. A shard's journal disk should hold at least 72 hours of peak traffic, so that a weekend outage of the consumers cannot reach the hard watermark. Adding a shard moves lanes the way a worker joining does, so do it in a quiet hour.\n\nPaging\n\nPage the on-call operator when the holding pen grows by more than 500 jobs in 10 minutes, or when any ordered lane has been stalled for more than 5 minutes. A pen that grows slowly is a ticket and not a page."
+    }
+  ],
+  "modules": [
+    {
+      "title": "Delivery",
+      "summary": "How a job reaches a worker and what happens when the worker fails.",
+      "outcomes": ["Explain leases, acknowledgements and the at-least-once guarantee"],
+      "lessons": [
+        {
+          "key": "m1.l1",
+          "title": "Leases and acknowledgements",
+          "objective": "Explain what a lease promises and the three ways a worker ends one.",
+          "completed": true,
+          "blocks": [{ "title": "Leases", "body": "A worker holds a lease on a job.", "sources": ["handbook"] }]
+        },
+        {
+          "key": "m1.l2",
+          "title": "Retries and the holding pen",
+          "objective": "Trace a failing job up the backoff ladder and into the holding pen.",
+          "completed": false,
+          "blocks": [{ "title": "Retries", "body": "A failed job climbs the ladder.", "sources": ["handbook"] }]
+        }
+      ]
+    },
+    {
+      "title": "Ordering",
+      "summary": "What Tidewell keeps in order, and how it protects data from slow workers.",
+      "outcomes": ["Explain lanes, head stalls and fence numbers"],
+      "lessons": [
+        {
+          "key": "m2.l1",
+          "title": "Lanes and head stalls",
+          "objective": "Explain where order is kept and why a failing job can hold up others.",
+          "completed": false,
+          "blocks": [{ "title": "Lanes", "body": "Order is kept inside a lane.", "sources": ["lanes"] }]
+        },
+        {
+          "key": "m2.l2",
+          "title": "Fence numbers",
+          "objective": "Explain how a fence number differs from a lease and when it protects nothing.",
+          "completed": false,
+          "blocks": [{ "title": "Fences", "body": "A fence number says whose writes count.", "sources": ["lanes"] }]
+        }
+      ]
+    },
+    {
+      "title": "Operations",
+      "summary": "Running the broker: stopping it safely and keeping its disk healthy.",
+      "outcomes": ["Choose between drain and quiesce, and plan capacity"],
+      "lessons": [
+        {
+          "key": "m3.l1",
+          "title": "Drain and quiesce",
+          "objective": "Choose the right command for a worker deploy and for a broker upgrade.",
+          "completed": false,
+          "blocks": [{ "title": "Stopping work", "body": "Two commands stop different things.", "sources": ["runbook"] }]
+        },
+        {
+          "key": "m3.l2",
+          "title": "Watermarks and capacity",
+          "objective": "State the watermarks and size a shard.",
+          "completed": false,
+          "blocks": [{ "title": "Watermarks", "body": "The broker watches its journal disk.", "sources": ["runbook"] }]
+        }
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "key": "c.ack",
+      "lesson": "m1.l1",
+      "question": "What are the three ways a Tidewell worker ends a lease?",
+      "answer": "An ack removes the job for good, a nack returns it at once and counts a failed attempt, and saying nothing lets the lease expire, a silent expiry, which also counts a failed attempt.",
+      "explanation": "The handbook's Acknowledgements section.",
+      "source": "handbook"
+    },
+    {
+      "key": "c.pen",
+      "lesson": "m1.l2",
+      "question": "What happens to a Tidewell job after it fails its fifth attempt?",
+      "answer": "It moves to the holding pen, is kept for 14 days, and only an operator's tw pen replay or tw pen drop acts on it.",
+      "explanation": "The handbook's holding pen section.",
+      "source": "handbook"
+    },
+    {
+      "key": "c.head",
+      "lesson": "m2.l1",
+      "question": "What is a head stall?",
+      "answer": "A failed job stays at the head of its lane through its backoff, and every job behind it in that lane waits, until it is acked or moves to the holding pen.",
+      "explanation": "The lanes reference's head stalls section.",
+      "source": "lanes"
+    },
+    {
+      "key": "c.fence",
+      "lesson": "m2.l2",
+      "question": "What does a fence number protect that a lease does not?",
+      "answer": "The data: a store that checks fence numbers refuses writes from a worker whose lease was taken over, even though both workers keep running.",
+      "explanation": "The lanes reference's fence numbers section.",
+      "source": "lanes"
+    },
+    {
+      "key": "c.drain",
+      "lesson": "m3.l1",
+      "question": "Which command do you run before deploying a new worker version, and why not the other one?",
+      "answer": "tw drain, because producers can keep enqueueing behind it; tw quiesce would also refuse producers with a 429 for no benefit.",
+      "explanation": "The runbook's drain and quiesce section.",
+      "source": "runbook"
+    },
+    {
+      "key": "c.mark",
+      "lesson": "m3.l2",
+      "question": "After the hard watermark trips, when does the broker accept jobs again?",
+      "answer": "At the recovery mark, 60 percent full, not as soon as the disk falls below 90 percent.",
+      "explanation": "The runbook's watermarks section.",
+      "source": "runbook"
+    }
+  ]
+}

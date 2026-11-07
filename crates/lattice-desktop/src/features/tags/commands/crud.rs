@@ -10,22 +10,21 @@ use lattice_core::shared::error::{AppError, Result};
 ///
 /// Creates a new tag that can be applied to documents for organization and categorization.
 /// Tags support optional visual customization (color) and descriptive metadata. Tag names
-/// must be unique and are validated for length and format.
+/// must be unique and are validated for format.
 ///
 /// # Errors
 ///
-/// * `AppError::InvalidInput` - Tag name invalid (empty, too long, or > 100 characters)
+/// * `AppError::InvalidInput` - Tag name invalid (empty)
 /// * `AppError::Conflict` - Tag name already exists (duplicate tag names not allowed)
 /// * `AppError::Other` - Use case execution failed (database error)
 ///
 /// # Security
 ///
-/// - **Input Validation**: Tag name length checked (1-100 characters)
+/// - **Input Validation**: Tag name must not be empty
 /// - **Uniqueness Enforcement**: Duplicate tag names rejected
 ///
 /// # Tag Naming Rules
 ///
-/// - **Length**: 1-100 characters
 /// - **Required**: Name cannot be empty
 /// - **Unique**: Tag names must be unique across the system
 /// - **Case-Sensitive**: "Research" and "research" are different tags
@@ -41,10 +40,8 @@ pub async fn create_tag_ddd(
     request: CreateTagRequestDto,
 ) -> Result<CreateTagResponseDto> {
     // Input validation
-    if request.name.is_empty() || request.name.len() > 100 {
-        return Err(AppError::InvalidInput(
-            "Tag name must be 1-100 characters".into(),
-        ));
+    if request.name.is_empty() {
+        return Err(AppError::InvalidInput("A tag needs a name".into()));
     }
 
     let use_case = container.create_tag_use_case();

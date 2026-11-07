@@ -29,7 +29,7 @@ use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
     SourceRole, SummaryRefold, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
+    MAX_QUOTE_BYTES,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -171,6 +171,25 @@ fn proposed_transition(item_id: &str, message_id: &str, quote: &str) -> serde_js
     })
 }
 
+fn proposed_supersession(
+    item_id: &str,
+    replacement: &str,
+    message_id: &str,
+    quote: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "item_id": item_id,
+        "state": "superseded",
+        "replacement_candidate_id": replacement,
+        "evidence": [{
+            "message_id": message_id,
+            "quote": quote,
+            "occurrence": null,
+            "purpose": "transition",
+        }],
+    })
+}
+
 fn verdict_response(pairs: &[(&str, &str)]) -> String {
     serde_json::json!({
         "verdicts": pairs
@@ -210,6 +229,8 @@ struct PortState {
     /// Bump the transcript revision just before the next commit, to make the
     /// compare-and-swap fire exactly once.
     conflict_next_commit: bool,
+    shared: Vec<MemoryItem>,
+    span_reads: Vec<String>,
 }
 
 struct FakePort {
@@ -237,8 +258,14 @@ impl FakePort {
                 operations: HashSet::new(),
                 errors: Vec::new(),
                 conflict_next_commit: false,
+                shared: Vec::new(),
+                span_reads: Vec::new(),
             }),
         })
+    }
+
+    fn share(&self, item: MemoryItem) {
+        self.inner.lock().shared.push(item);
     }
 
     fn conflict_once(&self) {
@@ -402,6 +429,10 @@ impl FakePort {
 
 #[async_trait]
 impl ConversationMemoryPort for FakePort {
+    async fn shared_items(&self, _conversation_id: &str, _text: &str) -> Result<Vec<MemoryItem>> {
+        Ok(self.inner.lock().shared.clone())
+    }
+
     async fn load_snapshot(&self, _conversation_id: &str) -> Result<MemorySnapshot> {
         let inner = self.inner.lock();
         Ok(MemorySnapshot {
@@ -516,11 +547,12 @@ impl ConversationMemoryPort for FakePort {
 
     async fn read_source_spans(
         &self,
-        _conversation_id: &str,
+        conversation_id: &str,
         spans: &[SourceSpanRef],
         _limits: SourceReadLimits,
     ) -> Result<Vec<ResolvedSpan>> {
-        let inner = self.inner.lock();
+        let mut inner = self.inner.lock();
+        inner.span_reads.push(conversation_id.to_string());
         Ok(spans
             .iter()
             .map(|span| {
@@ -933,7 +965,6 @@ fn the_enforced_limits_are_the_ones_the_design_documents() {
 
     // The payload caps are the domain's, reused rather than restated: two
     // numbers that must agree are one number that cannot disagree.
-    assert_eq!(MAX_PROPOSAL_BYTES, 64 * 1024);
     assert_eq!(MAX_OPERATIONS_PER_RESPONSE, 32);
     assert_eq!(MAX_EVIDENCE_PER_ITEM, 4);
     assert_eq!(MAX_QUOTE_BYTES, 2048);
@@ -987,6 +1018,7 @@ fn the_extractor_prompt_states_every_rule_the_design_requires() {
         "presents conflicting alternatives",
         "preserve the uncertainty",
         "Never treat an assistant message",
+        "the first that applies gives the verdict",
     ] {
         assert!(
             super::prompts::VERIFIER_SYSTEM.contains(required),
@@ -1078,6 +1110,49 @@ fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
             "{name} schema bound {bound} at {path} exceeds llama.cpp's grammar limit of {}",
             super::prompts::GRAMMAR_REPETITION_LIMIT
         );
+    }
+}
+
+/// Every `maxLength`, and every `minLength` above 1, anywhere in `schema`,
+/// with its JSON pointer.
+fn text_length_bounds(schema: &serde_json::Value) -> Vec<String> {
+    fn walk(value: &serde_json::Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    let at = format!("{path}/{key}");
+                    let past_one = child.as_u64().is_some_and(|bound| bound > 1);
+                    if key.as_str() == "maxLength" || (key.as_str() == "minLength" && past_one) {
+                        found.push(at.clone());
+                    }
+                    walk(child, &at, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    walk(child, &format!("{path}/{index}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", &mut found);
+    found
+}
+
+/// Claude's structured outputs accept a `maxLength` and do not enforce it, and
+/// a llama.cpp grammar does, so a bound on what the model writes is a different
+/// rule for each provider. The labels and reasons are the model's to write at
+/// the length they need.
+#[test]
+fn no_memory_schema_bounds_the_length_of_what_the_model_writes() {
+    for (name, schema) in [
+        ("patch", super::prompts::patch_schema()),
+        ("verdict", super::prompts::verdict_schema()),
+    ] {
+        let bounds = text_length_bounds(&schema);
+        assert!(bounds.is_empty(), "{name} schema bounds text at {bounds:?}");
     }
 }
 
@@ -1411,6 +1486,126 @@ async fn a_response_that_omits_an_existing_active_item_leaves_that_item_active()
 }
 
 #[tokio::test]
+async fn a_correction_here_reaches_a_fact_from_another_chat() {
+    let messages = four_turns();
+    let port = FakePort::new(messages.clone(), Vec::new(), 0);
+    let mut shared = committed_constraint("item-shared", &messages[0]);
+    shared.conversation_id = "other-chat".to_string();
+    shared.created_at_sequence = 0;
+    shared.changed_at_sequence = 0;
+    port.share(shared);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![],
+            vec![proposed_transition(
+                "item-shared",
+                "m3",
+                "Actually you may deploy staging.",
+            )],
+            &PREFIX_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[(
+            "transition:item-shared",
+            "supported",
+        )]))],
+        vec![Ok("Deployment is now allowed on staging.".to_string())],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("a correction to a shared item commits here");
+
+    assert!(llm.prompts_for(Task::Extract)[0].contains("Deployment requires approval"));
+    assert!(port
+        .inner
+        .lock()
+        .span_reads
+        .contains(&"other-chat".to_string()));
+    let [retired] = outcome.commit.updates.as_slice() else {
+        panic!(
+            "expected the shared item alone: {:?}",
+            outcome.commit.updates
+        );
+    };
+    assert_eq!(retired.conversation_id, "other-chat");
+    assert_ne!(retired.state, MemoryState::Active);
+}
+
+/// The conflict is recorded here, and a commit refuses a span from another
+/// chat, so it must not carry the shared item's own passages.
+#[tokio::test]
+async fn an_unclear_correction_to_a_shared_item_quotes_only_this_chat() {
+    let messages = four_turns();
+    let port = FakePort::new(messages.clone(), Vec::new(), 0);
+    let mut shared = committed_constraint("item-shared", &messages[0]);
+    shared.conversation_id = "other-chat".to_string();
+    shared.created_at_sequence = 0;
+    shared.changed_at_sequence = 0;
+    port.share(shared);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![],
+            vec![proposed_transition(
+                "item-shared",
+                "m3",
+                "Actually you may deploy staging.",
+            )],
+            &PREFIX_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[(
+            "transition:item-shared",
+            "ambiguous",
+        )]))],
+        vec![Ok("Deployment may have changed.".to_string())],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("an unclear correction still commits");
+
+    assert!(outcome.commit.updates.is_empty());
+    let [conflict] = outcome.commit.inserts.as_slice() else {
+        panic!("expected the conflict alone: {:?}", outcome.commit.inserts);
+    };
+    assert_eq!(conflict.kind, MemoryKind::UnresolvedChange);
+    let quoted: Vec<&str> = conflict
+        .evidence
+        .iter()
+        .map(|span| span.message_id.as_str())
+        .collect();
+    assert_eq!(quoted, ["m3"]);
+}
+
+#[tokio::test]
+async fn a_shared_item_does_not_become_a_requirement_of_the_summary() {
+    let messages = four_turns();
+    let port = FakePort::new(messages.clone(), Vec::new(), 0);
+    let mut shared = committed_constraint("item-shared", &messages[0]);
+    shared.conversation_id = "other-chat".to_string();
+    shared.created_at_sequence = 0;
+    shared.changed_at_sequence = 0;
+    port.share(shared);
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(vec![], vec![], &PREFIX_SEGMENTS))],
+        vec![],
+        vec![Ok("Talked about deployment.".to_string())],
+    );
+    let job = job(port.clone(), llm.clone(), small_config());
+
+    job.run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("the run commits");
+
+    for prompt in llm.prompts_for(Task::Summarize) {
+        assert!(!prompt.contains("Deployment requires approval"), "{prompt}");
+    }
+}
+
+#[tokio::test]
 async fn an_unsupported_retirement_is_dropped_without_stalling_source_coverage() {
     let messages = four_turns();
     let port = FakePort::new(
@@ -1454,6 +1649,101 @@ async fn an_unsupported_retirement_is_dropped_without_stalling_source_coverage()
     let old = port.item("item-old").expect("the restriction must survive");
     assert_eq!(old.state, MemoryState::Active);
     assert_eq!(old.superseded_by, None);
+}
+
+/// The one review call for a pass that replaces a constraint with a new item
+/// and ends another with nothing in its place.
+async fn reviewed_retirements() -> String {
+    let messages = four_turns();
+    let mut on_hold = committed_constraint("item-hold", &messages[0]);
+    on_hold.label = "Staging deploys are on hold".to_string();
+    let port = FakePort::new(
+        messages.clone(),
+        vec![committed_constraint("item-old", &messages[0]), on_hold],
+        0,
+    );
+    let quote = "Actually you may deploy staging.";
+    let llm = FakeLlm::new(
+        vec![Ok(extraction_response(
+            vec![proposed_constraint(
+                "c1",
+                "Staging deploys need no approval",
+                "m3",
+                quote,
+            )],
+            vec![
+                proposed_supersession("item-old", "c1", "m3", quote),
+                proposed_transition("item-hold", "m3", quote),
+            ],
+            &PREFIX_SEGMENTS,
+        ))],
+        vec![Ok(verdict_response(&[
+            ("addition:c1", "supported"),
+            ("transition:item-old", "supported"),
+            ("transition:item-hold", "supported"),
+        ]))],
+        vec![Ok("Staging may be deployed.".to_string())],
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    job.run(CONVERSATION, CompactionRequest::default())
+        .await
+        .expect("the pass commits");
+
+    assert_eq!(llm.count(Task::Review), 1);
+    llm.prompts_for(Task::Review).remove(0)
+}
+
+fn review_of(prompt: &str, id: &str) -> serde_json::Value {
+    let payload: serde_json::Value = serde_json::from_str(prompt).expect("review prompt JSON");
+    payload["reviews"]
+        .as_array()
+        .expect("reviews")
+        .iter()
+        .find(|review| review["id"] == id)
+        .unwrap_or_else(|| panic!("no review for {id}: {prompt}"))
+        .clone()
+}
+
+#[tokio::test]
+async fn a_superseding_change_is_reviewed_as_proposing_its_replacement_not_the_item_it_retires() {
+    let prompt = reviewed_retirements().await;
+
+    let transition = review_of(&prompt, "transition:item-old");
+    assert_eq!(
+        transition["proposed_label"],
+        "Staging deploys need no approval"
+    );
+    assert_eq!(
+        transition["existing_item_label"],
+        "Deployment requires approval"
+    );
+    assert_eq!(
+        transition["existing_item_evidence"][0]["text"],
+        "Do not deploy until I approve."
+    );
+
+    let addition = review_of(&prompt, "addition:c1");
+    assert_eq!(
+        addition["proposed_label"],
+        "Staging deploys need no approval"
+    );
+    assert_eq!(addition["existing_item_label"], serde_json::Value::Null);
+}
+
+#[tokio::test]
+async fn a_retirement_with_no_replacement_is_reviewed_with_no_proposed_label() {
+    let prompt = reviewed_retirements().await;
+
+    let transition = review_of(&prompt, "transition:item-hold");
+    assert_eq!(
+        transition.get("proposed_label"),
+        Some(&serde_json::Value::Null)
+    );
+    assert_eq!(
+        transition["existing_item_label"],
+        "Staging deploys are on hold"
+    );
 }
 
 #[tokio::test]

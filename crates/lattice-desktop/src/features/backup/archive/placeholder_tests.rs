@@ -1,5 +1,6 @@
 //! Tests for cloud-folder classification, file availability and hydration waits.
 use super::*;
+use lattice_core::shared::testing::links::{self, LinkKind};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -329,25 +330,41 @@ fn provider_display_names_are_product_names() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn classify_resolving_matches_through_a_symlinked_home() {
+fn classify_resolving_matches_through_a_linked_home(kind: LinkKind) {
     let tmp = tempfile::tempdir().unwrap();
     let real_home = tmp.path().join("real-home");
     std::fs::create_dir_all(real_home.join("Dropbox")).unwrap();
     let link_home = tmp.path().join("link-home");
-    std::os::unix::fs::symlink(&real_home, &link_home).unwrap();
+    if !links::link_dir(kind, &real_home, &link_home).unwrap() {
+        return;
+    }
 
     let file = link_home.join("Dropbox").join("b.lattice-backup");
     std::fs::write(&file, b"x").unwrap();
 
     // The configured home is the real directory; the path arrived via the
-    // symlink. Only the canonicalising pass can connect the two.
-    assert_eq!(classify_with_home(&file, &real_home, &no_env), None);
+    // link. Only the canonicalising pass can connect the two.
+    assert_eq!(
+        classify_with_home(&file, &real_home, &no_env),
+        None,
+        "{kind}"
+    );
     assert_eq!(
         classify_resolving(&file, &real_home, &no_env),
-        Some(CloudProvider::Dropbox)
+        Some(CloudProvider::Dropbox),
+        "{kind}"
     );
+}
+
+#[test]
+fn classify_resolving_matches_through_a_symlinked_home() {
+    classify_resolving_matches_through_a_linked_home(LinkKind::Symlink);
+}
+
+#[cfg(windows)]
+#[test]
+fn classify_resolving_matches_through_a_junctioned_home() {
+    classify_resolving_matches_through_a_linked_home(LinkKind::Junction);
 }
 
 // -- availability -------------------------------------------------------
@@ -377,7 +394,6 @@ fn file_availability_reports_missing_for_absent_paths() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn file_availability_stats_the_symlink_target() {
     // APFS reports a symlink's own inode with a non-zero size and
@@ -388,11 +404,13 @@ fn file_availability_stats_the_symlink_target() {
     std::fs::write(&target, b"contents are on disk").unwrap();
 
     let link = tmp.path().join("link.lattice-backup");
-    std::os::unix::fs::symlink(&target, &link).unwrap();
-    assert_eq!(file_availability(&link), FileAvailability::Local);
-
     let dangling = tmp.path().join("dangling.lattice-backup");
-    std::os::unix::fs::symlink(tmp.path().join("gone"), &dangling).unwrap();
+    if !links::link_file(&target, &link).unwrap()
+        || !links::link_file(&tmp.path().join("gone"), &dangling).unwrap()
+    {
+        return;
+    }
+    assert_eq!(file_availability(&link), FileAvailability::Local);
     assert_eq!(file_availability(&dangling), FileAvailability::Missing);
 }
 

@@ -1,0 +1,24 @@
+//! Tokens after which a full stop ends no sentence: CLDR's English
+//! sentence-break suppressions (`common/segments/en.xml`, unicode-org/cldr
+//! main, fetched 2026-11-02), verbatim and sorted, which ICU's filtered
+//! break iterator applies to UAX #29, and the few honorifics CLDR leaves out.
+
+pub(super) const CLDR_EN: [&str; 151] = [
+    "A.", "A.D.", "A.M.", "A.S.", "AA.", "AB.", "AD.", "Abs.", "Act.", "Adj.", "Adv.", "All.",
+    "Alt.", "Approx.", "As.", "Aug.", "B.", "B.V.", "By.", "C.F.", "C.O.D.", "Cap.", "Capt.",
+    "Card.", "Col.", "Comm.", "Conn.", "Cont.", "D.", "D.A.", "D.C.", "DC.", "Dec.", "Def.",
+    "Dept.", "Diff.", "Do.", "E.", "E.G.", "E.g.", "Ed.", "Est.", "Etc.", "Ex.", "Exec.", "F.",
+    "Feb.", "Fn.", "Fri.", "G.", "Gb.", "Go.", "Hat.", "Hon.B.A.", "Hz.", "I.", "I.D.", "I.T.",
+    "I.e.", "Id.", "In.", "Is.", "J.B.", "J.D.", "J.K.", "Jam.", "Jan.", "Job.", "Joe.", "Jun.",
+    "K.", "K.R.", "Kb.", "L.", "L.A.", "L.P.", "Lev.", "Lib.", "Link.", "Long.", "Lt.", "Lt.Cdr.",
+    "M.", "M.I.T.", "M.R.", "M.T.", "MR.", "Maj.", "Mar.", "Mart.", "Mb.", "Md.", "Mgr.", "Min.",
+    "Misc.", "Mr.", "Mrs.", "Ms.", "Mt.", "N.V.", "N.Y.", "Nov.", "Nr.", "Num.", "O.", "OK.",
+    "Ok.", "On.", "Op.", "Or.", "Org.", "P.M.", "P.O.", "P.V.", "PC.", "PP.", "Ph.D.", "Phys.",
+    "Pro.", "Prof.", "Pvt.", "Q.", "R.L.", "R.T.", "Rep.", "Rev.", "S.", "S.A.", "S.A.R.", "S.E.",
+    "S.p.A.", "Sep.", "Sept.", "Sgt.", "Sq.", "T.", "To.", "U.", "U.S.", "U.S.A.", "U.S.C.", "Up.",
+    "VS.", "Var.", "X.", "Yr.", "Z.", "a.m.", "exec.", "pp.", "vs.",
+];
+
+/// Honorifics and name suffixes CLDR's list lacks; the old library
+/// chunker held them too.
+pub(super) const HONORIFICS: [&str; 4] = ["Dr.", "Jr.", "Sr.", "St."];

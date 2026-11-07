@@ -6,7 +6,8 @@ A replay builds an OpenAI-style chat request for a llama-server; `call` turns it
     `tool_result` blocks, in the order `anthropic_messages` builds them;
   - no sampling settings (Claude rejects them); a 5-family model thinks unasked, so `thinking` is adaptive and
     `max_tokens` is the configured output ceiling cut to what the window leaves, not the request's own;
-  - tools kept with `tool_choice: none`; stop sequences as sent;
+  - tools kept with `tool_choice: none`; stop sequences as sent; a `response_format` JSON schema becomes
+    `output_config.format`, shaped as `cloud/schema.rs`'s `anthropic_schema` shapes it;
   - every replayed step is cache-keyed in the app, so the system prompt carries a breakpoint, and the whole prompt
     one when it continues an exchange.
 
@@ -51,8 +52,9 @@ def use(model, ledger, budget=None, window=WINDOW, max_tokens=MAX_TOKENS, thinki
 
 
 THINKING = "adaptive"
-# How each model is asked not to think: Sonnet 5.5 refuses `disabled`.
-THINKING_OFF = {"claude-sonnet-5-5": {"type": "between_tools"}}
+# How each model is asked not to think, as cloud.rs's `claude_thinking_off` asks it: Sonnet 5.5 refuses `disabled`,
+# and a model with no entry (Opus 5.5) cannot turn thinking off, so it thinks at the lowest effort.
+THINKING_OFF = {"claude-sonnet-5-5": {"type": "between_tools"}, "claude-haiku-5-5": {"type": "disabled"}}
 
 
 def add_arguments(ap):
@@ -107,6 +109,34 @@ def cached(prefix, rest):
     return [{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}, {"type": "text", "text": rest}]
 
 
+# Keywords Claude's structured outputs answer with a 400; cloud/schema.rs moves them into the description.
+MOVED = ("maxItems", "uniqueItems", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf")
+
+
+def anthropic_schema(schema):
+    """`schema` as cloud/schema.rs's `anthropic_schema` sends it to Claude."""
+    if isinstance(schema, list):
+        return [anthropic_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    kept, moved = {}, []
+    for key, value in schema.items():
+        keyword = isinstance(value, (bool, int, float))
+        if keyword and key in MOVED:
+            moved.append(f"{key}: {json.dumps(value)}")
+        elif keyword and key == "minItems" and not isinstance(value, bool) and value > 1:
+            moved.append(f"{key}: {json.dumps(value)}")
+            kept[key] = 1
+        else:
+            kept[key] = anthropic_schema(value)
+    if moved:
+        joined = ", ".join(moved)
+        kept["description"] = f"{kept['description']} ({joined})" if isinstance(kept.get("description"), str) else joined
+    if kept.get("type") == "object" or isinstance(kept.get("properties"), dict):
+        kept["additionalProperties"] = False
+    return kept
+
+
 def body_of(req):
     """cloud.rs's Messages body for `req`, a chat request as a replay sends it to a llama-server."""
     system, messages = messages_of(req["messages"])
@@ -114,11 +144,18 @@ def body_of(req):
     prompt = tokens("\n".join(f"{m['role']}\n{text_of(m['content'])}" for m in req["messages"])
                     + (json.dumps(tools) if tools else ""))
     room = max(1, WINDOW - prompt)
-    if THINKING == "adaptive":
+    off = THINKING_OFF.get(MODEL) if THINKING == "off" else None
+    if off is None:
         body = {"model": MODEL, "messages": messages, "max_tokens": min(MAX_TOKENS, room), "thinking": {"type": "adaptive"}}
     else:
         body = {"model": MODEL, "messages": messages, "max_tokens": min(req.get("max_tokens") or MAX_TOKENS, room),
-                "thinking": THINKING_OFF.get(MODEL, {"type": "disabled"})}
+                "thinking": off}
+    if THINKING == "off":
+        # A request for no thinking holds the answer at the lowest effort; Anthropic has no "none".
+        body["output_config"] = {"effort": "low"}
+    schema = ((req.get("response_format") or {}).get("json_schema") or {}).get("schema")
+    if schema is not None:
+        body.setdefault("output_config", {})["format"] = {"type": "json_schema", "schema": anthropic_schema(schema)}
     if system:
         body["system"] = [{"type": "text", "text": "\n\n".join(system), "cache_control": {"type": "ephemeral"}}]
     if req.get("stop"):
@@ -161,7 +198,7 @@ def call(req, kind):
         import anthropic
         _client = anthropic.Anthropic(api_key=api_key(), max_retries=10, timeout=900)
     body = body_of(req)
-    extra = {k: body.pop(k) for k in ("cache_control",) if k in body}
+    extra = {k: body.pop(k) for k in ("cache_control", "output_config") if k in body}
     import anthropic, httpx
     for attempt in range(5):
         t = time.time()

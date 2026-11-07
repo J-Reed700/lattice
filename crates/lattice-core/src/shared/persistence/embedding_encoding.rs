@@ -91,13 +91,10 @@ fn decode_raw(bytes: &[u8]) -> Result<Vec<f32>> {
         )));
     }
 
-    Ok(bytes
-        .chunks_exact(F32_BYTES)
-        .map(|chunk| {
-            let mut buf = [0u8; F32_BYTES];
-            buf.copy_from_slice(chunk);
-            f32::from_le_bytes(buf)
-        })
+    let (values, _) = bytes.as_chunks::<F32_BYTES>();
+    Ok(values
+        .iter()
+        .map(|value| f32::from_le_bytes(*value))
         .collect())
 }
 

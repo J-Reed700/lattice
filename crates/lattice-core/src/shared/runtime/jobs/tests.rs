@@ -465,6 +465,30 @@ async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> 
     Ok(())
 }
 
+/// A lesson job ended with "another attempt would fail again" on a busy
+/// database while another job was saving sources. Being kept out of the
+/// database says nothing about the work, so it is waited out.
+#[tokio::test]
+async fn a_busy_database_never_ends_a_job_however_often_it_repeats() -> Result<()> {
+    for error in [
+        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+        AppError::ServiceNotAvailable(
+            "The database is temporarily busy. Saved work is retained.".into(),
+        ),
+    ] {
+        let (runtime, id) = repeating(error.clone(), false).await?;
+        let job = saved_once(&runtime, &id, |job| {
+            job.status.is_finished() || job.retry_count >= 3
+        })
+        .await;
+        assert_ne!(job.status, JobStatus::Failed, "{error}");
+        assert!(job.retry_count >= 3, "{error}");
+        runtime.close();
+        runtime.drain().await;
+    }
+    Ok(())
+}
+
 /// Fails every attempt the same way in words that change: a server error
 /// carrying a new request id each time.
 struct Renumbered(std::sync::atomic::AtomicU32);
@@ -578,11 +602,12 @@ struct BusyAtTheEnd {
 #[async_trait::async_trait]
 impl JobHandler for BusyAtTheEnd {
     async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
-        let connection = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let connection = loop {
+            match self.pool.acquire().await {
+                Err(sqlx::Error::PoolTimedOut) => continue,
+                other => break other.map_err(|error| AppError::Database(error.to_string()))?,
+            }
+        };
         let hold = self.hold;
         tokio::spawn(async move {
             tokio::time::sleep(hold).await;
@@ -595,41 +620,70 @@ impl JobHandler for BusyAtTheEnd {
     }
 }
 
+/// `call` again for as long as the database is only busy.
+async fn while_busy<T, F: std::future::Future<Output = Result<T>>>(
+    call: impl Fn() -> F,
+) -> Result<T> {
+    loop {
+        match call().await {
+            Err(error) if JobFailure::is_transient(&error) => {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            other => return other,
+        }
+    }
+}
+
 #[tokio::test]
 async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Result<()> {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .acquire_timeout(Duration::from_millis(100))
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    // The runtime's store gets one connection and 100 ms to wait for it, and
+    // the handler holds that connection past the job's end, so the write that
+    // records the end finds it taken. The test sets up and reads through a
+    // pool of its own on the same file, so on a loaded machine only that
+    // write meets the busy store.
+    let directory = tempfile::tempdir().unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(directory.path().join("jobs.db"))
+        .create_if_missing(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+    let setup = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(options.clone())
         .await
         .unwrap();
     sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
+        .run(&setup)
         .await
         .unwrap();
-    let runtime = JobRuntime::new(pool.clone());
+    let busy = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_millis(100))
+        .connect_lazy_with(options);
+    let runtime = JobRuntime::new(busy.clone());
     let retry = Duration::from_millis(20);
-    runtime
-        .register(
-            KIND,
-            Arc::new(BusyAtTheEnd {
-                pool,
-                hold: Duration::from_millis(500),
-            }),
-            JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
-                initial: retry,
-                max: retry,
-            }),
-        )
-        .await?;
-    let job = runtime.submit(&new_job(KIND, "busy-end", None)).await?;
-    finished(&runtime, &job.id).await;
-    assert_eq!(
-        runtime.store().get(&job.id).await?.status,
-        JobStatus::Completed
-    );
+    let config = JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+        initial: retry,
+        max: retry,
+    });
+    let handler: Arc<dyn JobHandler> = Arc::new(BusyAtTheEnd {
+        pool: busy,
+        hold: Duration::from_millis(500),
+    });
+    while_busy(|| runtime.register(KIND, handler.clone(), config)).await?;
+    let new = new_job(KIND, "busy-end", None);
+    let job = while_busy(|| runtime.submit(&new)).await?;
+    let saved = JobStore::new(setup);
+    let ended = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let status = saved.get(&job.id).await?.status;
+            if status.is_finished() {
+                return Ok::<_, AppError>(status);
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the job's end is recorded within 30 s")?;
+    assert_eq!(ended, JobStatus::Completed);
     Ok(())
 }
 

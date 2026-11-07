@@ -36,6 +36,7 @@ import random
 import re
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 WORD = re.compile(r"[a-z0-9][a-z0-9.+#-]*")
@@ -89,11 +90,12 @@ def verbatim(source, passage):
 
 
 def extract(args):
-    db = sqlite3.connect(f'file:{args.db}?mode=ro', uri=True)
-    known = sources(db)
+    with closing(sqlite3.connect(f'file:{args.db}?mode=ro', uri=True)) as db:
+        known = sources(db)
+        verifications = db.execute('select lesson_id, report_json from learning_lesson_verifications').fetchall()
     rng = random.Random(args.seed)
     approved, related, dropped = [], [], 0
-    for lesson_id, report in db.execute('select lesson_id, report_json from learning_lesson_verifications'):
+    for lesson_id, report in verifications:
         for finding in json.loads(report).get('findings', []):
             claim = clean(finding['statement'])
             cited = finding.get('supporting_quote')
@@ -131,7 +133,7 @@ def extract(args):
                 pool.write(json.dumps({'pool_id': pair_id(f'{args.subject}-pool', row['claim'], row['passage']),
                                        **row}, ensure_ascii=False) + '\n')
     out_path = Path(args.out)
-    seen = {json.loads(line)['id'] for line in out_path.read_text().splitlines() if line.strip()} \
+    seen = {json.loads(line)['id'] for line in out_path.read_text(encoding="utf-8").splitlines() if line.strip()} \
         if out_path.exists() else set()
     written = 0
     with out_path.open('a', encoding='utf-8') as out:
@@ -151,7 +153,7 @@ def rejected_pairs(args, known):
     texts = {source_id: source for source_id, source in known.items()}
     rows = []
     for path in sorted(Path(args.calls).glob('call-*.json')):
-        call = json.loads(path.read_text())
+        call = json.loads(path.read_text(encoding="utf-8"))
         system = call['input'][0]['content']
         if not system.startswith('You check one claim') or 'inventory-fidelity' in system:
             continue
@@ -181,12 +183,12 @@ def rejected_pairs(args, known):
 
 def add_perturbed(args):
     """Append edited claims, each against the pool passage it was written for."""
-    pool = {row['pool_id']: row for row in map(json.loads, Path(args.pool).read_text().splitlines()) if row}
+    pool = {row['pool_id']: row for row in map(json.loads, Path(args.pool).read_text(encoding="utf-8").splitlines()) if row}
     out_path = Path(args.out)
-    seen = {json.loads(line)['id'] for line in out_path.read_text().splitlines() if line.strip()}
+    seen = {json.loads(line)['id'] for line in out_path.read_text(encoding="utf-8").splitlines() if line.strip()}
     written = 0
     with out_path.open('a', encoding='utf-8') as out:
-        for edit in map(json.loads, filter(str.strip, Path(args.edits).read_text().splitlines())):
+        for edit in map(json.loads, filter(str.strip, Path(args.edits).read_text(encoding="utf-8").splitlines())):
             base = pool[edit['pool_id']]
             claim = ' '.join(edit['claim'].split())
             row = {'id': pair_id(base['subject'], claim, base['passage']), 'subject': base['subject'],
@@ -216,9 +218,9 @@ def wrap(text, width=1500):
 
 def blind(args):
     """The labelling view: id, claim and passage only, shuffled, in readable parts."""
-    rows = [json.loads(line) for line in Path(args.pairs).read_text().splitlines() if line.strip()]
+    rows = [json.loads(line) for line in Path(args.pairs).read_text(encoding="utf-8").splitlines() if line.strip()]
     if args.only:
-        wanted = set(Path(args.only).read_text().split())
+        wanted = set(Path(args.only).read_text(encoding="utf-8").split())
         rows = [row for row in rows if row['id'] in wanted]
     random.Random(args.seed).shuffle(rows)
     out_dir = Path(args.out_dir)
@@ -245,7 +247,7 @@ def kappa(first, second):
 
 
 def load(path):
-    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def assemble(args):
@@ -349,7 +351,7 @@ def spot_check(args):
 def compare(args):
     """Agreement between a person's spot-check answers and the gold labels."""
     gold = {row['id']: row['label'] for row in load(args.gold)}
-    answers = json.loads(Path(args.answers).read_text())
+    answers = json.loads(Path(args.answers).read_text(encoding="utf-8"))
     ids = [pair_id for pair_id in answers if pair_id in gold]
     person = [answers[i] for i in ids]
     reference = [gold[i] for i in ids]

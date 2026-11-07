@@ -45,7 +45,7 @@ import { useRepairLearningOutline } from '@/features/learning/workspace/useLearn
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
-import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
+import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
 
@@ -249,6 +249,17 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     move();
     return true;
   };
+  const openModule = (module: LearningModuleDto) => void afterNotebookSave(() => {
+    setModuleId(module.id);
+    setLessonId(module.lessons.find((lesson) => !lesson.completed)?.id ?? module.lessons[0]?.id ?? '');
+    setTab('lessons');
+  });
+  const openLesson = (module: LearningModuleDto, selectedLessonId: string) => void afterNotebookSave(() => {
+    setModuleId(module.id);
+    setLessonId(selectedLessonId);
+    setTab('lessons');
+    requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  });
 
   const effectiveTangentId = initialTangentId ?? destination?.tangentId ?? null;
   // The goal once, behind a disclosure, and never when it is the title (§2.2).
@@ -280,7 +291,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
       <div className="studio-workspace pb-12">
         <div className="studio-course-toolbar">
           <Button variant="ghost" type="button" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(onBack)} className="studio-course-back disabled:opacity-50"><ArrowLeft size={15} /> {savingBeforeMove ? 'Saving your work…' : 'All programs'}</Button>
-          <div className="studio-course-tools"><CitationVisibilityToggle /><ProgramTangentsTrigger />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}
+          <div className="studio-course-tools"><CitationVisibilityToggle /><ProgramTangentsTrigger />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
             <Button variant="ghost" type="button" aria-pressed={contextVisible} disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setContextVisible((visible) => !visible))} className="studio-context-toggle disabled:opacity-50" title={contextVisible ? 'Hide lesson outline and notes' : 'Show lesson outline and notes'}>{contextVisible ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}<span>Outline & notes</span></Button>
           </div>
         </div>
@@ -303,10 +314,10 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     <OutlineReviewPanel program={program} generation={outlineGeneration} repair={repair} />
 
     {!program.sources.length && <p className="mt-3 text-xs leading-5 text-text-muted">Topic-based course · AI-authored from general knowledge. Add references in Sources to ground future lessons.</p>}
-    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={(module, selectedLessonId) => void afterNotebookSave(() => { setModuleId(module.id); setLessonId(selectedLessonId); setTab('lessons'); requestAnimationFrame(() => document.getElementById(`lesson-${selectedLessonId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); })} />}
+    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
     {activeProgram && <StudyHabitsBar className="studio-habits" onSelectFramework={handleSelectFramework} />}
     <div className="grid min-w-0 grid-cols-1 gap-2">
-      <CourseNavigator modules={program.modules} moduleId={currentModule?.id ?? ''} lessonId={currentLesson?.id ?? ''} disabled={savingBeforeMove} onModuleChange={(next) => void afterNotebookSave(() => { setModuleId(next.id); setLessonId(next.lessons.find((lesson) => !lesson.completed)?.id ?? next.lessons[0]?.id ?? ''); setTab('lessons'); })} onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}>
+      <CourseNavigator modules={program.modules} moduleId={currentModule?.id ?? ''} lessonId={currentLesson?.id ?? ''} disabled={savingBeforeMove} onModuleChange={openModule} onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}>
         {activeProgram ? <CourseCoach program={program} dueCount={memoryQuery.data?.dueCount ?? 0} disabled={savingBeforeMove || preparePending} onStep={goToStep} /> : resume && <Button type="button" aria-label={`Continue lesson: ${resume.lesson.title}`} title={resume.lesson.title} disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => { setModuleId(resume.module.id); setLessonId(resume.lesson.id); setTab('lessons'); })} className="studio-button studio-button-primary">Continue lesson <ArrowRight size={15} /></Button>}
       </CourseNavigator>
       <main className="min-w-0"><section id="workspace-panel" tabIndex={-1} aria-label="Program workspace content" className="studio-workspace-panel">

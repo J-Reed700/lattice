@@ -277,6 +277,7 @@ impl ValidatedFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::testing::links;
     use std::fs;
     use std::io::Write;
     use tempfile::TempDir;
@@ -364,7 +365,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
     fn test_blocks_symlink_escape() {
         let temp_dir = TempDir::new().unwrap();
         let vault_dir = temp_dir.path().join("lattice");
@@ -374,7 +374,9 @@ mod tests {
         fs::write(&outside_file, "secret").unwrap();
 
         let symlink_path = vault_dir.join("link.txt");
-        std::os::unix::fs::symlink(&outside_file, &symlink_path).unwrap();
+        if !links::link_file(&outside_file, &symlink_path).unwrap() {
+            return;
+        }
 
         // Try to access file through symlink (TOCTOU prevention)
         let allowed = vec![vault_dir.clone()];

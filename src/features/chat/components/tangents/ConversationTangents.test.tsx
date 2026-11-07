@@ -28,6 +28,8 @@ vi.mock('./TangentPanel', () => ({
   },
 }));
 
+const Chat = () => <p>Shared chat</p>;
+
 const tangent = (id: string, title: string) => ({
   conversationId: id, parentConversationId: 'p1', sourceConversationId: 'p1', sourceMessageId: 'm1',
   selectedText: `${title} passage`, title, createdAt: '', updatedAt: '', contextMessageCount: 2,
@@ -46,7 +48,7 @@ let queryClient: QueryClient;
 const renderTangents = () => render(
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <ConversationTangents conversationId="p1" toolPreferences={{ web: true } as never} unavailable={false}>
+      <ConversationTangents conversationId="p1" chat={Chat}>
         <AskInTangent />
       </ConversationTangents>
     </TooltipProvider>
@@ -58,6 +60,7 @@ const toggle = () => screen.getByRole('button', { name: /^Tangents/ });
 describe('ConversationTangents', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     h.panelProps = null;
     h.api.listConversationTangents.mockResolvedValue({ ok: true, data: [tangent('t1', 'Silk Road'), tangent('t2', 'Amber Road')] });
@@ -79,7 +82,7 @@ describe('ConversationTangents', () => {
     fireEvent.click(toggle());
     fireEvent.click(await screen.findByRole('button', { name: /Amber Road/ }));
     expect(screen.getByRole('heading', { name: 'Tangent' })).toBeInTheDocument();
-    expect(h.panelProps).toMatchObject({ toolPreferences: { web: true }, unavailable: false });
+    expect(h.panelProps).toMatchObject({ chat: Chat });
     fireEvent.click(screen.getByRole('button', { name: 'All tangents' }));
     expect(screen.getByRole('heading', { name: 'Tangents' })).toBeInTheDocument();
   });
@@ -133,6 +136,38 @@ describe('ConversationTangents', () => {
     renderTangents();
     act(() => conversationUiStore.setState({ requestedTangent: { parentId: 'other', tangentId: 't2' } } as never));
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
+  });
+
+  describe('sizing the panel', () => {
+    const edge = () => screen.getByRole('separator', { name: 'Resize tangents' });
+
+    it('is sized by its edge, and opens at that width the next time', async () => {
+      renderTangents();
+      fireEvent.click(toggle());
+      expect(edge()).toHaveAttribute('aria-valuenow', '420');
+      fireEvent.keyDown(edge(), { key: 'ArrowLeft' });
+      expect(edge()).toHaveAttribute('aria-valuenow', '444');
+      fireEvent.click(await screen.findByRole('button', { name: /Silk Road/ }));
+      expect(edge()).toHaveAttribute('aria-valuenow', '444');
+      fireEvent.click(screen.getByRole('button', { name: 'Close tangents' }));
+      fireEvent.click(toggle());
+      expect(edge()).toHaveAttribute('aria-valuenow', '444');
+    });
+
+    it('expands over the conversation from the list or an open tangent, and shrinks back', async () => {
+      renderTangents();
+      fireEvent.click(toggle());
+      const panel = screen.getByRole('complementary', { name: 'Tangents' });
+      fireEvent.click(screen.getByRole('button', { name: 'Expand tangents' }));
+      expect(panel).toHaveAttribute('data-expanded', 'true');
+      fireEvent.click(await screen.findByRole('button', { name: /Silk Road/ }));
+      expect(panel).toHaveAttribute('data-expanded', 'true');
+      fireEvent.click(screen.getByRole('button', { name: 'Shrink tangents' }));
+      expect(panel).not.toHaveAttribute('data-expanded');
+      fireEvent.click(screen.getByRole('button', { name: 'Close tangents' }));
+      fireEvent.click(toggle());
+      expect(screen.getByRole('button', { name: 'Expand tangents' })).toBeInTheDocument();
+    });
   });
 
   describe('starting a tangent', () => {

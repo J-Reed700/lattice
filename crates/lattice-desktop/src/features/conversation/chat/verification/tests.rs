@@ -375,6 +375,7 @@ async fn a_slow_judge_still_judges_every_claim() {
     let verifier = GroundingVerifier {
         judge: Some(scheduled_judge(Arc::clone(&llm), 1)),
         cited_only: false,
+        without_session_talk: false,
     };
 
     let started = tokio::time::Instant::now();
@@ -412,6 +413,7 @@ async fn concurrent_calls_judge_claims_side_by_side() {
     let verifier = GroundingVerifier {
         judge: Some(scheduled_judge(Arc::clone(&llm), 4)),
         cited_only: false,
+        without_session_talk: false,
     };
 
     let started = std::time::Instant::now();
@@ -532,6 +534,25 @@ fn metadata_fits_the_ui_schema_and_keeps_true_counts() {
     assert_eq!(ids, (1..=24).collect::<Vec<u64>>());
 }
 
+#[test]
+fn metadata_keeps_a_reason_past_1000_utf16_units_whole() {
+    let reason = "🙂".repeat(900);
+    let claims = vec![ClaimAssessment {
+        sentence: "A claim.".into(),
+        citation_ids: vec![1],
+        verdict: ClaimVerdict::Unsupported,
+        evidence_quote: None,
+        method: VerificationMethod::Lexical,
+        confidence: None,
+        reason: Some(reason.clone()),
+        unverified_reason: None,
+    }];
+
+    let metadata = GroundingReport::from_assessments(claims, false).metadata_json();
+
+    assert_eq!(metadata["claimVerdicts"][0]["reason"], reason.as_str());
+}
+
 /// A claim the judge never settled is unchecked, not whatever overlap said
 /// about it. It went to the judge because overlap could not settle it: these
 /// "hardier bushes" and "sturdier stems" are nowhere in a source that only
@@ -635,6 +656,90 @@ async fn an_explorer_answer_is_checked_on_its_cited_sentences_only() {
     assert_eq!(every_sentence.claims_evaluated, 2);
     assert_eq!(cited_only.claims_evaluated, 1);
     assert_eq!(cited_only.supported_claims, 1);
+}
+
+const LEASE_PASSAGE: &str = "A worker holds a lease on the job the broker handed it.";
+
+const SESSION_REPLY: &str = "Good work, you have named that part exactly as the handbook does.\n\n\
+     A worker holds a lease on the job the broker handed it [1].\n\n\
+     Let's move on to the next card in your deck, one at a time.\n\n\
+     The backoff ladder has six rungs in total, each one longer than the last.";
+
+/// What a tutor says to run the session is not a claim, and the uncited false
+/// sentence beside it still is.
+#[tokio::test]
+async fn a_sentence_that_only_runs_a_session_is_no_claim() {
+    let llm = Arc::new(ScriptedLlm::new(vec!["[3]"]));
+    let report = GroundingVerifier::new(Some(llm.clone()))
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(
+        report.claims_evaluated, 2,
+        "{:?}",
+        report.unsupported_claims
+    );
+    assert_eq!(report.supported_claims, 1);
+    assert_eq!(report.unsupported_claims.len(), 1);
+    assert!(
+        report.unsupported_claims[0].contains("six rungs"),
+        "{:?}",
+        report.unsupported_claims
+    );
+    assert_eq!(llm.call_count(), 1, "one question for the turn");
+}
+
+/// Unsure means checked: nothing is left unflagged because the model could not
+/// be read.
+#[tokio::test]
+async fn every_uncited_sentence_stays_a_claim_when_the_judge_cannot_say() {
+    let llm = Arc::new(ScriptedLlm::new(vec!["I could not tell which are which."]));
+    let report = GroundingVerifier::new(Some(llm))
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+    assert_eq!(report.unsupported_claims.len(), 3);
+}
+
+/// Numbers in a sentence of prose are not an answer: every uncited sentence
+/// stays a claim.
+#[tokio::test]
+async fn numbers_inside_prose_are_not_taken_as_the_judges_answer() {
+    let llm = Arc::new(ScriptedLlm::new(vec![
+        "Sentence [3] states a fact about the subject; the others run the session.",
+    ]));
+    let report = GroundingVerifier::new(Some(llm))
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+}
+
+/// Without the judge nothing sorts the sentences, so all of them stay.
+#[tokio::test]
+async fn a_lexical_check_keeps_every_uncited_sentence() {
+    let report = GroundingVerifier::new(None)
+        .without_session_talk(true)
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+}
+
+/// An ordinary chat's check costs no extra call.
+#[tokio::test]
+async fn a_chat_turn_never_asks_which_sentences_run_a_session() {
+    let llm = Arc::new(ScriptedLlm::new(vec!["[3]"]));
+    let report = GroundingVerifier::new(Some(llm.clone()))
+        .verify(SESSION_REPLY, &[source(LEASE_PASSAGE)])
+        .await;
+
+    assert_eq!(report.claims_evaluated, 4);
+    assert_eq!(llm.call_count(), 0);
 }
 
 /// A quotation its passage does not hold is a finding without a model, and

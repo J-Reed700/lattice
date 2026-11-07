@@ -9,7 +9,8 @@ use super::{
         LearningLabLimits,
     },
 };
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::testing::links::{self, LinkKind};
 
 fn id(seed: u128) -> String {
     uuid::Uuid::from_u128(seed).to_string()
@@ -165,23 +166,49 @@ fn lab_spec_rejects_aliases_and_accepts_resource_limit_edges() {
     assert!(validate_execution_spec(&boundaries).is_err());
 }
 
-#[cfg(unix)]
-#[test]
-fn lab_materialization_rejects_a_symlinked_parent_that_escapes_workspace() -> anyhow::Result<()> {
-    use std::os::unix::fs::symlink;
-
+fn an_existing_lab_run_folder_is_refused_so_a_planted_link_is_never_followed(
+    kind: LinkKind,
+) -> anyhow::Result<()> {
     let parent = tempfile::tempdir()?;
     let outside = parent.path().join("outside");
     std::fs::create_dir(&outside)?;
     let root = parent.path().join("run");
     std::fs::create_dir(&root)?;
-    symlink(&outside, root.join("linked"))?;
+    if !links::link_dir(kind, &outside, &root.join("linked"))? {
+        return Ok(());
+    }
 
     let spec = lab_spec(vec![LearningLabFile {
-        path: "linked/escaped.py".into(),
+        path: "linked/sub/escaped.py".into(),
         content: "should never be written".into(),
     }]);
-    assert!(materialize_workspace(&root, &spec).is_err());
-    assert!(!outside.join("escaped.py").exists());
+    let error = materialize_workspace(&root, &spec).unwrap_err();
+    assert!(
+        matches!(&error, AppError::Io { kind: io_kind, .. } if io_kind == "AlreadyExists"),
+        "a {kind} in an existing run folder must meet AlreadyExists, got {error:?}; \
+         outside/sub exists: {}",
+        outside.join("sub").exists()
+    );
+    assert!(
+        !outside.join("sub").exists(),
+        "{kind}: a spec file's folder was made through the link"
+    );
+    assert!(
+        std::fs::read_dir(&outside)?.next().is_none(),
+        "{kind}: something was created under the folder the link points at"
+    );
     Ok(())
+}
+
+#[test]
+fn an_existing_lab_run_folder_is_refused_so_a_planted_symlink_is_never_followed(
+) -> anyhow::Result<()> {
+    an_existing_lab_run_folder_is_refused_so_a_planted_link_is_never_followed(LinkKind::Symlink)
+}
+
+#[cfg(windows)]
+#[test]
+fn an_existing_lab_run_folder_is_refused_so_a_planted_junction_is_never_followed(
+) -> anyhow::Result<()> {
+    an_existing_lab_run_folder_is_refused_so_a_planted_link_is_never_followed(LinkKind::Junction)
 }

@@ -61,8 +61,6 @@ pub const DIGEST_SCHEME: &str = "sha256:";
 // magic number repeated at the call site.
 // ---------------------------------------------------------------------------
 
-/// Maximum structured-output bytes accepted before parsing is attempted.
-pub const MAX_PROPOSAL_BYTES: usize = 64 * 1024;
 /// Maximum add + transition operations in one model response.
 pub const MAX_OPERATIONS_PER_RESPONSE: usize = 32;
 /// Maximum evidence spans attached to a single item.
@@ -70,8 +68,6 @@ pub const MAX_EVIDENCE_PER_ITEM: usize = 4;
 /// Maximum bytes in one proposed quotation. Over-limit evidence is rejected,
 /// never silently clipped — a clipped negation is a reversed requirement.
 pub const MAX_QUOTE_BYTES: usize = 2048;
-/// Maximum characters in a generated display label.
-pub const MAX_LABEL_CHARS: usize = 200;
 /// Maximum conflict/antecedent links recorded on one item.
 pub const MAX_RELATED_ITEMS: usize = 8;
 /// Host work limit when materializing active items. Exceeding it is an explicit

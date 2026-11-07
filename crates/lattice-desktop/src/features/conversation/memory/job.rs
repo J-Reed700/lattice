@@ -524,10 +524,10 @@ impl CandidateLedger {
 
     /// Labels of the items that will reach every prompt. The summariser is shown
     /// these so it does not re-author them as its own authoritative list (§15).
-    fn mandatory_labels(&self) -> Vec<String> {
+    fn mandatory_labels(&self, conversation_id: &str) -> Vec<String> {
         self.active
             .iter()
-            .filter(|item| item.is_mandatory_now())
+            .filter(|item| item.conversation_id == conversation_id && item.is_mandatory_now())
             .map(|item| item.label.clone())
             .collect()
     }

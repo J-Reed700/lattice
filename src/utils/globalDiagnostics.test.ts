@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 
+import { SANITIZED_MESSAGE, SENSITIVE_MESSAGE } from './__tests__/sensitiveMessage';
 import { diagnostics } from './diagnostics';
 import { installGlobalDiagnostics } from './globalDiagnostics';
 import { toast } from '../stores/toastStore';
@@ -30,4 +31,20 @@ it('captures legacy console failures once and restores console on cleanup', () =
   expect(original).toHaveBeenCalledTimes(1);
   dispose();
   expect(console.error).toBe(original);
+});
+it('shows the sanitized message in the toast but keeps the log entry', () => {
+  diagnostics.clear();
+  dispose = installGlobalDiagnostics();
+  window.dispatchEvent(new ErrorEvent('error', { error: new Error(SENSITIVE_MESSAGE) }));
+  expect(toast.error).toHaveBeenCalledWith('An unexpected error occurred', { message: SANITIZED_MESSAGE, duration: 8000 });
+  expect(diagnostics.getSnapshot()[0].message).toContain('alice@example.com');
+});
+it('points to the logs when the toast message is empty', () => {
+  diagnostics.clear();
+  dispose = installGlobalDiagnostics();
+  window.dispatchEvent(new ErrorEvent('error', { error: new Error('') }));
+  expect(toast.error).toHaveBeenCalledWith('An unexpected error occurred', {
+    message: 'Open Settings → Logs for details.',
+    duration: 8000,
+  });
 });

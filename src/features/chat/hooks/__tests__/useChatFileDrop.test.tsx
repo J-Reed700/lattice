@@ -72,6 +72,54 @@ describe('useChatFileDrop', () => {
     expect(onDrop).not.toHaveBeenCalled();
   });
 
+  describe('with another panel laid over this one', () => {
+    const elementAt = vi.fn();
+
+    beforeEach(() => {
+      elementAt.mockReset();
+      Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: elementAt });
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(document, 'elementFromPoint');
+    });
+
+    it('leaves the drag and the drop to the panel on top', async () => {
+      const covered = panel();
+      elementAt.mockReturnValue(document.createElement('aside'));
+      const { result, onDrop } = setup(undefined, covered);
+      await waitFor(() => expect(h.handler).not.toBeNull());
+      emit({ type: 'enter', position: { x: 400, y: 400 } });
+      expect(result.current.isDragging).toBe(false);
+      emit({ type: 'drop', position: { x: 400, y: 400 }, paths: ['/a.md'] });
+      expect(result.current.staged).toEqual([]);
+      expect(onDrop).not.toHaveBeenCalled();
+      expect(elementAt).toHaveBeenCalledWith(200, 200);
+    });
+
+    it('takes them when it is the one on top, or what is on top is part of it', async () => {
+      const own = panel();
+      const inner = document.createElement('textarea');
+      own.current.append(inner);
+      elementAt.mockReturnValue(own.current);
+      const { result, onDrop } = setup(undefined, own);
+      await waitFor(() => expect(h.handler).not.toBeNull());
+      emit({ type: 'drop', position: { x: 400, y: 400 }, paths: ['/a.md'] });
+      expect(result.current.staged).toEqual([{ path: '/a.md', name: 'a.md' }]);
+      elementAt.mockReturnValue(inner);
+      emit({ type: 'drop', position: { x: 400, y: 400 }, paths: ['/b.md'] });
+      expect(result.current.staged).toHaveLength(2);
+      expect(onDrop).toHaveBeenCalledTimes(2);
+    });
+
+    it('takes them when nothing can be said to be on top', async () => {
+      elementAt.mockReturnValue(null);
+      const { result } = setup();
+      await waitFor(() => expect(h.handler).not.toBeNull());
+      emit({ type: 'drop', position: { x: 400, y: 400 }, paths: ['/a.md'] });
+      expect(result.current.staged).toHaveLength(1);
+    });
+  });
+
   it('ignores drops with no panel mounted', async () => {
     const { result, onDrop } = setup(undefined, { current: null });
     await waitFor(() => expect(h.handler).not.toBeNull());

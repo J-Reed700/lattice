@@ -25,7 +25,10 @@ impl FileType {
             "pdf" => FileType::Pdf,
             "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" => FileType::Image,
             "txt" | "md" | "markdown" | "rs" | "ts" | "tsx" | "js" | "jsx" | "py" | "json"
-            | "toml" | "yaml" | "yml" | "xml" | "html" | "css" | "sh" | "bash" => FileType::Text,
+            | "toml" | "yaml" | "yml" | "xml" | "html" | "css" | "sh" | "bash" | "go" | "java"
+            | "c" | "cpp" | "h" | "hpp" | "sql" | "csv" | "tsv" | "rb" | "php" | "swift" | "kt"
+            | "lua" | "zig" | "scala" | "r" | "ex" | "exs" | "hs" | "scss" | "less" | "ini"
+            | "conf" | "graphql" | "ps1" | "bat" | "zsh" | "fish" => FileType::Text,
             _ => FileType::Unknown,
         }
     }
@@ -78,6 +81,18 @@ mod tests {
         );
         assert_eq!(
             FileType::from_path(&PathBuf::from("/test/main.rs")),
+            FileType::Text
+        );
+        assert_eq!(
+            FileType::from_path(&PathBuf::from("/test/main.go")),
+            FileType::Text
+        );
+        assert_eq!(
+            FileType::from_path(&PathBuf::from("/test/App.java")),
+            FileType::Text
+        );
+        assert_eq!(
+            FileType::from_path(&PathBuf::from("/test/script.lua")),
             FileType::Text
         );
     }

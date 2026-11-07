@@ -3,7 +3,9 @@
 //! real temporary SQLite databases from the production migration, since the
 //! shared FTS index, the ownership column and the trigger most need testing.
 
-use super::recall::{build_recall_query, exact_identifiers};
+use super::recall::{
+    build_recall_query, exact_identifiers, relevance_by_message, RECALL_RELEVANCE_FLOOR,
+};
 use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use lattice_core::domain::conversation::memory::{compute_digest, SourceRole};
@@ -397,6 +399,8 @@ async fn an_exact_identifier_is_reported_as_an_exact_match_not_a_ranked_guess() 
 async fn adjacent_turn_expansion_explains_a_short_reply_and_stays_inside_budget() {
     let pool = migrated_pool().await;
     seed_conversation(&pool, "conv-mine", "Work").await;
+    // A word two messages of three hold could not pick them out.
+    seed_unrelated(&pool, "conv-mine", 12).await;
     seed_message(
         &pool,
         "conv-mine",
@@ -592,6 +596,446 @@ async fn the_message_being_answered_is_not_recalled_as_an_older_passage() {
     .unwrap();
 
     assert!(recalled.passages().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// Candidate order
+// ---------------------------------------------------------------------------
+
+/// `count` messages that hold none of the words the tests below ask about.
+async fn seed_unrelated(pool: &SqlitePool, conversation: &str, count: usize) {
+    for index in 0..count {
+        seed_message(
+            pool,
+            conversation,
+            &format!("{conversation}-pad{index}"),
+            "user",
+            &format!("the weather on day {index} was fine"),
+            "completed",
+        )
+        .await;
+    }
+}
+
+struct Embedder;
+#[async_trait::async_trait]
+impl lattice_core::application::ports::EmbeddingPort for Embedder {
+    async fn embed_single(&self, _: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
+        Ok(vec![1.0, 0.0])
+    }
+    async fn embed_batch(
+        &self,
+        texts: &[String],
+    ) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
+    }
+    fn dimension(&self) -> usize {
+        2
+    }
+    fn model_identity(&self) -> String {
+        "test-space".into()
+    }
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+        Ok(true)
+    }
+}
+
+async fn seed_vector(pool: &SqlitePool, conversation: &str, message: &str, vector: [f32; 2]) {
+    let content: String =
+        sqlx::query_scalar("SELECT content FROM conversation_messages WHERE id=?")
+            .bind(message)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO conversation_memory_vectors(id,conversation_id,message_id,role,content,embedding,dimension,embedding_model) VALUES (?,?,?,'user',?,?,2,'test-space')")
+        .bind(message)
+        .bind(conversation)
+        .bind(message)
+        .bind(content)
+        .bind(lattice_core::shared::persistence::embedding_encoding::encode_embedding(&vector))
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// With semantic search on, a candidate's score is its fused rank, where
+/// higher is better, not BM25. The best group is still the one packed first.
+#[tokio::test]
+async fn the_strongest_fused_candidate_is_the_first_one_packed() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_unrelated(&pool, "conv-mine", 3).await;
+    seed_message(
+        &pool,
+        "conv-mine",
+        "best",
+        "user",
+        "the interview schedule is on Friday",
+        "completed",
+    )
+    .await;
+    for index in 0..3 {
+        seed_message(
+            &pool,
+            "conv-mine",
+            &format!("gap{index}"),
+            "user",
+            "noted",
+            "completed",
+        )
+        .await;
+    }
+    seed_message(
+        &pool,
+        "conv-mine",
+        "weak",
+        "user",
+        "an interview",
+        "completed",
+    )
+    .await;
+    seed_vector(&pool, "conv-mine", "best", [1.0, 0.0]).await;
+    let port = port(&pool).with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
+
+    let recalled = recall_for_turn(
+        &port,
+        &scope("conv-mine"),
+        &RecallRequest {
+            user_input: "interview schedule",
+            recent_turns: &[],
+            active_memory: &[],
+            max_bytes: 80,
+        },
+    )
+    .await
+    .unwrap();
+
+    let selected = recalled.diagnostics.selected_message_ids;
+    assert!(selected.contains(&"best".to_string()), "{selected:?}");
+}
+
+// ---------------------------------------------------------------------------
+// The relevance floor
+// ---------------------------------------------------------------------------
+
+fn recall_request(input: &'static str) -> RecallRequest<'static> {
+    RecallRequest {
+        user_input: input,
+        recent_turns: &[],
+        active_memory: &[],
+        max_bytes: 64 * 1024,
+    }
+}
+
+/// The floor is a share of the turn, so it means the same at any length: a word
+/// one message holds clears it and a word half of them hold does not.
+#[test]
+fn the_floor_reads_the_same_in_a_short_and_a_long_conversation() {
+    use lattice_core::application::ports::conversation_memory::TermHolders;
+    for messages in [40, 400, 40_000] {
+        let held = TermHolders {
+            messages,
+            holders: vec![
+                vec!["rare".to_string()],
+                (0..messages / 2).map(|m| format!("common{m}")).collect(),
+            ],
+        };
+        let relevance = relevance_by_message(&held);
+        assert!(relevance["rare"] >= RECALL_RELEVANCE_FLOOR, "{messages}");
+        assert!(relevance["common0"] < RECALL_RELEVANCE_FLOOR, "{messages}");
+    }
+}
+
+/// A word a third of the conversation holds cannot pick a passage out, and the
+/// words the message shares with everything say nothing at all.
+#[tokio::test]
+async fn an_instruction_with_nothing_behind_it_recalls_nothing() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_unrelated(&pool, "conv-mine", 40).await;
+    for index in 0..20 {
+        seed_message(
+            &pool,
+            "conv-mine",
+            &format!("v{index}"),
+            "assistant",
+            &format!("this variable holds total {index}"),
+            "completed",
+        )
+        .await;
+    }
+
+    let recalled = recall_for_turn(
+        &port(&pool),
+        &scope("conv-mine"),
+        &recall_request("rename this variable"),
+    )
+    .await
+    .unwrap();
+
+    assert!(recalled.passages().is_empty(), "{:?}", recalled.passages());
+    assert_eq!(
+        recalled.availability(),
+        RecallAvailability::NotFoundByRetrieval
+    );
+}
+
+/// A question rarely repeats every word of its answer. One rare word is enough
+/// to bring the passage back.
+#[tokio::test]
+async fn a_question_finds_its_answer_by_the_one_word_they_share() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_unrelated(&pool, "conv-mine", 40).await;
+    seed_message(
+        &pool,
+        "conv-mine",
+        "fact",
+        "user",
+        "My interview is at ten on Friday.",
+        "completed",
+    )
+    .await;
+
+    let recalled = recall_for_turn(
+        &port(&pool),
+        &scope("conv-mine"),
+        &recall_request("what did I say my interview date was?"),
+    )
+    .await
+    .unwrap();
+
+    assert!(recalled
+        .diagnostics
+        .selected_message_ids
+        .contains(&"fact".to_string()));
+}
+
+/// The floor reads the whole message, not the opening a candidate carries.
+#[tokio::test]
+async fn a_word_past_the_opening_of_a_long_message_still_counts() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_unrelated(&pool, "conv-mine", 40).await;
+    let long = format!("{} and the interview is on Friday", "notes ".repeat(500));
+    seed_message(&pool, "conv-mine", "long", "user", &long, "completed").await;
+
+    let recalled = recall_for_turn(
+        &port(&pool),
+        &scope("conv-mine"),
+        &recall_request("when is the interview"),
+    )
+    .await
+    .unwrap();
+
+    assert!(recalled
+        .diagnostics
+        .selected_message_ids
+        .contains(&"long".to_string()));
+}
+
+/// What was just discussed does not stand in for what a message asks. It does
+/// for a message with no words of its own.
+#[tokio::test]
+async fn recent_turns_answer_only_for_a_message_with_no_words_of_its_own() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_message(
+        &pool,
+        "conv-mine",
+        "older",
+        "user",
+        "the Aldersgate contract lives in docs/aldersgate.md",
+        "completed",
+    )
+    .await;
+    seed_unrelated(&pool, "conv-mine", 40).await;
+    let recent = ["We were talking about Aldersgate and docs/aldersgate.md".to_string()];
+    let recall = |input: &'static str| {
+        let recent = &recent;
+        let pool = pool.clone();
+        async move {
+            recall_for_turn(
+                &port(&pool),
+                &scope("conv-mine"),
+                &RecallRequest {
+                    user_input: input,
+                    recent_turns: recent,
+                    active_memory: &[],
+                    max_bytes: 64 * 1024,
+                },
+            )
+            .await
+            .unwrap()
+        }
+    };
+
+    assert!(recall("rename this variable").await.passages().is_empty());
+    assert!(recall("and then?")
+        .await
+        .diagnostics
+        .selected_message_ids
+        .contains(&"older".to_string()));
+}
+
+/// Most of a long conversation misses the floor, so the search stops rather
+/// than paging through every message that holds a common word.
+#[tokio::test]
+async fn nothing_above_the_floor_does_not_page_through_the_conversation() {
+    use lattice_core::application::ports::conversation_memory::{
+        RecallCandidate, RecallCandidates, SourcePage, SourceReadLimits, TermHolders,
+    };
+    use lattice_core::domain::conversation::memory::SourceMessage;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Common {
+        searches: AtomicUsize,
+    }
+    #[async_trait::async_trait]
+    impl ConversationMemoryReadPort for Common {
+        async fn search_source_messages(
+            &self,
+            _: &str,
+            _: &str,
+            _: &[String],
+            limit: usize,
+        ) -> lattice_core::shared::error::Result<RecallCandidates> {
+            self.searches.fetch_add(1, Ordering::SeqCst);
+            Ok(RecallCandidates {
+                candidates: (0..limit as i64)
+                    .map(|sequence| RecallCandidate {
+                        message_id: format!("m{sequence}"),
+                        sequence,
+                        role: SourceRole::User,
+                        excerpt: String::new(),
+                        score: -1.0,
+                        exact_identifier: false,
+                        similarity: None,
+                    })
+                    .collect(),
+                lexical_ran: true,
+                ..Default::default()
+            })
+        }
+        async fn messages_holding(
+            &self,
+            _: &str,
+            terms: &[String],
+        ) -> lattice_core::shared::error::Result<TermHolders> {
+            let every: Vec<String> = (0..4096).map(|m| format!("m{m}")).collect();
+            Ok(TermHolders {
+                messages: 4096,
+                holders: terms
+                    .iter()
+                    .map(|term| {
+                        if term == "variable" {
+                            every.clone()
+                        } else {
+                            Vec::new()
+                        }
+                    })
+                    .collect(),
+            })
+        }
+        async fn read_adjacent_turns(
+            &self,
+            _: &str,
+            _: i64,
+            _: usize,
+            _: usize,
+            _: SourceReadLimits,
+        ) -> lattice_core::shared::error::Result<Vec<SourceMessage>> {
+            panic!("a message below the floor is not read");
+        }
+        async fn read_messages(
+            &self,
+            _: &str,
+            _: &[String],
+            _: SourceReadLimits,
+        ) -> lattice_core::shared::error::Result<Vec<SourceMessage>> {
+            Ok(Vec::new())
+        }
+        async fn read_sequence_range(
+            &self,
+            _: &str,
+            _: i64,
+            _: i64,
+            _: SourceReadLimits,
+        ) -> lattice_core::shared::error::Result<SourcePage> {
+            Ok(SourcePage::default())
+        }
+        async fn search_memory_labels(
+            &self,
+            _: &str,
+            _: &str,
+            _: usize,
+        ) -> lattice_core::shared::error::Result<
+            Vec<lattice_core::domain::conversation::memory::MemoryId>,
+        > {
+            Ok(Vec::new())
+        }
+    }
+    let port = Common {
+        searches: AtomicUsize::new(0),
+    };
+
+    let recalled = recall_for_turn(
+        &port,
+        &scope("conv-mine"),
+        &recall_request("rename variable"),
+    )
+    .await
+    .unwrap();
+
+    assert!(recalled.groups.is_empty());
+    assert_eq!(port.searches.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_passage_with_no_shared_word_is_recalled_only_when_close_in_meaning() {
+    let pool = migrated_pool().await;
+    seed_conversation(&pool, "conv-mine", "Work").await;
+    seed_unrelated(&pool, "conv-mine", 6).await;
+    seed_message(
+        &pool,
+        "conv-mine",
+        "close",
+        "user",
+        "the hound sleeps",
+        "completed",
+    )
+    .await;
+    for index in 0..4 {
+        seed_message(
+            &pool,
+            "conv-mine",
+            &format!("gap{index}"),
+            "assistant",
+            "noted",
+            "completed",
+        )
+        .await;
+    }
+    seed_message(
+        &pool,
+        "conv-mine",
+        "loose",
+        "user",
+        "cats purr softly",
+        "completed",
+    )
+    .await;
+    seed_vector(&pool, "conv-mine", "close", [0.95, 0.31]).await;
+    seed_vector(&pool, "conv-mine", "loose", [0.2, 0.98]).await;
+    let port = port(&pool).with_memory_embedding(Some(std::sync::Arc::new(Embedder)));
+
+    let recalled = recall_for_turn(&port, &scope("conv-mine"), &recall_request("canine"))
+        .await
+        .unwrap();
+
+    let selected = recalled.diagnostics.selected_message_ids;
+    assert!(selected.contains(&"close".to_string()), "{selected:?}");
+    assert!(!selected.contains(&"loose".to_string()), "{selected:?}");
 }
 
 // ---------------------------------------------------------------------------

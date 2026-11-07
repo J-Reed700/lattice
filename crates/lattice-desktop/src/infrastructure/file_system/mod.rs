@@ -19,5 +19,5 @@
 pub mod file_storage;
 pub mod file_system_adapter;
 
-pub use file_storage::SecureFileStorage;
+pub use file_storage::{compute_file_sha256_async, SecureFileStorage};
 pub use file_system_adapter::FileSystemAdapter;

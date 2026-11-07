@@ -1337,6 +1337,58 @@ async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<
 }
 },
 /**
+ * Starts a drill of `language`: an attempt on a ready one, or, when none is ready, the build that will make one.
+ * `lines` and `patterns_count` size that build. The drill comes back as the learner may see it, never with its key.
+ */
+async startCodeReviewDrill(language: string, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_code_review_drill", { language, mode, lines, patternsCount }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Hands in a review: the learner's findings, their fix when they wrote one and the time they spent. The grading job
+ * is queued; the attempt reads as submitted until it is graded.
+ */
+async submitCodeReview(attemptId: string, findings: CodeReviewFindingDto[], fixFiles: CodeReviewFileDto[] | null, timeSpentMs: number) : Promise<Result<CodeReviewResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|submit_code_review", { attemptId, findings, fixFiles, timeSpentMs }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Where an attempt stands. Once it is graded, the reveal comes with it.
+ */
+async codeReviewResult(attemptId: string) : Promise<Result<CodeReviewResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|code_review_result", { attemptId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Grades an attempt that could not be graded again.
+ */
+async regradeCodeReview(attemptId: string) : Promise<Result<CodeReviewResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|regrade_code_review", { attemptId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The languages a drill can be written in, in the catalogue's order.
+ */
+async codeReviewLanguages() : Promise<string[]> {
+    return await TAURI_INVOKE("plugin:learning|code_review_languages");
+},
+/**
  * Download a model by ID
  *
  * Thin wrapper over `download_model_impl`, the shared model-setup command.
@@ -3664,6 +3716,30 @@ async importSettings(request: ImportSettingsRequest) : Promise<Result<SettingsDt
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Shows the platform's save dialog, offering `suggested_name`, and writes
+ * `contents` to the file the user picks. `false` when the user cancels.
+ */
+async saveTextFile(suggestedName: string, filters: FileFilterDto[], contents: string) : Promise<Result<boolean, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|save_text_file", { suggestedName, filters, contents }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Shows the platform's open dialog and returns the text of the file the user
+ * picks. `None` when the user cancels.
+ */
+async openTextFile(filters: FileFilterDto[]) : Promise<Result<string | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|open_text_file", { filters }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async validateFolderPath(path: string) : Promise<Result<boolean, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|validate_folder_path", { path }) };
@@ -3920,6 +3996,14 @@ async listClusters() : Promise<Result<ClusterDto[], AppError>> {
 async transcribeFile(path: string) : Promise<Result<TranscriptDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|transcribe_file", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async transcribeSpeech(pcm: string) : Promise<Result<TranscribedSpeechDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:transcription|transcribe_speech", { pcm }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4428,6 +4512,26 @@ export type AttachOutcomeDto = { outcome: "checked"; check: CheckDto } | { outco
  * claims the user picked.
  */
 export type AttachScopeDto = { scope: "claim" } | { scope: "claims"; claimIds: string[] }
+/**
+ * How a drill is practised.
+ */
+export type AttemptMode = "practice" | "interview" | "rapid"
+/**
+ * Where an attempt stands.
+ */
+export type AttemptStatus =
+/**
+ * The learner is reviewing.
+ */
+"open" |
+/**
+ * Handed in, waiting for its grade.
+ */
+"submitted" | "graded" |
+/**
+ * The grader gave no assessment; a regrade tries again.
+ */
+"couldnt_grade"
 /**
  * One line of the backend's file log. Lines that do not match the log format
  * carry only `message` (the raw line) and an `Unknown` level.
@@ -5043,6 +5147,91 @@ memberDocumentIds: string[] }
  */
 export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; clusterCount: number; noiseCount: number; durationMs: number; llmCalls: number }
 /**
+ * The drill as the learner may see it.
+ */
+export type CodeReviewDrillDto = { title: string; language: string; files: CodeReviewFileDto[] }
+/**
+ * One file of a drill, as the learner reads it or leaves it.
+ */
+export type CodeReviewFileDto = { path: string; text: string }
+/**
+ * One comment of a learner's review: the lines it is on, when it selects any, what it says, and the severity the
+ * learner gave it, when they gave one.
+ */
+export type CodeReviewFindingDto = { span: CodeReviewSpanDto | null; text: string; severity: CodeReviewSeverity | null }
+/**
+ * An attempt: where it stands, the learner's own review and, once it is graded, the reveal.
+ */
+export type CodeReviewResultDto = { attemptId: string; mode: AttemptMode; status: AttemptStatus; startedAt: number; submittedAt: number | null;
+/**
+ * As the client measured it.
+ */
+timeSpentMs: number | null; drill: CodeReviewDrillDto;
+/**
+ * The learner's own comments, as they handed them in.
+ */
+findings: CodeReviewFindingDto[];
+/**
+ * The drill's files as the learner left them, when they wrote a fix.
+ */
+fixFiles: CodeReviewFileDto[] | null;
+/**
+ * Why the review could not be graded, when it could not.
+ */
+error: string | null;
+/**
+ * The model that graded the review, or tried to, as the server names it.
+ */
+graderModel: string | null; gradedAt: number | null;
+/**
+ * Everything the key knows, once the review is graded.
+ */
+reveal: CodeReviewRevealDto | null }
+/**
+ * What a graded review shows the learner.
+ */
+export type CodeReviewRevealDto = {
+/**
+ * Every key issue, in the key's order.
+ */
+issues: RevealedIssueDto[];
+/**
+ * Every finding of the learner's, in the order they made them.
+ */
+findings: RevealedFindingDto[]; score: CodeReviewScoreDto;
+/**
+ * How well the patterns of the key's issues were recognised. A review-found issue that was not raised has none.
+ */
+ratings: RatedPatternDto[];
+/**
+ * What came of the learner's fix for each key issue, when they wrote one.
+ */
+fix: IssueFix[] | null;
+/**
+ * The code before any issue was planted, to read beside the drill's.
+ */
+cleanFiles: CodeReviewFileDto[] }
+/**
+ * How a review fared, as its parts.
+ */
+export type CodeReviewScoreDto = { found: number; halfFound: number; missed: number; validExtras: number; falsePositives: number;
+/**
+ * One tally for each severity the key has, the most severe first.
+ */
+bySeverity: SeverityTallyDto[]; weightedRecall: number;
+/**
+ * The share of findings that match an issue or are a valid extra; none without findings.
+ */
+precision: number | null; ledWithTheMostSevere: boolean }
+/**
+ * How serious an issue is.
+ */
+export type CodeReviewSeverity = "critical" | "major" | "minor" | "nit"
+/**
+ * Whole lines of one file: 1-based, both ends included.
+ */
+export type CodeReviewSpanDto = { path: string; start: number; end: number }
+/**
  * Request to compact a conversation's oldest messages into an LLM summary.
  *
  * The oldest messages are folded into a summary so the LLM context window
@@ -5555,6 +5744,22 @@ export type DecideLearningFollowUpRequestDto = { operationId: string; programId:
 export type DecideLearningPracticeProposalRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; proposalId: string }
 export type DecideLearningRecallDuplicateRequestDto = { operationId: string; programId: string; suggestionId: string; accept: boolean }
 /**
+ * What decided an issue's outcome.
+ */
+export type DecidedBy =
+/**
+ * The issue's killing test, run on the learner's files.
+ */
+"test" |
+/**
+ * The hidden suite, run on the learner's files beside the fixes of the planted issues they left.
+ */
+"suite" |
+/**
+ * A judge, shown the code, the learner's code and the issue.
+ */
+"judge"
+/**
  * Response from deleting a batch job.
  */
 export type DeleteBatchJobResponseDto = {
@@ -5582,6 +5787,26 @@ export type DeleteConversationResponseDto = {
 status: string }
 export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
+/**
+ * What a diff does with one line.
+ */
+export type DiffKind =
+/**
+ * In both texts.
+ */
+"unchanged" |
+/**
+ * Only in the first text.
+ */
+"removed" |
+/**
+ * Only in the second text.
+ */
+"added"
+/**
+ * One line of a diff, without its line break.
+ */
+export type DiffLine = { kind: DiffKind; text: string }
 export type DiscardLearningCurriculumRevisionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
 /**
  * Document metadata DTO for display in UI
@@ -6084,6 +6309,10 @@ export type FailedLearningPackExportDto = { programId: string; title: string; er
  */
 export type FavoriteDocument = { id: string; document_id: string; document_name: string; document_path: string; file_type: string | null; added_at: string }
 /**
+ * One entry of a file dialog's type list: a name and the extensions it shows.
+ */
+export type FileFilterDto = { name: string; extensions: string[] }
+/**
  * Optional import context. File order comes from the request's file_paths.
  */
 export type FileIndexingOptionsDto = { sourceGroup: SourceGroup | null }
@@ -6201,7 +6430,31 @@ enabled: boolean;
  * Why it cannot run, or `None` when it may.
  */
 gate: FinderGateDto | null; health: FinderHealthDto }
+/**
+ * What came of a finding.
+ */
+export type FindingResultKind =
+/**
+ * It is about issues of the key.
+ */
+"matches" |
+/**
+ * A real problem the key does not hold.
+ */
+"valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+/**
+ * The fix of an issue as the lines it removes and the lines it adds, in the file the issue is in.
+ */
+export type FixDiffDto = { path: string; lines: DiffLine[] }
+/**
+ * Whether a learner's change fixes one issue.
+ */
+export type FixOutcome = "fixed" |
+/**
+ * The change fixes part of the issue, or fixes it and breaks something that worked.
+ */
+"partly" | "not_fixed"
 /**
  * Where the open folder's index stands.
  */
@@ -6561,6 +6814,36 @@ indexedDocuments: number;
 totalChunks: number }
 export type IndexingStatus = { active: boolean; progress: number }
 /**
+ * One key issue's result, by its position in the key.
+ */
+export type IssueFix = { issue: number; outcome: FixOutcome; decidedBy: DecidedBy; reason: string;
+/**
+ * What the killing test wrote when it failed, or what the suite wrote when it decided the issue.
+ */
+output: string | null;
+/**
+ * Why the issue's test could not decide it and a judge did instead.
+ */
+fallback: string | null;
+/**
+ * The other planted issues, by position in the key, whose key fixes were applied to the learner's files for this
+ * issue's test, so that the issue was graded beside them: none when a judge decided the issue.
+ */
+gradedBeside: number[];
+/**
+ * The hidden suite's verdict on the learner's files, run beside the fixes it names: the same for every issue of
+ * the fix.
+ */
+suite: SuiteVerdict }
+/**
+ * What came of an issue of the key.
+ */
+export type IssueResultKind = "found" |
+/**
+ * Right lines, wrong reason.
+ */
+"half_found" | "missed"
+/**
  * A job as the renderer sees it on [`STATUS_EVENT`].
  */
 export type JobDto = { id: string; kind: string; subjectId: string | null; status: JobStatus; progressCurrent: number; progressTotal: number; progressMessage: string; activity: JsonValue | null; resultRef: string | null; errorCode: string | null; error: string | null; retryOfJobId: string | null; retryCount: number; retryNotBefore: number | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
@@ -6612,6 +6895,10 @@ action: string; itemId: string | null;
  */
 text: string | null; scope: string | null; kind: string | null; validFrom: string | null; validUntil: string | null; offset: number | null }
 export type KnowledgeResponseDto = { items: KnowledgeItemDto[]; hasMore: boolean;
+/**
+ * What this chat's pool is: `space`, `folder` or `course`.
+ */
+pool: string;
 /**
  * Items supplied in the initial context of the latest completed answer.
  */
@@ -8588,6 +8875,10 @@ export type PassageReferenceDto = { id: string; documentId: string; chunkId: str
  */
 locator: string | null; text: string; title: string | null; note: string | null; createdAt: string }
 /**
+ * How well a pattern was recognised, in the words recall's schedule takes.
+ */
+export type PatternRating = "again" | "hard" | "good" | "easy"
+/**
  * Performance tier DTO for frontend.
  */
 export type PerformanceTierDto =
@@ -8642,6 +8933,10 @@ export type QuickCaptureResultDto = { noteId: string; noteTitle: string;
  * True when today's page had to be created for this capture.
  */
 created: boolean }
+/**
+ * How well one key issue's pattern was recognised.
+ */
+export type RatedPatternDto = { pattern: string; patternName: string; rating: PatternRating }
 /**
  * What part of the world a finder reaches; the panel groups finders by it.
  */
@@ -8987,6 +9282,46 @@ newJobId: string;
  */
 retriedCount: number }
 export type RevealLearningPracticeSolutionRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+/**
+ * One finding of the learner's, with what came of it.
+ */
+export type RevealedFindingDto = { span: CodeReviewSpanDto | null; text: string; severity: CodeReviewSeverity | null; outcome: FindingResultKind;
+/**
+ * The positions of the key's issues the finding is about; none unless it matches.
+ */
+issues: number[];
+/**
+ * The judge's reason for the outcome.
+ */
+reason: string }
+/**
+ * One issue of the key, with what came of it.
+ */
+export type RevealedIssueDto = { id: string;
+/**
+ * The id of the catalogue pattern.
+ */
+pattern: string; patternName: string; severity: CodeReviewSeverity;
+/**
+ * Where the issue is, in the drill's files.
+ */
+span: CodeReviewSpanDto; consequence: string;
+/**
+ * How to say it in an interview.
+ */
+explanation: string; fix: FixDiffDto; outcome: IssueResultKind;
+/**
+ * The position of the finding that earned the credit, when one did.
+ */
+finding: number | null;
+/**
+ * The judge's reason for the outcome.
+ */
+reason: string;
+/**
+ * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
+ */
+alsoValid: boolean }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
@@ -9313,6 +9648,10 @@ onboarding: OnboardingSettingsDto;
  */
 sourcing: SourcingSettingsDto }
 /**
+ * The key's issues of one severity and how many of them were found.
+ */
+export type SeverityTallyDto = { severity: CodeReviewSeverity; found: number; halfFound: number; total: number }
+/**
  * One neighbour of a document, collapsed from its chunk hits.
  */
 export type SimilarDocumentDto = { documentId: string; title: string; filePath: string | null; score: number }
@@ -9532,6 +9871,10 @@ export type SpeculativeDecodingDto = { mode: "off" } |
  */
 { mode: "mtpDraft"; nMax: number }
 /**
+ * The English a voice speaks.
+ */
+export type SpeechAccentDto = "american" | "british"
+/**
  * Speech for one piece of text.
  */
 export type SpeechClipDto = { sampleRate: number;
@@ -9539,6 +9882,10 @@ export type SpeechClipDto = { sampleRate: number;
  * Mono 16-bit little-endian PCM, base64.
  */
 pcm: string; durationMs: number }
+/**
+ * How a voice's speaker is described in Kokoro's voice list.
+ */
+export type SpeechGenderDto = "female" | "male"
 /**
  * Whether read-aloud can speak now, and what downloading it involves.
  */
@@ -9554,15 +9901,39 @@ modelId: string; modelName: string;
 /**
  * Total bytes of the download.
  */
-downloadBytes: number; license: string; voices: SpeechVoiceDto[]; defaultVoice: string }
+downloadBytes: number; license: string; voicePack: SpeechVoicePackDto; voices: SpeechVoiceDto[]; defaultVoice: string }
 /**
- * One of the voices the downloaded model speaks in.
+ * One of the voices Kokoro can speak in.
  */
 export type SpeechVoiceDto = {
 /**
  * Kokoro's voice id, e.g. `bf_emma`.
  */
-id: string; name: string }
+id: string; name: string; accent: SpeechAccentDto; gender: SpeechGenderDto;
+/**
+ * hexgrad's overall grade for the voice's training data, `A` to `F+`.
+ */
+grade: string;
+/**
+ * True when everything this voice needs is on disk.
+ */
+downloaded: boolean }
+/**
+ * The second download: the voices and accents the first one leaves out.
+ */
+export type SpeechVoicePackDto = {
+/**
+ * True when the pack is downloaded and complete.
+ */
+ready: boolean;
+/**
+ * The catalog id to download.
+ */
+modelId: string; modelName: string;
+/**
+ * Total bytes of the download.
+ */
+downloadBytes: number }
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
@@ -9641,6 +10012,18 @@ export type StartLearningPracticalRunRequestDto = { operationId: string; runId: 
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
+/**
+ * What starting a drill came to.
+ */
+export type StartedCodeReviewDto =
+/**
+ * A drill was ready: this attempt is open on it.
+ */
+{ status: "started"; attemptId: string; mode: AttemptMode; startedAt: number; drill: CodeReviewDrillDto } |
+/**
+ * None was ready: this build will make one.
+ */
+{ status: "building"; jobId: string }
 export type StickyItemDto = { id: string; text: string; color: string; createdAt: string }
 /**
  * Why a lesson's preparation stopped, verbatim for "Copy details" (§8.4).
@@ -9669,6 +10052,25 @@ export type StudySourceDto = { chunkId: string; documentId: string; fileName: st
 url?: string | null }
 export type SubmitLearningDiagnosticRequestDto = { operationId: string; programId: string; diagnosticId: string; expectedRevision: number; responses: LearningDiagnosticResponseDto[]; saveOnly?: boolean; expectedDiagnosticRevision?: number | null }
 export type SubmitLearningPracticeAttemptRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+/**
+ * What the hidden suite made of the learner's files as a whole, run beside the key's fixes of the planted issues the
+ * learner left.
+ */
+export type SuiteVerdict =
+/**
+ * The suite passes: nothing that worked is broken. `ran_beside` is the issues, by position in the key, whose
+ * fixes it ran beside.
+ */
+{ status: "passed"; ranBeside: number[] } |
+/**
+ * The suite fails: the fix broke behaviour that worked. `output` is what it wrote, and `ran_beside` the issues,
+ * by position in the key, whose fixes it ran beside.
+ */
+{ status: "failed"; output: string; ranBeside: number[] } |
+/**
+ * The suite proved nothing: the drill has none, no runtime was there to run it, or the run did not finish.
+ */
+{ status: "not_run"; why: string }
 /**
  * Sync settings.
  */
@@ -9938,6 +10340,22 @@ focusDocumentIds?: string[] | null;
  */
 explorerFocus?: ExplorerFocusDto | null }
 /**
+ * What was said in a recording made in the app.
+ */
+export type TranscribedSpeechDto = {
+/**
+ * The words, empty when the recording was not speech.
+ */
+text: string;
+/**
+ * Language tag reported by the model.
+ */
+language: string;
+/**
+ * Length of the recording.
+ */
+durationMs: number }
+/**
  * The transcript of one audio file.
  */
 export type TranscriptDto = {
@@ -9988,7 +10406,11 @@ modelReady: boolean;
 /**
  * Display name of the model that would be used.
  */
-modelName: string | null }
+modelName: string | null;
+/**
+ * What to download for a voice conversation.
+ */
+voiceModel: VoiceModelDto }
 export type TruncateConversationAfterRequestDto = { conversationId: string; messageId: string;
 /**
  * When true, `message_id` itself is deleted as well. Defaults to false.
@@ -10322,6 +10744,26 @@ export type VisionProjectorDownloadDto = {
  * when the whole projector is already on disk.
  */
 downloadId: string | null }
+/**
+ * The transcription model offered for a voice conversation.
+ */
+export type VoiceModelDto = {
+/**
+ * Catalog id, to start the download with.
+ */
+modelId: string;
+/**
+ * Display name.
+ */
+modelName: string;
+/**
+ * Size of the download.
+ */
+downloadBytes: number;
+/**
+ * Licence of the weights.
+ */
+license: string }
 /**
  * The course's waiting claims checked against a source the user added
  * (UI design §5.3): the held lessons' open claims the source mentions.

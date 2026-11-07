@@ -22,6 +22,7 @@ vi.mock('@/features/learning/portability/PortabilityPanel', () => ({ Portability
   <button onClick={() => onImported('copy')}>Complete test copy</button>
 </> }));
 vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCourseFlow: ({ onImported }: { onImported: (id: string, title: string) => void }) => <button onClick={() => onImported('imported-1', 'Imported course')}>Complete test import</button> }));
+vi.mock('@/features/learning/drills/CodeReviewDrillScreen', () => ({ CodeReviewDrillScreen: ({ onBack }: { onBack: () => void }) => <div><p>The drill screen</p><button type="button" onClick={onBack}>Back from the drills</button></div> }));
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
@@ -375,7 +376,8 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     const mainNav = screen.getByRole('tablist', { name: 'Program workspace' });
-    expect(within(mainNav).getAllByRole('tab')).toHaveLength(6);
+    expect(within(mainNav).getAllByRole('tab')).toHaveLength(7);
+    expect(within(mainNav).getByRole('tab', { name: 'Tutor' })).toBeVisible();
     await user.click(within(mainNav).getByRole('tab', { name: 'Practice' }));
     await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
     const lab = screen.getByRole('textbox', { name: 'Lab scratchpad' });
@@ -627,5 +629,26 @@ describe('Learning Studio program workflow', () => {
     show('/studio?deck=deck-1');
     expect(await screen.findByRole('heading', { name: 'Cell biology' })).toBeVisible();
     expect(mocks.deck).toHaveBeenCalledWith('deck-1');
+  });
+
+  it('lists code review drills beside Flashcards, opens them at /studio?drills=open and comes back', async () => {
+    const user = userEvent.setup();
+    mocks.list.mockResolvedValue(ok([]));
+    show();
+    expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Code review drills' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Start a drill' }));
+    expect(await screen.findByText('The drill screen')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Flashcards' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back from the drills' }));
+    expect(await screen.findByRole('heading', { name: 'Code review drills' })).toBeVisible();
+    expect(screen.queryByText('The drill screen')).not.toBeInTheDocument();
+  });
+
+  it('opens the drills straight from a /studio?drills=open link', async () => {
+    mocks.list.mockResolvedValue(ok([]));
+    show('/studio?drills=open');
+    expect(await screen.findByText('The drill screen')).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Flashcards' })).not.toBeInTheDocument();
   });
 });

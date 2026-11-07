@@ -1,11 +1,12 @@
-//! Sentences of written text, and markdown read as plain text: what the
-//! claim review shows of a claim (its sentence in its paragraph) and what
-//! the checker confines a repair to.
+//! Markdown read as plain text, and a claim's sentence in its paragraph: what
+//! the claim review shows of a claim and what the checker confines a repair
+//! to.
 
 use once_cell::sync::Lazy;
 use regex::Regex;
 
 use super::normalize_whitespace;
+use super::segmentation::sentences;
 
 // The patterns are constants and compile; `None` would only leave the
 // syntax in the text, which is the safe direction.
@@ -15,34 +16,6 @@ static LINK: Lazy<Option<Regex>> =
     Lazy::new(|| Regex::new(r#"!?\[([^\]\n]*)\]\([^)\s]*(?:\s+"[^"]*")?\)"#).ok());
 static CITATION_MARKER: Lazy<Option<Regex>> =
     Lazy::new(|| Regex::new(r"[ \t]*\[\d+(?:[ \t]*[,–-][ \t]*\d+)*\]").ok());
-
-/// The byte spans of `text`'s sentences, trimmed: a sentence ends at a
-/// line break, or at '.', '!' or '?' before whitespace or the end.
-pub fn sentences(text: &str) -> Vec<(usize, usize)> {
-    let mut spans = Vec::new();
-    let mut start = 0;
-    let mut push = |from: usize, to: usize| {
-        let Some(piece) = text.get(from..to) else {
-            return;
-        };
-        let lead = piece.len() - piece.trim_start().len();
-        let trimmed = piece.trim();
-        if !trimmed.is_empty() {
-            spans.push((from + lead, from + lead + trimmed.len()));
-        }
-    };
-    let mut chars = text.char_indices().peekable();
-    while let Some((at, ch)) = chars.next() {
-        let before_space = chars.peek().is_none_or(|(_, next)| next.is_whitespace());
-        if ch == '\n' || (matches!(ch, '.' | '!' | '?') && before_space) {
-            let end = at + ch.len_utf8();
-            push(start, end);
-            start = end;
-        }
-    }
-    push(start, text.len());
-    spans
-}
 
 /// `markdown` as plain text on one line: headings, list and quote markers,
 /// emphasis, inline code ticks, link syntax (its text is kept) and `[n]`

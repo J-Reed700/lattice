@@ -1,12 +1,11 @@
 //! The course a tutor chat is bound to, opened for one turn.
 
 use super::binding::conversation_course;
-use super::cards::due_count;
+use super::cards::DueCard;
 use super::facts::replies_since_check;
 use super::prompt::{self, TurnFacts, TUTOR_POLICY};
 use super::tools;
 use crate::features::learning::dto::{LearningLessonDto, LearningModuleDto, LearningProgramDto};
-use crate::features::learning::persistence::now;
 use crate::features::learning::references::course_index::CourseIndexes;
 use crate::features::learning::repository::LearningRepository;
 use async_trait::async_trait;
@@ -21,6 +20,11 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tracing::warn;
+
+/// The due cards a turn's facts show; `due_reviews` lists the rest. A card
+/// asked on one turn is rated on the next, when the tool result that gave its
+/// id is gone, and a session works through them one at a time.
+const CARDS_SHOWN: usize = 5;
 
 /// Called after the tutor writes to a note, so the vault's mirror picks it up.
 pub type NoteWritten = Arc<dyn Fn() + Send + Sync>;
@@ -102,9 +106,10 @@ impl CourseTurn {
             }
         };
         let lessons = || program.modules.iter().flat_map(|module| &module.lessons);
-        let cards_due = due_count(&self.pool, &self.program_id, now())
+        let due = self
+            .due_cards()
             .await
-            .inspect_err(|error| warn!(%error, "Could not count the course's due cards"))
+            .inspect_err(|error| warn!(%error, "Could not read the course's due cards"))
             .ok();
         let replies_since_check = replies_since_check(&self.pool, &self.conversation_id)
             .await
@@ -122,7 +127,13 @@ impl CourseTurn {
                     Some((place(module, lesson), lesson.objective.clone()))
                 })
             }),
-            cards_due,
+            cards_due: due.as_ref().map(|cards| cards.len() as i64),
+            next_cards: due
+                .iter()
+                .flatten()
+                .take(CARDS_SHOWN)
+                .map(DueCard::entry)
+                .collect(),
             replies_since_check,
         }
     }

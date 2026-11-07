@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useApi } from '@/contexts/ApiContext';
 import { VaultAPI, type ApiClient } from '@/lib/api';
 import type { KnowledgeRequestDto } from '@/lib/bindings';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 
 const listRequest = (conversationId: string, offset: number): KnowledgeRequestDto => ({
   conversationId, action: 'list', itemId: null, text: null, scope: null, kind: null,
@@ -38,7 +39,7 @@ export function useManageKnowledgeMutation(onSaved: (request: KnowledgeRequestDt
       onSaved(request);
       await queryClient.invalidateQueries({ queryKey: ['conversationKnowledge'] });
       await queryClient.invalidateQueries({ queryKey: ['conversationMemory'] });
-      await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      await queryClient.invalidateQueries({ queryKey: conversationKeys.all });
     },
   });
 }

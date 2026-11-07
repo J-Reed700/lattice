@@ -1,0 +1,154 @@
+{
+  "name": "22-go-the-race-seen-from-the-call",
+  "kind": "exposing_line",
+  "why": "The first finding is on the call to failures.Add in Process, not on Add, where the lock is missing, so no finding overlaps the issue's lines. It names the cause in full (Add writes the map without the mutex while Process calls it from many goroutines): found, which the rubric allows from other lines ('it may be made on other lines than the issue's'). The second finding is false: the goroutine already takes id as a parameter, so there is no shared loop variable. The third is on the division in Percent and says only that the reviewer is not sure about it: it names no cause, which is the rubric's half_found for the division by zero. The workers guard is missed.",
+  "drill": {
+    "id": "batch-failures",
+    "language": "go",
+    "title": "Running a batch of calls",
+    "files": [
+      {
+        "path": "batch.go",
+        "text": "package batch\n\nimport (\n\t\"context\"\n\t\"sync\"\n)\n\n// Failures collects the errors of a batch. Add may be called from many goroutines.\ntype Failures struct {\n\tmu   sync.Mutex\n\tbyID map[string]error\n}\n\nfunc NewFailures() *Failures {\n\treturn &Failures{byID: make(map[string]error)}\n}\n\nfunc (f *Failures) Add(id string, err error) {\n\tf.byID[id] = err\n}\n\nfunc (f *Failures) Count() int {\n\tf.mu.Lock()\n\tdefer f.mu.Unlock()\n\treturn len(f.byID)\n}\n\n// Percent is the share of total calls that failed, rounded down.\nfunc (f *Failures) Percent(total int) int {\n\treturn f.Count() * 100 / total\n}\n\n// Process calls fn for every id, which must be distinct, with at most workers\n// calls running at once, and returns the errors the calls gave.\nfunc Process(ctx context.Context, ids []string, workers int, fn func(context.Context, string) error) *Failures {\n\tfailures := NewFailures()\n\tslots := make(chan struct{}, workers)\n\tvar wg sync.WaitGroup\n\tfor _, id := range ids {\n\t\tslots <- struct{}{}\n\t\twg.Add(1)\n\t\tgo func(id string) {\n\t\t\tdefer wg.Done()\n\t\t\tdefer func() { <-slots }()\n\t\t\tif err := fn(ctx, id); err != nil {\n\t\t\t\tfailures.Add(id, err)\n\t\t\t}\n\t\t}(id)\n\t}\n\twg.Wait()\n\treturn failures\n}\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "batch-add-without-lock",
+        "pattern": "concurrency.unsynchronised_shared_state",
+        "severity": "major",
+        "span": {
+          "path": "batch.go",
+          "start": 18,
+          "end": 20
+        },
+        "consequence": "Process calls Add from one goroutine per id, so the map is written from several goroutines at once, which Go does not allow: the runtime usually aborts the whole program with 'fatal error: concurrent map writes', and otherwise the map can be corrupted. The doc comment still promises that Add is safe to call from many goroutines.",
+        "fix": {
+          "path": "batch.go",
+          "before": "func (f *Failures) Add(id string, err error) {\n\tf.byID[id] = err\n}",
+          "after": "func (f *Failures) Add(id string, err error) {\n\tf.mu.Lock()\n\tdefer f.mu.Unlock()\n\tf.byID[id] = err\n}"
+        },
+        "explanation": "Add writes to a map without taking the mutex that the struct carries for exactly that, and Process calls it from many goroutines. Lock mu around the write, as Count does for its read.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the Lock and the deferred Unlock around the map write, and the clean code holds the mutex there."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "batch-percent-of-nothing",
+        "pattern": "correctness.boundary_and_empty_input",
+        "severity": "major",
+        "span": {
+          "path": "batch.go",
+          "start": 30,
+          "end": 30
+        },
+        "consequence": "For an empty batch total is 0, and an integer division by zero panics at run time, so reporting on a batch with no ids crashes the caller.",
+        "fix": {
+          "path": "batch.go",
+          "before": "\treturn f.Count() * 100 / total",
+          "after": "\tif total == 0 {\n\t\treturn 0\n\t}\n\treturn f.Count() * 100 / total"
+        },
+        "explanation": "Percent divides by total, which is 0 when no calls were made, and integer division by zero panics in Go. Return 0 for an empty batch before dividing.",
+        "proof": {
+          "judged": {
+            "reason": "A blind review of the finished code reported it, and the judge confirmed that the clean code has it too: nothing guards the division when total is 0."
+          }
+        },
+        "origin": "found_in_review"
+      },
+      {
+        "id": "batch-workers-below-one",
+        "pattern": "correctness.boundary_and_empty_input",
+        "severity": "major",
+        "span": {
+          "path": "batch.go",
+          "start": 36,
+          "end": 37
+        },
+        "consequence": "With workers set to 0 the slots channel has no buffer, so the first send on it blocks forever and Process never returns; with a negative number make panics.",
+        "fix": {
+          "path": "batch.go",
+          "before": "\tfailures := NewFailures()\n\tslots := make(chan struct{}, workers)",
+          "after": "\tif workers < 1 {\n\t\tworkers = 1\n\t}\n\tfailures := NewFailures()\n\tslots := make(chan struct{}, workers)"
+        },
+        "explanation": "Process uses workers as the size of a channel without checking it, so 0 deadlocks and a negative value panics. Treat anything below one as one before the channel is made.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the guard that raises workers to at least one before the channel is made."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "batch.go",
+      "text": "package batch\n\nimport (\n\t\"context\"\n\t\"sync\"\n)\n\n// Failures collects the errors of a batch. Add may be called from many goroutines.\ntype Failures struct {\n\tmu   sync.Mutex\n\tbyID map[string]error\n}\n\nfunc NewFailures() *Failures {\n\treturn &Failures{byID: make(map[string]error)}\n}\n\nfunc (f *Failures) Add(id string, err error) {\n\tf.mu.Lock()\n\tdefer f.mu.Unlock()\n\tf.byID[id] = err\n}\n\nfunc (f *Failures) Count() int {\n\tf.mu.Lock()\n\tdefer f.mu.Unlock()\n\treturn len(f.byID)\n}\n\n// Percent is the share of total calls that failed, rounded down.\nfunc (f *Failures) Percent(total int) int {\n\treturn f.Count() * 100 / total\n}\n\n// Process calls fn for every id, which must be distinct, with at most workers\n// calls running at once, and returns the errors the calls gave.\nfunc Process(ctx context.Context, ids []string, workers int, fn func(context.Context, string) error) *Failures {\n\tif workers < 1 {\n\t\tworkers = 1\n\t}\n\tfailures := NewFailures()\n\tslots := make(chan struct{}, workers)\n\tvar wg sync.WaitGroup\n\tfor _, id := range ids {\n\t\tslots <- struct{}{}\n\t\twg.Add(1)\n\t\tgo func(id string) {\n\t\t\tdefer wg.Done()\n\t\t\tdefer func() { <-slots }()\n\t\t\tif err := fn(ctx, id); err != nil {\n\t\t\t\tfailures.Add(id, err)\n\t\t\t}\n\t\t}(id)\n\t}\n\twg.Wait()\n\treturn failures\n}\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "batch.go",
+        "start": 46,
+        "end": 46
+      },
+      "text": "Process calls failures.Add from one goroutine per id, and Add writes the map without taking its mutex, so these goroutines write the map at the same time. Go aborts with 'concurrent map writes'. Add has to lock mu.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "batch.go",
+        "start": 42,
+        "end": 42
+      },
+      "text": "The goroutine should take id as a parameter, because the loop variable is shared between all of them.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "batch.go",
+        "start": 30,
+        "end": 30
+      },
+      "text": "Not sure about the division in Percent.",
+      "severity": null
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      {
+        "half_found": {
+          "finding": 2
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "false_positive",
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      }
+    ]
+  }
+}

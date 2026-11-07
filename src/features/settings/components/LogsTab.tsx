@@ -1,13 +1,12 @@
 import { useMemo, useState, useSyncExternalStore } from 'react';
 
-import { save } from '@tauri-apps/plugin-dialog';
-import { writeTextFile } from '@tauri-apps/plugin-fs';
-
 import { PageHeader } from '@/components/ui';
+import { describeFailure } from '@/lib/errorHandling';
 import { diagnostics } from '@/utils/diagnostics';
 
 import { exportLogEntries, fromBackend, mergeNewestFirst, type LogLevel, type LogOrigin } from './logEntries';
 import { useBackendLogsQuery } from '../hooks/useBackendLogsQuery';
+import { useJsonFileDialogs } from '../hooks/useJsonFileDialogs';
 
 const buttonClass = 'rounded-sm border border-border-default bg-surface px-3 py-1.5 text-sm text-text-secondary hover:bg-surface-raised disabled:opacity-50';
 const tones: Record<LogLevel, string> = {
@@ -21,6 +20,7 @@ const originLabels: Record<LogOrigin, string> = { app: 'App', backend: 'Backend'
 export function LogsTab() {
   const appEntries = useSyncExternalStore(diagnostics.subscribe, diagnostics.getSnapshot);
   const backendLogs = useBackendLogsQuery();
+  const { saveJsonFile } = useJsonFileDialogs();
   const backendEntries = useMemo(() => fromBackend(backendLogs.data ?? []), [backendLogs.data]);
   const entries = useMemo(() => mergeNewestFirst(appEntries, backendEntries), [appEntries, backendEntries]);
   const [search, setSearch] = useState('');
@@ -38,8 +38,9 @@ export function LogsTab() {
     setExporting(true);
     setNotice('');
     try {
-      const path = await save({ defaultPath: `lattice-logs-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] });
-      if (path) { await writeTextFile(path, exportLogEntries(entries)); setNotice('Logs exported.'); }
+      const saved = await saveJsonFile(`lattice-logs-${new Date().toISOString().slice(0, 10)}.json`, exportLogEntries(entries));
+      if (!saved.ok) throw new Error(describeFailure(saved));
+      if (saved.data) setNotice('Logs exported.');
     } catch (error) {
       diagnostics.capture(error, 'Log export');
       setNotice('Could not export logs. See the newest entry for details.');

@@ -175,7 +175,7 @@ def contexts(args):
 def run(args):
     path = os.path.join(args.out, "records.jsonl")
     done = {(r["key"], r["arm"]) for r in base.read_out(path)}
-    out = open(path, "a")
+    out = open(path, "a", encoding="utf-8")
     ctxs = contexts(args)
     print(f"{len(ctxs)} readings, {sum(len(c['fl']) for c in ctxs)} fact passages", flush=True)
     for ctx in ctxs:

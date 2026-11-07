@@ -1,5 +1,6 @@
 import type { BackendLogEntry } from '@/lib/bindings';
-import { redact, type DiagnosticEntry, type DiagnosticLevel } from '@/utils/diagnostics';
+import type { DiagnosticEntry, DiagnosticLevel } from '@/utils/diagnostics';
+import { redact } from '@/utils/redact';
 
 /** Which side of the app wrote an entry. */
 export type LogOrigin = 'app' | 'backend';

@@ -104,6 +104,12 @@ pub trait DocumentRepositoryPort: RepositoryPort<Document> {
     /// - `AppError::Database` if delete operation fails
     async fn delete(&self, document_id: &str) -> Result<()>;
 
+    /// Delete a document whose file is a library blob, recording in the same
+    /// write that the blob was let go of, so a release this process does not
+    /// finish is finished at the next start. Required, so no repository can
+    /// skip the record by accident.
+    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()>;
+
     /// Find a document by its content checksum.
     ///
     /// This is used for duplicate detection during indexing to avoid re-indexing

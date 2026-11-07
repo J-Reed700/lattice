@@ -252,6 +252,8 @@ fn main() {
                     "reset_settings",
                     "export_settings",
                     "import_settings",
+                    "save_text_file",
+                    "open_text_file",
                     "get_system_theme",
                     "validate_folder_path",
                     "test_ollama_connection",
@@ -606,6 +608,11 @@ fn main() {
                     "create_learning_tangent",
                     "list_learning_tangents",
                     "set_conversation_course",
+                    "start_code_review_drill",
+                    "submit_code_review",
+                    "code_review_result",
+                    "regrade_code_review",
+                    "code_review_languages",
                 ]),
             )
             .plugin(
@@ -618,8 +625,11 @@ fn main() {
             )
             .plugin(
                 "transcription",
-                tauri_build::InlinedPlugin::new()
-                    .commands(&["transcribe_file", "get_transcription_status"]),
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "transcribe_file",
+                    "transcribe_speech",
+                    "get_transcription_status",
+                ]),
             )
             .plugin(
                 "speech",

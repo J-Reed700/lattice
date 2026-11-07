@@ -36,6 +36,7 @@ impl Checksum {
     ///
     /// Returns an error if the hash string is empty or invalid format.
     pub fn new(hash: String) -> Result<Self> {
+        let hash = hash.to_ascii_lowercase();
         if hash.is_empty() {
             return Err(AppError::InvalidInput("Checksum cannot be empty".into()));
         }
@@ -72,8 +73,7 @@ impl Checksum {
 
 impl From<String> for Checksum {
     fn from(s: String) -> Self {
-        // Note: This implementation doesn't validate. Use Checksum::new() for validation.
-        Checksum(s)
+        Checksum(s.to_ascii_lowercase())
     }
 }
 
@@ -128,6 +128,32 @@ mod tests {
 
         assert_eq!(checksum1, checksum2);
         assert!(checksum1.matches(&checksum2));
+    }
+
+    #[test]
+    fn test_checksum_new_normalizes_to_lowercase() {
+        let upper = "A".repeat(64);
+        let expected = "a".repeat(64);
+        let checksum = Checksum::new(upper).unwrap();
+        assert_eq!(checksum.as_str(), expected);
+    }
+
+    #[test]
+    fn test_checksum_case_insensitive_matching() {
+        let upper = "A".repeat(64);
+        let lower = "a".repeat(64);
+        let checksum1 = Checksum::new(upper).unwrap();
+        let checksum2 = Checksum::new(lower).unwrap();
+        assert_eq!(checksum1, checksum2);
+        assert!(checksum1.matches(&checksum2));
+    }
+
+    #[test]
+    fn test_checksum_from_normalizes_to_lowercase() {
+        let upper = "A".repeat(64);
+        let expected = "a".repeat(64);
+        let checksum = Checksum::from(upper);
+        assert_eq!(checksum.as_str(), expected);
     }
 
     #[test]
@@ -246,16 +272,15 @@ mod tests {
             }
 
             #[test]
-            fn prop_checksum_case_preserved(hex in valid_checksum_hex_mixed_case()) {
+            fn prop_checksum_normalized_to_lowercase(hex in valid_checksum_hex_mixed_case()) {
                 // GIVEN: Mixed-case hex string
                 // WHEN: Creating checksum
                 let result = Checksum::new(hex.clone());
 
-                // THEN: If valid, case should be preserved as-is
+                // THEN: If valid, checksum is normalized to lowercase
                 if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
                     if let Ok(checksum) = result {
-                        // Checksum stores the string as-is without normalization
-                        prop_assert_eq!(checksum.as_str(), hex);
+                        prop_assert_eq!(checksum.as_str(), hex.to_ascii_lowercase());
                     }
                 }
             }

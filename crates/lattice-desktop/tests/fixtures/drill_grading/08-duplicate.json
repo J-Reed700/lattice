@@ -1,0 +1,116 @@
+{
+  "name": "08-duplicate",
+  "kind": "duplicate",
+  "why": "Two findings on the same lines make the same point about the idempotency key. The earlier one is credited with the find and the later one still matches the issue, so it is not a false positive. The missing wait is not mentioned.",
+  "drill": {
+    "id": "payments-retry",
+    "language": "javascript",
+    "title": "Charging a card with retries",
+    "files": [
+      {
+        "path": "payments.js",
+        "text": "const MAX_ATTEMPTS = 3;\n\nasync function chargeCard(client, order) {\n  const body = JSON.stringify({\n    orderId: order.id,\n    amountCents: order.totalCents,\n    card: order.cardToken,\n  });\n  let lastError;\n  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {\n    try {\n      const response = await client.post(\"/charges\", body, {\n        timeoutMs: 5000,\n      });\n      return response.json();\n    } catch (error) {\n      lastError = error;\n    }\n  }\n  throw lastError;\n}\n\nmodule.exports = { chargeCard };\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "payments-no-idempotency-key",
+        "pattern": "errors.retry_not_idempotent",
+        "severity": "critical",
+        "span": {
+          "path": "payments.js",
+          "start": 12,
+          "end": 14
+        },
+        "consequence": "When a charge times out after it went through, the retry sends it again with nothing to say it is the same payment, so the customer is charged twice.",
+        "fix": {
+          "path": "payments.js",
+          "before": "      const response = await client.post(\"/charges\", body, {\n        timeoutMs: 5000,\n      });",
+          "after": "      const response = await client.post(\"/charges\", body, {\n        headers: { \"Idempotency-Key\": order.id },\n        timeoutMs: 5000,\n      });"
+        },
+        "explanation": "The charge is retried, but the request has no idempotency key, so the service cannot tell a retry from a new payment. Send the order id as the key and a repeated request is applied once.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the Idempotency-Key header that the clean code sends with every attempt."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "payments-retry-without-backoff",
+        "pattern": "errors.retry_without_backoff",
+        "severity": "major",
+        "span": {
+          "path": "payments.js",
+          "start": 16,
+          "end": 18
+        },
+        "consequence": "A failed charge is retried at once, so a payment service that is struggling gets three requests back to back and a short blip is more likely to become an outage.",
+        "fix": {
+          "path": "payments.js",
+          "before": "    } catch (error) {\n      lastError = error;\n    }",
+          "after": "    } catch (error) {\n      lastError = error;\n      if (attempt < MAX_ATTEMPTS) {\n        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));\n      }\n    }"
+        },
+        "explanation": "The catch block moves straight on to the next attempt. Wait between attempts, and wait longer each time, so a struggling service gets room to recover.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the growing wait that the clean code makes between attempts."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "payments.js",
+      "text": "const MAX_ATTEMPTS = 3;\n\nasync function chargeCard(client, order) {\n  const body = JSON.stringify({\n    orderId: order.id,\n    amountCents: order.totalCents,\n    card: order.cardToken,\n  });\n  let lastError;\n  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {\n    try {\n      const response = await client.post(\"/charges\", body, {\n        headers: { \"Idempotency-Key\": order.id },\n        timeoutMs: 5000,\n      });\n      return response.json();\n    } catch (error) {\n      lastError = error;\n      if (attempt < MAX_ATTEMPTS) {\n        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));\n      }\n    }\n  }\n  throw lastError;\n}\n\nmodule.exports = { chargeCard };\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "payments.js",
+        "start": 12,
+        "end": 14
+      },
+      "text": "No idempotency key on this POST. If a timeout hides a success, the retry charges the customer twice.",
+      "severity": "critical"
+    },
+    {
+      "span": {
+        "path": "payments.js",
+        "start": 12,
+        "end": 14
+      },
+      "text": "The charge request can be applied twice when it is retried, because nothing identifies it as the same payment.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

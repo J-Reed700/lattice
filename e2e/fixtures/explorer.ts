@@ -36,9 +36,16 @@ export async function installExplorerFixture(page: Page) {
     generate_chat_starters: () => ({ fingerprint: '', generatedAt: stamp, starters: [], documentCount: 0 }),
     'dialog|open': () => state.picker,
     list_downloads: () => [],
+    // Iris, in the rail, lists what is running and counts the flashcards due.
     activity_snapshot: () => ({ items: [], running: 0 }),
-    // Iris, in the rail, counts the flashcards due.
     list_study_decks: () => [],
+    // Every answer and lesson offers Listen; the voice is not downloaded.
+    get_speech_status: () => ({
+      modelReady: false, modelId: 'kokoro-82m-british', modelName: 'Kokoro 82M', downloadBytes: 0, license: 'Apache-2.0',
+      voicePack: { ready: false, modelId: 'kokoro-82m-more-voices', modelName: 'Kokoro 82M: more voices', downloadBytes: 0 },
+      voices: [{ id: 'bf_emma', name: 'Emma', accent: 'british', gender: 'female', grade: 'B-', downloaded: false }],
+      defaultVoice: 'bf_emma',
+    }),
     // The folder chat lists each cloud provider's models; no keys are saved here.
     list_cloud_models: () => ({ hasApiKey: false, models: [] }),
     get_batch_history: () => ({ jobs: [] }),

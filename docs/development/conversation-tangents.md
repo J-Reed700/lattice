@@ -1,10 +1,12 @@
 # Conversation tangents
 
-Chat and Explorer both render `ChatPanel`. Its `ConversationTangents` wrapper owns the tangent drawer. Every completed assistant reply has a visible **Tangent** action alongside Copy and Reference, which starts from that reply. For replies over 8,000 characters, an editable passage picker lets the user narrow the starting point without needing to highlight text.
+Chat and Explorer both render `ChatPanel`. Its `ConversationTangents` wrapper owns the tangent drawer. Every completed assistant reply has a visible **Tangent** action alongside Copy and Reference, which starts from that reply, whatever its length.
 
 Highlighting text also reveals **Ask in a tangent** beside the passage, without moving focus or interrupting selection. The same action remains in the right-click menu. A selection must stay within one completed answer; other selections and context menus retain their normal behavior. These entry points all use the same creation and drawer flow.
 
 Tangents use the existing conversation and message tables, generation lifecycle, streaming events, message renderer, citations, bookmarks, retry, regeneration, and cancellation. `ConversationSnapshotProvider` lets the drawer render another transcript through that same controller without changing the globally selected conversation. It does not create a second controller or stream listener lifecycle.
+
+The chat inside the drawer is `ChatPanel` itself, embedded: its composer, model and space pickers, attachments, read-aloud, citations and the rest are the main chat's, not a copy. `TangentConversation` scopes it to the tangent's conversation through the snapshot provider, after the inherited messages, and says when a turn ends. The provider also names the message the thread follows (`threadStartsAfter`), so a branch before the tangent's first question still forks with the inherited context instead of coming up empty. Course tangents (`CourseTangentChat`) use the same two pieces. The drawer itself is a `TangentDock`: its left edge drags between 340 and 800px, remembered under `tangents.width`, and its header can expand it over the conversation beside it.
 
 ## Persistence
 
@@ -25,7 +27,7 @@ The conversation detail response includes `tangentParentId`. Selecting a tangent
 ## Verification
 
 - Repository tests in `crates/lattice-desktop/src/features/conversation/repository/tests/tangents.rs` cover ownership, snapshot isolation, hidden lists, invalid anchors, transaction rollback, promotion, deletion, nested tangents, and Explorer context.
-- The selection and reply-action tests exercise discovery after highlighting, preserved focus, selection boundaries, keyboard behavior, and narrowing long replies. Controller tests cover cache isolation, composer recovery, and linked tangents.
+- The selection and reply-action tests exercise discovery after highlighting, preserved focus, selection boundaries, keyboard behavior, and long replies and blank selections. Controller tests cover cache isolation, composer recovery, and linked tangents.
 - The `chat tangents` journeys in `e2e/app-shell.spec.ts` use the production renderer in Chromium and WebKit at wide and narrow widths. They exercise all three entry points, sending, independent drafts, reopening saved tangents, deep links, promotion failure and retry, and the main transcript remaining intact.
 
 Browser fixtures model the IPC responses; the native repository tests verify actual SQLite behavior.

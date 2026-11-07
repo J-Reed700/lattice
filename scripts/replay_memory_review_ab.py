@@ -8,10 +8,14 @@ for changes that must still pass or fail, under the shipped prompt, an added que
 
   python -I -u scripts/replay_memory_review_ab.py --shipped A/prompts.rs --candidate B/prompts.rs \
       --llama URL --out OUT.jsonl [--seeds 5]
+  python -I -u scripts/replay_memory_review_ab.py --shipped A/prompts.rs --candidate B/prompts.rs \
+      --claude claude-haiku-5-5 --budget 1 --out OUT.jsonl [--seeds 5]
   python -I scripts/replay_memory_review_ab.py --summary OUT.jsonl
 
 `--shipped` and `--candidate` are `conversation/memory/prompts.rs` from two checkouts; the candidate holds the lists. An
-auth header comes from LLAMA_AUTH_HEADER_NAME and LLAMA_AUTH_HEADER_VALUE, never from a command line.
+auth header comes from LLAMA_AUTH_HEADER_NAME and LLAMA_AUTH_HEADER_VALUE, never from a command line. On Claude
+(scripts/replay_claude.py) the request is sent as the app's Claude adapter sends the reviewer's: adaptive thinking, the
+schema as its output format, no sampling settings; every call's price goes to OUT.jsonl.spend.jsonl.
 """
 import argparse
 import json
@@ -24,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import replay_claude as claude
 from replay_model import one_model, served_model
 
 ARMS = ("shipped", "question", "lists", "lists_question")
@@ -135,16 +140,17 @@ def payload(scenario, questions):
          "surrounding_original_text": around[:1]},
         {**addition, "id": "addition:c2", "proposed_evidence": [new], "proposed_label": scenario["later_label"],
          "surrounding_original_text": around[1:]},
+        # The transition replaces c1 with c2, so verify.rs proposes c2's label and shows c1's as the existing item.
         {"change": "supersede_item", "existing_item_evidence": [old], "existing_item_label": scenario["earlier_label"],
          "id": "transition:c1", "kind": scenario["kind"], "proposed_evidence": [new],
-         "proposed_label": scenario["earlier_label"], "surrounding_original_text": around},
+         "proposed_label": scenario["later_label"], "surrounding_original_text": around},
     ]
     body = {"questions": questions, "reviews": reviews, "task": "review_memory_changes",
             "verdicts_required_for_every_id": True}
     return json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def ask(url, system, user, seed):
+def ask(args, system, user, seed):
     body = {
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "max_tokens": VERIFIER_OUTPUT_TOKENS,
@@ -154,8 +160,10 @@ def ask(url, system, user, seed):
         "chat_template_kwargs": {"enable_thinking": False},
         "response_format": {"type": "json_schema", "json_schema": {"name": "response", "strict": True, "schema": SCHEMA}},
     }
+    if args.claude:
+        return claude.call(body, "review")["content"]
     request = urllib.request.Request(
-        url.rstrip("/") + "/v1/chat/completions", json.dumps(body).encode("utf-8"),
+        args.llama.rstrip("/") + "/v1/chat/completions", json.dumps(body).encode("utf-8"),
         {"Content-Type": "application/json"},
     )
     name, value = os.environ.get("LLAMA_AUTH_HEADER_NAME"), os.environ.get("LLAMA_AUTH_HEADER_VALUE")
@@ -166,7 +174,11 @@ def ask(url, system, user, seed):
 
 
 def run(args):
-    model = served_model(args.llama)
+    if args.claude:
+        model = args.claude
+        claude.use(model, args.out + ".spend.jsonl", args.budget)
+    else:
+        model = served_model(args.llama)
     print(model, flush=True)
     shipped = verifier_system(args.shipped)
     lists = verifier_system(args.candidate)
@@ -188,11 +200,13 @@ def run(args):
                     if (arm, scenario["name"], seed) in done:
                         continue
                     system, questions = arms[arm]
-                    raw = ask(args.llama, system, payload(scenario, questions), seed)
+                    raw = ask(args, system, payload(scenario, questions), seed)
                     sink.write(json.dumps({"model": model, "arm": arm, "scenario": scenario["name"], "seed": seed,
                                            "raw": raw}, ensure_ascii=False) + "\n")
                     sink.flush()
             print(f"seed {seed} done", flush=True)
+    if args.claude:
+        claude.print_spend(args.out + ".spend.jsonl")
 
 
 def summary(path):
@@ -223,6 +237,7 @@ def main():
     parser.add_argument("--out")
     parser.add_argument("--seeds", type=int, default=5)
     parser.add_argument("--summary")
+    claude.add_arguments(parser)
     args = parser.parse_args()
     if args.summary:
         summary(args.summary)

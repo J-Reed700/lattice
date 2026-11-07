@@ -1,14 +1,18 @@
 import { canOpenActivity, useOpenActivity } from '@/features/activity/hooks/useOpenActivity';
-import { progressPercent, stateLine } from '@/features/activity/model/activityFormat';
+import {
+  activitySummary,
+  formatProgress,
+  formatTimeLeft,
+  progressPercent,
+  STATE_WORDS,
+  stateLine,
+} from '@/features/activity/model/activityFormat';
 import type { ActivityEntryDto } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 
 import { IrisOrb } from './IrisOrb';
 
 import type { IrisDestination, IrisReading } from '../model/irisReading';
-
-/** Enough to see what is going on; the Activity drawer lists the rest. */
-const WORK_SHOWN = 4;
 
 const SECTION_HEADING = 'text-xxs uppercase tracking-[0.08em] text-text-muted';
 const LINK_BUTTON =
@@ -23,20 +27,49 @@ interface IrisCardProps {
 }
 
 function WorkRow({ item, now, onOpen }: { item: ActivityEntryDto; now: number; onOpen: (item: ActivityEntryDto) => void }) {
-  const percent = item.progress ? progressPercent(item.progress) : null;
+  const measured = item.progress && { percent: progressPercent(item.progress), text: formatProgress(item.progress) };
+  const facts = [
+    measured?.text,
+    item.secondsLeft !== null && item.state === 'running' ? formatTimeLeft(item.secondsLeft) : null,
+    item.holding,
+  ].filter((fact): fact is string => Boolean(fact));
   const body = (
-    <>
-      <span className="flex items-baseline justify-between gap-2">
-        <span className="truncate text-xs font-medium text-text-primary">{item.title}</span>
-        {percent !== null && <span className="shrink-0 text-xxs tabular-nums text-text-muted">{percent}%</span>}
-      </span>
-      <span className="block truncate text-xxs font-normal text-text-muted">{stateLine(item, now)}</span>
-      {percent !== null && (
-        <span className="iris-bar mt-1.5" aria-hidden="true">
-          <span style={{ width: `${percent}%` }} />
+    <span className="flex items-start gap-2">
+      <span className="iris-dot" data-state={item.state} aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline justify-between gap-2">
+          <span className="truncate text-xs font-medium leading-5 text-text-primary">{item.title}</span>
+          {measured && <span className="shrink-0 text-xxs tabular-nums text-text-muted">{measured.percent}%</span>}
         </span>
-      )}
-    </>
+        <span className="block text-xxs font-normal text-text-muted">
+          <span className="sr-only">{STATE_WORDS[item.state]}: </span>
+          {stateLine(item, now)}
+        </span>
+        {measured && (
+          <span
+            role="progressbar"
+            aria-label={`${item.title} progress`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={measured.percent}
+            aria-valuetext={measured.text}
+            className="iris-bar mt-1.5"
+          >
+            <span style={{ width: `${measured.percent}%` }} />
+          </span>
+        )}
+        {facts.length > 0 && (
+          <span className="mt-1 flex flex-wrap gap-x-2 text-xxs font-normal text-text-muted">
+            {facts.map((fact, index) => (
+              <span key={fact}>
+                {index > 0 && <span aria-hidden="true" className="mr-2">·</span>}
+                {fact}
+              </span>
+            ))}
+          </span>
+        )}
+      </span>
+    </span>
   );
   const shape = '-mx-2 block w-[calc(100%+1rem)] rounded-md px-2 py-1.5 text-left';
   if (!canOpenActivity(item)) return <li className={shape}>{body}</li>;
@@ -53,12 +86,11 @@ function WorkRow({ item, now, onOpen }: { item: ActivityEntryDto; now: number; o
   );
 }
 
-/** What Iris says when you click her: one line, anything worth a look, and what is running. */
+/** What Iris says when you click her: one line, anything worth a look, and everything that is running. */
 export function IrisCard({ reading, onGo, onHide, onClose }: IrisCardProps) {
   const openItem = useOpenActivity(onClose);
   const now = Date.now();
-  const shown = reading.work.slice(0, WORK_SHOWN);
-  const more = reading.work.length - shown.length;
+  const { work, activityFailed } = reading;
 
   return (
     <div className="text-text-primary">
@@ -91,18 +123,24 @@ export function IrisCard({ reading, onGo, onHide, onClose }: IrisCardProps) {
         </section>
       )}
 
-      {shown.length > 0 && (
+      {(work.length > 0 || !activityFailed) && (
         <section aria-labelledby="iris-work" className="border-t border-border-subtle px-4 py-3">
-          <h3 id="iris-work" className={SECTION_HEADING}>Working on</h3>
-          <ul className="mt-1.5 space-y-0.5">
-            {shown.map((item) => (
-              <WorkRow key={item.id} item={item} now={now} onOpen={openItem} />
-            ))}
-          </ul>
-          {more > 0 && (
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 id="iris-work" className={SECTION_HEADING}>Working on</h3>
+            <p className="text-xxs font-normal text-text-muted">{activitySummary(work)}</p>
+          </div>
+          {work.length === 0 ? (
             <p className="mt-1.5 text-xxs font-normal text-text-muted">
-              And {more} more in Activity.
+              Lessons, indexes, model requests and downloads appear here while they run.
             </p>
+          ) : (
+            <div className="-mx-2.5 mt-1 max-h-72 overflow-y-auto overscroll-contain px-2.5 py-0.5">
+              <ul aria-label="Running, paused and waiting work" className="space-y-0.5">
+                {work.map((item) => (
+                  <WorkRow key={item.id} item={item} now={now} onOpen={openItem} />
+                ))}
+              </ul>
+            </div>
           )}
         </section>
       )}

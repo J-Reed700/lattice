@@ -8,7 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Every English Kokoro voice in Read aloud**: all 28 American and British voices, grouped by accent with hexgrad's grade for each. American voices read with American phonemes. They come as a second download of about 21 MB, **Kokoro 82M: more voices**; an install that has the first download keeps working and does not fetch it again
 - **Conversation outline**: a collapsible rail on the right of chat shows your current message, opens numbered previews for jumping through long conversations, and provides previous, next, and latest-message controls. Its expanded preference is remembered.
+- **Voice conversations**: a mic beside Send in every chat, in Conversation, Explorer and the Tutor. Press it and talk: Whisper hears you, the turn goes out as an ordinary message, Kokoro says the reply as it is written, and it listens again. Talking over a reply stops it. Whisper Tiny downloads from the Read aloud settings, and on an x86 PC Whisper now hears a short sentence in a few seconds rather than half a minute.
 - **Explorer** (`/explorer`, ⌘6): a folder from disk beside a chat
   - Pick a folder once; the tree, the viewer and the model's tools stay inside it until you close it
   - Back and forward through the files opened (‹ › above the file, ⌘[ and ⌘])

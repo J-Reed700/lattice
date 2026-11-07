@@ -24,10 +24,11 @@ use crate::features::function_calling::registry::{
 };
 use crate::features::function_calling::{FunctionExecutorTrait, FunctionRegistryTrait};
 use crate::features::llm::instances::LlmInstances;
-use crate::features::web::services::web::WebService;
+use crate::features::web::services::web::{build_instance_client, public_web_client, WebService};
 use crate::interfaces::settings_side_effects::ContainerSettingsSideEffects;
 use lattice_core::application::ports::EmbeddingPort as EmbeddingServiceTrait;
 use lattice_core::application::ports::SettingsSideEffectsPort;
+use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
@@ -125,6 +126,11 @@ pub struct Container {
 
     /// Pictures shown inline in chat answers; fetched through `web_service`.
     pub(crate) chat_images: Arc<crate::features::web::images::ChatImageService>,
+
+    /// Whether the sweeps that delete files no row names may run. Shut until
+    /// startup finds that this database owns the files; the snapshot and
+    /// picture services hold the same gate.
+    pub(crate) sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,
 
     /// The Explorer's folder indexes: the open folder and its builds, which
     /// run as jobs. Built with the app handle, which it loads the embedder
@@ -326,6 +332,7 @@ impl Container {
         );
         tracing::debug!("AIModule initialized");
 
+        let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
         let indexing = Arc::new(
             super::modules::IndexingModule::new(
                 db_pool,
@@ -336,6 +343,7 @@ impl Container {
                     query_cache: query_cache.clone(),
                     index_observer: summary_tier.trigger().clone(),
                     extraction_workers,
+                    sweep_gate: Arc::clone(&sweep_gate),
                 },
             )
             .await?,
@@ -393,6 +401,8 @@ impl Container {
                 recent_documents_repository: library.recent_docs_repo().clone(),
                 file_storage: indexing.file_storage().clone(),
                 web_service: web_service.clone(),
+                http_client: public_web_client()?,
+                custom_tool_client: build_instance_client(WEB_REQUEST_TIMEOUT)?,
             },
             custom_tool_map,
         )) as Arc<dyn FunctionExecutorTrait>;
@@ -424,11 +434,13 @@ impl Container {
             Arc::clone(&jobs),
             Arc::clone(&web_snapshot_events),
             Arc::clone(core.background()),
+            Arc::clone(&sweep_gate),
         )?;
         let chat_images = crate::features::web::di::build_chat_images(
             core.db_pool().clone(),
             Arc::clone(&web_service),
             Arc::clone(core.background()),
+            Arc::clone(&sweep_gate),
         )?;
 
         let turn_cancellation = Arc::new(
@@ -466,6 +478,7 @@ impl Container {
             web_page_snapshots,
             web_snapshot_events,
             chat_images,
+            sweep_gate,
             turn_cancellation,
             research_waiters,
             outline_run_registry,
@@ -562,6 +575,16 @@ impl Container {
         let embedders: Arc<dyn crate::infrastructure::passage_index::EmbedderSource> = Arc::new(
             crate::features::embedding::di::AppEmbedders::new(handle.clone()),
         );
+        self.app_handle = Some(handle);
+        self.with_passage_indexes(embedders)
+    }
+
+    /// The folder and course indexes, embedding through `embedders`. The app
+    /// attaches them with its handle; an eval with no app passes its own.
+    pub fn with_passage_indexes(
+        mut self,
+        embedders: Arc<dyn crate::infrastructure::passage_index::EmbedderSource>,
+    ) -> Self {
         let searches: Arc<
             dyn lattice_core::application::ports::hybrid_search::HybridSearchFactory,
         > = Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory);
@@ -592,8 +615,6 @@ impl Container {
             ),
         );
         self.index_turns = Some(turns);
-
-        self.app_handle = Some(handle);
         self
     }
 }

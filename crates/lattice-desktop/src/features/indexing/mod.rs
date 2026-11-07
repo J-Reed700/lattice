@@ -13,6 +13,8 @@
 //! - `crate::features::indexing::use_cases` — index/reindex/delete use cases
 //! - `crate::features::indexing::library_gc` — LibraryGc, the one owner of
 //!   blob deletion in `~/.lattice/files`
+//! - `crate::features::indexing::library_owner` — which database owns the
+//!   files the startup sweeps delete
 //! - `crate::features::indexing::commands` — Tauri command handlers
 //!
 //! ## Engine
@@ -30,6 +32,7 @@ pub mod content_extraction_adapter;
 pub mod di;
 pub mod dto;
 pub mod library_gc;
+pub mod library_owner;
 pub mod mapper;
 pub mod note_index_sink;
 pub mod outcome;

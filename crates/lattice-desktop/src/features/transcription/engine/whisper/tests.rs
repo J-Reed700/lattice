@@ -2,6 +2,37 @@ use super::decode::{argmax, compression_ratio};
 use super::*;
 use candle_transformers::models::whisper;
 
+/// The switch is read once per thread, so each look needs a thread of its own.
+#[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+fn loads_as_floats() -> bool {
+    use candle_core::quantized::{GgmlDType, QMatMul, QTensor};
+    use candle_core::DType;
+
+    std::thread::spawn(|| {
+        let weights = Tensor::zeros((2, 32), DType::F32, &Device::Cpu).unwrap();
+        let weights = QTensor::quantize(&weights, GgmlDType::Q8_0).unwrap();
+        matches!(
+            QMatMul::from_arc(Arc::new(weights)).unwrap(),
+            QMatMul::Tensor(_)
+        )
+    })
+    .join()
+    .unwrap()
+}
+
+/// A candle upgrade could rename the switch and quietly bring back the scalar
+/// q8 kernels, which take a minute over a short sentence.
+#[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+#[test]
+fn whisper_weights_load_as_floats_on_x86() {
+    std::env::remove_var("CANDLE_DEQUANTIZE_ALL");
+    assert!(!loads_as_floats());
+
+    prefer_float_weights();
+
+    assert!(loads_as_floats());
+}
+
 #[test]
 fn only_one_idle_unload_timer_can_be_active() {
     let active = Arc::new(AtomicBool::new(false));

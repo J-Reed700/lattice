@@ -9,7 +9,7 @@ import { BATCH_IMPORT_JOBS } from '@/features/batch/jobKinds';
 import { useJobStatus } from '@/features/jobs/api';
 import type { ApiClient } from '@/lib/api';
 import type { BatchJobSummary, BatchJobStatus, BatchJobItem } from '@/types/api/batch';
-import { listAllBatchJobs, deleteBatchJob, retryFailedItems, getBatchJobDetails } from '@/utils/batchHistory';
+import { listAllBatchJobs, deleteBatchJob, retryFailedItems, getBatchJobDetails, BATCH_IMPORT_JOBS_QUERY_KEY } from '@/utils/batchHistory';
 import { validateIndexablePath } from '@/utils/indexingFileValidation';
 
 interface ImportHistoryProps { onRefresh?: () => void; }
@@ -35,7 +35,7 @@ function recoveryHint(error: string | null): string {
 }
 
 const importHistoryKeys = {
-  all: ['import-history'] as const,
+  all: BATCH_IMPORT_JOBS_QUERY_KEY,
   list: () => [...importHistoryKeys.all, 'list'] as const,
   job: (id: string) => [...importHistoryKeys.all, 'details', id] as const,
   /** A summary that has moved on reads fresh details by itself. */

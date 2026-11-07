@@ -12,7 +12,6 @@ vi.mock('@/features/model/components/Downloads/HeaderDownloadsIndicator', () => 
   HeaderDownloadsIndicator: () => null,
 }));
 vi.mock('@/features/files/components/IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: () => null }));
-vi.mock('@/features/activity/components/ActivityIndicator', () => ({ ActivityIndicator: () => null }));
 vi.mock('@/features/iris/components/Iris', () => ({ Iris: () => null }));
 
 // The rail renders `null` under the mock above (and on a real idle vault), so
@@ -63,6 +62,11 @@ describe('Layout', () => {
     const nav = screen.getByRole('navigation', { name: 'Main navigation' });
     const buttons = Array.from(nav.querySelectorAll('button')).map((b) => b.getAttribute('aria-label'));
     expect(buttons).toEqual(NAV_LABELS);
+  });
+
+  it('has no Activity button: what is running is shown by Iris', () => {
+    renderLayout();
+    expect(screen.queryByRole('button', { name: /^Activity/ })).not.toBeInTheDocument();
   });
 
   it('marks the current route with aria-current', () => {

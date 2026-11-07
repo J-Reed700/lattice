@@ -7,9 +7,10 @@ use tracing::instrument;
 use crate::features::indexing::dto::IndexFileRequestDto;
 use crate::features::indexing::mapper::IndexingMapper;
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
-use lattice_core::application::factories::{ChecksumFactory, FileMetadataFactory};
+use lattice_core::application::factories::FileMetadataFactory;
 use lattice_core::application::ports::ImportedBlob;
 use lattice_core::domain::entities::Document;
+use lattice_core::domain::value_objects::Checksum;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::ValidatedFilePath;
 
@@ -34,8 +35,7 @@ impl IndexFileUseCase {
             .file_storage
             .compute_hash(source_path.as_path())
             .await?;
-        let content_checksum =
-            lattice_core::domain::value_objects::Checksum::new(content_hash.clone())?;
+        let content_checksum = Checksum::new(content_hash.clone())?;
 
         let requested_context: Option<
             lattice_core::domain::value_objects::source_context::SourceContext,
@@ -67,15 +67,38 @@ impl IndexFileUseCase {
         }
 
         let already_in_library = self.content_storage.exists_by_hash(&content_hash).await?;
+        // Before the copy: a blob this import writes is never on disk without
+        // the record that lets a later start collect it. A copy that fails
+        // keeps the record for that reason.
+        let mut import_intent = if already_in_library {
+            None
+        } else {
+            self.begin_import(&content_hash).await?
+        };
         let ImportedBlob {
             path: library_path,
             hash: library_hash,
             lease,
+            created,
         } = self
             .content_storage
             .import_file(source_path.as_path())
             .await?;
-        let imported_new = !already_in_library;
+        if created && import_intent.is_none() {
+            // The blob went between the check and the copy, so this import
+            // wrote it again; record that now rather than not at all.
+            import_intent = match self.begin_import(&library_hash).await {
+                Ok(intent) => intent,
+                Err(error) => {
+                    tracing::warn!(%error, hash = %library_hash, "Could not record a blob this import wrote");
+                    None
+                }
+            };
+        } else if !created {
+            // Another import put the content there first: not this one's.
+            self.end_import(import_intent.take()).await;
+        }
+        let imported_new = created;
 
         // Everything from here on can fail. When it does and this import is
         // what put the blob on disk, the blob has to go back: nothing will
@@ -84,6 +107,7 @@ impl IndexFileUseCase {
             .build_prepared_document(
                 source_path.as_path(),
                 library_path.as_path(),
+                &library_hash,
                 request.chunking_strategy,
                 existing,
                 requested_context,
@@ -97,7 +121,8 @@ impl IndexFileUseCase {
                 // own caller's blob as still being imported.
                 drop(lease);
                 if imported_new {
-                    self.release_failed_import(&library_hash).await;
+                    self.release_failed_import(&library_hash, import_intent)
+                        .await;
                 }
                 return Err(error);
             }
@@ -109,6 +134,7 @@ impl IndexFileUseCase {
                 embeddings,
                 library_path: library_path.to_str().unwrap_or("").to_string(),
                 imported_new,
+                import_intent,
                 lease,
             },
         )))
@@ -124,6 +150,7 @@ impl IndexFileUseCase {
         &self,
         source_path: &Path,
         library_path: &Path,
+        library_hash: &str,
         chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto,
         existing: Option<Document>,
         requested_context: Option<
@@ -132,7 +159,16 @@ impl IndexFileUseCase {
     ) -> Result<(Document, Vec<EmbeddingWithVector>)> {
         // Heavy work (extraction + embeddings) - NO TRANSACTION
         let metadata = FileMetadataFactory::from_path(library_path)?;
-        let checksum = ChecksumFactory::from_path(library_path)?;
+        let checksum = Checksum::new(library_hash.to_owned())?;
+        // The file can change between the hash that found `existing` and the copy.
+        let existing = if existing
+            .as_ref()
+            .is_some_and(|found| found.checksum() != &checksum)
+        {
+            self.document_repo.find_by_checksum(&checksum).await?
+        } else {
+            existing
+        };
         let extracted = self.content_extractor.extract_content(library_path).await?;
         let page_ranges = extracted.page_ranges;
         let ocr_pages = extracted.ocr_pages;
@@ -151,6 +187,7 @@ impl IndexFileUseCase {
         )?;
 
         if let Some(mut saved) = existing {
+            saved.set_mime_type(metadata.mime_type().to_string());
             saved.reindex(content.clone(), chunking_strategy)?;
             document = saved;
         }
@@ -175,23 +212,6 @@ impl IndexFileUseCase {
             metadata.modified_at(),
         ));
         document.set_word_count(metadata_extractor.count_words(&content));
-
-        for index in 0..document.chunks().len() {
-            let chunk = document.chunks().get(index).ok_or_else(|| {
-                AppError::InvalidInput(format!(
-                    "Chunk index {} out of bounds in index_file_and_persist",
-                    index
-                ))
-            })?;
-            let chunk_content = chunk.content().to_string();
-            document.set_chunk_token_count(index, metadata_extractor.count_tokens(chunk.content()));
-            document.set_chunk_word_count(
-                index,
-                metadata_extractor.count_words(&chunk_content) as usize,
-            );
-            document.set_chunk_has_code(index, metadata_extractor.contains_code(&chunk_content));
-            document.set_chunk_section(index, metadata_extractor.extract_section(&chunk_content));
-        }
 
         let mut document = super::super::embedding_input::prepare_structured(
             document,

@@ -443,3 +443,101 @@ async fn accepting_drafts_records_citations_or_an_honest_fallback() -> Result<()
     );
     Ok(())
 }
+
+/// The notebook picker prints a notebook's icon as text, so a course's notebook
+/// gets an emoji, not the name of an icon.
+#[tokio::test]
+async fn a_course_notebook_gets_an_emoji_for_its_icon() -> Result<()> {
+    let pool = fk_pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let active = accepted_unprepared_program(&repo).await?;
+    let lesson_id = active.modules[0].lessons[0].id.clone();
+    repo.ensure_lesson_note(&active.summary.id, &lesson_id, "Notes", "")
+        .await?;
+    let journal_id = repo
+        .memory_state(&active.summary.id)
+        .await?
+        .journal_id
+        .unwrap();
+    let icon: Option<String> = sqlx::query_scalar("SELECT icon FROM journals WHERE id=?")
+        .bind(&journal_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    let icon = icon.unwrap_or_default();
+    assert!(
+        !icon.is_empty() && !icon.chars().any(|c| c.is_ascii_alphanumeric()),
+        "{icon:?}"
+    );
+    Ok(())
+}
+
+/// The notebooks the Studio made before get the emoji a new one gets; a
+/// notebook of the user's own keeps its icon.
+#[tokio::test]
+async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
+    const ICON_FIX: &str = "20261102120000";
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .idle_timeout(None)
+        .max_lifetime(None)
+        .connect(":memory:")
+        .await
+        .map_err(db)?;
+    let earlier = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if name.as_str() < ICON_FIX {
+            std::fs::copy(&path, earlier.path().join(&name)).unwrap();
+        }
+    }
+    sqlx::migrate::Migrator::new(earlier.path())
+        .await
+        .unwrap()
+        .run(&pool)
+        .await
+        .unwrap();
+    for statement in [
+        "INSERT INTO learning_programs (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at) \
+         VALUES ('p1', 'Tides', 'Read tide tables', 'active', 1, 'none', 30, 'qwen', 1000)",
+        "INSERT INTO journals (id, name, icon) VALUES ('journal_learning_p1', 'Studio · Tides · p1', 'book-open')",
+        "INSERT INTO journals (id, name, icon) VALUES ('mine', 'Mine', 'book-open')",
+        "INSERT INTO learning_memory (program_id, journal_id, deck_id, created_at) VALUES ('p1', 'journal_learning_p1', NULL, 1000)",
+    ] {
+        sqlx::query(statement).execute(&pool).await.map_err(db)?;
+    }
+
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+    let repo = LearningRepository::new(pool.clone());
+    let active = accepted_unprepared_program(&repo).await?;
+    let lesson_id = active.modules[0].lessons[0].id.clone();
+    repo.ensure_lesson_note(&active.summary.id, &lesson_id, "Notes", "")
+        .await?;
+    let new_icon: Option<String> = sqlx::query_scalar(
+        "SELECT j.icon FROM journals j JOIN learning_memory m ON m.journal_id=j.id WHERE m.program_id=?",
+    )
+    .bind(&active.summary.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(db)?;
+    let icon_of = |id: &'static str| {
+        sqlx::query_scalar::<_, Option<String>>("SELECT icon FROM journals WHERE id=?")
+            .bind(id)
+            .fetch_one(&pool)
+    };
+    let old_icon = icon_of("journal_learning_p1").await.map_err(db)?;
+    assert!(
+        old_icon.as_deref().is_some_and(
+            |icon| !icon.is_empty() && !icon.chars().any(|c| c.is_ascii_alphanumeric())
+        ),
+        "{old_icon:?}"
+    );
+    assert_eq!(old_icon, new_icon);
+    assert_eq!(
+        icon_of("mine").await.map_err(db)?.as_deref(),
+        Some("book-open")
+    );
+    Ok(())
+}

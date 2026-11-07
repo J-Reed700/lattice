@@ -10,7 +10,8 @@
 
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 
-import { logComponentError } from '../../utils/errorLogger';
+import { diagnostics } from '../../utils/diagnostics';
+import { sanitizeErrorMessage } from '../../utils/redact';
 
 export interface ErrorBoundaryProps {
   children: ReactNode;
@@ -69,7 +70,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     }));
 
     // Log error
-    logComponentError(error, errorInfo, name);
+    diagnostics.record('error', error.message, name ?? 'Component', {
+      error,
+      componentStack: errorInfo.componentStack,
+    });
 
     if (onError) {
       try {
@@ -183,7 +187,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
               Error in {this.props.name || 'component'}
             </p>
             <p className="text-xs text-[hsl(var(--danger-fg))] mb-3">
-              {fallbackError.message}
+              {sanitizeErrorMessage(fallbackError.message)}
             </p>
             <button
               onClick={this.reset}
