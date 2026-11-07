@@ -7,7 +7,11 @@
 use super::acceptance_switch_tests::{claim, local_check, stood, SOURCED};
 use super::class_checks_tests::Classes;
 use super::*;
+use crate::features::learning::dto::{
+    LearningBlockDto, LearningBlockKind, LearningPreparation, PreparedLearningLesson,
+};
 use crate::features::learning::lesson_drafts;
+use crate::features::learning::lesson_evidence::LearningLessonEvidenceDto;
 use crate::features::learning::lessons::claim_reviews::checker_examples::{
     CheckerExamples, Label, LabelSource,
 };
@@ -16,6 +20,7 @@ use crate::features::learning::lessons::claim_reviews::repository::{
     ClaimReviewRepository, ShownPassage,
 };
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
+use crate::features::learning::repository::LearningRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::acceptance::Reading;
 use lattice_core::domain::learning::claim_review::{
@@ -258,13 +263,13 @@ pub(super) fn waiting(entries: &[ClaimLedgerEntry]) -> Vec<&ClaimLedgerEntry> {
 }
 
 #[tokio::test]
-async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed_and_a_lesson_left_without_its_first_explanation_stops(
+async fn a_last_attempt_that_cannot_take_the_sentence_out_leaves_it_standing_and_a_lesson_left_without_its_first_explanation_publishes_it_unverified(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
     let model = Figures::new();
-    let error = prepare(
+    let (raw, report) = prepare(
         &repo,
         &job,
         &lesson_id,
@@ -273,29 +278,22 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
         &sources,
     )
     .await
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(
-        error.starts_with("The sources do not support enough of this lesson"),
-        "{error}"
-    );
-    assert!(error.contains("first explanation"), "{error}");
-    // A rewrite, then the last attempt, which the code makes: the sentence
-    // is the whole of its field, so the section goes with it, and it was the
-    // lesson's only explanation.
+    .expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    // A rewrite, then the last attempt, which could only take the section
+    // out, and it was the lesson's only explanation: the sentence stays.
     assert_eq!(model.repairs.load(Ordering::Relaxed), 1);
+    let draft: Value = serde_json::from_str(&raw)?;
+    assert!(draft["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .contains(&figure(0)));
 
     let store = ClaimReviewRepository::new(pool.clone());
     let ledger = store.load(&lesson_id).await?;
-    let review = ledger.review.clone().unwrap();
-    assert_eq!(review.state, LessonReviewState::Stopped);
-    assert_eq!(review.job_id, job);
-    let stop = review.stop_reason.unwrap();
-    assert_eq!(stop.code, "sources_do_not_support");
-    assert!(stop.fix.contains("Add sources"), "{}", stop.fix);
-    // The rewrites kept the claim: one card, with both attempts on it, and it
-    // is terminal: no claim waits for anyone.
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
+    // The rewrites kept the claim: one card, with its attempts on it, and
+    // no claim waits for anyone.
     assert_eq!(ledger.claims.len(), 1, "{:?}", ledger.claims);
     let claim = &ledger.claims[0];
     assert_eq!(claim.statement(), figure(0));
@@ -303,23 +301,17 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
     assert_eq!(claim.location().unit_kind, UnitKind::Block);
     assert_eq!(claim.location().field, "body");
     assert!(
-        matches!(
+        !matches!(
             claim.state(),
-            ClaimState::Removed {
-                by: Actor::Machine,
-                ..
-            }
+            ClaimState::Removed { .. } | ClaimState::Edited { .. }
         ),
         "{:?}",
         claim.state()
     );
     assert!(waiting(&ledger.claims).is_empty());
     assert_eq!(
-        repairs(claim),
-        vec![
-            (1, false, RepairOutcome::Rewritten),
-            (2, true, RepairOutcome::Removed)
-        ]
+        repairs(claim).first(),
+        Some(&(1, false, RepairOutcome::Rewritten))
     );
     // Research ran once (no web here: nothing found) and is on the record.
     assert_eq!(
@@ -342,17 +334,6 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
     assert!(passages
         .iter()
         .all(|passage| sources[0].excerpt.contains(&passage.text)));
-    // The job reads the review row: the lesson is held, and says why.
-    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
-    assert!(held.stopped);
-    assert_eq!(held.claims, 0);
-    assert_eq!(
-        review_outcome(&[held]),
-        (
-            format!("needs_review:{lesson_id}"),
-            "Stopped: The sources do not support enough of this lesson: its first explanation would have to be taken out.".to_owned()
-        )
-    );
     Ok(())
 }
 
@@ -413,152 +394,49 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
     Ok(())
 }
 
-/// What the job says of a lesson none of whose statements is left.
-const NOTHING_LEFT: &str =
-    "The sources do not support enough of this lesson: every statement in it would have to be taken out.";
-
-/// A lesson of one section whose one claim fails its rewrite: the cut that
-/// ends it leaves nothing the sources back. Returns the job, the lesson and
-/// what the preparation ended with.
-async fn prepared_to_nothing(
-    pool: &sqlx::SqlitePool,
-) -> Result<(
-    crate::features::learning::curriculum_repository::LearningCurriculumRepository,
-    String,
-    String,
-    String,
-)> {
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(pool).await?;
-    let model = Figures::new();
-    let error = prepare(
+#[tokio::test]
+async fn a_lesson_whose_every_statement_would_be_cut_publishes_them_unverified_as_ones_its_sources_do_not_support(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let (raw, report) = prepare(
         &repo,
         &job,
         &lesson_id,
-        &model,
+        &Figures::new(),
         Some(lesson(&[BAD]).to_string()),
         &[source()],
     )
     .await
-    .err()
-    .unwrap()
-    .to_string();
-    Ok((repo, job, lesson_id, error))
-}
+    .expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    let draft: Value = serde_json::from_str(&raw)?;
+    assert!(draft["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .contains(&figure(0)));
 
-#[tokio::test]
-async fn a_lesson_whose_every_statement_is_cut_stops_as_one_its_sources_do_not_support(
-) -> Result<()> {
-    let pool = crate::features::learning::tests::pool().await?;
-    let (_, job, lesson_id, error) = prepared_to_nothing(&pool).await?;
-
-    assert_eq!(error, NOTHING_LEFT);
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
         .await?;
-    let review = ledger.review.clone().unwrap();
-    assert_eq!(review.state, LessonReviewState::Stopped);
-    assert_eq!(review.job_id, job);
-    let stop = review.stop_reason.unwrap();
-    assert_eq!(stop.code, "sources_do_not_support");
-    assert!(stop.fix.contains("Add sources"), "{}", stop.fix);
-    // The claim ends removed by the machine, as the claim of a section that
-    // goes does, and nothing waits for anyone.
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
+    // The claim is not cut: its sentence stays, and nothing waits for anyone.
     let [claim] = ledger.claims.as_slice() else {
         panic!("one claim: {:?}", ledger.claims);
     };
     assert!(
-        matches!(
+        !matches!(
             claim.state(),
-            ClaimState::Removed {
-                by: Actor::Machine,
-                ..
-            }
+            ClaimState::Removed { .. } | ClaimState::Edited { .. }
         ),
         "{:?}",
         claim.state()
     );
     assert_eq!(
-        repairs(claim),
-        vec![
-            (1, false, RepairOutcome::Rewritten),
-            (2, true, RepairOutcome::Removed)
-        ]
+        repairs(claim).first(),
+        Some(&(1, false, RepairOutcome::Rewritten))
     );
     assert!(waiting(&ledger.claims).is_empty());
-    // The job reads the review row: the lesson is held, stopped, and says why.
-    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
-    assert!(held.stopped);
-    assert_eq!(held.claims, 0);
-    assert_eq!(
-        review_outcome(&[held]),
-        (
-            format!("needs_review:{lesson_id}"),
-            format!("Stopped: {NOTHING_LEFT}")
-        )
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_stop_leaves_the_lesson_free_to_be_prepared_again() -> Result<()> {
-    let pool = crate::features::learning::tests::pool().await?;
-    let (repo, job, lesson_id, error) = prepared_to_nothing(&pool).await?;
-    assert_eq!(error, NOTHING_LEFT);
-    // The worker completes the job as held, not failed.
-    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
-    let (result_ref, message) = review_outcome(&[held]);
-    assert!(
-        JobStore::new(pool.clone())
-            .complete(&job, &result_ref, &message)
-            .await?
-    );
-    let stopped = repo.job(&job).await?;
-    assert_eq!(
-        stopped.status,
-        crate::features::learning::curriculum::LearningGenerationJobStatus::Completed
-    );
-
-    // Preparing the lesson again starts a new job, which takes the lesson
-    // from its outline and publishes it once its sources back it.
-    let program = crate::features::learning::repository::LearningRepository::new(pool.clone())
-        .get(&stopped.program_id)
-        .await?;
-    let again = repo
-        .start_lesson_job(
-            &crate::features::learning::plan_dto::StartLearningGenerationJobRequestDto {
-                operation_id: uuid::Uuid::new_v4().to_string(),
-                program_id: program.summary.id,
-                expected_revision: program.summary.revision,
-                kind: crate::features::learning::curriculum::LearningGenerationJobKind::LessonPreparation,
-                request_json: json!({"lessonIds":[lesson_id]}).to_string(),
-                progress_total: 1,
-            },
-        )
-        .await?;
-    assert_ne!(again.id, job);
-    assert_eq!(
-        again.status,
-        crate::features::learning::curriculum::LearningGenerationJobStatus::Pending
-    );
-    assert!(JobStore::new(pool.clone())
-        .claim(&again.id)
-        .await?
-        .is_some());
-    let (raw, report) = prepare(
-        &repo,
-        &again.id,
-        &lesson_id,
-        &Figures::new(),
-        Some(lesson(&[GOOD]).to_string()),
-        &[source()],
-    )
-    .await?;
-    let lesson: Value = serde_json::from_str(&raw)?;
-    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
-    assert!(report.issues.is_empty(), "{:?}", report.issues);
-    assert!(held_for_review(&pool, &lesson_id, &again.id)
-        .await?
-        .is_none());
     Ok(())
 }
 
@@ -597,7 +475,7 @@ async fn the_calls_ceiling_does_not_rise_while_a_rewrite_fails_its_recheck_and_i
 }
 
 #[tokio::test]
-async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attempts_and_the_job_stops(
+async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attempts_and_the_lesson_publishes_it_unverified(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -607,7 +485,7 @@ async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attem
         ..Figures::new()
     };
     let draft = lesson(&[GOOD]).to_string();
-    let error = prepare(
+    let (raw, report) = prepare(
         &repo,
         &job,
         &lesson_id,
@@ -616,41 +494,36 @@ async fn a_statement_whose_judge_never_answers_readably_keeps_its_text_and_attem
         &sources,
     )
     .await
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(error.contains("could not be read"), "{error}");
+    .expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
     assert_eq!(model.repairs.load(Ordering::Relaxed), 0, "never rewritten");
+    assert_eq!(
+        serde_json::from_str::<Value>(&raw)?,
+        serde_json::from_str::<Value>(&draft)?,
+        "its text in the draft untouched"
+    );
 
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
         .await?;
-    let review = ledger.review.clone().unwrap();
-    assert_eq!(review.state, LessonReviewState::Stopped);
-    let stop = review.stop_reason.unwrap();
-    assert_eq!(stop.code, "checker_unreadable");
-    assert!(stop.message.contains("figures-fixture"), "{}", stop.message);
-    assert!(stop.fix.contains("another verifier model"), "{}", stop.fix);
-    // The statement is as it was: unchecked, asked twice, no attempt spent,
-    // its text in the draft untouched.
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
+    // The statement is as it was: asked twice, no attempt spent, and never
+    // taken for verified.
     let [claim] = ledger.claims.as_slice() else {
         panic!("one claim: {:?}", ledger.claims);
     };
-    assert_eq!(claim.state(), &ClaimState::Unchecked);
+    assert!(
+        !matches!(
+            claim.state(),
+            ClaimState::ResolvedByEvidence { .. }
+                | ClaimState::Consistent { .. }
+                | ClaimState::GeneralKnowledge { .. }
+        ),
+        "{:?}",
+        claim.state()
+    );
     assert_eq!(claim.unjudged(), 2);
     assert!(repairs(claim).is_empty());
-    let saved = lesson_drafts::run(&repo, &job, &lesson_id, async {
-        lesson_drafts::resume(INPUT.into()).await
-    })
-    .await?;
-    assert_eq!(saved.as_deref(), Some(draft.as_str()));
-    // The job reads the review row: the lesson is held, and says it stopped.
-    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
-    assert!(held.stopped);
-    assert_eq!(
-        review_outcome(&[held]).1,
-        "Stopped: the checking model's answers could not be read for 1 claim"
-    );
     Ok(())
 }
 
@@ -2071,8 +1944,8 @@ async fn two_claims_on_one_sentence_are_both_kept_when_the_extraction_names_one(
 }
 
 #[tokio::test]
-async fn a_lesson_is_not_published_with_a_sentence_a_claim_the_machine_ended_stood_on() -> Result<()>
-{
+async fn a_lesson_with_a_sentence_a_claim_the_machine_ended_stood_on_publishes_with_that_sentence_unverified(
+) -> Result<()> {
     // §1 #16 (b) of the acceptance policy design
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -2093,7 +1966,7 @@ async fn a_lesson_is_not_published_with_a_sentence_a_claim_the_machine_ended_sto
     })
     .await?;
 
-    let published = prepare(
+    let (published, report) = prepare(
         &repo,
         &job,
         &lesson_id,
@@ -2101,28 +1974,16 @@ async fn a_lesson_is_not_published_with_a_sentence_a_claim_the_machine_ended_sto
         Some(raw),
         &[source()],
     )
-    .await;
+    .await
+    .expect("the lesson publishes, the sentence not verified");
 
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    let draft: Value = serde_json::from_str(&published)?;
     assert!(
-        published.is_err(),
-        "the lesson was published with {GOOD:?} in it, which a claim the machine ended stood on"
+        draft["blocks"][0]["body"].as_str().unwrap().contains(GOOD),
+        "the sentence stands in the published lesson"
     );
-    assert!(
-        held_for_review(&pool, &lesson_id, &job).await?.is_some(),
-        "the lesson is not held for review"
-    );
-    let ledger = ClaimReviewRepository::new(pool.clone())
-        .load(&lesson_id)
-        .await?;
-    let reason = ledger
-        .review
-        .and_then(|review| review.stop_reason)
-        .map(|stop| stop.message)
-        .unwrap_or_default();
-    assert!(
-        reason.contains(GOOD),
-        "the reason names no sentence: {reason}"
-    );
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
     Ok(())
 }
 
@@ -2174,5 +2035,406 @@ async fn a_code_examples_ended_claim_blocks_nothing() -> Result<()> {
     assert!(ledger.append(&example, ended).await?);
 
     assert!(ledger.ended_but_standing(&cell_lesson(CELL)).is_none());
+    Ok(())
+}
+
+/// A model whose rewrites change nothing, so a sentence stays as the judge
+/// last read it.
+struct Stubborn(Model);
+
+#[async_trait::async_trait]
+impl LLMPort for Stubborn {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let mut replies = Vec::new();
+        for prompt in fixture_prompts(request) {
+            if prompt.starts_with("Repair verified lesson defects.") {
+                let body = self::context(&prompt)["candidate"]["blocks"][0]["body"].clone();
+                replies.push(repair_body(&prompt, body));
+            } else {
+                replies.push(self.0.respond(&prompt).await?);
+            }
+        }
+        Ok(fixture_completion(request, replies))
+    }
+    fn model_name(&self) -> &str {
+        "stubborn-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// A course whose lesson is prepared against a source its library holds, so
+/// what a preparation returns can be published and read back as a learner
+/// reads it.
+struct Course {
+    pool: sqlx::SqlitePool,
+    repo: crate::features::learning::curriculum_repository::LearningCurriculumRepository,
+    job: String,
+    lesson_id: String,
+    program_id: String,
+    sources: Vec<LearningSourceDto>,
+}
+
+/// A published lesson as the learner reads it.
+struct Shown {
+    draft: Value,
+    view: LearningLessonEvidenceDto,
+    claims: Vec<Value>,
+}
+
+impl Course {
+    async fn new() -> Result<Self> {
+        let pool = crate::features::learning::tests::pool().await?;
+        let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+        let program_id = repo.job(&job).await?.program_id;
+        install_source(&pool, &program_id, SOURCE).await?;
+        let sources = LearningRepository::new(pool.clone())
+            .verification_sources(&program_id)
+            .await?;
+        Ok(Self {
+            pool,
+            repo,
+            job,
+            lesson_id,
+            program_id,
+            sources,
+        })
+    }
+
+    async fn prepare(
+        &self,
+        model: &dyn LLMPort,
+        draft: &Value,
+    ) -> Result<(String, LessonVerificationReport)> {
+        prepare(
+            &self.repo,
+            &self.job,
+            &self.lesson_id,
+            model,
+            Some(draft.to_string()),
+            &self.sources,
+        )
+        .await
+    }
+
+    /// Publishes what a preparation returned as the worker does, and reads
+    /// the lesson back.
+    async fn publish(&self, prepared: (String, LessonVerificationReport)) -> Result<Shown> {
+        let (raw, report) = prepared;
+        assert!(report.issues.is_empty(), "{:?}", report.issues);
+        let draft: Value = serde_json::from_str(&raw)?;
+        let mut lesson = PreparedLearningLesson {
+            blocks: draft["blocks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|block| LearningBlockDto {
+                    kind: LearningBlockKind::Explanation,
+                    title: block["title"].as_str().unwrap().into(),
+                    body: block["body"].as_str().unwrap().into(),
+                    source_ids: Vec::new(),
+                    rubric: Vec::new(),
+                })
+                .collect(),
+            questions: Vec::new(),
+            keys: Vec::new(),
+            verification: None,
+        };
+        report.cite_user_evidence(&mut lesson);
+        lesson.verification = Some(report.bind(&self.lesson_id, &lesson)?);
+        self.repo.seed_accepted(&self.program_id).await?;
+        let programs = LearningRepository::new(self.pool.clone());
+        let revision = programs.get(&self.program_id).await?.summary.revision;
+        self.repo
+            .publish_prepared(
+                &self.job,
+                revision,
+                &[(self.lesson_id.clone(), lesson)],
+                &[],
+                &[],
+            )
+            .await?;
+
+        let program = programs.get(&self.program_id).await?;
+        let published = program
+            .modules
+            .iter()
+            .flat_map(|module| module.lessons.iter())
+            .find(|lesson| lesson.id == self.lesson_id)
+            .unwrap();
+        assert_eq!(published.preparation, LearningPreparation::Ready);
+        assert_eq!(
+            self.repo.job(&self.job).await?.status,
+            crate::features::learning::curriculum::LearningGenerationJobStatus::Completed
+        );
+        let ledger = ClaimReviewRepository::new(self.pool.clone())
+            .load(&self.lesson_id)
+            .await?;
+        if let Some(review) = ledger.review {
+            assert_eq!(review.state, LessonReviewState::Ready);
+        }
+        let view = crate::features::learning::lesson_evidence::get(
+            &self.pool,
+            &self.program_id,
+            &self.lesson_id,
+        )
+        .await?
+        .expect("the published lesson has its evidence");
+        let claims = view
+            .teaching_claims
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(Shown {
+            draft,
+            view,
+            claims,
+        })
+    }
+}
+
+impl Shown {
+    /// The claims on `sentence`.
+    fn on(&self, sentence: &str) -> Vec<&Value> {
+        self.claims
+            .iter()
+            .filter(|entry| entry["claim"] == json!(sentence))
+            .collect()
+    }
+
+    /// The sentences of the claims read as `resolution`.
+    fn read_as(&self, resolution: &str) -> Vec<&str> {
+        self.claims
+            .iter()
+            .filter(|entry| entry["resolution"] == json!(resolution))
+            .map(|entry| entry["claim"].as_str().unwrap())
+            .collect()
+    }
+
+    /// The learner reads `entry` as not verified for `reason`, and its
+    /// sentence still stands in its section.
+    fn assert_not_verified(&self, entry: &Value, reason: &str) {
+        assert_eq!(entry["resolution"], json!("not_verified"), "{entry}");
+        assert_eq!(entry["unverifiedReason"], json!(reason), "{entry}");
+        let section = entry["sectionIndex"].as_u64().unwrap() as usize;
+        let body = self.draft["blocks"][section]["body"].as_str().unwrap();
+        assert!(body.contains(entry["claim"].as_str().unwrap()), "{entry}");
+        assert!(
+            body.contains(entry["contentQuote"].as_str().unwrap()),
+            "{entry}"
+        );
+    }
+
+    /// `sentence` is the one statement the learner is told is not verified
+    /// for `reason`, and no statement is read as verified.
+    fn assert_only_not_verified(&self, sentence: &str, reason: &str) {
+        let on = self.on(sentence);
+        assert_eq!(on.len(), 1, "{:?}", self.claims);
+        self.assert_not_verified(on[0], reason);
+        assert_eq!(self.claims.len(), 1, "{:?}", self.claims);
+        assert_eq!(self.view.claim_count, 1);
+        assert!(self.read_as("verified").is_empty(), "{:?}", self.claims);
+    }
+}
+
+#[tokio::test]
+async fn a_statement_whose_cut_would_take_the_lessons_first_explanation_is_published_not_verified_as_one_its_sources_do_not_state(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let prepared = course
+        .prepare(&Figures::new(), &candidate(BAD))
+        .await
+        .expect("the lesson publishes, its statement not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    shown.assert_only_not_verified(&figure(0), "unsupported");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_whose_last_reading_was_a_contradiction_is_published_not_verified_as_one_a_source_disagrees_with(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let prepared = course
+        .prepare(&Stubborn(Model::new()), &candidate(BAD))
+        .await
+        .expect("the lesson publishes, its statement not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    shown.assert_only_not_verified(BAD, "contradicted");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_whose_every_statement_would_be_cut_is_published_with_each_not_verified(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let prepared = course
+        .prepare(&Figures::new(), &lesson(&[BAD]))
+        .await
+        .expect("the lesson publishes, its statement not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    shown.assert_only_not_verified(&figure(0), "unsupported");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_beside_one_the_sources_do_not_state_still_reads_verified_and_the_other_does_not(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let draft = json!({"blocks":[
+        {"kind":"explanation","title":"Section 0","body":BAD,"rubric":[]},
+        {"kind":"explanation","title":"Section 1","body":section(GOOD),"rubric":[]}
+    ],"questions":[]});
+    let prepared = course
+        .prepare(&Figures::new(), &draft)
+        .await
+        .expect("the lesson publishes, one statement not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    // The settled statement reads as it always did, and is the only one that
+    // does: the other is counted among the claims, never as verified.
+    assert_eq!(shown.view.claim_count, 2, "{:?}", shown.claims);
+    assert_eq!(shown.read_as("verified"), [GOOD]);
+    assert_eq!(shown.view.confirmed_count, 0);
+    let on = shown.on(&figure(0));
+    assert_eq!(on.len(), 1, "{:?}", shown.claims);
+    shown.assert_not_verified(on[0], "unsupported");
+    assert_ne!(on[0]["resolution"], json!("verified"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_whose_judge_never_answers_readably_is_published_not_verified_as_one_that_was_not_checked(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let model = Figures {
+        unusable_asks: usize::MAX,
+        ..Figures::new()
+    };
+    let prepared = course
+        .prepare(&model, &lesson(&[GOOD]))
+        .await
+        .expect("the lesson publishes, its statement not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    shown.assert_only_not_verified(GOOD, "unchecked");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_round_where_research_reached_nothing_publishes_the_statement_waiting_for_it_not_verified_beside_the_settled_one(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let figure = figure(0);
+    let draft = lesson(&[GOOD, figure.as_str()]);
+    let prepared = research::run(
+        course.pool.clone(),
+        course.program_id.clone(),
+        "CSV".into(),
+        Some(research::tests::web(false)),
+        course.prepare(&Figures::new(), &draft),
+    )
+    .await
+    .expect("the lesson publishes, one statement not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    assert_eq!(shown.view.claim_count, 2, "{:?}", shown.claims);
+    assert_eq!(shown.read_as("verified"), [GOOD]);
+    let on = shown.on(&figure);
+    assert_eq!(on.len(), 1, "{:?}", shown.claims);
+    shown.assert_not_verified(on[0], "unchecked");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_left_for_the_user_when_no_machine_work_is_left_is_published_not_verified_as_unchecked(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let draft = lesson(&[GOOD]);
+    // An earlier run verified the sentence against a source the course has
+    // since replaced, so the claim is reopened and waits for the user.
+    lesson_drafts::run(&course.repo, &course.job, &course.lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&draft.to_string()).await?;
+        let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), &draft.to_string()).await?;
+        let id = claim(
+            &mut ledger,
+            "verified",
+            (GOOD, GOOD),
+            &section(GOOD),
+            SOURCED,
+        )
+        .await?;
+        let read = passage_finding(GOOD, GOOD, true, SOURCE);
+        stood(&mut ledger, &id, SOURCED.0, (Reading::Parts, read)).await
+    })
+    .await?;
+    let prepared = course
+        .prepare(&Figures::new(), &draft)
+        .await
+        .expect("the lesson publishes, its statement not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    shown.assert_only_not_verified(GOOD, "unchecked");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_a_claim_the_machine_ended_stood_on_is_published_with_that_claim_not_verified_by_its_last_reading(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let draft = lesson(&[GOOD]);
+    // An earlier run read a claim on this sentence as contradicted and ended
+    // it; the sentence outlived it.
+    lesson_drafts::run(&course.repo, &course.job, &course.lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&draft.to_string()).await?;
+        let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), &draft.to_string()).await?;
+        let ended = claim(&mut ledger, "ended", (GOOD, GOOD), &section(GOOD), SOURCED).await?;
+        let read = local_check(
+            CheckResult::Failed {
+                kind: VerdictKind::Contradicted,
+            },
+            "A source says otherwise.",
+            vec![],
+        );
+        assert!(ledger.append(&ended, ClaimEvent::Checked(read)).await?);
+        let gone = ClaimEvent::Superseded {
+            successor: None,
+            by: Actor::Machine,
+        };
+        assert!(ledger.append(&ended, gone).await?);
+        Ok(())
+    })
+    .await?;
+    let prepared = course
+        .prepare(&Figures::new(), &draft)
+        .await
+        .expect("the lesson publishes, the sentence not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    let on = shown.on(GOOD);
+    let marked = on
+        .iter()
+        .find(|entry| entry["resolution"] == json!("not_verified"))
+        .unwrap_or_else(|| panic!("no claim on {GOOD:?} is marked: {:?}", shown.claims));
+    shown.assert_not_verified(marked, "contradicted");
     Ok(())
 }

@@ -22,8 +22,8 @@ use lattice_core::domain::learning::acceptance::{
 };
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    ClaimLocation, ClaimState, EvidenceFingerprint, EvidenceSeen, LessonReviewState, ReopenCause,
-    RepairOutcome, UnitKind, VerdictKind,
+    ClaimLocation, ClaimState, EvidenceFingerprint, EvidenceSeen, ReopenCause, RepairOutcome,
+    UnitKind, VerdictKind,
 };
 use std::collections::VecDeque;
 
@@ -628,7 +628,7 @@ async fn only_a_statement_the_ledger_does_not_hold_is_sorted() -> Result<()> {
 }
 
 #[tokio::test]
-async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing_else_moves_stops_with_no_progress(
+async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing_else_moves_publishes_the_statement_unverified(
 ) -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
@@ -638,7 +638,7 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
     let draft = lesson_of(&section(&statement)).to_string();
     // The fixture gives the research planner no answer it can use: the round
     // reaches nothing.
-    let error = research::run(
+    let (raw, report) = research::run(
         pool.clone(),
         program_id,
         "CSV".into(),
@@ -653,27 +653,18 @@ async fn research_that_reached_nothing_records_nothing_and_a_round_where_nothing
         ),
     )
     .await
-    .err()
-    .unwrap()
-    .to_string();
+    .expect("the lesson publishes, its statement not verified");
 
-    // The stop says what is wrong and how to mend it, in words and with no
-    // node names.
-    assert_eq!(
-        error,
-        format!("Research could not reach any search engine or web page, so 1 statement still waits for a source: \"{statement}\".")
-    );
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    let published: Value = serde_json::from_str(&raw)?;
+    assert!(published["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .contains(&statement));
     let ledger = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
         .await?;
-    let review = ledger.review.clone().unwrap();
-    assert_eq!(review.state, LessonReviewState::Stopped);
-    let reason = review.stop_reason.unwrap();
-    assert_eq!(reason.code, "no_progress");
-    assert_eq!(
-        reason.fix,
-        "Check your internet connection and the research settings, then resume this lesson."
-    );
+    assert!(held_for_review(&pool, &lesson_id, &job).await?.is_none());
     let [claim] = ledger.claims.as_slice() else {
         panic!("one claim: {:?}", ledger.claims);
     };
