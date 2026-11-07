@@ -299,3 +299,46 @@ async fn registering_every_kind_without_a_failure_reports_none() -> Result<()> {
     assert!(failures.is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn a_kind_that_failed_to_register_is_retried_until_it_does_and_its_jobs_run() -> Result<()> {
+    const LATE: &str = "test.late";
+    let pool = pool().await;
+    let runtime = JobRuntime::new(pool.clone());
+    let store = runtime.store();
+    let mut saved = new_job("saved", None);
+    saved.kind = LATE.into();
+    let saved = store.submit(&saved).await?.id;
+    store.claim(&saved).await?;
+    sqlx::query("CREATE TRIGGER refuse BEFORE UPDATE ON jobs WHEN OLD.kind='test.late' BEGIN SELECT RAISE(ABORT,'jobs table unreadable'); END")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mut late = registration(LATE);
+    late.config = late.config.backoff(Backoff {
+        initial: Duration::from_millis(10),
+        max: Duration::from_millis(20),
+    });
+    let failures = tokio::time::timeout(WAIT, runtime.register_all(vec![late]))
+        .await
+        .unwrap();
+    assert_eq!(
+        failures.iter().map(|f| f.kind.as_str()).collect::<Vec<_>>(),
+        vec![LATE]
+    );
+    assert_eq!(store.get(&saved).await?.status, JobStatus::Running);
+
+    sqlx::query("DROP TRIGGER refuse")
+        .execute(&pool)
+        .await
+        .unwrap();
+    tokio::time::timeout(WAIT, async {
+        while store.get(&saved).await.unwrap().status != JobStatus::Completed {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the kind registers on its own and its saved job runs");
+    Ok(())
+}
