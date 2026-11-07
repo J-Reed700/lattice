@@ -392,3 +392,93 @@ async fn a_handler_is_told_when_recovery_fails_its_job_for_stopping_the_app() ->
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn progress_climbing_back_to_a_height_already_reached_is_not_saved_work() -> Result<()> {
+    let store = JobStore::new(pool().await);
+    let id = submitted(&store, "regrades").await;
+    for attempt in 0..2 {
+        left_running(&store, &id).await;
+        let context = JobContext::detached(&store, &id).await?;
+        // Each attempt starts its progress over, then climbs back to the same point.
+        let _ = context.progress(0, "Fetching the page", None).await;
+        let _ = context.progress(1, "Reading the page", None).await;
+        recovered(&store).await;
+        let expected = if attempt == 0 {
+            JobStatus::Pending
+        } else {
+            JobStatus::Failed
+        };
+        assert_eq!(status(&store, &id).await, expected, "attempt {attempt}");
+    }
+    assert_eq!(
+        store.get(&id).await?.error_code.as_deref(),
+        Some("stopped_the_app")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn progress_past_the_highest_value_ever_reached_is_saved_work() -> Result<()> {
+    let store = JobStore::new(pool().await);
+    let id = submitted(&store, "advances").await;
+    for (reached, expected) in [(1, JobStatus::Pending), (1, JobStatus::Failed)] {
+        left_running(&store, &id).await;
+        let context = JobContext::detached(&store, &id).await?;
+        let _ = context.progress(0, "Fetching the page", None).await;
+        let _ = context.progress(reached, "Reading the page", None).await;
+        recovered(&store).await;
+        assert_eq!(status(&store, &id).await, expected);
+    }
+
+    let other = submitted(&store, "climbs").await;
+    for (reached, expected) in [(1, JobStatus::Pending), (2, JobStatus::Pending)] {
+        left_running(&store, &other).await;
+        let context = JobContext::detached(&store, &other).await?;
+        let _ = context.progress(0, "Fetching the page", None).await;
+        let _ = context.progress(reached, "Reading the page", None).await;
+        recovered(&store).await;
+        assert_eq!(
+            status(&store, &other).await,
+            expected,
+            "a rise past the old high is saved work"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_orderly_shutdown_leaves_a_job_of_an_interrupt_kind_to_be_interrupted() -> Result<()> {
+    let runtime = JobRuntime::new(pool().await);
+    let store = runtime.store();
+    let (started, mut running) = mpsc::unbounded_channel();
+    runtime
+        .register(
+            KIND,
+            Arc::new(Deaf { started }),
+            JobKindConfig::new(RecoveryPolicy::Interrupt),
+        )
+        .await?;
+    let job = runtime.submit(&new_job("once")).await?;
+    tokio::time::timeout(WAIT, running.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    runtime.close();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), runtime.drain())
+            .await
+            .is_err()
+    );
+    runtime.suspend_running().await?;
+
+    store.recover(KIND, RecoveryPolicy::Interrupt).await?;
+    let saved = store.get(&job.id).await?;
+    assert_eq!(
+        saved.status,
+        JobStatus::Interrupted,
+        "work that cannot resume is interrupted, not run again"
+    );
+    assert_eq!(saved.error_code.as_deref(), Some("interrupted"));
+    Ok(())
+}
