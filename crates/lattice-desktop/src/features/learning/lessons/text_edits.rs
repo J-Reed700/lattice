@@ -177,6 +177,126 @@ struct Edit {
     after: Value,
 }
 
+/// The part of the input a path belongs to: its block or question, or else
+/// the rest of the input.
+fn part_of(path: &str) -> String {
+    let mut segments = path.split('/').skip(1);
+    match (segments.next(), segments.next()) {
+        (Some(list @ ("blocks" | "questions")), Some(index))
+            if !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            format!("/{list}/{index}")
+        }
+        _ => String::new(),
+    }
+}
+
+/// The new value of one field under its edits, or the first problem with
+/// them, as `(edit number, what is wrong)`.
+fn field_value(
+    path: &str,
+    original: &Value,
+    edits: Vec<(usize, Edit)>,
+) -> std::result::Result<Value, (usize, String)> {
+    let first = edits.first().map_or(0, |(index, _)| *index);
+    if let Some(text) = original.as_str() {
+        let mut ranges = Vec::new();
+        for (index, edit) in &edits {
+            let index = *index;
+            let (Some(before), Some(after)) = (
+                edit.before.as_str().filter(|s| !s.is_empty()),
+                edit.after.as_str(),
+            ) else {
+                return Err((
+                    index,
+                    format!("edit {index} to {path} must replace nonempty text with text."),
+                ));
+            };
+            let mut matches = text.match_indices(before);
+            let Some((start, _)) = matches.next() else {
+                return Err((
+                    index,
+                    format!("the before text of edit {index} does not occur in {path}."),
+                ));
+            };
+            if matches.next().is_some() {
+                return Err((index, format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
+            }
+            ranges.push((start, start + before.len(), after));
+        }
+        ranges.sort_by_key(|range| range.0);
+        if ranges
+            .windows(2)
+            .any(|pair| matches!(pair, [left, right] if left.1 > right.0))
+        {
+            return Err((first, format!("two edits to {path} overlap.")));
+        }
+        let mut updated = text.to_string();
+        for (start, end, after) in ranges.into_iter().rev() {
+            updated.replace_range(start..end, after);
+        }
+        return Ok(json!(updated));
+    }
+    let [(index, edit)] = <[_; 1]>::try_from(edits).map_err(|_| {
+        (
+            first,
+            format!("{path} holds one value; give one edit for it."),
+        )
+    })?;
+    if &edit.before != original
+        || !(original.is_number() && edit.after.is_number()
+            || original.is_boolean() && edit.after.is_boolean())
+    {
+        return Err((index, format!("edit {index} to {path} must give its current value as before and a value of the same type as after.")));
+    }
+    Ok(edit.after)
+}
+
+/// One part's edits checked together: the new values of its fields, or every
+/// problem found, so that a part with any problem changes nothing.
+fn part_values(
+    candidate: &Value,
+    allowed: &[String],
+    edits: Vec<(usize, Edit)>,
+) -> std::result::Result<Vec<(String, Value)>, Vec<(usize, String)>> {
+    let mut problems = Vec::new();
+    let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
+    for (index, edit) in edits {
+        if allowed.contains(&edit.path) {
+            fields
+                .entry(edit.path.clone())
+                .or_default()
+                .push((index, edit));
+        } else {
+            problems.push((
+                index,
+                format!(
+                    "edit {index} names {}, which is not an editable field.",
+                    edit.path
+                ),
+            ));
+        }
+    }
+    let mut values = Vec::new();
+    for (path, edits) in fields {
+        let first = edits.first().map_or(0, |(index, _)| *index);
+        match candidate.pointer(&path) {
+            None => problems.push((first, format!("{path} is not in the draft."))),
+            Some(original) => match field_value(&path, original, edits) {
+                Ok(value) => values.push((path, value)),
+                Err(problem) => problems.push(problem),
+            },
+        }
+    }
+    if problems.is_empty() {
+        Ok(values)
+    } else {
+        Err(problems)
+    }
+}
+
+/// Applies a patch part by part: the edits of a block or question that has
+/// any problem are left out and the other parts' edits apply.
 pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
     let fail = |reason: String| {
         AppError::InvalidInput(format!(
@@ -187,79 +307,35 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
     if patch.edits.is_empty() && patch.citations.is_empty() {
         return Err(fail("it gave no edits.".into()));
     }
-    let edited = !patch.edits.is_empty();
     let mut allowed = Vec::new();
     paths(candidate, "", &mut allowed);
-    let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
+    let mut parts = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
     for (index, edit) in patch.edits.into_iter().enumerate() {
-        if !allowed.contains(&edit.path) {
-            return Err(fail(format!(
-                "edit {index} names {}, which is not an editable field.",
-                edit.path
-            )));
+        if edit.before != edit.after {
+            parts
+                .entry(part_of(&edit.path))
+                .or_default()
+                .push((index, edit));
         }
-        if edit.before == edit.after {
-            return Err(fail(format!("edit {index} changes nothing.")));
-        }
-        fields
-            .entry(edit.path.clone())
-            .or_default()
-            .push((index, edit));
     }
     let mut result = candidate.clone();
-    for (path, edits) in fields {
-        let original = candidate
-            .pointer(&path)
-            .ok_or_else(|| fail(format!("{path} is not in the draft.")))?;
-        let value = if let Some(text) = original.as_str() {
-            let mut ranges = Vec::new();
-            for (index, edit) in &edits {
-                let (Some(before), Some(after)) = (
-                    edit.before.as_str().filter(|s| !s.is_empty()),
-                    edit.after.as_str(),
-                ) else {
-                    return Err(fail(format!(
-                        "edit {index} to {path} must replace nonempty text with text."
-                    )));
-                };
-                let mut matches = text.match_indices(before);
-                let Some((start, _)) = matches.next() else {
-                    return Err(fail(format!(
-                        "the before text of edit {index} does not occur in {path}."
-                    )));
-                };
-                if matches.next().is_some() {
-                    return Err(fail(format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
+    let mut problems = Vec::new();
+    let mut applied = false;
+    for edits in parts.into_values() {
+        match part_values(candidate, &allowed, edits) {
+            Ok(values) => {
+                applied |= !values.is_empty();
+                for (path, value) in values {
+                    if let Some(slot) = result.pointer_mut(&path) {
+                        *slot = value;
+                    }
                 }
-                ranges.push((start, start + before.len(), after));
             }
-            ranges.sort_by_key(|range| range.0);
-            if ranges
-                .windows(2)
-                .any(|pair| matches!(pair, [left, right] if left.1 > right.0))
-            {
-                return Err(fail(format!("two edits to {path} overlap.")));
-            }
-            let mut updated = text.to_string();
-            for (start, end, after) in ranges.into_iter().rev() {
-                updated.replace_range(start..end, after);
-            }
-            json!(updated)
-        } else {
-            let [(index, edit)] = <[_; 1]>::try_from(edits)
-                .map_err(|_| fail(format!("{path} holds one value; give one edit for it.")))?;
-            if &edit.before != original
-                || !(original.is_number() && edit.after.is_number()
-                    || original.is_boolean() && edit.after.is_boolean())
-            {
-                return Err(fail(format!("edit {index} to {path} must give its current value as before and a value of the same type as after.")));
-            }
-            edit.after
-        };
-        *result
-            .pointer_mut(&path)
-            .ok_or_else(|| fail(format!("{path} is not in the draft.")))? = value;
+            Err(found) => problems.extend(found),
+        }
     }
+    problems.sort_by_key(|(index, _)| *index);
+    let problems: Vec<String> = problems.into_iter().map(|(_, reason)| reason).collect();
     // A citation comes on top of the edits: one the draft cannot hold is left
     // out, not charged to the edits and citations that apply.
     let refused: Vec<String> = patch
@@ -272,16 +348,21 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
                 .map(|reason| format!("citation {index} {reason}"))
         })
         .collect();
-    if refused.is_empty() {
-        return Ok(result);
+    if !applied && refused.len() == patch.citations.len() {
+        let mut reasons = problems;
+        reasons.extend(refused);
+        if reasons.is_empty() {
+            reasons.push("it changed nothing.".into());
+        }
+        return Err(fail(reasons.join(" ")));
     }
-    if !edited && refused.len() == patch.citations.len() {
-        return Err(fail(refused.join(" ")));
+    if !problems.is_empty() || !refused.is_empty() {
+        tracing::warn!(
+            left_out = %problems.join(" "),
+            refused = %refused.join(" "),
+            "Left out the edits and citations of a repair that the draft cannot hold"
+        );
     }
-    tracing::warn!(
-        refused = %refused.join(" "),
-        "Left out the citations of a repair that the draft cannot hold"
-    );
     Ok(result)
 }
 
@@ -595,6 +676,27 @@ mod tests {
 
         only_block_0_changed(&revised);
         assert_eq!(revised["blocks"][2], parted()["blocks"][2]);
+        Ok(())
+    }
+
+    #[test]
+    fn an_edit_to_an_unknown_block_is_a_problem_of_that_part_alone() -> Result<()> {
+        let revised = patched(json!([
+            good(),
+            {"path":"/blocks/9/body","before":"Alpha.","after":"Omega."}
+        ]))?;
+
+        only_block_0_changed(&revised);
+        let message = patched(json!([
+            {"path":"/blocks/9/body","before":"Alpha.","after":"Omega."},
+            {"path":"/blocks/1/body","before":"Missing.","after":"Present."}
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(
+            message.contains("edit 0") && message.contains("edit 1"),
+            "{message}"
+        );
         Ok(())
     }
 }
