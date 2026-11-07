@@ -1,4 +1,5 @@
 //! Instructional review and task-specific teaching contracts.
+use super::writer_excerpts::{self, WriterExcerpts};
 use crate::features::learning::dto::{
     LearningPracticeCriterionDto, LearningPracticeEvidenceDimension,
 };
@@ -11,7 +12,7 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
 mod passes;
@@ -670,8 +671,15 @@ async fn review_material(
             original_issues = issues.clone();
             issues
         };
-        let repair = json!({"task":"Repair the teaching material", "originalRequirements":authoring_context, "candidate":candidate_value, "sourceQuoteChecks":quote_checks, "issuesToFix":issues, "instruction":"Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review in the learner-facing material."}).to_string();
-        let repair_system = format!("{system}\nYou are editing a rejected draft. Apply every listed correction to the actual content. Do not reproduce the draft unchanged.");
+        // Fitted to the window as the review is.
+        let mut requirements = authoring_context.clone();
+        let excerpts = WriterExcerpts::take(llm, &mut requirements, &candidate_value);
+        let parts = [
+            ("originalRequirements", requirements),
+            ("candidate", candidate_value.clone()),
+            ("sourceQuoteChecks", json!(quote_checks)),
+            ("issuesToFix", json!(issues)),
+        ];
         if let Some(progress) = progress {
             progress.stage(crate::features::learning::outline_progress::OutlineStage::Repairing);
         }
@@ -680,22 +688,42 @@ async fn review_material(
             "Correcting the lesson from review findings",
         );
         let repaired = if can_edit_spans {
-            crate::features::learning::generation::complete_checked(
-                llm,
-                &format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::instructions(schema)),
-                json!({"originalRequirements":authoring_context,"candidate":candidate_value,"sourceQuoteChecks":quote_checks,"issuesToFix":issues}).to_string(),
-                super::text_edits::schema_for(&candidate_value, schema), output_tokens, progress, None,
-                |raw| super::text_edits::apply(&candidate_value, raw).map(|value| value.to_string()),
-            ).await
-        } else {
-            crate::features::learning::generation::complete_json_with_progress(
-                llm,
-                &repair_system,
-                repair,
-                schema.clone(),
+            let edit_system = format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::instructions(schema));
+            let prompt: Map<String, Value> = parts
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect();
+            let request = writer_excerpts::Request {
+                subject: "the teaching repair",
+                system: &edit_system,
+                prompt: &prompt,
+                context: "originalRequirements",
+                schema: super::text_edits::schema_for(&candidate_value, schema),
                 output_tokens,
-                progress,
-            )
+            };
+            writer_excerpts::complete(llm, &request, excerpts.as_ref(), progress, None, |raw| {
+                super::text_edits::apply(&candidate_value, raw).map(|value| value.to_string())
+            })
+            .await
+        } else {
+            let repair_system = format!("{system}\nYou are editing a rejected draft. Apply every listed correction to the actual content. Do not reproduce the draft unchanged.");
+            let prompt: Map<String, Value> = [("task", json!("Repair the teaching material"))]
+                .into_iter()
+                .chain(parts)
+                .chain([("instruction", json!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review in the learner-facing material."))])
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect();
+            let request = writer_excerpts::Request {
+                subject: "the teaching repair",
+                system: &repair_system,
+                prompt: &prompt,
+                context: "originalRequirements",
+                schema: schema.clone(),
+                output_tokens,
+            };
+            writer_excerpts::complete(llm, &request, excerpts.as_ref(), progress, None, |text| {
+                Ok(text.to_owned())
+            })
             .await
         };
         // After a claim repair or a user edit, the repair changes only the

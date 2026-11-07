@@ -1,102 +1,20 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
-use crate::features::learning::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
-};
+use crate::features::learning::lessons::structured_call::{CallKind, ReasonFirst};
+use crate::features::learning::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
-use crate::features::learning::{generation, model_call, outline_progress::OutlineProgress};
+use crate::features::learning::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
-    application::{ports::LLMPort, services::grounded_generation::GroundedRequest},
+    application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
 
 pub(super) const POLICY: &str = "section-review-v3";
 
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
-
-/// The sources the candidate's blocks and questions cite, by index.
-fn cited_sources(candidate: &Value) -> BTreeSet<u64> {
-    let mut cited = BTreeSet::new();
-    for field in ["blocks", "questions"] {
-        for item in candidate
-            .get(field)
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            cited.extend(item.get("sourceIndex").and_then(Value::as_u64));
-            for citation in item
-                .get("citations")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                cited.extend(citation.get("sourceIndex").and_then(Value::as_u64));
-            }
-        }
-    }
-    cited
-}
-
-/// The writer's excerpts filled the room its own request left, so on a small
-/// window they do not fit beside the candidate: the prompt gets back those that
-/// fit, the cited first. They are a partial selection already
-/// (`LESSON_REVIEW_EVIDENCE_SCOPE`).
-fn fit_excerpts(
-    llm: &dyn LLMPort,
-    system: &str,
-    prompt: &mut Map<String, Value>,
-    excerpts: &[Value],
-    cited: &BTreeSet<u64>,
-) {
-    let put = |prompt: &mut Map<String, Value>, sources: Vec<Value>| {
-        if let Some(context) = prompt
-            .get_mut("authoringContext")
-            .and_then(Value::as_object_mut)
-        {
-            context.insert("sources".into(), Value::Array(sources));
-        }
-    };
-    put(prompt, Vec::new());
-    let mut request =
-        GroundedRequest::new(system, serde_json::to_string(&*prompt).unwrap_or_default());
-    request.output_tokens = REVIEW_ANSWER_TOKENS;
-    let mut room = model_call::source_room(llm, &request, usize::MAX);
-    let is_cited = |excerpt: &Value| {
-        excerpt
-            .get("sourceIndex")
-            .and_then(Value::as_u64)
-            .is_some_and(|index| cited.contains(&index))
-    };
-    let order = excerpts
-        .iter()
-        .enumerate()
-        .filter(|(_, excerpt)| is_cited(excerpt))
-        .chain(
-            excerpts
-                .iter()
-                .enumerate()
-                .filter(|(_, excerpt)| !is_cited(excerpt)),
-        );
-    let mut kept = Vec::new();
-    for (position, excerpt) in order {
-        // The comma that joins it to the one before it.
-        let tokens = llm.count_tokens(&excerpt.to_string()) + 1;
-        if tokens <= room {
-            room -= tokens;
-            kept.push(position);
-        }
-    }
-    kept.sort_unstable();
-    let fitted = kept
-        .into_iter()
-        .filter_map(|position| excerpts.get(position).cloned())
-        .collect();
-    put(prompt, fitted);
-}
 
 /// What the review does with a blank finding after the response correction.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -292,14 +210,9 @@ async fn review_sections(
         ));
     };
     prompt.insert("candidate".into(), reviewed);
-    let excerpts = match prompt
+    let excerpts = prompt
         .get_mut("authoringContext")
-        .and_then(|context| context.get_mut("sources"))
-    {
-        Some(Value::Array(sources)) => Some(std::mem::take(sources)),
-        _ => None,
-    };
-    let cited = cited_sources(candidate);
+        .and_then(|context| WriterExcerpts::take(llm, context, candidate));
     let mut accepted = BTreeMap::<usize, BlockCheck>::new();
     let mut issues: Vec<ReviewFinding> = Vec::new();
     let mut problems = Vec::new();
@@ -330,39 +243,30 @@ async fn review_sections(
             );
             prompt.insert("responseCorrection".into(), json!("Correct the review response, not the lesson. Return checks only for sectionIndicesToReview. Read all passages in each requested section; select a passageId from that same section. Keep every established defect. Do not regenerate the lesson or treat a response-format error as a content defect."));
         }
-        if let Some(excerpts) = &excerpts {
-            fit_excerpts(llm, system, &mut prompt, excerpts, &cited);
-        }
-        let request = serde_json::to_string(&prompt)?;
-        let response_schema = schema(&indices, &passages);
+        let request = writer_excerpts::Request {
+            subject: "the teaching review",
+            system,
+            prompt: &prompt,
+            context: "authoringContext",
+            schema: schema(&indices, &passages),
+            output_tokens: REVIEW_ANSWER_TOKENS,
+        };
         // A correction repairs the response, not the judgement, so only the
         // first review reasons in prose before answering.
-        let raw = if attempt == 0 {
-            complete_reasoned_json(
-                llm,
-                system,
-                request,
-                response_schema,
-                REVIEW_ANSWER_TOKENS,
-                progress,
-                ReasonFirst {
-                    kind: CallKind::Authoring,
-                    subject: "the teaching review",
-                    brief: REVIEW_DRAFT_BRIEF,
-                },
-            )
-            .await?
-        } else {
-            generation::complete_json_with_progress(
-                llm,
-                system,
-                request,
-                response_schema,
-                REVIEW_ANSWER_TOKENS,
-                progress,
-            )
-            .await?
-        };
+        let reasoning = (attempt == 0).then_some(ReasonFirst {
+            kind: CallKind::Authoring,
+            subject: "the teaching review",
+            brief: REVIEW_DRAFT_BRIEF,
+        });
+        let raw = writer_excerpts::complete(
+            llm,
+            &request,
+            excerpts.as_ref(),
+            progress,
+            reasoning,
+            |text| Ok(text.to_owned()),
+        )
+        .await?;
         problems.clear();
         match generation::parse_json::<Review>(&raw) {
             Err(_) => problems.push("The previous review was incomplete. Give the issues and a check for every requested section.".into()),
