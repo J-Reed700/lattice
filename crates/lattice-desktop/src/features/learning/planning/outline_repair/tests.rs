@@ -64,3 +64,38 @@ fn a_rewrite_keeps_the_citations_it_was_given_and_never_introduces_one() {
     assert_eq!(after["lessons"][0]["sourceIndex"], Value::Null);
     assert_eq!(after["lessons"][0]["quote"], "");
 }
+
+#[test]
+fn a_located_passage_past_a_quotations_ceiling_is_cited_by_the_chunk_it_was_built_around() {
+    use crate::features::learning::reference_collection::ReferencePassage;
+    use lattice_core::application::services::claim_verification::ClaimVerdict;
+    let excerpt = "A process records each observation with a stable identifier. ".repeat(30);
+    let source = LearningSourceDto {
+        id: "source".into(),
+        title: "Guide".into(),
+        url: None,
+        excerpt: excerpt.clone(),
+        acquired_at: 0,
+    };
+    let passage = |start: usize, end: usize| ReferencePassage {
+        source_id: "source".into(),
+        text: excerpt[start..end].to_owned(),
+        start_byte: start,
+        end_byte: end,
+        retrieval_kind: "lexical_fallback".into(),
+        score: 1.0,
+    };
+    let located = passage(0, excerpt.len());
+    let chunk = passage(305, 610);
+    let found = super::evidence::locate(
+        &located.text,
+        ClaimVerdict::Supported,
+        std::slice::from_ref(&located),
+        std::slice::from_ref(&chunk),
+        std::slice::from_ref(&source),
+    );
+    assert_eq!(
+        found,
+        Some(("source".to_owned(), chunk.text.trim().to_owned()))
+    );
+}

@@ -9,6 +9,8 @@
 //! carry to the next pass.
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::features::learning::review_findings::{FindingKey, ReviewFinding, SetAside};
 
 /// Findings sent to one repair, as many as one request handles well.
@@ -39,11 +41,40 @@ pub(super) struct Passes {
     latest: Vec<ReviewFinding>,
 }
 
+/// What decides stopping, kept with the draft a repair produced.
+#[derive(Deserialize, Serialize)]
+struct Kept {
+    repairs: Vec<(FindingKey, u8)>,
+    open_at_repair: Option<BTreeSet<FindingKey>>,
+}
+
 impl Passes {
     pub fn new(held: BTreeSet<FindingKey>) -> Self {
         Self {
             held,
             ..Self::default()
+        }
+    }
+
+    /// The state that decides stopping, to save with the draft the latest
+    /// repair produced.
+    pub fn saved(&self) -> serde_json::Result<String> {
+        serde_json::to_string(&Kept {
+            repairs: self
+                .repairs
+                .iter()
+                .map(|(key, count)| (*key, *count))
+                .collect(),
+            open_at_repair: self.open_at_repair.clone(),
+        })
+    }
+
+    /// Takes up the state a review cut short saved with this draft; state
+    /// that cannot be read is none.
+    pub fn resume(&mut self, saved: &str) {
+        if let Ok(kept) = serde_json::from_str::<Kept>(saved) {
+            self.repairs = kept.repairs.into_iter().collect();
+            self.open_at_repair = kept.open_at_repair;
         }
     }
 

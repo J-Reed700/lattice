@@ -2,6 +2,7 @@
 //! delivery, cancellation, per-course exclusivity and shutdown; this handler
 //! prepares, verifies and publishes the requested lessons.
 use crate::features::learning::{
+    content_verification::Rounds,
     curriculum_repository::{lesson_failure, LearningCurriculumRepository},
     dto::{LearningPreparation, LearningProgramStatus},
     model_requirements,
@@ -73,11 +74,12 @@ impl JobHandler for LessonGenerationWorker {
         // request immediately. Publication stays outside the cancellable part,
         // so its transaction commits or rolls back whole before shutdown
         // releases the database.
+        let mut rounds = Rounds::default();
         loop {
             let prepared = match context
                 .until_cancelled(crate::features::learning::lesson_progress::run(
                     context,
-                    self.prepare(&repo, context),
+                    self.prepare(&repo, context, &mut rounds),
                 ))
                 .await
             {
@@ -105,12 +107,14 @@ impl JobHandler for LessonGenerationWorker {
                 )
                 .await
             {
-                // A reference changed between verification and publication:
-                // verify again (saved checks are reused), never fail (§12).
+                // A source a lesson was verified against changed between
+                // verification and publication: verify again (saved checks are
+                // reused) once, and fail as found the second time (§12).
                 Err(error)
                     if crate::features::learning::content_verification::sources_changed(&error) =>
                 {
                     tracing::info!(job_id = context.id(), %error, "Lesson references changed before publication; verifying again");
+                    rounds.publishing_failed(error)?;
                 }
                 Err(error) => return Err(error),
                 Ok(()) => return Ok(JobOutcome::Committed),
@@ -144,6 +148,7 @@ impl LessonGenerationWorker {
         &self,
         repo: &LearningCurriculumRepository,
         context: &JobContext,
+        rounds: &mut Rounds,
     ) -> Result<Prepared> {
         use crate::features::learning::curriculum::LearningGenerationJobKind;
         let job_id = context.id();
@@ -183,6 +188,24 @@ impl LessonGenerationWorker {
         // This snapshots the already accepted outline; it approves no content.
         repo.seed_accepted(&job.program_id).await?;
         (self.refresh_sources)(job.program_id.clone()).await?;
+        // Pages the admission gate refuses leave retrieval and citation before
+        // anything is compared with them (claim classes design §3.6).
+        crate::features::learning::lesson_progress::stage(
+            "Checking that the course's saved pages are sources",
+        );
+        let refused =
+            crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+                self.pool.clone(),
+            )
+            .sweep_admission(&job.program_id)
+            .await?;
+        if !refused.is_empty() {
+            tracing::info!(
+                program_id = %job.program_id,
+                pages = refused.len(),
+                "Saved pages that are not sources are left out of retrieval"
+            );
+        }
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
         if had_sources && program.sources.is_empty() {
@@ -388,15 +411,12 @@ impl LessonGenerationWorker {
                     ));
                 }
             }
-            // Research for a later lesson may add evidence relevant to an earlier
-            // one. Revisit only invalidated checkpoints before atomic publication.
+            // A source added meanwhile, by research for a later lesson or by the
+            // user, never invalidates a lesson prepared before it: only a source
+            // its report is bound to, gone or changed, does, and that sends the
+            // lesson round once more at most (claim classes design §3.2).
             let sources = program_repo.verification_sources(&job.program_id).await?;
-            if staged.iter().all(|(id, prepared)| {
-                prepared
-                    .verification
-                    .as_ref()
-                    .is_some_and(|report| report.reusable(id, prepared, &sources, llm.as_ref()))
-            }) {
+            if !rounds.again(&staged, &sources, llm.as_ref())? {
                 break;
             }
         }
@@ -531,6 +551,7 @@ mod repository_tests {
                                 "test fixture",
                             ),
                     },
+                    found: false,
                 },
             )
             .collect();

@@ -1,5 +1,6 @@
 //! Shared builders for the claim-review tests.
 
+mod decision_tests;
 mod ledger_tests;
 mod rules_tests;
 mod trust_tests;
@@ -92,6 +93,7 @@ fn rewrite(attempt: u8, escalated: bool, outcome: RepairOutcome) -> ClaimEvent {
         before: QUOTE.into(),
         after: (outcome == RepairOutcome::Rewritten).then(|| "Water boils at 100 °C.".into()),
         outcome,
+        goal: None,
     }
 }
 
@@ -131,4 +133,8 @@ fn verified_claim(id: &str) -> ClaimLedgerEntry {
     let mut entry = claim(id);
     entry.append(machine(2), checked(None, "v1")).unwrap();
     entry
+}
+
+fn classified(class: Class, by: ClassifiedBy) -> ClaimEvent {
+    ClaimEvent::Classified { class, by }
 }

@@ -79,6 +79,7 @@ pub(super) async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(Strin
                     "test fixture",
                 ),
             },
+            found: false,
         })
         .collect();
     let repo = LearningRepository::new(pool.clone());

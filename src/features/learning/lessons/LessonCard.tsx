@@ -13,7 +13,8 @@ import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromM
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
 import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
-import { claimsCount, claimsNeedYou, preparingLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
+import { claimsCount, claimsNeedYou, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { isTeachingWaiting } from '@/features/learning/lessons/review/TeachingFindings';
@@ -118,7 +119,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   const statusLabel = reviewState === 'stopped' ? 'Stopped with a cause to fix'
     : needsReview ? holdLabel[hold]
     : lesson.preparation === 'ready' ? teachingWaiting > 0 ? `Ready · ${teachingNotesForYou(teachingWaiting)}` : 'Ready'
-    : preparingThis ? preparingLine(activeJob?.activity?.claims)
+    : preparingThis ? preparingLine(activeJob?.activity)
     : 'Outline';
   const reviewable = Boolean(onReview) && (needsReview || teachingWaiting > 0);
   const openReview = () => onReview?.(program.summary.id, lesson.id);

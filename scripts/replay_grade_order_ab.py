@@ -58,8 +58,8 @@ def schema(arm, rubric):
     fields = {
         "criterion_id": {"type": "string"},
         "score": {"type": ["integer", "null"], "minimum": 0, "maximum": top},
-        "observation": {"type": "string", "minLength": 1, "maxLength": 900},
-        "evidence_quote": {"type": ["string", "null"], "maxLength": 500},
+        "observation": {"type": "string", "minLength": 1},
+        "evidence_quote": {"type": ["string", "null"]},
     }
     order = {
         "score_first": ["criterion_id", "score", "observation", "evidence_quote"],
@@ -93,8 +93,8 @@ def diagnostic_schema(arm):
         "promptId": {"type": "string"},
         "outcomeId": {"type": "string"},
         "signal": {"enum": ["needs_practice", "ready_for_challenge", "uncertain"]},
-        "feedback": {"type": "string", "minLength": 20, "maxLength": 1200},
-        "evidenceQuote": {"type": ["string", "null"], "maxLength": 700},
+        "feedback": {"type": "string", "minLength": 1},
+        "evidenceQuote": {"type": ["string", "null"]},
     }
     order = {
         "score_first": ["promptId", "outcomeId", "signal", "feedback", "evidenceQuote"],

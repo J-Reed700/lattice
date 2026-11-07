@@ -97,7 +97,9 @@ pub(in crate::features::learning) struct ClaimList {
     /// The fused ranking, widened as verification widens a hit, without what
     /// the claim was shown, up to the last passage on the claim's subject.
     pub passages: Vec<ReferencePassage>,
-    /// Whether a counter query's branches were fused into the ranking.
+    /// Whether a counter query's branches were fused into the ranking: for the
+    /// tests.
+    #[cfg(test)]
     pub counter: bool,
     /// Whether the scope had passages past the depth the list was found at:
     /// `false` when the list's end is the end of the scope itself.
@@ -164,6 +166,7 @@ impl ReferenceCollection<'_> {
             );
             return Ok(ClaimList {
                 passages,
+                #[cfg(test)]
                 counter: counter.is_some(),
                 deeper,
             });

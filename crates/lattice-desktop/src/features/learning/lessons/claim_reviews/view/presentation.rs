@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use lattice_core::domain::learning::claim_review::{
-    AttachOutcome, ClaimEvent, ClaimLedgerEntry, ClaimState, UnitKind,
+    Actor, AttachOutcome, ClaimEvent, ClaimLedgerEntry, ClaimState, UnitKind,
 };
 use lattice_core::shared::text::{plain_sentence_context, plain_text};
 use serde_json::Value;
@@ -14,28 +14,46 @@ use super::super::dto::{ClaimPresentationDto, ResearchSummaryDto};
 use super::SourceFacts;
 use crate::features::learning::content_verification::{field_text, located_quote};
 
+/// Whether the machine took the statement's text out of the lesson: what
+/// stands where its location says is another sentence now, or another section.
+pub(super) fn taken_out(entry: &ClaimLedgerEntry) -> bool {
+    matches!(
+        entry.state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    )
+}
+
 /// The claim as plain text in its sentence and paragraph. `units` is the
 /// lesson's blocks and questions, as the draft or the published lesson has
-/// them; `title` is the claim's unit title.
+/// them; `title` is the claim's unit title. A statement the machine took out
+/// shows the sentence it was extracted from and no place.
 pub(in crate::features::learning::lessons::claim_reviews) fn presentation(
     entry: &ClaimLedgerEntry,
     units: &Value,
     title: &str,
 ) -> ClaimPresentationDto {
     let location = entry.location();
+    let gone = taken_out(entry);
     let (context_before, sentence, context_after) =
         match field_text(units, location.unit_index, &location.field) {
-            Some(text) => {
+            Some(text) if !gone => {
                 plain_sentence_context(&text, &located_quote(location, entry.statement(), &text))
             }
-            None => (String::new(), plain_text(&location.quote), String::new()),
+            _ => (String::new(), plain_text(&location.quote), String::new()),
         };
     ClaimPresentationDto {
         statement: plain_text(entry.statement()),
         sentence,
         context_before,
         context_after,
-        place: place(location.unit_kind, location.unit_index, units, title),
+        place: if gone {
+            String::new()
+        } else {
+            place(location.unit_kind, location.unit_index, units, title)
+        },
     }
 }
 
