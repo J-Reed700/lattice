@@ -265,6 +265,43 @@ async fn marginalia_without_a_key_calls_the_current_api_as_public() {
 }
 
 #[tokio::test]
+async fn marginalia_asks_for_the_page_it_is_asked_for() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(marginalia_fixture()))
+        .mount(&server)
+        .await;
+
+    let finder = Marginalia::with_api(test_http(), server.uri());
+    for page in [1, 2] {
+        finder
+            .find(&make_need(NeedKind::Web, "indie"), page, &test_budget())
+            .await;
+    }
+
+    let requests = server.received_requests().await.unwrap();
+    let pairs = |index: usize| {
+        let mut pairs: Vec<(String, String)> = requests[index]
+            .url
+            .query_pairs()
+            .map(|(name, value)| (name.into_owned(), value.into_owned()))
+            .collect();
+        pairs.sort();
+        pairs
+    };
+    let expected = |page: &str| {
+        vec![
+            ("count".to_string(), "10".to_string()),
+            ("page".to_string(), page.to_string()),
+            ("query".to_string(), "indie".to_string()),
+        ]
+    };
+    assert_eq!(pairs(0), expected("1"));
+    assert_eq!(pairs(1), expected("2"));
+}
+
+#[tokio::test]
 async fn marginalia_with_a_key_sends_the_users_key_instead_of_public() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

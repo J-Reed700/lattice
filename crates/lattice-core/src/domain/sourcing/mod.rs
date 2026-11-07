@@ -7,6 +7,7 @@
 
 pub mod canonical;
 pub mod catalogue;
+pub mod contact;
 pub mod descriptor;
 pub mod fusion;
 pub mod health;

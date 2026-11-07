@@ -488,6 +488,27 @@ async fn crossref_keeps_a_url_contact_in_the_headers_only() {
 }
 
 #[tokio::test]
+async fn crossref_sends_mailto_only_for_what_the_shared_check_calls_an_email() {
+    for contact in [
+        "https://user@host.example/x",
+        "mailto:user@example.org",
+        "user@example.org/about",
+    ] {
+        let server = crossref_server().await;
+        let finder = Crossref::with_api(http(Some(contact)), server.uri());
+        finder.find(&need("graphs"), 1, &budget()).await;
+
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(mailto_of(&requests[0]), None, "{contact}");
+        assert_eq!(
+            finder.descriptor().rate.min_interval,
+            Duration::from_secs(1),
+            "{contact}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn crossref_sends_no_mailto_without_a_contact() {
     let server = crossref_server().await;
 

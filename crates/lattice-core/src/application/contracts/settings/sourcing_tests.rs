@@ -109,6 +109,7 @@ fn a_contact_is_an_email_or_an_http_address() {
         "me@example.org",
         " me@example.org ",
         "https://example.org/about",
+        "https://user@host.example/x",
     ] {
         let settings = SourcingSettingsDto {
             contact: Some(good.to_string()),
@@ -126,6 +127,8 @@ fn a_contact_is_an_email_or_an_http_address() {
         "me@.org",
         "me@@example.org",
         "me @example.org",
+        "me@example.org\n",
+        "https://example.org/a b",
         "ftp://example.org",
     ] {
         let settings = SourcingSettingsDto {
