@@ -42,6 +42,17 @@ describe('outline progress while the model server is out of reach', () => {
     expect(sentence.closest('[role="alert"], [role="status"]')).not.toBeNull();
   });
 
+  it.each([
+    ['RATE_LIMIT_EXCEEDED', 'The model is getting too many requests. Lattice keeps trying.'],
+    ['SERVICE_NOT_AVAILABLE', 'The model server is busy or starting. Lattice keeps trying.'],
+    ['INTERNAL_ERROR', "The model server isn't answering. Lattice keeps trying."],
+  ] as const)('reads a %s wait as its own sentence, with the seconds beside it', (errorCode, sentence) => {
+    render(<Tree current={progress('drafting', { retryInSeconds: 30, errorCode })} onCancel={vi.fn()} />);
+    expect(screen.getByText(sentence)).toBeVisible();
+    expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();
+    expect(screen.getByText(/Retrying in 30s/)).toBeVisible();
+  });
+
   it('offers Open model settings, which opens the tab holding the chat and Learning model', async () => {
     render(<Tree current={progress('loading_model', WAITING)} onCancel={vi.fn()} />);
     await userEvent.click(screen.getByRole('button', { name: 'Open model settings' }));

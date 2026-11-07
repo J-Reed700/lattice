@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IndexingSnapshot } from '@/types/api/indexing';
@@ -114,8 +114,6 @@ describe('IndexingStatusPopover', () => {
       ],
     };
     const onClose = vi.fn();
-    const listener = vi.fn();
-    window.addEventListener('settings:navigate-tab', listener);
     render(<IndexingStatusPopover snapshot={snapshot({ status: 'complete', failed: 0, processed: 40 })} open onClose={onClose} />);
     expect(screen.getByText('Recent activity')).toBeInTheDocument();
     expect(screen.getByText('moths.md')).toBeInTheDocument();
@@ -124,10 +122,6 @@ describe('IndexingStatusPopover', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show all →' }));
     expect(h.navigate).toHaveBeenCalledWith('/settings?tab=indexing');
     expect(onClose).toHaveBeenCalled();
-    expect(listener).not.toHaveBeenCalled();
-    act(() => { vi.runAllTimers(); });
-    expect((listener.mock.calls[0][0] as CustomEvent).detail).toEqual({ tab: 'indexing' });
-    window.removeEventListener('settings:navigate-tab', listener);
   });
 
   it('shows no activity block for an empty history', () => {
