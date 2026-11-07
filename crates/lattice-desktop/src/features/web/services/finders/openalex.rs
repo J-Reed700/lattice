@@ -10,11 +10,13 @@ use chrono::{DateTime, Utc};
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome, Identifier,
-    Identity, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed, WaveSlot,
+    Identity, KeyService, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed,
+    WaveSlot,
 };
+use reqwest::header::{HeaderValue, AUTHORIZATION};
 use url::Url;
 
-use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp};
+use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp, GetOptions};
 use crate::features::web::services::identity;
 use crate::features::web::services::web::MIN_SITE_REQUEST_INTERVAL;
 
@@ -38,7 +40,9 @@ pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
         },
     ],
     reaches: Reach::Scholarly,
-    auth: Auth::None,
+    auth: Auth::OptionalKey {
+        service: KeyService::OpenAlex,
+    },
     privacy: Privacy::QueryLogged {
         by: "OurResearch (OpenAlex)",
     },
@@ -48,7 +52,7 @@ pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
         quota: None,
         honours_retry_after: true,
         trip_on_first_refusal: false,
-        source: "https://docs.openalex.org/how-to-use-the-api/rate-limits-and-authentication",
+        source: "https://help.openalex.org/how-to-use-the-api/rate-limits-and-authentication",
     },
     supports_scope: false,
     identity: Identity::DeclaredClient,
@@ -58,18 +62,27 @@ pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
 pub(crate) struct OpenAlex {
     http: FinderHttp,
     api: String,
+    api_key: Option<String>,
     descriptor: FinderDescriptor,
 }
 
 impl OpenAlex {
-    pub(crate) fn new(http: FinderHttp) -> Self {
-        Self::with_api(http, API.to_string())
+    pub(crate) fn new(http: FinderHttp, api_key: Option<String>) -> Self {
+        Self::with_api_key(http, API.to_string(), api_key)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_api(http: FinderHttp, api: String) -> Self {
+        Self::with_api_key(http, api, None)
+    }
+
+    pub(crate) fn with_api_key(http: FinderHttp, api: String, api_key: Option<String>) -> Self {
         Self {
             http,
             api,
+            api_key: api_key
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty()),
             descriptor: DESCRIPTOR,
         }
     }
@@ -247,9 +260,23 @@ impl SourceFinder for OpenAlex {
             )
         };
 
-        let headers =
+        let mut headers =
             identity::declared_client_headers(self.http.contact.as_deref(), "application/json");
-        let body = match self.http.get(&url, headers, MAX_BODY_BYTES).await {
+        if let Some(key) = &self.api_key {
+            if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {key}")) {
+                value.set_sensitive(true);
+                headers.insert(AUTHORIZATION, value);
+            }
+        }
+        let options = GetOptions {
+            reset_in_seconds: true,
+            ..GetOptions::default()
+        };
+        let body = match self
+            .http
+            .get_with(&url, headers, MAX_BODY_BYTES, options)
+            .await
+        {
             Fetched::Body(body) => body,
             other => return failed(&self.descriptor, cause_of(other), started),
         };
