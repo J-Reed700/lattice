@@ -2,20 +2,26 @@
 //!
 //! Reaches Crossref's REST API; supports DOI lookups and reference extraction.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome, Identifier,
-    Identity, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed, WaveSlot,
+    Identity, KeyService, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed,
+    WaveSlot,
 };
+use reqwest::header::{HeaderName, HeaderValue};
 use url::Url;
 
-use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp};
+use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp, GetOptions};
 use crate::features::web::services::identity;
-use crate::features::web::services::web::MIN_SITE_REQUEST_INTERVAL;
+
+/// Crossref limits list requests (queries and filters) to 1 a second in the
+/// public pool and 3 a second in the polite pool.
+const PUBLIC_LIST_INTERVAL: Duration = Duration::from_secs(1);
+const POLITE_LIST_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / 3);
 
 pub(crate) const RESULTS_PER_PAGE: usize = 10;
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -37,15 +43,17 @@ pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
         },
     ],
     reaches: Reach::Scholarly,
-    auth: Auth::None,
+    auth: Auth::OptionalKey {
+        service: KeyService::CrossrefPlus,
+    },
     privacy: Privacy::QueryLogged { by: "Crossref" },
     cost: Cost::Free,
     rate: RatePolicy {
-        min_interval: MIN_SITE_REQUEST_INTERVAL,
+        min_interval: PUBLIC_LIST_INTERVAL,
         quota: None,
         honours_retry_after: true,
         trip_on_first_refusal: false,
-        source: "https://www.crossref.org/documentation/retrieve-metadata/rest-api/",
+        source: "https://community.crossref.org/t/refining-rest-api-limits-for-improved-stability-and-reliability/16137",
     },
     supports_scope: false,
     identity: Identity::DeclaredClient,
@@ -55,21 +63,68 @@ pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
 pub(crate) struct Crossref {
     http: FinderHttp,
     api: String,
+    plus_token: Option<String>,
+    /// The email contact that puts requests in the polite pool.
+    mailto: Option<String>,
     descriptor: FinderDescriptor,
 }
 
 impl Crossref {
-    pub(crate) fn new(http: FinderHttp) -> Self {
-        Self::with_api(http, API.to_string())
+    pub(crate) fn new(http: FinderHttp, plus_token: Option<String>) -> Self {
+        Self::with_api_token(http, API.to_string(), plus_token)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_api(http: FinderHttp, api: String) -> Self {
+        Self::with_api_token(http, api, None)
+    }
+
+    pub(crate) fn with_api_token(
+        http: FinderHttp,
+        api: String,
+        plus_token: Option<String>,
+    ) -> Self {
+        let mailto = email_contact(http.contact.as_deref()).map(str::to_string);
+        let mut descriptor = DESCRIPTOR;
+        if mailto.is_some() {
+            descriptor.rate.min_interval = POLITE_LIST_INTERVAL;
+        }
         Self {
             http,
             api,
-            descriptor: DESCRIPTOR,
+            plus_token: plus_token
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty()),
+            mailto,
+            descriptor,
         }
     }
+
+    /// `url` with the polite pool's `mailto` when the user's contact is an
+    /// email address.
+    fn with_mailto(&self, url: String) -> String {
+        match &self.mailto {
+            Some(email) => {
+                let separator = if url.contains('?') { '&' } else { '?' };
+                format!("{url}{separator}mailto={}", urlencoding::encode(email))
+            }
+            None => url,
+        }
+    }
+}
+
+/// The contact when it is an email address (one `@`, a dotted domain, no
+/// spaces or slashes), the only form Crossref's polite pool reads.
+fn email_contact(contact: Option<&str>) -> Option<&str> {
+    let contact = contact?.trim();
+    let (local, domain) = contact.split_once('@')?;
+    let plain = !contact.chars().any(|c| c.is_whitespace() || c == '/');
+    (plain
+        && !local.is_empty()
+        && !domain.contains('@')
+        && domain.contains('.')
+        && domain.split('.').all(|label| !label.is_empty()))
+    .then_some(contact)
 }
 
 fn clean_doi(doi: &str) -> String {
@@ -271,9 +326,25 @@ impl SourceFinder for Crossref {
             }
         };
 
-        let headers =
+        let url = self.with_mailto(url);
+
+        let mut headers =
             identity::declared_client_headers(self.http.contact.as_deref(), "application/json");
-        let body = match self.http.get(&url, headers, MAX_BODY_BYTES).await {
+        if let Some(token) = &self.plus_token {
+            if let Ok(mut value) = HeaderValue::from_str(&format!("Bearer {token}")) {
+                value.set_sensitive(true);
+                headers.insert(HeaderName::from_static("crossref-plus-api-token"), value);
+            }
+        }
+        let options = GetOptions {
+            min_interval: Some(self.descriptor.rate.min_interval),
+            ..GetOptions::default()
+        };
+        let body = match self
+            .http
+            .get_with(&url, headers, MAX_BODY_BYTES, options)
+            .await
+        {
             Fetched::Body(body) => body,
             other => return failed(&self.descriptor, cause_of(other), started),
         };

@@ -102,10 +102,14 @@ pub enum KeyService {
     SemanticScholar,
     ApiDataGov,
     StackExchange,
+    OpenAlex,
+    Marginalia,
+    /// Crossref's paid Metadata Plus token.
+    CrossrefPlus,
 }
 
 impl KeyService {
-    pub const ALL: [KeyService; 7] = [
+    pub const ALL: [KeyService; 10] = [
         KeyService::Brave,
         KeyService::Tavily,
         KeyService::Exa,
@@ -113,6 +117,9 @@ impl KeyService {
         KeyService::SemanticScholar,
         KeyService::ApiDataGov,
         KeyService::StackExchange,
+        KeyService::OpenAlex,
+        KeyService::Marginalia,
+        KeyService::CrossrefPlus,
     ];
 
     /// The keyring service id (`CredentialsPort::*_api_key(service)`).
@@ -125,6 +132,9 @@ impl KeyService {
             KeyService::SemanticScholar => "semantic_scholar",
             KeyService::ApiDataGov => "api_data_gov",
             KeyService::StackExchange => "stack_exchange",
+            KeyService::OpenAlex => "openalex",
+            KeyService::Marginalia => "marginalia",
+            KeyService::CrossrefPlus => "crossref_plus",
         }
     }
 
@@ -138,6 +148,9 @@ impl KeyService {
             KeyService::SemanticScholar => "Semantic Scholar",
             KeyService::ApiDataGov => "api.data.gov",
             KeyService::StackExchange => "Stack Exchange",
+            KeyService::OpenAlex => "OpenAlex",
+            KeyService::Marginalia => "Marginalia",
+            KeyService::CrossrefPlus => "Crossref Metadata Plus",
         }
     }
 
@@ -154,6 +167,11 @@ impl KeyService {
             }
             KeyService::ApiDataGov => "https://api.data.gov/signup/",
             KeyService::StackExchange => "https://stackapps.com/apps/oauth/register",
+            KeyService::OpenAlex => "https://openalex.org/settings/api",
+            KeyService::Marginalia => "https://about.marginalia-search.com/article/api",
+            KeyService::CrossrefPlus => {
+                "https://www.crossref.org/services/metadata-retrieval/metadata-plus/"
+            }
         }
     }
 }

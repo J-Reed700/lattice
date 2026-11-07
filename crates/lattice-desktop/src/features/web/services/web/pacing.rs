@@ -73,8 +73,18 @@ impl SitePacer {
     /// minimum interval. Dropping the guard releases the slot; `None` means the
     /// request is not paced at all — it has no host, or the wait timed out.
     pub(crate) async fn acquire(&self, url: &str) -> Option<OwnedMutexGuard<Option<Instant>>> {
+        self.acquire_every(url, self.min_interval).await
+    }
+
+    /// [`SitePacer::acquire`] with the spacing a host asks for in place of the
+    /// default, for a service that documents its own.
+    pub(crate) async fn acquire_every(
+        &self,
+        url: &str,
+        min_interval: Duration,
+    ) -> Option<OwnedMutexGuard<Option<Instant>>> {
         let key = Self::site_key(url)?;
-        let min_interval = self.min_interval;
+        let kept_for = min_interval.max(self.min_interval);
         let slot = {
             let mut sites = self.sites.lock();
             if sites.len() >= MAX_TRACKED_SITES {
@@ -83,7 +93,7 @@ impl SitePacer {
                 sites.retain(|_, slot| {
                     Arc::strong_count(slot) > 1
                         || slot.try_lock().map_or(true, |last| {
-                            last.is_some_and(|started| started.elapsed() < min_interval)
+                            last.is_some_and(|started| started.elapsed() < kept_for)
                         })
                 });
             }

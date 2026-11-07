@@ -6867,7 +6867,7 @@ findingKey: string }
  * A service whose key lives in the keyring, as the panel and the key
  * commands name it.
  */
-export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange"
+export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange" | "openAlex" | "marginalia" | "crossrefPlus"
 /**
  * Whether a key service has a key stored, and where to get one.
  */

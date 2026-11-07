@@ -28,6 +28,9 @@ pub enum KeyServiceDto {
     SemanticScholar,
     ApiDataGov,
     StackExchange,
+    OpenAlex,
+    Marginalia,
+    CrossrefPlus,
 }
 
 impl From<KeyService> for KeyServiceDto {
@@ -40,6 +43,9 @@ impl From<KeyService> for KeyServiceDto {
             KeyService::SemanticScholar => Self::SemanticScholar,
             KeyService::ApiDataGov => Self::ApiDataGov,
             KeyService::StackExchange => Self::StackExchange,
+            KeyService::OpenAlex => Self::OpenAlex,
+            KeyService::Marginalia => Self::Marginalia,
+            KeyService::CrossrefPlus => Self::CrossrefPlus,
         }
     }
 }
@@ -54,6 +60,9 @@ impl From<KeyServiceDto> for KeyService {
             KeyServiceDto::SemanticScholar => Self::SemanticScholar,
             KeyServiceDto::ApiDataGov => Self::ApiDataGov,
             KeyServiceDto::StackExchange => Self::StackExchange,
+            KeyServiceDto::OpenAlex => Self::OpenAlex,
+            KeyServiceDto::Marginalia => Self::Marginalia,
+            KeyServiceDto::CrossrefPlus => Self::CrossrefPlus,
         }
     }
 }
