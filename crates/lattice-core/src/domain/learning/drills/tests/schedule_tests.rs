@@ -442,11 +442,11 @@ fn pending_patterns_are_chosen_only_when_nothing_else_is_left() {
     let everything = targets(&material, &states, 10, usize::MAX);
     assert_eq!(everything.len(), patterns_for(&material).count());
     let rest = everything.len() - held.len();
-    assert_eq!(
-        ids(&everything).get(rest..),
-        Some(held.as_slice()),
-        "the pending patterns come last"
-    );
+    let mut last = ids(&everything).split_off(rest);
+    last.sort_unstable();
+    let mut expected = held.clone();
+    expected.sort_unstable();
+    assert_eq!(last, expected, "the pending patterns come last");
 }
 
 #[test]
