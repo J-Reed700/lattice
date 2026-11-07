@@ -6403,7 +6403,7 @@ export type FinderGateDto =
 /**
  * The user turned it off (or, for the archive, the archive fallback).
  */
-"disabled" | "noKey" | "noInstance" | "noContact"
+"disabled" | "noKey" | "noInstance" | "noContact" | "noEmail"
 /**
  * A finder's health since the app started.
  */
@@ -6909,7 +6909,7 @@ findingKey: string }
  * A service whose key lives in the keyring, as the panel and the key
  * commands name it.
  */
-export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange"
+export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange" | "openAlex" | "marginalia" | "crossrefPlus"
 /**
  * Whether a key service has a key stored, and where to get one.
  */

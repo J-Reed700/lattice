@@ -122,7 +122,10 @@ fn keyring_ids_are_distinct_and_stable() {
             "github",
             "semantic_scholar",
             "api_data_gov",
-            "stack_exchange"
+            "stack_exchange",
+            "openalex",
+            "marginalia",
+            "crossref_plus"
         ]
     );
 }

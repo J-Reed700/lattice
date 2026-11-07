@@ -1,14 +1,15 @@
 //! Unpaywall finder: open access locator for known DOIs.
 //!
-//! Reaches api.unpaywall.org; requires a DOI and declared user contact.
+//! Reaches api.unpaywall.org; requires a DOI and the user's email contact.
 
 use std::time::Instant;
 
 use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
-    Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome, Identifier,
-    Identity, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed, WaveSlot,
+    is_email, Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome,
+    Identifier, Identity, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed,
+    WaveSlot,
 };
 use url::Url;
 
@@ -181,7 +182,7 @@ impl SourceFinder for Unpaywall {
             .contact
             .as_deref()
             .map(str::trim)
-            .filter(|c| !c.is_empty())
+            .filter(|c| is_email(c))
         else {
             return answered(&self.descriptor, Vec::new(), started);
         };

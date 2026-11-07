@@ -503,3 +503,32 @@ async fn test_site_pacer_serializes_same_site_only() {
         tokio::time::timeout(wait, pacer.acquire("https://lite.duckduckgo.com/lite/?q=b")).await;
     assert!(mirror_slot.is_ok(), "released slot must be handed on");
 }
+
+/// Page reads share the pacer at its short default. Evicting by that default
+/// would drop a slot held for a longer interval another caller asked for, and
+/// that host's next request would go out unpaced.
+#[tokio::test]
+async fn a_slot_held_for_a_long_interval_survives_eviction_by_short_default_callers() {
+    let pacer = SitePacer::with_interval(Duration::from_millis(10));
+    let site = "https://api.slow.example/works";
+    let interval = Duration::from_secs(1);
+
+    let started = Instant::now();
+    drop(pacer.acquire_every(site, interval).await);
+    for index in 0..64 {
+        drop(
+            pacer
+                .acquire(&format!("https://site{index}.example/"))
+                .await,
+        );
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(pacer.acquire("https://one-more.example/").await);
+
+    drop(pacer.acquire_every(site, interval).await);
+    assert!(
+        started.elapsed() >= interval,
+        "the second request went out after {:?}",
+        started.elapsed()
+    );
+}
