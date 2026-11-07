@@ -236,6 +236,15 @@ pub struct OllamaChatStreamResponse {
 
 use lattice_core::shared::error::AppError;
 
+/// The refusal for a bundled server that cannot run: an install problem the
+/// learner fixes by reinstalling or choosing another model, never by waiting.
+pub(crate) fn server_cannot_start(reason: &str) -> AppError {
+    AppError::ModelServerCannotStart(format!(
+        "The model server could not start: {}. Reinstall Lattice, or choose another model in Settings.",
+        reason.trim().trim_end_matches('.')
+    ))
+}
+
 /// Auto-convert from LLMError to AppError
 impl From<crate::features::llm::engine::types::LLMError> for AppError {
     fn from(e: crate::features::llm::engine::types::LLMError) -> Self {
@@ -252,7 +261,7 @@ impl From<crate::features::llm::engine::types::LLMError> for AppError {
             LLMError::InsufficientMemory(msg) => AppError::ModelLoadFailed(msg),
             LLMError::PlatformNotSupported(msg) => AppError::ServiceNotAvailable(msg),
             // Not `ModelLoadFailed`: nothing is wrong with the model.
-            LLMError::SidecarBinaryUnusable(msg) => AppError::ServiceNotAvailable(msg),
+            LLMError::SidecarBinaryUnusable(msg) => server_cannot_start(&msg),
             LLMError::ModelUnsupported(msg) => AppError::ModelLoadFailed(msg),
             LLMError::Io(e) => AppError::Io {
                 message: e.to_string(),

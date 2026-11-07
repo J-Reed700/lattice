@@ -254,7 +254,11 @@ fn a_local_model_launches_with_its_own_saved_configuration_and_a_remote_one_with
 #[test]
 fn unusable_sidecar_is_not_reported_as_a_model_failure() {
     let mapped = unusable_sidecar(&LLMError::SidecarBinaryUnusable("broken".into()));
-    assert!(matches!(mapped, Some(AppError::ServiceNotAvailable(m)) if m == "broken"));
+    assert!(matches!(
+        mapped,
+        Some(AppError::ModelServerCannotStart(m))
+            if m == "The model server could not start: broken. Reinstall Lattice, or choose another model in Settings."
+    ));
     assert!(unusable_sidecar(&LLMError::GenerationFailed("bad gguf".into())).is_none());
     assert!(unusable_sidecar(&LLMError::Timeout).is_none());
 }
@@ -518,4 +522,54 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
     );
     let connection = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
     assert_eq!(connection.max_tokens, 8_192);
+}
+
+#[test]
+fn a_bundled_server_that_cannot_run_is_an_install_problem_the_learner_can_act_on() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    let fault = "llama-server.exe was not found";
+    let expected = "The model server could not start: llama-server.exe was not found. \
+        Reinstall Lattice, or choose another model in Settings.";
+    let error = LLMError::SidecarBinaryUnusable(fault.into());
+
+    let mapped = unusable_sidecar(&error).expect("an unusable sidecar is reported as such");
+    let converted = AppError::from(error);
+
+    for error in [mapped, converted] {
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(
+            !JobFailure::is_transient(&error),
+            "waiting does not bring a missing server back: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_server_that_is_starting_or_unreachable_stays_transient() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for error in [
+        LLMError::ClientUnavailable("llama-server is still starting".into()),
+        LLMError::Network("connection reset".into()),
+    ] {
+        assert!(JobFailure::is_transient(&AppError::from(error)));
+    }
+}
+
+#[test]
+fn a_bundled_server_that_cannot_run_reaches_the_wire_as_a_model_load_error() {
+    use lattice_core::shared::ipc::{ApiError, ErrorCode};
+    let error = AppError::from(LLMError::SidecarBinaryUnusable(
+        "llama-server.exe was not found".into(),
+    ));
+    let wire = ApiError::from(error);
+    assert_eq!(wire.code, ErrorCode::ModelLoadError);
+    assert!(
+        wire.details
+            .as_deref()
+            .is_some_and(|details| details.contains(
+                "The model server could not start: llama-server.exe was not found. \
+             Reinstall Lattice, or choose another model in Settings."
+            )),
+        "{wire:?}"
+    );
 }

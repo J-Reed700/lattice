@@ -15,9 +15,10 @@ export interface SectionErrorProps {
   sectionName?: string;
   icon?: React.ReactNode;
   onDismiss?: () => void;
+  exhausted?: boolean;
 }
 
-export function SectionError({ error, errorInfo, resetError, sectionName = 'this section', onDismiss }: SectionErrorProps) {
+export function SectionError({ error, errorInfo, resetError, sectionName = 'this section', onDismiss, exhausted }: SectionErrorProps) {
   const [showDetails, setShowDetails] = useState(false);
   const isDevelopment = import.meta.env.DEV;
   const userFriendlyMessage = getUserFriendlyMessage(error);
@@ -37,6 +38,15 @@ export function SectionError({ error, errorInfo, resetError, sectionName = 'this
           >
             Try again
           </button>
+          {exhausted ? (
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex h-8 items-center rounded-md border border-border-default bg-surface px-3 text-sm font-medium text-text-primary transition-colors duration-fast hover:bg-surface-raised"
+            >
+              Reload
+            </button>
+          ) : null}
           {onDismiss ? (
             <button
               type="button"

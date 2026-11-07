@@ -3,6 +3,7 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRight, Layers3, PanelRightClose, PanelRightOpen } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
 import { NavigationTabs } from '@/components/ui/NavigationTabs';
 import { useLearningOutlineEvidence } from '@/features/learning/api/evidenceQueries';
@@ -62,8 +63,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   program: LearningProgramDto; onBack: () => void; onAccept: (title: string) => void; acceptPending: boolean; acceptError?: string;
   /** Opens another course, e.g. the copy an import just created. */
   onOpenProgram: (programId: string) => void;
-  onPrepare: (lesson: LearningLessonDto) => void; preparePending: boolean; prepareError?: string;
-  onComplete: (lesson: LearningLessonDto) => void; completePending: boolean; completeError?: string;
+  onPrepare: (lesson: LearningLessonDto) => void; preparePending: boolean; prepareError?: Error;
+  onComplete: (lesson: LearningLessonDto) => void; completePending: boolean; completeError?: Error;
   /** Opens a lesson's claim review screen (UI design §2.3). */
   onReview?: (programId: string, lessonId: string, claimId?: string) => void;
 }) {
@@ -342,8 +343,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         <CourseIndexNotice programId={program.summary.id} />
         {/* The full panel belongs to Lessons; elsewhere one line keeps the tab's own content in view. */}
         {activeProgram && (tab === 'lessons'
-          ? <LessonPreparationStatus job={preparationJob} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} />
-          : <LessonPreparationLine job={preparationJob} pending={preparePending} programId={program.summary.id} error={prepareError} onView={() => selectTab('lessons')} />)}
+          ? <LessonPreparationStatus job={preparationJob} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError?.message} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} />
+          : <LessonPreparationLine job={preparationJob} pending={preparePending} programId={program.summary.id} error={prepareError?.message} onView={() => selectTab('lessons')} />)}
         {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-rose-700">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
         {tab === 'lessons' && <div className="studio-lessons">{!currentModule?.lessons.length ? <p className="rounded-lg bg-surface p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson, index) => <LessonCard key={lesson.id} lesson={lesson} number={`${program.modules.indexOf(currentModule) + 1}.${index + 1}`} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparingLesson)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); setWrittenOpened(true); setLastPracticeTab('workbench'); })} onReview={openReview} contextVisible={contextVisible} onSources={() => selectTab('sources')}
           notebook={activeProgram && lesson.id === lessonId ? <NotebookPanel compact enabled program={program} lessonId={lesson.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} onOpenNotebook={() => selectTab('notebook')} /> : undefined}
@@ -490,7 +491,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             )}
           </div>
         )}
-        {(prepareError || completeError) && tab === 'lessons' && <p role="alert" className="mt-4 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-700">{prepareError ? `Lesson preparation failed: ${prepareError}` : `Completion could not be saved: ${completeError}`}</p>}
+        {(prepareError || completeError) && tab === 'lessons' && <PlainError error={prepareError ?? completeError} />}
       </section></main>
 
       <details className="studio-course-provenance border border-border px-4"><summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold text-text-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Progress, source materials & authorship</summary><div className="grid gap-3 pb-4 md:grid-cols-2 xl:grid-cols-3"><section className="rounded-xl border border-border bg-background p-4"><div className="text-sm font-medium text-text-muted">Outcome evidence</div><h3 className="mt-1 font-serif text-lg text-text-primary">Where you are</h3><p className="mt-1 text-sm leading-5 text-text-muted">Different signals answer different questions.</p><div className="mt-3 space-y-3">{[{ label: 'Encountered', value: `${readyCount} of ${allLessons.length}`, detail: 'Lessons prepared' }, { label: 'Checked', value: quizzes.data ? `${quizzes.data.quizzesPassed} of ${quizzes.data.quizzesTotal}` : '—', detail: 'Lesson quizzes passed' }, { label: 'Demonstrated', value: quizzes.data ? `${testsPassed} of ${quizzes.data.modules.length}` : '—', detail: 'Module tests passed' }, { label: 'Due for recheck', value: !activeProgram ? 'After acceptance' : memoryQuery.isError ? 'Unavailable' : memoryQuery.data ? `${memoryQuery.data.dueCount} due` : 'Loading', detail: !activeProgram ? 'Review scheduling starts with accepted work' : memoryQuery.isError ? 'Could not load the review schedule' : 'FSRS 6 review schedule' }].map((row) => <div key={row.label} className="border-t border-border pt-2 first:border-0 first:pt-0"><div className="flex items-baseline justify-between gap-2"><span className="text-sm font-medium text-text-secondary">{row.label}</span><span className="text-sm font-semibold tabular-nums text-text-primary">{row.value}</span></div><div className="mt-0.5 text-sm text-text-muted">{row.detail}</div></div>)}</div><p className="mt-3 rounded-lg bg-surface px-3 py-2 text-sm leading-5 text-text-secondary">A quiz result is evidence from one attempt; it does not establish mastery or job readiness.</p></section>

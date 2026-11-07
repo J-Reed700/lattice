@@ -13,6 +13,12 @@ impl Container {
         self.core.db_pool()
     }
 
+    pub fn settings_repository(
+        &self,
+    ) -> &Arc<dyn lattice_core::application::ports::SettingsRepositoryPort> {
+        self.system.settings_repo()
+    }
+
     pub fn jobs(&self) -> &Arc<lattice_core::shared::runtime::jobs::JobRuntime> {
         &self.jobs
     }

@@ -242,7 +242,7 @@ impl LessonGenerationWorker {
             ));
         }
         if program.sources.is_empty() {
-            return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. The MVP needs saved evidence to check its teaching.".into()));
+            return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. Lattice checks what it teaches against saved sources.".into()));
         }
         let workspace =
             crate::features::learning::source_library::LearningSourceLibraryRepository::new(
@@ -539,8 +539,31 @@ mod repository_tests {
         LearningCurriculumRepository,
         crate::features::learning::curriculum::LearningGenerationJob,
     ) {
+        queued_job_with(pool, true).await
+    }
+
+    /// A course the learner has not added any reference material to.
+    pub(super) async fn queued_job_without_sources(
+        pool: &SqlitePool,
+    ) -> (
+        LearningCurriculumRepository,
+        crate::features::learning::curriculum::LearningGenerationJob,
+    ) {
+        queued_job_with(pool, false).await
+    }
+
+    async fn queued_job_with(
+        pool: &SqlitePool,
+        with_sources: bool,
+    ) -> (
+        LearningCurriculumRepository,
+        crate::features::learning::curriculum::LearningGenerationJob,
+    ) {
         let program_repo = LearningRepository::new(pool.clone());
-        let program = crate::features::learning::tests::fixture();
+        let mut program = crate::features::learning::tests::fixture();
+        if !with_sources {
+            program.sources.clear();
+        }
         let references: Vec<_> = program
             .sources
             .iter()

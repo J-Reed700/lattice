@@ -71,7 +71,7 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
   /** Waiting claims on the same source, this one included. */
   sharing: number;
   busy: boolean;
-  error: string | null;
+  error: Error | null;
   form: ActionForm | null;
   onFormChange: (form: ActionForm | null) => void;
   onAct: ClaimActionRunner;

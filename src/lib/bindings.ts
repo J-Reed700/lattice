@@ -6133,6 +6133,14 @@ export type ErrorCode =
  */
 "MODEL_LOAD_ERROR" |
 /**
+ * The prompt is larger than the model's context window
+ */
+"PROMPT_EXCEEDS_WINDOW" |
+/**
+ * No Learning model is set
+ */
+"LEARNING_MODEL_NOT_SET" |
+/**
  * Data processing failed
  */
 "PROCESSING_ERROR" |
@@ -7620,7 +7628,11 @@ modelCallsCeilingRises?: number;
  * the first pass observed them.
  */
 claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
-export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null;
+/**
+ * The code of the error the job recorded; null on older jobs.
+ */
+errorCode?: ErrorCode | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -7812,7 +7824,11 @@ export type LearningOutlineProgressDto = { programId?: string | null; stage: Out
  * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
  * dive's gathering and evidence linking are never a silent spinner.
  */
-detail?: string | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+detail?: string | null;
+/**
+ * Present while the outline waits out a model outage between attempts.
+ */
+waiting?: ModelWaitDto; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
 export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
 /**
  * Outline items whose citation is verified: chosen by evidence linking or
@@ -8852,6 +8868,7 @@ popularity_likes?: number | null }
  * Settings when the model is loaded, so moving a server moves every chat
  * that names it.
  */
+export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 export type ModelRef =
 /**
  * A downloaded GGUF row in `models` (`DownloadedModel::model_id`).
