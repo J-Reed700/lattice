@@ -5,17 +5,25 @@ use regex::Regex;
 use serde_json::Value;
 use std::sync::OnceLock;
 
+fn pattern(source: &str) -> Regex {
+    match Regex::new(source) {
+        Ok(re) => re,
+        Err(_) => match Regex::new("$^") {
+            Ok(never) => never,
+            Err(_) => unreachable!(),
+        },
+    }
+}
+
 fn mention() -> &'static Regex {
     static MENTION: OnceLock<Regex> = OnceLock::new();
-    MENTION.get_or_init(|| {
-        Regex::new(r"(?i) ?[(\[][ \t]*source[ \t]?index[ \t]*:?[ \t]*\d+[ \t]*[)\]]")
-            .expect("mention pattern")
-    })
+    MENTION
+        .get_or_init(|| pattern(r"(?i) ?[(\[][ \t]*source[ \t]?index[ \t]*:?[ \t]*\d+[ \t]*[)\]]"))
 }
 
 fn list_marker() -> &'static Regex {
     static MARKER: OnceLock<Regex> = OnceLock::new();
-    MARKER.get_or_init(|| Regex::new(r"^\s*(?:[-*+]|\d+[.)])[ \t]+").expect("marker pattern"))
+    MARKER.get_or_init(|| pattern(r"^\s*(?:[-*+]|\d+[.)])[ \t]+"))
 }
 
 struct Line {
@@ -26,6 +34,10 @@ struct Line {
     removed: bool,
     heading: bool,
     drop: bool,
+}
+
+fn backticks_at(bytes: &[u8], at: usize) -> usize {
+    bytes.iter().skip(at).take_while(|b| **b == b'`').count()
 }
 
 /// Removes the mentions outside inline code spans; reports whether any went.
@@ -40,20 +52,20 @@ fn without_mentions(line: &str) -> (String, bool) {
         found |= stripped.len() != text.len();
         out.push_str(&stripped);
     };
-    while i < bytes.len() {
-        if bytes[i] != b'`' {
+    while let Some(&byte) = bytes.get(i) {
+        if byte != b'`' {
             i += 1;
             continue;
         }
-        let run = bytes[i..].iter().take_while(|b| **b == b'`').count();
+        let run = backticks_at(bytes, i);
         let mut j = i + run;
         let mut end = None;
-        while j < bytes.len() {
-            if bytes[j] != b'`' {
+        while let Some(&next) = bytes.get(j) {
+            if next != b'`' {
                 j += 1;
                 continue;
             }
-            let closing = bytes[j..].iter().take_while(|b| **b == b'`').count();
+            let closing = backticks_at(bytes, j);
             if closing == run {
                 end = Some(j + closing);
                 break;
@@ -62,15 +74,15 @@ fn without_mentions(line: &str) -> (String, bool) {
         }
         match end {
             Some(end) => {
-                clean(&line[plain..i], &mut out);
-                out.push_str(&line[i..end]);
+                clean(line.get(plain..i).unwrap_or_default(), &mut out);
+                out.push_str(line.get(i..end).unwrap_or_default());
                 plain = end;
                 i = end;
             }
             None => i += run,
         }
     }
-    clean(&line[plain..], &mut out);
+    clean(line.get(plain..).unwrap_or_default(), &mut out);
     (out, found)
 }
 
@@ -78,7 +90,7 @@ fn fence_of(line: &str) -> Option<(char, usize)> {
     let trimmed = line.trim_start();
     let mark = trimmed.chars().next().filter(|c| *c == '`' || *c == '~')?;
     let run = trimmed.chars().take_while(|c| *c == mark).count();
-    let info = &trimmed[run..];
+    let info = trimmed.trim_start_matches(mark);
     (run >= 3 && !(mark == '`' && info.contains('`'))).then_some((mark, run))
 }
 
@@ -121,7 +133,7 @@ pub(in crate::features::learning) fn strip_citation_apparatus(text: &str) -> Str
         } else {
             ""
         };
-        let content = &raw[..raw.len() - ending.len()];
+        let content = raw.strip_suffix(ending).unwrap_or(raw);
         let in_code = match fence {
             Some((mark, run)) => {
                 if closes(content, mark, run) {
@@ -148,7 +160,8 @@ pub(in crate::features::learning) fn strip_citation_apparatus(text: &str) -> Str
             line.blank = body.trim().is_empty();
             if let Some(marker) = list_marker().find(&body) {
                 line.item = true;
-                line.removed = mentioned && is_quotation(&body[marker.end()..]);
+                line.removed =
+                    mentioned && is_quotation(body.get(marker.end()..).unwrap_or_default());
             }
             line.heading = !line.item && is_heading(&body);
             line.drop = line.removed;
@@ -157,18 +170,18 @@ pub(in crate::features::learning) fn strip_citation_apparatus(text: &str) -> Str
         lines.push(line);
     }
     for h in 0..lines.len() {
-        if !lines[h].heading || lines[h].drop {
+        if !lines.get(h).is_some_and(|line| line.heading && !line.drop) {
             continue;
         }
         let (mut seen, mut last, mut j) = (0, h, h + 1);
         let mut standing = false;
-        while j < lines.len() {
-            if lines[j].blank {
-            } else if lines[j].removed {
+        while let Some(line) = lines.get(j) {
+            if line.blank {
+            } else if line.removed {
                 seen += 1;
                 last = j;
             } else {
-                standing = lines[j].item;
+                standing = line.item;
                 break;
             }
             j += 1;
@@ -176,14 +189,24 @@ pub(in crate::features::learning) fn strip_citation_apparatus(text: &str) -> Str
         if seen == 0 || standing {
             continue;
         }
-        let to = if j == lines.len() { j - 1 } else { last };
-        for line in &mut lines[h..=to] {
+        let to = if j == lines.len() {
+            lines.len().saturating_sub(1)
+        } else {
+            last
+        };
+        for line in lines.iter_mut().take(to + 1).skip(h) {
             line.drop = true;
         }
         let mut k = h;
-        while k > 0 && lines[k - 1].blank && !lines[k - 1].drop {
+        while k > 0
+            && lines
+                .get(k - 1)
+                .is_some_and(|line| line.blank && !line.drop)
+        {
             k -= 1;
-            lines[k].drop = true;
+            if let Some(line) = lines.get_mut(k) {
+                line.drop = true;
+            }
         }
     }
     let mut out: String = lines
@@ -216,13 +239,17 @@ pub(in crate::features::learning) fn strip_draft_apparatus(raw: String) -> Strin
     };
     let mut changed = 0;
     for (list, field) in [("blocks", "body"), ("questions", "explanation")] {
-        for item in draft[list].as_array_mut().into_iter().flatten() {
-            let Some(text) = item[field].as_str() else {
+        let items = draft.get_mut(list).and_then(Value::as_array_mut);
+        for item in items.into_iter().flatten() {
+            let Some(slot) = item.get_mut(field) else {
+                continue;
+            };
+            let Some(text) = slot.as_str() else {
                 continue;
             };
             let stripped = strip_citation_apparatus(text);
             if stripped != text {
-                item[field] = Value::String(stripped);
+                *slot = Value::String(stripped);
                 changed += 1;
             }
         }
