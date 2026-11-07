@@ -73,15 +73,8 @@ export function IndexingStatusPopover({ snapshot, open, onClose }: IndexingStatu
   const failureLine = formatFailureLine(snapshot);
 
   const showAll = () => {
-    // Navigate first: `Settings` installs the `settings:navigate-tab` listener
-    // on mount, so dispatching before it exists sends the event nowhere.
     navigate(INDEXING_SETTINGS_PATH);
     onClose();
-    window.setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent('settings:navigate-tab', { detail: { tab: 'indexing' } }),
-      );
-    }, 0);
   };
 
   return (

@@ -3,8 +3,8 @@ import { useEffect, useId, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, CirclePause, ClipboardCheck, LoaderCircle, Save } from 'lucide-react';
 
-import { OpenModelSettingsButton } from '@/components/OpenModelSettingsButton';
 import { PlainError } from '@/components/PlainError';
+import { WaitingNotice } from '@/components/WaitingNotice';
 import { useCancelLearningGenerationJob, useRetryLearningGenerationJob } from '@/features/learning/curriculum/useLearningPlan';
 import { PREPARATION_PHASES, callsLine, preparationDuration, preparationState, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { LessonPreparationCurrentStep } from '@/features/learning/lessons/LessonPreparationCurrentStep';
@@ -136,10 +136,7 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
     {!active && waitsForIndex && <p id={indexWaitId} className="mt-1 text-xs tabular-nums text-text-secondary">{waitsForIndex}</p>}
     {currentChecks && bar && <div role="progressbar" aria-label={bar.label} aria-valuenow={bar.value} aria-valuemin={0} aria-valuemax={bar.max} aria-valuetext={`${bar.text}${calls ? `; ${calls}` : ''}; ${activity.checksReused} saved checks reused`} className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, bar.value / bar.max * 100)}%` }} /></div>}
     {actionError && <p role="alert" className="mt-2 text-xs text-rose-700">{actionError.message}</p>}
-    {reconnecting && job?.error && <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm leading-6 text-text-primary">
-      <p className="min-w-0 wrap-break-word">{job.error}</p>
-      <OpenModelSettingsButton />
-    </div>}
+    {reconnecting && job?.error && <WaitingNotice code={job.errorCode} raw={job.error} />}
     {!active && !paused && (job?.error
       ? <PlainError error={jobErrorToError(job)} className="mt-2 text-sm leading-6 text-rose-700" />
       : <p role="alert" className="mt-2 text-sm leading-6 text-rose-700">{error || 'Preparation stopped. Your draft and completed checkpoints remain saved.'}</p>)}

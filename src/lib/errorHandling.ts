@@ -79,6 +79,17 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.UNKNOWN]: 'Something went wrong.',
 };
 
+const WAITING_MESSAGES: Partial<Record<ErrorCode, string>> = {
+  [ErrorCode.NETWORK_ERROR]: "Can't reach the model server. Lattice keeps trying.",
+  [ErrorCode.RATE_LIMIT_EXCEEDED]: 'The model is getting too many requests. Lattice keeps trying.',
+  [ErrorCode.SERVICE_NOT_AVAILABLE]: 'The model server is busy or starting. Lattice keeps trying.',
+};
+
+/** What a learner reads while work waits out an outage and retries, from the code of the error it is waiting on. */
+export function waitingSentence(code: ErrorCode | null | undefined): string {
+  return (code && WAITING_MESSAGES[code]) ?? "The model server isn't answering. Lattice keeps trying.";
+}
+
 const KNOWN_CODES: ReadonlySet<string> = new Set(Object.values(ErrorCode));
 
 /** A backend code, or UNKNOWN for anything that is not one. */
