@@ -488,6 +488,64 @@ mod tests {
         Ok(())
     }
 
+    /// The notes `check` establishes from two scripted answers, the second
+    /// the one asked for again.
+    async fn established_from(
+        first: &Value,
+        second: &Value,
+        issues: &[ReviewFinding],
+    ) -> Result<Vec<String>> {
+        use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+        let model = ScriptedModel {
+            outputs: std::sync::Mutex::new(vec![first.to_string(), second.to_string()].into()),
+            prompts: Default::default(),
+        };
+        let sources = ReferenceCollection::lexical(&[])?;
+        let established = check(
+            &model,
+            issues,
+            &json!({"deliverable":"Record the resulting state."}),
+            &json!({"blocks":[{"body":"Read the instructions."}],"questions":[]}),
+            &sources,
+            None,
+        )
+        .await?;
+        assert_eq!(model.prompts.lock().unwrap().len(), 2);
+        Ok(established
+            .into_iter()
+            .map(|finding| finding.note)
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn a_decision_broken_only_when_asked_again_keeps_the_grounded_one_the_first_answer_gave(
+    ) -> Result<()> {
+        let decision = |verdict: &str, ids: Value, requirement: Value| json!({"verdict":verdict,"basis":"lesson_contract","evidenceIds":ids,"requirementId":requirement,"reason":"The exercise does not ask for what the contract requires."});
+        let grounded = decision("actionable", json!(["blocks-0"]), json!("requirements"));
+        let uncited = decision("actionable", json!([]), json!("requirements"));
+        let issues = [
+            proposal("The exercise omitted its required deliverable."),
+            proposal("The exercise never asks for the recorded state."),
+        ]
+        .concat();
+        let notes: Vec<String> = issues.iter().map(|issue| issue.note.clone()).collect();
+        // The first answer cites nothing for issue-0, so it is asked for
+        // again; asked again, it cites nothing for issue-1, which the first
+        // answer grounded.
+        let first = json!({"issue-0": uncited, "issue-1": grounded});
+        let second = json!({"issue-0": grounded, "issue-1": uncited});
+        assert_eq!(established_from(&first, &second, &issues).await?, notes);
+        // An answer asked for again that breaks the protocol on another
+        // verdict does not take the first answer's.
+        let withdrawn = decision("not_established", json!([]), json!("requirements"));
+        let second = json!({"issue-0": grounded, "issue-1": withdrawn});
+        assert_eq!(
+            established_from(&first, &second, &issues).await?,
+            notes[..1].to_vec()
+        );
+        Ok(())
+    }
+
     #[test]
     fn flat_responses_still_require_the_right_evidence_for_internal_conflicts() -> Result<()> {
         let issues = proposal("The two statements in the candidate are incompatible.");
