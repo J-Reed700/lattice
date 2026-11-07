@@ -20,7 +20,9 @@ pub use machine::{Accelerator, AcceleratorKind, Backend, MachineProfile};
 pub use placement::{
     choose_placement, DedicatedGpu, Placement, ProcessorOnly, UnifiedMemory, DISPLAY_RESERVE_BYTES,
 };
-pub use recommender::{Candidate, Evidence, Label, MeasuredSuite, Recommendation, Recommender};
+pub use recommender::{
+    Candidate, Evidence, Label, MeasuredSuite, Recommendation, Recommender, SpeedClass,
+};
 pub use shape::{ModelShape, PerLayer, PinnedModel, MICRO_BATCH_TOKENS};
 pub use verdict::{fit, DeviceKind, FitDevice, FitKind, FitVerdict};
 

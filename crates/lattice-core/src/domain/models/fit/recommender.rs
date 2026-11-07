@@ -3,7 +3,7 @@ use super::footprint::{footprint, ServerBuffers, COMFORTABLE_WINDOW_TOKENS};
 use super::machine::MachineProfile;
 use super::placement::choose_placement;
 use super::shape::ModelShape;
-use super::verdict::{fit, FitKind, FitVerdict};
+use super::verdict::{fit, DeviceKind, FitKind, FitVerdict};
 use crate::domain::models::curated::CuratedChatModel;
 
 /// One result file a model was measured in.
@@ -40,6 +40,33 @@ const MEASURED_SUITES: &[MeasuredSuite] = &[
 
 /// Models below this many parameters are not offered at under four bits.
 const SMALL_MODEL_PARAMETERS_B: f32 = 20.0;
+
+/// Active parameters up to which a model is fast.
+const FAST_MAX_ACTIVE_PARAMETERS_B: f32 = 5.0;
+
+/// Active parameters up to which a model is balanced; above it a model is thorough.
+const BALANCED_MAX_ACTIVE_PARAMETERS_B: f32 = 14.0;
+
+/// How quickly a model answers, from its active parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpeedClass {
+    Fast,
+    Balanced,
+    Thorough,
+}
+
+impl SpeedClass {
+    /// Up to 5 billion active parameters is fast, up to 14 balanced, above that thorough.
+    pub fn from_active_parameters(active_parameters_b: f32) -> Self {
+        if active_parameters_b <= FAST_MAX_ACTIVE_PARAMETERS_B {
+            Self::Fast
+        } else if active_parameters_b <= BALANCED_MAX_ACTIVE_PARAMETERS_B {
+            Self::Balanced
+        } else {
+            Self::Thorough
+        }
+    }
+}
 
 /// A model the recommender may offer.
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +123,11 @@ impl Candidate {
 
     fn is_offered(&self) -> bool {
         self.quantization_bits >= 4 || self.parameters_b >= SMALL_MODEL_PARAMETERS_B
+    }
+
+    /// The model's speed class, from its active parameters.
+    pub fn speed(&self) -> SpeedClass {
+        SpeedClass::from_active_parameters(self.active_parameters_b)
     }
 
     fn needs_at_comfortable_window(&self, buffers: ServerBuffers) -> u64 {
@@ -156,9 +188,11 @@ impl Recommender {
     ) -> Vec<Recommendation> {
         let placement = choose_placement(profile, &self.companions);
         let buffers = ServerBuffers::chat(self.kv_cache_quantization);
+        let on_processor = placement.device().kind == DeviceKind::Processor;
         let judged: Vec<(&Candidate, FitVerdict)> = catalog
             .iter()
             .filter(|candidate| candidate.is_offered())
+            .filter(|candidate| !on_processor || candidate.speed() != SpeedClass::Thorough)
             .map(|candidate| {
                 let verdict = fit(
                     candidate.gpu_weight_bytes,
