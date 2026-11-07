@@ -36,6 +36,8 @@ struct State {
     /// Every ceiling the plan published, in order.
     #[cfg(test)]
     ceilings: Vec<u32>,
+    #[cfg(test)]
+    stages: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -106,6 +108,8 @@ pub(in crate::features::learning) fn stage(message: impl Into<String>) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         tracing::info!(stage = %message, "Lesson preparation stage changed");
+        #[cfg(test)]
+        state.stages.push(message.clone());
         state.message = message;
         state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
         if state.active_model_calls == 0 {
@@ -541,6 +545,22 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     activity.model_calls_ceiling_rises = 0;
     activity.statements = None;
     activity
+}
+
+/// Runs `future` with fresh progress and returns every stage it showed.
+#[cfg(test)]
+pub(in crate::features::learning) async fn staged<T>(
+    future: impl std::future::Future<Output = T>,
+) -> (T, Vec<String>) {
+    let progress = Progress::default();
+    let value = CURRENT.scope(progress.clone(), future).await;
+    let stages = progress
+        .0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .stages
+        .clone();
+    (value, stages)
 }
 
 impl Progress {
