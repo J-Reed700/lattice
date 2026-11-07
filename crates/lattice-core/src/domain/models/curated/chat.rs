@@ -1,5 +1,6 @@
 //! Curated chat models: the catalog, what a model file supports, and what its context window costs in memory.
 
+use super::pins::{pinned_for, unpinned};
 use crate::domain::models::fit::PinnedModel;
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
@@ -268,7 +269,7 @@ impl CuratedChatModel {
     /// The memory facts of this entry's GGUF header and the bytes of it that stay in system RAM,
     /// as pinned in the catalog.
     pub fn pinned(&self) -> PinnedModel {
-        todo!("stage 2")
+        pinned_for(self.repo, self.file).unwrap_or_else(unpinned)
     }
 
     fn metadata(&self) -> ModelMetadata {

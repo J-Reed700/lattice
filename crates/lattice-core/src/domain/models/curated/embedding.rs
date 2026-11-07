@@ -1,5 +1,6 @@
 //! Curated embedding models, and which of them support Matryoshka truncation.
 
+use super::pins::{pinned_for, unpinned};
 use crate::domain::models::checkpoint::TOKENIZER_JSON;
 use crate::domain::models::fit::PinnedModel;
 use crate::domain::models::metadata::ModelFileMetadata;
@@ -58,8 +59,11 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
 /// The memory facts of the curated embedding GGUF's header and the bytes of it that stay in system
 /// RAM, as pinned in the catalog.
 pub fn curated_embedding_pinned() -> PinnedModel {
-    todo!("stage 2")
+    pinned_for(QWEN3_EMBEDDING_REPO, QWEN3_EMBEDDING_FILE).unwrap_or_else(unpinned)
 }
+
+const QWEN3_EMBEDDING_REPO: &str = "Qwen/Qwen3-Embedding-0.6B-GGUF";
+const QWEN3_EMBEDDING_FILE: &str = "Qwen3-Embedding-0.6B-f16.gguf";
 
 const QWEN3_EMBEDDING_GGUF_BYTES: u64 = 1_197_629_632;
 const QWEN3_EMBEDDING_TOKENIZER_BYTES: u64 = 11_423_705;
