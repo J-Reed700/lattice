@@ -317,11 +317,14 @@ impl FolderIndexManager {
     ) -> Result<bool> {
         let subject = root_string(index_root);
         // A build that stopped the app waits, visible, for the learner's retry.
-        if self
-            .jobs
-            .store()
-            .last_run_stopped_the_app(build::FOLDER_INDEX, &subject)
-            .await?
+        // Rebuilding a sub-folder is that retry; rebuilding a whole folder has
+        // already forgotten its builds.
+        if !wipe_prefix
+            && self
+                .jobs
+                .store()
+                .last_run_stopped_the_app(build::FOLDER_INDEX, &subject)
+                .await?
         {
             return Ok(false);
         }
