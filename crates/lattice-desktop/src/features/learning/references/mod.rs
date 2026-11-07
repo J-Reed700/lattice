@@ -2,6 +2,9 @@
 
 pub(crate) mod admission;
 pub mod course_index;
+pub(crate) mod gathering;
+#[cfg(test)]
+mod gathering_tests;
 pub(crate) mod source_identity;
 pub mod source_library;
 pub mod source_selector;
