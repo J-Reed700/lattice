@@ -10,7 +10,7 @@ use std::path::Path;
 #[test]
 fn test_llm_models_count() {
     let models = get_curated_llm_models();
-    assert_eq!(models.len(), 9);
+    assert_eq!(models.len(), 15);
 }
 
 /// Every chat entry is one file whose size and digest were read from Hugging
@@ -58,6 +58,12 @@ fn memory_estimates_are_weights_plus_kv_plus_runtime() {
         ("qwen3.5-9b-q4_k_m", 7.0, 7.8),
         ("qwen3.5-9b-mtp-q4_k_m", 7.2, 8.1),
         ("gemma-4-12b-it-q4_k_m", 8.8, 9.2),
+        ("qwen3.5-9b-q6_k", 8.8, 9.6),
+        ("qwen3.5-9b-q8_0", 10.8, 11.7),
+        ("gemma-4-12b-it-q6_k", 11.5, 11.9),
+        ("qwen3.8-27b-iq3_s", 12.7, 14.4),
+        ("gemma-4-26b-a4b-it-ud-iq3_s", 12.8, 13.3),
+        ("gemma-4-12b-it-q8_0", 14.4, 14.8),
         ("qwen3.8-27b-ud-q4_k_m", 18.1, 19.8),
         ("gemma-4-26b-a4b-it-ud-q4_k_m", 18.5, 19.0),
         ("qwen3.6-35b-a3b-ud-q4_k_xl", 23.6, 24.1),
@@ -161,6 +167,100 @@ fn only_the_mtp_build_is_served_with_mtp() {
     assert_eq!(flagged, ["qwen3.5-9b-mtp-q4_k_m"]);
 }
 
+/// Ids are unique, and the entries that give up bits to fit a 16 GB card say
+/// so in their name and description rather than leaving it to a file name.
+#[test]
+fn entries_are_unique_and_three_bit_files_are_marked() {
+    let mut ids = std::collections::HashSet::new();
+    let mut files = std::collections::HashSet::new();
+    for model in CURATED_CHAT_MODELS {
+        assert!(ids.insert(model.id), "{} appears twice", model.id);
+        assert!(
+            files.insert((model.repo, model.file)),
+            "{} pins a file another entry pins",
+            model.id
+        );
+        let three_bit = model.quantization.contains("IQ3");
+        assert_eq!(
+            three_bit,
+            model.description.contains("3-bit"),
+            "{}: description and quantization disagree about 3 bits",
+            model.id
+        );
+        assert_eq!(three_bit, model.name.contains("3-bit"), "{}", model.id);
+    }
+}
+
+/// The recommender orders by `rank` and reads the parameter counts, so every
+/// entry carries them: ranks are unique and run 1 to the catalog's size,
+/// a mixture-of-experts model names its active parameters, and a quantization
+/// below 4 bits belongs only to a model of 20B parameters or more.
+#[test]
+fn every_entry_has_a_unique_rank_and_parameter_counts() {
+    let mut ranks: Vec<u8> = CURATED_CHAT_MODELS.iter().map(|m| m.rank).collect();
+    ranks.sort_unstable();
+    let expected: Vec<u8> = (1..=CURATED_CHAT_MODELS.len() as u8).collect();
+    assert_eq!(ranks, expected, "ranks are unique and without gaps");
+    for model in CURATED_CHAT_MODELS {
+        assert!(model.parameters_b > 0.0, "{}", model.id);
+        assert!(
+            model.active_parameters_b > 0.0 && model.active_parameters_b <= model.parameters_b,
+            "{}: active parameters are at most the total",
+            model.id
+        );
+        let mixture_of_experts = model.id.contains("-a3b-") || model.id.contains("-a4b-");
+        assert!(
+            !mixture_of_experts || model.active_parameters_b < model.parameters_b,
+            "{} names its active parameters",
+            model.id
+        );
+        let bits = match model.quantization {
+            q if q.contains("IQ3") || q.contains("Q3_") => 3,
+            q if q.contains("Q6") => 6,
+            q if q.contains("Q8") => 8,
+            q if q.contains("Q5") => 5,
+            _ => 4,
+        };
+        assert_eq!(model.quantization_bits, bits, "{}", model.id);
+        if model.quantization_bits < 4 {
+            assert!(
+                model.parameters_b >= 20.0,
+                "{}: a small model is never offered below 4 bits",
+                model.id
+            );
+        }
+    }
+}
+
+/// The order the survey's public results support, spelled out so a change to
+/// one entry's rank is a visible change here.
+#[test]
+fn the_capability_order_is_the_documented_one() {
+    let mut by_rank: Vec<_> = CURATED_CHAT_MODELS.iter().collect();
+    by_rank.sort_by_key(|model| std::cmp::Reverse(model.rank));
+    let ids: Vec<&str> = by_rank.iter().map(|model| model.id).collect();
+    assert_eq!(
+        ids,
+        [
+            "qwen3.8-27b-ud-q4_k_m",
+            "qwen3.8-27b-iq3_s",
+            "gemma-4-26b-a4b-it-ud-q4_k_m",
+            "qwen3.6-35b-a3b-ud-q4_k_xl",
+            "gemma-4-12b-it-q8_0",
+            "gemma-4-12b-it-q6_k",
+            "gemma-4-12b-it-q4_k_m",
+            "gemma-4-26b-a4b-it-ud-iq3_s",
+            "qwen3.5-9b-q8_0",
+            "qwen3.5-9b-q6_k",
+            "qwen3.5-9b-q4_k_m",
+            "qwen3.5-9b-mtp-q4_k_m",
+            "gemma-4-e4b-it-q4_k_m",
+            "qwen3.5-4b-q4_k_m",
+            "qwen3.5-2b-q4_k_m",
+        ]
+    );
+}
+
 /// Pre-Qwen-3.5 families were removed, not hidden.
 #[test]
 fn chat_catalog_is_current_generation_only() {
@@ -191,8 +291,12 @@ fn a_catalog_file_in_the_version_list_is_the_catalog_entry() {
     assert_eq!(mtp.id, "qwen3.5-9b-mtp-q4_k_m");
     // Another quantisation of a catalog repository is not vouched for.
     assert!(
-        curated_chat_model_for_file("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q8_0.gguf").is_none()
+        curated_chat_model_for_file("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q5_K_M.gguf").is_none()
     );
+    let q8 = curated_chat_model_for_file("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q8_0.gguf")
+        .expect("a catalog file");
+    assert_eq!(q8.id, "qwen3.5-9b-q8_0");
+    assert_eq!(q8.files[0].size_bytes, 9_527_502_048);
 }
 
 #[test]
@@ -205,7 +309,14 @@ fn catalog_search_matches_every_term() {
     };
     assert_eq!(ids("").len(), CURATED_CHAT_MODELS.len());
     assert_eq!(ids("gguf").len(), CURATED_CHAT_MODELS.len());
-    assert_eq!(ids("gemma 12b"), ["gemma-4-12b-it-q4_k_m".to_string()]);
+    assert_eq!(
+        ids("gemma 12b"),
+        [
+            "gemma-4-12b-it-q4_k_m".to_string(),
+            "gemma-4-12b-it-q6_k".to_string(),
+            "gemma-4-12b-it-q8_0".to_string(),
+        ]
+    );
     assert_eq!(ids("Qwen3.6").len(), 1);
     assert!(ids("qwen").len() >= 6);
     assert!(ids("llama").is_empty());
@@ -289,7 +400,7 @@ fn all_curated_models_have_unique_ids_and_valid_categories() {
 #[test]
 fn test_get_by_category() {
     let llms = get_curated_models_by_category(ModelCategory::LLM);
-    assert_eq!(llms.len(), 9);
+    assert_eq!(llms.len(), 15);
 
     let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
     assert_eq!(embeddings.len(), 1);
@@ -537,8 +648,15 @@ fn every_chat_entry_pins_a_projector_and_is_tagged_as_seeing() {
         let vision = model
             .vision
             .expect("every catalog repository ships a projector");
+        // ByteShape publishes only a bf16 projector; every other
+        // repository an F16 one.
+        let expected_projector = if model.repo.starts_with("byteshape/") {
+            "mmproj-bf16.gguf"
+        } else {
+            "mmproj-F16.gguf"
+        };
         assert_eq!(
-            vision.projector_remote_file, "mmproj-F16.gguf",
+            vision.projector_remote_file, expected_projector,
             "{}",
             model.id
         );
