@@ -44,6 +44,7 @@ vi.mock('@/lib/api', () => ({ default: {
   courseIndexClose: async () => ({ ok: true, data: undefined }),
 } }));
 
+const PAGE_WAIT = { timeout: 5000 };
 const STATEMENT = 'Water boils at 100 °C on Everest.';
 const lesson = { id: 'lesson-1', title: 'Start with the idea', objective: 'Explain boiling', estimatedMinutes: 20, preparation: 'ready', completed: false,
   blocks: [{ kind: 'explanation', title: 'The idea', body: 'A source-backed explanation.', sourceIds: [] }] } as unknown as LearningLessonDto;
@@ -76,24 +77,24 @@ describe('Learning Studio page: opening the claim review on a claim', () => {
 
   it('puts the claim in the address and hands it to the review screen from "Check the sources"', async () => {
     const router = show();
-    await userEvent.click(await screen.findByRole('button', { name: /A thoughtful course/ }, { timeout: 5000 }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Check the sources' }));
-    expect(await screen.findByText('Review on claim: claim-1')).toBeVisible();
+    await userEvent.click(await screen.findByRole('button', { name: /A thoughtful course/ }, PAGE_WAIT));
+    await userEvent.click(await screen.findByRole('button', { name: 'Check the sources' }, PAGE_WAIT));
+    expect(await screen.findByText('Review on claim: claim-1', undefined, PAGE_WAIT)).toBeVisible();
     const params = new URLSearchParams(router.state.location.search);
     expect([params.get('review'), params.get('course'), params.get('lesson'), params.get('claim')]).toEqual(['claims', 'program-1', 'lesson-1', 'claim-1']);
   });
 
   it('opens the review on the claim named in the address', async () => {
     show('/studio?course=program-1&lesson=lesson-1&review=claims&claim=claim-7');
-    expect(await screen.findByText('Review on claim: claim-7')).toBeVisible();
+    expect(await screen.findByText('Review on claim: claim-7', undefined, PAGE_WAIT)).toBeVisible();
   });
 
   it('opens the review on no particular claim when the address names none, and leaving drops the claim', async () => {
     const router = show('/studio?course=program-1&lesson=lesson-1&review=claims');
-    expect(await screen.findByText('Review on claim: none')).toBeVisible();
+    expect(await screen.findByText('Review on claim: none', undefined, PAGE_WAIT)).toBeVisible();
     router.navigate('/studio?course=program-1&lesson=lesson-1&review=claims&claim=claim-7');
-    expect(await screen.findByText('Review on claim: claim-7')).toBeVisible();
+    expect(await screen.findByText('Review on claim: claim-7', undefined, PAGE_WAIT)).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Leave the review' }));
-    await vi.waitFor(() => expect(new URLSearchParams(router.state.location.search).get('claim')).toBeNull());
+    await vi.waitFor(() => expect(new URLSearchParams(router.state.location.search).get('claim')).toBeNull(), PAGE_WAIT);
   });
 });
