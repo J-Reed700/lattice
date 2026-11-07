@@ -8923,7 +8923,7 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
-export type RecommendationDto = { modelId: string; name: string; description: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
+export type RecommendationDto = { modelId: string; name: string; description: string; useFor: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
 export type RecommendationLabelDto = "best" | "fastest" | "smallest_download"
 export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**

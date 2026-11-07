@@ -41,6 +41,7 @@ const recommendation = (modelId: string, name: string) => ({
   modelId,
   name,
   description: `${name} description.`,
+  useFor: `${name} is for everyday chat.`,
   downloadBytes: 5.7 * GB,
   verdict: verdict('fits'),
   labels: [],

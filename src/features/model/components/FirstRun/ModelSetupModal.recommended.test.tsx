@@ -29,6 +29,7 @@ const recommendation = (overrides: Record<string, unknown> = {}) => ({
   modelId: 'qwen-9b',
   name: 'Qwen 3.5 9B',
   description: 'Strong all-round chat model.',
+  useFor: 'For everyday chat and writing. Balances quality and speed.',
   downloadBytes: 5.7 * GB,
   verdict: { kind: 'fits', needsBytes: 11.2 * GB, budgetBytes: 15 * GB, device: RTX },
   labels: ['best'],
@@ -43,6 +44,7 @@ const recommendations = () => [
     modelId: 'gemma-4b',
     name: 'Gemma 4 4B',
     description: 'Small and quick.',
+    useFor: 'For fast answers and high throughput, with strong quality for its speed.',
     downloadBytes: 2.9 * GB,
     verdict: { kind: 'fits', needsBytes: 5.3 * GB, budgetBytes: 15 * GB, device: RTX },
     labels: ['fastest', 'smallest_download'],
@@ -53,6 +55,7 @@ const recommendations = () => [
     modelId: 'herb-12b',
     name: 'Herb 12B',
     description: 'Larger and slower.',
+    useFor: 'For complex reasoning and multi-step work, like building and checking courses. Answers more slowly.',
     downloadBytes: 7.4 * GB,
     verdict: { kind: 'fits', needsBytes: 13.6 * GB, budgetBytes: 15 * GB, device: RTX },
     labels: [],
@@ -119,6 +122,14 @@ describe('ModelSetupModal recommended list', () => {
     expect(radios[1]).not.toHaveAccessibleName(/Tested by Lattice/);
 
     expect(radios[2]).not.toHaveAccessibleName(/Best for this computer|Fastest|Smallest download|Tested by Lattice/);
+  });
+
+  it('says in plain words what each recommended model is for', async () => {
+    renderModal();
+    const radios = await cards();
+    expect(radios[0]).toHaveAccessibleName(/For everyday chat and writing\. Balances quality and speed\./);
+    expect(radios[1]).toHaveAccessibleName(/For fast answers and high throughput, with strong quality for its speed\./);
+    expect(radios[2]).toHaveAccessibleName(/For complex reasoning and multi-step work, like building and checking courses\. Answers more slowly\./);
   });
 
   it('says each card’s speed in words, not the backend’s code', async () => {
