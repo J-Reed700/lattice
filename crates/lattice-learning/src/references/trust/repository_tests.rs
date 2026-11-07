@@ -146,7 +146,7 @@ async fn judgements_round_trip_under_their_keys() -> Result<()> {
     };
     course.store.save_standing(&second).await?;
     let (batch, reads) =
-        crate::test_support::query_counts::count_reads(course.store.standings(&[
+        lattice_core::shared::testing::query_counts::count_reads(course.store.standings(&[
             second.key.clone(),
             other_model,
             standing.key.clone(),
@@ -159,7 +159,7 @@ async fn judgements_round_trip_under_their_keys() -> Result<()> {
         vec![second.value.clone(), standing.value.clone(), second.value]
     );
     let (empty, reads) =
-        crate::test_support::query_counts::count_reads(course.store.standings(&[])).await;
+        lattice_core::shared::testing::query_counts::count_reads(course.store.standings(&[])).await;
     assert!(empty?.is_empty());
     assert_eq!(reads, 0);
 
@@ -516,7 +516,7 @@ async fn site_lists_batch_history_and_count_an_origin_once_across_snapshots() ->
     ] {
         course.store.set_override(&entry).await?;
     }
-    let (listed, reads) = crate::test_support::query_counts::count_reads(
+    let (listed, reads) = lattice_core::shared::testing::query_counts::count_reads(
         super::override_changes::list(&course.store),
     )
     .await;

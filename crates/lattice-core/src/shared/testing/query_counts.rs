@@ -2,6 +2,8 @@
 //! One filtered test subscriber keeps callsite registration stable while
 //! unrelated queries and parallel tests remain outside each counter.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use std::future::Future;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},

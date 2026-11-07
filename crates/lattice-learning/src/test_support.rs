@@ -6,9 +6,6 @@ use crate::dto::*;
 use lattice_core::shared::error::Result;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
-#[cfg(test)]
-pub mod query_counts;
-
 pub async fn pool() -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(1)

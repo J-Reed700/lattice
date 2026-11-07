@@ -111,7 +111,7 @@ imagesize = "0.13"
 # (features/web/images/prepare.rs); decoders for the stored formats only.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+tracing-subscriber = { workspace = true }
 tracing-appender = "0.2"
 opentelemetry = "0.32"
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }

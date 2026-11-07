@@ -797,7 +797,7 @@ async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones()
     )
     .await?;
     let (form, reads) =
-        crate::test_support::query_counts::count_reads(repo.get_form(&form_id)).await;
+        lattice_core::shared::testing::query_counts::count_reads(repo.get_form(&form_id)).await;
     let form = form?;
     assert_eq!(
         reads, 9,
