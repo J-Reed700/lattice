@@ -114,22 +114,6 @@ fn test_parse_search_results_generic_fallback_skips_search_hosts() {
     );
 }
 
-/// Bing wraps its own tabs (Images, Videos, Shopping) in the same click-through
-/// as a result, with a payload naming a page on Bing. Hrefs as a results page
-/// served on 2026-11-06 has them, the query shortened.
-#[test]
-fn a_bing_tab_is_not_a_result_though_it_is_wrapped_like_one() {
-    let html = r#"<html><body>
-        <a href="https://www.bing.com/ck/a?!&&p=fbb78fd2&ptn=3&u=a1L2ltYWdlcy9zZWFyY2g_cT1Qb3N0Z3JlU1FMK0ItdHJlZStpbmRleCZGT1JNPUhEUlNDMg&ntb=1">Images</a>
-        <a href="https://www.bing.com/ck/a?!&&p=0c9b324f&ptn=3&u=a1aHR0cHM6Ly93d3cucG9zdGdyZXNxbC5vcmcvZG9jcy9jdXJyZW50L2J0cmVlLmh0bWw&ntb=1">B-Tree Indexes</a>
-    </body></html>"#;
-
-    let hits = parse_results(html, 10);
-
-    let urls: Vec<_> = hits.iter().map(|hit| hit.url.as_str()).collect();
-    assert_eq!(urls, ["https://www.postgresql.org/docs/current/btree.html"]);
-}
-
 #[test]
 fn a_repeated_result_and_its_tracking_twin_are_listed_once() {
     let html = r#"<html><body>

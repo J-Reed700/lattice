@@ -106,10 +106,6 @@ fn unwrap_redirect_url(url: &str) -> Option<String> {
         let encoded = raw.get(2..)?;
         let decoded = BASE64_URL_SAFE_NO_PAD.decode(encoded).ok()?;
         let decoded = String::from_utf8(decoded).ok()?;
-        // A path is a page of Bing's own, such as a tab: resolved to it, it reads as navigation.
-        if decoded.starts_with('/') && !decoded.starts_with("//") {
-            return parsed.join(&decoded).ok().map(String::from);
-        }
         return Some(decoded)
             .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
     }
