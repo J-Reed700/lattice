@@ -120,21 +120,21 @@ async fn web_search_returns_every_finders_outcome() {
 #[tokio::test]
 async fn page_two_of_a_twelve_result_search_makes_no_provider_request_when_the_pool_holds_it() {
     let ddg = Arc::new(ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 15));
-    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 15));
-    let service = web_service(&[(&ddg, 15), (&second, 15)]);
+    let other = Arc::new(ScriptedFinder::answering(second_web_engine(), 15));
+    let service = web_service(&[(&ddg, 15), (&other, 15)]);
 
     let first = service
         .search_web(&input("rust async", 12, 1))
         .await
         .unwrap();
-    assert_eq!((ddg.calls().len(), second.calls().len()), (1, 1));
+    assert_eq!((ddg.calls().len(), other.calls().len()), (1, 1));
     let second = service
         .search_web(&input("rust async", 12, 2))
         .await
         .unwrap();
 
     assert_eq!(
-        (ddg.calls().len(), second.calls().len()),
+        (ddg.calls().len(), other.calls().len()),
         (1, 1),
         "page 2 is a slice of the pool"
     );

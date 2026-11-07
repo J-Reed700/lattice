@@ -400,8 +400,8 @@ async fn when_every_finder_fails_the_error_names_every_cause() {
 async fn a_cached_page_costs_no_request_and_only_missing_pages_are_fetched() {
     let clock = FakeClock::new();
     let ddg = Arc::new(ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 10));
-    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&second, 10)], &clock);
+    let other = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&other, 10)], &clock);
 
     let first = sourcing
         .find(web_need(12, &[]), budget(PLENTY))
@@ -416,7 +416,7 @@ async fn a_cached_page_costs_no_request_and_only_missing_pages_are_fetched() {
     let query = "rust async".to_string();
     assert_eq!(ddg.calls(), vec![(query.clone(), 1), (query.clone(), 2)]);
     assert_eq!(
-        second.calls(),
+        other.calls(),
         vec![(query, 1)],
         "page 1 is never fetched twice"
     );
