@@ -1,5 +1,6 @@
 //! Curated chat models: the catalog, what a model file supports, and what its context window costs in memory.
 
+use crate::domain::models::fit::Footprint;
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
@@ -249,7 +250,17 @@ fn memory_estimate_gb(weights_bytes: u64, kv: KvFootprint, window_tokens: u64) -
     (bytes as f64 / 100_000_000.0).ceil() / 10.0
 }
 
+/// Every entry of the chat catalog.
+pub fn curated_chat_models() -> &'static [CuratedChatModel] {
+    CURATED_CHAT_MODELS
+}
+
 impl CuratedChatModel {
+    /// What this entry holds in accelerator memory, from its pinned header values.
+    pub fn footprint(&self) -> Footprint {
+        todo!("stage 2")
+    }
+
     fn metadata(&self) -> ModelMetadata {
         let repo_url = format!("https://huggingface.co/{}", self.repo);
         let file_url = format!("{repo_url}/resolve/main/{}", self.file);
