@@ -7,14 +7,16 @@ import type { CodeReviewSeverity } from '@/lib/bindings';
 
 import { SEVERITIES, severityLabel } from './severity';
 
+import type { ReviewKind } from './drillOptions';
 import type { DraftFinding } from './findings';
 
 /**
- * Where the learner writes a comment: on the lines they selected in the code ("Lines 12–14 of api.py"), or on no
- * lines at all. Editing a comment puts its words and severity back here.
+ * Where the learner writes a comment: on the lines they selected in the code ("Lines 12–14 of api.py"), or the
+ * sentences of an explanation ("Sentences 3–4"), or on none at all. Editing a comment puts its words and severity back here.
  */
-export function ReviewComposer({ selection, onClearSelection, editing, onSave, onCancel }: {
-  /** "Lines 12–14 of api.py" while lines are selected. */
+export function ReviewComposer({ material = 'code', selection, onClearSelection, editing, onSave, onCancel }: {
+  material?: ReviewKind;
+  /** "Lines 12–14 of api.py", or "Sentences 3–4", while some are selected. */
   selection: string | null;
   onClearSelection: () => void;
   /** The comment being edited; none while a new one is written. */
@@ -40,12 +42,16 @@ export function ReviewComposer({ selection, onClearSelection, editing, onSave, o
         {selection ? (
           <>
             <span className="min-w-0 truncate font-mono text-text-primary">{selection}</span>
-            <Button type="button" size="icon" variant="ghost" className="h-6 w-6" aria-label="Clear the selected lines" onClick={onClearSelection}>
+            <Button type="button" size="icon" variant="ghost" className="h-6 w-6" aria-label={material === 'passage' ? 'Clear the selected sentences' : 'Clear the selected lines'} onClick={onClearSelection}>
               <X aria-hidden="true" />
             </Button>
           </>
         ) : (
-          <span>A general comment. Click line numbers in the code to put it on lines.</span>
+          <span>
+            {material === 'passage'
+              ? 'A general comment. Click a sentence in the explanation to put it on sentences.'
+              : 'A general comment. Click line numbers in the code to put it on lines.'}
+          </span>
         )}
       </div>
       <textarea

@@ -2,17 +2,18 @@
 //! judge when a run proves nothing, and the real built-in runtime.
 
 use super::support::{
-    fix_answer, last, messages, operator_fixed, proved, FakeRunner, ScriptedModel, KILLING_TEST,
-    LITERALS_AFTER, LITERALS_BEFORE, OPERATOR_AFTER, SUITE,
+    fix_answer, last, messages, operator_fixed, proved, raised_all, FakeRunner, ScriptedModel,
+    KILLING_TEST, LITERALS_AFTER, LITERALS_BEFORE, OPERATOR_AFTER, SUITE,
 };
 use crate::features::learning::drills::fix_grading::{choose, grade_fix, FixCase, StrategyKind};
+use crate::features::learning::drills::material::CodeMaterial;
 use crate::features::learning::drills::proof::Tools;
 use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::practice::practice_tests::text_length_rules;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{
-    Assessment, DecidedBy, Drill, DrillFile, FixOutcome, IssueFix, IssueOutcome, Origin, Proof,
-    SuiteVerdict,
+    Assessment, DecidedBy, Drill, DrillFile, FixOutcome, IssueFix, IssueOutcome, Material, Origin,
+    Proof, SuiteVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
@@ -24,7 +25,7 @@ fn drill() -> Drill {
     let proved = proved();
     Drill {
         id: "drill".into(),
-        language: "python".into(),
+        material: Material::code("python"),
         title: "A sliding-window rate limiter".into(),
         files: proved.files.clone(),
         key: proved.planted_key(),
@@ -73,18 +74,6 @@ fn ran(runner: &FakeRunner, test: &str) -> usize {
     runner.runs().iter().filter(|(_, ran)| ran == test).count()
 }
 
-/// An assessment in which every issue of the key was found.
-fn raised_all(drill: &Drill) -> Assessment {
-    Assessment {
-        issues: drill
-            .key
-            .iter()
-            .map(|_| (IssueOutcome::Found { finding: 0 }, "Found.".to_owned()))
-            .collect(),
-        findings: Vec::new(),
-    }
-}
-
 async fn grade(
     model: &ScriptedModel,
     runner: Option<&FakeRunner>,
@@ -110,11 +99,13 @@ async fn grade_assessed(
         cancel: &cancel,
     };
     grade_fix(
+        &CodeMaterial::new(tools.runner),
         tools,
         &FixCase {
             drill,
             learner,
             suite,
+            source: None,
             assessment,
         },
     )
@@ -547,11 +538,13 @@ async fn files_the_runtime_refuses_prove_nothing_so_the_judge_decides() -> Resul
     let learner = operator_fixed();
     let drill = drill();
     let results = grade_fix(
+        &CodeMaterial::new(tools.runner),
         tools,
         &FixCase {
             drill: &drill,
             learner: &learner,
             suite: Some(SUITE),
+            source: None,
             assessment: &raised_all(&drill),
         },
     )
@@ -740,11 +733,13 @@ mod real_runtime {
         };
         let drill = drill();
         grade_fix(
+            &CodeMaterial::new(tools.runner),
             tools,
             &FixCase {
                 drill: &drill,
                 learner,
                 suite: Some(SUITE),
+                source: None,
                 assessment: &raised_all(&drill),
             },
         )
@@ -962,7 +957,7 @@ mod beside {
         ];
         let drill = Drill {
             id: "drill".into(),
-            language: "python".into(),
+            material: Material::code("python"),
             title: "A sliding-window rate limiter".into(),
             files: drilled,
             key,
@@ -1319,7 +1314,7 @@ mod beside {
         let (drilled, spans) = apply(&files(), &planted).expect("the edits apply");
         let drill = Drill {
             id: "drill".into(),
-            language: "python".into(),
+            material: Material::code("python"),
             title: "A sliding-window rate limiter".into(),
             files: drilled,
             key: vec![
@@ -1360,11 +1355,13 @@ mod beside {
             cancel: &cancel,
         };
         let results = grade_fix(
+            &CodeMaterial::new(tools.runner),
             tools,
             &FixCase {
                 drill: &drill,
                 learner: &learner,
                 suite: Some(SUITE),
+                source: None,
                 assessment: &raised_all(&drill),
             },
         )

@@ -19,6 +19,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
+mod apparatus;
+#[cfg(test)]
+use apparatus::strip_citation_apparatus;
+pub(in crate::features::learning) use apparatus::strip_draft_apparatus;
 mod citations;
 mod claim_ledger;
 use citations::{
@@ -488,6 +492,7 @@ pub(in crate::features::learning) fn unchecked(cause: impl Into<String>) -> Clai
         reason: Some(cause.into()),
         quote: None,
         confidence: None,
+        uncertain: false,
     })
 }
 

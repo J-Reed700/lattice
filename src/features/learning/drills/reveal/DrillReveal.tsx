@@ -3,10 +3,12 @@ import { useMemo, useRef, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { kindOf } from '@/features/learning/drills/drillMaterial';
 import { CodeContrast, type ContrastFocus } from '@/features/learning/drills/reveal/CodeContrast';
 import { FindingList } from '@/features/learning/drills/reveal/FindingList';
 import { FixResults } from '@/features/learning/drills/reveal/FixResults';
 import { IssueList } from '@/features/learning/drills/reveal/IssueCard';
+import { PassageContrast } from '@/features/learning/drills/reveal/PassageContrast';
 import { PatternList } from '@/features/learning/drills/reveal/PatternList';
 import { lineLabel } from '@/features/learning/drills/reveal/revealCopy';
 import { cleanLinesOf, contrastPaths, rankIssues, type RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
@@ -35,6 +37,7 @@ function GradedReveal({ result, reveal, onNextDrill }: {
   const paths = useMemo(() => contrastPaths(result.drill.files, reveal.cleanFiles), [result.drill.files, reveal.cleanFiles]);
   const [path, setPath] = useState(paths[0] ?? '');
   const [focus, setFocus] = useState<ContrastFocus | null>(null);
+  const kind = kindOf(result.drill);
   const contrastRef = useRef<HTMLDivElement>(null);
 
   const show = (entry: RankedIssue) => {
@@ -42,7 +45,8 @@ function GradedReveal({ result, reveal, onNextDrill }: {
     setPath(span.path);
     setFocus((current) => ({
       path: span.path,
-      label: lineLabel(span),
+      label: lineLabel(span, kind),
+      quote: entry.issue.sourceQuote,
       reviewed: { startLine: span.start, endLine: span.end },
       clean: cleanLinesOf(entry.issue, reveal.cleanFiles),
       nonce: (current?.nonce ?? 0) + 1,
@@ -53,19 +57,30 @@ function GradedReveal({ result, reveal, onNextDrill }: {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <RevealSummary result={result} reveal={reveal} />
-      <IssueList ranked={ranked} findings={reveal.findings} onShow={show} />
-      <FindingList findings={reveal.findings} ranked={ranked} />
-      {reveal.fix && reveal.fix.length > 0 && <FixResults fixes={reveal.fix} ranked={ranked} />}
+      <IssueList ranked={ranked} findings={reveal.findings} onShow={show} material={kind} />
+      <FindingList findings={reveal.findings} ranked={ranked} material={kind} />
+      {reveal.fix && reveal.fix.length > 0 && <FixResults fixes={reveal.fix} ranked={ranked} material={kind} />}
       <div ref={contrastRef} className="scroll-mt-4">
-        <CodeContrast
-          language={result.drill.language}
-          reviewed={result.drill.files}
-          clean={reveal.cleanFiles}
-          paths={paths}
-          path={path}
-          onPathChange={setPath}
-          focus={focus}
-        />
+        {result.drill.material.kind === 'passage' ? (
+          <PassageContrast
+            reviewed={result.drill.files[0]}
+            clean={reveal.cleanFiles[0]}
+            ranked={ranked}
+            cleanFiles={reveal.cleanFiles}
+            source={reveal.source}
+            focus={focus}
+          />
+        ) : (
+          <CodeContrast
+            language={result.drill.material.language}
+            reviewed={result.drill.files}
+            clean={reveal.cleanFiles}
+            paths={paths}
+            path={path}
+            onPathChange={setPath}
+            focus={focus}
+          />
+        )}
       </div>
       <PatternList ratings={reveal.ratings} ranked={ranked} />
       <div className="flex justify-end">
@@ -80,7 +95,7 @@ function GradedReveal({ result, reveal, onNextDrill }: {
 
 /**
  * What a drill's learner reads after handing in: every issue of the key with what came of it, their own comments
- * and fix, and the code they reviewed beside the same code without the issues.
+ * and fix, and what they reviewed beside the same without the issues; for an explanation, what the source says too.
  */
 export function DrillReveal({ result, onNextDrill, onRegrade, regrading }: DrillRevealProps) {
   if (result.status === 'graded' && result.reveal) {

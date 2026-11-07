@@ -3,7 +3,7 @@
 
 use super::outputs::{Baseline, DroppedMutation, Planted, Proved, ProvenMutation, Trail};
 use super::DrillBuild;
-use crate::features::learning::drills::proof::{choose, strategy, ProofCase, ProofVerdict, Tools};
+use crate::features::learning::drills::proof::{ProofCase, ProofVerdict, Tools};
 use crate::features::learning::drills::spec::DrillSpec;
 use lattice_core::domain::learning::drills::{apply, pattern, DrillFile, Edit};
 use lattice_core::shared::error::{AppError, Result};
@@ -18,7 +18,7 @@ impl DrillBuild<'_> {
     ) -> Result<Proved> {
         let tools = Tools {
             llm: self.llm,
-            runner: self.runner,
+            runner: self.material.runner(),
             cancel: &self.cancel,
         };
         let mut proven: Vec<ProvenMutation> = Vec::new();
@@ -47,16 +47,16 @@ impl DrillBuild<'_> {
                     ))
                 })?;
             let case = ProofCase {
-                language: &spec.language,
+                language: spec.material.language().unwrap_or_default(),
                 clean: &baseline.files,
                 mutation,
                 mutated: &mutated,
                 pattern: known,
                 suite: baseline.suite.as_deref(),
                 others: &others,
+                source: baseline.source.as_ref(),
             };
-            let kind = choose(known.family, self.runner.is_some(), &mutation.verification);
-            let proof_strategy = strategy(kind, tools);
+            let proof_strategy = self.material.proof_strategy(known, mutation, tools);
             match proof_strategy.prove(&case).await? {
                 ProofVerdict::Proven {
                     proof,

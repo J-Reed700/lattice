@@ -632,6 +632,9 @@ mod repair_request_tests;
 #[path = "unwrite_tests.rs"]
 mod unwrite_tests;
 
+#[path = "apparatus_tests.rs"]
+mod apparatus_tests;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
@@ -1206,7 +1209,7 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     // changes nothing and the section is asked for once.
     let sections = model.sections.lock().unwrap();
     assert_eq!(sections.len(), 1, "{sections:?}");
-    assert!(sections[0].contains("changes nothing"), "{}", sections[0]);
+    assert!(sections[0].contains("changed nothing"), "{}", sections[0]);
     assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
     assert!(raw.contains(GOOD));
     assert!(report.issues.is_empty());

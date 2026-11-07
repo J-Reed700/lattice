@@ -6,12 +6,15 @@ import { cn } from '@/lib/utils';
 import { describeSpan, type DraftFinding } from './findings';
 import { severityLabel, severityTone } from './severity';
 
+import type { ReviewKind } from './drillOptions';
+
 /**
  * The learner's comments in the order they will be handed in. Leading with the most severe issue counts in the score,
  * so the order is the learner's to change.
  */
-export function FindingsList({ findings, editingId, onShow, onEdit, onRemove, onMove }: {
+export function FindingsList({ findings, material = 'code', editingId, onShow, onEdit, onRemove, onMove }: {
   findings: readonly DraftFinding[];
+  material?: ReviewKind;
   editingId: string | null;
   onShow: (finding: DraftFinding) => void;
   onEdit: (finding: DraftFinding) => void;
@@ -27,7 +30,11 @@ export function FindingsList({ findings, editingId, onShow, onEdit, onRemove, on
         Put what you would fix first at the top: leading with the most severe issue counts.
       </p>
       {findings.length === 0 ? (
-        <p className="mt-3 text-sm text-text-muted">No comments yet. Select lines in the code, or write a general comment.</p>
+        <p className="mt-3 text-sm text-text-muted">
+          {material === 'passage'
+            ? 'No comments yet. Select sentences in the explanation, or write a general comment.'
+            : 'No comments yet. Select lines in the code, or write a general comment.'}
+        </p>
       ) : (
         <ol className="mt-3 space-y-2">
           {findings.map((finding, index) => (
@@ -40,12 +47,12 @@ export function FindingsList({ findings, editingId, onShow, onEdit, onRemove, on
                 {finding.span ? (
                   <button
                     type="button"
-                    title="Show these lines in the code"
+                    title={material === 'passage' ? 'Show these sentences in the explanation' : 'Show these lines in the code'}
                     onClick={() => onShow(finding)}
                     className="min-w-0 text-left font-mono text-xs text-text-secondary hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <span className="font-sans font-semibold tabular-nums text-text-muted">{index + 1}</span>{' '}
-                    {describeSpan(finding.span)}
+                    {describeSpan(finding.span, material)}
                   </button>
                 ) : (
                   <span className="min-w-0 text-xs text-text-secondary">

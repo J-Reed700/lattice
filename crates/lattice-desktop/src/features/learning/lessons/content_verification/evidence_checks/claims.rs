@@ -74,6 +74,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn compar
             reason: Some(NO_PASSAGES.into()),
             quote: None,
             confidence: None,
+            uncertain: false,
         });
         let (_, _, finding, _) = finish(pending, judgment, None, Vec::new()).await?;
         return Ok(Comparison::Done(Box::new(finding), false));

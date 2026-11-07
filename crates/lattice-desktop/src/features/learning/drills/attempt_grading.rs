@@ -7,9 +7,9 @@ use super::attempts::{self, Attempt, Graded};
 use super::fix_grading::{grade_fix, FixCase};
 use super::grader::{Review, ReviewGrader};
 use super::jobs::GRADING_STEPS;
+use super::material::DrillMaterial;
 use super::proof::Tools;
 use super::repository::StoredDrill;
-use super::runner::CodeRunner;
 use crate::features::learning::persistence::db;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{ratings, score, validate};
@@ -18,28 +18,28 @@ use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use tokio_util::sync::CancellationToken;
 
-/// Grades attempts. The model, the runner, the grader and the database are the grading's own; the job runtime's context
-/// carries the progress and the cancellation.
+/// Grades attempts. The model, the material, the grader and the database are the grading's own; the job runtime's
+/// context carries the progress and the cancellation.
 pub(in crate::features::learning) struct AttemptGrading<'a> {
     llm: &'a dyn LLMPort,
-    runner: Option<&'a dyn CodeRunner>,
+    material: Box<dyn DrillMaterial + 'a>,
     grader: &'a dyn ReviewGrader,
     pool: &'a SqlitePool,
     cancel: CancellationToken,
 }
 
 impl<'a> AttemptGrading<'a> {
-    /// Grading that runs the learner's fix on `runner`, or, without one, judges every issue of it.
+    /// Grading of attempts at drills of `material`.
     pub(in crate::features::learning) fn new(
         llm: &'a dyn LLMPort,
-        runner: Option<&'a dyn CodeRunner>,
+        material: Box<dyn DrillMaterial + 'a>,
         grader: &'a dyn ReviewGrader,
         pool: &'a SqlitePool,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             llm,
-            runner,
+            material,
             grader,
             pool,
             cancel,
@@ -62,6 +62,7 @@ impl<'a> AttemptGrading<'a> {
         let review = Review {
             drill: &stored.drill,
             clean: &stored.clean_files,
+            source: stored.source.as_ref(),
             findings,
         };
         let Some(assessed) = context.until_cancelled(self.grader.assess(&review)).await else {
@@ -89,14 +90,18 @@ impl<'a> AttemptGrading<'a> {
                     drill: &stored.drill,
                     learner,
                     suite: stored.suite.as_deref(),
+                    source: stored.source.as_ref(),
                     assessment: &assessment,
                 };
                 let tools = Tools {
                     llm: self.llm,
-                    runner: self.runner,
+                    runner: self.material.runner(),
                     cancel: &self.cancel,
                 };
-                let Some(graded) = context.until_cancelled(grade_fix(tools, &case)).await else {
+                let Some(graded) = context
+                    .until_cancelled(grade_fix(self.material.as_ref(), tools, &case))
+                    .await
+                else {
                     return Ok(JobOutcome::Stopped);
                 };
                 match graded {

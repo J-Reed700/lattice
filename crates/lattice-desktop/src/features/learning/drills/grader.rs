@@ -1,15 +1,18 @@
 //! The one judgement of a review against a drill's key, whoever wrote the review: a learner in practice or an
 //! interview, the Tutor's chat, or the blind reviewer that completes a key while a drill is built.
 
+use super::build::SourcePassage;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{Assessment, Drill, DrillFile, Finding};
 use lattice_core::shared::error::Result;
 
-/// A review to judge: the drill as the reviewer saw it, its code before any issue was planted, and the review's
-/// findings in the order they were made.
+/// A review to judge: the drill as the reviewer saw it, its material before any issue was planted, the passage an
+/// explanation was written from, and the review's findings in the order they were made.
 pub struct Review<'a> {
     pub drill: &'a Drill,
     pub clean: &'a [DrillFile],
+    /// `None` for code.
+    pub source: Option<&'a SourcePassage>,
     pub findings: &'a [Finding],
 }
 
