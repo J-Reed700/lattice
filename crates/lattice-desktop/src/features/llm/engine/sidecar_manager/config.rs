@@ -155,16 +155,21 @@ fn resident_weight_bytes(model_path: &std::path::Path) -> Option<u64> {
     Some(weights + crate::features::llm::engine::vision::projector_bytes_on_disk(model_path))
 }
 
-/// What a server holds at a window of `window` tokens: its `weights`, and what
-/// its header, `info`, says the rest costs. Whatever the header cannot say
-/// counts as nothing.
+/// What a server holds at a window of `window` tokens: its `weights` less what stays in system
+/// RAM, and what its header, `info`, says the rest costs. Whatever the header cannot say counts as
+/// nothing.
 pub(super) fn footprint_from(
     weights: u64,
     info: Option<&GgufModelInfo>,
     window: u32,
     buffers: ServerBuffers,
 ) -> Footprint {
-    footprint(weights, info.map(|info| &info.shape), window, buffers)
+    footprint(
+        weights.saturating_sub(info.map_or(0, |info| info.cpu_weight_bytes)),
+        info.map(|info| &info.shape),
+        window,
+        buffers,
+    )
 }
 
 /// What a server of `model_path` holds at a window of `context_size` tokens.
