@@ -830,11 +830,17 @@ impl JobStore {
         Ok(Recovered { settled, stopped })
     }
 
-    /// Suspends every job still running, in one statement, clearing its
-    /// unsaved-start count: for an orderly exit, which is never a crash.
-    pub async fn suspend_all_running(&self) -> Result<usize> {
+    /// For an orderly exit, which is never a crash: in one statement, every
+    /// running job of a kind in `resumable` becomes pending, and every other
+    /// running job stays running for the next recovery to settle by its kind's
+    /// policy. Each has its unsaved-start count cleared. Returns the jobs
+    /// touched.
+    pub async fn suspend_all_running(&self, resumable: &[&str]) -> Result<usize> {
         let stamp = now();
-        let suspended = sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=NULL,error_message=NULL,progress_message=?,heartbeat_at=?,unsaved_starts=0 WHERE status='running'")
+        let resumable =
+            serde_json::to_string(resumable).map_err(|e| AppError::Serialization(e.to_string()))?;
+        let suspended = sqlx::query("UPDATE jobs SET status=CASE WHEN kind IN (SELECT value FROM json_each(?1)) THEN 'pending' ELSE status END,progress_message=CASE WHEN kind IN (SELECT value FROM json_each(?1)) THEN ?2 ELSE progress_message END,heartbeat_at=?3,unsaved_starts=0 WHERE status='running'")
+            .bind(resumable)
             .bind(SUSPENDED)
             .bind(stamp)
             .execute(&self.pool)

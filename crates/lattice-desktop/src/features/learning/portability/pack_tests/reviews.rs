@@ -419,12 +419,7 @@ async fn a_replace_warns_about_unfinished_reviews_and_keeps_what_lives_here() ->
 }
 
 /// This computer's bookkeeping of how a job's runs ended: not course content.
-const JOB_COUNTERS: [&str; 4] = [
-    "saved_work",
-    "recovery_mark",
-    "unsaved_starts",
-    "progress_high_water",
-];
+const JOB_COUNTERS: [&str; 3] = ["saved_work", "recovery_mark", "unsaved_starts"];
 const REVIEW_JOBS: &str = "curriculum/reviews/jobs.json";
 
 async fn exported_pack(home: &SqlitePool, dir: &std::path::Path) -> Result<String> {

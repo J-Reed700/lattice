@@ -795,10 +795,21 @@ impl JobRuntime {
         self.tasks.wait().await;
     }
 
-    /// Suspends every job still running, in one statement, and returns how
-    /// many. For an orderly exit that did not wait for every worker.
+    /// For an orderly exit that did not wait for every worker: suspends, in
+    /// one statement, the running jobs of the kinds registered to resume, and
+    /// clears the unsaved-start count of the rest, which the next recovery
+    /// settles by their kind's policy. Returns the jobs touched.
     pub async fn suspend_running(&self) -> Result<usize> {
-        self.store().suspend_all_running().await
+        let resumable: Vec<String> = self
+            .kinds
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, kind)| kind.config.recovery == RecoveryPolicy::Requeue)
+            .map(|(name, _)| name.clone())
+            .collect();
+        let resumable: Vec<&str> = resumable.iter().map(String::as_str).collect();
+        self.store().suspend_all_running(&resumable).await
     }
 
     /// Waits until no worker is running or waiting for `id`.
