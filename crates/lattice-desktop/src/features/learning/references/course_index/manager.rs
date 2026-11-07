@@ -281,6 +281,15 @@ impl CourseIndexes {
     /// build under this name is forgotten too when the caller knows the index
     /// is still not current, so the build runs again.
     pub(super) async fn queue_stamp(&self, program: &str, stamp: &str, rerun: Rerun) -> Result<()> {
+        // A build that stopped the app waits, visible, for the learner's retry.
+        if self
+            .jobs
+            .store()
+            .last_run_stopped_the_app(COURSE_INDEX, program)
+            .await?
+        {
+            return Ok(());
+        }
         let operation_id = build_name(program, stamp);
         for old in self
             .jobs

@@ -72,6 +72,20 @@ pub(super) const EVIDENCE_TABLES: &[AggregateTableSpec] = &[
     AggregateTableSpec { table: "learning_operations", filter: "program_id=? AND scope<>'portability'" },
 ];
 
+/// This computer's bookkeeping of how a job's runs ended: never course content,
+/// so never in a pack. An imported job takes the columns' defaults.
+const LOCAL_COLUMNS: &[(&str, &str)] = &[
+    ("jobs", "saved_work"),
+    ("jobs", "recovery_mark"),
+    ("jobs", "unsaved_starts"),
+];
+
+fn is_local(table: &str, column: &str) -> bool {
+    LOCAL_COLUMNS
+        .iter()
+        .any(|(local_table, local_column)| *local_table == table && *local_column == column)
+}
+
 /// Columns holding a JSON list of identifiers.
 const ID_LIST_COLUMNS: &[&str] = &[
     "source_version_ids_json",
@@ -129,6 +143,7 @@ pub(super) async fn snapshot_table(
     let columns: Vec<String> = cols
         .into_iter()
         .map(|row| row.get::<String, _>("name"))
+        .filter(|name| !is_local(spec.table, name))
         .collect();
     if columns.is_empty() {
         return Err(AppError::Database(format!(
@@ -146,6 +161,9 @@ pub(super) async fn snapshot_table(
     for row in rows {
         let mut object = serde_json::Map::new();
         for (index, column) in row.columns().iter().enumerate() {
+            if is_local(spec.table, column.name()) {
+                continue;
+            }
             let type_name = column.type_info().name().to_ascii_uppercase();
             let value = if type_name.contains("INT") || type_name == "BOOL" {
                 row.try_get::<Option<i64>, _>(index)
@@ -202,6 +220,7 @@ pub(super) async fn checked_rows(
     let expected: Vec<String> = cols
         .into_iter()
         .map(|row| row.get::<String, _>("name"))
+        .filter(|name| !is_local(spec.table, name))
         .collect();
     if expected != table.columns {
         return Err(invalid(

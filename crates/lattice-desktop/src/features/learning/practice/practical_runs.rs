@@ -115,9 +115,13 @@ pub async fn recover_running_runs(repo: &LearningPracticalRepository) -> Result<
     repo.mark_runs_interrupted().await
 }
 
-/// What the plugin's setup runs: settles the runs the last process left running.
+/// What the plugin's setup runs: settles the runs the last process left running. A database error is logged and
+/// setup goes on; the runs are settled at the next start.
 pub async fn recover_at_startup(repo: &LearningPracticalRepository) -> Result<usize> {
-    recover_running_runs(repo).await
+    recover_running_runs(repo).await.or_else(|error| {
+        tracing::error!(%error, "Could not settle the practical runs the last process left running");
+        Ok(0)
+    })
 }
 
 async fn cleanup_orphan(run: RunCleanup, active: bool) -> Result<()> {

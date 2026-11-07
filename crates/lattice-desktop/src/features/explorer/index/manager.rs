@@ -316,6 +316,15 @@ impl FolderIndexManager {
         wipe_prefix: bool,
     ) -> Result<bool> {
         let subject = root_string(index_root);
+        // A build that stopped the app waits, visible, for the learner's retry.
+        if self
+            .jobs
+            .store()
+            .last_run_stopped_the_app(build::FOLDER_INDEX, &subject)
+            .await?
+        {
+            return Ok(false);
+        }
         let request = BuildRequest {
             root: root_string(root),
             index_root: subject.clone(),
