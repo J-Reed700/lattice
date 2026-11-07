@@ -51,6 +51,23 @@ fn gone(entry: &ClaimLedgerEntry) -> bool {
     )
 }
 
+/// The text of the published lesson's section `unit`, which its claims quote.
+pub(super) async fn section_body<'e, E>(
+    executor: E,
+    lesson_id: &str,
+    unit: usize,
+) -> Result<Option<String>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    sqlx::query_scalar("SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?")
+        .bind(lesson_id)
+        .bind(i64::try_from(unit).unwrap_or(i64::MAX))
+        .fetch_optional(executor)
+        .await
+        .map_err(db)
+}
+
 pub(super) async fn apply(pool: &SqlitePool, edit: PublishedEdit<'_>) -> Result<Revision> {
     let PublishedEdit {
         lesson_id,
@@ -81,14 +98,9 @@ pub(super) async fn apply(pool: &SqlitePool, edit: PublishedEdit<'_>) -> Result<
         return Err(AppError::InvalidInput(BLANK.into()));
     }
     let unit = target.location().unit_index;
-    let body: String =
-        sqlx::query_scalar("SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?")
-            .bind(lesson_id)
-            .bind(i64::try_from(unit).unwrap_or(i64::MAX))
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::InvalidInput(CHANGED.into()))?;
+    let body = section_body(&mut *tx, lesson_id, unit)
+        .await?
+        .ok_or_else(|| AppError::InvalidInput(CHANGED.into()))?;
     let changed = || AppError::InvalidInput(CHANGED.into());
     let sentence = placed(target, &body).ok_or_else(changed)?;
     let range = if body.get(sentence.0..sentence.1) == Some(before) {
