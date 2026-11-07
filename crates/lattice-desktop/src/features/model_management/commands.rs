@@ -18,7 +18,7 @@
 use crate::features::model_management::cache_adapter::ModelCatalogStats;
 use crate::features::model_management::domain::ModelMetadata;
 use crate::interfaces::di::Container;
-use crate::interfaces::dto::{ModelRecommendationDto, ModelSearchResultDto};
+use crate::interfaces::dto::{ModelRecommendationDto, ModelSearchResultDto, RecommendationDto};
 use lattice_core::domain::{
     CompatibilityScorer, ModelCatalogService, ModelCategory, ModelRecommendation, ModelSource,
     SearchFilters, SystemCapabilities,
@@ -161,6 +161,16 @@ pub async fn get_compatible_models(
         .collect();
 
     Ok(dto_recommendations)
+}
+
+/// The chat models recommended for this computer, best first, each with its fit, the device it was
+/// judged against and the labels it earned.
+#[tauri::command]
+#[specta::specta]
+pub async fn recommend_chat_models(
+    _container: State<'_, Container>,
+) -> Result<Vec<RecommendationDto>> {
+    todo!("stage 2")
 }
 
 /// Get all recommended models across all categories.

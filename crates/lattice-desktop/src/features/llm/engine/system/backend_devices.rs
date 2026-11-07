@@ -62,7 +62,7 @@ impl BackendDevice {
 
     /// Whether this GPU runs from the system's RAM, told by its name since
     /// `--list-devices` gives no type.
-    fn is_integrated(&self) -> bool {
+    pub fn is_integrated(&self) -> bool {
         let name = self.name.to_ascii_lowercase();
         let named = |models: &[&str]| models.iter().any(|model| name.contains(model));
         match self.vendor() {

@@ -6,6 +6,7 @@
 pub mod backend_devices;
 pub mod capabilities;
 pub mod gpu;
+pub mod machine_profile;
 pub mod platform;
 
 pub use backend_devices::{BackendDevice, BackendDevices};

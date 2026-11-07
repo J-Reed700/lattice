@@ -3,6 +3,7 @@
 //! Data Transfer Objects for model catalog commands.
 //! These types are exposed to the frontend via Tauri IPC and Specta type generation.
 
+use super::model_fit_dto::FitVerdictDto;
 use serde::{Deserialize, Serialize};
 
 /// Model category DTO for frontend.
@@ -174,6 +175,11 @@ pub struct ModelMetadataDto {
     /// models. Frontend uses this to disable + badge incompatible rows so
     /// users don't waste a 1GB+ download on a model that won't load.
     pub embedding_compatibility: Option<EmbeddingCompatibilityDto>,
+    /// Whether this model fits this computer, judged by the backend. Null
+    /// while the file's header is unread, and for models that are not chat
+    /// models.
+    #[serde(default)]
+    pub fit: Option<FitVerdictDto>,
 }
 
 /// Frontend mirror of `EmbeddingCompatibility`.
@@ -233,6 +239,7 @@ impl From<crate::features::model_management::domain::ModelMetadata> for ModelMet
             total_size_bytes: domain.total_size_bytes,
             embedding_dimensions: domain.embedding_dimensions,
             embedding_compatibility: domain.embedding_compatibility.map(Into::into),
+            fit: None,
         }
     }
 }
@@ -291,6 +298,9 @@ pub struct ModelRecommendationDto {
     /// Popularity metric from upstream provider (likes)
     #[serde(default)]
     pub popularity_likes: Option<u64>,
+    /// Whether this model fits this computer; null until its header is read.
+    #[serde(default)]
+    pub fit: Option<FitVerdictDto>,
 }
 
 impl From<crate::features::model_management::domain::ModelRecommendation>
@@ -303,6 +313,7 @@ impl From<crate::features::model_management::domain::ModelRecommendation>
             ranking_score: domain.ranking_score,
             popularity_downloads: None,
             popularity_likes: None,
+            fit: None,
         }
     }
 }

@@ -1,3 +1,4 @@
+use crate::features::model_management::recommend::MachineProfileProbe;
 use lattice_core::application::ports::system_info::SystemInfoPort;
 use lattice_core::domain::models::curated::{get_curated_llm_models, recommend_chat_model_for_ram};
 use lattice_core::domain::models::embedding_defaults::default_embedding_model;
@@ -49,6 +50,15 @@ impl CheckFirstRunStatusUseCase {
             repository,
             system_info: Some(system_info),
         }
+    }
+
+    /// First run sized to the machine: the chat model is the top of the recommended list for the
+    /// profile `probe` builds, not a pick by system RAM alone.
+    pub fn with_machine_probe(
+        _repository: Arc<dyn DownloadedModelRepository>,
+        _probe: Arc<dyn MachineProfileProbe>,
+    ) -> Self {
+        todo!("stage 2")
     }
 
     pub async fn execute(&self) -> Result<FirstRunStatusResponse> {
@@ -389,5 +399,100 @@ mod tests {
             Some("qwen3.5-9b-q4_k_m"),
             "16 GB box should get the high-tier chat model"
         );
+    }
+
+    fn machine(
+        accelerators: Vec<lattice_core::domain::models::fit::Accelerator>,
+    ) -> lattice_core::domain::models::fit::MachineProfile {
+        lattice_core::domain::models::fit::MachineProfile {
+            accelerators,
+            system_ram_bytes: 32 << 30,
+            models_volume_free_bytes: 500 << 30,
+            os: "windows".into(),
+        }
+    }
+
+    fn rtx_4080_profile() -> lattice_core::domain::models::fit::MachineProfile {
+        use lattice_core::domain::models::fit::{Accelerator, AcceleratorKind, Backend};
+        machine(vec![Accelerator {
+            name: "NVIDIA GeForce RTX 4080".into(),
+            total_bytes: 16 << 30,
+            kind: AcceleratorKind::Dedicated,
+            backend: Backend::Cuda,
+        }])
+    }
+
+    fn top_recommendation(profile: &lattice_core::domain::models::fit::MachineProfile) -> String {
+        use lattice_core::domain::models::curated::curated_chat_models;
+        use lattice_core::domain::models::fit::{Candidate, Companions, Recommender};
+        let catalog: Vec<Candidate> = curated_chat_models()
+            .iter()
+            .map(Candidate::from_curated)
+            .collect();
+        Recommender::new(Companions::default_pair())
+            .recommend(profile, &catalog)
+            .remove(0)
+            .id
+    }
+
+    #[tokio::test]
+    async fn first_run_names_the_top_recommendation_as_the_chat_model() {
+        use crate::features::model_management::recommend::FixedMachineProfile;
+        let profile = rtx_4080_profile();
+        let probe = Arc::new(FixedMachineProfile(profile.clone()));
+
+        let response = CheckFirstRunStatusUseCase::with_machine_probe(setup_repo().await, probe)
+            .execute()
+            .await
+            .expect("execute should succeed");
+
+        let chat = response.chat_model.expect("a chat model is offered");
+        assert_eq!(chat.model_id, top_recommendation(&profile));
+        assert_ne!(
+            chat.model_id,
+            recommend_chat_model_for_ram(32.0),
+            "a 16 GB card must not get the RAM tier's pick"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_run_with_a_machine_probe_still_offers_the_embedding_model() {
+        use crate::features::model_management::recommend::FixedMachineProfile;
+        let probe = Arc::new(FixedMachineProfile(rtx_4080_profile()));
+
+        let response = CheckFirstRunStatusUseCase::with_machine_probe(setup_repo().await, probe)
+            .execute()
+            .await
+            .expect("execute should succeed");
+
+        assert!(response.needs_setup);
+        assert_eq!(
+            response.recommended_model_id.as_deref(),
+            Some(default_embedding_model().curated_id)
+        );
+        assert!(response.embedding_model.is_some());
+        let chat = response.chat_model.as_ref().expect("chat model");
+        let embedding = response.embedding_model.as_ref().expect("embedding model");
+        assert_eq!(
+            response.total_estimated_size_bytes,
+            Some(chat.estimated_size_bytes + embedding.estimated_size_bytes)
+        );
+    }
+
+    #[tokio::test]
+    async fn first_run_without_a_usable_card_still_recommends_a_chat_model() {
+        use crate::features::model_management::recommend::FixedMachineProfile;
+        let profile = machine(Vec::new());
+        let probe = Arc::new(FixedMachineProfile(profile.clone()));
+
+        let response = CheckFirstRunStatusUseCase::with_machine_probe(setup_repo().await, probe)
+            .execute()
+            .await
+            .expect("a failed device probe is not an error");
+
+        assert!(response.needs_setup);
+        let chat = response.chat_model.expect("a chat model is offered");
+        assert_eq!(chat.model_id, top_recommendation(&profile));
+        assert!(response.embedding_model.is_some());
     }
 }
