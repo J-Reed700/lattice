@@ -160,7 +160,7 @@ export const ClaimVerdictSchema = z.object({
   verdict: z.enum(['supported', 'contradicted', 'unsupported', 'unverified']),
   evidenceQuote: z.string().max(1000).nullable().optional(),
   /** The judge's short factual comparison, especially useful for negatives. */
-  reason: z.string().max(600).nullable().optional(),
+  reason: z.string().nullable().optional(),
   method: z.enum(['lexical', 'judge', 'quote']),
   /** The judge's probability for `verdict`, when its provider reports one. */
   confidence: z.number().min(0).max(1).nullable().optional(),
@@ -531,7 +531,7 @@ export const TurnStepSchema = z.object({
   id: z.string().min(1).max(64),
   kind: TurnStepKindSchema,
   /** A human sentence, as the activity labels were: "Searching your documents". */
-  label: z.string().max(200),
+  label: z.string(),
   /** The query, the host, a tool's argument summary. */
   detail: z.string().max(400).nullable().optional(),
   state: z.enum(['running', 'done', 'failed']),
@@ -610,7 +610,7 @@ export const TurnRecordSchema = z.object({
   router: z.object({
     action: z.string().max(64),
     confidence: z.number().min(0).max(1),
-    rationale: z.string().max(4000).nullable(),
+    rationale: z.string().nullable(),
   }).strict().nullable(),
 }).strict();
 

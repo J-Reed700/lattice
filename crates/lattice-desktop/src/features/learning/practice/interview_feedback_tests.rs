@@ -230,3 +230,27 @@ fn unobserved_feedback_uses_an_app_owned_explanation() -> Result<()> {
         .contains("does not contain enough learner evidence"));
     Ok(())
 }
+
+#[test]
+fn a_long_closing_scorecard_is_read_not_refused() -> Result<()> {
+    let (boundary, mut session) = fixture();
+    let learner = "I would retry once the acknowledgement was dropped. ".repeat(20);
+    session.turns[1].content = format!("{LEARNER} {}", learner.trim());
+    let essay =
+        "Preserve intended effects across retries and verify the lost response. ".repeat(70);
+    let wordy = "You described a concrete check after the lost response. ".repeat(30);
+    for (pointer, text) in [
+        ("/referenceApproach", essay.trim().to_string()),
+        ("/nextPracticeStep", wordy.trim().to_string()),
+        ("/scorecard/0/feedback", wordy.trim().to_string()),
+        ("/scorecard/0/learnerQuotes/0", learner.trim().to_string()),
+    ] {
+        let mut value = response();
+        *value.pointer_mut(pointer).expect(pointer) = json!(text);
+        let read = boundary.read(&value.to_string(), &session);
+        assert!(read.is_ok(), "{pointer}: {:?}", read.as_ref().err());
+        let result = read?;
+        assert!(result.content.contains(&text), "{pointer} is kept whole");
+    }
+    Ok(())
+}

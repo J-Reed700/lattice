@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { kindOf } from '@/features/learning/drills/drillMaterial';
 import { MODE_LABEL, durationText, momentOf, percentText, plural } from '@/features/learning/drills/reveal/revealCopy';
 import { leadingLine } from '@/features/learning/drills/reveal/revealPresentation';
 import { eyebrow, panel } from '@/features/learning/drills/reveal/revealStyle';
@@ -40,7 +41,7 @@ export function RevealSummary({ result, reveal }: { result: CodeReviewResultDto;
   return (
     <section aria-labelledby={headingId} className={`${panel} overflow-hidden`}>
       <header className="border-b border-border bg-surface-raised px-5 py-5 sm:px-6">
-        <p className={eyebrow}>Result · {MODE_LABEL[result.mode]} · {result.drill.language}</p>
+        <p className={eyebrow}>Result · {MODE_LABEL[result.mode]} · {result.drill.material.kind === 'code' ? result.drill.material.language : 'Explanation'}</p>
         <h2 id={headingId} ref={headingRef} tabIndex={-1} className="mt-1 font-serif text-2xl leading-tight text-text-primary outline-hidden">
           {result.drill.title}
         </h2>
@@ -55,7 +56,7 @@ export function RevealSummary({ result, reveal }: { result: CodeReviewResultDto;
       <div className="space-y-5 px-5 py-5 sm:px-6">
         <div className="grid gap-5 md:grid-cols-2">
           <div>
-            <h3 className={eyebrow}>Of the {plural(issues, 'issue')} in the code</h3>
+            <h3 className={eyebrow}>Of the {plural(issues, 'planted issue')}{kindOf(result.drill) === 'passage' ? ' in the explanation' : ''}</h3>
             <dl className="mt-2 grid grid-cols-3 gap-2">
               <Stat label="Found" value={score.found} />
               <Stat label="Half found" value={score.halfFound} />
@@ -77,7 +78,7 @@ export function RevealSummary({ result, reveal }: { result: CodeReviewResultDto;
               {score.precision !== null && (
                 <Stat label="Precision" value={percentText(score.precision)} hint="Comments that matched an issue or were a valid extra." />
               )}
-              <Stat label="Valid extras" value={score.validExtras} hint="Real problems the key does not hold." />
+              <Stat label="Valid extras" value={score.validExtras} hint="Real problems beyond the planted ones." />
               <Stat label="False positives" value={score.falsePositives} />
             </dl>
           </div>

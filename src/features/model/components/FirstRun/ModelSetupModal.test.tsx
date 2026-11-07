@@ -11,7 +11,7 @@ import { ModelSetupModal } from './ModelSetupModal';
 
 const mocks = vi.hoisted(() => ({
   catalog: { systemCapabilities: null as null | { available_disk_gb: number }, compatibleModels: [] as unknown[] },
-  api: { checkFirstRunStatus: vi.fn(), downloadDefaultEmbeddingModel: vi.fn(), downloadModel: vi.fn() },
+  api: { checkFirstRunStatus: vi.fn(), recommendChatModels: vi.fn(), downloadDefaultEmbeddingModel: vi.fn(), downloadModel: vi.fn() },
 }));
 vi.mock('@/routes', () => ({ router: { navigate: vi.fn() } }));
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () => mocks.catalog }));
@@ -39,6 +39,14 @@ const install = () => screen.findByRole('button', { name: /^Install/ });
 beforeEach(() => {
   mocks.catalog = { systemCapabilities: null, compatibleModels: [] };
   mocks.api.checkFirstRunStatus.mockReset().mockResolvedValue({ ok: true, data: status() });
+  mocks.api.recommendChatModels.mockReset().mockResolvedValue({
+    ok: true,
+    data: [{
+      modelId: 'herb-4b', name: 'Herb 4B', description: 'A small general model.', useFor: 'For everyday questions on a modest computer.', downloadBytes: 2.5 * GB,
+      verdict: { kind: 'fits', needsBytes: 4 * GB, budgetBytes: 8 * GB, device: { name: 'Test GPU', kind: 'dedicated' } },
+      labels: ['best'], evidence: { kind: 'untested' }, speed: 'balanced',
+    }],
+  });
   mocks.api.downloadDefaultEmbeddingModel.mockReset().mockResolvedValue({ ok: true, data: 'embed-job' });
   mocks.api.downloadModel.mockReset().mockResolvedValue({ ok: true, data: { id: 'chat-job' } });
   vi.mocked(router.navigate).mockReset();
@@ -133,12 +141,12 @@ describe('ModelSetupModal', () => {
     expect(router.navigate).not.toHaveBeenCalled();
   });
 
-  it('sends the user to choose models in Settings', async () => {
+  it('sends the user to see all models in Settings', async () => {
     const props = renderModal();
     await install();
-    fireEvent.click(screen.getByRole('button', { name: 'Choose models' }));
+    fireEvent.click(screen.getByRole('button', { name: 'See all models' }));
     expect(props.onDismiss).toHaveBeenCalled();
-    expect(router.navigate).toHaveBeenCalledWith('/settings');
+    expect(router.navigate).toHaveBeenCalledWith('/settings?tab=models');
     expect(props.onComplete).toHaveBeenCalled();
   });
 });

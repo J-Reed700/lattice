@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::catalogue::{patterns_for, Family, Pattern};
-use super::drill::KeyIssue;
+use super::drill::{KeyIssue, Material, Origin};
 use super::grading::{Assessment, IssueOutcome};
 
 /// How well a pattern was recognised, in the words recall's schedule takes.
@@ -36,24 +36,29 @@ pub struct IssueRating {
     pub rating: PatternRating,
 }
 
-/// The rating of each key issue's pattern under an assessment, one for each issue in the key's order. An issue the
-/// assessment has no outcome for counts as missed, as `score` counts it.
+/// The rating of each key issue's pattern under an assessment, in the key's order. An issue the assessment has no
+/// outcome for counts as missed, as `score` counts it. A missed issue found in review gives no rating, because it was
+/// never proven; one that was found or half found is rated like a planted issue.
 pub fn ratings(key: &[KeyIssue], assessment: &Assessment) -> Vec<IssueRating> {
     key.iter()
         .enumerate()
-        .map(|(position, issue)| IssueRating {
-            pattern: issue.pattern.clone(),
-            rating: rating(
-                &assessment
-                    .issues
-                    .get(position)
-                    .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome),
-            ),
+        .filter_map(|(position, issue)| {
+            let outcome = assessment
+                .issues
+                .get(position)
+                .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome);
+            if issue.origin == Origin::FoundInReview && outcome == IssueOutcome::Missed {
+                return None;
+            }
+            Some(IssueRating {
+                pattern: issue.pattern.clone(),
+                rating: rating(&outcome),
+            })
         })
         .collect()
 }
 
-/// When a pattern is next due for one learner and language.
+/// When a pattern is next due for one learner and material.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatternDue {
     /// The id of a catalogue pattern.
@@ -77,14 +82,14 @@ struct Candidate {
     pattern: &'static Pattern,
     standing: Standing,
     due_at: Option<i64>,
-    /// The pattern's place among those that apply to the language.
+    /// The pattern's place among those that apply to the material.
     order: usize,
 }
 
 /// The patterns the next drill plants, `count` of them or every one that
 /// applies when there are fewer.
 ///
-/// Only patterns that apply to `language` are chosen. They are ranked patterns
+/// Only patterns that apply to `material` are chosen. They are ranked patterns
 /// due (`due_at <= now`), earliest first; then patterns never practised, in the
 /// catalogue's order; then the rest, soonest due first. From that ranking each
 /// pick is the first pattern whose family has not been picked yet, so a drill
@@ -93,12 +98,12 @@ struct Candidate {
 /// entry in `states` is never practised, and a pattern listed twice takes its
 /// first entry. The same inputs give the same patterns in the same order.
 pub fn targets(
-    language: &str,
+    material: &Material,
     states: &[PatternDue],
     now: i64,
     count: usize,
 ) -> Vec<&'static Pattern> {
-    let mut candidates: Vec<Candidate> = patterns_for(language)
+    let mut candidates: Vec<Candidate> = patterns_for(material)
         .enumerate()
         .map(|(order, pattern)| {
             let due_at = states

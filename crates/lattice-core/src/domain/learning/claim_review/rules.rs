@@ -103,8 +103,11 @@ pub fn new_information(prev: &ClaimLedgerEntry, now: &Observation) -> Option<New
         // A verified claim is not re-judged on reselected evidence (claim
         // sources design §18.4 ii): only its sentence or a source it cites
         // changing reopens it, as `reopen_cause` says. The gate weighed other
-        // evidence, so it is not compared either.
-        _ if matches!(prev.state(), ClaimState::ResolvedByEvidence { .. }) => {}
+        // evidence, so it is not compared either. A citation the machine
+        // repaired is not reselected: the check that reads it decides the
+        // repair (course evidence index §5.1).
+        _ if matches!(prev.state(), ClaimState::ResolvedByEvidence { .. })
+            && !prev.citation_awaits_check() => {}
         _ => return Some(NewInformation::EvidenceChanged),
     }
     now.attached_source_version_id
@@ -200,7 +203,7 @@ pub struct ExtractedClaim {
 }
 
 /// Which prior claim each extracted claim continues, and which prior claims
-/// have no successor (they become `Edited { successor: None }`).
+/// have no successor (their sentence is gone: the machine removes them).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Identities {
     /// Per extracted claim, in order: the prior id it keeps, or `None` for a
@@ -317,13 +320,16 @@ pub fn end_state<'a>(claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>) -> 
 /// design §11): only the user's actions are "resolved by you".
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ClaimCounts {
+    /// Passed by the machine: by evidence, by consistency, or as common
+    /// knowledge.
     pub verified: usize,
     pub confirmed: usize,
-    pub general_knowledge: usize,
     /// Waiting for the user: Queued, Reopened, or held for standing.
     pub queued: usize,
     /// The machine's: Unchecked or Open.
     pub open: usize,
+    /// Published not verified: the machine could not settle them.
+    pub unverified: usize,
     /// Removed by the user.
     pub removed_by_you: usize,
     /// Edited away by the user: no successor claim.
@@ -338,9 +344,11 @@ impl ClaimCounts {
         let mut counts = Self::default();
         for claim in claims {
             let slot = match claim.state() {
-                ClaimState::ResolvedByEvidence { .. } => &mut counts.verified,
+                ClaimState::ResolvedByEvidence { .. }
+                | ClaimState::Consistent { .. }
+                | ClaimState::GeneralKnowledge { .. } => &mut counts.verified,
                 ClaimState::Confirmed { .. } => &mut counts.confirmed,
-                ClaimState::GeneralKnowledge { .. } => &mut counts.general_knowledge,
+                ClaimState::Unverified { .. } => &mut counts.unverified,
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => &mut counts.queued,
                 ClaimState::Open { .. } if claim.held_for_standing() => &mut counts.queued,
                 ClaimState::Unchecked | ClaimState::Open { .. } => &mut counts.open,
@@ -369,9 +377,8 @@ impl ClaimCounts {
         counts
     }
 
-    /// The user's own verdicts: confirmed, accepted as general knowledge,
-    /// removed or edited away.
+    /// The user's own verdicts: confirmed, removed or edited away.
     pub fn resolved_by_you(&self) -> usize {
-        self.confirmed + self.general_knowledge + self.removed_by_you + self.edited_by_you
+        self.confirmed + self.removed_by_you + self.edited_by_you
     }
 }

@@ -1,22 +1,21 @@
-//! The provenance gate: whether a supported claim's support is enough for its
-//! kind (source provenance §6.2), and the one rule that may take a supported
-//! verdict away (§11). [`weigh`] levels each supporting source from cached
-//! judgements and asks lattice-core's `decide` whether they meet the bar; only
-//! contrary evidence that outranks the support, or support that fails its bar,
-//! overturns the checker. No model is called.
-//! Design: docs/design/2026-10-18-source-provenance-and-trust.md §6, §10, §11.
+//! The provenance gate: what a supported claim's support is, for its kind
+//! (source provenance §6.2). [`weigh`] levels each supporting source from
+//! cached judgements and asks lattice-core's `decide` whether they meet the
+//! bar; what it finds labels the claim ("per <source>", "according to
+//! <source>") and never takes the checker's verdict away. Deciding calls no
+//! model.
+//! Design: docs/design/2026-10-18-source-provenance-and-trust.md §6, §10, §11;
+//! docs/design/2026-11-01-lesson-claim-classes.md §3.2.
 
 use super::support_gate::{Sufficiency, Support as Supported, SupportGate};
 use super::*;
-use lattice_core::domain::learning::claim_review::{
-    GateVerdict, SupportedBy, TrustAssessment, VerdictKind,
-};
+use lattice_core::domain::learning::claim_review::{SupportedBy, TrustAssessment};
 use lattice_core::domain::provenance::TRUST_POLICY_VERSION;
 use lattice_core::domain::provenance::{
-    citation_candidates, clusters, decide, effective_date, passage_merges, AddedBy, Available,
-    ClaimProfile, ClusterId, Contrary, Decision, EffectiveBars, LinkStanding, Missing, OriginKey,
-    OutboundLink, Overturn, PassageKind, Policy, Reason, SourceDates, SourceRelation, Support,
-    TemporalScope, Trust, TrustLevel,
+    citation_candidates, clusters, decide, effective_date, label_below_primary, passage_merges,
+    AddedBy, Available, ClaimProfile, ClusterId, Contrary, Decision, EffectiveBars, Label,
+    LinkStanding, Missing, OriginKey, OutboundLink, Overturn, PassageKind, Policy, Reason,
+    SourceDates, SourceRelation, Support, TemporalScope, Trust, TrustLevel,
 };
 use std::sync::Arc;
 
@@ -24,7 +23,6 @@ mod context;
 mod relevel;
 mod strongest;
 pub(super) use context::passage_labels;
-pub(in crate::features::learning) use context::Judgements;
 pub(in crate::features::learning) use context::{outline_trust, with_outline_trust, with_trust};
 pub(in crate::features::learning) use relevel::relevel;
 #[cfg(test)]
@@ -47,9 +45,9 @@ pub(in crate::features::learning) struct FindingTrust {
     pub(super) profile: ClaimProfile,
     pub(super) supports: Vec<Support>,
     /// Contrary passages for the same claim, levelled the same way: what one
-    /// of the claim's two passes found saying otherwise when the other
-    /// supported it (course evidence index §5.1). The overturn rule weighs
-    /// them against the supports.
+    /// reading of the claim found saying otherwise when another supported it
+    /// (course evidence index §5.1). The overturn rule weighs them against the
+    /// supports.
     #[serde(default)]
     pub(super) contrary: Vec<Contrary>,
     pub(super) decision: Decision,
@@ -60,15 +58,22 @@ pub(in crate::features::learning) struct FindingTrust {
 }
 
 impl FindingTrust {
-    /// Whether research should look further for this claim (§11: scrutiny
-    /// runs only on an insufficient decision or a contrary).
-    pub(super) fn needs_scrutiny(&self) -> bool {
-        matches!(self.decision, Decision::Insufficient { .. }) || !self.contrary.is_empty()
+    /// The label the claim carries to the learner (claim classes design
+    /// §3.2): the decision's own when its support met the bar, and when it
+    /// did not the one its kind takes below Primary ("per <source>", "a
+    /// practice, per <source>", "according to <source>"). None for the user's
+    /// own evidence and for a kind that takes none.
+    pub(super) fn label(&self) -> Option<Label> {
+        match &self.decision {
+            Decision::Sufficient { label, .. } => label.clone(),
+            Decision::Insufficient { .. } => label_below_primary(&self.profile),
+        }
     }
 
     /// The claim's reason when its support is not enough: what it lacks,
     /// then the rules that fired, verbatim (the first names the claim's kind,
     /// its subject and the bar).
+    #[cfg(test)]
     pub(super) fn explain(&self) -> String {
         explain(&self.decision)
     }
@@ -154,8 +159,9 @@ fn reason_lines(reasons: &[Reason]) -> String {
 }
 
 /// The claim ledger's gate (CR §4 "P4 seam"): a supported verdict becomes
-/// verified only when the quotation it rests on is in the passage it names
-/// and the overturn rule leaves it standing.
+/// verified when the quotation it rests on is in the passage it names. What
+/// the gate weighed of the source is the claim's label and decides nothing
+/// (claim classes design §3.2).
 pub(super) struct ProvenanceGate;
 
 impl SupportGate for ProvenanceGate {
@@ -171,28 +177,9 @@ impl SupportGate for ProvenanceGate {
                     "The checker supported \"{}\" with a quotation that is not in the passage it names.",
                     support.claim
                 ),
-                kind: None,
             };
         }
-        // A finding the gate did not weigh: a quotation settled by its match,
-        // a claim the user resolved with evidence, or a check outside a
-        // preparation job, where no provenance is stored.
-        let Some(trust) = support.trust else {
-            return Sufficiency::Sufficient;
-        };
-        let assessed = trust.assessment(support.source_version_id, support.supporting_quote);
-        match assessed.verdict() {
-            GateVerdict::Sufficient => Sufficiency::Sufficient,
-            GateVerdict::Fails(kind @ VerdictKind::InsufficientStanding { .. }) => {
-                Sufficiency::Insufficient {
-                    reason: gate_reason(&assessed),
-                    kind: Some(kind),
-                }
-            }
-            GateVerdict::Fails(_) => Sufficiency::Contradicted {
-                reason: gate_reason(&assessed),
-            },
-        }
+        Sufficiency::Sufficient
     }
 }
 
@@ -453,11 +440,12 @@ pub(super) fn owner_hinted(url: &str, hints: &[String]) -> bool {
     })
 }
 
-/// Weighs every supported finding of a pass that the gate decides, in a
-/// preparation job (where provenance is stored); elsewhere nothing is
-/// weighed and the ledger's gate applies the quotation rule alone.
-/// `settled` holds the ordinals of findings decided before any model check
-/// (a quotation found in the source it names, evidence the user brought).
+/// Weighs and labels every supported finding of a pass, in a preparation
+/// job (where provenance is stored); elsewhere nothing is weighed and the
+/// ledger's gate applies the quotation rule alone. The weighing never takes
+/// the checker's verdict away. `settled` holds the ordinals of findings
+/// decided before any model check (a quotation found in the source it names,
+/// evidence the user brought).
 pub(super) async fn weigh(
     llm: &dyn LLMPort,
     results: &mut [CheckedClaim],
@@ -493,25 +481,14 @@ pub(super) async fn weigh(
         let Some((_, _, finding, _)) = results.get_mut(index) else {
             continue;
         };
-        reweigh(&mut judgements, llm, &profile, finding, None).await?;
+        // The strongest counted support is the claim's support (claim
+        // sources design §8), and the claim is labelled for it.
+        finding.trust = Some(Box::new(
+            weighed(&mut judgements, llm, &profile, finding).await?,
+        ));
+        strongest::name_strongest(finding);
+        finding.label = finding.trust.as_deref().and_then(FindingTrust::label);
     }
-    Ok(())
-}
-
-/// Weighs a supported `finding` again with what the course has on its
-/// subject (`available`, from the standing reach), and names the strongest
-/// counted support as the claim's support (claim sources design §8).
-pub(super) async fn reweigh(
-    judgements: &mut context::Judgements,
-    llm: &dyn LLMPort,
-    profile: &ClaimProfile,
-    finding: &mut Finding,
-    available: Option<Available>,
-) -> Result<()> {
-    finding.trust = Some(Box::new(
-        weighed(judgements, llm, profile, finding, available).await?,
-    ));
-    strongest::name_strongest(finding);
     Ok(())
 }
 
@@ -522,7 +499,6 @@ async fn weighed(
     llm: &dyn LLMPort,
     profile: &ClaimProfile,
     finding: &Finding,
-    available: Option<Available>,
 ) -> Result<FindingTrust> {
     let mut versions: Vec<String> = supporting_passages(finding)
         .into_iter()
@@ -546,7 +522,7 @@ async fn weighed(
             relations: judgements.relations(),
             bars: judgements.bars(),
             policy: &lattice_core::domain::provenance::POLICY,
-            available,
+            available: None,
         },
     ))
 }
@@ -573,8 +549,11 @@ pub(in crate::features::learning) async fn weigh_claim(
         evidence: page.to_vec(),
         supporting_quote: Some(supported.supporting_quote.clone()),
         resolution: None,
+        claim_id: None,
         two_pass: Default::default(),
         trust: None,
+        label: None,
+        class: None,
     };
     if supporting_passages(&finding).is_empty() {
         return Ok(None);
@@ -590,7 +569,7 @@ pub(in crate::features::learning) async fn weigh_claim(
     else {
         return Ok(None);
     };
-    let trust = weighed(&mut judgements, llm, &profile, &finding, None).await?;
+    let trust = weighed(&mut judgements, llm, &profile, &finding).await?;
     Ok(Some(trust.assessment(
         &supported.source_version_id,
         &supported.supporting_quote,

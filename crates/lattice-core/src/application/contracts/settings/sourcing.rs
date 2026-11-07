@@ -7,7 +7,7 @@
 //! needs is configured: keyless finders are on by default; the keyed engines
 //! (Brave, Tavily, Exa: `Auth::RequiredKey`) are off until their key is in the
 //! keyring; SearXNG (`Auth::UserInstance`) is off until `searxng_url` is set;
-//! polite pools (`Auth::Contact`) are off until `contact` is set.
+//! polite pools (`Auth::Contact`) are off until `contact` is an email address.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -16,8 +16,8 @@ use url::Url;
 
 use crate::domain::sourcing::policy::DEFAULT_FINDER_CONCURRENCY;
 use crate::domain::sourcing::{
-    is_known_finder, is_retired_finder, Auth, FinderDescriptor, FinderId, InstanceSetting,
-    KeyService, Reach, SkipReason,
+    is_email, is_known_finder, is_retired_finder, Auth, FinderDescriptor, FinderId,
+    InstanceSetting, KeyService, Reach, SkipReason,
 };
 
 /// Source-finding settings.
@@ -176,26 +176,24 @@ impl SourcingSettingsDto {
             Auth::UserInstance { setting } => {
                 (!self.instance_set(setting)).then_some(SkipReason::NoInstance { setting })
             }
-            Auth::Contact => self.contact().is_none().then_some(SkipReason::NoContact),
+            Auth::Contact => match self.contact() {
+                None => Some(SkipReason::NoContact),
+                Some(contact) if !is_email(contact) => Some(SkipReason::NoEmail),
+                Some(_) => None,
+            },
         }
     }
 }
 
-/// An email address (one `@`, something before it, a dotted domain after
-/// it, no spaces) or an http(s) URL with a host. The services that pool by
-/// contact accept either; the check is shape only.
+/// An email address (see [`is_email`]) or an http(s) URL with a host. The
+/// services that pool by contact accept either; the check is shape only.
 fn is_contact(contact: &str) -> bool {
     if contact.is_empty() || contact.chars().any(char::is_whitespace) {
         return false;
     }
-    if let Some((local, domain)) = contact.split_once('@') {
-        return !local.is_empty()
-            && !domain.contains('@')
-            && domain.contains('.')
-            && domain.split('.').all(|label| !label.is_empty());
-    }
-    Url::parse(contact)
-        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+    is_email(contact)
+        || Url::parse(contact)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
 }
 
 #[cfg(test)]

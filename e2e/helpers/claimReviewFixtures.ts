@@ -35,7 +35,7 @@ export function claimFixture(options: ClaimOptions) {
     reason: null,
     evidence: passage ? [{ passage, addedBy: 'research' }] : [],
     supportingQuote: null, research: [], repairs: [], executions: [], human: null,
-    availableActions: ['confirm', 'edit', 'remove', 'general_knowledge', 'attach_evidence', 'research_with_hint'],
+    availableActions: ['confirm', 'edit', 'remove', 'attach_evidence', 'research_with_hint'],
     history: [], localCheck: null, verifierCheck: null,
     sufficiency: verdict === 'insufficient_standing'
       ? { claimKind: 'general', subject: null, sufficient: false, bar: 'established', label: null, missing: 'no_identified_source', ceiling: null, reasons: [] }
@@ -74,7 +74,7 @@ export async function holdLessonForReview(page: Page, claims: ReturnType<typeof 
     }];
     state.claimReviews[lesson.id] = {
       lessonId: lesson.id, programId: state.planWorkspace.programId, state: 'needs_review', revision: 3, pass: 2, stopReason: null, changedSinceStop: false,
-      counts: { verified: alreadyVerified, confirmed: 0, generalKnowledge: 0, queued: held.length, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 },
+      counts: { verified: alreadyVerified, confirmed: 0, queued: held.length, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 },
       teachingFindings: [],
       claims: held,
     };

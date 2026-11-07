@@ -112,6 +112,17 @@ impl From<AppError> for ApiError {
                 details: Some(details.clone()),
             },
 
+            AppError::LearningModelNotSet(ref details) => ApiError {
+                code: ErrorCode::LearningModelNotSet,
+                message: "No Learning model is set".to_string(),
+                details: Some(details.clone()),
+            },
+            AppError::ModelServerCannotStart(ref details) => ApiError {
+                code: ErrorCode::ModelLoadError,
+                message: "The model server could not start".to_string(),
+                details: Some(details.clone()),
+            },
+
             // Resource errors
             AppError::NotFound(ref msg) => ApiError {
                 code: ErrorCode::NotFound,
@@ -132,7 +143,7 @@ impl From<AppError> for ApiError {
                 details: None,
             },
             AppError::PromptExceedsWindow { ref message, .. } => ApiError {
-                code: ErrorCode::InvalidInput,
+                code: ErrorCode::PromptExceedsWindow,
                 message: message.clone(),
                 details: None,
             },

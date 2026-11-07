@@ -29,12 +29,14 @@ use tracing::warn;
 
 /// Closes the turn's message for one group, in place of the reading
 /// instruction. `{passages}` is each passage as `[label] text`, a blank line
-/// apart, and `{last}` the group's last label. The criterion must follow the
-/// passages: said before them, the model copies whole passages that do not
-/// bear on the question. Telling the model not to answer yet, and that its
-/// reply ends with the last label's line, keeps it from answering in place of
-/// the lines or after them.
-pub(super) const GROUP_INSTRUCTION: &str = "Do not answer my question yet. First read these passages from above again, each on its own.\n\n{passages}\n\nWrite one line for each of these passages, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, including any exception or condition, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. When my question names a document, a passage from any other document gets a hyphen. Write only these lines: your reply ends with the line for [{last}].";
+/// apart, `{question}` the turn's question and `{last}` the group's last label.
+/// The criterion must follow the passages: said before them, the model copies
+/// whole passages that do not bear on the question. The question is said again
+/// because the passages put it far back, with the last turn's question nearer
+/// the start: without it a follow-up's reading can answer that one instead.
+/// Telling the model not to answer yet, and that its reply ends with the last
+/// label's line, keeps it from answering in place of the lines or after them.
+pub(super) const GROUP_INSTRUCTION: &str = "Do not answer my question yet. First read these passages from above again, each on its own.\n\n{passages}\n\nMy question is: \"{question}\"\n\nWrite one line for each of these passages, starting with its label in square brackets as shown above: the label, then the sentences of that passage that bear on my question, including any exception or condition, copied exactly as written and in the passage's own language — or the label and a single hyphen when it says nothing bearing on my question, however near its subject. When my question names a document, a passage from any other document gets a hyphen. Write only these lines: your reply ends with the line for [{last}].";
 
 /// Closes the turn's message for a passage the window cannot hold shown
 /// again: it is read where it stands. `{labels}` lists the labels and
@@ -54,6 +56,7 @@ pub(super) async fn planned(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
     passages: &Passages,
+    question: &str,
 ) -> Vec<Reading> {
     let labels: Vec<u32> = passages.labels().collect();
     let mut pending: VecDeque<Vec<u32>> =
@@ -61,7 +64,7 @@ pub(super) async fn planned(
     let mut readings = Vec::new();
     while let Some(group) = pending.pop_front() {
         let again = shown(passages, &group);
-        let input = group_input(request, &again, &group);
+        let input = group_input(request, &again, &group, question);
         let room = room_left(
             llm,
             &reading_request(request, input.clone(), None, &[], None),
@@ -95,13 +98,14 @@ pub(super) async fn read_in_groups(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
     passages: &Passages,
+    question: &str,
     cancel: &CancellationToken,
     clock: &TurnClock,
 ) -> Result<BTreeMap<u32, Option<String>>> {
     let reserved = request.max_output_tokens;
     let mut lines = BTreeMap::new();
     let mut written = 0usize;
-    let readings = planned(llm, request, passages).await;
+    let readings = planned(llm, request, passages, question).await;
     if llm.keeps_read_prompts() {
         read_ahead(llm, request, cancel, clock).await?;
     }
@@ -257,13 +261,15 @@ pub(super) fn group_input(
     request: &CompletionRequest,
     again: &str,
     group: &[u32],
+    question: &str,
 ) -> Vec<CompletionInput> {
     let mut input = request.input.clone();
     replace_reading(
         &mut input,
         &GROUP_INSTRUCTION
-            .replace("{passages}", again)
-            .replace("{last}", &last_label(group)),
+            .replace("{last}", &last_label(group))
+            .replace("{question}", question)
+            .replace("{passages}", again),
     );
     input
 }

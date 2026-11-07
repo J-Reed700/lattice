@@ -67,7 +67,7 @@ describe('CommandPalette actions', () => {
     ['Library', '/files'],
     ['Chat', '/chat'],
     ['Flashcards', '/studio?section=flashcards'],
-    ['Code review drills', '/studio?drills=open'],
+    ['Review drills', '/studio?drills=open'],
     ['New learning program', '/studio?new=1'],
     ['New journal entry', '/journals?new=1'],
   ])('goes to %s and closes', async (label, path) => {

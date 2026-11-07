@@ -72,6 +72,7 @@ fn parse(row: &SqliteRow) -> Result<JobRecord> {
         staged_result: json("staged_result_json")?,
         result_ref: row.get("result_ref"),
         error_code: row.get("error_code"),
+        cause_code: row.get("cause_code"),
         error_message: row.get("error_message"),
         retry_of_job_id: row.get("retry_of_job_id"),
         retry_count: count(row, "retry_count"),
@@ -310,7 +311,7 @@ impl JobStore {
             ));
         }
         let stamp = now();
-        sqlx::query("UPDATE jobs SET status='cancelled',finished_at=?,result_ref=NULL,error_code=NULL,error_message=NULL,progress_message='Cancelled' WHERE id=?")
+        sqlx::query("UPDATE jobs SET status='cancelled',finished_at=?,result_ref=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,progress_message='Cancelled' WHERE id=?")
             .bind(stamp)
             .bind(id)
             .execute(&mut *connection)
@@ -444,7 +445,7 @@ impl JobStore {
     pub async fn claim(&self, id: &str) -> Result<Option<JobRecord>> {
         let mut tx = self.immediate().await?;
         let stamp = now();
-        let claimed = sqlx::query("UPDATE jobs SET status='running',started_at=?,finished_at=NULL,error_code=NULL,error_message=NULL,retry_not_before=NULL,progress_message='Starting',heartbeat_at=? WHERE id=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?)")
+        let claimed = sqlx::query("UPDATE jobs SET status='running',started_at=?,finished_at=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,retry_not_before=NULL,progress_message='Starting',heartbeat_at=? WHERE id=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?)")
             .bind(stamp)
             .bind(stamp)
             .bind(id)
@@ -619,7 +620,7 @@ impl JobStore {
         message: &str,
     ) -> Result<bool> {
         let stamp = now();
-        let completed = sqlx::query("UPDATE jobs SET status='completed',progress_current=progress_total,progress_message=?,result_ref=?,finished_at=?,heartbeat_at=?,error_code=NULL,error_message=NULL,retry_not_before=NULL WHERE id=? AND status='running'")
+        let completed = sqlx::query("UPDATE jobs SET status='completed',progress_current=progress_total,progress_message=?,result_ref=?,finished_at=?,heartbeat_at=?,error_code=NULL,cause_code=NULL,error_message=NULL,retry_not_before=NULL WHERE id=? AND status='running'")
             .bind(message)
             .bind(result_ref)
             .bind(stamp)
@@ -637,12 +638,24 @@ impl JobStore {
     }
 
     pub async fn fail(&self, id: &str, code: &str, message: &str) -> Result<bool> {
+        self.fail_because(id, code, message, None).await
+    }
+
+    /// [`Self::fail`], also recording the wire code of the error behind it.
+    pub async fn fail_because(
+        &self,
+        id: &str,
+        code: &str,
+        message: &str,
+        cause_code: Option<&str>,
+    ) -> Result<bool> {
         let mut tx = self.immediate().await?;
         let stamp = now();
-        let failed = sqlx::query("UPDATE jobs SET status='failed',finished_at=?,heartbeat_at=?,error_code=?,error_message=?,progress_message='Failed',result_ref=NULL WHERE id=? AND status='running'")
+        let failed = sqlx::query("UPDATE jobs SET status='failed',finished_at=?,heartbeat_at=?,error_code=?,cause_code=?,error_message=?,progress_message='Failed',result_ref=NULL WHERE id=? AND status='running'")
             .bind(stamp)
             .bind(stamp)
             .bind(code)
+            .bind(cause_code)
             .bind(message.chars().take(ERROR_LIMIT).collect::<String>())
             .bind(id)
             .execute(&mut *tx)
@@ -660,6 +673,17 @@ impl JobStore {
     /// Returns a running job to pending after a temporary outage. It is due
     /// again after `backoff`, which grows with each consecutive deferral.
     pub async fn defer(&self, id: &str, deferral: &Deferral, backoff: Backoff) -> Result<bool> {
+        self.defer_because(id, deferral, backoff, None).await
+    }
+
+    /// [`Self::defer`], also recording the wire code of the error behind it.
+    pub async fn defer_because(
+        &self,
+        id: &str,
+        deferral: &Deferral,
+        backoff: Backoff,
+        cause_code: Option<&str>,
+    ) -> Result<bool> {
         let mut tx = self.immediate().await?;
         let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
         if job.status != JobStatus::Running {
@@ -668,8 +692,9 @@ impl JobStore {
         }
         let stamp = now();
         let delay = i64::try_from(backoff.delay(job.retry_count).as_millis()).unwrap_or(i64::MAX);
-        sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=?,error_message=?,progress_message=?,heartbeat_at=?,activity_json=coalesce(?,activity_json),retry_not_before=?,retry_count=retry_count+1 WHERE id=? AND status='running'")
+        sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=?,cause_code=?,error_message=?,progress_message=?,heartbeat_at=?,activity_json=coalesce(?,activity_json),retry_not_before=?,retry_count=retry_count+1 WHERE id=? AND status='running'")
             .bind(&deferral.code)
+            .bind(cause_code)
             .bind(deferral.message.chars().take(ERROR_LIMIT).collect::<String>())
             .bind(&deferral.progress_message)
             .bind(stamp)
@@ -714,7 +739,7 @@ impl JobStore {
         message: &str,
     ) -> Result<bool> {
         let stamp = now();
-        let suspended = sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=NULL,error_message=NULL,progress_message=?,heartbeat_at=? WHERE id=? AND status='running'")
+        let suspended = sqlx::query("UPDATE jobs SET status='pending',finished_at=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,progress_message=?,heartbeat_at=? WHERE id=? AND status='running'")
             .bind(message)
             .bind(stamp)
             .bind(id)
@@ -739,7 +764,7 @@ impl JobStore {
 
     async fn interrupt_in(connection: &mut SqliteConnection, id: &str) -> Result<bool> {
         let stamp = now();
-        let interrupted = sqlx::query("UPDATE jobs SET status='interrupted',finished_at=?,heartbeat_at=?,result_ref=NULL,error_code='interrupted',error_message=?,progress_message='Interrupted' WHERE id=? AND status='running'")
+        let interrupted = sqlx::query("UPDATE jobs SET status='interrupted',finished_at=?,heartbeat_at=?,result_ref=NULL,error_code='interrupted',cause_code=NULL,error_message=?,progress_message='Interrupted' WHERE id=? AND status='running'")
             .bind(stamp)
             .bind(stamp)
             .bind(STOPPED_BY_RESTART)

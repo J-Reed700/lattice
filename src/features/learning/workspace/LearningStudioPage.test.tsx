@@ -11,6 +11,7 @@ import type { ExportAllLearningPacksResultDto, LearningGenerationJob, LearningLe
 import { queryClient as activityClient } from '@/lib/queryClient';
 import { STUDY_ACTIVITY_KEY, type StudyActivity } from '@/lib/studyActivity';
 import { deferred } from '@/tests/deferred';
+import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
 
@@ -58,7 +59,15 @@ vi.mock('@/lib/api', () => ({ default: {
   exportAllLearningPacks: mocks.exportAll,
   courseIndexOpen: async () => ({ ok: true, data: undefined }),
   courseIndexClose: async () => ({ ok: true, data: undefined }),
+  // A Learning model is set, so the course builder shows no model notice.
+  getSettings: async () => ({ ok: true, data: settingsWithLearningModel() }),
+  getDownloadedModels: async () => ({ ok: true, data: [] }),
 } }));
+
+function settingsWithLearningModel() {
+  const base = makeAppSettings();
+  return { ...base, llm: { ...base.llm, learningModel: { kind: 'cloud', provider: 'anthropic', model: 'claude-test' } } };
+}
 
 
 const source = { id: 'source-1', title: 'Field guide', url: 'https://example.org/guide', excerpt: 'A carefully chosen passage.', acquiredAt: 1_790_000_000_000 };
@@ -321,7 +330,7 @@ describe('Learning Studio program workflow', () => {
         phase: 'evidence', phaseStartedAt: Date.now() - 60_000, lastActivityAt: Date.now() - 1_000,
         lastCheckpointAt: null, lessonTitle: 'Reading field notes', modelName: 'Test model',
         modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,
-        checksCompleted: 0, checksTotal: 0, checksReused: 0, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null,
+        checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
         recentSteps: [],
       },
       progressTotal: 1, progressMessage: 'Checking saved evidence',
@@ -631,17 +640,17 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.deck).toHaveBeenCalledWith('deck-1');
   });
 
-  it('lists code review drills beside Flashcards, opens them at /studio?drills=open and comes back', async () => {
+  it('lists review drills beside Flashcards, opens them at /studio?drills=open and comes back', async () => {
     const user = userEvent.setup();
     mocks.list.mockResolvedValue(ok([]));
     show();
     expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Code review drills' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Review drills' })).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Start a drill' }));
     expect(await screen.findByText('The drill screen')).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Flashcards' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Back from the drills' }));
-    expect(await screen.findByRole('heading', { name: 'Code review drills' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Review drills' })).toBeVisible();
     expect(screen.queryByText('The drill screen')).not.toBeInTheDocument();
   });
 

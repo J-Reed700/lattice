@@ -4,21 +4,33 @@
 
 use super::attempts::{Attempt, AttemptStatus};
 use super::dto::{
-    CodeReviewDrillDto, CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto,
-    CodeReviewRevealDto, CodeReviewScoreDto, FindingResultKind, FixDiffDto, IssueResultKind,
-    RatedPatternDto, RevealedFindingDto, RevealedIssueDto,
+    CodeReviewDrillDto, CodeReviewFileDto, CodeReviewFindingDto, CodeReviewMaterialDto,
+    CodeReviewResultDto, CodeReviewRevealDto, CodeReviewScoreDto, FindingResultKind, FixDiffDto,
+    IssueResultKind, RatedPatternDto, RevealedFindingDto, RevealedIssueDto, RevealedSourceDto,
 };
 use super::repository::StoredDrill;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, FindingOutcome, IssueOutcome, KeyIssue,
+    line_diff, pattern, FindingOutcome, IssueOutcome, KeyIssue, Material, Origin, Proof,
 };
 use lattice_core::shared::error::{AppError, Result};
 
-/// The drill as the learner may see it: its title, its language and its files.
+/// The drill as the learner may see it: its title, what it is made of and its files. For a passage that is the
+/// source's title; its text is for the reveal.
 pub fn learner_drill(stored: &StoredDrill) -> CodeReviewDrillDto {
     CodeReviewDrillDto {
         title: stored.drill.title.clone(),
-        language: stored.drill.language.clone(),
+        material: match &stored.drill.material {
+            Material::Code { language } => CodeReviewMaterialDto::Code {
+                language: language.clone(),
+            },
+            Material::Passage => CodeReviewMaterialDto::Passage {
+                source_title: stored
+                    .source
+                    .as_ref()
+                    .map(|source| source.title.clone())
+                    .unwrap_or_default(),
+            },
+        },
         files: stored
             .drill
             .files
@@ -108,14 +120,11 @@ fn reveal_of(attempt: &Attempt, stored: &StoredDrill) -> Result<CodeReviewReveal
             }
         })
         .collect();
-    let ratings = stored
-        .drill
-        .key
+    let ratings = ratings
         .iter()
-        .zip(ratings)
-        .map(|(issue, rated)| RatedPatternDto {
+        .map(|rated| RatedPatternDto {
             pattern: rated.pattern.clone(),
-            pattern_name: name_of(&issue.pattern),
+            pattern_name: name_of(&rated.pattern),
             rating: rated.rating,
         })
         .collect();
@@ -130,6 +139,11 @@ fn reveal_of(attempt: &Attempt, stored: &StoredDrill) -> Result<CodeReviewReveal
             .iter()
             .map(CodeReviewFileDto::from)
             .collect(),
+        source: stored.source.as_ref().map(|source| RevealedSourceDto {
+            title: source.title.clone(),
+            text: source.text.clone(),
+            version_id: source.version_id.clone(),
+        }),
     })
 }
 
@@ -152,9 +166,14 @@ fn revealed_issue(issue: &KeyIssue, outcome: IssueOutcome, reason: String) -> Re
             path: issue.fix.path.clone(),
             lines: line_diff(&issue.fix.before, &issue.fix.after),
         },
+        source_quote: match &issue.proof {
+            Proof::Sourced { quote, .. } => Some(quote.clone()),
+            Proof::Killed { .. } | Proof::Judged { .. } => None,
+        },
         outcome: kind,
         finding,
         reason,
+        also_valid: issue.origin == Origin::FoundInReview,
     }
 }
 

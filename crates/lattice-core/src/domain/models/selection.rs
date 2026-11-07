@@ -1,30 +1,24 @@
 //! # Model Management Domain Types
 //!
-//! Rich domain models for AI model selection, compatibility scoring, and recommendations.
+//! Rich domain models for AI model selection and the system they run on.
 //!
 //! ## Architecture
 //!
 //! Following Domain-Driven Design (DDD) patterns, this module provides:
 //! - Value Objects: Immutable, validated domain primitives
-//! - Aggregates: Model recommendation with compatibility analysis
-//! - Domain Services: Compatibility scoring algorithm
 //!
 //! ## Key Concepts
 //!
 //! - **SystemCapabilities**: Hardware detection results (RAM, GPU, disk)
 //! - **ModelMetadata**: Complete model information with requirements
-//! - **CompatibilityScore**: Multi-factor scoring (RAM, GPU, disk, performance)
-//! - **ModelRecommendation**: Model + compatibility + performance estimates
 
 use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 mod model_metadata;
-mod scoring;
 
 pub use model_metadata::ModelMetadata;
-pub use scoring::{CompatibilityScore, CompatibilityScorer, ModelRecommendation};
 
 /// Whether an embedding model can be loaded by the current local runtime.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,30 +169,6 @@ impl fmt::Display for CpuArchitecture {
         match self {
             CpuArchitecture::ARM64 => write!(f, "ARM64"),
             CpuArchitecture::X86_64 => write!(f, "x86_64"),
-        }
-    }
-}
-
-/// Compatibility level between model and system.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum CompatibilityLevel {
-    /// Model will NOT run (insufficient resources)
-    Incompatible,
-    /// Model may run poorly (< 60% compatibility)
-    Poor,
-    /// Model will run acceptably (60-85% compatibility)
-    Good,
-    /// Model will run well (> 85% compatibility)
-    Excellent,
-}
-
-impl fmt::Display for CompatibilityLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CompatibilityLevel::Incompatible => write!(f, "Incompatible"),
-            CompatibilityLevel::Poor => write!(f, "Poor"),
-            CompatibilityLevel::Good => write!(f, "Good"),
-            CompatibilityLevel::Excellent => write!(f, "Excellent"),
         }
     }
 }

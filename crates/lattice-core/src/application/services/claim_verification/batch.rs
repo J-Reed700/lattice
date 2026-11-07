@@ -88,13 +88,14 @@ fn resolve(raw: &str, claims: &[LocatedClaim], passages: &[String]) -> Option<Ve
             }
             Some(ClaimJudgment::Judged(JudgeOutcome {
                 verdict,
-                reason: Some(reason.chars().take(MAX_REASON_CHARS).collect()),
+                reason: Some(reason),
                 quote: if verdict == ClaimVerdict::Unsupported {
                     None
                 } else {
                     quote
                 },
                 confidence: None,
+                uncertain: false,
             }))
         })()
         .unwrap_or(ClaimJudgment::Unusable);
@@ -221,5 +222,22 @@ mod tests {
         ] {
             assert!(resolve(&json!({"checks":checks}).to_string(), &claims, &bank).is_none());
         }
+    }
+
+    #[test]
+    fn a_batch_reason_past_600_characters_is_kept_whole() {
+        let claims = targets();
+        let (_, bank) = render_batch_evidence(&claims);
+        let reason = "The passage gives a different figure than the claim. "
+            .repeat(14)
+            .trim()
+            .to_string();
+        assert!(reason.chars().count() > 600);
+        let response = format!("Reason: {reason}\nSource passage: none\nVerdict: unsupported");
+        let raw = json!({"checks":[{"id":"claim-0","response":response},{"id":"claim-1","response":response}]}).to_string();
+        let result = resolve(&raw, &claims, &bank).unwrap();
+        assert!(
+            matches!(&result[0], ClaimJudgment::Judged(f) if f.reason.as_deref() == Some(reason.as_str()))
+        );
     }
 }

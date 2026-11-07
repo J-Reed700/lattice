@@ -1,0 +1,133 @@
+{
+  "name": "14-soil-crop-and-interval-found",
+  "kind": "find",
+  "why": "Both findings say what the source has instead: phosphorus and barley rather than nitrogen and wheat, and every three years rather than every three months. Both issues found.",
+  "source": {
+    "versionId": "tarn-valley-liming-trial-v1",
+    "startByte": 9840,
+    "endByte": 10778,
+    "title": "Soil Science 250, field report: The Tarn Valley liming trial",
+    "text": "Soils in the upper Tarn Valley have a mean pH of 5.1, which limits the uptake of phosphorus by barley. Agronomist Soledad Varga ran a four-year liming trial on 24 plots, applying ground limestone at 2 tonnes per hectare. Plots that received lime reached a mean pH of 6.2 after two years, and barley yields on those plots rose by 18 percent against untreated plots. Varga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\n\nThe effect faded: by the fourth year the pH of limed plots had drifted back to 5.6 and the yield advantage fell to 7 percent. Varga recommends reapplying lime every three years. She stresses that the trial used a single soil type, a silt loam, and that sandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied. The trial did not measure the cost of liming, so no claim about profitability can be drawn from it."
+  },
+  "drill": {
+    "id": "tarn-valley-liming-trial",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Liming acid soils in the Tarn Valley",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of nitrogen by wheat.\nSoledad Varga, an agronomist, ran a four-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots.\nVarga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent.\nVarga recommends reapplying lime every three months.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tarn-valley-liming-trial-swap",
+        "pattern": "fidelity.swapped_entities",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 2,
+          "end": 2
+        },
+        "consequence": "A reader takes the problem to be nitrogen supply to wheat, and would look for the wrong remedy and the wrong crop.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "This acidity limits the uptake of nitrogen by wheat.",
+          "after": "This acidity limits the uptake of phosphorus by barley."
+        },
+        "explanation": "The acidity limits the uptake of phosphorus by barley.",
+        "proof": {
+          "sourced": {
+            "quote": "which limits the uptake of phosphorus by barley",
+            "planted": "contradicted",
+            "reason": "The source names phosphorus and barley; the sentence names nitrogen and wheat."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tarn-valley-liming-trial-months",
+        "pattern": "fidelity.wrong_unit_or_magnitude",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 9,
+          "end": 9
+        },
+        "consequence": "A reader plans to spread lime twelve times as often as Varga advises.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Varga recommends reapplying lime every three months.",
+          "after": "Varga recommends reapplying lime every three years."
+        },
+        "explanation": "Varga recommends reapplying lime every three years.",
+        "proof": {
+          "sourced": {
+            "quote": "Varga recommends reapplying lime every three years",
+            "planted": "contradicted",
+            "reason": "The source gives every three years; the sentence gives every three months."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of phosphorus by barley.\nSoledad Varga, an agronomist, ran a four-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots.\nVarga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent.\nVarga recommends reapplying lime every three years.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 2,
+        "end": 2
+      },
+      "text": "Wrong nutrient and wrong crop. The study was about phosphorus uptake by barley, not nitrogen and wheat.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "Reapplying lime every three months is not realistic. Varga's advice was every three years.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      {
+        "found": {
+          "finding": 1
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      }
+    ]
+  }
+}

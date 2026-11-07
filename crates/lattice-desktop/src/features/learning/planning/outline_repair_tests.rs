@@ -478,7 +478,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     assert!(!prompts[5].contains("SEARCH_SNIPPET"));
     assert_eq!(
         irrelevant.queries.lock().unwrap().as_slice(),
-        ["random assignment confounding primary source"]
+        ["random assignment confounding primary source", claim]
     );
     // Repair: attempts start afresh, the planner is told what was searched, and
     // the new page's evidence closes the finding in code. Linking runs again on
@@ -535,7 +535,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
     );
     assert_eq!(
         relevant.queries.lock().unwrap().as_slice(),
-        ["random assignment confounding textbook"]
+        ["random assignment confounding textbook", claim]
     );
     let draft = repo.outline_draft(&repaired.summary.id).await?.unwrap();
     assert_eq!(

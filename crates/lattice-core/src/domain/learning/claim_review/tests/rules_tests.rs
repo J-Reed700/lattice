@@ -167,6 +167,44 @@ fn new_information_names_each_cause_and_nothing_else() {
 }
 
 #[test]
+fn a_verified_claim_is_checked_again_after_its_citation_is_repaired_and_only_then() {
+    let mut entry = verified_claim("c1");
+    let mut elsewhere = observation(&entry);
+    elsewhere.fingerprint = local_check(None, "v2").fingerprint;
+    assert_eq!(
+        new_information(&entry, &elsewhere),
+        None,
+        "reselected evidence"
+    );
+
+    entry
+        .append(
+            machine(3),
+            ClaimEvent::CitationRepaired {
+                cited: vec!["v1".into()],
+                source_version_id: "v2".into(),
+                quote: "At sea level, water boils at 100 °C.".into(),
+                added_source: false,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        new_information(&entry, &elsewhere),
+        Some(NewInformation::EvidenceChanged),
+        "the repaired citation is what the next check reads"
+    );
+
+    entry.append(machine(4), checked(None, "v2")).unwrap();
+    let mut later = observation(&entry);
+    later.fingerprint = local_check(None, "v3").fingerprint;
+    assert_eq!(
+        new_information(&entry, &later),
+        None,
+        "the check decided the repair; the claim is verified again"
+    );
+}
+
+#[test]
 fn only_the_sentence_or_a_bound_source_reopens_a_confirmation() {
     let bound = HumanBinding::new(QUOTE, vec!["v1".into()]);
     let cases = [
@@ -234,24 +272,20 @@ fn a_lesson_is_ready_only_when_every_claim_is_resolved() {
     removed
         .append(user(7), act(UserAction::Remove, None))
         .unwrap();
-    let mut general = claim("c4");
-    general
+    // A statement the knowledge judge passed is the machine's, and resolves.
+    let mut common = claim("c4");
+    common
         .append(
             machine(2),
-            checked(Some(VerdictKind::GeneralKnowledgeProposed), "v1"),
+            ClaimEvent::Checked(Check {
+                result: CheckResult::KnownCommon,
+                evidence: vec![],
+                ..local_check(None, "v1")
+            }),
         )
         .unwrap();
-
     assert_eq!(
-        end_state([&verified, &confirmed, &removed, &general]),
-        LessonReviewState::NeedsReview,
-        "a general-knowledge proposal blocks until accepted"
-    );
-    general
-        .append(user(3), act(UserAction::GeneralKnowledge, None))
-        .unwrap();
-    assert_eq!(
-        end_state([&verified, &confirmed, &removed, &general]),
+        end_state([&verified, &confirmed, &removed, &common]),
         LessonReviewState::Ready
     );
     let unchecked = claim("c5");
@@ -273,18 +307,76 @@ fn a_lesson_is_ready_only_when_every_claim_is_resolved() {
         LessonReviewState::NeedsReview
     );
     assert_eq!(
-        ClaimCounts::tally([&verified, &confirmed, &removed, &general, &unchecked, &reopened]),
+        ClaimCounts::tally([&verified, &confirmed, &removed, &common, &unchecked, &reopened]),
         ClaimCounts {
-            verified: 1,
+            verified: 2,
             confirmed: 1,
-            general_knowledge: 1,
             queued: 1,
             open: 1,
+            unverified: 0,
             removed_by_you: 1,
             edited_by_you: 0,
             rewritten: 0,
         }
     );
+}
+
+#[test]
+fn a_lesson_whose_failed_claims_the_machine_cut_is_ready() {
+    let research = || ClaimEvent::Researched {
+        queries: vec!["boiling point sea level".into()],
+        sources_added: vec!["v2".into()],
+        passages_found: 1,
+        round_ms_per_claim: None,
+    };
+    // A statement the knowledge judge calls false is cut at once.
+    let mut false_at_once = claim("c1");
+    false_at_once
+        .append(machine(2), checked(Some(VerdictKind::Contradicted), "v1"))
+        .unwrap();
+    // A sourced statement is judged, researched and rechecked, rewritten once
+    // and rechecked, then cut (claim classes design §3.2).
+    let mut after_a_rewrite = claim("c2");
+    for (at, event) in [
+        (2, checked(Some(VerdictKind::Unsupported), "v1")),
+        (3, research()),
+        (4, checked(Some(VerdictKind::Unsupported), "v2")),
+        (5, rewrite(1, false, RepairOutcome::Rewritten)),
+        (6, checked(Some(VerdictKind::Unsupported), "v3")),
+    ] {
+        after_a_rewrite.append(machine(at), event).unwrap();
+    }
+    let verified = verified_claim("c3");
+    assert_eq!(
+        end_state([&verified, &false_at_once, &after_a_rewrite]),
+        LessonReviewState::Verifying,
+        "a failed claim is the machine's until it cuts it"
+    );
+
+    false_at_once
+        .append(machine(3), rewrite(1, false, RepairOutcome::Removed))
+        .unwrap();
+    after_a_rewrite
+        .append(machine(7), rewrite(2, true, RepairOutcome::Removed))
+        .unwrap();
+    for cut in [&false_at_once, &after_a_rewrite] {
+        assert!(
+            matches!(
+                cut.state(),
+                ClaimState::Removed {
+                    by: Actor::Machine,
+                    ..
+                }
+            ),
+            "{:?}",
+            cut.state()
+        );
+    }
+    let claims = [&verified, &false_at_once, &after_a_rewrite];
+    assert_eq!(end_state(claims), LessonReviewState::Ready);
+    let counts = ClaimCounts::tally(claims);
+    assert_eq!((counts.verified, counts.rewritten), (1, 2));
+    assert_eq!(counts.queued + counts.open, 0);
 }
 
 #[test]
@@ -342,6 +434,41 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
             },
         },
         ClaimEvent::Undone { event_ordinal: 4 },
+        classified(Class::Reasoning, ClassifiedBy::Model),
+        classified(Class::Common, ClassifiedBy::Evidence),
+        ClaimEvent::CitationDropped {
+            cited: vec!["v1".into()],
+        },
+        ClaimEvent::RepairAttempted {
+            attempt: 1,
+            escalated: false,
+            before: QUOTE.into(),
+            after: None,
+            outcome: RepairOutcome::Rewritten,
+            goal: Some(Goal::AsTheFieldHasIt),
+        },
+        ClaimEvent::Stepped {
+            policy: "acceptance-v1".into(),
+            step: Step::Cut,
+            outcome: acceptance::Outcome::CannotCut,
+            then: Then::End(acceptance::End::Removed { section_goes: true }),
+            reason: "The sentence cannot be cut.".into(),
+            rewrite_ahead: false,
+        },
+        ClaimEvent::Checked(Check {
+            result: CheckResult::Consistent,
+            ..local_check(None, "v1")
+        }),
+        ClaimEvent::Checked(Check {
+            result: CheckResult::KnownCommon,
+            evidence: vec![],
+            ..local_check(None, "v1")
+        }),
+        ClaimEvent::Checked(Check {
+            result: CheckResult::NotFalse,
+            evidence: vec![],
+            ..local_check(None, "v1")
+        }),
         ClaimEvent::Stopped {
             reason: StopReason {
                 code: "model_rejected".into(),
@@ -369,6 +496,8 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
 
     let states = [
         ClaimState::Unchecked,
+        ClaimState::Consistent { at: 5 },
+        ClaimState::GeneralKnowledge { at: 6 },
         entry.state().clone(),
         ClaimState::Reopened {
             cause: ReopenCause::VerifierDispute,
@@ -393,6 +522,29 @@ fn stored_forms_round_trip_and_tag_the_events_kind_column() {
         serde_json::to_value(entry.state()).unwrap(),
         json!({"state": "queued", "kind": "contradicted", "reason": "compared v1"})
     );
+    assert_eq!(
+        serde_json::to_value(ClaimState::Consistent { at: 5 }).unwrap(),
+        json!({"state": "consistent", "at": 5})
+    );
+    assert_eq!(
+        serde_json::to_value(CheckResult::KnownCommon).unwrap(),
+        json!("known_common")
+    );
+    assert_eq!(
+        serde_json::to_value(CheckResult::NotFalse).unwrap(),
+        json!("not_false")
+    );
+    for (by, name) in [
+        (ClassifiedBy::Model, "model"),
+        (ClassifiedBy::Rule, "rule"),
+        (ClassifiedBy::Writer, "writer"),
+        (ClassifiedBy::Evidence, "evidence"),
+    ] {
+        assert_eq!(
+            serde_json::to_value(classified(Class::Sourced, by)).unwrap(),
+            json!({"kind": "classified", "class": "sourced", "by": name})
+        );
+    }
     for (value, column) in [
         (UnitKind::AnswerKey.as_str(), "answer_key"),
         (LessonReviewState::NeedsReview.as_str(), "needs_review"),

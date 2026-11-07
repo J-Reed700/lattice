@@ -241,3 +241,144 @@ async fn an_invalid_repaired_quotation_stops_before_more_model_review() {
         .to_string()
         .contains("revised lesson contains 1 source quotation")));
 }
+
+const REPLICATION: &str =
+    "Replication copies each write to several machines so a single failure loses nothing.";
+
+#[test]
+fn a_cited_sentences_quote_is_checked_like_the_sections() {
+    let mut candidate = lesson(EXCERPT);
+    candidate["blocks"][0]["citations"] = json!([{"sentence":"The tool behaves exactly as described.","sourceIndex":0,"quote":EXCERPT}]);
+    assert!(lesson_quote_checks(&candidate, &context()).is_empty());
+
+    candidate["blocks"][0]["citations"][0]["quote"] =
+        json!("An invented quotation that does not appear in the selected source.");
+    let checks = lesson_quote_checks(&candidate, &context());
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["path"], "blocks[0]");
+    assert!(checks[0]["error"]
+        .as_str()
+        .unwrap()
+        .starts_with("Citation 1 of this part:"));
+
+    // A citation of a source the lesson was not given is refused too.
+    candidate["blocks"][0]["citations"][0] =
+        json!({"sentence":"A sentence.","sourceIndex":3,"quote":EXCERPT});
+    assert_eq!(lesson_quote_checks(&candidate, &context()).len(), 1);
+}
+
+#[test]
+fn the_typography_of_a_cited_sentences_quote_is_restored_with_the_sections() {
+    let exact =
+        "We’ll download Rust through rustup, a command line tool for managing Rust versions.";
+    let authoring = json!({"sources":[{"sourceIndex":0,"excerpt":exact}]});
+    let mut candidate = lesson(exact);
+    candidate["blocks"][0]["citations"] = json!([{"sentence":"Rust is downloaded through rustup.",
+        "sourceIndex":0,"quote":exact.replace('’', "'")}]);
+
+    assert_eq!(restore_lesson_quotes(&mut candidate, &authoring), 1);
+
+    assert_eq!(candidate["blocks"][0]["citations"][0]["quote"], exact);
+}
+
+#[test]
+fn a_cited_sentence_whose_quote_matches_nothing_is_cited_to_the_nearest_passage_of_the_sentence() {
+    let authoring = json!({"sources":[
+        {"sourceIndex":0,"excerpt":"Navigation home page. The cache stores computed values so repeated requests return quickly."},
+        {"sourceIndex":1,"excerpt":REPLICATION}
+    ]});
+    let mut candidate = json!({"blocks":[{"body":"Why replicas matter. Writes are copied to several machines.","sourceIndex":0,
+        "quote":"The cache stores computed values so repeated requests return quickly.",
+        "citations":[{"sentence":"Replication copies every write to several machines so one failure loses nothing.",
+            "sourceIndex":0,"quote":"Completely different wording appears here instead."}]}],"questions":[]});
+
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+
+    assert_eq!(
+        candidate["blocks"][0]["sourceIndex"], 0,
+        "the section's quote holds"
+    );
+    assert_eq!(candidate["blocks"][0]["citations"][0]["sourceIndex"], 1);
+    assert_eq!(candidate["blocks"][0]["citations"][0]["quote"], REPLICATION);
+}
+
+#[test]
+fn a_citation_the_repair_appends_is_checked_against_its_source_like_any_other() {
+    let candidate = lesson(EXCERPT);
+    let sentence = "A substantive teaching explanation with practice context.";
+    let appended = |quote: &str| {
+        let patch = json!({"edits":[],"citations":[
+            {"path":"/blocks/0","sentence":sentence,"sourceIndex":0,"quote":quote}]});
+        super::super::text_edits::apply(&candidate, &patch.to_string()).unwrap()
+    };
+
+    // A quote the source holds stands.
+    assert!(lesson_quote_checks(&appended(EXCERPT), &context()).is_empty());
+
+    // One it does not is refused, at the part that cites it.
+    let refused = lesson_quote_checks(
+        &appended("An invented quotation that does not appear in the selected source."),
+        &context(),
+    );
+    assert_eq!(refused.len(), 1);
+    assert_eq!(refused[0]["path"], "blocks[0]");
+    assert!(refused[0]["error"]
+        .as_str()
+        .unwrap()
+        .starts_with("Citation 1 of this part:"));
+}
+
+#[tokio::test]
+async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_others() -> Result<()>
+{
+    let invented = "An invented quotation that does not appear in the selected source.";
+    let mut original = lesson(EXCERPT);
+    let block = original["blocks"][0].clone();
+    original["blocks"] = json!([block.clone(), block.clone(), block]);
+    original["blocks"][0]["quote"] = json!(invented);
+    original["blocks"][1]["title"] = json!("Example");
+    original["blocks"][2]["citations"] =
+        json!([{"sentence":"The tool behaves as described.","sourceIndex":0,"quote":EXCERPT}]);
+    let approved = || {
+        let check = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false});
+        json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks((0..3).map(check).collect())}).to_string()
+    };
+    let chained = "This saved reference describes how the example tool behaves.";
+    let patch = json!({"edits":[
+        {"path":"/blocks/0/quote","before":invented,"after":EXCERPT},
+        {"path":"/blocks/1/title","before":"Example","after":"Corrected example"},
+        {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":0},
+        {"path":"/blocks/2/citations/0/quote","before":EXCERPT,"after":chained},
+        {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":0},
+        {"path":"/blocks/2/citations/0/quote","before":chained,"after":EXCERPT}
+    ]});
+    let model = ScriptedModel {
+        outputs: Mutex::new(vec![approved(), patch.to_string(), approved()].into()),
+        prompts: Mutex::new(Vec::new()),
+    };
+
+    let result = review_and_repair(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context().to_string(),
+        &json!({"type":"object"}),
+        original.to_string(),
+        4000,
+    )
+    .await?;
+
+    let mut expected = original.clone();
+    expected["blocks"][0]["quote"] = json!(EXCERPT);
+    expected["blocks"][1]["title"] = json!("Corrected example");
+    assert_eq!(serde_json::from_str::<Value>(&result)?, expected);
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(
+        prompts
+            .iter()
+            .filter(|prompt| prompt.contains("You are editing a rejected draft"))
+            .count(),
+        1,
+        "the repair is asked for once"
+    );
+    Ok(())
+}

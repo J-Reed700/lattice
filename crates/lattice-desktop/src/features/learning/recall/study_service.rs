@@ -13,6 +13,12 @@ fn text(value: &str, label: &str, max: usize) -> Result<()> {
     }
     Ok(())
 }
+fn not_blank(value: &str, label: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(AppError::InvalidInput(format!("{label} must not be empty")));
+    }
+    Ok(())
+}
 pub fn validate_generation(request: &GenerateStudyDeckRequestDto) -> Result<()> {
     text(&request.title, "Deck title", 120)?;
     if request.focus.chars().count() > 200 {
@@ -181,9 +187,9 @@ pub async fn review(
 }
 
 pub async fn update_card(repo: &StudyRepository, request: UpdateStudyCardRequestDto) -> Result<()> {
-    text(&request.question, "Question", 2000)?;
-    text(&request.answer, "Answer", 1000)?;
-    text(&request.explanation, "Explanation", 3000)?;
+    not_blank(&request.question, "Question")?;
+    not_blank(&request.answer, "Answer")?;
+    not_blank(&request.explanation, "Explanation")?;
     repo.update_card(&request).await
 }
 

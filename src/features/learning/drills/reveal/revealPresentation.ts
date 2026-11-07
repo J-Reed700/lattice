@@ -17,11 +17,15 @@ export interface RankedIssue {
   number: number;
 }
 
+/** The planted issues first, then the also-valid ones, each most severe first, ties by position. */
 export function rankIssues(issues: readonly RevealedIssueDto[]): RankedIssue[] {
   const order = (issue: RevealedIssueDto) => SEVERITIES.indexOf(issue.severity);
   return issues
     .map((issue, position) => ({ issue, position }))
-    .sort((a, b) => order(a.issue) - order(b.issue) || a.position - b.position)
+    .sort(
+      (a, b) =>
+        Number(a.issue.alsoValid) - Number(b.issue.alsoValid) || order(a.issue) - order(b.issue) || a.position - b.position,
+    )
     .map((entry, index) => ({ ...entry, number: index + 1 }));
 }
 
@@ -57,14 +61,18 @@ export interface LeadingLine {
 
 const was = (items: readonly unknown[]) => (items.length === 1 ? 'was' : 'were');
 
-/** Whether the review led with the key's most severe issue, and the short reason. */
+/** Whether the review led with the most severe planted issue, and the short reason. */
 export function leadingLine(reveal: CodeReviewRevealDto): LeadingLine | null {
-  const top = SEVERITIES.find((severity) => reveal.issues.some((issue) => issue.severity === severity));
+  const planted = reveal.issues.filter((issue) => !issue.alsoValid);
+  const top = SEVERITIES.find((severity) => planted.some((issue) => issue.severity === severity));
   if (!top) return null;
-  const tops = reveal.issues.filter((issue) => issue.severity === top);
+  const tops = planted.filter((issue) => issue.severity === top);
   const named = (list: readonly RevealedIssueDto[]) => joinList(list.map((issue) => issue.patternName));
   if (reveal.score.ledWithTheMostSevere) {
-    const first = tops.filter((issue) => issue.outcome === 'found' && issue.finding === 0);
+    const reach = SEVERITIES.indexOf(top);
+    const first = reveal.issues.filter(
+      (issue) => SEVERITIES.indexOf(issue.severity) <= reach && issue.outcome === 'found' && issue.finding === 0,
+    );
     return {
       led: true,
       text: first.length > 0

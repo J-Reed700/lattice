@@ -1,10 +1,12 @@
 //! The claim review end to end (§6, §12), over a real database and job
-//! store: a claim the checker flags twice waits for the user in a completed
-//! job; the user attaches a page that supports it (or confirms it), Resume
+//! store: a claim the Verifier disputes waits for the user in a completed
+//! job (a failure of the job's own checks never does, claim classes design
+//! §3.2); the user attaches a page that supports it (or confirms it), Resume
 //! continues the job, the pass takes the user's resolution without asking the
 //! model again, and the lesson publishes. Resume with nothing changed is
 //! refused.
 
+use super::audit_flow_tests::{opt_in, AuditingModel, FakeVerifier};
 use super::claim_ledger_tests::{prepare, waiting, Figures};
 use super::*;
 use crate::features::learning::curriculum::LearningGenerationJobStatus;
@@ -15,14 +17,13 @@ use crate::features::learning::dto::{
 use crate::features::learning::lessons::claim_reviews::attach::{
     attach, AttachDeps, AttachRequest, Evidence,
 };
-use crate::features::learning::lessons::claim_reviews::checker_examples::{
-    CheckerExamples, Label, LabelSource,
-};
+use crate::features::learning::lessons::claim_reviews::checker_examples::CheckerExamples;
 use crate::features::learning::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::claim_reviews::service::{
     ClaimReviewService, NOTHING_CHANGED,
 };
+use crate::features::learning::lessons::verifier_audit::lesson;
 use crate::features::learning::repository::LearningRepository;
 use async_trait::async_trait;
 use lattice_core::application::contracts::web::{
@@ -172,7 +173,8 @@ impl LibraryPassagesPort for NoLibrary {
     }
 }
 
-/// A course whose lesson waits for the user's review, its job completed.
+/// A course whose lesson waits for the user's review, its job completed: the
+/// Verifier disputes the one claim the local checker verified (§14.5).
 pub(super) struct Waiting {
     pub(super) pool: sqlx::SqlitePool,
     pub(super) jobs: LearningCurriculumRepository,
@@ -182,8 +184,11 @@ pub(super) struct Waiting {
 }
 
 impl Waiting {
-    /// The flagged claim: unsupported, corrected, rewritten, then handed to
-    /// the user (§4); the job completes as the worker completes it (§6.1).
+    /// The disputed claim: verified by the local checker, then called
+    /// unsupported by the Verifier the course opted into, the one way a job
+    /// leaves a claim to the user (claim classes design §3.2); the job
+    /// completes as the worker completes it (§6.1). The audit stays on, so a
+    /// pass that resumes the job runs under a Verifier (`run_and_publish_audited`).
     pub(super) async fn new(model: &Supporting) -> Result<Self> {
         let course = Self::course().await?;
         course.hold(model).await?;
@@ -205,16 +210,22 @@ impl Waiting {
         })
     }
 
-    /// Prepares the lesson until its flagged claim waits for the user, and
-    /// completes the job as the worker does.
+    /// Prepares the lesson until the Verifier's dispute leaves its claim to
+    /// the user, and completes the job as the worker does.
     pub(super) async fn hold(&self, model: &Supporting) -> Result<()> {
-        let error = prepare(
-            &self.jobs,
-            &self.job_id,
-            &self.lesson_id,
-            model,
-            Some(candidate(BAD).to_string()),
-            &self.references().await?,
+        opt_in(self, true).await?;
+        let verifier = AuditingModel::new("unsupported");
+        let references = self.references().await?;
+        let error = lesson::scope(
+            Some(FakeVerifier::local(&verifier)),
+            prepare(
+                &self.jobs,
+                &self.job_id,
+                &self.lesson_id,
+                model,
+                Some(candidate(GOOD).to_string()),
+                &references,
+            ),
         )
         .await
         .err()
@@ -318,6 +329,21 @@ impl Waiting {
         Ok(lesson)
     }
 
+    /// `run_and_publish` under a Verifier that agrees with every claim: the
+    /// audit the course opted into runs and lets the lesson publish.
+    pub(super) async fn run_and_publish_audited(
+        &self,
+        model: &Supporting,
+        job_id: &str,
+    ) -> Result<PreparedLearningLesson> {
+        let verifier = AuditingModel::new("supported");
+        lesson::scope(
+            Some(FakeVerifier::local(&verifier)),
+            self.run_and_publish(model, job_id),
+        )
+        .await
+    }
+
     pub(super) async fn assert_published(&self, job_id: &str) -> Result<()> {
         let program = LearningRepository::new(self.pool.clone())
             .get(&self.program_id)
@@ -406,16 +432,14 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
         "{:?}",
         entry.state()
     );
-    // The card shows what was compared, and the overturned flag is a
-    // labelled example: the page was not a reference before (§15).
+    // The card shows what was compared. The local checker flagged nothing,
+    // so the evidence overturns no flag and gives no labelled example (§15).
     let shown = store.shown_passages(&course.lesson_id).await?;
     assert!(shown[&claim_id]
         .iter()
         .any(|passage| passage.source_version_id == version));
     let examples = CheckerExamples::new(course.pool.clone()).list(None).await?;
-    assert_eq!(examples.len(), 1);
-    assert_eq!(examples[0].label_source, LabelSource::EvidenceAdded);
-    assert_eq!(examples[0].label, Label::RetrievalMiss);
+    assert!(examples.is_empty(), "{examples:?}");
     assert!(
         course
             .service()
@@ -435,7 +459,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     // The pass takes the attached check as the claim's receipt, and the
     // lesson cites the page on the claim's section (§5.4).
     let judged = model.judged();
-    let lesson = course.run_and_publish(&model, &next.id).await?;
+    let lesson = course.run_and_publish_audited(&model, &next.id).await?;
     assert_eq!(
         model.judged(),
         judged,
@@ -465,6 +489,10 @@ async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
             ledger.revision.0,
         )
         .await?;
+    // The Verifier flagged it, the local checker passed it: no example of the
+    // local checker's.
+    let examples = CheckerExamples::new(course.pool.clone()).list(None).await?;
+    assert!(examples.is_empty(), "{examples:?}");
 
     let next = course.resume().await?;
     assert_eq!(
@@ -472,12 +500,12 @@ async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
         Some(course.job_id.as_str())
     );
     let judged = model.judged();
-    let lesson = course.run_and_publish(&model, &next.id).await?;
+    let lesson = course.run_and_publish_audited(&model, &next.id).await?;
     assert_eq!(model.judged(), judged, "a confirmed claim is not rechecked");
     let report = lesson.verification.unwrap();
     assert!(report.findings.iter().any(|finding| matches!(
         finding.resolution,
-        Some(general_knowledge::Resolution::Confirmed { .. })
+        Some(resolution::Resolution::Confirmed { .. })
     )));
     course.assert_published(&next.id).await
 }
@@ -643,6 +671,7 @@ mod loop_bound {
             before: FAILED.into(),
             after: Some(FIXED.into()),
             outcome: RepairOutcome::Rewritten,
+            goal: None,
         }
     }
 
@@ -658,46 +687,46 @@ mod loop_bound {
 
     #[tokio::test]
     async fn a_repair_pass_touches_only_the_failed_sentences() -> Result<()> {
-        use super::super::claim_ledger_tests::{only_passage, pass_report, passage_finding};
+        use super::super::claim_ledger_tests::{
+            check_findings, identify_findings, only_passage, pass_report, passage_finding,
+        };
         const SOURCE: &str = "Pure water boils at 100 °C at sea level; ice melts at 0 °C.";
         const BOILS: &str = "At sea level, water boils at 100 °C.";
         let lesson = |body: &str| json!({"blocks":[{"kind":"explanation","title":"Boiling","body":body,"rubric":[]}],"questions":[]});
         let body = format!("{VERIFIED} {ALSO_VERIFIED} {FAILED}");
-        // One inventory passage holds all three claims: it is each one's
-        // quote as the extractor names it, and the ledger locates each claim
-        // to its own sentence.
+        // One inventory passage holds all three claims: a pass that quoted
+        // whole passages stored it as each one's quote, and the ledger
+        // locates each claim to its own sentence.
         assert_eq!(only_passage(&body), body);
         let model = Model::new();
         let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
         let before = lesson(&body);
-        ledger
-            .observe(
-                &before,
-                &pass_report(vec![
-                    passage_finding(&body, BOILS, true, SOURCE),
-                    passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
-                    passage_finding(
-                        &body,
-                        "Salt lowers water's boiling point a lot.",
-                        false,
-                        SOURCE,
-                    ),
-                ]),
-            )
-            .await?;
-        let ids = ledger.finding_claims().to_vec();
+        let report = pass_report(vec![
+            passage_finding(&body, BOILS, true, SOURCE),
+            passage_finding(&body, ALSO_VERIFIED, true, SOURCE),
+            passage_finding(
+                &body,
+                "Salt lowers water's boiling point a lot.",
+                false,
+                SOURCE,
+            ),
+        ]);
+        let ids = identify_findings(&mut ledger, &before, &report).await?;
+        check_findings(&mut ledger, &ids, &report.findings).await?;
         let quotes: Vec<String> = ids
             .iter()
             .map(|id| ledger.entry(id).unwrap().location().quote.clone())
             .collect();
         assert_eq!(quotes, [VERIFIED, ALSO_VERIFIED, FAILED]);
         let target = ids[2].clone();
-        let claim_ledger::Decision::Repair(targets) = ledger.decide() else {
+        let claim_ledger::Decision::Repair(targets) = ledger.decide(&StandardPolicy::new(), &[])
+        else {
             panic!("the failed claim is repaired");
         };
-        let targets = ledger.withhold_shared(&targets).await?;
         assert_eq!(targets, std::slice::from_ref(&target));
-        ledger.begin_repairs(&before, &targets).await?;
+        ledger
+            .begin_repairs(&StandardPolicy::new(), &before, &targets)
+            .await?;
         let verified: Vec<ClaimLedgerEntry> = ids[..2]
             .iter()
             .map(|id| ledger.entry(id).unwrap().clone())
@@ -716,7 +745,8 @@ mod loop_bound {
             &Protected::of_claims(&ledger, &targets),
             &Protected::of_ledger(&ledger, &targets),
         )
-        .unwrap();
+        .unwrap()
+        .section;
         let after = confined["body"].as_str().unwrap().to_owned();
         assert_eq!(after, format!("{VERIFIED} {ALSO_VERIFIED} {FIXED}"));
 
@@ -735,21 +765,19 @@ mod loop_bound {
                 .sum()
         };
         let checked = checks(&ledger);
-        ledger
-            .observe(
-                &lesson(&after),
-                &pass_report(vec![
-                    passage_finding(&after, BOILS, true, SOURCE),
-                    passage_finding(&after, ALSO_VERIFIED, true, SOURCE),
-                    passage_finding(
-                        &after,
-                        "Salt raises water's boiling point slightly.",
-                        false,
-                        SOURCE,
-                    ),
-                ]),
-            )
-            .await?;
+        let report = pass_report(vec![
+            passage_finding(&after, BOILS, true, SOURCE),
+            passage_finding(&after, ALSO_VERIFIED, true, SOURCE),
+            passage_finding(
+                &after,
+                "Salt raises water's boiling point slightly.",
+                false,
+                SOURCE,
+            ),
+        ]);
+        let ids_after = identify_findings(&mut ledger, &lesson(&after), &report).await?;
+        // The pass checks the target alone.
+        check_findings(&mut ledger, &ids_after[2..], &report.findings[2..]).await?;
 
         // The verified claims keep their ids, states and bases, and nothing
         // is recorded for them; the target continues with one attempt fewer,

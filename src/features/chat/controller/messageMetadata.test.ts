@@ -16,6 +16,7 @@ import {
   normalizeSource,
   parseImages,
   parseSources,
+  parseTurnRecord,
   parseVerification,
 } from './messageMetadata';
 
@@ -97,6 +98,35 @@ describe('messageMetadata', () => {
     it('is null for nothing or nonsense', () => {
       expect(parseVerification(null)).toBeNull();
       expect(parseVerification({ claimsEvaluated: 'many' })).toBeNull();
+    });
+
+    it.each([601, 5000])('keeps a verdict whose reason is %i characters', length => {
+      const reason = 'r'.repeat(length);
+      const parsed = parseVerification({
+        enabled: true,
+        claimVerdicts: [{ sentence: 'Rome fell.', citationIds: [1], verdict: 'unsupported', reason, method: 'judge' }],
+      });
+      expect(parsed?.claimVerdicts?.[0].reason).toBe(reason);
+    });
+  });
+
+  describe('parseTurnRecord', () => {
+    const record = (overrides: { label?: string; rationale?: string } = {}) => ({
+      model: null,
+      steps: [{ id: 's1', kind: 'find_image', label: overrides.label ?? 'Finding a picture', state: 'done', startedAtMs: 0 }],
+      timing: { totalMs: 1, routerMs: 0, retrievalMs: 0, generationMs: 1, verificationMs: 0, toolMs: 0 },
+      tokens: { completion: null, contextUsed: null },
+      router: { action: 'answer', confidence: 0.9, rationale: overrides.rationale ?? 'Short.' },
+    });
+
+    it.each([201, 3000])('keeps a step whose label is %i characters', length => {
+      const label = 'q'.repeat(length);
+      expect(parseTurnRecord(record({ label }))?.steps[0].label).toBe(label);
+    });
+
+    it.each([4001, 20000])('keeps a router rationale of %i characters', length => {
+      const rationale = 'w'.repeat(length);
+      expect(parseTurnRecord(record({ rationale }))?.router?.rationale).toBe(rationale);
     });
   });
 

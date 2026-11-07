@@ -422,15 +422,6 @@ async fn refresh_guards_its_inputs_and_records_unusable_pages_as_failed_checks()
     assert!(message.is_some_and(|m| m.contains("valid source metadata")));
     assert!(pending.is_none());
 
-    let long_title = refresh_request(&program_id, &web, 0);
-    library
-        .refresh(&long_title, Some(page(&"t".repeat(181), "Some text")), None)
-        .await?;
-    assert_eq!(
-        check_row(&pool, &long_title.operation_id).await?.0,
-        "failed"
-    );
-
     let unreachable = refresh_request(&program_id, &web, 0);
     library
         .refresh(&unreachable, None, Some("é".repeat(600)))
@@ -642,28 +633,6 @@ async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note()
         )
         .await,
     );
-    assert_invalid(
-        try_add(
-            &library,
-            &program_id,
-            page(&"t".repeat(181), "Some text"),
-            web.clone(),
-            manual.clone(),
-        )
-        .await,
-    );
-    let mut long_publisher = page("Altitude", "Some text");
-    long_publisher.publisher = Some("p".repeat(181));
-    assert_invalid(
-        try_add(
-            &library,
-            &program_id,
-            long_publisher,
-            web.clone(),
-            manual.clone(),
-        )
-        .await,
-    );
     let mut long_url = page("Altitude", "Some text");
     long_url.resolved_url = Some(format!("https://example.org/{}", "a".repeat(2048)));
     assert_invalid(try_add(&library, &program_id, long_url, web.clone(), manual.clone()).await);
@@ -738,6 +707,81 @@ async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note()
         fixture_rows + 4,
         "rejected captures must not leave rows behind"
     );
+    Ok(())
+}
+
+/// The title and publisher the library stored for `version_id`.
+async fn shown_title_and_publisher(
+    pool: &SqlitePool,
+    version_id: &str,
+) -> Result<(String, Option<String>)> {
+    let row = sqlx::query("SELECT title,publisher FROM learning_source_versions WHERE id=?")
+        .bind(version_id)
+        .fetch_one(pool)
+        .await
+        .map_err(db)?;
+    Ok((row.get("title"), row.get("publisher")))
+}
+
+#[tokio::test]
+async fn a_long_title_or_publisher_is_cut_to_what_the_library_shows_never_refused() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program_id = active_program(&pool).await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let title = "A headline that runs on and on. "
+        .repeat(12)
+        .trim()
+        .to_owned();
+    let publisher = "A publisher whose declared name never ends. "
+        .repeat(9)
+        .trim()
+        .to_owned();
+    for (kind, freshness) in [
+        (LearningSourceKind::Web, LearningSourcePolicy::Manual),
+        (LearningSourceKind::Pasted, LearningSourcePolicy::Fixed),
+    ] {
+        let mut long = page(&title, "Water boils near 70 °C on Everest.");
+        long.publisher = Some(publisher.clone());
+        let (op, source_id, version_id) = (id(), id(), id());
+        library
+            .add(
+                new_source(&op, &source_id, &version_id, &program_id, kind, freshness),
+                long,
+                id(),
+            )
+            .await?;
+        let (shown_title, shown_publisher) = shown_title_and_publisher(&pool, &version_id).await?;
+        assert_eq!(shown_title, title.chars().take(180).collect::<String>());
+        assert_eq!(
+            shown_publisher,
+            Some(publisher.chars().take(180).collect::<String>())
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refreshed_page_with_a_long_title_or_publisher_is_cut_never_failed() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program_id = active_program(&pool).await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let (web, _) = add(
+        &library,
+        &program_id,
+        LearningSourceKind::Web,
+        LearningSourcePolicy::Manual,
+    )
+    .await?;
+    let mut long = page(&"t".repeat(200), "Updated: water boils near 71 °C.");
+    long.publisher = Some("p".repeat(200));
+    let request = refresh_request(&program_id, &web, 0);
+    library.refresh(&request, Some(long), None).await?;
+    let (status, message, pending) = check_row(&pool, &request.operation_id).await?;
+    assert_eq!(status, "update_available", "{message:?}");
+    let pending = pending.expect("the refreshed version is pending");
+    let (shown_title, shown_publisher) = shown_title_and_publisher(&pool, &pending).await?;
+    assert_eq!(shown_title, "t".repeat(180));
+    assert_eq!(shown_publisher, Some("p".repeat(180)));
     Ok(())
 }
 

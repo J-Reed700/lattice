@@ -6,6 +6,10 @@ are committed.
 
 ## Page recall (`live_page_recall_eval`)
 
+> The eval was removed with the relevance walk it measured
+> (`docs/design/2026-11-01-lesson-claim-classes.md` §3.7). These rows are the
+> record of what the walk measured.
+
 Two-pass claim pages on a stored run (course evidence index §7.1–7.2). The
 three orders of §5.2 decide `REACHES` (D2) and the page numbers decide
 `B_DEPTH` (D5); record the decision a run supports in its notes.

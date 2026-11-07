@@ -30,6 +30,8 @@ export const ISSUE_OUTCOME: Record<IssueResultKind, Words> = {
   missed: { label: 'Missed', tone: BAD },
 };
 
+export const ALSO_VALID_NOT_RAISED: Words = { label: 'Not raised', tone: NOTE };
+
 export const FINDING_OUTCOME: Record<FindingResultKind, Words> = {
   matches: { label: 'Matches', tone: GOOD },
   valid_extra: { label: 'Valid extra', tone: NOTE },
@@ -46,6 +48,7 @@ export const DECIDED_BY: Record<DecidedBy, string> = {
   test: 'the issue’s test',
   suite: 'the hidden suite',
   judge: 'a judge',
+  source: 'the source passage',
 };
 
 export const RATING: Record<PatternRating, Words> = {
@@ -89,7 +92,8 @@ export function momentOf(ms: number): { text: string; iso: string } | null {
   };
 }
 
-export function lineLabel(span: CodeReviewSpanDto): string {
+export function lineLabel(span: CodeReviewSpanDto, material: 'code' | 'passage' = 'code'): string {
+  if (material === 'passage') return span.start === span.end ? `Sentence ${span.start}` : `Sentences ${span.start}–${span.end}`;
   return span.start === span.end
     ? `${span.path} · line ${span.start}`
     : `${span.path} · lines ${span.start}–${span.end}`;

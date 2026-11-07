@@ -86,25 +86,54 @@ pub(crate) enum Fetched {
     Transport(String),
 }
 
+/// What one GET asks of [`FinderHttp::get_with`] beyond the default.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct GetOptions {
+    /// The spacing the host documents, in place of the pacer's default.
+    pub min_interval: Option<Duration>,
+    /// Read a 429 with `X-RateLimit-Remaining: 0` as a wait of
+    /// `X-RateLimit-Reset` seconds when it names no `Retry-After`. Only for a
+    /// host whose reset header is seconds (GitHub's is an epoch time).
+    pub reset_in_seconds: bool,
+}
+
 impl FinderHttp {
     /// One paced GET. The host's slot covers this request only, never a
     /// retry: what happens next is the runner's decision.
     pub(crate) async fn get(&self, url: &str, headers: HeaderMap, max_bytes: usize) -> Fetched {
+        self.get_with(url, headers, max_bytes, GetOptions::default())
+            .await
+    }
+
+    pub(crate) async fn get_with(
+        &self,
+        url: &str,
+        headers: HeaderMap,
+        max_bytes: usize,
+        options: GetOptions,
+    ) -> Fetched {
         if self.public_only {
             if let Err(error) = check_public_url(url) {
                 return Fetched::Transport(error.to_string());
             }
         }
-        let _site_slot = self.pacer.acquire(url).await;
+        let _site_slot = match options.min_interval {
+            Some(interval) => self.pacer.acquire_every(url, interval).await,
+            None => self.pacer.acquire(url).await,
+        };
         let response = match self.client.get(url).headers(headers).send().await {
             Ok(response) => response,
             Err(error) => return Fetched::Transport(error.to_string()),
         };
         let status = response.status();
         if !status.is_success() {
+            let mut wait = retry_after(response.headers(), Utc::now());
+            if wait.is_none() && options.reset_in_seconds && status.as_u16() == 429 {
+                wait = spent_allowance_reset(response.headers());
+            }
             return Fetched::Status {
                 code: status.as_u16(),
-                retry_after: retry_after(response.headers(), Utc::now()),
+                retry_after: wait,
             };
         }
         match read_text_bounded(response, max_bytes).await {
@@ -138,6 +167,15 @@ pub(crate) fn retry_after(headers: &HeaderMap, now: DateTime<Utc>) -> Option<Dur
         .ok()?
         .with_timezone(&Utc);
     Some((date - now).to_std().unwrap_or(Duration::ZERO))
+}
+
+/// The wait a host's spent allowance names: `X-RateLimit-Reset` seconds when
+/// `X-RateLimit-Remaining` is 0.
+fn spent_allowance_reset(headers: &HeaderMap) -> Option<Duration> {
+    let number = |name: &str| headers.get(name)?.to_str().ok()?.trim().parse::<u64>().ok();
+    (number("x-ratelimit-remaining")? == 0)
+        .then(|| number("x-ratelimit-reset").map(Duration::from_secs))
+        .flatten()
 }
 
 /// A registered finder and how many results its service serves per page,
@@ -216,7 +254,7 @@ pub(crate) fn registry(
             searxng::RESULTS_PER_PAGE,
         ),
         entry(
-            marginalia::Marginalia::new(http.clone()),
+            marginalia::Marginalia::new(http.clone(), key(KeyService::Marginalia)),
             marginalia::RESULTS_PER_PAGE,
         ),
         // Encyclopedia & owner sites
@@ -258,11 +296,11 @@ pub(crate) fn registry(
         ),
         // Scholarly & OA
         entry(
-            openalex::OpenAlex::new(http.clone()),
+            openalex::OpenAlex::new(http.clone(), key(KeyService::OpenAlex)),
             openalex::RESULTS_PER_PAGE,
         ),
         entry(
-            crossref::Crossref::new(http.clone()),
+            crossref::Crossref::new(http.clone(), key(KeyService::CrossrefPlus)),
             crossref::RESULTS_PER_PAGE,
         ),
         entry(

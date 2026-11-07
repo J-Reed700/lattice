@@ -8,16 +8,18 @@ use super::support::{
 };
 use crate::features::learning::drills::attempts::{self, AttemptMode, AttemptStatus};
 use crate::features::learning::drills::dto::{
-    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewSeverity, CodeReviewSpanDto,
-    FindingResultKind, IssueResultKind, StartedCodeReviewDto,
+    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewMaterialDto, CodeReviewSeverity,
+    CodeReviewSpanDto, FindingResultKind, IssueResultKind, ReviewMaterialDto, StartedCodeReviewDto,
 };
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD, DRILL_GRADING};
+use crate::features::learning::drills::reveal;
 use crate::features::learning::drills::review;
 use crate::features::learning::persistence::db;
 use crate::features::learning::plugin::code_review_languages;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, PatternRating, Proof, LANGUAGES,
+    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, IssueRating, Material, Origin,
+    PatternRating, Proof, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -47,6 +49,10 @@ fn secrets() -> Vec<(String, String)> {
         match &issue.proof {
             Proof::Killed { test } => secrets.push((which("killing test"), test.clone())),
             Proof::Judged { reason } => secrets.push((which("proof"), reason.clone())),
+            Proof::Sourced { quote, reason, .. } => {
+                secrets.push((which("source quote"), quote.clone()));
+                secrets.push((which("proof"), reason.clone()));
+            }
         }
     }
     secrets.push(("the suite".into(), SUITE.into()));
@@ -56,6 +62,12 @@ fn secrets() -> Vec<(String, String)> {
 }
 
 const GRADER: &str = "scripted-grading-model";
+
+fn code(language: &str) -> ReviewMaterialDto {
+    ReviewMaterialDto::Code {
+        language: language.to_owned(),
+    }
+}
 
 /// What a DTO shows of the key: the texts it holds and the names of the fields it has.
 fn leaks(shown: &Value) -> Vec<String> {
@@ -121,7 +133,7 @@ fn finding_dtos() -> Vec<CodeReviewFindingDto> {
 async fn started() -> Result<(SqlitePool, String, Value)> {
     let pool = pool().await?;
     stock(&pool, "drill").await?;
-    let started = review::start(&pool, "python", AttemptMode::Practice, 40, 2).await?;
+    let started = review::start(&pool, &code("python"), AttemptMode::Practice, 40, 2).await?;
     let shown = serde_json::to_value(&started.dto).expect("a DTO is JSON");
     let StartedCodeReviewDto::Started { attempt_id, .. } = started.dto else {
         panic!("a drill was ready");
@@ -134,7 +146,7 @@ async fn starting_a_drill_gives_the_attempt_and_the_drill_as_the_learner_may_see
 {
     let pool = pool().await?;
     stock(&pool, "drill").await?;
-    let started = review::start(&pool, "python", AttemptMode::Interview, 40, 2).await?;
+    let started = review::start(&pool, &code("python"), AttemptMode::Interview, 40, 2).await?;
     let StartedCodeReviewDto::Started {
         attempt_id,
         mode,
@@ -147,7 +159,12 @@ async fn starting_a_drill_gives_the_attempt_and_the_drill_as_the_learner_may_see
     assert_eq!(mode, AttemptMode::Interview);
     assert!(started_at > 0);
     assert_eq!(drill.title, "A sliding-window rate limiter");
-    assert_eq!(drill.language, "python");
+    assert_eq!(
+        drill.material,
+        CodeReviewMaterialDto::Code {
+            language: "python".into()
+        }
+    );
     assert_eq!(
         drill.files,
         proved()
@@ -180,7 +197,11 @@ async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
         .map(String::as_str)
         .collect();
     drill_keys.sort_unstable();
-    assert_eq!(drill_keys, ["files", "language", "title"]);
+    assert_eq!(drill_keys, ["files", "material", "title"]);
+    assert_eq!(
+        object["drill"]["material"],
+        json!({"kind": "code", "language": "python"})
+    );
     Ok(())
 }
 
@@ -231,7 +252,7 @@ async fn an_attempt_not_yet_graded_shows_the_learner_nothing_of_the_key() -> Res
 #[tokio::test]
 async fn with_no_drill_ready_a_build_is_queued_and_the_learner_is_told() -> Result<()> {
     let pool = pool().await?;
-    let started = review::start(&pool, "python", AttemptMode::Practice, 50, 2).await?;
+    let started = review::start(&pool, &code("python"), AttemptMode::Practice, 50, 2).await?;
     let StartedCodeReviewDto::Building { job_id } = &started.dto else {
         panic!("none was ready");
     };
@@ -243,9 +264,9 @@ async fn with_no_drill_ready_a_build_is_queued_and_the_learner_is_told() -> Resu
     let job = JobStore::new(pool.clone()).get(job_id).await?;
     assert_eq!(job.kind, DRILL_BUILD);
     let spec = spec_of(&job)?;
-    assert_eq!(spec.language, "python");
+    assert_eq!(spec.material, Material::code("python"));
     assert_eq!(spec.lines, 50);
-    let wanted: Vec<String> = targets("python", &[], 0, 2)
+    let wanted: Vec<String> = targets(&Material::code("python"), &[], 0, 2)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();
@@ -257,8 +278,8 @@ async fn with_no_drill_ready_a_build_is_queued_and_the_learner_is_told() -> Resu
 #[tokio::test]
 async fn asking_again_while_a_build_is_under_way_finds_that_build() -> Result<()> {
     let pool = pool().await?;
-    let first = review::start(&pool, "python", AttemptMode::Practice, 50, 2).await?;
-    let again = review::start(&pool, "python", AttemptMode::Practice, 50, 2).await?;
+    let first = review::start(&pool, &code("python"), AttemptMode::Practice, 50, 2).await?;
+    let again = review::start(&pool, &code("python"), AttemptMode::Practice, 50, 2).await?;
     assert_eq!(first.dto, again.dto);
     assert_eq!(jobs_of(&pool, DRILL_BUILD).await?, 1);
     Ok(())
@@ -269,9 +290,9 @@ async fn the_build_queued_when_a_drill_was_taken_is_the_one_the_next_learner_wai
 ) -> Result<()> {
     let pool = pool().await?;
     stock(&pool, "drill").await?;
-    let first = review::start(&pool, "python", AttemptMode::Practice, 50, 2).await?;
+    let first = review::start(&pool, &code("python"), AttemptMode::Practice, 50, 2).await?;
     let next = first.jobs[0].clone();
-    let second = review::start(&pool, "python", AttemptMode::Practice, 50, 2).await?;
+    let second = review::start(&pool, &code("python"), AttemptMode::Practice, 50, 2).await?;
     assert_eq!(
         second.dto,
         StartedCodeReviewDto::Building { job_id: next },
@@ -286,13 +307,14 @@ async fn a_request_that_cannot_make_a_build_is_refused_and_takes_no_drill() -> R
     let pool = pool().await?;
     stock(&pool, "drill").await?;
     for (language, lines, count) in [("python", 0, 2), ("python", 40, 0), ("klingon", 40, 2)] {
-        let result = review::start(&pool, language, AttemptMode::Practice, lines, count).await;
+        let result =
+            review::start(&pool, &code(language), AttemptMode::Practice, lines, count).await;
         assert!(
             matches!(result, Err(AppError::InvalidInput(_))),
             "{language} {lines} {count}: {result:?}"
         );
     }
-    let still_there = review::start(&pool, "python", AttemptMode::Practice, 40, 2).await?;
+    let still_there = review::start(&pool, &code("python"), AttemptMode::Practice, 40, 2).await?;
     assert!(matches!(
         still_there.dto,
         StartedCodeReviewDto::Started { .. }
@@ -453,6 +475,8 @@ async fn a_graded_review_reveals_every_issue_every_finding_the_score_the_ratings
     assert_eq!(first.outcome, IssueResultKind::Found);
     assert_eq!(first.finding, Some(0));
     assert_eq!(first.reason, "The finding names the operator.");
+    assert_eq!(first.source_quote, None);
+    assert_eq!(reveal.source, None);
     let second = &reveal.issues[1];
     assert_eq!(second.severity, CodeReviewSeverity::Nit);
     assert_eq!(second.outcome, IssueResultKind::Missed);
@@ -569,6 +593,8 @@ async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
     );
     assert_eq!(reveal["issues"][0]["outcome"], "found");
     assert_eq!(reveal["issues"][0]["finding"], 0);
+    assert!(reveal["source"].is_null(), "code has no source passage");
+    assert!(reveal["issues"][0]["sourceQuote"].is_null());
     assert_eq!(reveal["issues"][0]["fix"]["lines"][0]["kind"], "removed");
     assert_eq!(reveal["issues"][1]["outcome"], "missed");
     assert_eq!(reveal["findings"][1]["outcome"], "valid_extra");
@@ -605,12 +631,79 @@ async fn every_language_the_screen_offers_starts_at_every_size_it_offers() -> Re
     for language in code_review_languages() {
         for (lines, count) in SCREEN_SIZES {
             let started =
-                review::start(&pool, &language, AttemptMode::Practice, lines, count).await?;
+                review::start(&pool, &code(&language), AttemptMode::Practice, lines, count).await?;
             assert!(
                 matches!(started.dto, StartedCodeReviewDto::Building { .. }),
                 "{language} {lines} {count}: {started:?}"
             );
         }
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_issue_a_blind_review_raised_is_revealed_as_also_valid_and_a_planted_one_is_not(
+) -> Result<()> {
+    let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let grader = FakeGrader::new(review_assessment());
+    waiting.grade(&model, None, &grader).await?;
+    let (attempt, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    stored.drill.key[1].origin = Origin::FoundInReview;
+
+    let revealed = reveal::result_of(&attempt, &stored)?
+        .reveal
+        .expect("a graded review is revealed");
+    assert!(!revealed.issues[0].also_valid);
+    assert!(revealed.issues[1].also_valid);
+    let shown = serde_json::to_value(&revealed.issues).expect("a DTO is JSON");
+    assert_eq!(shown[0]["alsoValid"], false);
+    assert_eq!(shown[1]["alsoValid"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn ratings_are_revealed_as_stored_whatever_their_number_against_the_key() -> Result<()> {
+    let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let grader = FakeGrader::new(review_assessment());
+    waiting.grade(&model, None, &grader).await?;
+    let (mut attempt, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    stored.drill.key[1].origin = Origin::FoundInReview;
+    let rating = |pattern: &str, rating| IssueRating {
+        pattern: pattern.to_owned(),
+        rating,
+    };
+
+    // An attempt graded before review-found issues stopped being rated holds one rating for each key issue.
+    attempt.ratings = Some(vec![
+        rating(OPERATOR, PatternRating::Easy),
+        rating(LITERALS, PatternRating::Again),
+    ]);
+    let both = reveal::result_of(&attempt, &stored)?
+        .reveal
+        .expect("a graded review is revealed");
+    assert_eq!(
+        both.ratings
+            .iter()
+            .map(|rated| (rated.pattern.as_str(), rated.rating))
+            .collect::<Vec<_>>(),
+        [
+            (OPERATOR, PatternRating::Easy),
+            (LITERALS, PatternRating::Again)
+        ]
+    );
+
+    // One that has fewer ratings than the key has issues names each rating's own pattern.
+    attempt.ratings = Some(vec![rating(LITERALS, PatternRating::Good)]);
+    let one = reveal::result_of(&attempt, &stored)?
+        .reveal
+        .expect("a graded review is revealed");
+    assert_eq!(one.ratings.len(), 1);
+    assert_eq!(one.ratings[0].pattern, LITERALS);
+    assert_eq!(
+        one.ratings[0].pattern_name,
+        pattern(LITERALS).expect("a pattern").name
+    );
     Ok(())
 }

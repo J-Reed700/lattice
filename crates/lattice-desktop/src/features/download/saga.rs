@@ -2,12 +2,15 @@ use crate::features::download::events::model_download_events::*;
 use crate::infrastructure::events::event_bus::EventBus;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use chrono::Utc;
+use lattice_core::application::contracts::settings::SettingsCategory;
 use lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort;
-use lattice_core::application::ports::UnitOfWorkFactory;
+use lattice_core::application::ports::{SettingsRepositoryPort, UnitOfWorkFactory};
 use lattice_core::domain::models::checkpoint::has_tokenizer;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::domain::value_objects::ArtifactIdentity;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -20,6 +23,7 @@ pub struct DownloadSaga {
     model_file_repo: Arc<dyn ModelFileRepositoryPort>,
     uow_factory: Arc<dyn UnitOfWorkFactory>,
     downloaded_model_repo: Arc<DownloadedModelRepository>,
+    settings: Option<Arc<dyn SettingsRepositoryPort>>,
 }
 
 impl DownloadSaga {
@@ -76,6 +80,45 @@ impl DownloadSaga {
             model_file_repo,
             uow_factory,
             downloaded_model_repo,
+            settings: None,
+        }
+    }
+
+    /// Lets a first-run chat activation also set the Learning model.
+    pub fn with_settings(mut self, settings: Arc<dyn SettingsRepositoryPort>) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
+    /// Makes `model_id` the Learning model when none is set; one the user
+    /// chose is never replaced.
+    async fn default_learning_model(&self, model_id: &str) {
+        let Some(settings) = &self.settings else {
+            return;
+        };
+        let current = match settings.get_all().await {
+            Ok(current) => current,
+            Err(e) => {
+                warn!(error = %e, "Saga: could not read settings to default the Learning model");
+                return;
+            }
+        };
+        if current.llm.learning_model.is_some() {
+            return;
+        }
+        let model = ModelRef::Local {
+            model_id: model_id.to_string(),
+        };
+        let Ok(value) = serde_json::to_value(&model) else {
+            return;
+        };
+        let updates = HashMap::from([("learningModel".to_string(), value)]);
+        match settings.update(Some(SettingsCategory::Llm), updates).await {
+            Ok(_) => info!(
+                model_id,
+                "Saga: set the Learning model to the first chat model"
+            ),
+            Err(e) => warn!(error = %e, "Saga: could not set the Learning model"),
         }
     }
 
@@ -380,6 +423,7 @@ impl DownloadSaga {
                                 model_id = %event.model_id,
                                 "Saga: auto-activated newly-downloaded chat model (slot was empty)"
                             );
+                            self.default_learning_model(&event.model_id).await;
                         }
                     }
                     Ok(Some(_)) => {}

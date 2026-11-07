@@ -12,14 +12,14 @@ const numbered = (index: number, unitIndex = index) => {
   return { ...item, presentation: { ...item.presentation, statement: item.statement } };
 };
 
-const proposal = (index: number) => claimItem({ ...numbered(index), verdictKind: { kind: 'general_knowledge_proposed' } });
 
 function setup(overrides: Partial<Parameters<typeof ClaimQueue>[0]> = {}) {
   const claims = overrides.groups?.flatMap((group) => group.claims) ?? [numbered(1, 0), numbered(2, 0), numbered(3, 1)];
   const props = {
     groups: groupBySection(claims), mode: 'section' as const, onModeChange: vi.fn(), activeId: null as string | null,
     openedIds: new Set<string>(), settledIds: new Set<string>(), onSelect: vi.fn(), onAcceptSource: vi.fn(), onAddSource: vi.fn(),
-    onAcceptProposals: vi.fn(), resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(), busy: false,
+    resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(),
+    removedCount: 0, removedActive: false, onOpenRemoved: vi.fn(), busy: false,
     ...overrides,
   };
   render(<ClaimQueue {...props} />);
@@ -80,7 +80,8 @@ describe('ClaimQueue', () => {
     const groups = groupBySection(claims);
     const base = {
       groups, mode: 'section' as const, onModeChange: vi.fn(), openedIds: new Set<string>(), settledIds: new Set<string>(), onSelect: vi.fn(),
-      onAcceptSource: vi.fn(), onAddSource: vi.fn(), onAcceptProposals: vi.fn(), resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(), busy: false,
+      onAcceptSource: vi.fn(), onAddSource: vi.fn(), resolved: [], teachingWaiting: 0, teachingActive: false, onOpenTeaching: vi.fn(),
+      removedCount: 0, removedActive: false, onOpenRemoved: vi.fn(), busy: false,
     };
     const { rerender } = render(<ClaimQueue {...base} activeId="claim-3" />);
     const first = screen.getAllByRole('region')[0];
@@ -113,15 +114,8 @@ describe('ClaimQueue', () => {
   });
 
   it('disables bulk actions while an action is saving', () => {
-    setup({ groups: groupBySection([proposal(1), proposal(2)]), busy: true });
+    setup({ groups: groupBySection([numbered(1), numbered(2)]), busy: true });
     expect(screen.getByRole('button', { name: 'Add a source for these 2' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /Accept all 2 common-knowledge proposals/ })).toBeDisabled();
-  });
-
-  it('accepts every unsettled common-knowledge proposal at once', async () => {
-    const props = setup({ groups: groupBySection([proposal(1), proposal(2), numbered(3, 1)]), settledIds: new Set(['claim-2']) });
-    await userEvent.click(screen.getByRole('button', { name: 'Accept all 1 common-knowledge proposal' }));
-    expect(props.onAcceptProposals).toHaveBeenCalledWith([expect.objectContaining({ claimId: 'claim-1' })]);
   });
 
   it('moves between rows with the arrow keys, Home and End', () => {
@@ -165,8 +159,22 @@ describe('ClaimQueue', () => {
     expect(screen.queryByRole('region', { name: 'Teaching notes' })).not.toBeInTheDocument();
   });
 
+  it('opens the taken-out row with the count of statements the machine took out', async () => {
+    const props = setup({ removedCount: 3, removedActive: true });
+    const row = screen.getByRole('button', { name: /Taken out of the lesson/ });
+    expect(row).toHaveTextContent('3 statements');
+    expect(row).toHaveAttribute('aria-current', 'true');
+    await userEvent.click(row);
+    expect(props.onOpenRemoved).toHaveBeenCalled();
+  });
+
+  it('has no taken-out row when the machine took nothing out', () => {
+    setup();
+    expect(screen.queryByRole('region', { name: 'Taken out of the lesson' })).not.toBeInTheDocument();
+  });
+
   it('shows resolved claims behind a toggle and selects one', async () => {
-    const done = claimItem({ ...numbered(9, 2), state: { state: 'general_knowledge', at: 1, by: 'user' } });
+    const done = claimItem({ ...numbered(9, 2), state: { state: 'general_knowledge', at: 1 } });
     const props = setup({ resolved: [done], activeId: 'claim-9' });
     expect(screen.queryByRole('list', { name: 'Resolved claims' })).not.toBeInTheDocument();
     const toggle = screen.getByRole('button', { name: 'Show resolved (1)' });

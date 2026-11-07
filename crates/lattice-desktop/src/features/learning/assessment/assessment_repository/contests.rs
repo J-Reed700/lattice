@@ -9,6 +9,7 @@ use super::{
 use crate::features::learning::dto::*;
 use crate::features::learning::persistence::{db, now};
 use crate::features::learning::quiz_bank_jobs;
+use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
@@ -125,8 +126,10 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        if req.note.chars().count() > 2_000 {
-            return Err(invalid("A note is at most 2,000 characters."));
+        if req.note.chars().count() > MAX_CHAT_MESSAGE_CHARS {
+            return Err(invalid(format!(
+                "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
+            )));
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
@@ -368,8 +371,10 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        if req.note.chars().count() > 2_000 {
-            return Err(invalid("A note is at most 2,000 characters."));
+        if req.note.chars().count() > MAX_CHAT_MESSAGE_CHARS {
+            return Err(invalid(format!(
+                "A note is at most {MAX_CHAT_MESSAGE_CHARS} characters."
+            )));
         }
         let mut tx = self.pool.begin().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;

@@ -90,7 +90,7 @@ pub fn resolve(
 /// nor any chat's choice is consulted.
 pub fn resolve_learning(settings: &LLMSettingsDto) -> Result<ResolvedModel> {
     let model = settings.learning_model.clone().ok_or_else(|| {
-        AppError::InvalidConfig(
+        AppError::LearningModelNotSet(
             "No Learning model is set. Choose one in Settings → Models under Learning.".into(),
         )
     })?;

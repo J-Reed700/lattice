@@ -3,8 +3,8 @@
 
 use super::{
     grounding_instructions, invalid, normalize, optional_citation, optional_source_index_schema,
-    parse_json, validate_outline_request, validate_text, MAX_BODY, MAX_EXPLANATION, MIN_TEXT,
-    OUTLINE_OUTPUT_RESERVE, OUTLINE_REFERENCE_INSTRUCTIONS,
+    parse_json, validate_outline_request, validate_text, OUTLINE_OUTPUT_RESERVE,
+    OUTLINE_REFERENCE_INSTRUCTIONS,
 };
 use crate::features::learning::dto::{
     GenerateLearningProgramRequestDto, LearningCourseDepth, LearningLessonDto, LearningModuleDto,
@@ -15,7 +15,7 @@ use crate::features::learning::lessons::structured_call::{
 };
 use crate::features::learning::model_call;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -70,15 +70,15 @@ pub(in crate::features::learning) fn outline_schema(
         "properties":{"modules":{"type":"array","minItems":min_modules,"maxItems":max_modules,"items":{
             "type":"object","additionalProperties":false,
             "required":["title","summary","outcomes","lessons","prerequisiteIndices","project"],"properties":{
-                "prerequisiteIndices":{"type":"array","maxItems":9,"items":{"type":"integer","minimum":0,"maximum":9}},"project":crate::features::learning::teaching::project_schema(),"title":{"type":"string","maxLength":120},"summary":{"type":"object","additionalProperties":false,"required":["text","sourceIndex","quote"],"properties":{"text":{"type":"string","maxLength":1600},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string","maxLength":1200}}},
+                "prerequisiteIndices":{"type":"array","maxItems":9,"items":{"type":"integer","minimum":0,"maximum":9}},"project":crate::features::learning::teaching::project_schema(),"title":{"type":"string"},"summary":{"type":"object","additionalProperties":false,"required":["text","sourceIndex","quote"],"properties":{"text":{"type":"string"},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string"}}},
                 "outcomes":{"type":"array","minItems":2,"maxItems":6,"items":{
                     "type":"object","additionalProperties":false,"required":["text","sourceIndex","quote"],"properties":{
-                        "text":{"type":"string","maxLength":1000},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string","maxLength":1200}
+                        "text":{"type":"string"},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string"}
                     }
                 }},
                 "lessons":{"type":"array","minItems":min_lessons,"maxItems":max_lessons,"items":{
                     "type":"object","additionalProperties":false,"required":["title","objective","estimatedMinutes","sourceIndex","quote"],"properties":{
-                    "title":{"type":"string","maxLength":160},"objective":{"type":"string","maxLength":1200},"estimatedMinutes":{"type":"integer","minimum":5,"maximum":180},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string","maxLength":1200}
+                    "title":{"type":"string"},"objective":{"type":"string"},"estimatedMinutes":{"type":"integer","minimum":5,"maximum":180},"sourceIndex":optional_source_index_schema(source_count),"quote":{"type":"string"}
                     }
                 }}
             }
@@ -219,11 +219,41 @@ pub(in crate::features::learning) async fn draft_outline<T>(
             )
         },
         "the course outline",
-        "The course goal and the outline's instructions do not fit",
+        OUTLINE_DOES_NOT_FIT,
     )
-    .await?;
+    .await
+    .map_err(|error| description_too_long(llm, error))?;
     let context = built.into_inner().unwrap_or_else(PoisonError::into_inner);
     Ok((outline, context, output_tokens))
+}
+
+const OUTLINE_DOES_NOT_FIT: &str = "The course goal and the outline's instructions do not fit";
+
+/// A window refusal on a model whose window meets the outline's own minimum
+/// is the learner's text being too long, not the window being too small.
+fn description_too_long(llm: &dyn LLMPort, error: AppError) -> AppError {
+    let window_needed = crate::features::learning::model_requirements::outline()
+        .min_context_tokens
+        .unwrap_or(0);
+    if llm.max_context_tokens() < window_needed {
+        return error;
+    }
+    let refusals = [
+        OUTLINE_DOES_NOT_FIT,
+        crate::features::learning::lessons::structured_call::MATERIAL_DOES_NOT_FIT,
+    ]
+    .map(|what| model_call::window_too_small(llm, what));
+    if matches!(error, AppError::InvalidConfig(_))
+        && refusals
+            .iter()
+            .any(|refusal| refusal.to_string() == error.to_string())
+    {
+        return AppError::InvalidInput(
+            "Your course description is too long for the Learning model's context window. Shorten the course description and try again."
+                .into(),
+        );
+    }
+    error
 }
 
 /// One piece of an outline's reference material.
@@ -402,15 +432,11 @@ pub(in crate::features::learning) fn decode_outline(
                 ),
             }));
         }
-        if !validate_text(&module.title, 120) {
-            return Err(invalid(format!(
-                "Module {number} needs a title of {MIN_TEXT} to 120 characters."
-            )));
+        if !validate_text(&module.title) {
+            return Err(invalid(format!("Module {number} needs a title.")));
         }
-        if !validate_text(&module.summary.text, MAX_EXPLANATION) {
-            return Err(invalid(format!(
-                "Module {number} needs a summary of {MIN_TEXT} to {MAX_EXPLANATION} characters."
-            )));
+        if !validate_text(&module.summary.text) {
+            return Err(invalid(format!("Module {number} needs a summary.")));
         }
         if !(2..=6).contains(&module.outcomes.len()) {
             return Err(invalid(format!(
@@ -433,9 +459,9 @@ pub(in crate::features::learning) fn decode_outline(
         optional_citation(sources, module.summary.source_index, &module.summary.quote)?;
         let mut outcomes = Vec::with_capacity(module.outcomes.len());
         for (outcome_index, outcome) in module.outcomes.into_iter().enumerate() {
-            if !validate_text(&outcome.text, MAX_BODY) {
+            if !validate_text(&outcome.text) {
                 return Err(invalid(format!(
-                    "Outcome {} of module {number} must be {MIN_TEXT} to {MAX_BODY} characters.",
+                    "Outcome {} of module {number} must not be blank.",
                     outcome_index + 1
                 )));
             }
@@ -446,15 +472,11 @@ pub(in crate::features::learning) fn decode_outline(
         for (lesson_index, lesson) in module.lessons.into_iter().enumerate() {
             let place = (number, lesson_index + 1);
             let at = format!("Lesson {}.{}", place.0, place.1);
-            if !validate_text(&lesson.title, 160) {
-                return Err(invalid(format!(
-                    "{at} needs a title of {MIN_TEXT} to 160 characters."
-                )));
+            if !validate_text(&lesson.title) {
+                return Err(invalid(format!("{at} needs a title.")));
             }
-            if !validate_text(&lesson.objective, 1200) {
-                return Err(invalid(format!(
-                    "{at} needs an objective of {MIN_TEXT} to 1200 characters."
-                )));
+            if !validate_text(&lesson.objective) {
+                return Err(invalid(format!("{at} needs an objective.")));
             }
             if !(5..=180).contains(&lesson.estimated_minutes) {
                 return Err(invalid(format!(

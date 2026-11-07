@@ -44,7 +44,21 @@ impl Trail {
     }
 }
 
-/// Stage 1: the code, and the suite that passes on it where the language has a runner.
+/// A passage of one of a course's sources: the bytes `start_byte..end_byte` of the source version `version_id`,
+/// which never changes, so `text` is always exactly what the version holds there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourcePassage {
+    pub version_id: String,
+    pub start_byte: usize,
+    pub end_byte: usize,
+    /// The source's title.
+    pub title: String,
+    pub text: String,
+}
+
+/// Stage 1: the clean material. For code, the files and the suite that passes on them where the language has a
+/// runner; for a passage, the explanation and the source passage it explains.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CleanCode {
@@ -55,6 +69,9 @@ pub struct CleanCode {
     /// The paths of the files that are tests: part of the code under review.
     pub tests: Vec<String>,
     pub suite: Option<String>,
+    /// The passage an explanation was written from. A checkpoint saved before passages has none.
+    #[serde(default)]
+    pub source: Option<SourcePassage>,
     pub trail: Trail,
 }
 
@@ -66,7 +83,7 @@ pub struct Repair {
     pub edit: Edit,
 }
 
-/// Stage 2: the repaired code, which every later stage compares against.
+/// Stage 2: the repaired material, which every later stage compares against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CleanReview {
     pub files: Vec<DrillFile>,
@@ -74,7 +91,7 @@ pub struct CleanReview {
     pub trail: Trail,
 }
 
-/// The code every later stage compares against, with what was written beside it.
+/// The material every later stage compares against, with what was written beside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Baseline {
     pub drill_id: String,
@@ -83,6 +100,7 @@ pub struct Baseline {
     pub files: Vec<DrillFile>,
     pub tests: Vec<String>,
     pub suite: Option<String>,
+    pub source: Option<SourcePassage>,
 }
 
 impl Baseline {
@@ -94,6 +112,7 @@ impl Baseline {
             files: review.files.clone(),
             tests: code.tests.clone(),
             suite: code.suite.clone(),
+            source: code.source.clone(),
         }
     }
 }

@@ -87,9 +87,11 @@ export const MAGIC_NUMBER: RevealedIssueDto = {
       { kind: 'added', text: LITERALS_AFTER },
     ],
   },
+  sourceQuote: null,
   outcome: 'missed',
   finding: null,
   reason: 'No comment mentions the literals.',
+  alsoValid: false,
 };
 
 export const WRONG_OPERATOR: RevealedIssueDto = {
@@ -108,9 +110,11 @@ export const WRONG_OPERATOR: RevealedIssueDto = {
       { kind: 'unchanged', text: RECORD },
     ],
   },
+  sourceQuote: null,
   outcome: 'found',
   finding: 0,
   reason: 'Your comment names the operator.',
+  alsoValid: false,
 };
 
 export const STALE_STATE: RevealedIssueDto = {
@@ -128,9 +132,34 @@ export const STALE_STATE: RevealedIssueDto = {
       { kind: 'added', text: STALE_AFTER },
     ],
   },
+  sourceQuote: null,
   outcome: 'half_found',
   finding: 1,
   reason: 'Your comment is on the right line but is about speed, not about hits that never expire.',
+  alsoValid: false,
+};
+
+/** Raised by a blind review, not planted: the key holds it after the planted issues. */
+export const UNBOUNDED_GROWTH: RevealedIssueDto = {
+  id: 'review-1',
+  pattern: 'resources.unbounded_growth',
+  patternName: 'Unbounded growth',
+  severity: 'critical',
+  span: { path: 'src/limiter.py', start: 21, end: 21 },
+  consequence: 'Every key ever seen stays in memory.',
+  explanation: 'The dictionary only grows. Drop keys whose window has passed.',
+  fix: {
+    path: 'src/limiter.py',
+    lines: [
+      { kind: 'removed', text: '        self.hits.pop(key, None)' },
+      { kind: 'added', text: '        self.hits.clear()' },
+    ],
+  },
+  sourceQuote: null,
+  outcome: 'missed',
+  finding: null,
+  reason: 'No comment mentions the growth.',
+  alsoValid: true,
 };
 
 export const ISSUES: RevealedIssueDto[] = [MAGIC_NUMBER, WRONG_OPERATOR, STALE_STATE];
@@ -239,6 +268,7 @@ export function revealOf(patch: Partial<CodeReviewRevealDto> = {}): CodeReviewRe
     ratings: RATINGS,
     fix: null,
     cleanFiles: CLEAN_FILES,
+    source: null,
     ...patch,
   };
 }
@@ -251,7 +281,7 @@ export function gradedResult(patch: Partial<CodeReviewResultDto> = {}): CodeRevi
     startedAt: GRADED_AT - 600_000,
     submittedAt: GRADED_AT - 60_000,
     timeSpentMs: 90_000,
-    drill: { title: 'A sliding-window rate limiter', language: 'python', files: REVIEWED_FILES },
+    drill: { title: 'A sliding-window rate limiter', material: { kind: 'code', language: 'python' }, files: REVIEWED_FILES },
     findings: FINDINGS.map(({ span, text: said, severity }) => ({ span, text: said, severity })),
     fixFiles: null,
     error: null,

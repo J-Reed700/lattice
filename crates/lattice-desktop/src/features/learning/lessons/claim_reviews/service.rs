@@ -7,21 +7,23 @@
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance, HumanBinding, Ledger,
-    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction, VerdictKind,
+    Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance,
+    HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 use sqlx::SqlitePool;
 
+use super::actions::{in_section_body, refusal, ONLY_SECTION};
 use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
+use super::published_edit::{self, PublishedEdit};
 use super::repository::ClaimReviewRepository;
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 use crate::features::learning::content_verification::located_quote;
 use crate::features::learning::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
-use crate::features::learning::persistence::now;
+use crate::features::learning::persistence::{db, now};
 use crate::features::learning::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::features::learning::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
@@ -117,8 +119,7 @@ impl ClaimReviewService {
         self.drafts.continue_review_job(&request).await
     }
 
-    /// Applies the user's `action` to `claim_id` (to every general-knowledge
-    /// proposal for `AcceptAllGeneralKnowledge`) and returns the review's new
+    /// Applies the user's `action` to `claim_id` and returns the review's new
     /// revision. Refused, writing nothing, when `expected_revision` is stale
     /// or the claim's state does not allow the action.
     pub async fn resolve(
@@ -138,25 +139,52 @@ impl ClaimReviewService {
                 "This claim changed; reload and act again.".into(),
             ));
         }
-        if matches!(action, ClaimActionRequestDto::AcceptAllGeneralKnowledge) {
-            return self.accept_all_general_knowledge(&ledger, &review).await;
-        }
         let entry = ledger
             .claims
             .iter()
             .find(|entry| entry.claim_id().0 == claim_id)
             .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
+        let published = review.state == LessonReviewState::Ready;
+        if published {
+            if let Some(refusal) = refusal(entry, action_kind(&action)) {
+                return Err(refusal);
+            }
+        }
         let resolution = self.resolution(&review, lesson_id, entry, action).await?;
-        let revision = self
-            .store
-            .append(
-                lesson_id,
-                entry.claim_id(),
-                provenance(&review),
-                resolution.event,
-                ledger.revision,
-            )
-            .await?;
+        let rewrite = match &resolution.event {
+            ClaimEvent::UserAction {
+                action: UserAction::Edit { before, after },
+                ..
+            } if published => Some((before.clone(), after.clone())),
+            _ => None,
+        };
+        let revision = match rewrite {
+            Some((before, after)) => {
+                published_edit::apply(
+                    &self.pool,
+                    PublishedEdit {
+                        lesson_id,
+                        claim_id: entry.claim_id(),
+                        before: &before,
+                        after: &after,
+                        expected_revision: ledger.revision,
+                        user: provenance(&review),
+                    },
+                )
+                .await?
+            }
+            None => {
+                self.store
+                    .append(
+                        lesson_id,
+                        entry.claim_id(),
+                        provenance(&review),
+                        resolution.event,
+                        ledger.revision,
+                    )
+                    .await?
+            }
+        };
         if let Some(label) = resolution.label {
             let shown = self.store.shown_passages(lesson_id).await?;
             let passages = shown.get(entry.claim_id()).cloned().unwrap_or_default();
@@ -182,15 +210,15 @@ impl ClaimReviewService {
         Ok(revision.0)
     }
 
-    /// Whether claim activity, a different checker, or an outdated standing
-    /// assessment gives verification new work since the lesson stopped.
+    /// Whether claim activity or a different checker gives verification new
+    /// work since the lesson stopped.
     pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
         let ledger = self.store.load(lesson_id).await?;
         self.changed_in(&ledger).await
     }
 
-    /// `changed_since_stop` over a loaded ledger. Settings and verification
-    /// upgrades count even when the user has not acted on a claim card.
+    /// `changed_since_stop` over a loaded ledger. A different checker counts
+    /// even when the user has not acted on a claim card.
     pub(super) async fn changed_in(&self, ledger: &Ledger) -> Result<bool> {
         let Some(review) = &ledger.review else {
             return Ok(false);
@@ -213,44 +241,7 @@ impl ClaimReviewService {
             .review_written_at(&ledger.lesson_id)
             .await?
             .unwrap_or(i64::MAX);
-        if changed_since(ledger, stopped_at) {
-            return Ok(true);
-        }
-        self.stale_standing(ledger).await
-    }
-
-    async fn accept_all_general_knowledge(
-        &self,
-        ledger: &Ledger,
-        review: &LessonReview,
-    ) -> Result<i64> {
-        let mut revision = ledger.revision;
-        let proposals: Vec<&ClaimLedgerEntry> = ledger
-            .claims
-            .iter()
-            .filter(|entry| entry.state().verdict() == Some(&VerdictKind::GeneralKnowledgeProposed))
-            .collect();
-        if proposals.is_empty() {
-            return Err(AppError::InvalidInput(
-                "No claim of this lesson is proposed as general knowledge.".into(),
-            ));
-        }
-        for entry in proposals {
-            revision = self
-                .store
-                .append(
-                    &ledger.lesson_id,
-                    entry.claim_id(),
-                    provenance(review),
-                    ClaimEvent::UserAction {
-                        action: UserAction::GeneralKnowledge,
-                        note: None,
-                    },
-                    revision,
-                )
-                .await?;
-        }
-        Ok(revision.0)
+        Ok(changed_since(ledger, stopped_at))
     }
 
     async fn resolution(
@@ -333,9 +324,6 @@ impl ClaimReviewService {
                 }
                 user(UserAction::Remove, None, Some(LabelSource::UserRemove))
             }
-            ClaimActionRequestDto::GeneralKnowledge => {
-                user(UserAction::GeneralKnowledge, None, None)
-            }
             ClaimActionRequestDto::ResearchWithHint { hint } => {
                 let hint = hint.trim().to_owned();
                 if hint.is_empty() {
@@ -344,9 +332,6 @@ impl ClaimReviewService {
                 user(UserAction::ResearchWithHint { hint }, None, None)
             }
             ClaimActionRequestDto::Undo => self.undo(review, lesson_id, entry).await,
-            ClaimActionRequestDto::AcceptAllGeneralKnowledge => Err(AppError::InternalError(
-                "Accepting every proposal is a lesson action".into(),
-            )),
         }
     }
 
@@ -438,9 +423,18 @@ impl ClaimReviewService {
         entry: &ClaimLedgerEntry,
     ) -> Result<String> {
         if review.state == LessonReviewState::Ready {
-            return Err(AppError::InvalidState(
-                "This lesson is published. Prepare it again to change its text.".into(),
-            ));
+            if !in_section_body(entry) {
+                return Err(AppError::InvalidInput(ONLY_SECTION.into()));
+            }
+            return sqlx::query_scalar(
+                "SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?",
+            )
+            .bind(lesson_id)
+            .bind(i64::try_from(entry.location().unit_index).unwrap_or(i64::MAX))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| AppError::NotFound("The claim's section is not in the lesson.".into()));
         }
         let draft = self
             .drafts
@@ -460,6 +454,17 @@ impl ClaimReviewService {
             &location.field,
         )
         .ok_or_else(|| AppError::NotFound("The claim's section is not in the draft.".into()))
+    }
+}
+
+fn action_kind(action: &ClaimActionRequestDto) -> ClaimActionKind {
+    match action {
+        ClaimActionRequestDto::Confirm { .. } => ClaimActionKind::Confirm,
+        ClaimActionRequestDto::Unconfirm => ClaimActionKind::Unconfirm,
+        ClaimActionRequestDto::Edit { .. } => ClaimActionKind::Edit,
+        ClaimActionRequestDto::Remove => ClaimActionKind::Remove,
+        ClaimActionRequestDto::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
+        ClaimActionRequestDto::Undo => ClaimActionKind::Undo,
     }
 }
 

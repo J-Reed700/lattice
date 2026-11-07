@@ -538,6 +538,7 @@ fn is_claim_candidate(sentence: &str) -> bool {
     let unwrapped = s.trim_start_matches('_').trim_start_matches('(');
     if [
         super::super::tool_loop::CUT_SHORT_NOTE,
+        super::super::tool_loop::DECLINED_NOTE,
         super::super::tool_loop::OUT_OF_ROUNDS_NOTE,
         super::super::tool_loop::WINDOW_FULL_NOTE,
         super::super::tool_loop::OUT_OF_TIME_NOTE,

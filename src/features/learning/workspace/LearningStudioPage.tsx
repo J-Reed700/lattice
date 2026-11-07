@@ -5,6 +5,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 
 
+import { LearningModelNotice } from '@/features/learning/curriculum/LearningModelNotice';
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
 import { clearProgramBuilderDraft } from '@/features/learning/curriculum/programBuilderDraft';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
@@ -85,7 +86,7 @@ export function LearningStudioPage() {
   </div>;
 }
 
-const REVIEW_PARAMS = ['course', 'lesson', 'review'] as const;
+const REVIEW_PARAMS = ['course', 'lesson', 'review', 'claim'] as const;
 
 function LearningStudioContent({ destination, exportingAll, onOpenDestination }: { destination?: StudyDestination; exportingAll: boolean; onOpenDestination?: (destination: StudyDestination) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -123,6 +124,7 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   // The review screen is the address `?course=…&lesson=…&review=claims` (§2.3).
   const reviewCourse = searchParams.get('review') === 'claims' ? searchParams.get('course') : null;
   const reviewLesson = reviewCourse ? searchParams.get('lesson') : null;
+  const reviewClaim = reviewLesson ? searchParams.get('claim') : null;
   const reviewing = Boolean(reviewCourse && reviewLesson);
   const pushedReview = useRef(false);
   useEffect(() => {
@@ -132,13 +134,14 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   }, [reviewCourse]);
   // Left by the browser's Back: the next leave has no entry of ours to pop.
   useEffect(() => { if (!reviewing) pushedReview.current = false; }, [reviewing]);
-  const openReview = (programId: string, lessonId: string) => {
+  const openReview = (programId: string, lessonId: string, claimId?: string) => {
     pushedReview.current = true;
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set('course', programId);
       next.set('lesson', lessonId);
       next.set('review', 'claims');
+      if (claimId) next.set('claim', claimId); else next.delete('claim');
       return next;
     });
   };
@@ -241,13 +244,13 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   if (flashcardRoute && !selectedId && screen === 'programs') return <FlashcardDeckView />;
   if (drillsOpen && !selectedId && screen === 'programs') return <CodeReviewDrillScreen onBack={() => setSearchParams({})} />;
   if (screen === 'import' || screen === 'export-all') return <div className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-background"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
-  if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ? message(generate.error) : undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
+  if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><LearningModelNotice /><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ?? undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
 
   const reviewTitle = reviewing ? detail.data?.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === reviewLesson)?.title ?? 'Lesson' : '';
   return <>
     {reviewing && <div className="h-full min-h-0">
       {detail.data?.summary.id === reviewCourse
-        ? <ClaimReviewScreen key={`${reviewCourse}:${reviewLesson}`} programId={reviewCourse!} lessonId={reviewLesson!} lessonTitle={reviewTitle} courseRevision={detail.data.summary.revision} onBack={leaveReview} />
+        ? <ClaimReviewScreen key={`${reviewCourse}:${reviewLesson}:${reviewClaim}`} programId={reviewCourse!} lessonId={reviewLesson!} focusClaimId={reviewClaim} lessonTitle={reviewTitle} courseRevision={detail.data.summary.revision} onBack={leaveReview} />
         : detail.isError ? <div role="alert" className="m-6 rounded-xl bg-danger-muted p-4 text-sm text-text-primary"><p>{message(detail.error)}</p><button type="button" onClick={leaveReview} className="mt-3 underline">Back to the course</button></div>
           : <p role="status" className="p-6 text-sm text-text-muted">Loading the review…</p>}
     </div>}
@@ -257,7 +260,7 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     {selectedId ? (
       detail.isLoading ? <div className="mx-auto flex max-w-5xl items-center justify-center rounded-2xl border border-border bg-surface p-16 text-sm text-text-muted">Loading your program…</div>
         : detail.isError || !detail.data ? <div className="mx-auto max-w-3xl rounded-2xl border border-rose-500/25 bg-rose-500/5 p-8"><h2 className="font-serif text-2xl text-text-primary">This program could not be opened</h2><p className="mt-2 text-sm text-text-secondary">{message(detail.error)}</p><div className="mt-5 flex gap-3"><button type="button" onClick={refresh} className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-fg">Retry</button><button type="button" onClick={() => setSelectedId(null)} className="rounded-full border border-border px-4 py-2 text-sm">All programs</button></div></div>
-          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ? message(prepare.error) : undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ? message(complete.error) : undefined} />
+          : <ProgramWorkspace key={selectedId} destination={destination?.programId === selectedId ? destination : undefined} initialTangentId={destination?.tangentId} outlineGeneration={generate.progress?.programId === selectedId ? generate : undefined} program={detail.data} onBack={() => { setSelectedId(null); void client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }); }} onOpenProgram={openImported} onReview={openReview} onAccept={(title) => accept.mutate({ programId: selectedId, expectedRevision: detail.data!.summary.revision, title })} acceptPending={accept.isPending} acceptError={accept.error ? message(accept.error) : undefined} onPrepare={(lesson) => prepare.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} preparePending={prepare.isPending} prepareError={prepare.error ?? undefined} onComplete={(lesson) => complete.mutate({ programId: selectedId, lessonId: lesson.id, expectedRevision: detail.data!.summary.revision })} completePending={complete.isPending} completeError={complete.error ?? undefined} />
     ) : <ProgramLibrary
       programs={programs.data}
       loading={programs.isLoading}

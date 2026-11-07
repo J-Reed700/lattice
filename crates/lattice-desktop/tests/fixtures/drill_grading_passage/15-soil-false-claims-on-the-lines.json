@@ -1,0 +1,159 @@
+{
+  "name": "15-soil-false-claims-on-the-lines",
+  "kind": "false_claim_on_issue_lines",
+  "why": "The first two findings sit on the lines of the yield figure and the reapplication interval, so the hint pairs them with those issues, but they claim other errors that are not there (a pH rise from 5.1 to 6.2 being impossible, and reapplying lime being wrong at all; the source reports the one and recommends the other): false positives, and both issues stay missed. The third names the buffering reversal in full: found.",
+  "source": {
+    "versionId": "tarn-valley-liming-trial-v1",
+    "startByte": 9840,
+    "endByte": 10778,
+    "title": "Soil Science 250, field report: The Tarn Valley liming trial",
+    "text": "Soils in the upper Tarn Valley have a mean pH of 5.1, which limits the uptake of phosphorus by barley. Agronomist Soledad Varga ran a four-year liming trial on 24 plots, applying ground limestone at 2 tonnes per hectare. Plots that received lime reached a mean pH of 6.2 after two years, and barley yields on those plots rose by 18 percent against untreated plots. Varga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\n\nThe effect faded: by the fourth year the pH of limed plots had drifted back to 5.6 and the yield advantage fell to 7 percent. Varga recommends reapplying lime every three years. She stresses that the trial used a single soil type, a silt loam, and that sandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied. The trial did not measure the cost of liming, so no claim about profitability can be drawn from it."
+  },
+  "drill": {
+    "id": "tarn-valley-liming-trial",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Liming acid soils in the Tarn Valley",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of phosphorus by barley.\nSoledad Varga, an agronomist, ran a four-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 28 percent higher than on untreated plots.\nVarga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent.\nVarga recommends reapplying lime every three months.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have strong buffering capacity, stay safe if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tarn-valley-liming-trial-yld",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 5,
+          "end": 5
+        },
+        "consequence": "A reader believes liming raised yields by more than half as much again as it did.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "After two years the limed plots reached a mean pH of 6.2, and their barley yields were 28 percent higher than on untreated plots.",
+          "after": "After two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots."
+        },
+        "explanation": "Yields on the limed plots were 18 percent higher, not 28.",
+        "proof": {
+          "sourced": {
+            "quote": "barley yields on those plots rose by 18 percent against untreated plots",
+            "planted": "contradicted",
+            "reason": "The source gives an 18 percent rise; the sentence gives 28 percent."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tarn-valley-liming-trial-months",
+        "pattern": "fidelity.wrong_unit_or_magnitude",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 9,
+          "end": 9
+        },
+        "consequence": "A reader plans to spread lime twelve times as often as Varga advises.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Varga recommends reapplying lime every three months.",
+          "after": "Varga recommends reapplying lime every three years."
+        },
+        "explanation": "Varga recommends reapplying lime every three years.",
+        "proof": {
+          "sourced": {
+            "quote": "Varga recommends reapplying lime every three years",
+            "planted": "contradicted",
+            "reason": "The source gives every three years; the sentence gives every three months."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tarn-valley-liming-trial-sandy",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 11,
+          "end": 11
+        },
+        "consequence": "A reader limes sandy soils at the same dose without fear and risks pushing them to an alkaline pH.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Sandy soils, which have strong buffering capacity, stay safe if the same dose is applied.",
+          "after": "Sandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied."
+        },
+        "explanation": "Sandy soils buffer little, so the same dose can overshoot to an alkaline pH.",
+        "proof": {
+          "sourced": {
+            "quote": "sandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied",
+            "planted": "contradicted",
+            "reason": "The source says sandy soils have little buffering and can overshoot; the sentence says they buffer strongly and stay safe."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of phosphorus by barley.\nSoledad Varga, an agronomist, ran a four-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots.\nVarga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent.\nVarga recommends reapplying lime every three years.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 5,
+        "end": 5
+      },
+      "text": "A rise in pH from 5.1 to 6.2 in two years is impossible, because liming raises pH by 0.1 units at most.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "Recommending that lime be reapplied at all is wrong, since ground limestone stays in the soil for decades.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 11,
+        "end": 11
+      },
+      "text": "Buffering works the other way: sandy soils, with little buffering, overshoot easily, so saying they stay safe is backwards.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      "missed",
+      "missed",
+      {
+        "found": {
+          "finding": 2
+        }
+      }
+    ],
+    "findings": [
+      "false_positive",
+      "false_positive",
+      {
+        "matches": {
+          "issues": [
+            2
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -65,8 +65,8 @@ impl Gathered<'_> {
 fn plan_schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["topics"],"properties":{
         "topics":{"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["topic","queries"],"properties":{
-            "topic":{"type":"string","minLength":3},
-            "queries":{"type":"array","minItems":1,"items":{"type":"string","minLength":3}}
+            "topic":{"type":"string","minLength":1},
+            "queries":{"type":"array","minItems":1,"items":{"type":"string","minLength":1}}
         }}}
     }})
 }

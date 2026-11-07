@@ -17,6 +17,7 @@ import {
   MAGIC_NUMBER,
   REVIEWED_FILES,
   STALE_STATE,
+  UNBOUNDED_GROWTH,
   WRONG_OPERATOR,
   revealOf,
 } from '@/features/learning/drills/reveal/revealTestData';
@@ -37,6 +38,26 @@ describe('rankIssues', () => {
     const first: RevealedIssueDto = { ...WRONG_OPERATOR, id: 'first' };
     const second: RevealedIssueDto = { ...WRONG_OPERATOR, id: 'second' };
     expect(rankIssues([second, first]).map((entry) => entry.issue.id)).toEqual(['second', 'first']);
+  });
+
+  it('puts the planted issues before the also-valid ones, whatever their severity', () => {
+    const mixed = rankIssues([UNBOUNDED_GROWTH, ...ISSUES]);
+    expect(mixed.map(({ issue, position, number }) => [issue.patternName, position, number])).toEqual([
+      ['Stale state', 3, 1],
+      ['Wrong operator or comparison', 2, 2],
+      ['Magic number', 1, 3],
+      ['Unbounded growth', 0, 4],
+    ]);
+  });
+
+  it('ranks the also-valid issues most severe first, and by the key’s order among equals', () => {
+    const minor: RevealedIssueDto = { ...UNBOUNDED_GROWTH, id: 'minor', severity: 'minor' };
+    const same: RevealedIssueDto = { ...UNBOUNDED_GROWTH, id: 'same' };
+    expect(rankIssues([minor, UNBOUNDED_GROWTH, same]).map((entry) => entry.issue.id)).toEqual([
+      'review-1',
+      'same',
+      'minor',
+    ]);
   });
 
   it('leaves the issues it is given as they were', () => {
@@ -141,6 +162,40 @@ describe('leadingLine', () => {
   it('judges by the most severe issues the key has, whichever severity that is', () => {
     const reveal = revealOf({ issues: [MAGIC_NUMBER] });
     expect(leadingLine(reveal)?.text).toBe('Did not lead with the most severe issue: you missed Magic number.');
+  });
+
+  it('judges by the planted issues alone: a missed also-valid issue above them is not the top', () => {
+    const missedOperator: RevealedIssueDto = { ...WRONG_OPERATOR, outcome: 'missed', finding: null };
+    const reveal = revealOf({ issues: [missedOperator, UNBOUNDED_GROWTH] });
+    expect(leadingLine(reveal)?.text).toBe(
+      'Did not lead with the most severe issue: you missed Wrong operator or comparison.',
+    );
+  });
+
+  it('says the review led when the first comment found an also-valid issue above the planted top', () => {
+    const raised: RevealedIssueDto = { ...UNBOUNDED_GROWTH, outcome: 'found', finding: 0 };
+    const later: RevealedIssueDto = { ...WRONG_OPERATOR, finding: 1 };
+    const reveal = revealOf({ issues: [later, raised], score: ledScore });
+    expect(leadingLine(reveal)).toEqual({
+      led: true,
+      text: 'Led with the most severe issue: your first comment found Unbounded growth.',
+    });
+  });
+
+  it('names a planted top found first even when an also-valid issue above it was not raised', () => {
+    const reveal = revealOf({
+      issues: [top({ outcome: 'found', finding: 0 }), { ...UNBOUNDED_GROWTH, severity: 'critical' }],
+      score: ledScore,
+    });
+    expect(leadingLine(reveal)?.text).toBe(
+      'Led with the most severe issue: your first comment found Stale state.',
+    );
+  });
+
+  it('does not say the review led when the first comment found an also-valid issue below the planted top', () => {
+    const raised: RevealedIssueDto = { ...UNBOUNDED_GROWTH, severity: 'nit', outcome: 'found', finding: 0 };
+    const reveal = revealOf({ issues: [STALE_STATE, raised] });
+    expect(leadingLine(reveal)?.led).toBe(false);
   });
 
   it('has nothing to say about a key without issues', () => {

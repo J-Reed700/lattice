@@ -3,8 +3,8 @@
 pub mod activity;
 pub mod assessment;
 pub mod canvas;
-pub mod dto;
 pub mod drills;
+pub mod dto;
 pub mod lessons;
 mod model_call;
 pub(crate) mod model_requirements;
@@ -88,6 +88,10 @@ mod backend_boundary_tests;
 mod tests;
 
 #[cfg(test)]
+mod clean_slate_tests;
+#[cfg(test)]
 mod consistency_tests;
 #[cfg(test)]
 mod content_caps_tests;
+#[cfg(test)]
+mod found_by_search_tests;

@@ -7,6 +7,7 @@
 
 pub mod canonical;
 pub mod catalogue;
+pub mod contact;
 pub mod descriptor;
 pub mod fusion;
 pub mod health;
@@ -19,6 +20,7 @@ pub mod scope;
 
 pub use canonical::{lead_key, unwrap_archive, ArchiveCopy, CanonicalKey};
 pub use catalogue::{is_known_finder, is_retired_finder, FINDER_IDS};
+pub use contact::is_email;
 pub use descriptor::{
     Activation, Auth, Cost, Destination, FinderDescriptor, FinderId, Identity, InstanceSetting,
     KeyPlan, KeyService, Privacy, Quota, RatePolicy, Reach, Role, WaveSlot,

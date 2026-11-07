@@ -3,12 +3,13 @@
 
 use super::support::{
     baseline, blind_answer, blind_assessment, build, entry_answer, files, idle_grader, last,
-    messages, proved, system, FakeGrader, ScriptedModel, LITERALS, OPERATOR,
+    messages, proved, system, FakeGrader, ScriptedModel, LITERALS, OPERATOR, OPERATOR_AFTER,
 };
 use crate::features::learning::drills::build::Proved;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    check_key, Assessment, Drill, FindingOutcome, IssueOutcome, LineSpan, Origin, Proof, Severity,
+    check_key, Assessment, Drill, FindingOutcome, IssueOutcome, KeyIssue, LineSpan, Material,
+    Origin, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -126,7 +127,7 @@ async fn a_valid_extra_becomes_a_found_in_review_issue_with_its_span_from_its_fi
     key.extend(blind.extras.clone());
     let drill = Drill {
         id: "d".into(),
-        language: "python".into(),
+        material: Material::code("python"),
         title: "A limiter".into(),
         files: proved.files.clone(),
         key,
@@ -403,5 +404,48 @@ async fn with_no_planted_issue_there_is_no_key_to_judge_against_and_nothing_is_a
     assert_eq!(blind, super::support::quiet());
     assert!(model.requests().is_empty());
     assert!(grader.seen().is_empty());
+    Ok(())
+}
+
+/// The extras the key gains when the reviewer's one finding is a valid extra that the model describes as `entry`.
+async fn extras_for(entry: String) -> Result<Vec<KeyIssue>> {
+    let pool = pool().await?;
+    let reviewer = json!({"findings": [pop_finding()]}).to_string();
+    let assessment = Assessment {
+        issues: vec![
+            (IssueOutcome::Missed, "Not mentioned.".into()),
+            (IssueOutcome::Missed, "Not mentioned.".into()),
+        ],
+        findings: vec![(FindingOutcome::ValidExtra, "It is a real problem.".into())],
+    };
+    let model = ScriptedModel::new([reviewer, entry]);
+    let grader = FakeGrader::new(assessment);
+    let blind = build(&pool, &model, None, &grader)
+        .blind_review(&super::support::spec(), &baseline(), &proved())
+        .await?;
+    Ok(blind.extras)
+}
+
+#[tokio::test]
+async fn an_entry_of_a_planted_issues_pattern_on_its_lines_restates_it_and_is_not_added(
+) -> Result<()> {
+    let extras = extras_for(entry(OPERATOR, OPERATOR_AFTER)).await?;
+    assert!(extras.is_empty(), "{extras:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_entry_of_another_pattern_on_a_planted_issues_lines_is_added() -> Result<()> {
+    let extras = extras_for(entry("resources.unbounded_growth", OPERATOR_AFTER)).await?;
+    assert_eq!(extras.len(), 1);
+    assert_eq!(extras[0].span, span(13));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_entry_of_a_planted_issues_pattern_on_other_lines_is_added() -> Result<()> {
+    let extras = extras_for(entry(OPERATOR, "        self.hits.pop(key, None)\n")).await?;
+    assert_eq!(extras.len(), 1);
+    assert_eq!(extras[0].span, span(21));
     Ok(())
 }

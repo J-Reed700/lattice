@@ -1,5 +1,6 @@
 //! W3C Specifications: searches W3C standards and technical reports.
 
+use std::collections::HashSet;
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -8,6 +9,7 @@ use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome, Identity,
     Lead, LeadKind, NeedKind, Origin, Privacy, RatePolicy, Reach, Role, SourceNeed, WaveSlot,
 };
+use lattice_core::shared::text::informative_terms;
 use url::Url;
 
 use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp};
@@ -70,16 +72,24 @@ struct SpecCandidate {
     score: u32,
 }
 
+/// The words of `text` that can tell one specification from another, a
+/// shortname's dashes and a title's slashes splitting words as spaces do.
+fn telling_words(text: &str) -> Vec<String> {
+    informative_terms(&text.replace(['-', '/', ':'], " "))
+}
+
 fn score_spec(
     title: &str,
     shortname: &str,
     query_lower: &str,
-    query_tokens: &[&str],
+    query_tokens: &[String],
     subject_lower: &str,
-    subject_tokens: &[&str],
+    subject_tokens: &[String],
 ) -> u32 {
     let t_lower = title.to_ascii_lowercase();
     let s_lower = shortname.to_ascii_lowercase();
+    let title_words: HashSet<String> = telling_words(title).into_iter().collect();
+    let short_words: HashSet<String> = telling_words(shortname).into_iter().collect();
 
     if query_lower.is_empty() && subject_lower.is_empty() {
         return 1;
@@ -95,10 +105,10 @@ fn score_spec(
             score += 40;
         }
         for token in query_tokens {
-            if s_lower.contains(token) {
+            if short_words.contains(token) {
                 score += 15;
             }
-            if t_lower.contains(token) {
+            if title_words.contains(token) {
                 score += 10;
             }
         }
@@ -113,10 +123,10 @@ fn score_spec(
             score += 40;
         }
         for token in subject_tokens {
-            if s_lower.contains(token) {
+            if short_words.contains(token) {
                 score += 15;
             }
-            if t_lower.contains(token) {
+            if title_words.contains(token) {
                 score += 10;
             }
         }
@@ -153,8 +163,8 @@ fn extract_candidates(payload: &serde_json::Value, need: &SourceNeed) -> Vec<Spe
         .as_ref()
         .map(|s| s.name.trim().to_ascii_lowercase())
         .unwrap_or_default();
-    let query_tokens: Vec<&str> = query_lower.split_whitespace().collect();
-    let subject_tokens: Vec<&str> = subject_lower.split_whitespace().collect();
+    let query_tokens = telling_words(&query_lower);
+    let subject_tokens = telling_words(&subject_lower);
 
     let mut candidates = Vec::new();
     for item in items {

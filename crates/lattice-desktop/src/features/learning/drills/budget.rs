@@ -4,6 +4,9 @@
 /// What one line of code takes in an answer, its indentation and JSON escaping included.
 const LINE_TOKENS: usize = 20;
 
+/// What one sentence of prose takes in an answer, its JSON escaping included.
+const SENTENCE_TOKENS: usize = 60;
+
 /// What an answer's frame takes: field names, brackets, a title and a few sentences.
 const FRAME_TOKENS: usize = 600;
 
@@ -71,4 +74,16 @@ pub(super) fn findings(size: u32) -> usize {
 /// One entry of the answer key.
 pub(super) fn key_entry() -> usize {
     KEY_ENTRY_TOKENS
+}
+
+/// An explanation of about `sentences` sentences, with its title.
+pub(super) fn explanation(sentences: u32) -> usize {
+    lines(sentences)
+        .saturating_mul(SENTENCE_TOKENS)
+        .saturating_add(FRAME_TOKENS)
+}
+
+/// One sentence, written again.
+pub(super) fn sentence() -> usize {
+    SENTENCE_TOKENS + FRAME_TOKENS
 }

@@ -243,9 +243,10 @@ async fn run(
             .ok()
             .and_then(PlannedNeed::searches)
         {
-            None => "Search not run: give a query and rewordings of 3 to 240 characters besides \
-                     any site: operators, a site that is an address, one of the listed kinds, \
-                     dates as YYYY-MM-DD, and for asOf the page's address as identifier."
+            None => "Search not run: give a query and rewordings that are not blank once any \
+                     site: operators are lifted out, a site that is an address, one of the \
+                     listed kinds, dates as YYYY-MM-DD, and for asOf the page's address as \
+                     identifier."
                 .into(),
             // A query naming several sites is one search per site, sharing
             // the room the one call has. The call fails only when every
