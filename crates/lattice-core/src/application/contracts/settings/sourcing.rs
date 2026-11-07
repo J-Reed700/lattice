@@ -7,7 +7,7 @@
 //! needs is configured: keyless finders are on by default; the keyed engines
 //! (Brave, Tavily, Exa: `Auth::RequiredKey`) are off until their key is in the
 //! keyring; SearXNG (`Auth::UserInstance`) is off until `searxng_url` is set;
-//! polite pools (`Auth::Contact`) are off until `contact` is set.
+//! polite pools (`Auth::Contact`) are off until `contact` is an email address.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -165,7 +165,11 @@ impl SourcingSettingsDto {
             Auth::UserInstance { setting } => {
                 (!self.instance_set(setting)).then_some(SkipReason::NoInstance { setting })
             }
-            Auth::Contact => self.contact().is_none().then_some(SkipReason::NoContact),
+            Auth::Contact => match self.contact() {
+                None => Some(SkipReason::NoContact),
+                Some(contact) if !is_email(contact) => Some(SkipReason::NoEmail),
+                Some(_) => None,
+            },
         }
     }
 }

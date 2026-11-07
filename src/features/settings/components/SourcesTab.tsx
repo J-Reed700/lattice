@@ -148,8 +148,8 @@ export function SourcesTab() {
             <>
               Crossref and Unpaywall ask callers to say who they are and give them a faster,
               politer pool. Your contact is sent to them with each lookup, and added to the
-              agent string Lattice sends the other services it asks. Off by default: without it,
-              Unpaywall stays off and Crossref is asked anonymously.
+              agent string Lattice sends the other services it asks. Off by default: without an
+              email address, Unpaywall stays off and Crossref is asked anonymously.
             </>
           }
           saved={sourcing.contact}

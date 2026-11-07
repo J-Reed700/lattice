@@ -64,6 +64,8 @@ export function statusLine(
       return { text: 'Needs your SearXNG address', tone: 'muted' };
     case 'noContact':
       return { text: 'Needs a contact', tone: 'muted' };
+    case 'noEmail':
+      return { text: 'Needs an email address as your contact', tone: 'muted' };
     default:
       break;
   }

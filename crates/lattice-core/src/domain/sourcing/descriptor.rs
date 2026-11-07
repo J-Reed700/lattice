@@ -211,7 +211,8 @@ pub enum Auth {
     UserInstance {
         setting: InstanceSetting,
     },
-    /// A polite pool that runs only with the user's contact set.
+    /// A polite pool that runs only with the user's contact set to an email
+    /// address.
     Contact,
 }
 

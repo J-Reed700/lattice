@@ -146,6 +146,8 @@ pub enum FinderGateDto {
     NoKey,
     NoInstance,
     NoContact,
+    /// A contact is set but is not an email address.
+    NoEmail,
 }
 
 impl FinderGateDto {
@@ -157,6 +159,7 @@ impl FinderGateDto {
             SkipReason::NoKey { .. } => Some(Self::NoKey),
             SkipReason::NoInstance { .. } => Some(Self::NoInstance),
             SkipReason::NoContact => Some(Self::NoContact),
+            SkipReason::NoEmail => Some(Self::NoEmail),
             SkipReason::CircuitOpen { .. }
             | SkipReason::QuotaSpent { .. }
             | SkipReason::NotApplicable

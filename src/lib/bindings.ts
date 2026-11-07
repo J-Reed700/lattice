@@ -6361,7 +6361,7 @@ export type FinderGateDto =
 /**
  * The user turned it off (or, for the archive, the archive fallback).
  */
-"disabled" | "noKey" | "noInstance" | "noContact"
+"disabled" | "noKey" | "noInstance" | "noContact" | "noEmail"
 /**
  * A finder's health since the app started.
  */
