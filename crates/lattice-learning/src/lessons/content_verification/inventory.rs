@@ -216,7 +216,7 @@ fn resolve(unit: ExtractedUnit, input: &[Value]) -> std::result::Result<UnitClai
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) async fn extract(
     llm: &dyn LLMPort,
     content: &[Value],

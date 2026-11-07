@@ -4,7 +4,7 @@ pub(crate) use crate::test_support::{fixture, pool};
 use lattice_core::shared::error::Result;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    Row, SqlitePool,
+    Row,
 };
 pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     let mut questions = Vec::new();

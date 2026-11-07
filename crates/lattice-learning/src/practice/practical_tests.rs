@@ -38,7 +38,7 @@ fn workspace_cleanup_requires_a_matching_invocation_marker() -> Result<()> {
     Ok(())
 }
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 use super::test_support::{fixture, fixture_on_pool, id};
 
 use crate::persistence::db;

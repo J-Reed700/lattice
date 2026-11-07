@@ -4,11 +4,7 @@ use super::readings_tests::{claim, driven, paged, read_observed, world_of};
 use super::*;
 use crate::curriculum_repository::LESSON_PREPARATION;
 pub(in crate::lessons) use crate::content_verification::test_support::setup;
-use crate::{
-    curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
-    dto::AcceptLearningProgramRequestDto, lesson_drafts,
-    plan_dto::StartLearningGenerationJobRequestDto, repository::LearningRepository,
-};
+use crate::{curriculum_repository::LearningCurriculumRepository, lesson_drafts};
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore, RecoveryPolicy};
 

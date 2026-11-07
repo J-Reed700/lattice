@@ -66,8 +66,8 @@ pub enum Stage {
 
 impl Stage {
     /// Every stage, in the order they run.
-    #[cfg(test)]
-    pub(crate) const ALL: [Stage; 5] = [
+    #[cfg(any(test, feature = "test-support"))]
+    pub const ALL: [Stage; 5] = [
         Stage::CleanCode,
         Stage::CleanReview,
         Stage::Plant,

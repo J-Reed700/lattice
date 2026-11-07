@@ -437,8 +437,8 @@ impl CourseIndexes {
 
     /// Brings `program`'s index current with no one watching: for a test, or
     /// a caller that only needs the mode.
-    #[cfg(test)]
-    pub(crate) async fn ensure_current_quietly(
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn ensure_current_quietly(
         &self,
         program: &str,
     ) -> Result<IndexMode> {

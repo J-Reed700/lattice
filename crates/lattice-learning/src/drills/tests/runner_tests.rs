@@ -161,7 +161,7 @@ fn only_a_language_whose_runtime_is_available_gets_a_runner() {
 #[cfg(feature = "learning-labs")]
 mod real_runtimes {
     use super::super::support::{files, operator_edit, KILLING_TEST, SUITE};
-    use crate::drills::runner::{runner_for, CodeRunner, RunOutcome};
+    use crate::drills::runner::{runner_for, RunOutcome};
     use crate::embedded_runtime::BuiltinRuntimes;
     use lattice_core::domain::learning::drills::{apply, DrillFile};
     use lattice_core::shared::error::{AppError, Result};

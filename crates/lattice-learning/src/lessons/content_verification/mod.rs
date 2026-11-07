@@ -550,7 +550,7 @@ fn example_runs(observations: &[execution::Observation], unit: usize) -> Vec<Evi
 /// example runs and then the course's first page for it, as the readers
 /// select it at the start of a job (`evidence_checks`). For tests that bind a
 /// receipt to exactly what a reading compares.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 async fn evidence_for(
     llm: &dyn LLMPort,
     claim: &str,

@@ -679,7 +679,7 @@ pub(super) struct Harness {
 
 impl Harness {
     pub(super) async fn new(spec: &DrillSpec) -> Result<Self> {
-        let pool = crate::tests::pool().await?;
+        let pool = crate::test_support::pool().await?;
         let job = bank::queue_build(&pool, spec, "test").await?;
         let store = JobStore::new(pool.clone());
         store
@@ -881,7 +881,7 @@ impl Waiting {
         findings: Vec<Finding>,
         fix_files: Option<Vec<DrillFile>>,
     ) -> Result<Self> {
-        let pool = crate::tests::pool().await?;
+        let pool = crate::test_support::pool().await?;
         stock(&pool, "drill").await?;
         let begun = attempts::start(&pool, "python", AttemptMode::Practice)
             .await?
@@ -1256,7 +1256,7 @@ pub(super) fn passage_build<'a>(
 pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
     use crate::dto::LearningSourceDto;
     use crate::repository::LearningRepository;
-    let mut program = crate::tests::fixture();
+    let mut program = crate::test_support::fixture();
     program.sources = vec![
         LearningSourceDto {
             id: format!("spacing-{}", uuid::Uuid::new_v4()),

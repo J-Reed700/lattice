@@ -3,7 +3,7 @@
 use super::support::{
     files, judge_answer, last, literals_edit, literals_mutation, messages, operator_edit,
     operator_mutation, FakeRunner, ScriptedModel, KILLING_TEST, LITERALS, LITERALS_AFTER,
-    LITERALS_BEFORE, OPERATOR, OPERATOR_AFTER, OPERATOR_BEFORE, SUITE,
+    LITERALS_BEFORE, OPERATOR, OPERATOR_AFTER, SUITE,
 };
 use crate::drills::build::{Mutation, Trail, Verification};
 use crate::drills::proof::{
