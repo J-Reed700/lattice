@@ -2,8 +2,8 @@
 //! `docs/design/2026-09-19-conversation-memory.md` §6.3). Validation proves a
 //! quote is real, not whose instruction it is or what it is about, so every
 //! new item and proposed transition gets a structured look at the original
-//! passages. When review cannot run or answers unparseably, the verdict is
-//! [`SemanticVerdict::Ambiguous`], never `Supported`.
+//! passages. When review cannot run, or answers unparseably or without a reason,
+//! the verdict is [`SemanticVerdict::Ambiguous`], never `Supported`.
 
 use std::collections::HashMap;
 
@@ -27,6 +27,10 @@ use super::{complete_json, CompactionError, Deadline};
 /// a dozen unrelated changes at once starts dropping ids, and a dropped id is a
 /// silent `Ambiguous`.
 pub const MAX_REVIEWS_PER_CALL: usize = 6;
+
+/// How often a batch's reviews are asked for. A reply can leave reviews unread
+/// (`gives_a_reason`); what a second ask does not read stays ambiguous.
+const ASKS_PER_BATCH: usize = 2;
 
 /// Verdicts for one patch, keyed the way [`apply_patch`] wants them.
 ///
@@ -205,103 +209,135 @@ pub async fn review_patch(
     }
 
     for batch in requests.chunks(MAX_REVIEWS_PER_CALL) {
-        let render = |surrounding_chars: Option<usize>| {
-            batch
-                .iter()
-                .map(|review| ReviewRequest {
-                    id: review.id.as_str(),
-                    change: review.change,
-                    kind: review.kind,
-                    label: review.label.as_deref(),
-                    proposed_evidence: passages(&review.proposed, evidence),
-                    existing_evidence: passages(&review.existing, evidence),
-                    existing_label: review.existing_label.as_deref(),
-                    surrounding: surrounding_chars.map_or_else(Vec::new, |max_chars| {
-                        surrounding(&review.proposed, &review.existing, &messages, max_chars)
-                    }),
-                })
-                .collect::<Vec<_>>()
-        };
-        // The surrounding text shares what the review call's window has left
-        // once the reviews themselves are in: each message is shown whole when
-        // that share holds it, and centred on its quotes and flagged when not.
-        let bare = render_verifier_prompt(&render(None));
-        let context_messages: usize = render(Some(usize::MAX))
-            .iter()
-            .map(|review| review.surrounding.len())
-            .sum();
-        let share =
-            super::call_room_chars(llm, VERIFIER_SYSTEM, super::VERIFIER_OUTPUT_TOKENS, &bare)
-                / context_messages.max(1);
-        let rendered = render(Some(share));
-
-        let prompt = render_verifier_prompt(&rendered);
-        outcome.calls += 1;
-        let raw = match complete_json(
-            llm,
-            deadline,
-            VERIFIER_SYSTEM,
-            prompt,
-            Some(verdict_schema()),
-        )
-        .await
-        {
-            Ok(raw) => raw,
-            // A hard limit stops the job. A provider failure does not: the
-            // batch keeps its `Ambiguous` defaults and the pass continues.
-            Err(error @ (CompactionError::DeadlineExceeded(_) | CompactionError::Cancelled)) => {
-                return Err(error)
-            }
-            Err(error) => {
-                warn!(
-                    reviews = batch.len(),
-                    code = error.code(),
-                    "Memory review call failed — those changes stay ambiguous"
-                );
-                outcome.degraded = true;
-                continue;
-            }
-        };
-
-        let Some(parsed) = parse_verdicts(&raw) else {
-            warn!(
-                reviews = batch.len(),
-                "Memory review response was unparseable — those changes stay ambiguous"
-            );
-            outcome.degraded = true;
-            continue;
-        };
-        let mut answered = std::collections::HashSet::new();
-        for verdict in parsed {
-            let Some(decision) = parse_verdict(&verdict.verdict) else {
-                continue;
+        let mut left: Vec<&OwnedReview> = batch.iter().collect();
+        for _ in 0..ASKS_PER_BATCH {
+            let Some(unread) =
+                ask_for_reviews(llm, deadline, &left, &messages, evidence, &mut outcome).await?
+            else {
+                break;
             };
-            // Only ids that were actually asked about are updated. A verdict for
-            // anything else is a reviewer answering a question nobody put, and
-            // accepting it would let the model name its own subject.
-            if let Some(id) = verdict.id.strip_prefix("addition:") {
-                if let Some(slot) = outcome.addition_verdicts.get_mut(id) {
-                    *slot = decision;
-                    answered.insert(verdict.id.clone());
-                }
-            } else if let Some(id) = verdict.id.strip_prefix("transition:") {
-                if let Some(slot) = outcome.transition_verdicts.get_mut(id) {
-                    *slot = decision;
-                    answered.insert(verdict.id.clone());
-                }
+            left = unread;
+            if left.is_empty() {
+                break;
             }
         }
-        if batch.iter().any(|review| !answered.contains(&review.id)) {
+        if !left.is_empty() {
             warn!(
                 reviews = batch.len(),
-                answered = answered.len(),
-                "Memory review omitted requested ids — missing changes stay ambiguous"
+                left = left.len(),
+                "Memory review left changes unread — they stay ambiguous"
             );
             outcome.degraded = true;
         }
     }
 
     Ok(outcome)
+}
+
+/// Ask for `reviews` once and record what the reply read in `outcome`. Returns
+/// the reviews it gave no reading of, or `None` when no reply came.
+async fn ask_for_reviews<'r>(
+    llm: &dyn LLMPort,
+    deadline: &Deadline,
+    reviews: &[&'r OwnedReview],
+    messages: &HashMap<&str, &SourceMessage>,
+    evidence: &EvidenceText,
+    outcome: &mut VerificationOutcome,
+) -> std::result::Result<Option<Vec<&'r OwnedReview>>, CompactionError> {
+    let render = |surrounding_chars: Option<usize>| {
+        reviews
+            .iter()
+            .map(|review| ReviewRequest {
+                id: review.id.as_str(),
+                change: review.change,
+                kind: review.kind,
+                label: review.label.as_deref(),
+                proposed_evidence: passages(&review.proposed, evidence),
+                existing_evidence: passages(&review.existing, evidence),
+                existing_label: review.existing_label.as_deref(),
+                surrounding: surrounding_chars.map_or_else(Vec::new, |max_chars| {
+                    surrounding(&review.proposed, &review.existing, messages, max_chars)
+                }),
+            })
+            .collect::<Vec<_>>()
+    };
+    // The surrounding text shares what the review call's window has left
+    // once the reviews themselves are in: each message is shown whole when
+    // that share holds it, and centred on its quotes and flagged when not.
+    let bare = render_verifier_prompt(&render(None));
+    let context_messages: usize = render(Some(usize::MAX))
+        .iter()
+        .map(|review| review.surrounding.len())
+        .sum();
+    let share = super::call_room_chars(llm, VERIFIER_SYSTEM, super::VERIFIER_OUTPUT_TOKENS, &bare)
+        / context_messages.max(1);
+    let rendered = render(Some(share));
+
+    let prompt = render_verifier_prompt(&rendered);
+    outcome.calls += 1;
+    let raw = match complete_json(
+        llm,
+        deadline,
+        VERIFIER_SYSTEM,
+        prompt,
+        Some(verdict_schema()),
+    )
+    .await
+    {
+        Ok(raw) => raw,
+        // A hard limit stops the job. A provider failure does not: the
+        // reviews keep their `Ambiguous` defaults and the pass continues.
+        Err(error @ (CompactionError::DeadlineExceeded(_) | CompactionError::Cancelled)) => {
+            return Err(error)
+        }
+        Err(error) => {
+            warn!(
+                reviews = reviews.len(),
+                code = error.code(),
+                "Memory review call failed — those changes stay ambiguous"
+            );
+            return Ok(None);
+        }
+    };
+
+    let Some(parsed) = parse_verdicts(&raw) else {
+        warn!(
+            reviews = reviews.len(),
+            "Memory review response was unparseable"
+        );
+        return Ok(Some(reviews.to_vec()));
+    };
+    let mut answered = std::collections::HashSet::new();
+    for verdict in parsed {
+        // Only ids this call asked about are updated. A verdict for anything
+        // else is a reviewer answering a question nobody put, and accepting it
+        // would let the model name its own subject.
+        if !gives_a_reason(&verdict.reason) || !reviews.iter().any(|review| review.id == verdict.id)
+        {
+            continue;
+        }
+        let Some(decision) = parse_verdict(&verdict.verdict) else {
+            continue;
+        };
+        if let Some(id) = verdict.id.strip_prefix("addition:") {
+            if let Some(slot) = outcome.addition_verdicts.get_mut(id) {
+                *slot = decision;
+                answered.insert(verdict.id.clone());
+            }
+        } else if let Some(id) = verdict.id.strip_prefix("transition:") {
+            if let Some(slot) = outcome.transition_verdicts.get_mut(id) {
+                *slot = decision;
+                answered.insert(verdict.id.clone());
+            }
+        }
+    }
+    Ok(Some(
+        reviews
+            .iter()
+            .copied()
+            .filter(|review| !answered.contains(&review.id))
+            .collect(),
+    ))
 }
 
 /// One review, owned so batches can borrow from it without fighting lifetimes.
@@ -446,6 +482,16 @@ struct VerdictResponse {
 struct RawVerdict {
     id: String,
     verdict: String,
+    #[serde(default)]
+    reason: String,
+}
+
+/// Whether a verdict says why. The reason is the only sign the passages were
+/// read, and a model can answer with an empty one or a single filler word. A
+/// script written without spaces is not held to words.
+fn gives_a_reason(reason: &str) -> bool {
+    let reason = reason.trim();
+    reason.contains(char::is_whitespace) || (!reason.is_empty() && !reason.is_ascii())
 }
 
 /// Parse the reviewer response, tolerating one markdown fence.
