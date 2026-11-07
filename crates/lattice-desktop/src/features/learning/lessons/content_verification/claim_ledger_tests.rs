@@ -22,7 +22,7 @@ use crate::features::learning::lessons::claim_reviews::repository::{
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
 use crate::features::learning::repository::LearningRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
-use lattice_core::domain::learning::acceptance::Reading;
+use lattice_core::domain::learning::acceptance::{Outcome, Reading, Step, Then};
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
     ClaimLocation, ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen, LessonReview,
@@ -121,7 +121,7 @@ impl Figures {
                             .as_array()
                             .unwrap()
                             .iter()
-                            .find(|p| p["field"] == "/body")
+                            .find(|p| p["field"] == "/body" || p["field"] == "/explanation")
                             .unwrap();
                         let statement = statement_in(passage["text"].as_str().unwrap());
                         match statement {
@@ -146,17 +146,22 @@ impl Figures {
                     "fixture server failure during a section repair".into(),
                 ));
             }
-            let body = data["candidate"]["blocks"][0]["body"].as_str().unwrap();
+            let (path, body) = match data["candidate"]["blocks"][0]["body"].as_str() {
+                Some(body) => ("/blocks/0/body", body),
+                None => (
+                    "/questions/0/explanation",
+                    data["candidate"]["questions"][0]["explanation"]
+                        .as_str()
+                        .unwrap(),
+                ),
+            };
             let replacement = if self.repair_to_good {
                 GOOD.to_owned()
             } else {
                 figure(repair)
             };
             let after = body.replace(&statement_in(body).unwrap(), &replacement);
-            return Ok(
-                json!({"edits":[{"path":"/blocks/0/body","before":body,"after":after}]})
-                    .to_string(),
-            );
+            return Ok(json!({"edits":[{"path":path,"before":body,"after":after}]}).to_string());
         }
         if prompt.starts_with("Source passages:") {
             let claim = prompt
@@ -437,6 +442,112 @@ async fn a_lesson_whose_every_statement_would_be_cut_publishes_them_unverified_a
         Some(&(1, false, RepairOutcome::Rewritten))
     );
     assert!(waiting(&ledger.claims).is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_stopped_on_checks_made_under_other_rules_completes_its_job_as_held_and_is_free_to_be_prepared_again(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let stale = lesson(&[BAD]).to_string();
+    // An earlier version of the app decided a claim on this sentence under
+    // other checking rules.
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&stale).await?;
+        let mut ledger = claim_ledger::ClaimLedger::open(&Model::new(), &stale).await?;
+        let old = claim(&mut ledger, "old", (BAD, BAD), &section(BAD), SOURCED).await?;
+        let stepped = ClaimEvent::Stepped {
+            policy: "acceptance-v0".into(),
+            step: Step::Read(Reading::Parts),
+            outcome: Outcome::Unproven,
+            then: Then::Node {
+                name: "s.research".into(),
+                step: Step::Research,
+            },
+            reason: String::new(),
+            rewrite_ahead: true,
+        };
+        assert!(ledger.append(&old, stepped).await?);
+        Ok(())
+    })
+    .await?;
+    let error = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &Figures::new(),
+        Some(stale),
+        &[source()],
+    )
+    .await
+    .err()
+    .expect("a fault stops the lesson")
+    .to_string();
+    assert!(error.contains("earlier checking rules"), "{error}");
+    let review = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?
+        .review
+        .unwrap();
+    assert_eq!(review.state, LessonReviewState::Stopped);
+    assert_eq!(review.stop_reason.unwrap().code, "policy_changed");
+    // The worker completes the job as held, not failed.
+    let held = held_for_review(&pool, &lesson_id, &job).await?.unwrap();
+    let (result_ref, message) = review_outcome(&[held]);
+    assert!(
+        JobStore::new(pool.clone())
+            .complete(&job, &result_ref, &message)
+            .await?
+    );
+    let stopped = repo.job(&job).await?;
+    assert_eq!(
+        stopped.status,
+        crate::features::learning::curriculum::LearningGenerationJobStatus::Completed
+    );
+
+    // Preparing the lesson again starts a new job, which takes the lesson
+    // from its outline and publishes it once its sources back it.
+    let program = crate::features::learning::repository::LearningRepository::new(pool.clone())
+        .get(&stopped.program_id)
+        .await?;
+    let again = repo
+        .start_lesson_job(
+            &crate::features::learning::plan_dto::StartLearningGenerationJobRequestDto {
+                operation_id: uuid::Uuid::new_v4().to_string(),
+                program_id: program.summary.id,
+                expected_revision: program.summary.revision,
+                kind: crate::features::learning::curriculum::LearningGenerationJobKind::LessonPreparation,
+                request_json: json!({"lessonIds":[lesson_id]}).to_string(),
+                progress_total: 1,
+            },
+        )
+        .await?;
+    assert_ne!(again.id, job);
+    assert_eq!(
+        again.status,
+        crate::features::learning::curriculum::LearningGenerationJobStatus::Pending
+    );
+    assert!(JobStore::new(pool.clone())
+        .claim(&again.id)
+        .await?
+        .is_some());
+    let (raw, report) = prepare(
+        &repo,
+        &again.id,
+        &lesson_id,
+        &Figures::new(),
+        Some(lesson(&[GOOD]).to_string()),
+        &[source()],
+    )
+    .await?;
+    let lesson: Value = serde_json::from_str(&raw)?;
+    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(held_for_review(&pool, &lesson_id, &again.id)
+        .await?
+        .is_none());
     Ok(())
 }
 
@@ -2336,32 +2447,6 @@ async fn a_statement_whose_judge_never_answers_readably_is_published_not_verifie
 }
 
 #[tokio::test]
-async fn a_round_where_research_reached_nothing_publishes_the_statement_waiting_for_it_not_verified_beside_the_settled_one(
-) -> Result<()> {
-    let course = Course::new().await?;
-    let figure = figure(0);
-    let draft = lesson(&[GOOD, figure.as_str()]);
-    let prepared = research::run(
-        course.pool.clone(),
-        course.program_id.clone(),
-        "CSV".into(),
-        Some(research::tests::web(false)),
-        course.prepare(&Figures::new(), &draft),
-    )
-    .await
-    .expect("the lesson publishes, one statement not verified");
-
-    let shown = course.publish(prepared).await?;
-
-    assert_eq!(shown.view.claim_count, 2, "{:?}", shown.claims);
-    assert_eq!(shown.read_as("verified"), [GOOD]);
-    let on = shown.on(&figure);
-    assert_eq!(on.len(), 1, "{:?}", shown.claims);
-    shown.assert_not_verified(on[0], "unchecked");
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_statement_left_for_the_user_when_no_machine_work_is_left_is_published_not_verified_as_unchecked(
 ) -> Result<()> {
     let course = Course::new().await?;
@@ -2436,5 +2521,105 @@ async fn a_sentence_a_claim_the_machine_ended_stood_on_is_published_with_that_cl
         .find(|entry| entry["resolution"] == json!("not_verified"))
         .unwrap_or_else(|| panic!("no claim on {GOOD:?} is marked: {:?}", shown.claims));
     shown.assert_not_verified(marked, "contradicted");
+    Ok(())
+}
+
+fn quiz(kind: &str, explanation: &str) -> Value {
+    json!({"kind":kind,"prompt":"Which?","options":["One","Two","Three","Four"],"correctIndex":0,"explanation":explanation})
+}
+
+/// A section whose whole body is one sentence, so a cut that takes the
+/// sentence takes the section.
+fn bare(index: usize, sentence: &str) -> Value {
+    json!({"kind":"explanation","title":format!("Section {index}"),"body":sentence,"rubric":[]})
+}
+
+/// A lesson of two sections that state what the sources do, and `questions`.
+fn with_questions(questions: Vec<Value>) -> Value {
+    json!({"blocks":[
+        {"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]},
+        {"kind":"explanation","title":"Section 1","body":section(GOOD),"rubric":[]}
+    ],"questions":questions})
+}
+
+#[tokio::test]
+async fn a_lesson_whose_cuts_would_take_more_than_a_third_of_its_sections_is_published_with_those_statements_not_verified(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let (first, second) = (figure(5), figure(6));
+    let draft = json!({"blocks":[
+        {"kind":"explanation","title":"Section 0","body":section(GOOD),"rubric":[]},
+        bare(1, &first),
+        bare(2, &second)
+    ],"questions":[]});
+    let prepared = course
+        .prepare(&Figures::new(), &draft)
+        .await
+        .expect("the lesson publishes, two statements not verified");
+
+    let shown = course.publish(prepared).await?;
+
+    // Each section's sentence is the figure its rewrite gave, and stands.
+    assert_eq!(shown.view.claim_count, 3, "{:?}", shown.claims);
+    assert_eq!(shown.read_as("verified"), [GOOD]);
+    for sentence in [figure(0), figure(1)] {
+        let on = shown.on(&sentence);
+        assert_eq!(on.len(), 1, "{sentence}: {:?}", shown.claims);
+        shown.assert_not_verified(on[0], "unsupported");
+    }
+    Ok(())
+}
+
+// A question's claims are the lesson's own and are not among the learner's
+// teaching claims, so the next two read the lesson as the preparation returns
+// it: it publishes, and each explanation keeps its sentence.
+
+#[tokio::test]
+async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_their_statements_standing(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let draft = with_questions(vec![quiz("quiz", &figure(5)), quiz("quiz", &figure(6))]);
+    let (raw, report) = course
+        .prepare(&Figures::new(), &draft)
+        .await
+        .expect("the lesson publishes, two statements not verified");
+
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(
+        held_for_review(&course.pool, &course.lesson_id, &course.job)
+            .await?
+            .is_none()
+    );
+    let published: Value = serde_json::from_str(&raw)?;
+    let questions = published["questions"].as_array().unwrap();
+    assert_eq!(questions.len(), 2, "{questions:?}");
+    for (index, sentence) in [figure(0), figure(1)].iter().enumerate() {
+        assert_eq!(questions[index]["explanation"], json!(sentence));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_whose_cuts_would_take_every_question_of_a_kind_it_asks_is_published_with_that_statement_standing(
+) -> Result<()> {
+    let course = Course::new().await?;
+    let draft = with_questions(vec![quiz("practice", &figure(5)), quiz("quiz", GOOD)]);
+    let (raw, report) = course
+        .prepare(&Figures::new(), &draft)
+        .await
+        .expect("the lesson publishes, one statement not verified");
+
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(
+        held_for_review(&course.pool, &course.lesson_id, &course.job)
+            .await?
+            .is_none()
+    );
+    let published: Value = serde_json::from_str(&raw)?;
+    let questions = published["questions"].as_array().unwrap();
+    assert_eq!(questions.len(), 2, "{questions:?}");
+    assert_eq!(questions[0]["kind"], json!("practice"));
+    assert_eq!(questions[0]["explanation"], json!(figure(0)));
+    assert_eq!(questions[1]["explanation"], json!(GOOD));
     Ok(())
 }
