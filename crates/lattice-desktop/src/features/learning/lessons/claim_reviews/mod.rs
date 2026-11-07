@@ -6,14 +6,15 @@
 //! `lattice_core::application::ports::claim_review`.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §7.
 
+mod actions;
 pub mod attach;
 pub mod checker_examples;
 pub mod dto;
 #[cfg(test)]
 mod dto_tests;
-mod freshness;
 #[cfg(test)]
 mod migration_tests;
+mod published_edit;
 pub mod recheck;
 pub mod repository;
 pub mod service;

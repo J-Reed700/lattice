@@ -3,9 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct DisconnectDuringFidelity {
     inner: Model,
-    saved: crate::features::learning::curriculum_repository::LearningCurriculumRepository,
+    jobs: JobStore,
     job: String,
-    lesson: String,
+    /// Where the job saves the lesson's fidelity findings.
+    fidelity: String,
     mapping_calls: AtomicUsize,
     fidelity_calls: AtomicUsize,
 }
@@ -45,12 +46,8 @@ impl DisconnectDuringFidelity {
             tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
                     let saved = self
-                        .saved
-                        .lesson_checkpoints_with_prefix(
-                            &self.job,
-                            &self.lesson,
-                            "coverage-fidelity-v2:",
-                        )
+                        .jobs
+                        .checkpoints_with_prefix(&self.job, &self.fidelity)
                         .await
                         .unwrap();
                     if !saved.is_empty() {
@@ -73,9 +70,9 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let model = DisconnectDuringFidelity {
         inner: Model::new(),
-        saved: repo.clone(),
+        jobs: JobStore::new(pool.clone()),
         job: job.clone(),
-        lesson: lesson.clone(),
+        fidelity: format!("{lesson}/coverage-fidelity-v2:"),
         mapping_calls: AtomicUsize::new(0),
         fidelity_calls: AtomicUsize::new(0),
     };

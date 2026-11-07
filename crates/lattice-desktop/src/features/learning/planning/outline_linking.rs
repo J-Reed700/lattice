@@ -395,7 +395,7 @@ fn request(
     let prompt = json!({"passages":listed,"items":items}).to_string();
     let schema = json!({"type":"object","additionalProperties":false,"required":["links"],"properties":{
         "links":{"type":"array","minItems":group.len(),"maxItems":group.len(),"items":{"type":"object","additionalProperties":false,"required":["id","candidate","reason"],"properties":{
-            "id":{"type":"string","enum":ids},"candidate":{"type":"string","enum":choices},"reason":{"type":"string","minLength":1,"maxLength":300}
+            "id":{"type":"string","enum":ids},"candidate":{"type":"string","enum":choices},"reason":{"type":"string","minLength":1}
         }}}
     }});
     let listed = passages.into_iter().cloned().collect();
@@ -709,7 +709,7 @@ pub(in crate::features::learning) async fn link(
                     None => continue,
                 }
             };
-            decisions.insert(link.id, (chosen, link.reason.chars().take(300).collect()));
+            decisions.insert(link.id, (chosen, link.reason));
         }
         for item in &group {
             let Some((chosen, reason)) = decisions.remove(&item.path) else {

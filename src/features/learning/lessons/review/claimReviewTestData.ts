@@ -75,7 +75,7 @@ export function unsupportedItem(index: number, unitIndex = index): ClaimReviewIt
     statement: `Statement number ${index}.`,
     verdictKind: { kind: 'unsupported' },
     reason: `No passage supports statement ${index}.`,
-    availableActions: ['confirm', 'edit', 'remove', 'general_knowledge', 'attach_evidence', 'research_with_hint'],
+    availableActions: ['confirm', 'edit', 'remove', 'attach_evidence', 'research_with_hint'],
     research: [],
     repairs: [],
   });
@@ -88,7 +88,7 @@ export function userActionAt(at: number): ClaimEventDto {
 export function review(claims: ClaimReviewItemDto[], overrides: Partial<LessonClaimReviewDto> = {}): LessonClaimReviewDto {
   return {
     lessonId: 'lesson-1', programId: 'program-1', state: 'needs_review', revision: 7, pass: 3, stopReason: null, changedSinceStop: false,
-    counts: { verified: 12, confirmed: 0, generalKnowledge: 0, queued: claims.length, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 },
+    counts: { verified: 12, confirmed: 0, queued: claims.length, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 },
     claims,
     teachingFindings: [],
     ...overrides,

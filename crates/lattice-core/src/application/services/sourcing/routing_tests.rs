@@ -255,6 +255,7 @@ fn summarise(plan: &Plan) -> Summary {
                         SkipReason::NoKey { .. } => "no_key",
                         SkipReason::NoInstance { .. } => "no_instance",
                         SkipReason::NoContact => "no_contact",
+                        SkipReason::NoEmail => "no_email",
                         SkipReason::CircuitOpen { .. } => "circuit_open",
                         SkipReason::QuotaSpent { .. } => "quota_spent",
                         SkipReason::NotApplicable => "not_applicable",

@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
 import type { ActionForm } from '@/features/learning/lessons/review/ClaimActions';
 import { announcement, trustedAnnouncement, type AnnouncedAction, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
-import { defaultGroupMode, groupClaims, isWaitingForYou, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { defaultGroupMode, groupClaims, isTakenOut, isWaitingForYou, takenOutSentences, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { useLessonClaimReview, useResolveLearningClaim } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useClearSourceTrustOverride } from '@/features/learning/sources/trust/useSourceTrust';
 import type {
@@ -44,7 +44,7 @@ function closestOf(item: ClaimReviewItemDto | undefined, versionId: string, repo
  * in focus, the forms and sheet open on it, what the last action announced
  * and how to undo it. Resolving moves to the next claim in queue order.
  */
-export function useClaimReviewSession(programId: string, lessonId: string) {
+export function useClaimReviewSession(programId: string, lessonId: string, focusClaimId: string | null = null) {
   const client = useQueryClient();
   const query = useLessonClaimReview(programId, lessonId);
   const resolve = useResolveLearningClaim(programId, lessonId);
@@ -53,13 +53,14 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
   const claims = useMemo(() => review?.claims ?? [], [review]);
 
   const [mode, setMode] = useState<GroupMode | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(focusClaimId);
   const [teachingActive, setTeachingActive] = useState(false);
+  const [removedActive, setRemovedActive] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [settling, setSettling] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<ActionForm | null>(null);
   const [acting, setActing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [message, setMessage] = useState('');
   const [undo, setUndo] = useState<Undo>(null);
   const [closest, setClosest] = useState<{ claimId: string; versionId: string; report: ClaimAttachReportDto } | null>(null);
@@ -72,10 +73,12 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
   const queueClaims = useMemo(() => claims.filter((claim) => isWaitingForYou(claim) || settling.has(claim.claimId)), [claims, settling]);
   const groups: ClaimGroup[] = useMemo(() => groupClaims(queueClaims, currentMode), [queueClaims, currentMode]);
   const ordered = useMemo(() => groups.flatMap((group) => group.claims), [groups]);
-  const resolved = useMemo(() => claims.filter((claim) => !isWaitingForYou(claim) && !settling.has(claim.claimId)), [claims, settling]);
+  const resolved = useMemo(() => claims.filter((claim) => !isWaitingForYou(claim) && !isTakenOut(claim) && !settling.has(claim.claimId)), [claims, settling]);
+  // What the machine took out has a list of its own: nothing there waits for the user.
+  const removed = useMemo(() => takenOutSentences(claims), [claims]);
 
   // The claim in focus: the chosen one while it exists, else the first in queue order.
-  const active = claims.find((claim) => claim.claimId === activeId) ?? (teachingActive ? undefined : ordered[0]);
+  const active = claims.find((claim) => claim.claimId === activeId) ?? (teachingActive || removedActive ? undefined : ordered[0]);
   const activeIndex = active ? ordered.findIndex((claim) => claim.claimId === active.claimId) : -1;
   useEffect(() => {
     if (!active || opened.has(active.claimId)) return;
@@ -84,6 +87,7 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
 
   const select = (claimId: string) => {
     setTeachingActive(false);
+    setRemovedActive(false);
     setActiveId(claimId);
     setForm(null);
     setError(null);
@@ -92,7 +96,8 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
     const next = ordered[activeIndex + by];
     if (next) { select(next.claimId); setFocusTick((tick) => tick + 1); }
   };
-  const openTeaching = () => { setTeachingActive(true); setActiveId(null); setForm(null); };
+  const openTeaching = () => { setTeachingActive(true); setRemovedActive(false); setActiveId(null); setForm(null); };
+  const openRemoved = () => { setRemovedActive(true); setTeachingActive(false); setActiveId(null); setForm(null); };
 
   const fresh = () => client.getQueryData<LessonClaimReviewDto | null>(learningClaimReviewKey(programId, lessonId));
 
@@ -130,15 +135,11 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
       }
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The action could not be saved.');
+      setError(cause instanceof Error ? cause : new Error('The action could not be saved.'));
       return false;
     } finally {
       setActing(false);
     }
-  };
-
-  const acceptProposals = async (proposals: ClaimReviewItemDto[]) => {
-    if (proposals[0]) await run(proposals[0], { action: 'accept_all_general_knowledge' }, 'accept_all_general_knowledge');
   };
 
   const trusted = (result: LearningTrustChangeResultDto, support: ClaimSupportDto) => {
@@ -190,8 +191,8 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
 
   return {
     query, review, claims, waiting, groups, ordered, resolved, settling, opened,
-    mode: currentMode, setMode, active, activeIndex, teachingActive, select, step, openTeaching,
-    form, setForm, acting, error, message, setMessage, undo, undoLast, run, acceptProposals, trusted, added,
+    mode: currentMode, setMode, active, activeIndex, teachingActive, removed, removedActive, select, step, openTeaching, openRemoved,
+    form, setForm, acting, error, message, setMessage, undo, undoLast, run, trusted, added,
     closestSupport, focusTick,
   };
 }

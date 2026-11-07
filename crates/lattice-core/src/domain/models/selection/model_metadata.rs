@@ -20,10 +20,6 @@ pub struct ModelMetadata {
     pub description: String,
     /// Model size in gigabytes (on disk)
     pub size_gb: f64,
-    /// Minimum RAM required to load model
-    pub minimum_ram_gb: f64,
-    /// Recommended RAM for good performance
-    pub recommended_ram_gb: f64,
     /// Maximum context length in tokens
     pub context_length: u32,
     /// Performance characteristic
@@ -140,18 +136,8 @@ impl ModelMetadata {
         }
     }
 
-    /// Check if model fits in available RAM.
-    pub fn fits_in_ram(&self, total_ram_gb: f64) -> bool {
-        total_ram_gb >= self.minimum_ram_gb
-    }
-
     /// Check if model fits on disk.
     pub fn fits_on_disk(&self, available_disk_gb: f64) -> bool {
         available_disk_gb >= self.size_gb
-    }
-
-    /// Estimate if model will perform well with given RAM.
-    pub fn has_recommended_ram(&self, total_ram_gb: f64) -> bool {
-        total_ram_gb >= self.recommended_ram_gb
     }
 }

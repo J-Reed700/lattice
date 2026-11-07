@@ -713,6 +713,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
                 authoring: None,
                 claim_inventory: None,
                 pending_repair: None,
+                teaching_passes: None,
             }
         )
         .await
@@ -851,5 +852,76 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
         published_snapshot.modules[0].lessons[0].state,
         LearningCurriculumLessonState::Ready
     );
+    Ok(())
+}
+
+async fn shared_file_pool(directory: &std::path::Path) -> Result<SqlitePool> {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(directory.join("plan.sqlite"))
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .map_err(db)?;
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    Ok(pool)
+}
+
+#[tokio::test]
+async fn loading_a_seeded_plan_takes_no_write_lock() -> Result<()> {
+    let directory = tempfile::tempdir().unwrap();
+    let pool = shared_file_pool(directory.path()).await?;
+    let program = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let seeded = repo.plan(&program.summary.id).await?;
+    let writer = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let loaded = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        repo.plan(&program.summary.id),
+    )
+    .await
+    .expect("Loading a seeded plan must not wait for the write lock")?;
+    assert_eq!(
+        loaded.accepted_revision.unwrap().id,
+        seeded.accepted_revision.unwrap().id
+    );
+    writer.rollback().await.map_err(db)?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn concurrent_plan_loads_of_a_legacy_program_seed_one_accepted_revision() -> Result<()> {
+    let directory = tempfile::tempdir().unwrap();
+    let pool = shared_file_pool(directory.path()).await?;
+    let program = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let accepted_before: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'",
+    )
+    .bind(&program.summary.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(accepted_before, 0);
+    let (left, right) = tokio::join!(
+        repo.plan(&program.summary.id),
+        repo.plan(&program.summary.id)
+    );
+    assert_eq!(
+        left?.accepted_revision.unwrap().id,
+        right?.accepted_revision.unwrap().id
+    );
+    let accepted_after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'",
+    )
+    .bind(&program.summary.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(accepted_after, 1);
     Ok(())
 }

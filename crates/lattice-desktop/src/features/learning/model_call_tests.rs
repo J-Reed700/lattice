@@ -437,3 +437,81 @@ async fn a_servers_estimated_refusal_halves_the_room_until_it_is_accepted() -> R
     assert_eq!(sent(&never.sent), 0);
     Ok(())
 }
+
+/// The outline fixture behind a context window of `window` tokens.
+struct Windowed {
+    inner: crate::features::learning::lessons::course_generation_tests::Model,
+    window: usize,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Windowed {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        "Ornith-1.5-9B"
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.window
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// The error an outline for `goal` fails with on a model with `window` tokens.
+async fn outline_error(window: usize, goal: String) -> String {
+    use crate::features::learning::dto::LearningCourseDepth;
+    use crate::features::learning::lessons::course_generation_tests::{outline, request};
+    let llm = Windowed {
+        inner: outline(4, 3),
+        window,
+    };
+    let mut asked = request(LearningCourseDepth::Course);
+    asked.goal = goal;
+    let pool = crate::features::learning::tests::pool().await.unwrap();
+    crate::features::learning::service::generate(
+        &crate::features::learning::repository::LearningRepository::new(pool),
+        &crate::features::learning::outline_draft::DraftRunRegistry::new(),
+        &llm,
+        asked,
+        vec![],
+    )
+    .await
+    .err()
+    .map(|error| error.to_string())
+    .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_course_description_too_long_for_a_big_enough_window_says_to_shorten_it() {
+    let enough = crate::features::learning::model_requirements::outline()
+        .min_context_tokens
+        .unwrap();
+    let error = outline_error(enough, "Learn statistics. ".repeat(20_000)).await;
+
+    assert!(
+        error
+            .to_lowercase()
+            .contains("shorten the course description"),
+        "{error}"
+    );
+    assert!(
+        !error.contains("Raise your Learning model's context length"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_window_that_is_itself_too_small_still_says_to_raise_it() {
+    let error = outline_error(512, "Learn statistics".into()).await;
+
+    assert!(
+        error.contains("Raise your Learning model's context length in Settings"),
+        "{error}"
+    );
+}

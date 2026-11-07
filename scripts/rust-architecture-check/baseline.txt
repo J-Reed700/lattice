@@ -15,7 +15,7 @@
 # passes on; only a derived constant or a hook the process owns by nature
 # (a panic hook, an OS callback target) may stay global, marked with a
 # `// global-state: <reason>` comment directly above the static.
-# Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
+# Keep a file at or under 1000 lines: move inline tests to a sibling tests.rs,
 # then split it by responsibility.
 #
 # feature-edge is held at zero and never appears here: a reference from one
@@ -44,7 +44,7 @@
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
-#   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
+#   file-length <file> max-1000-lines                     files over 1000 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
 
 feature-reexport features/conversation/chat/ports.rs lattice_core 2

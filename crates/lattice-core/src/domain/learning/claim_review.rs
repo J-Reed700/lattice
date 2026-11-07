@@ -1,12 +1,15 @@
 //! Lesson claim review: every factual claim a lesson makes, what the machine
 //! and the user did about it, and the rules that decide what happens next.
 //!
-//! A claim is checked by the machine at most twice per piece of evidence it
-//! has seen; after that it waits for the user, who resolves it with an action
-//! that is recorded, undoable and never re-litigated by the machine unless the
-//! sentence or a cited source changes. A lesson with any unresolved claim is
-//! not ready. Pure types and rules, no I/O: the learning feature stores the
-//! ledger through `application::ports::claim_review::ClaimReviewStore`.
+//! A claim gets at most two machine repairs in its life, whatever evidence
+//! later checks bring; after that it waits for the user, who resolves it with
+//! an action that is recorded, undoable and never re-litigated by the machine
+//! unless the sentence or a cited source changes. A lesson with any unresolved
+//! claim is not ready. A claim the acceptance policy has decided
+//! ([`ClaimEvent::Stepped`]) is read from its latest decision instead, and
+//! the two-repair budget does not apply to it (acceptance design §2.9). Pure
+//! types and rules, no I/O: the learning feature stores the ledger through
+//! `application::ports::claim_review::ClaimReviewStore`.
 //!
 //! Storage forms: [`ClaimState`] and [`ClaimEvent`] are internally tagged
 //! (`state`, `kind`; the event tag is also the events table's `kind` column);
@@ -36,10 +39,12 @@ pub use trust::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::domain::learning::acceptance::{self, Goal, Step, Then};
 use crate::domain::provenance::{Bar, CountedSupport};
 
-/// Machine repairs a claim gets per piece of evidence: one correction, then
-/// one escalated rewrite that may remove the sentence (§3).
+/// Machine repairs a claim gets in its life, whatever evidence later checks
+/// bring: one correction, then one escalated rewrite that may remove the
+/// sentence (§3; claim classes design §3.2).
 pub const MACHINE_ATTEMPTS: u8 = 2;
 
 /// Lower-case hex SHA-256 of `text`: quote bindings and passage digests.
@@ -137,6 +142,63 @@ pub fn span_of(text: &str, quote: &str) -> Option<(usize, usize)> {
     }
 }
 
+/// What a statement needs to be checked for (claim classes design §3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Class {
+    /// Attributes something to a source or states a specific: checked
+    /// against its cited passage.
+    Sourced,
+    /// The lesson's own explanation: checked for consistency with its
+    /// section's passages and for falsity.
+    Reasoning,
+    /// Standard knowledge with no specific: checked closed-book.
+    Common,
+    /// Scenario, rubric, option or remark about the sources: not a claim.
+    Internal,
+}
+
+impl Class {
+    /// How much checking the class gets: the stricter, the more.
+    pub fn strictness(self) -> u8 {
+        match self {
+            Self::Sourced => 3,
+            Self::Reasoning => 2,
+            Self::Common => 1,
+            Self::Internal => 0,
+        }
+    }
+
+    /// Whether this class, decided `by` an authority, takes the place of the
+    /// one a statement holds: a stronger authority's always does, the same
+    /// authority's only when it is stricter, so nothing makes a statement's
+    /// check lighter but an authority above the one that gave its class. What
+    /// a check found always does: the policy moves a statement by evidence in
+    /// either direction, and the latest move holds.
+    pub fn prevails(self, by: ClassifiedBy, held: Option<(Class, ClassifiedBy)>) -> bool {
+        held.is_none_or(|(class, held_by)| {
+            by == ClassifiedBy::Evidence
+                || by > held_by
+                || (by == held_by && self.strictness() > class.strictness())
+        })
+    }
+}
+
+/// Who decided a statement's class, weakest first. The model only splits
+/// what the rule layer leaves, and a sentence the writer cited is Sourced
+/// whatever anyone says later, so a class is never replaced by a weaker
+/// authority's (claim classes design §3.1). What a check found outranks them
+/// all: a statement that changes class because of it is the policy's to move
+/// (acceptance design §2.9), either way, and its latest move holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifiedBy {
+    Model,
+    Rule,
+    Writer,
+    Evidence,
+}
+
 /// Why a claim is not verified, in honest words, one per case.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -148,11 +210,10 @@ pub enum VerdictKind {
     /// Retrieval found no passage for the claim's terms in any saved source.
     NoSource,
     /// The checker could not answer: the window, an unusable answer, or no
-    /// runtime for a code example.
+    /// runtime for a code example. A local check with this result teaches
+    /// nothing about the claim (claim classes design §3.2): see
+    /// [`CheckResult::is_unjudged`].
     CouldNotJudge,
-    /// The machine proposes the general-knowledge label; the user accepts it
-    /// or not (D1).
-    GeneralKnowledgeProposed,
     /// The Verifier audit disagrees with the local checker's "supported"
     /// (§14.5). The local side is always "verified": a human verdict the
     /// Verifier disputes is reopened instead ([`ReopenCause::VerifierDispute`]).
@@ -171,19 +232,23 @@ impl VerdictKind {
             Self::Contradicted => "contradicted",
             Self::NoSource => "no_source",
             Self::CouldNotJudge => "could_not_judge",
-            Self::GeneralKnowledgeProposed => "general_knowledge_proposed",
             Self::Disputed { .. } => "disputed",
             Self::InsufficientStanding { .. } => "insufficient_standing",
         }
     }
 
-    /// A failure the machine may rewrite: no passage supports the claim, or
-    /// one contradicts it. A claim whose support is below the bar is never
-    /// rewritten or removed for lack of standing (claim sources design
-    /// §10.4): research may look for a stronger source, then it waits for
-    /// the user.
+    /// A failure the machine answers, by a rewrite and then by taking the
+    /// claim's sentence out (claim classes design §3.2): no passage supports
+    /// the claim, one contradicts it, or none was found. A checker that gave
+    /// no answer is not a failure of the claim, and a claim whose support is
+    /// below the bar is never rewritten or removed for lack of standing
+    /// (claim sources design §10.4): research may look for a stronger
+    /// source, then it waits for the user.
     pub fn is_repairable(&self) -> bool {
-        matches!(self, Self::Unsupported | Self::Contradicted)
+        matches!(
+            self,
+            Self::Unsupported | Self::Contradicted | Self::NoSource
+        )
     }
 
     /// A passage, the local checker's or the Verifier's, says otherwise.
@@ -253,6 +318,11 @@ pub enum ClaimState {
         source_version_id: String,
         supporting_quote: String,
     },
+    /// A Reasoning statement its section's passages do not contradict and
+    /// that asserts no specific they lack (claim classes design §3.11), or a
+    /// statement the model sorted Internal that the falsity veto passed. Like
+    /// a verification it is the machine's, and the lesson may publish with it.
+    Consistent { at: i64 },
     /// The user's verdict.
     Confirmed {
         at: i64,
@@ -261,22 +331,41 @@ pub enum ClaimState {
     },
     /// The sentence or claim was deleted.
     Removed { at: i64, by: Actor },
-    /// The text changed; the successor claim owns the state. `None` is
-    /// "removed by the edit". `by`: who changed the text, the user's edit or
-    /// the machine's repair (claim sources design §11).
+    /// The text changed; the successor claim owns the state. `None` is the
+    /// user's edit that left no successor, "removed by the edit": the
+    /// machine's change with none is [`ClaimState::Removed`]. `by`: who
+    /// changed the text, the user's edit or the machine's repair (claim
+    /// sources design §11).
     Edited {
         at: i64,
         successor: Option<ClaimId>,
         #[serde(default)]
         by: Actor,
     },
-    /// The general-knowledge label, accepted (D1).
-    GeneralKnowledge { at: i64, by: Actor },
+    /// A Common statement the knowledge judge passed: standard knowledge,
+    /// checked against no source (claim classes design §3.11).
+    GeneralKnowledge { at: i64 },
     /// A closed claim reopened; it waits for the user like `Queued`.
     Reopened {
         cause: ReopenCause,
         previous: Box<ClaimState>,
     },
+    /// The machine did all it will do and could not settle the statement: the
+    /// lesson publishes with it, marked not verified. It is the machine's
+    /// word, never a verification and never the user's decision.
+    Unverified { at: i64, reason: UnverifiedReason },
+}
+
+/// Why a statement was published without being verified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnverifiedReason {
+    /// The check could not be completed.
+    Unchecked,
+    /// The lesson's sources do not state it.
+    Unsupported,
+    /// A source appears to disagree with it.
+    Contradicted,
 }
 
 impl ClaimState {
@@ -291,8 +380,8 @@ impl ClaimState {
     }
 
     /// Closed in one of the ways a lesson may publish with (§2.1): verified,
-    /// confirmed, removed, edited (the successor answers for it) or accepted
-    /// as general knowledge.
+    /// found consistent, passed as common knowledge, confirmed, removed,
+    /// edited (the successor answers for it) or published not verified.
     pub fn is_resolved(&self) -> bool {
         !self.is_machine_owned() && !self.awaits_user()
     }
@@ -303,11 +392,17 @@ impl ClaimState {
     pub fn is_settled(&self) -> bool {
         matches!(
             self,
-            Self::Confirmed { .. }
-                | Self::Removed { .. }
-                | Self::Edited { .. }
-                | Self::GeneralKnowledge { .. }
+            Self::Confirmed { .. } | Self::Removed { .. } | Self::Edited { .. }
         )
+    }
+
+    /// Holds a decision of the user's: settled, or reopened from one. A queued
+    /// claim, or a machine's check reopened, only waits for them.
+    pub fn is_the_users_decision(&self) -> bool {
+        match self {
+            Self::Reopened { previous, .. } => previous.is_the_users_decision(),
+            state => state.is_settled(),
+        }
     }
 
     /// The failure an Open or Queued claim carries.
@@ -411,23 +506,47 @@ pub enum CheckResult {
     },
     /// The claim stands, but not on what its section cites: none of the
     /// `cited` source versions supports it, and a passage of another
-    /// course source does (two-pass claim pages, course evidence index
-    /// §5.1). The claim is verified by the found passage; the lesson's
-    /// citation is repaired to it.
+    /// course source does, found on a page of the course (course evidence
+    /// index §5.1). The claim is verified by the found passage; the
+    /// lesson's citation is repaired to it.
     SupportedElsewhere {
         cited: Vec<String>,
         source_version_id: String,
         supporting_quote: String,
     },
+    /// A Reasoning statement the passages compared do not contradict, and
+    /// that asserts no specific they lack: it rests on no one passage (claim
+    /// classes design §3.1).
+    Consistent,
+    /// A Common statement every sample of the knowledge judge called true and
+    /// common: it rests on no passage at all (claim classes design §3.1).
+    KnownCommon,
+    /// Asked alone, the model's samples did not call the statement false: a
+    /// passed falsity veto, which is not the unanimity `KnownCommon` records
+    /// (acceptance design §4).
+    NotFalse,
     Failed {
         kind: VerdictKind,
     },
 }
 
 impl CheckResult {
+    /// The checker gave no answer: its reply could not be read, or the claim
+    /// and its passage did not fit its window. Nothing is learned about the
+    /// claim, which keeps its text and its attempts (claim classes design
+    /// §3.2).
+    pub fn is_unjudged(&self) -> bool {
+        matches!(
+            self,
+            Self::Failed {
+                kind: VerdictKind::CouldNotJudge
+            }
+        )
+    }
+
     /// The passage that entails the claim, as its source version and
     /// quotation: wherever it was found, the claim stands on it. `None` for a
-    /// failed check.
+    /// failed check, and for a pass that rests on no passage.
     pub fn support(&self) -> Option<(&str, &str)> {
         match self {
             Self::Supported {
@@ -439,7 +558,7 @@ impl CheckResult {
                 supporting_quote,
                 ..
             } => Some((source_version_id, supporting_quote)),
-            Self::Failed { .. } => None,
+            Self::Consistent | Self::KnownCommon | Self::NotFalse | Self::Failed { .. } => None,
         }
     }
 }
@@ -453,7 +572,6 @@ pub enum UserAction {
     Unconfirm,
     Edit { before: String, after: String },
     Remove,
-    GeneralKnowledge,
     ResearchWithHint { hint: String },
 }
 
@@ -470,10 +588,6 @@ pub enum RepairOutcome {
     /// The user edited the unit meanwhile; the result was discarded and the
     /// attempt is not charged (§9).
     SupersededByUser,
-    /// The machine did not rewrite the sentence: it also states something
-    /// verified or waiting for the user, so the claim waits for the user at
-    /// once, with no attempt charged (claim sources design §18.5).
-    NotAttempted { reason: String },
 }
 
 /// What the user attached as evidence (§5.4).
@@ -570,10 +684,10 @@ pub enum ClaimEvent {
         sources_added: Vec<String>,
         passages_found: usize,
         /// What the round cost per claim it researched, in milliseconds:
-        /// its time from start to result over its claims. Pass B weighs it
-        /// as the cost of researching one claim on the web (course evidence
-        /// index D5). `None` when no round ran, and on events written before
-        /// rounds were timed.
+        /// its time from start to result over its claims: the cost of
+        /// researching one claim on the web (course evidence index D5).
+        /// `None` when no round ran, and on events written before rounds were
+        /// timed.
         #[serde(default)]
         round_ms_per_claim: Option<u64>,
     },
@@ -583,6 +697,10 @@ pub enum ClaimEvent {
         before: String,
         after: Option<String>,
         outcome: RepairOutcome,
+        /// What the repair was asked to achieve (acceptance design §2.9);
+        /// `None` on repairs recorded before the policy named a goal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal: Option<Goal>,
     },
     Executed {
         observation_id: String,
@@ -603,6 +721,14 @@ pub enum ClaimEvent {
         /// lesson's sources to be cited.
         added_source: bool,
     },
+    /// The machine dropped the sentence's citation: the claim's parts are all
+    /// common and the passages it cited state none (acceptance design §2.1).
+    /// The claim's words are unchanged, so no repair attempt is charged; the
+    /// next check reads it without the citation.
+    CitationDropped {
+        /// The source versions the sentence cited.
+        cited: Vec<String>,
+    },
     UserAction {
         action: UserAction,
         note: Option<String>,
@@ -613,8 +739,9 @@ pub enum ClaimEvent {
         result: AttachOutcome,
     },
     /// Re-extraction found the claim's successor (`None`: no successor, the
-    /// sentence went with the edit). `by`: whose edit, the user's or the
-    /// machine's repair.
+    /// sentence went with the change). `by`: whose change, the user's edit
+    /// or the machine's repair; the machine's with no successor removes the
+    /// claim, as it does a claim on a sentence cut for another's failure.
     Superseded {
         successor: Option<ClaimId>,
         #[serde(default)]
@@ -631,6 +758,11 @@ pub enum ClaimEvent {
     Reopened {
         cause: ReopenCause,
     },
+    /// The statement's class and who decided it (claim classes design §3.1).
+    Classified {
+        class: Class,
+        by: ClassifiedBy,
+    },
     Undone {
         event_ordinal: u32,
     },
@@ -646,6 +778,27 @@ pub enum ClaimEvent {
         reason: String,
         cause: Option<TrustCause>,
     },
+    /// What the acceptance policy made of one machine step, recorded beside
+    /// the step's own event (acceptance design §2.9). A machine-owned claim's
+    /// state is read from its latest decision.
+    Stepped {
+        /// The policy's version, [`acceptance::STANDARD_POLICY`] for the
+        /// standard one. A claim is never continued under another.
+        policy: String,
+        step: Step,
+        outcome: acceptance::Outcome,
+        /// Where the policy sent the statement.
+        then: Then,
+        /// The step's own reason, which the claim shows while it is open.
+        reason: String,
+        /// A rewrite is reachable from `then`: the Open state's attempt left.
+        rewrite_ahead: bool,
+    },
+    /// The machine has done all it will do for the claim and the lesson
+    /// publishes with it, not verified.
+    PublishedUnverified {
+        reason: UnverifiedReason,
+    },
 }
 
 impl ClaimEvent {
@@ -658,14 +811,18 @@ impl ClaimEvent {
             Self::RepairAttempted { .. } => "repair_attempted",
             Self::Executed { .. } => "executed",
             Self::CitationRepaired { .. } => "citation_repaired",
+            Self::CitationDropped { .. } => "citation_dropped",
             Self::UserAction { .. } => "user_action",
             Self::EvidenceAttached { .. } => "evidence_attached",
             Self::Superseded { .. } => "superseded",
             Self::BornOfRepair { .. } => "born_of_repair",
             Self::Reopened { .. } => "reopened",
+            Self::Classified { .. } => "classified",
             Self::Undone { .. } => "undone",
             Self::Stopped { .. } => "stopped",
             Self::StandingAssessed { .. } => "standing_assessed",
+            Self::Stepped { .. } => "stepped",
+            Self::PublishedUnverified { .. } => "published_unverified",
         }
     }
 }

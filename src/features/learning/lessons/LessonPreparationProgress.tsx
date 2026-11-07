@@ -3,8 +3,10 @@ import { useEffect, useId, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, CirclePause, ClipboardCheck, LoaderCircle, Save } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
+import { WaitingNotice } from '@/components/WaitingNotice';
 import { useCancelLearningGenerationJob, useRetryLearningGenerationJob } from '@/features/learning/curriculum/useLearningPlan';
-import { PREPARATION_PHASES, preparationDuration, preparationState } from '@/features/learning/lessons/lessonPreparationActivity';
+import { PREPARATION_PHASES, callsLine, preparationDuration, preparationState, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { LessonPreparationCurrentStep } from '@/features/learning/lessons/LessonPreparationCurrentStep';
 import { claimsNeedYou, jobTallyLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { isWaitingForYou, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
@@ -12,13 +14,13 @@ import { useLessonClaimReview } from '@/features/learning/lessons/review/useLess
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/workspace/useLearningStudio';
 import type { LearningGenerationJob } from '@/lib/bindings';
+import { jobErrorToError } from '@/lib/errorHandling';
 
 const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Publish'];
 
-/** "Re-checking 81 claims against 72 new references"; the claim count once saved checks are compared. */
-function recheckLine(references: number, claims: number | null): string {
-  const what = claims == null ? 'claims' : `${claims} ${claims === 1 ? 'claim' : 'claims'}`;
-  return `Re-checking ${what} against ${references} new ${references === 1 ? 'reference' : 'references'}`;
+/** "Re-checking 81 claims against 72 new references". */
+function recheckLine(references: number, claims: number): string {
+  return `Re-checking ${claims} ${claims === 1 ? 'claim' : 'claims'} against ${references} new ${references === 1 ? 'reference' : 'references'}`;
 }
 
 /** A finished job's lessons are new course content: reload the course. */
@@ -103,19 +105,12 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
   const actionError = cancel.error ?? retry.error;
   const hasChecks = activity && activity.checksTotal > 0;
   const remaining = hasChecks ? Math.max(0, activity.checksTotal - activity.checksCompleted) : 0;
-  // A claim the source check sends back was still found in a source, so
-  // it stays in that count and the check shows as a part of it.
-  const found = hasChecks ? Math.max(0, activity.checksCompleted - activity.checksUnresolved) : 0;
-  const restoringChecks = active && activity?.phase === 'evidence' && activity.modelChecksTotal == null;
   const currentChecks = active && !queued && activity?.phase === 'evidence';
-  // After every claim's first check, unsupported claims are checked against
-  // further evidence pages. Those checks move claims between counts.
-  const deeper = (currentChecks && activity?.deeperEvidence) || null;
   // Research saved references; this step of the pass checks claims again against them.
-  const recheck = currentChecks && activity?.newReferences != null ? recheckLine(activity.newReferences, activity.modelChecksTotal) : null;
-  const bar = deeper
-    ? { label: `Unsupported claims checked against evidence page ${deeper.page}`, value: deeper.checked, max: deeper.claims, text: `${deeper.checked} of ${deeper.claims} checked on evidence page ${deeper.page}` }
-    : hasChecks ? { label: 'Claim checks this pass', value: activity.checksCompleted, max: activity.checksTotal, text: `${activity.checksCompleted} of ${activity.checksTotal} checked` } : null;
+  const recheck = currentChecks && activity?.newReferences != null ? recheckLine(activity.newReferences, activity.checksTotal) : null;
+  const bar = hasChecks ? { label: 'Claim checks this pass', value: activity.checksCompleted, max: activity.checksTotal, text: `${activity.checksCompleted} of ${activity.checksTotal} checked` } : null;
+  // The plan: what the statements were sorted into, and the calls made so far beside the most there can be.
+  const calls = activity ? callsLine(activity) : null;
   const showCurrentStep = active && !queued && Boolean(activity);
   const lesson = activity?.lessonTitle;
   const step = phase ? workflow[phase.group] : null;
@@ -139,13 +134,16 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
       </div>}
     </div>
     {!active && waitsForIndex && <p id={indexWaitId} className="mt-1 text-xs tabular-nums text-text-secondary">{waitsForIndex}</p>}
-    {currentChecks && !restoringChecks && bar && <div role="progressbar" aria-label={bar.label} aria-valuenow={bar.value} aria-valuemin={0} aria-valuemax={bar.max} aria-valuetext={`${bar.text}; ${activity.checksUnresolved} need attention; ${activity.checksReused} saved checks reused`} className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, bar.value / bar.max * 100)}%` }} /></div>}
+    {currentChecks && bar && <div role="progressbar" aria-label={bar.label} aria-valuenow={bar.value} aria-valuemin={0} aria-valuemax={bar.max} aria-valuetext={`${bar.text}${calls ? `; ${calls}` : ''}; ${activity.checksReused} saved checks reused`} className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-[width] motion-reduce:transition-none" style={{ width: `${Math.min(100, bar.value / bar.max * 100)}%` }} /></div>}
     {actionError && <p role="alert" className="mt-2 text-xs text-rose-700">{actionError.message}</p>}
-    {!active && !paused && <p role="alert" className="mt-2 text-sm leading-6 text-rose-700">{job?.error || error || 'Preparation stopped. Your draft and completed checkpoints remain saved.'}</p>}
+    {reconnecting && job?.error && <WaitingNotice code={job.errorCode} raw={job.error} />}
+    {!active && !paused && (job?.error
+      ? <PlainError error={jobErrorToError(job)} className="mt-2 text-sm leading-6 text-rose-700" />
+      : <p role="alert" className="mt-2 text-sm leading-6 text-rose-700">{error || 'Preparation stopped. Your draft and completed checkpoints remain saved.'}</p>)}
     {expanded && <div id={detailsId} className="mt-3 space-y-4 border-t border-accent/15 pt-3">
       {showCurrentStep && job ? <LessonPreparationCurrentStep job={job} now={now} /> : <div>
         <h4 className="text-base font-semibold text-text-primary">{paused ? phase ? `Paused at: ${phase.title}` : 'Saved work is available' : reconnecting ? 'Preparation interrupted' : queued ? 'Waiting for a preparation slot' : phase?.title ?? (active ? 'Starting lesson preparation' : 'Saved work is available')}</h4>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? job?.error : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual claims against saved references.'}</p>
+        <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? null : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual claims against saved references.'}</p>
         {reconnecting && phase && <p className="mt-2 text-xs leading-5 text-text-secondary">Last step: {phase.title}. When preparation resumes, it reuses completed checks and repeats unfinished work.</p>}
         {!paused && <p className="mt-2 wrap-break-word text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage || 'Saving the preparation request…'}</p>}
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
@@ -154,17 +152,14 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
       <ol aria-label="Preparation workflow" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {workflow.map((label, index) => <li key={label} aria-current={active && !queued && phase?.group === index ? 'step' : undefined} className={`rounded-lg border px-3 py-2 text-xs ${active && !queued && phase?.group === index ? 'border-accent/50 bg-accent/10 font-semibold text-text-primary' : 'border-border text-text-muted'}`}><span className="mr-1.5 tabular-nums opacity-60">{index + 1}</span>{label}</li>)}
       </ol>
-      {hasChecks && <div className="rounded-xl border border-border bg-background/70 p-4">
-        <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{recheck ?? (activity.phase === 'evidence' ? 'Claim checks this pass' : 'Last verification pass')} · Pass {activity.verificationPass}</span><span className="tabular-nums text-text-secondary">{restoringChecks ? `${activity.checksTotal} lesson claims` : `${activity.checksCompleted} / ${activity.checksTotal} checked`}</span></div>
-        {restoringChecks ? <p className="mt-3 text-sm leading-6 text-text-secondary" role="status">Looking for saved checks to reuse. The number needing model review will appear once all saved results have been compared with the current evidence.</p>
-          : activity.modelChecksTotal != null && currentChecks && <p className="mt-3 text-sm leading-6 text-text-secondary">{activity.checksReused} saved checks reused. {deeper ? `Every claim has had its first check. Checking ${deeper.claims} unsupported claims against evidence page ${deeper.page}; ${deeper.claims - deeper.checked} left.` : remaining === 0 ? 'Checking finished. Preparing the next step.' : `${remaining} of ${activity.modelChecksTotal} model checks remaining in this pass.`}</p>}
-        <dl className={`mt-3 grid grid-cols-2 gap-3 text-xs ${currentChecks ? 'sm:grid-cols-5' : 'sm:grid-cols-4'}`}>
-          <div><dt className="text-text-muted">Found in a source</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{found}</dd></div>
-          <div><dt className="text-text-muted">{currentChecks ? 'Need attention' : 'Needed attention in this pass'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksUnresolved}</dd></div>
-          <div><dt className="text-text-muted">Of those, sent back for stronger sources</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksSentBack}</dd></div>
-          {currentChecks && <div><dt className="text-text-muted">{deeper ? `Left on evidence page ${deeper.page}` : recheck ? 'Still to re-check' : 'Still to check'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{restoringChecks ? 'Calculating…' : deeper ? deeper.claims - deeper.checked : remaining}</dd></div>}
+      {activity && (activity.statements || calls || hasChecks) && <div aria-label="Statement checks" className="rounded-xl border border-border bg-background/70 p-4">
+        {hasChecks && <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{recheck ?? (currentChecks ? 'Claim checks this pass' : 'Last claim checks')}</span><span className="tabular-nums text-text-secondary">{activity.checksCompleted} / {activity.checksTotal} checked</span></div>}
+        {activity.statements && <p className="mt-3 text-sm leading-6 text-text-primary">{statementsLine(activity.statements)}</p>}
+        {calls && <p className="mt-1 text-sm tabular-nums text-text-secondary">{calls}</p>}
+        {hasChecks && <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+          {currentChecks && <div><dt className="text-text-muted">{recheck ? 'Still to re-check' : 'Still to check'}</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{remaining}</dd></div>}
           <div><dt className="text-text-muted">Saved checks reused</dt><dd className="mt-1 text-lg tabular-nums text-text-primary">{activity.checksReused}</dd></div>
-        </dl>
+        </dl>}
       </div>}
       {activity?.claims && <div className="rounded-xl border border-border bg-background/70 p-4 text-xs leading-5">
         <h4 className="font-semibold text-text-primary">Claims</h4>

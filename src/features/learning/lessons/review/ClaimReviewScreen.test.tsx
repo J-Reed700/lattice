@@ -37,7 +37,7 @@ function show(data: LessonClaimReviewDto | LessonClaimReviewDto[], onBack = vi.f
 
 const statement = () => document.querySelector<HTMLElement>('[data-claim-statement]');
 const confirmedFrom = (claims: ClaimReviewItemDto[], id: string) => claims.map((claim) => (claim.claimId === id ? { ...claim, state: { state: 'confirmed' as const, at: 2 } } : claim));
-const counts = (queued: number) => ({ verified: 12, confirmed: 0, generalKnowledge: 0, queued, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 });
+const counts = (queued: number) => ({ verified: 12, confirmed: 0, queued, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 });
 
 describe('Claim review screen', () => {
   beforeEach(() => {
@@ -66,6 +66,32 @@ describe('Claim review screen', () => {
     await waitFor(() => expect(statement()).toHaveFocus());
   });
 
+  it('lists what the checks took out of the lesson once, a sentence several statements stood on naming each of them', async () => {
+    const sentence = 'Tesseract is an OCR engine written in 2019 that reads pixels into text.';
+    const gone = (claimId: string, statement: string, overrides: Partial<ClaimReviewItemDto> = {}) => ({
+      ...unsupportedItem(1), claimId, state: { state: 'removed' as const, at: 5, by: 'machine' as const }, availableActions: [],
+      verdictKind: null, reason: null, location: { unitIndex: 2, unitKind: 'block' as const, unitTitle: '', field: 'body', quote: sentence, span: null },
+      presentation: { statement, sentence, contextBefore: '', contextAfter: '', place: '' }, ...overrides,
+    });
+    show(review([
+      gone('a', 'Tesseract was written in 2019.', { verdictKind: { kind: 'unsupported' }, reason: 'No passage gives the year.' }),
+      gone('b', 'Tesseract reads pixels into text.'),
+    ], { state: 'ready', counts: counts(0) }));
+
+    const row = await screen.findByRole('button', { name: /Taken out of the lesson/ });
+    expect(row).toHaveTextContent('2 statements');
+    // They wait for no one: nothing is left to resolve, and they are not among the resolved.
+    expect(screen.queryByRole('button', { name: /Show resolved/ })).not.toBeInTheDocument();
+    await userEvent.click(row);
+    const list = await screen.findByRole('region', { name: 'Statements taken out of the lesson' });
+    expect(within(list).getAllByText(sentence)).toHaveLength(1);
+    expect(within(list).getByText('Tesseract was written in 2019.')).toBeVisible();
+    expect(within(list).getByText('Not stated by the passages compared · No passage gives the year.')).toBeVisible();
+    expect(within(list).getByText('Tesseract reads pixels into text.')).toBeVisible();
+    expect(within(list).getByText('Taken out with the sentence or section it stood in')).toBeVisible();
+    expect(within(list).queryByRole('button')).not.toBeInTheDocument();
+  });
+
   it('shows the checked statement in plain text inside its sentence, never markdown or citation markers', async () => {
     const item = waitingOnSource(1);
     item.location = { ...item.location, quote: 'The **eastern** `population` migrates *up to* 3,000 miles [5].' };
@@ -85,7 +111,6 @@ describe('Claim review screen', () => {
       { ...unsupportedItem(20), support: null, tried: tried(), presentation: waitingOnSource(20).presentation, alsoSupported: [] },
       { ...unsupportedItem(21), verdictKind: { kind: 'no_source' }, support: null, tried: tried(), presentation: waitingOnSource(21).presentation, alsoSupported: [] },
       { ...waitingOnSource(22), verdictKind: { kind: 'contradicted' }, support: support({ role: 'contradicts' }) },
-      { ...waitingOnSource(23), verdictKind: { kind: 'general_knowledge_proposed' }, support: null },
       { ...waitingOnSource(24), verdictKind: { kind: 'could_not_judge' } },
       { ...waitingOnSource(25), verdictKind: { kind: 'disputed', verifier: { kind: 'unsupported' } } },
     ];
@@ -202,14 +227,6 @@ describe('Claim review screen', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Remove it' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('This claim changed; reload and act again.');
     await waitFor(() => expect(api.review).toHaveBeenCalledTimes(2));
-  });
-
-  it('accepts every common-knowledge proposal of the no-source group in one action', async () => {
-    const proposals = [1, 2].map((index) => ({ ...waitingOnSource(index), support: null, verdictKind: { kind: 'general_knowledge_proposed' as const } }));
-    show(review(proposals));
-    api.resolve.mockResolvedValue(ok({ revision: 8 }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Accept all 2 common-knowledge proposals' }));
-    await waitFor(() => expect(api.resolve).toHaveBeenCalledWith(expect.objectContaining({ claimId: 'claim-1', action: { action: 'accept_all_general_knowledge' } })));
   });
 
   it('keeps the first and the independent check under More › History', async () => {

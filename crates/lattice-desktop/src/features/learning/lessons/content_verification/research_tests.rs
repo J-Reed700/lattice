@@ -16,11 +16,10 @@ use lattice_core::application::contracts::web::{
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
 pub(in crate::features::learning) const CAPTURE: &str =
-    "Random assignment reduces confounding in comparisons between treatment groups.";
+    "Random assignment reduces confounding in comparisons between treatment groups. A study that assigns participants to its groups by chance spreads every characteristic it did not measure across the groups in the same way, so the difference it finds afterward is not owed to who was placed where. Researchers give this as the reason a randomised comparison can support a causal claim where an observational one cannot. The method does not remove chance variation, which shrinks as the groups grow, and it does not repair a measurement that was biased or a trial in which many participants left. Those need their own safeguards, such as blinding the people who record the outcome and following up everyone who was assigned. Random assignment is also distinct from random sampling: sampling decides who is studied, assignment decides who receives which treatment, and the two protect different conclusions. Reports of trials state how the sequence of assignments was generated so a reader can judge whether the groups were comparable at the start.";
 pub(in crate::features::learning) struct ResearchWeb(
     MockWebService,
     Arc<Mutex<Vec<WebSearchInput>>>,
-    Arc<Mutex<Vec<String>>>,
 );
 #[async_trait::async_trait]
 impl WebServiceTrait for ResearchWeb {
@@ -29,7 +28,6 @@ impl WebServiceTrait for ResearchWeb {
         self.0.search_web(input).await
     }
     async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
-        self.2.lock().unwrap().push(url.to_owned());
         self.0.fetch_url_content(url).await
     }
     async fn fetch_url_content(&self, _: &str) -> Result<FetchUrlContentOutput> {
@@ -42,9 +40,6 @@ impl WebServiceTrait for ResearchWeb {
 impl ResearchWeb {
     pub(in crate::features::learning) fn recorded_inputs(&self) -> Vec<WebSearchInput> {
         self.1.lock().unwrap().clone()
-    }
-    fn fetched(&self) -> Vec<String> {
-        self.2.lock().unwrap().clone()
     }
 }
 pub(in crate::features::learning) fn web(truncated: bool) -> Arc<ResearchWeb> {
@@ -73,11 +68,7 @@ fn web_capture(truncated: bool, url: &str, content: &str) -> Arc<ResearchWeb> {
             read_via: Default::default(),
         },
     );
-    Arc::new(ResearchWeb(
-        web,
-        Arc::new(Mutex::new(Vec::new())),
-        Arc::new(Mutex::new(Vec::new())),
-    ))
+    Arc::new(ResearchWeb(web, Arc::new(Mutex::new(Vec::new()))))
 }
 fn gap() -> Finding {
     Finding {
@@ -89,7 +80,10 @@ fn gap() -> Finding {
         evidence: vec![],
         supporting_quote: None,
         resolution: None,
+        claim_id: None,
         two_pass: Default::default(),
+        label: None,
+        class: None,
         trust: None,
     }
 }
@@ -120,6 +114,31 @@ fn found(results: Vec<WebSearchResult>) -> Vec<web_research::Candidate> {
 
 pub(in crate::features::learning) fn selection(indices: &[usize]) -> String {
     json!({"decisions":indices.iter().map(|i|json!({"id":format!("result-{i}"),"useForGap":true,"reason":"Directly relevant primary reference for the requested concept."})).collect::<Vec<_>>()}).to_string()
+}
+
+#[test]
+fn a_long_reason_for_a_reference_is_read_not_refused() {
+    let results = vec![WebSearchResult {
+        title: "Relevant reference".into(),
+        url: "https://example.org/reference".into(),
+        snippet: "Discovery metadata only".into(),
+        published_date: None,
+        source: None,
+    }];
+    let reason = "It states the scoped point in its own words. ".repeat(20);
+    let raw = json!({"decisions":[{"id":"result-0","useForGap":true,"reason":reason}]}).to_string();
+    let selected = super::selection(&raw, &results);
+    assert!(selected.is_ok(), "{:?}", selected.as_ref().err());
+    assert_eq!(selected.unwrap()[0].1, reason.trim());
+}
+
+#[test]
+fn the_selection_schema_bounds_no_text_but_a_blank() {
+    let ids = [json!("result-0"), json!("result-1")];
+    let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+        &selection_schema(&ids),
+    );
+    assert!(bounds.is_empty(), "{bounds:?}");
 }
 
 #[tokio::test]
@@ -509,10 +528,78 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
     .await
 }
 
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_hint_with_no_terms_besides_its_sites_is_not_searched_and_the_log_says_so() -> Result<()>
+{
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _logs = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
+
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web(false)),
+        async {
+            let llm = ScriptedModel {
+                outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
+                prompts: Mutex::new(vec![]),
+            };
+            let hints = [(0, "site:docs.python.org".to_owned())];
+            let outcome =
+                expand(&llm, &references, &[gap()], &hints, &ClaimChecks::default()).await?;
+            assert!(
+                matches!(outcome, Expansion::Exhausted(..)),
+                "a hint that is not a search adds none"
+            );
+            assert_eq!(llm.prompts.lock().unwrap().len(), 1, "only the planner ran");
+            let logs = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+            assert!(
+                logs.contains(
+                    "A research hint is not a search: no terms are left once any site: operators are lifted out"
+                ),
+                "{logs}"
+            );
+            assert!(!logs.contains("3 to 240"), "{logs}");
+            Ok(())
+        },
+    )
+    .await
+}
+
 #[tokio::test]
 async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparisons() -> Result<()> {
     const SECOND_CAPTURE: &str =
-        "Allocation concealment prevents foreknowledge of treatment assignments.";
+        "Allocation concealment prevents foreknowledge of treatment assignments. The people enrolling participants in a trial must not be able to see or guess which group the next participant will join, because a recruiter who can foresee the assignment may steer sicker or healthier people toward one group, deliberately or without noticing. Concealment is kept until the moment a participant is irrevocably enrolled, for example by sealed opaque envelopes, a central telephone service or a pharmacy that prepares identical containers. It differs from blinding, which hides the assignment from participants and assessors after enrolment and protects the measurement of outcomes rather than the make-up of the groups. A trial can conceal its allocation even when blinding is impossible, as in a surgical comparison, and reports of trials describe the method of concealment separately from the method that generated the sequence. Where concealment fails, studies tend to exaggerate the benefit of the treatment under test.";
     struct ResearchRounds {
         first: Arc<ResearchWeb>,
         second: Arc<ResearchWeb>,
@@ -579,12 +666,15 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
                 let mut plans = self.plans.lock().unwrap();
                 *plans += 1;
                 assert!(
-                    *plans <= 2,
-                    "Research should finish once both gaps are resolved"
+                    *plans <= 1,
+                    "A claim is researched once: one round serves every gap"
                 );
                 return Ok(
-                    json!({"needs":[{"gap":0,"kind":"web","query":if *plans == 1 {"random assignment confounding official guidance"} else {"allocation concealment official guidance"}}]})
-                        .to_string(),
+                    json!({"needs":[
+                        {"gap":0,"kind":"web","query":"random assignment confounding official guidance"},
+                        {"gap":1,"kind":"web","query":"allocation concealment official guidance"}
+                    ]})
+                    .to_string(),
                 );
             }
             if prompt.starts_with("Select trustworthy references") {
@@ -623,7 +713,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     let candidate = json!({"blocks":[{"kind":"explanation","body":original},{"kind":"explanation","body":CAPTURE},{"kind":"explanation","body":SECOND_CAPTURE}],"questions":[]});
     let references = ReferenceCollection::lexical(&sources)?;
     let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
-    let (_, report) = run(
+    let (_, report, owned) = run(
         pool,
         program.summary.id,
         program.summary.goal,
@@ -644,7 +734,9 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     .await?;
     assert!(report.issues.is_empty());
     assert_eq!(report.sources.len(), 3);
-    assert_eq!(*llm.plans.lock().unwrap(), 2);
+    assert_eq!(owned.len(), sources.len() + 2);
+    assert!(sources.iter().all(|source| owned.contains(&source.id)));
+    assert_eq!(*llm.plans.lock().unwrap(), 1);
     let checks = llm.claims.lock().unwrap();
     assert_eq!(
         checks
@@ -653,17 +745,19 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             .count(),
         1
     );
-    // The missing claim had no retrieval hits on the first pass, so its first
-    // model judgment happens only after research supplies a complete capture;
-    // Later automatic research is scoped to the remaining failed claim. Even
-    // when its page shares terminology with an already supported claim, that
-    // completed comparison stays reusable.
-    assert!(
-        !checks
-            .iter()
-            .any(|(round, claim)| *round == 2 && claim == CAPTURE),
-        "The second research round must not reopen a claim resolved by the first round: {checks:?}"
-    );
+    // The two missing claims had no retrieval hits on the first pass, so
+    // their first model judgments happen only after research supplies a
+    // complete capture of each, and the expanded collection judges each once.
+    for claim in [CAPTURE, SECOND_CAPTURE] {
+        assert_eq!(
+            checks
+                .iter()
+                .filter(|(round, checked)| *round == 1 && checked == claim)
+                .count(),
+            1,
+            "{checks:?}"
+        );
+    }
     for finding in &report.findings {
         assert_eq!(finding.verdict, ClaimVerdict::Supported);
         assert!(finding
@@ -674,54 +768,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     Ok(())
 }
 
-fn spec_finding(statement: &str, subject: &str, owner_hint: &str) -> Finding {
-    use crate::features::learning::lessons::content_verification::provenance_gate::FindingTrust;
-    use lattice_core::domain::provenance::*;
-    Finding {
-        unit: 0,
-        quote: statement.into(),
-        statement: statement.into(),
-        verdict: ClaimVerdict::Supported,
-        reason: "Supported".into(),
-        evidence: vec![],
-        supporting_quote: None,
-        resolution: None,
-        two_pass: Default::default(),
-        trust: Some(Box::new(FindingTrust {
-            profile: ClaimProfile {
-                kind: ClaimKind::Specification,
-                subject: Some(ClaimSubject {
-                    name: subject.into(),
-                    kind: SubjectKind::Product,
-                    aliases: vec![],
-                    classes: vec![],
-                    key: SubjectKey::of(subject),
-                }),
-                temporal: TemporalScope::Current,
-                measurement_origin: None,
-                attributed_to: None,
-                reasons: vec![],
-                policy: "test".into(),
-                model: "test".into(),
-            },
-            supports: vec![],
-            contrary: vec![],
-            decision: Decision::Insufficient {
-                bar: Bar::Primary,
-                have: vec![],
-                missing: Missing::NoPrimaryForSubject,
-                next: vec![NextStep::SearchOwner {
-                    origin_hints: vec![owner_hint.into()],
-                }],
-                reasons: vec![],
-            },
-            available: None,
-        })),
-    }
-}
-
 #[tokio::test]
-async fn specification_gap_with_known_owner_issues_official_docs_search_need() -> Result<()> {
+async fn a_planned_official_docs_need_is_searched_with_its_subject_and_site() -> Result<()> {
     let pool = crate::features::learning::tests::pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let mut program = crate::features::learning::tests::fixture();
@@ -732,7 +780,7 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
 
     let target_url = "https://learn.microsoft.com/en-us/dotnet/api/system.threading.asynclocal-1";
     let second_url = "https://learn.microsoft.com/en-us/dotnet/fundamentals/runtime-libraries/system-threading-asynclocal";
-    let capture = "AsyncLocal<T> represents ambient data local to an asynchronous flow.";
+    let capture = "AsyncLocal<T> represents ambient data local to an asynchronous flow. A value stored in an AsyncLocal belongs to the logical flow of control that set it, not to any one thread, so code running after an await sees the value its caller set even when a different thread resumes it. The runtime copies the value into each flow that the setting code starts, which is why a change made in a child task is not seen by its parent, while a change made before the child starts is seen by the child. Libraries use this to carry request identifiers, culture settings and logging scopes through layers of asynchronous calls without passing them as arguments. Because the copy is made when work is queued, a long-lived background loop started early keeps the values it was given and does not see later changes. A notification callback can be supplied to observe each change, whether the value was set directly or replaced when a flow moved to another thread, which helps to diagnose a value that appears to leak.";
     let web = web_capture(false, target_url, capture);
     web.0.set_search_results(vec![
         WebSearchResult {
@@ -764,14 +812,16 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
             read_via: Default::default(),
         },
     );
-    let finding = spec_finding("AsyncLocal in .NET", ".NET", "learn.microsoft.com");
+    let finding = Finding {
+        quote: "AsyncLocal in .NET".into(),
+        statement: "AsyncLocal in .NET".into(),
+        ..gap()
+    };
 
     let llm = ScriptedModel {
         outputs: Mutex::new(
             [
-                // The subject comes from the gap the need serves; the host
-                // only because the planner set it.
-                json!({"needs":[{"gap":0,"query":"AsyncLocal value flow across await","kind":"official_docs","site":"learn.microsoft.com"}]}).to_string(),
+                json!({"needs":[{"gap":0,"query":"AsyncLocal value flow across await","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
                 selection(&[0]),
                 json!({"needs":[{"gap":0,"query":"AsyncLocal flow","kind":"official_docs","subject":".NET","site":"learn.microsoft.com"}]}).to_string(),
                 selection(&[0]),
@@ -812,162 +862,6 @@ async fn specification_gap_with_known_owner_issues_official_docs_search_need() -
         },
     )
     .await
-}
-
-/// A supported finding whose gate asks only to follow `urls`.
-fn citing_finding(urls: &[&str]) -> Finding {
-    use lattice_core::domain::provenance::{Decision, NextStep};
-    let mut finding = spec_finding(CAPTURE, "Random assignment", "example.org");
-    if let Some(Decision::Insufficient { next, .. }) =
-        finding.trust.as_mut().map(|trust| &mut trust.decision)
-    {
-        *next = urls
-            .iter()
-            .map(|url| NextStep::FollowCitation {
-                url: (*url).into(),
-                from: "citing-version".into(),
-            })
-            .collect();
-    }
-    finding
-}
-
-#[tokio::test]
-async fn a_link_to_a_place_in_a_saved_page_never_fetches_it_again() -> Result<()> {
-    let pool = crate::features::learning::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let mut program = crate::features::learning::tests::fixture();
-    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
-    repo.create(&program).await?;
-    let sources = repo.verification_sources(&program.summary.id).await?;
-    let references = ReferenceCollection::lexical(&sources)?;
-    let web = web(false);
-    let empty_plan = || json!({"needs":[]}).to_string();
-    let llm = ScriptedModel {
-        outputs: Mutex::new([empty_plan(), empty_plan()].into()),
-        prompts: Mutex::new(vec![]),
-    };
-    run(
-        pool,
-        program.summary.id,
-        program.summary.goal,
-        Some(web.clone()),
-        async {
-            let page = "https://example.org/research";
-            let first = [citing_finding(&[page])];
-            let expanded = expand(&llm, &references, &first, &[], &ClaimChecks::default())
-                .await?
-                .saved()
-                .expect("the cited page is saved");
-            assert_eq!(web.fetched(), vec![page.to_owned()]);
-            let places = [citing_finding(&[
-                "https://example.org/research#why-models-need-tools",
-                "https://example.org/research#exercises",
-            ])];
-            let again = expand(&llm, &expanded, &places, &[], &ClaimChecks::default()).await?;
-            assert!(again.saved().is_none(), "nothing new to save");
-            assert_eq!(
-                web.fetched(),
-                vec![page.to_owned()],
-                "links to places in the saved page are that page"
-            );
-            Ok(())
-        },
-    )
-    .await
-}
-
-#[tokio::test]
-async fn a_search_for_an_independent_source_never_offers_the_supports_own_origin() -> Result<()> {
-    use lattice_core::domain::provenance::{
-        AddedBy, ClusterId, Decision, NextStep, PassageKind, SourceDates, Support,
-        TemporalValidity, Trust, TrustLevel,
-    };
-    let pool = crate::features::learning::tests::pool().await?;
-    let repo = LearningRepository::new(pool.clone());
-    let mut program = crate::features::learning::tests::fixture();
-    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
-    repo.create(&program).await?;
-    // The claim's one support is a blog post on example.com.
-    let blog = crate::features::learning::dto::LearningSourceDto {
-        id: "blog-version".into(),
-        title: "Strict mode explained".into(),
-        url: Some("https://blog.example.com/strict-mode".into()),
-        excerpt: "Strict mode makes the model follow the schema.".into(),
-        acquired_at: 0,
-    };
-    let references = ReferenceCollection::lexical(std::slice::from_ref(&blog))?;
-    let mut finding = spec_finding(
-        "Strict mode follows the schema.",
-        "OpenAI API",
-        "openai.com",
-    );
-    if let Some(trust) = finding.trust.as_mut() {
-        trust.supports = vec![Support {
-            source_version_id: blog.id.clone(),
-            origin_cluster: ClusterId(blog.id.clone()),
-            trust: Trust {
-                level: TrustLevel::Established,
-                reasons: vec![],
-                override_: None,
-            },
-            dates: SourceDates::default(),
-            passage: PassageKind::Direct,
-            temporal: TemporalValidity::Valid,
-            added_by: AddedBy::Research,
-            cited_urls: vec![],
-            owner_hints: vec![],
-        }];
-        if let Decision::Insufficient { next, .. } = &mut trust.decision {
-            *next = vec![NextStep::SearchIndependent];
-        }
-    }
-    let web = web(false);
-    let result = |url: &str| WebSearchResult {
-        title: "Strict mode".into(),
-        url: url.into(),
-        snippet: String::new(),
-        published_date: None,
-        source: Some("duckduckgo".into()),
-    };
-    web.0.set_search_results(vec![
-        result("https://docs.example.com/strict-mode"),
-        result("https://independent.org/structured-outputs-review"),
-    ]);
-    let llm = ScriptedModel {
-        outputs: Mutex::new(
-            [
-                json!({"needs":[{"gap":0,"query":"structured outputs strict mode review","kind":"web"}]}).to_string(),
-                selection(&[]),
-            ]
-            .into(),
-        ),
-        prompts: Mutex::new(vec![]),
-    };
-    run(
-        pool,
-        program.summary.id,
-        program.summary.goal,
-        Some(web.clone()),
-        async {
-            expand(&llm, &references, &[finding], &[], &ClaimChecks::default()).await?;
-            Ok::<_, AppError>(())
-        },
-    )
-    .await?;
-    let prompts = llm.prompts.lock().unwrap();
-    assert!(
-        prompts[0].contains("\"independentOf\":[\"example.com\"]"),
-        "the planner is told which origins to avoid"
-    );
-    let offered = &prompts[1];
-    assert!(offered.contains("independent.org"));
-    assert!(
-        !offered.contains("docs.example.com"),
-        "the supports' own origin is dropped before selection"
-    );
-    assert!(offered.contains("\"needKind\":\"web\""));
-    Ok(())
 }
 
 /// Counts as a tokenizer does on notation and formulas: plain text at four
@@ -1189,10 +1083,10 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
                     &ClaimChecks::default(),
                 )
                 .await?;
-                assert!(outcome.per_claim().is_some(), "the round is still timed");
                 let Expansion::Unchanged(searched) = outcome else {
                     panic!("research adds evidence; it never stops the lesson");
                 };
+                assert!(searched.per_claim.is_some(), "the round is still timed");
                 assert!(searched.sources_added.is_empty());
             }
             assert_eq!(
@@ -1203,4 +1097,280 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
         },
     )
     .await
+}
+
+/// The pages `serving` offers, each a long page of its own.
+fn serving(pages: &[(&str, &str)]) -> Arc<ResearchWeb> {
+    let web = web_capture(false, pages[0].0, CAPTURE);
+    web.0.set_search_results(
+        pages
+            .iter()
+            .map(|(url, title)| WebSearchResult {
+                title: (*title).into(),
+                url: (*url).into(),
+                snippet: "SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE".into(),
+                published_date: None,
+                source: None,
+            })
+            .collect(),
+    );
+    for (index, (url, title)) in pages.iter().enumerate() {
+        web.0.set_url_content(
+            *url,
+            FetchUrlContentOutput {
+                url: (*url).into(),
+                title: Some((*title).into()),
+                content: format!("{CAPTURE} Page {index}."),
+                content_truncated: false,
+                word_count: 170,
+                fetch_time_ms: 1.,
+                content_type: None,
+                from_cache: false,
+                read_via: Default::default(),
+            },
+        );
+    }
+    web
+}
+
+#[test]
+fn a_round_fetches_at_most_two_pages_for_a_statement_and_twice_the_statements_in_all() {
+    assert_eq!(
+        Pages::of(Gaps::Claims, 7).announced(7),
+        "Looking up 7 statements on the web, at most 14 pages"
+    );
+    assert_eq!(
+        Pages::of(Gaps::Claims, 1).announced(1),
+        "Looking up 1 statement on the web, at most 2 pages"
+    );
+    let mut pages = Pages::of(Gaps::Claims, 3);
+    // The selector's first choice for a statement, then one page on its
+    // owner's site, then no more.
+    assert!(pages.allows(Some(0), false));
+    pages.take(Some(0), false);
+    assert!(!pages.allows(Some(0), false), "one general page");
+    assert!(pages.allows(Some(0), true));
+    pages.take(Some(0), true);
+    assert!(!pages.allows(Some(0), true) && !pages.allows(Some(0), false));
+    // Another statement's pages are its own.
+    assert!(pages.allows(Some(1), false));
+    // A hint's search stands behind no statement: only the total holds it.
+    pages.take(None, false);
+    assert!(pages.allows(None, false));
+    pages.take(Some(1), false);
+    pages.take(Some(1), true);
+    pages.take(Some(2), false);
+    assert!(!pages.allows(None, false), "six pages in all");
+    assert!(!pages.allows(Some(2), true));
+    // A lesson's topics have no statement and no bound.
+    let topics = Pages::of(Gaps::Topics, 9);
+    assert!(topics.allows(Some(4), false) && topics.allows(None, true));
+}
+
+#[tokio::test]
+async fn a_round_fetches_the_selectors_first_choice_and_one_page_on_the_owners_site_and_no_more(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let web = serving(&[
+        ("https://docs.example.org/guide", "Random assignment guide"),
+        (
+            "https://docs.example.org/reference",
+            "Random assignment reference",
+        ),
+        ("https://docs.example.org/notes", "Random assignment notes"),
+        (
+            "https://other.example.net/post",
+            "A post about random assignment",
+        ),
+        ("https://example.org/login", "Sign in"),
+    ]);
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                json!({"needs":[
+                    {"gap":0,"query":"random assignment confounding","kind":"web"},
+                    {"gap":0,"query":"random assignment guidance","kind":"official_docs","subject":"Example","site":"docs.example.org"}
+                ]})
+                .to_string(),
+                selection(&[0, 1, 2]),
+                selection(&[0, 1]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web),
+        async {
+            let outcome = expand(&llm, &references, &[gap()], &[], &ClaimChecks::default()).await?;
+            let Expansion::Saved(expanded, searched) = outcome else {
+                panic!("the pages are sources");
+            };
+            // The selector chose three pages for the statement's general
+            // search and two for its owner-site search; one of each is read.
+            assert_eq!(searched.fetched, 2);
+            assert_eq!(searched.sources_added.len(), 2);
+            assert_eq!(expanded.sources.len(), sources.len() + 2);
+            // A login page is never offered to the selector.
+            let prompts = llm.prompts.lock().unwrap();
+            assert!(prompts.iter().all(|prompt| !prompt.contains("Sign in")));
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_fetched_page_that_is_not_a_source_counts_against_the_pages_and_is_not_saved(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let web = web_capture(
+        false,
+        "https://example.org/research",
+        "Please sign in to continue to the library.",
+    );
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web),
+        async {
+            let outcome = expand(
+                &model(),
+                &references,
+                &[gap()],
+                &[],
+                &ClaimChecks::default(),
+            )
+            .await?;
+            let Expansion::Unchanged(searched) = outcome else {
+                panic!("a page that is not a source adds nothing");
+            };
+            assert_eq!(searched.fetched, 1);
+            assert!(searched.sources_added.is_empty());
+            assert_eq!(
+                repo.verification_sources(&program.summary.id).await?.len(),
+                sources.len()
+            );
+            Ok(())
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_event() -> Result<()>
+{
+    use lattice_core::domain::learning::claim_review::{
+        ClaimEvent, ClaimId, ClaimLocation, UnitKind,
+    };
+    const CLAIM: &str = "Mineral alpha shows property beta under pressure.";
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = crate::features::learning::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let statements = [CLAIM.to_owned(), format!("{CLAIM} It holds in the lab.")];
+    let findings: Vec<Finding> = statements
+        .iter()
+        .map(|statement| Finding {
+            unit: 0,
+            quote: statement.clone(),
+            statement: statement.clone(),
+            verdict: ClaimVerdict::Unsupported,
+            reason: "No passage states this.".into(),
+            evidence: vec![],
+            supporting_quote: None,
+            resolution: None,
+            trust: None,
+            claim_id: None,
+            two_pass: Default::default(),
+            label: None,
+            class: None,
+        })
+        .collect();
+    // A planner that finds nothing public to search: the round ends
+    // exhausted, and is timed all the same.
+    let llm = ScriptedModel {
+        outputs: Mutex::new([json!({"needs":[]}).to_string()].into()),
+        prompts: Mutex::new(vec![]),
+    };
+    let expansion = run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(web(false)),
+        expand(&llm, &references, &findings, &[], &ClaimChecks::default()),
+    )
+    .await?;
+    let Expansion::Exhausted(_, searched) = expansion else {
+        panic!("an empty plan exhausts the round");
+    };
+    let per_claim = searched.per_claim.expect("a round that ran is timed");
+    let ms = u64::try_from(per_claim.as_millis()).unwrap();
+
+    let mut ledger = claim_ledger::ClaimLedger::open(&llm, "{}").await?;
+    let ids: Vec<ClaimId> = (0..statements.len())
+        .map(|index| ClaimId(format!("claim-{index}")))
+        .collect();
+    for (id, statement) in ids.iter().zip(&statements) {
+        ledger
+            .append(
+                id,
+                ClaimEvent::Extracted {
+                    location: ClaimLocation::locate(
+                        0,
+                        UnitKind::Block,
+                        "body",
+                        statement,
+                        statement,
+                    ),
+                    statement: statement.clone(),
+                },
+            )
+            .await?;
+    }
+    let round: Vec<(ClaimId, usize)> = ids.iter().map(|id| (id.clone(), 0)).collect();
+    ledger
+        .record_research(
+            &lattice_core::domain::learning::acceptance::StandardPolicy::new(),
+            &round,
+            &searched,
+            false,
+        )
+        .await?;
+    // Every claim the round researched carries its share of the round.
+    for id in &ids {
+        let costs: Vec<Option<u64>> = ledger
+            .entry(id)
+            .unwrap()
+            .events()
+            .iter()
+            .filter_map(|record| match &record.event {
+                ClaimEvent::Researched {
+                    round_ms_per_claim, ..
+                } => Some(*round_ms_per_claim),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(costs, vec![Some(ms)]);
+    }
+    Ok(())
 }

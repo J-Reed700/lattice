@@ -134,6 +134,37 @@ fn a_bold_line_at_body_size_is_still_a_heading() {
     assert!(rendered.contains("### Bold Subheading"), "{rendered}");
 }
 
+/// A typeface whose regular weight reads as bold set a whole article's body
+/// "in bold": FSMe declares stems of 184 for its regular weight and 196 for
+/// its bold, both past the bold-stem bar, and every short line of a two-column
+/// journal article became a `####` heading, 805 of its 1,101 lines, quoted that
+/// way in a lesson (2026-11-06).
+#[test]
+fn a_body_set_all_in_bold_is_not_promoted_line_by_line() {
+    let body = |y: f32, text: &str| {
+        let mut line = run(50.0, y, 10.0, text);
+        line.bold = true;
+        line
+    };
+    let pages = vec![page(group_lines(vec![
+        run(50.0, 700.0, 20.0, "Title"),
+        body(660.0, "Energy refers to a combination of loudness, rhyth-"),
+        body(
+            645.0,
+            "mic density, frequency density, and instrumentation.",
+        ),
+        body(630.0, "Segments with high energy are characterized by high"),
+    ]))];
+
+    let rendered = render(&pages).first().cloned().unwrap_or_default();
+
+    let headings: Vec<_> = rendered
+        .lines()
+        .filter(|line| line.starts_with('#'))
+        .collect();
+    assert_eq!(headings, ["## Title"], "{rendered}");
+}
+
 #[test]
 fn an_overlong_line_is_never_promoted_to_a_heading() {
     let long = "word ".repeat(40);

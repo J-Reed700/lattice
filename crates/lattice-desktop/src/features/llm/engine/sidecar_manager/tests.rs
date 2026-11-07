@@ -1341,7 +1341,8 @@ fn api_tokens_are_unguessable_and_never_repeat() {
 }
 
 use super::config::{footprint_from, hint_for, memory_room, FIT_TARGET_BYTES};
-use crate::features::llm::engine::gguf_metadata::{GgufModelInfo, PerLayer};
+use crate::features::llm::engine::gguf_metadata::GgufModelInfo;
+use lattice_core::domain::models::fit::{ModelShape, PerLayer};
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -1352,19 +1353,22 @@ fn ornith_9b() -> GgufModelInfo {
     GgufModelInfo {
         architecture: Some("qwen35".into()),
         trained_context_length: Some(262_144),
-        block_count: Some(33),
-        nextn_predict_layers: Some(1),
-        full_attention_interval: Some(4),
-        head_count_kv: Some(4.into()),
-        head_count: Some(16.into()),
-        key_length: Some(256),
-        value_length: Some(256),
-        embedding_length: Some(4096),
-        feed_forward_length: Some(12_288),
-        ssm_conv_kernel: Some(4),
-        ssm_state_size: Some(128),
-        ssm_group_count: Some(16),
-        ssm_inner_size: Some(4096),
+        shape: ModelShape {
+            block_count: Some(33),
+            nextn_predict_layers: Some(1),
+            full_attention_interval: Some(4),
+            head_count_kv: Some(4.into()),
+            head_count: Some(16.into()),
+            key_length: Some(256),
+            value_length: Some(256),
+            embedding_length: Some(4096),
+            feed_forward_length: Some(12_288),
+            ssm_conv_kernel: Some(4),
+            ssm_state_size: Some(128),
+            ssm_group_count: Some(16),
+            ssm_inner_size: Some(4096),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -1486,8 +1490,8 @@ fn a_hint_prices_weights_cache_recurrent_state_and_compute() {
             // Nine layers keep a cache (eight full-attention, one MTP) at
             // 4 KiB a token each.
             cache: 60_416 * 9 * 4 * 1024,
-            state: info.recurrent_state_bytes(),
-            compute: info.compute_buffer_bytes(60_416, 512),
+            state: info.shape.recurrent_state_bytes(),
+            compute: info.shape.compute_buffer_bytes(60_416, 512),
             window: 60_416,
         }
     );
@@ -1505,8 +1509,11 @@ const MIB: u64 = 1024 * 1024;
 /// The sizing keys of Qwen3.5-9B-Q4_K_M.gguf, with what it leaves in RAM.
 fn qwen_9b() -> GgufModelInfo {
     GgufModelInfo {
-        block_count: Some(32),
-        nextn_predict_layers: None,
+        shape: ModelShape {
+            block_count: Some(32),
+            nextn_predict_layers: None,
+            ..ornith_9b().shape
+        },
         cpu_weight_bytes: 572_125_184,
         ..ornith_9b()
     }
@@ -1517,13 +1524,16 @@ fn qwen3_0_6b() -> GgufModelInfo {
     GgufModelInfo {
         architecture: Some("qwen3".into()),
         trained_context_length: Some(32_768),
-        block_count: Some(28),
-        head_count_kv: Some(8.into()),
-        head_count: Some(16.into()),
-        key_length: Some(128),
-        value_length: Some(128),
-        embedding_length: Some(1024),
-        feed_forward_length: Some(3_072),
+        shape: ModelShape {
+            block_count: Some(28),
+            head_count_kv: Some(8.into()),
+            head_count: Some(16.into()),
+            key_length: Some(128),
+            value_length: Some(128),
+            embedding_length: Some(1024),
+            feed_forward_length: Some(3_072),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -1708,22 +1718,25 @@ fn gemma4_12b() -> GgufModelInfo {
     GgufModelInfo {
         architecture: Some("gemma4".into()),
         trained_context_length: Some(262_144),
-        block_count: Some(48),
-        head_count: Some(16.into()),
-        head_count_kv: Some(PerLayer::Layers(
-            pattern
-                .iter()
-                .map(|&slides| if slides { 8 } else { 1 })
-                .collect(),
-        )),
-        key_length: Some(512),
-        value_length: Some(512),
-        key_length_swa: Some(256),
-        value_length_swa: Some(256),
-        embedding_length: Some(3840),
-        sliding_window: Some(1024),
-        sliding_window_pattern: Some(pattern),
-        shared_kv_layers: Some(0),
+        shape: ModelShape {
+            block_count: Some(48),
+            head_count: Some(16.into()),
+            head_count_kv: Some(PerLayer::Layers(
+                pattern
+                    .iter()
+                    .map(|&slides| if slides { 8 } else { 1 })
+                    .collect(),
+            )),
+            key_length: Some(512),
+            value_length: Some(512),
+            key_length_swa: Some(256),
+            value_length_swa: Some(256),
+            embedding_length: Some(3840),
+            sliding_window: Some(1024),
+            sliding_window_pattern: Some(pattern),
+            shared_kv_layers: Some(0),
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -1741,7 +1754,10 @@ fn gemma_4_sliding_layers_are_charged_their_window_not_the_whole_context() {
         held: 0,
     };
     let every_layer_global = GgufModelInfo {
-        sliding_window: None,
+        shape: ModelShape {
+            sliding_window: None,
+            ..gemma4_12b().shape
+        },
         ..gemma4_12b()
     };
 

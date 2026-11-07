@@ -11,11 +11,12 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::domain::sourcing::NeedKind;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::json;
 
 use super::web_research::{
-    need_schema, plan_needs, search_need, Candidate, GapNeed, PlannedNeed, Room,
+    need_schema, plan_needs, search_need, with_breadth, Candidate, GapNeed, NeedSearch,
+    PlannedNeed, Room,
 };
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use crate::features::web::mocks::MockWebService;
@@ -61,7 +62,7 @@ fn a_need_is_checked_against_what_a_search_allows() {
     assert_eq!(trimmed.subject, None);
     assert_eq!(trimmed.ecosystem.as_deref(), Some("pypi"));
 
-    assert_eq!(need("ab", NeedKind::Web).one(), None, "too short");
+    assert_eq!(need("   ", NeedKind::Web).one(), None, "a blank query");
     assert_eq!(
         need("an archived page", NeedKind::Archive).one(),
         None,
@@ -92,7 +93,7 @@ fn rewordings_and_dates_are_checked_like_the_query() {
     let refused = |need: PlannedNeed| need.one().is_none();
     let base = || need("upload limit", NeedKind::Web);
     assert!(refused(PlannedNeed {
-        alternatives: vec!["ok rewording".into(), "ab".into()],
+        alternatives: vec!["ok rewording".into(), "  ".into()],
         ..base()
     }));
     assert!(refused(PlannedNeed {
@@ -237,9 +238,9 @@ fn a_site_the_planner_set_is_the_scope_and_is_written_as_an_address() {
     };
     assert_eq!(not_an_address.searches(), None);
     assert_eq!(
-        need("site:react.dev ab", NeedKind::Web).searches(),
+        need("site:react.dev", NeedKind::Web).searches(),
         None,
-        "the terms left are too short to search"
+        "no terms are left to search once the site is lifted out"
     );
 }
 
@@ -263,8 +264,8 @@ fn every_planner_may_ask_for_rewordings_and_dates() {
     for schema in [need_schema(None), need_schema(Some(2))] {
         let properties = &schema["properties"];
         let rewording = &properties["alternatives"]["items"];
-        assert_eq!(rewording["minLength"], json!(3));
-        assert_eq!(rewording["maxLength"], json!(240));
+        assert_eq!(rewording["minLength"], json!(1));
+        assert!(rewording.get("maxLength").is_none());
         assert!(
             properties["alternatives"].get("maxItems").is_none(),
             "no fixed count of rewordings"
@@ -272,6 +273,50 @@ fn every_planner_may_ask_for_rewordings_and_dates() {
         assert_eq!(properties["after"]["format"], "date");
         assert_eq!(properties["asOf"]["format"], "date");
     }
+}
+
+#[test]
+fn a_planned_search_schema_bounds_no_text_but_a_blank_one() {
+    for (what, schema) in [
+        ("a course plan", need_schema(None)),
+        ("a lesson plan", need_schema(Some(2))),
+    ] {
+        let caps = crate::features::learning::content_caps_tests::text_caps(&schema);
+        assert!(caps.is_empty(), "{what}: {caps:?}");
+    }
+}
+
+#[test]
+fn a_search_is_refused_for_being_blank_never_for_its_length() {
+    let long = "how a planner words a search ".repeat(20);
+    assert!(long.chars().count() > 240);
+    for (what, query) in [
+        ("a query under three characters", "ab".to_owned()),
+        ("a query past 240 characters", long.clone()),
+    ] {
+        let planned = need(&query, NeedKind::Web).one();
+        assert!(planned.is_some(), "{what}");
+    }
+    let reworded = PlannedNeed {
+        alternatives: vec!["ab".into(), long.trim().into()],
+        ..need("upload limit", NeedKind::Web)
+    }
+    .one();
+    assert!(reworded.is_some(), "rewordings of any length");
+    assert_eq!(
+        need("   ", NeedKind::Web).one(),
+        None,
+        "a blank query says nothing"
+    );
+    let blank_rewording = PlannedNeed {
+        alternatives: vec!["  ".into()],
+        ..need("upload limit", NeedKind::Web)
+    };
+    assert_eq!(
+        blank_rewording.one(),
+        None,
+        "a blank rewording says nothing"
+    );
 }
 
 #[tokio::test]
@@ -450,7 +495,8 @@ impl WebServiceTrait for Endless {
 }
 
 #[tokio::test]
-async fn a_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full() -> Result<()> {
+async fn a_paged_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full() -> Result<()>
+{
     let web = Endless {
         web: MockWebService::new(),
         pages: Mutex::new(0),
@@ -460,12 +506,203 @@ async fn a_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full()
         tokens: 30,
         cost: &cost,
     };
-    let found = search_need(&web, &need("tonal centre", NeedKind::Paper), room).await?;
+    let tonal = need("tonal centre", NeedKind::Paper);
+    let mut search = NeedSearch::new(&tonal);
+    let mut found = Vec::new();
+    while !search.is_done() {
+        found.extend(search.next_page(&web, room).await?);
+    }
     // Twelve a page: the third page fills the room and is the last asked for.
     assert_eq!(found.len(), 30);
     assert_eq!(*web.pages.lock().unwrap(), 3);
     assert_eq!(found[29].result.url, "https://doi.org/10.1000/3.5");
     Ok(())
+}
+
+/// A catalog that answers every page it is asked for with a full page of
+/// results not seen before, and fails from page `fail_from` on so that a
+/// search which keeps paging still ends.
+struct Full {
+    web: MockWebService,
+    asked: Mutex<Vec<usize>>,
+    fail_from: usize,
+}
+
+#[async_trait::async_trait]
+impl WebServiceTrait for Full {
+    async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
+        self.asked.lock().unwrap().push(input.page);
+        if input.page >= self.fail_from {
+            return Err(AppError::ServiceNotAvailable("No further page".into()));
+        }
+        let mut output = self.web.search_web(input).await?;
+        output.results = (0..input.max_results)
+            .map(|i| WebSearchResult {
+                title: format!("Paper {} {i}", input.page),
+                url: format!("https://doi.org/10.1000/{}.{i}", input.page),
+                snippet: String::new(),
+                published_date: None,
+                source: Some("crossref".into()),
+            })
+            .collect();
+        Ok(output)
+    }
+    async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        self.web.fetch_url_content(url).await
+    }
+    fn validate_url(&self, url: &str) -> Result<()> {
+        self.web.validate_url(url)
+    }
+}
+
+#[tokio::test]
+async fn a_search_asks_for_the_first_page_only() -> Result<()> {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 4,
+    };
+    let found = search_need(
+        &web,
+        &need("tonal centre", NeedKind::Paper),
+        Room::for_all(),
+    )
+    .await?;
+    assert_eq!(*web.asked.lock().unwrap(), [1]);
+    assert_eq!(found.len(), 12);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_asks_for_the_next_page_each_time_until_a_page_adds_nothing() -> Result<()> {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 10,
+    };
+    let tonal = need("tonal centre", NeedKind::Paper);
+    let mut search = NeedSearch::new(&tonal);
+    let first = search.next_page(&web, Room::for_all()).await?;
+    assert_eq!(*web.asked.lock().unwrap(), [1]);
+    assert!(!search.is_done());
+    let second = search.next_page(&web, Room::for_all()).await?;
+    assert_eq!(*web.asked.lock().unwrap(), [1, 2]);
+    assert_eq!(first.len(), 12);
+    assert_eq!(second.len(), 12);
+    assert_eq!(second[0].result.url, "https://doi.org/10.1000/2.0");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_is_done_after_a_short_page_and_asks_for_no_more() -> Result<()> {
+    let web = Recording {
+        web: MockWebService::new(),
+        searches: Mutex::new(Vec::new()),
+    };
+    web.web.set_search_results(
+        (0..5)
+            .map(|i| WebSearchResult {
+                title: format!("Article {i}"),
+                url: format!("https://example.org/article-{i}"),
+                snippet: String::new(),
+                published_date: None,
+                source: None,
+            })
+            .collect(),
+    );
+    let tonal = need("tonal centre", NeedKind::Web);
+    let mut search = NeedSearch::new(&tonal);
+    assert_eq!(search.next_page(&web, Room::for_all()).await?.len(), 5);
+    assert!(search.is_done());
+    assert!(search.next_page(&web, Room::for_all()).await?.is_empty());
+    assert_eq!(web.searches.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_whose_later_page_fails_ends_without_an_error() -> Result<()> {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 2,
+    };
+    let tonal = need("tonal centre", NeedKind::Paper);
+    let mut search = NeedSearch::new(&tonal);
+    assert_eq!(search.next_page(&web, Room::for_all()).await?.len(), 12);
+    assert!(search.next_page(&web, Room::for_all()).await?.is_empty());
+    assert!(search.is_done());
+    assert!(search.next_page(&web, Room::for_all()).await?.is_empty());
+    assert_eq!(*web.asked.lock().unwrap(), [1, 2]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_whose_first_page_fails_returns_the_error() {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 1,
+    };
+    let tonal = need("tonal centre", NeedKind::Paper);
+    assert!(search_need(&web, &tonal, Room::for_all()).await.is_err());
+    assert!(NeedSearch::new(&tonal)
+        .next_page(&web, Room::for_all())
+        .await
+        .is_err());
+}
+
+#[test]
+fn a_plan_of_papers_is_searched_on_the_web_and_in_an_encyclopedia_too() {
+    let planned = [
+        need("q1", NeedKind::Paper),
+        need("q2", NeedKind::OfficialDocs),
+    ];
+    let searched = with_breadth(&planned, "  Random assignment ");
+    assert_eq!(searched[..2], planned);
+    assert_eq!(searched.len(), 4);
+    assert_eq!(searched[2], need("q1", NeedKind::Web));
+    assert_eq!(
+        searched[3],
+        need("Random assignment", NeedKind::Encyclopedia)
+    );
+}
+
+#[test]
+fn a_plan_keeps_the_web_and_encyclopedia_searches_it_has_and_adds_only_the_missing_kind() {
+    let both = [
+        need("q1", NeedKind::Paper),
+        need("q2", NeedKind::Web),
+        need("q3", NeedKind::Encyclopedia),
+    ];
+    assert_eq!(with_breadth(&both, "Title"), both);
+
+    let web_only = [need("q1", NeedKind::Web)];
+    assert_eq!(
+        with_breadth(&web_only, "Title"),
+        [
+            need("q1", NeedKind::Web),
+            need("Title", NeedKind::Encyclopedia)
+        ]
+    );
+    let encyclopedia_only = [need("q1", NeedKind::Encyclopedia)];
+    assert_eq!(
+        with_breadth(&encyclopedia_only, "Title"),
+        [
+            need("q1", NeedKind::Encyclopedia),
+            need("q1", NeedKind::Web)
+        ]
+    );
+}
+
+#[test]
+fn a_subtopic_the_planner_covered_with_existing_sources_has_no_searches() {
+    assert!(with_breadth(&[], "Title").is_empty());
+    let papers = [need("q1", NeedKind::Paper)];
+    assert_eq!(
+        with_breadth(&papers, "  "),
+        [need("q1", NeedKind::Paper), need("q1", NeedKind::Web)],
+        "a blank title is no search"
+    );
 }
 
 #[tokio::test]

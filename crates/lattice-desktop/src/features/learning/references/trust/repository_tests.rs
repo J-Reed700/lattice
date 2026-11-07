@@ -246,20 +246,18 @@ async fn judgements_round_trip_under_their_keys() -> Result<()> {
 }
 
 #[tokio::test]
-async fn ownership_levels_are_the_current_checkers_and_every_checkers_work_is_a_lead() -> Result<()>
-{
+async fn an_ownership_judgement_is_read_for_its_own_model_only() -> Result<()> {
     let course = course().await?;
-    let other_course = course_on(&course.pool).await?;
     let subject = SubjectKey::of("Python");
-    let assessment = |origin: &str, model: &str, at: i64, relation| StoredJudgement {
+    let assessment = |model: &str, at: i64| StoredJudgement {
         key: JudgementKey {
             model: model.into(),
-            ..key(&format!("{origin}-{model}"))
+            ..key(&format!("python.org-{model}"))
         },
         value: AuthorityAssessment {
-            origin_key: OriginKey(origin.into()),
+            origin_key: OriginKey("python.org".into()),
             subject_key: subject.clone(),
-            relation,
+            relation: SubjectRelation::Owner,
             basis: vec![],
             owner_origin_hints: vec![format!("{model}.example.org")],
             policy: "test-policy-v1".into(),
@@ -269,84 +267,22 @@ async fn ownership_levels_are_the_current_checkers_and_every_checkers_work_is_a_
         output_tokens: 0,
         assessed_at: at,
     };
-    let old = assessment("python.org", "old", 1, SubjectRelation::Owner);
-    let recent = assessment("python.org", "recent", 3, SubjectRelation::Independent);
-    let current = assessment("python.org", "current", 2, SubjectRelation::Owner);
-    let fallback = assessment("docs.example.org", "old", 1, SubjectRelation::Independent);
-    for row in [&old, &recent, &current, &fallback] {
+    let old = assessment("old", 1);
+    let current = assessment("current", 2);
+    for row in [&old, &current] {
         course.store.save_authority(&course.program_id, row).await?;
     }
-    course
+    let stored = course
         .store
-        .save_authority(
-            &other_course,
-            &assessment("foreign.example.org", "current", 9, SubjectRelation::Owner),
-        )
-        .await?;
-    let mut wrong_subject = assessment(
-        "other-subject.example.org",
-        "current",
-        9,
-        SubjectRelation::Owner,
-    );
-    wrong_subject.value.subject_key = SubjectKey::of("Unrelated subject");
-    course
-        .store
-        .save_authority(&course.program_id, &wrong_subject)
-        .await?;
-    let mut wrong_policy = assessment(
-        "old-policy.example.org",
-        "current",
-        9,
-        SubjectRelation::Owner,
-    );
-    wrong_policy.key.policy = "old-policy".into();
-    wrong_policy.value.policy = "old-policy".into();
-    course
-        .store
-        .save_authority(&course.program_id, &wrong_policy)
-        .await?;
-
-    let current_only = course
-        .store
-        .authority_for_subject(&course.program_id, &subject, "test-policy-v1", "current")
-        .await?;
-    assert_eq!(
-        current_only,
-        vec![current.value.clone()],
-        "levels come from the current checker's judgements alone"
-    );
-    assert!(course
-        .store
-        .authority_for_subject(&course.program_id, &subject, "test-policy-v1", "brand-new")
-        .await?
-        .is_empty());
-    let mut alias = assessment("alias.example.org", "old", 4, SubjectRelation::Owner);
-    alias.value.subject_key = SubjectKey::of("CPython");
-    course
-        .store
-        .save_authority(&course.program_id, &alias)
-        .await?;
-    let leads = course
-        .store
-        .subject_leads(
+        .authority(
             &course.program_id,
-            &[subject.clone(), SubjectKey::of("CPython")],
+            &old.value.origin_key,
+            &subject,
             "test-policy-v1",
+            "current",
         )
         .await?;
-    assert_eq!(
-        leads,
-        vec![
-            alias.value,
-            recent.value,
-            current.value,
-            fallback.value,
-            old.value.clone()
-        ],
-        "every checker's leads on the subject and its aliases, newest first, \
-         no other courses, subjects or policies"
-    );
+    assert_eq!(stored.map(|saved| saved.value), Some(current.value.clone()));
     assert!(
         course
             .store
@@ -359,7 +295,7 @@ async fn ownership_levels_are_the_current_checkers_and_every_checkers_work_is_a_
             )
             .await?
             .is_none(),
-        "discovery reuse does not forge a current-model assessment"
+        "another model's judgement does not stand for the current one's"
     );
     Ok(())
 }

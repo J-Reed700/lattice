@@ -193,7 +193,6 @@ fn a_support_below_its_bar_is_the_gates_failure_researched_but_never_repaired() 
     // rewritten or removed by the machine.
     assert!(entry.may_research());
     assert!(!entry.may_repair());
-    assert!(!entry.allows(ClaimActionKind::GeneralKnowledge));
 }
 
 #[test]

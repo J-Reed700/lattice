@@ -192,13 +192,8 @@ pub async fn generate_learning_practical_activity(
             ),
         ));
     }
-    if request.learner_brief.trim().is_empty() || request.learner_brief.chars().count() > 4_000 {
-        return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
-                "Practical request must contain 1–4000 characters.".into(),
-            ),
-        ));
-    }
+    crate::features::learning::practical_generation::validate_request(&request.learner_brief)
+        .map_err(ApiError::from)?;
     let interview_target = if request.kind == LearningPracticalActivityKind::Interview {
         if request.runtime_profile_id.is_some() || request.builtin_runtime.is_some() {
             return Err(ApiError::from(
@@ -455,16 +450,15 @@ pub async fn send_learning_simulation_turn(
             ),
         ));
     }
-    if session.status != LearningSimulationStatus::Active
-        || request.content.trim().is_empty()
-        || request.content.chars().count() > 8_000
-    {
+    if session.status != LearningSimulationStatus::Active {
         return Err(ApiError::from(
             lattice_core::shared::error::AppError::InvalidInput(
-                "Active simulations accept responses of 1–8000 characters.".into(),
+                "Only active simulations accept responses.".into(),
             ),
         ));
     }
+    crate::features::learning::practical_repository::validate_learner_turn(&request.content)
+        .map_err(ApiError::from)?;
     let (activity, source_ids) = repo
         .simulation_session_generation_context(&request.program_id, &session.id)
         .await

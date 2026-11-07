@@ -101,6 +101,7 @@ fn job(status: LearningGenerationJobStatus) -> LearningGenerationJob {
         activity: None,
         result_id: None,
         error: None,
+        error_code: None,
         retry_of_job_id: None,
         created_at: 10,
         started_at: None,
@@ -129,4 +130,71 @@ fn running_jobs_recover_as_interrupted_without_a_partial_result() {
     assert_eq!(jobs[0].status, LearningGenerationJobStatus::Interrupted);
     assert!(jobs[0].result_id.is_none());
     assert!(jobs[0].finished_at.is_some());
+}
+
+#[test]
+fn a_curriculum_is_checked_for_blank_text_never_for_how_long_it_is() {
+    let mut value = revision();
+    value.modules[0].title = "Foundations of a durable mental model ".repeat(6);
+    value.modules[0].purpose = "Build a durable mental model of the subject. ".repeat(50);
+    value.modules[0].lessons[2].title = "Explain and apply the invariant ".repeat(8);
+    value.modules[0].lessons[2].objective =
+        "Explain and apply the invariant to a new case. ".repeat(30);
+    let checked = validate_curriculum(&value);
+    assert!(checked.is_ok(), "{checked:?}");
+}
+
+#[test]
+fn a_lesson_is_edited_at_any_length() -> Result<()> {
+    let base = revision();
+    let title = "Explain and apply the invariant "
+        .repeat(8)
+        .trim()
+        .to_owned();
+    let objective = "Explain and apply the invariant to a new case. "
+        .repeat(30)
+        .trim()
+        .to_owned();
+    let request = LearningCurriculumRevisionRequest {
+        revision_id: id(20),
+        expected_revision_number: 3,
+        reason: "Say more about the last lesson".into(),
+        created_at: 20,
+        operations: vec![LearningCurriculumOperation::EditLesson {
+            lesson_id: id(12),
+            title: title.clone(),
+            objective: objective.clone(),
+            estimated_minutes: 25,
+        }],
+    };
+    let result = apply_curriculum_revision(&base, Some(&id(11)), request)?;
+    assert_eq!(result.revision.modules[0].lessons[2].title, title);
+    assert_eq!(result.revision.modules[0].lessons[2].objective, objective);
+    Ok(())
+}
+
+#[test]
+fn a_failure_is_recorded_whatever_its_message_says() -> Result<()> {
+    let mut value = job(LearningGenerationJobStatus::Pending);
+    start_generation_job(&mut value, 20)?;
+    let message = "The model's answer could not be read: ".repeat(80);
+    fail_generation_job(&mut value, message.clone(), 30)?;
+    assert_eq!(value.status, LearningGenerationJobStatus::Failed);
+    assert_eq!(value.error.as_deref(), Some(message.as_str()));
+    Ok(())
+}
+
+#[test]
+fn a_job_carries_its_error_code_as_error_code_and_reads_null_without_one() {
+    use lattice_core::shared::ipc::ErrorCode;
+    let mut value = job(LearningGenerationJobStatus::Pending);
+    value.error = Some("Connection interrupted".into());
+    value.error_code = Some(ErrorCode::NetworkError);
+    let wire = serde_json::to_value(&value).unwrap();
+    assert_eq!(wire["errorCode"], "NETWORK_ERROR");
+
+    let mut stored = wire;
+    stored.as_object_mut().unwrap().remove("errorCode");
+    let read: LearningGenerationJob = serde_json::from_value(stored).unwrap();
+    assert_eq!(read.error_code, None);
 }

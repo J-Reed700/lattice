@@ -204,31 +204,49 @@ pub struct LearningGenerationActivity {
     pub checks_completed: u32,
     pub checks_total: u32,
     pub checks_reused: u32,
-    /// Checked claims of this pass that are not supported at present. A claim
-    /// a deeper evidence page supports leaves this count.
-    pub checks_unresolved: u32,
-    /// Checked claims of this pass the checker supported but whose sources
-    /// the source check found too weak for the claim: research looks for
-    /// stronger sources for them. Not counted in `checks_unresolved`.
-    pub checks_sent_back: u32,
     /// Set while this pass checks its claims again against references
     /// research has just saved: how many it saved.
     pub new_references: Option<u32>,
-    /// None while looking up saved checks; otherwise the number requiring the
-    /// model in this pass, after every reusable comparison has been restored.
-    pub model_checks_total: Option<u32>,
-    /// Set while claims this pass left unsupported are checked against further
-    /// pages of their evidence.
-    pub deeper_evidence: Option<LearningDeeperEvidence>,
+    /// The lesson's statements by the check each gets, once they are sorted
+    /// (claim classes design §3.12); none before.
+    #[serde(default)]
+    pub statements: Option<LearningStatementPlan>,
+    /// Calls made to sort, check and rewrite this lesson's statements since
+    /// this run began.
+    #[serde(default)]
+    pub model_calls: u32,
+    /// The most calls the checks can make in all, once the statements are
+    /// sorted. It only comes down: terms of the count are replaced by what
+    /// the first checks find.
+    #[serde(default)]
+    pub model_calls_ceiling: Option<u32>,
+    /// How many times the ceiling was published higher than the one before
+    /// it: the design allows none (§3.12), and the acceptance run reads this
+    /// count from the job.
+    #[serde(default)]
+    pub model_calls_ceiling_rises: u32,
     /// Where the lesson's claims stand after the latest pass; none before
     /// the first pass observed them.
     pub claims: Option<LearningClaimTally>,
     pub recent_steps: Vec<LearningGenerationStep>,
 }
 
+/// The statements of a lesson by the check each gets (claim classes design
+/// §3.1, §3.12): "73 statements: 36 to check against their sources, 29 to
+/// check for consistency, 8 common knowledge".
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningStatementPlan {
+    /// Checked against their sources.
+    pub sourced: u32,
+    /// Checked for consistency with the passages their section cites.
+    pub reasoning: u32,
+    /// Common knowledge, put to the model alone.
+    pub common: u32,
+}
+
 /// The lesson's claims by who acts next and what is done to them (§6.3):
-/// "Pass 3 · 4 sent back for stronger sources · 2 being repaired · 5
-/// waiting for you · 108 verified".
+/// "2 being repaired · 5 waiting for you · 108 verified".
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningClaimTally {
@@ -237,10 +255,6 @@ pub struct LearningClaimTally {
     /// The machine's: no passage supports them or one contradicts them, and
     /// research looks for sources before they are checked again.
     pub searching: u32,
-    /// The machine's: the checker supported them, but the source check found
-    /// their sources too weak, and research looks for stronger ones before
-    /// they are checked again.
-    pub sent_back: u32,
     /// The machine's: research is done, and their text is rewritten next or
     /// a rewrite awaits its check.
     pub repairing: u32,
@@ -248,23 +262,11 @@ pub struct LearningClaimTally {
     pub waiting: u32,
     /// Verified against a source.
     pub verified: u32,
-    /// Closed by the user or removed: confirmed, general knowledge, removed.
+    /// Closed by the user: confirmed, removed or edited away.
     pub resolved_by_you: u32,
     /// Rewritten or dropped by the machine's repairs.
     #[serde(default)]
     pub rewritten: u32,
-}
-
-/// One round of checking unsupported claims against their next evidence page.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct LearningDeeperEvidence {
-    /// The evidence page of this round. Page 1 is each claim's first check.
-    pub page: u32,
-    /// Claims checked against this page.
-    pub claims: u32,
-    /// Of those claims, the ones whose check against this page has finished.
-    pub checked: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -283,6 +285,10 @@ pub struct LearningGenerationJob {
     pub activity: Option<LearningGenerationActivity>,
     pub result_id: Option<String>,
     pub error: Option<String>,
+    /// The code of the error behind `error`, for a job that failed or is
+    /// waiting out a temporary failure; `None` otherwise.
+    #[serde(default)]
+    pub error_code: Option<lattice_core::shared::ipc::ErrorCode>,
     pub retry_of_job_id: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,
@@ -305,10 +311,19 @@ fn text(value: &str, label: &str, max: usize) -> Result<()> {
     Ok(())
 }
 
+fn not_blank(value: &str, label: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(AppError::InvalidInput(format!(
+            "{label} must not be empty."
+        )));
+    }
+    Ok(())
+}
+
 fn validate_lesson(lesson: &LearningCurriculumLesson) -> Result<()> {
     id(&lesson.id, "lesson")?;
-    text(&lesson.title, "Lesson title", 160)?;
-    text(&lesson.objective, "Lesson objective", 1_200)?;
+    not_blank(&lesson.title, "Lesson title")?;
+    not_blank(&lesson.objective, "Lesson objective")?;
     if !(1..=600).contains(&lesson.estimated_minutes) {
         return Err(AppError::InvalidInput(
             "Lesson time must be between 1 and 600 minutes.".into(),
@@ -340,8 +355,8 @@ pub fn validate_curriculum(revision: &LearningCurriculumRevision) -> Result<()> 
     let mut module_ids = HashSet::new();
     for module in &revision.modules {
         id(&module.id, "module")?;
-        text(&module.title, "Module title", 160)?;
-        text(&module.purpose, "Module purpose", 2_000)?;
+        not_blank(&module.title, "Module title")?;
+        not_blank(&module.purpose, "Module purpose")?;
         if module.lessons.is_empty() || module.lessons.len() > 64 {
             return Err(AppError::InvalidInput(
                 "A module must contain 1–64 lessons.".into(),

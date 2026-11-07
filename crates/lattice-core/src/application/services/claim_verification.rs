@@ -4,19 +4,32 @@ use crate::application::ports::llm_port::{
     CompletionInput, CompletionRequest, InferencePriority, SamplingOverride,
 };
 use crate::application::ports::LLMPort;
+use crate::domain::learning::acceptance::Outcome;
 use crate::shared::error::Result;
 use crate::shared::text::normalize_whitespace;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 mod batch;
+mod bridge;
+mod classes;
 mod prompt;
 mod rooms;
 
 #[cfg(test)]
+mod bridge_tests;
+#[cfg(test)]
+mod classes_tests;
+#[cfg(test)]
 mod field_emphasis_tests;
 
 pub use batch::{render_batch_evidence, LocatedClaim};
+pub use bridge::{BridgeDecision, BridgeOutcome, BridgePart, PartKind, BRIDGE_SYSTEM};
+pub use classes::{
+    ClassJudgment, ConsistencyOutcome, ConsistencyVerdict, KnowledgeOutcome, KnowledgeSample,
+    KnowledgeVerdict, CONSISTENCY_POLICY, CONSISTENCY_SYSTEM, KNOWLEDGE_POLICY, KNOWLEDGE_SAMPLES,
+    KNOWLEDGE_SYSTEM,
+};
 
 /// Judgments and the output tokens the model spent writing them, across
 /// every request the check sent: what answering costs the caller's job.
@@ -47,6 +60,18 @@ impl ClaimVerdict {
     }
 }
 
+/// A strict `verdict` on a claim's page in the acceptance policy's words.
+/// `on_cited`: the supporting passage is one the claim's sentence cites.
+pub fn page_outcome(verdict: ClaimVerdict, on_cited: bool) -> Outcome {
+    match verdict {
+        ClaimVerdict::Supported if on_cited => Outcome::Stands,
+        ClaimVerdict::Supported => Outcome::StandsElsewhere,
+        ClaimVerdict::Unsupported => Outcome::Unproven,
+        ClaimVerdict::Contradicted => Outcome::Refuted,
+        ClaimVerdict::Unverified => Outcome::Unjudged,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum CheckPolicy {
     Chat,
@@ -55,6 +80,17 @@ pub enum CheckPolicy {
     /// Used only by the live fidelity controls in lessons/live_lesson_tests.rs
     /// and live_small_lesson.rs; delete it together with them.
     Fidelity,
+    /// A Reasoning statement against its section's passages: contradicted,
+    /// asserting a specific they lack, or consistent (claim classes design
+    /// §3.1). It answers JSON: see [`ClaimChecker::check_consistency`].
+    Consistency,
+    /// A statement put to the model alone, [`KNOWLEDGE_SAMPLES`] times:
+    /// standard knowledge, false, or in need of a source (§3.1). See
+    /// [`ClaimChecker::check_knowledge`].
+    Knowledge,
+    /// A Sourced statement against the passages its sentence cites, part by
+    /// part (§3.3). See [`ClaimChecker::check_bridge`].
+    Bridge,
 }
 impl CheckPolicy {
     fn strict(self) -> bool {
@@ -107,6 +143,11 @@ pub struct JudgeOutcome {
     /// Probability of `verdict` among the three labels, from the first token's
     /// log-probabilities. `None` when the provider does not report them.
     pub confidence: Option<f32>,
+    /// The strict policy recorded `Unsupported` in place of an answer the
+    /// judge was unsure of: its first token below the confidence floor, or
+    /// disagreeing with the verdict its text gives. `confidence` is then the
+    /// first token's, which may be high.
+    pub uncertain: bool,
 }
 
 /// How one claim's request ended.
@@ -380,6 +421,7 @@ impl<'a> ClaimChecker<'a> {
                 quote: None,
                 reason: Some(format!("The checker could not confidently establish a factual finding from these passages. {}",labeled_value(&text,&["Reason","Explanation"]).unwrap_or_default())),
                 confidence,
+                uncertain: true,
             }));
         }
         let mut explanation = parse_judge_explanation(&text, evidence, verdict);
@@ -436,6 +478,7 @@ impl<'a> ClaimChecker<'a> {
             quote,
             reason: explanation.reason,
             confidence,
+            uncertain: false,
         }))
     }
 }

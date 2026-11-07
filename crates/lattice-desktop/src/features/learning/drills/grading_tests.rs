@@ -7,7 +7,7 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::domain::learning::drills::{
     overlapping, pattern, Drill, DrillFile, Edit, Finding, FindingOutcome, KeyIssue, LineSpan,
-    Origin, Proof, Severity,
+    Material, Origin, Proof, Severity,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -134,7 +134,7 @@ impl Scene {
         Self {
             drill: Drill {
                 id: "orders".into(),
-                language: "python".into(),
+                material: Material::code("python"),
                 title: "Orders".into(),
                 files: vec![file("orders.py", ORDERS), file("notify.py", NOTIFY)],
                 key: vec![
@@ -198,6 +198,7 @@ impl Scene {
         Review {
             drill: &self.drill,
             clean: &self.clean,
+            source: None,
             findings: &self.findings,
         }
     }
@@ -729,7 +730,7 @@ async fn the_request_holds_the_files_the_clean_files_the_key_the_review_and_the_
     let llm = ScriptedJudge::answering(vec![valid().to_string()]);
     grade(&llm, &Scene::new()).await?;
     let (system, task) = the_request(&llm);
-    assert_eq!(system, SYSTEM);
+    assert_eq!(system, JudgeWording::of(&Material::code("python"))?.system);
 
     let sections = [
         "Drill: Orders (python)",
@@ -1103,6 +1104,115 @@ async fn an_answer_naming_finding_zero_is_refused_in_one_based_terms() {
         matches!(&error, AppError::ModelAnswerUnusable(reason) if reason == "Finding 0 is not a finding of the review, which has finding 1 only. Finding 1 has no entry: every finding needs exactly one."),
         "{error:?}"
     );
+}
+
+/// An explanation of a passage with one error planted on its second sentence, and two findings.
+fn passage_scene() -> (
+    Drill,
+    Vec<DrillFile>,
+    Vec<Finding>,
+    crate::features::learning::drills::build::SourcePassage,
+) {
+    let planted = "Spacing raised recall by 40%.";
+    let drill = Drill {
+        id: "passage".into(),
+        material: Material::Passage,
+        title: "Spacing".into(),
+        files: vec![file(
+            "explanation.md",
+            &format!("Learners spread their study.\n{planted}\n\nThe gain was smaller for known material.\n"),
+        )],
+        key: vec![KeyIssue {
+            proof: Proof::Sourced {
+                quote: "recalled 14% more".into(),
+                planted: lattice_core::domain::learning::drills::SourceVerdict::Contradicted,
+                reason: "The source gives 14%.".into(),
+            },
+            ..key_issue(
+                "fidelity.misquoted_figure",
+                Severity::Major,
+                span("explanation.md", 2, 2),
+                "A reader takes away a gain nearly three times the real one.",
+            )
+        }],
+    };
+    let clean = vec![file(
+        "explanation.md",
+        "Learners spread their study.\nSpacing raised recall by 14%.\n\nThe gain was smaller for known material.\n",
+    )];
+    let findings = vec![
+        finding(
+            Some(span("explanation.md", 2, 2)),
+            "The study found 14%, not 40%.",
+            Some(Severity::Major),
+        ),
+        finding(None, "Nothing else is wrong.", None),
+    ];
+    let source = crate::features::learning::drills::build::SourcePassage {
+        version_id: "spacing-v1".into(),
+        start_byte: 0,
+        end_byte: 61,
+        title: "Spacing and memory".into(),
+        text: "Learners who spread their study recalled 14% more a week later.".into(),
+    };
+    (drill, clean, findings, source)
+}
+
+#[tokio::test]
+async fn the_task_for_a_passage_shows_numbered_sentences_and_the_source_passage() -> Result<()> {
+    let (drill, clean, findings, source) = passage_scene();
+    let answer = json!({
+        "issues": [issue_entry(1, "Finding 1 names the figure.", "found", Some(1), Some("found 14%, not 40%"))],
+        "findings": [
+            finding_entry(1, "It is the figure.", "matches", &[1]),
+            finding_entry(2, "A remark.", "false_positive", &[]),
+        ],
+    });
+    let llm = ScriptedJudge::answering(vec![answer.to_string()]);
+    let review = Review {
+        drill: &drill,
+        clean: &clean,
+        source: Some(&source),
+        findings: &findings,
+    };
+    JudgeGrader::new(&llm).assess(&review).await?;
+    let (system, task) = the_request(&llm);
+    assert_eq!(system, JudgeWording::of(&Material::Passage)?.system);
+    let sections = [
+        "Drill: Spacing (an explanation of a source passage)",
+        "The explanation as the reviewer saw it, one sentence to a numbered line:\n\nFile explanation.md\n1 | Learners spread their study.\n2 | Spacing raised recall by 40%.\n3 | \n4 | The gain was smaller for known material.",
+        "The same explanation before any error was planted, with its own numbers:\n\nFile explanation.md\n1 | Learners spread their study.\n2 | Spacing raised recall by 14%.",
+        "The source passage the explanation was written from, in Spacing and memory:\n<passage>\nLearners who spread their study recalled 14% more a week later.\n</passage>",
+        "The key: 1 issue, numbered 1.",
+        "Issue 1: Misquoted figure (major), explanation.md sentence 2",
+        "Sentences:\n  2 | Spacing raised recall by 40%.",
+        "Finding 1: explanation.md sentence 2, severity given: major",
+        "Finding 2: no sentences selected",
+        "Findings and issues whose sentences overlap, a hint and not a verdict:\nfinding 1 and issue 1",
+    ];
+    let mut last = 0;
+    for section in sections {
+        let found = at(&task, section);
+        assert!(found >= last, "{section:?} is out of order");
+        last = found;
+    }
+    assert!(!task.contains("explanation.md line"), "{task}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_task_for_code_shows_no_source_even_when_one_is_given() -> Result<()> {
+    let scene = Scene::new();
+    let source = passage_scene().3;
+    let llm = ScriptedJudge::answering(vec![valid().to_string()]);
+    let review = Review {
+        source: Some(&source),
+        ..scene.review()
+    };
+    JudgeGrader::new(&llm).assess(&review).await?;
+    let (_, task) = the_request(&llm);
+    assert!(!task.contains("<passage>"), "{task}");
+    Ok(())
 }
 
 /// An answer for `Scene::unsorted`, which numbers its issues most severe first: issue 1 is the SQL injection, 2 the

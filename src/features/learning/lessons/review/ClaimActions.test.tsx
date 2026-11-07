@@ -133,16 +133,15 @@ describe('ClaimActions', () => {
   });
 
   it('opens the More menu with the actions the claim offers', async () => {
-    const { onAct } = setup();
+    setup();
     const more = screen.getByRole('button', { name: /More/ });
     expect(more).toHaveAttribute('aria-expanded', 'false');
     await userEvent.click(more);
     const menu = screen.getByRole('menu', { name: 'More actions' });
     expect(within(menu).getByRole('menuitem', { name: 'History (0)' })).toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Withdraw acceptance' })).not.toBeInTheDocument();
-    await userEvent.click(within(menu).getByRole('menuitem', { name: 'General knowledge' }));
-    expect(onAct).toHaveBeenCalledWith({ action: 'general_knowledge' }, 'general_knowledge');
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    // The user is never asked to accept a statement as common knowledge.
+    expect(within(menu).queryByRole('menuitem', { name: 'General knowledge' })).not.toBeInTheDocument();
   });
 
   it('closes the menu again from the More button', async () => {
@@ -203,7 +202,7 @@ describe('ClaimActions', () => {
   });
 
   it('shows the error the action returned', () => {
-    setup(unsupportedItem(1), null, { error: 'The review changed; reload it.' });
+    setup(unsupportedItem(1), null, { error: new Error('The review changed; reload it.') });
     expect(screen.getByRole('alert')).toHaveTextContent('The review changed; reload it.');
   });
 });

@@ -1337,12 +1337,13 @@ async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<
 }
 },
 /**
- * Starts a drill of `language`: an attempt on a ready one, or, when none is ready, the build that will make one.
- * `lines` and `patterns_count` size that build. The drill comes back as the learner may see it, never with its key.
+ * Starts a drill on `material`, code in a language or a passage of a course: an attempt on a ready one, or, when none
+ * is ready, the build that will make one. `lines` (lines of code, or sentences) and `patterns_count` size that build.
+ * The drill comes back as the learner may see it, never with its key or its source.
  */
-async startCodeReviewDrill(language: string, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
+async startReviewDrill(material: ReviewMaterialDto, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_code_review_drill", { language, mode, lines, patternsCount }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_review_drill", { material, mode, lines, patternsCount }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1389,6 +1390,17 @@ async codeReviewLanguages() : Promise<string[]> {
     return await TAURI_INVOKE("plugin:learning|code_review_languages");
 },
 /**
+ * The courses a drill on a passage can draw on: those with at least one source.
+ */
+async reviewDrillCourses() : Promise<Result<ReviewDrillCourseDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_drill_courses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Download a model by ID
  *
  * Thin wrapper over `download_model_impl`, the shared model-setup command.
@@ -1410,6 +1422,29 @@ async downloadModel(modelId: string) : Promise<Result<DownloadModelResponse, Api
 async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|check_first_run_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The chat models recommended for this computer, best first.
+ */
+async recommendChatModels() : Promise<Result<RecommendationDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|recommend_chat_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The verdict for each listed model file, in the order asked; `null` when a
+ * file's header could not be read.
+ */
+async readModelFits(files: ModelFileRefDto[]) : Promise<Result<(FitVerdictDto | null)[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|read_model_fits", { files }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4840,7 +4875,7 @@ export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; su
  * Supported by a passage of another course source than the ones its
  * section cites; the lesson's citation is repaired to it.
  */
-{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
+{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "consistent" } | { verdict: "known_common" } | { verdict: "not_false" } | { verdict: "failed"; kind: VerdictKindDto }
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */
@@ -4895,13 +4930,13 @@ export type ChecksumRequest = { algorithm: string; value: string }
  * A conversation that has this document among its linked documents.
  */
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
-export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "general_knowledge" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
+export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
 /**
  * What the user asked for on a claim (§5.1); `resolve_learning_claim`
  * carries it with the lesson's `expected_revision`. Evidence is attached
  * through `attach_learning_claim_evidence` instead.
  */
-export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "accept_all_general_knowledge" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
 /**
  * Where an attach is, for the line the review shows while it runs.
  */
@@ -4940,7 +4975,7 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
  * The card's lines, in order.
  */
 lines: string[] }
-export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number;
+export type ClaimCountsDto = { verified: number; confirmed: number; queued: number; open: number;
 /**
  * Removed by the user.
  */
@@ -4968,7 +5003,11 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
 /**
  * What the provenance gate weighed (source provenance §18.7).
  */
-{ kind: "standing_assessed"; assessment: StandingAssessedDto }
+{ kind: "standing_assessed"; assessment: StandingAssessedDto } |
+/**
+ * The statement's class and who decided it (claim classes design §3.1).
+ */
+{ kind: "classified"; class: ClassDto; by: ClassifiedByDto }
 /**
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
@@ -5050,7 +5089,7 @@ tried: ResearchSummaryDto }
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
  */
-export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number; by: ActorDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
+export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number } | { state: "unverified"; at: number; reason: UnverifiedReasonDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
 /**
  * Whether a support counted toward the claim's bar.
  */
@@ -5087,6 +5126,8 @@ quote: string;
  */
 quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
+export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
+export type ClassifiedByDto = "model" | "rule" | "writer" | "evidence"
 /**
  * Clean article content extracted from HTML (reader mode).
  *
@@ -5149,7 +5190,7 @@ export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; cl
 /**
  * The drill as the learner may see it.
  */
-export type CodeReviewDrillDto = { title: string; language: string; files: CodeReviewFileDto[] }
+export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[] }
 /**
  * One file of a drill, as the learner reads it or leaves it.
  */
@@ -5159,6 +5200,14 @@ export type CodeReviewFileDto = { path: string; text: string }
  * learner gave it, when they gave one.
  */
 export type CodeReviewFindingDto = { span: CodeReviewSpanDto | null; text: string; severity: CodeReviewSeverity | null }
+/**
+ * What a drill is made of, as the learner may see it.
+ */
+export type CodeReviewMaterialDto = { kind: "code"; language: string } |
+/**
+ * An explanation of a passage; the passage itself is in the reveal only.
+ */
+{ kind: "passage"; sourceTitle: string }
 /**
  * An attempt: where it stands, the learner's own review and, once it is graded, the reveal.
  */
@@ -5210,7 +5259,11 @@ fix: IssueFix[] | null;
 /**
  * The code before any issue was planted, to read beside the drill's.
  */
-cleanFiles: CodeReviewFileDto[] }
+cleanFiles: CodeReviewFileDto[];
+/**
+ * The source passage an explanation was written from; none for code.
+ */
+source: RevealedSourceDto | null }
 /**
  * How a review fared, as its parts.
  */
@@ -5346,66 +5399,6 @@ error: string | null;
  */
 degraded: string | null }
 export type CompareTableDto = { columns: string[]; rows: CompareRowDto[]; modelName: string; generatedAt: string }
-/**
- * Compatibility level DTO for frontend.
- */
-export type CompatibilityLevelDto =
-/**
- * Model will NOT run
- */
-"Incompatible" |
-/**
- * Model may run poorly
- */
-"Poor" |
-/**
- * Model will run acceptably
- */
-"Good" |
-/**
- * Model will run well
- */
-"Excellent"
-/**
- * Compatibility score DTO for frontend.
- */
-export type CompatibilityScoreDto = {
-/**
- * Overall compatibility level
- */
-compatibility_level: CompatibilityLevelDto;
-/**
- * Overall score (0-100)
- */
-overall_score: number;
-/**
- * RAM score (0-100)
- */
-ram_score: number;
-/**
- * GPU score (0-100)
- */
-gpu_score: number;
-/**
- * Disk score (0-100)
- */
-disk_score: number;
-/**
- * Estimated tokens/second (LLMs only)
- */
-estimated_tokens_per_second: number | null;
-/**
- * Estimated loading time in seconds
- */
-estimated_loading_time_seconds: number;
-/**
- * Recommendations
- */
-recommendations: string[];
-/**
- * Blockers
- */
-blockers: string[] }
 export type CompleteLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto[];
 /**
@@ -5758,7 +5751,11 @@ export type DecidedBy =
 /**
  * A judge, shown the code, the learner's code and the issue.
  */
-"judge"
+"judge" |
+/**
+ * The source passage of an explanation, checked against what the learner wrote.
+ */
+"source"
 /**
  * Response from deleting a batch job.
  */
@@ -5787,6 +5784,7 @@ export type DeleteConversationResponseDto = {
 status: string }
 export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
+export type DeviceKindDto = "dedicated" | "unified" | "processor"
 /**
  * What a diff does with one line.
  */
@@ -6099,6 +6097,14 @@ export type ErrorCode =
  */
 "MODEL_LOAD_ERROR" |
 /**
+ * The prompt is larger than the model's context window
+ */
+"PROMPT_EXCEEDS_WINDOW" |
+/**
+ * No Learning model is set
+ */
+"LEARNING_MODEL_NOT_SET" |
+/**
  * Data processing failed
  */
 "PROCESSING_ERROR" |
@@ -6158,6 +6164,7 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
+export type EvidenceDto = { kind: "measured"; suites: string[] } | { kind: "untested" }
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
 /**
  * A code example's run, as the checker saw it (§5.5).
@@ -6361,7 +6368,7 @@ export type FinderGateDto =
 /**
  * The user turned it off (or, for the archive, the archive fallback).
  */
-"disabled" | "noKey" | "noInstance" | "noContact"
+"disabled" | "noKey" | "noInstance" | "noContact" | "noEmail"
 /**
  * A finder's health since the app started.
  */
@@ -6443,6 +6450,9 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type FitDeviceDto = { name: string; kind: DeviceKindDto; totalBytes: number }
+export type FitKindDto = "fits" | "tight" | "too_large"
+export type FitVerdictDto = { kind: FitKindDto; needsBytes: number; budgetBytes: number; device: FitDeviceDto }
 /**
  * The fix of an issue as the lines it removes and the lines it adds, in the file the issue is in.
  */
@@ -6867,7 +6877,7 @@ findingKey: string }
  * A service whose key lives in the keyring, as the panel and the key
  * commands name it.
  */
-export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange"
+export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange" | "openAlex" | "marginalia" | "crossrefPlus"
 /**
  * Whether a key service has a key stored, and where to get one.
  */
@@ -7363,7 +7373,55 @@ note: string | null;
  * Whether the claim's support met the bar for its kind; `None` when it
  * was not weighed.
  */
-sufficiency: LearningSufficiencyDto | null }
+sufficiency: LearningSufficiencyDto | null;
+/**
+ * The class the statement was checked as; none for a lesson prepared
+ * before statements were sorted.
+ */
+class?: LearningStatementClassDto | null;
+/**
+ * How the provenance gate labelled its support, by the label's name
+ * (`attributed`, `practice`, `secondary`...); none when it takes none.
+ */
+label?: string | null;
+/**
+ * The parts a Sourced statement's cited passage was read as, which say
+ * what a passage states and what is common knowledge beside it.
+ */
+parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null;
+/**
+ * The claim behind this statement, for acting on it; none in a report
+ * from before findings named theirs.
+ */
+claimId?: string | null }
+/**
+ * One part of a statement as the part-wise check read it.
+ */
+export type LearningClaimPartDto = { part: string; kind: LearningClaimPartKindDto;
+/**
+ * The saved source version that states the part; none for another.
+ */
+sourceVersionId: string | null }
+/**
+ * What the part-wise check found of one part of a statement (§3.3).
+ */
+export type LearningClaimPartKindDto =
+/**
+ * A passage states it.
+ */
+"stated" |
+/**
+ * No passage states it, and it is standard knowledge of the field.
+ */
+"common" |
+/**
+ * No passage gives a specific it states.
+ */
+"specific_missing" |
+/**
+ * A passage says otherwise.
+ */
+"contradicted"
 /**
  * A claim's profile (§12.3): its kind and subject.
  */
@@ -7380,10 +7438,10 @@ claimKind: string; subject: LearningClaimSubjectDto | null; measurementOrigin: s
 reasons: LearningTrustReasonDto[] }
 /**
  * How a published claim stands (§5.6): verified against a source, confirmed
- * by the user, accepted as general knowledge, or verified against a source
- * since removed. A string union, like the review panel's.
+ * by the user, or verified against a source since removed. A string union,
+ * like the review panel's.
  */
-export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "general_knowledge" | "source_removed"
+export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "source_removed" | "not_verified"
 /**
  * The subject a claim is about, with what a site-for-subject override can
  * be scoped to: the subject, its aliases and its broader classes.
@@ -7395,8 +7453,7 @@ export type LearningClaimSubjectDto = { name: string; kind: string; aliases: str
 classes: string[] }
 /**
  * The lesson's claims by who acts next and what is done to them (§6.3):
- * "Pass 3 · 4 sent back for stronger sources · 2 being repaired · 5
- * waiting for you · 108 verified".
+ * "2 being repaired · 5 waiting for you · 108 verified".
  */
 export type LearningClaimTally = {
 /**
@@ -7408,12 +7465,6 @@ unchecked: number;
  * research looks for sources before they are checked again.
  */
 searching: number;
-/**
- * The machine's: the checker supported them, but the source check found
- * their sources too weak, and research looks for stronger ones before
- * they are checked again.
- */
-sentBack: number;
 /**
  * The machine's: research is done, and their text is rewritten next or
  * a rewrite awaits its check.
@@ -7428,7 +7479,7 @@ waiting: number;
  */
 verified: number;
 /**
- * Closed by the user or removed: confirmed, general knowledge, removed.
+ * Closed by the user: confirmed, removed or edited away.
  */
 resolvedByYou: number;
 /**
@@ -7486,22 +7537,6 @@ export type LearningCurriculumModule = { id: string; title: string; purpose: str
 export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "edit_lesson"; lesson_id: string; title: string; objective: string; estimated_minutes: number } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
 export type LearningCurriculumRevision = { id: string; programId: string; revisionNumber: number; parentRevisionId: string | null; reason: string; modules: LearningCurriculumModule[]; createdAt: number }
 export type LearningCurriculumRevisionActionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
-/**
- * One round of checking unsupported claims against their next evidence page.
- */
-export type LearningDeeperEvidence = {
-/**
- * The evidence page of this round. Page 1 is each claim's first check.
- */
-page: number;
-/**
- * Claims checked against this page.
- */
-claims: number;
-/**
- * Of those claims, the ones whose check against this page has finished.
- */
-checked: number }
 export type LearningDiagnosticAttemptDto = { id: string; programId: string; status: LearningDiagnosticStatus; revision?: number; prompts: LearningDiagnosticPromptDto[]; responses: LearningDiagnosticResponseDto[]; sourceCoverageGaps: LearningDiagnosticCoverageGapDto[]; interpretation: string; findings?: LearningDiagnosticFindingDto[]; createdAt: number; submittedAt: number | null }
 export type LearningDiagnosticCoverageGapDto = { outcomeId: string; outcomeTitle: string; sourceVersionIds: string[] }
 export type LearningDiagnosticFindingDto = { promptId: string; outcomeId: string; signal: LearningDiagnosticSignal; feedback: string; evidenceQuote: string | null }
@@ -7530,37 +7565,42 @@ export type LearningGenerationActivity = { phase: LearningGenerationPhase; phase
  */
 checksCompleted: number; checksTotal: number; checksReused: number;
 /**
- * Checked claims of this pass that are not supported at present. A claim
- * a deeper evidence page supports leaves this count.
- */
-checksUnresolved: number;
-/**
- * Checked claims of this pass the checker supported but whose sources
- * the source check found too weak for the claim: research looks for
- * stronger sources for them. Not counted in `checks_unresolved`.
- */
-checksSentBack: number;
-/**
  * Set while this pass checks its claims again against references
  * research has just saved: how many it saved.
  */
 newReferences: number | null;
 /**
- * None while looking up saved checks; otherwise the number requiring the
- * model in this pass, after every reusable comparison has been restored.
+ * The lesson's statements by the check each gets, once they are sorted
+ * (claim classes design §3.12); none before.
  */
-modelChecksTotal: number | null;
+statements?: LearningStatementPlan | null;
 /**
- * Set while claims this pass left unsupported are checked against further
- * pages of their evidence.
+ * Calls made to sort, check and rewrite this lesson's statements since
+ * this run began.
  */
-deeperEvidence: LearningDeeperEvidence | null;
+modelCalls?: number;
+/**
+ * The most calls the checks can make in all, once the statements are
+ * sorted. It only comes down: terms of the count are replaced by what
+ * the first checks find.
+ */
+modelCallsCeiling?: number | null;
+/**
+ * How many times the ceiling was published higher than the one before
+ * it: the design allows none (§3.12), and the acceptance run reads this
+ * count from the job.
+ */
+modelCallsCeilingRises?: number;
 /**
  * Where the lesson's claims stand after the latest pass; none before
  * the first pass observed them.
  */
 claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
-export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null;
+/**
+ * The code of the error the job recorded; null on older jobs.
+ */
+errorCode?: ErrorCode | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -7665,12 +7705,6 @@ export type LearningLessonAuditState = "running" | "completed" | "stopped"
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
 /**
- * Of `claim_count`, the claims kept as general knowledge: no saved
- * reference supports or contradicts them, and they were not checked
- * against a source.
- */
-generalKnowledgeCount: number;
-/**
  * Of `claim_count`, the claims the user confirmed without a supporting
  * passage; shown apart from the machine-verified ones (§5.6).
  */
@@ -7758,7 +7792,11 @@ export type LearningOutlineProgressDto = { programId?: string | null; stage: Out
  * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
  * dive's gathering and evidence linking are never a silent spinner.
  */
-detail?: string | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+detail?: string | null;
+/**
+ * Present while the outline waits out a model outage between attempts.
+ */
+waiting?: ModelWaitDto; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
 export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
 /**
  * Outline items whose citation is verified: chosen by evidence linking or
@@ -8007,6 +8045,20 @@ export type LearningRecallDuplicateStatus = "pending" | "confirmed" | "dismissed
 export type LearningRecallDuplicateSuggestionDto = { id: string; cardId: string; possibleDuplicateCardId: string; reason: string; similarity: number | null; status: LearningRecallDuplicateStatus; createdAt: number; decidedAt: number | null }
 export type LearningRecallSchedulerStateDto = { stability: number | null; difficulty: number | null; lastReviewedAt: number | null; dueAt: number; intervalDays: number; reviewCount: number }
 export type LearningRecallWorkspaceDto = { programId: string; cards: LearningRecallCardDto[]; duplicates: LearningRecallDuplicateSuggestionDto[]; dueCount: number; schedulerDisclosure: string }
+/**
+ * A saved page the admission gate refused, or a source research added that
+ * no lesson cites now, listed for the user to remove (claim classes design
+ * 3.6). Nothing is removed without them.
+ */
+export type LearningRemovableSourceDto = { sourceId: string;
+/**
+ * The source's revision, which a removal names.
+ */
+revision: number; title: string; url: string | null;
+/**
+ * Why the gate refused the page; none for a source research added.
+ */
+reason: string | null }
 export type LearningRubricCriterion = { id: string; title: string; description: string; maxPoints: number }
 export type LearningRuntimePresetDto = { id: LearningRuntimePresetId; name: string; description: string;
 /**
@@ -8150,10 +8202,54 @@ export type LearningSourceVersionSummaryDto = { id: string; versionNumber: numbe
 snapshotHash: string | null }
 export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[];
 /**
+ * Saved pages the admission gate refused, for the user to remove.
+ */
+notSources?: LearningRemovableSourceDto[];
+/**
+ * Sources research added that no lesson cites now, for the user to
+ * remove.
+ */
+unusedResearch?: LearningRemovableSourceDto[];
+/**
  * What checking the course's waiting claims against a source just
  * added found; null when no re-check ran.
  */
 recheck: WaitingClaimsRecheckDto | null }
+/**
+ * The class a published statement was checked as (claim classes design
+ * §3.1): what the learner is told of the check it met.
+ */
+export type LearningStatementClassDto =
+/**
+ * Checked against the source passage its sentence cites.
+ */
+"sourced" |
+/**
+ * Checked for consistency with the passages its section cites.
+ */
+"reasoning" |
+/**
+ * Standard knowledge, put to the model alone.
+ */
+"common"
+/**
+ * The statements of a lesson by the check each gets (claim classes design
+ * §3.1, §3.12): "73 statements: 36 to check against their sources, 29 to
+ * check for consistency, 8 common knowledge".
+ */
+export type LearningStatementPlan = {
+/**
+ * Checked against their sources.
+ */
+sourced: number;
+/**
+ * Checked for consistency with the passages their section cites.
+ */
+reasoning: number;
+/**
+ * Common knowledge, put to the model alone.
+ */
+common: number }
 /**
  * A subject class as the user named it ("Web platform APIs").
  */
@@ -8592,6 +8688,7 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
+export type ModelFileRefDto = { repo: string; file: string; revision: string | null }
 export type ModelInfo = {
 /**
  * The loaded model's vector-space identity; empty when none is loaded.
@@ -8621,14 +8718,6 @@ description: string;
  * Size in GB
  */
 size_gb: number;
-/**
- * Minimum RAM in GB
- */
-minimum_ram_gb: number;
-/**
- * Recommended RAM in GB
- */
-recommended_ram_gb: number;
 /**
  * Context length in tokens
  */
@@ -8683,7 +8772,8 @@ embedding_dimensions: number | null;
  * models. Frontend uses this to disable + badge incompatible rows so
  * users don't waste a 1GB+ download on a model that won't load.
  */
-embedding_compatibility: EmbeddingCompatibilityDto | null }
+embedding_compatibility: EmbeddingCompatibilityDto | null;
+fit?: FitVerdictDto | null }
 /**
  * Why a turn or job runs on the model it runs on.
  */
@@ -8717,21 +8807,14 @@ export type ModelRecommendationDto = {
  */
 model: ModelMetadataDto;
 /**
- * Compatibility analysis
- */
-compatibility: CompatibilityScoreDto;
-/**
- * Ranking score (0-100)
- */
-ranking_score: number;
-/**
  * Popularity metric from upstream provider (downloads)
  */
 popularity_downloads?: number | null;
 /**
  * Popularity metric from upstream provider (likes)
  */
-popularity_likes?: number | null }
+popularity_likes?: number | null;
+fit: FitVerdictDto | null }
 /**
  * A model a chat or a role can name.
  *
@@ -8740,6 +8823,7 @@ popularity_likes?: number | null }
  * Settings when the model is loaded, so moving a server moves every chat
  * that names it.
  */
+export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 export type ModelRef =
 /**
  * A downloaded GGUF row in `models` (`DownloadedModel::model_id`).
@@ -8968,6 +9052,8 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
+export type RecommendationDto = { modelId: string; name: string; description: string; useFor: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
+export type RecommendationLabelDto = "best" | "fastest" | "smallest_download"
 export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**
  * Function registry statistics
@@ -9044,12 +9130,7 @@ export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_de
 { cause: "trust_changed"; trust: TrustCauseDto }
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
-export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" } |
-/**
- * Left to the user without a rewrite: the sentence also states
- * something verified or waiting (claim sources design §18.5).
- */
-{ outcome: "not_attempted"; reason: string }
+export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
 export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
@@ -9309,7 +9390,11 @@ span: CodeReviewSpanDto; consequence: string;
 /**
  * How to say it in an interview.
  */
-explanation: string; fix: FixDiffDto; outcome: IssueResultKind;
+explanation: string; fix: FixDiffDto;
+/**
+ * The words of the source passage that settle the issue, when a source proved it.
+ */
+sourceQuote: string | null; outcome: IssueResultKind;
 /**
  * The position of the finding that earned the credit, when one did.
  */
@@ -9322,7 +9407,23 @@ reason: string;
  * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
  */
 alsoValid: boolean }
+/**
+ * The source passage of a drill on a passage, as the reveal shows it.
+ */
+export type RevealedSourceDto = { title: string; text: string;
+/**
+ * The version of the source the passage is the exact text of.
+ */
+versionId: string }
+/**
+ * A course a drill on a passage can draw on.
+ */
+export type ReviewDrillCourseDto = { programId: string; title: string }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
+/**
+ * What a learner asks to review: code in a language, or a passage from one of their courses.
+ */
+export type ReviewMaterialDto = { kind: "code"; language: string } | { kind: "passage"; programId: string; topic: string | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
  * A selected option records a quiz answer; otherwise the rating records recall.
@@ -9934,6 +10035,7 @@ modelId: string; modelName: string;
  * Total bytes of the download.
  */
 downloadBytes: number }
+export type SpeedClassDto = "fast" | "balanced" | "thorough"
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
@@ -10558,6 +10660,7 @@ resultsPerPage: number;
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
 export type UnitKindDto = "block" | "question" | "answer_key"
+export type UnverifiedReasonDto = "unchecked" | "unsupported" | "contradicted"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
@@ -10627,7 +10730,7 @@ keywords?: string[] }
  * A recorded user action. A confirmation shows the sources it was bound
  * to; the quote digest it is bound to stays on the backend.
  */
-export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "research_with_hint"; hint: string }
+export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.
@@ -10679,7 +10782,7 @@ export type VectorQuantizationDto =
  * searches rescore against full-precision vectors.
  */
 "i8"
-export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } | { kind: "no_source" } | { kind: "could_not_judge" } | { kind: "general_knowledge_proposed" } |
+export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } | { kind: "no_source" } | { kind: "could_not_judge" } |
 /**
  * The Verifier's verdict on a claim the local checker verified.
  */

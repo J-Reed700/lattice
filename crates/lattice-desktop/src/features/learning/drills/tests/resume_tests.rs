@@ -7,6 +7,7 @@ use super::support::{
     FakeRunner, Harness, ScriptedModel, KILLING_TEST, MODEL, SUITE,
 };
 use crate::features::learning::drills::build::{DrillBuild, Evidence, ModelCall, Stage};
+use crate::features::learning::drills::material::CodeMaterial;
 use crate::features::learning::drills::repository::{self, StoredDrill};
 use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::persistence::db;
@@ -306,7 +307,7 @@ async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_
     let context = harness.context().await?;
     let outcome = DrillBuild::new(
         &model,
-        Some(&runner as &dyn CodeRunner),
+        Box::new(CodeMaterial::new(Some(&runner as &dyn CodeRunner))),
         &grader,
         &harness.pool,
         cancel,

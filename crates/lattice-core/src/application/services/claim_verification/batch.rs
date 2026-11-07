@@ -95,6 +95,7 @@ fn resolve(raw: &str, claims: &[LocatedClaim], passages: &[String]) -> Option<Ve
                     quote
                 },
                 confidence: None,
+                uncertain: false,
             }))
         })()
         .unwrap_or(ClaimJudgment::Unusable);

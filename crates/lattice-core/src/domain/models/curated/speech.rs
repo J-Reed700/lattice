@@ -217,8 +217,6 @@ fn entry(id: &str, name: &str, description: &str, files: Vec<ModelFileMetadata>)
         category: ModelCategory::Speech,
         description: description.into(),
         size_gb: total_size_bytes as f64 / 1_000_000_000.0,
-        minimum_ram_gb: 2.0,
-        recommended_ram_gb: 4.0,
         context_length: 512,
         performance_tier: PerformanceTier::Fast,
         supported_quantizations: vec!["F32".into()],

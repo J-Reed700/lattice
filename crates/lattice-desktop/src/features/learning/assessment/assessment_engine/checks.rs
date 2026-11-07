@@ -82,10 +82,7 @@ fn distinct_options(options: &[String]) -> bool {
 fn text_key_valid(key: &LearningTextKey) -> bool {
     !key.variants.is_empty()
         && key.variants.len() <= 12
-        && key
-            .variants
-            .iter()
-            .all(|v| !v.trim().is_empty() && v.chars().count() <= 500)
+        && key.variants.iter().all(|v| !v.trim().is_empty())
         && key.numeric.as_ref().is_none_or(|n| {
             n.value.is_finite()
                 && n.tolerance.is_finite()
@@ -98,7 +95,7 @@ pub const TRUE_FALSE: [&str; 2] = ["True", "False"];
 
 pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()> {
     id(&candidate.id, "assessment item")?;
-    bounded(&candidate.prompt, "Assessment prompt", 8_000)?;
+    present(&candidate.prompt, "Assessment prompt")?;
     if candidate.outcome_ids.is_empty() || candidate.outcome_ids.len() > 8 {
         return Err(invalid("An assessment item must address 1–8 outcomes."));
     }
@@ -122,10 +119,10 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
     for source in &candidate.source_version_ids {
         id(source, "source version")?;
     }
-    if candidate.explanation.chars().count() > 2_000
-        || candidate.distractor_rationales.len() > candidate.options.len().max(8)
-    {
-        return Err(invalid("Assessment item explanations are bounded."));
+    if candidate.distractor_rationales.len() > candidate.options.len().max(8) {
+        return Err(invalid(
+            "An assessment item has more distractor rationales than options.",
+        ));
     }
     let no_left = candidate.left.is_empty();
     match (&candidate.format, &candidate.key) {
@@ -246,12 +243,8 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             let mut criteria = HashSet::new();
             for criterion in &candidate.rubric {
                 id(&criterion.id, "rubric criterion")?;
-                bounded(&criterion.title, "Rubric criterion title", 160)?;
-                bounded(
-                    &criterion.description,
-                    "Rubric criterion description",
-                    1_200,
-                )?;
+                present(&criterion.title, "Rubric criterion title")?;
+                present(&criterion.description, "Rubric criterion description")?;
                 if criterion.max_points == 0 || criterion.max_points > 100 {
                     return Err(invalid(
                         "Rubric criterion points must be between 1 and 100.",

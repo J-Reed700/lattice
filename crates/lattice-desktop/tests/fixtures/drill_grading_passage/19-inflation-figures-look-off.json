@@ -1,0 +1,133 @@
+{
+  "name": "19-inflation-figures-look-off",
+  "kind": "vague",
+  "why": "The first finding says only that the figures look off: right sentence, no cause, so half found. The second names the non sequitur and why it fails (the study only compares Orsland with its own past): found.",
+  "source": {
+    "versionId": "orsland-inflation-target-v1",
+    "startByte": 41007,
+    "endByte": 42012,
+    "title": "Macroeconomics 220, case study: Inflation targeting in Orsland",
+    "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent, to be met over a horizon of eight quarters. Economist Tamsin Ridgewell studied the 60 months after the change and found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points. She argues that the target worked chiefly by anchoring expectations: surveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\n\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall. Her study compares Orsland only with its own past, so it does not show that a neighbouring country without a target would have done worse. The central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side, after a large wage settlement in the mining sector. Ridgewell regards these misses as small, the largest being 0.9 percentage points."
+  },
+  "drill": {
+    "id": "orsland-inflation-target",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "The Orsland inflation target",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 months after the change.\nShe found that the standard deviation of annual inflation rose from 1.2 to 3.4 percentage points.\nShe argues that the target worked chiefly by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore shows that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side.\nThis followed a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "orsland-inflation-target-sd",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 4,
+          "end": 4
+        },
+        "consequence": "A reader concludes the target made inflation less stable, the opposite of the study's finding.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "She found that the standard deviation of annual inflation rose from 1.2 to 3.4 percentage points.",
+          "after": "She found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points."
+        },
+        "explanation": "The standard deviation fell from 3.4 to 1.2 percentage points.",
+        "proof": {
+          "sourced": {
+            "quote": "the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points",
+            "planted": "contradicted",
+            "reason": "The source says the standard deviation fell from 3.4 to 1.2; the sentence says it rose from 1.2 to 3.4."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "orsland-inflation-target-nonseq",
+        "pattern": "reasoning.non_sequitur",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 9,
+          "end": 9
+        },
+        "consequence": "A reader takes a study of one country against its own past as proof that targeting beats not targeting.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "It therefore shows that a neighbouring country without a target would have done worse.",
+          "after": "It therefore does not show that a neighbouring country without a target would have done worse."
+        },
+        "explanation": "A comparison of Orsland with its own past does not show that a neighbour without a target would have done worse.",
+        "proof": {
+          "sourced": {
+            "quote": "so it does not show that a neighbouring country without a target would have done worse",
+            "planted": "contradicted",
+            "reason": "The source says the study does not show this; the sentence says it does, which does not follow from comparing Orsland only with itself."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 months after the change.\nShe found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points.\nShe argues that the target worked chiefly by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore does not show that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side.\nThis followed a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 4,
+        "end": 4
+      },
+      "text": "The figures here look off to me.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "This conclusion does not follow. The study compares Orsland only with its own past, as the previous sentence says, so it can say nothing about whether a neighbour without a target would have done worse.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "half_found": {
+          "finding": 0
+        }
+      },
+      {
+        "found": {
+          "finding": 1
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -1,12 +1,15 @@
 //! The pattern catalogue: the recurring shapes of defect that a drill plants
 //! and a learner is asked to recognise, as data. Each pattern has a family, a
-//! one-sentence definition, the languages it applies to and the source that
+//! one-sentence definition, the material it applies to and the source that
 //! names it.
 
 use serde::{Deserialize, Serialize};
 
+use super::drill::Material;
+
 /// The kind of problem a pattern is. The catalogue lists families in this
-/// order, and a pattern's id begins with its family's slug.
+/// order, and a pattern's id begins with its family's slug. The first nine are
+/// the families of code, the last five those of a passage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Family {
@@ -19,11 +22,16 @@ pub enum Family {
     Design,
     Readability,
     Testing,
+    Fidelity,
+    Scope,
+    Reasoning,
+    Definition,
+    Consistency,
 }
 
 impl Family {
     /// Every family, in the catalogue's order.
-    pub const ALL: [Family; 9] = [
+    pub const ALL: [Family; 14] = [
         Family::Correctness,
         Family::Errors,
         Family::Concurrency,
@@ -33,6 +41,33 @@ impl Family {
         Family::Design,
         Family::Readability,
         Family::Testing,
+        Family::Fidelity,
+        Family::Scope,
+        Family::Reasoning,
+        Family::Definition,
+        Family::Consistency,
+    ];
+
+    /// The families of code, in the catalogue's order.
+    pub const CODE: [Family; 9] = [
+        Family::Correctness,
+        Family::Errors,
+        Family::Concurrency,
+        Family::Resources,
+        Family::Security,
+        Family::Performance,
+        Family::Design,
+        Family::Readability,
+        Family::Testing,
+    ];
+
+    /// The families of a passage, in the catalogue's order.
+    pub const PASSAGE: [Family; 5] = [
+        Family::Fidelity,
+        Family::Scope,
+        Family::Reasoning,
+        Family::Definition,
+        Family::Consistency,
     ];
 
     /// The family's name as it begins a pattern id: `security` in
@@ -48,27 +83,35 @@ impl Family {
             Self::Design => "design",
             Self::Readability => "readability",
             Self::Testing => "testing",
+            Self::Fidelity => "fidelity",
+            Self::Scope => "scope",
+            Self::Reasoning => "reasoning",
+            Self::Definition => "definition",
+            Self::Consistency => "consistency",
         }
     }
 }
 
-/// The languages a pattern can be planted in.
+/// What a pattern can be planted in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Languages {
-    /// Every language of the catalogue.
+    /// Code in every language of the catalogue.
     Any,
     /// Only these: the pattern exists only where the language has the thing it
     /// is about.
     Only(&'static [&'static str]),
+    /// Only an explanation of a passage, never code.
+    Passage,
 }
 
 impl Languages {
-    /// Whether a pattern with these languages applies to `language`.
+    /// Whether a pattern with these languages applies to code in `language`.
     pub fn includes(self, language: &str) -> bool {
         match self {
             Self::Any => true,
             Self::Only(languages) => languages.contains(&language),
+            Self::Passage => false,
         }
     }
 }
@@ -90,9 +133,12 @@ pub struct Pattern {
 }
 
 impl Pattern {
-    /// Whether the pattern can be planted in `language`.
-    pub fn applies_to(&self, language: &str) -> bool {
-        self.languages.includes(language)
+    /// Whether the pattern can be planted in `material`.
+    pub fn applies_to(&self, material: &Material) -> bool {
+        match material {
+            Material::Code { language } => self.languages.includes(language),
+            Material::Passage => self.languages == Languages::Passage,
+        }
     }
 }
 
@@ -120,11 +166,11 @@ pub fn pattern(id: &str) -> Option<&'static Pattern> {
     CATALOGUE.iter().find(|pattern| pattern.id == id)
 }
 
-/// The patterns that apply to `language`, in the catalogue's order.
-pub fn patterns_for(language: &str) -> impl Iterator<Item = &'static Pattern> + '_ {
+/// The patterns that apply to `material`, in the catalogue's order.
+pub fn patterns_for(material: &Material) -> impl Iterator<Item = &'static Pattern> + '_ {
     CATALOGUE
         .iter()
-        .filter(move |pattern| pattern.applies_to(language))
+        .filter(move |pattern| pattern.applies_to(material))
 }
 
 /// The general-purpose programming languages: every language but SQL and shell.
@@ -1000,5 +1046,130 @@ pub const CATALOGUE: &[Pattern] = &[
         definition: "Tests share mutable state such as a global, a file or a database row, so a result depends on which tests ran before and the suite fails when the order changes.",
         languages: Languages::Any,
         source: "Meszaros, xUnit Test Patterns, Interacting Tests",
+    },
+    // Fidelity
+    Pattern {
+        id: "fidelity.misquoted_figure",
+        family: Family::Fidelity,
+        name: "Misquoted figure",
+        definition: "A number, percentage or other figure differs from the one the source gives, so a reader takes away a result the source does not report.",
+        languages: Languages::Passage,
+        source: "Lewandowsky et al., Misinformation and its Correction, Psychological Science in the Public Interest 13(3), 2012",
+    },
+    Pattern {
+        id: "fidelity.wrong_unit_or_magnitude",
+        family: Family::Fidelity,
+        name: "Wrong unit or magnitude",
+        definition: "A quantity keeps its number but has the wrong unit or the wrong order of magnitude, such as milligrams for micrograms or thousands for millions, so it is off by a large factor.",
+        languages: Languages::Passage,
+        source: "Huff, How to Lie with Statistics, ch. 5, The Gee-Whiz Graph",
+    },
+    Pattern {
+        id: "fidelity.swapped_entities",
+        family: Family::Fidelity,
+        name: "Swapped entities",
+        definition: "Two people, groups, methods or things the source distinguishes trade places, so what the source says of one is said of the other.",
+        languages: Languages::Passage,
+        source: "Lewandowsky et al., Misinformation and its Correction, Psychological Science in the Public Interest 13(3), 2012",
+    },
+    Pattern {
+        id: "fidelity.wrong_attribution",
+        family: Family::Fidelity,
+        name: "Wrong attribution",
+        definition: "A claim, finding or quotation is credited to a person, study or institution other than the one the source credits it to, so a reader trusts it for the wrong reason.",
+        languages: Languages::Passage,
+        source: "Lewandowsky et al., Misinformation and its Correction, Psychological Science in the Public Interest 13(3), 2012",
+    },
+    Pattern {
+        id: "fidelity.wrong_date_or_order",
+        family: Family::Fidelity,
+        name: "Wrong date or order",
+        definition: "A date, period or sequence of events differs from the source's, so a cause appears to come after its effect or a step happens out of order.",
+        languages: Languages::Passage,
+        source: "Grosse and Renkl, Finding and Fixing Errors in Worked Examples, Journal of Educational Psychology 99(4), 2007",
+    },
+    // Scope
+    Pattern {
+        id: "scope.overgeneralisation",
+        family: Family::Scope,
+        name: "Overgeneralisation",
+        definition: "A claim the source makes about some cases, some people or one setting is stated about all of them, so it asserts more than the evidence reaches.",
+        languages: Languages::Passage,
+        source: "Damer, Attacking Faulty Reasoning, Hasty Generalization",
+    },
+    Pattern {
+        id: "scope.dropped_qualifier",
+        family: Family::Scope,
+        name: "Dropped qualifier or hedge",
+        definition: "A word such as may, often, in most cases or under these conditions is left out, so a tentative or conditional finding reads as a certain one.",
+        languages: Languages::Passage,
+        source: "Sumner et al., The Association between Exaggeration in Health Related Science News and Academic Press Releases, BMJ 349, 2014",
+    },
+    Pattern {
+        id: "scope.shifted_population",
+        family: Family::Scope,
+        name: "Shifted population or condition",
+        definition: "A result is moved to a group, a setting or a condition other than the one the source studied, such as from mice to people or from adults to children.",
+        languages: Languages::Passage,
+        source: "Henrich, Heine and Norenzayan, The Weirdest People in the World?, Behavioral and Brain Sciences 33, 2010",
+    },
+    // Reasoning
+    Pattern {
+        id: "reasoning.correlation_as_cause",
+        family: Family::Reasoning,
+        name: "Correlation stated as cause",
+        definition: "Two things the source reports as associated are said to be cause and effect, although the source gives no evidence that one produces the other.",
+        languages: Languages::Passage,
+        source: "Huff, How to Lie with Statistics, ch. 8, Post Hoc Rides Again",
+    },
+    Pattern {
+        id: "reasoning.reversed_relation",
+        family: Family::Reasoning,
+        name: "Reversed relation or direction",
+        definition: "The direction of a relation is turned round, so that what the source says increases, causes or precedes something is said to decrease, result from or follow it.",
+        languages: Languages::Passage,
+        source: "Damer, Attacking Faulty Reasoning, Questionable Cause",
+    },
+    Pattern {
+        id: "reasoning.unsupported_mechanism",
+        family: Family::Reasoning,
+        name: "Unsupported mechanism",
+        definition: "A reason for why something happens is added that the source does not give, so the explanation sounds complete but rests on a claim nothing supports.",
+        languages: Languages::Passage,
+        source: "Pearl and Mackenzie, The Book of Why, ch. 1, The Ladder of Causation",
+    },
+    Pattern {
+        id: "reasoning.non_sequitur",
+        family: Family::Reasoning,
+        name: "Non sequitur",
+        definition: "A conclusion is drawn that does not follow from the sentences before it, even if each of them is true.",
+        languages: Languages::Passage,
+        source: "Copi and Cohen, Introduction to Logic, Fallacies of Relevance",
+    },
+    // Definition
+    Pattern {
+        id: "definition.wrong_definition",
+        family: Family::Definition,
+        name: "Wrong definition",
+        definition: "A term is defined in a way that differs from how the source defines it, so every later use of the term carries the wrong meaning.",
+        languages: Languages::Passage,
+        source: "Tippett, Refutation Text in Science Education, International Journal of Science and Mathematics Education 8, 2010",
+    },
+    Pattern {
+        id: "definition.conflated_terms",
+        family: Family::Definition,
+        name: "Conflated terms",
+        definition: "Two terms the source keeps apart, such as accuracy and precision, are treated as one or used for each other, so a distinction the subject depends on is lost.",
+        languages: Languages::Passage,
+        source: "Chi, Slotta and de Leeuw, From Things to Processes: A Theory of Conceptual Change for Learning Science Concepts, Learning and Instruction 4, 1994",
+    },
+    // Consistency
+    Pattern {
+        id: "consistency.self_contradiction",
+        family: Family::Consistency,
+        name: "Contradicts another sentence",
+        definition: "A sentence says the opposite of another sentence of the same explanation, so the explanation cannot be right in both places.",
+        languages: Languages::Passage,
+        source: "Copi and Cohen, Introduction to Logic, the law of non-contradiction",
     },
 ];

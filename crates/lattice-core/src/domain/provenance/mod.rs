@@ -104,8 +104,8 @@ pub use standing::{
     TrackRecord,
 };
 pub use sufficiency::{
-    decide, Available, Bar, CountedSupport, Decision, Label, Missing, NextStep, PassageKind,
-    StaticBars, Support,
+    decide, label_below_primary, Available, Bar, CountedSupport, Decision, Label, Missing,
+    NextStep, PassageKind, StaticBars, Support,
 };
 pub use temporal::{effective_date, validity, EffectiveDate, TemporalValidity};
 

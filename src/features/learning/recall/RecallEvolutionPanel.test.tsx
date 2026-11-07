@@ -43,10 +43,15 @@ describe('Learning Studio versioned recall', () => {
     renderPanel();
     await user.click(await screen.findByRole('button', { name: 'Create a typed card' }));
     await user.selectOptions(screen.getByLabelText('Card format'), 'cloze');
-    await user.type(screen.getByRole('textbox', { name: 'Card prompt' }), 'A {{stable operation ID}} prevents duplicates.');
-    await user.type(screen.getByRole('textbox', { name: 'Card answer' }), 'stable operation ID');
-    await user.type(screen.getByRole('textbox', { name: 'Card explanation' }), 'A replay reuses its original request.');
-    await user.type(screen.getByRole('textbox', { name: 'Cloze deletions' }), 'stable operation ID');
+    for (const [name, text] of [
+      ['Card prompt', 'A {{stable operation ID}} prevents duplicates.'],
+      ['Card answer', 'stable operation ID'],
+      ['Card explanation', 'A replay reuses its original request.'],
+      ['Cloze deletions', 'stable operation ID'],
+    ] as const) {
+      await user.click(screen.getByRole('textbox', { name }));
+      await user.paste(text);
+    }
     await user.click(screen.getByLabelText(/Operations guide · v1/));
     await user.click(screen.getByRole('button', { name: 'Save card version' }));
     expect((await screen.findAllByRole('alert')).some((alert) => alert.textContent?.includes('Connection interrupted'))).toBe(true);
@@ -55,6 +60,16 @@ describe('Learning Studio versioned recall', () => {
     await user.click(screen.getByRole('button', { name: 'Retry card save' }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
     expect(mocks.save.mock.calls[1][0]).toEqual(request);
+  });
+
+  it('does not cap the prompt, answer or explanation of a card', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: 'Create a typed card' }));
+    await user.selectOptions(screen.getByLabelText('Card format'), 'question_answer');
+    for (const name of ['Card prompt', 'Card answer', 'Card explanation']) {
+      expect(screen.getByRole('textbox', { name })).not.toHaveAttribute('maxlength');
+    }
   });
 
   it('hides a due answer until reveal and retries the same review ID after failure', async () => {

@@ -74,6 +74,26 @@ pub(super) fn heading_tiers(pages: &[PageLayout], body: f32) -> Vec<u32> {
     tiers
 }
 
+/// Whether bold marks anything at body size: bold sets less than half of the
+/// body-size characters. A body that reads as bold throughout, as one does in
+/// a typeface whose regular stems pass the bold-stem bar, marks nothing by it.
+pub(super) fn bold_stands_out(pages: &[PageLayout], body: f32) -> bool {
+    let (mut bold, mut all) = (0usize, 0usize);
+    for run in pages
+        .iter()
+        .flat_map(|page| page.lines.iter())
+        .flat_map(|line| line.runs.iter())
+        .filter(|run| bucket(run.size) == bucket(body))
+    {
+        let characters = run.text.chars().count();
+        all += characters;
+        if run.bold {
+            bold += characters;
+        }
+    }
+    bold.saturating_mul(2) < all
+}
+
 /// A heading must be short enough that the chunker will recognise it.
 fn is_heading_shaped(line: &Line) -> bool {
     let text = line.text();
@@ -82,11 +102,9 @@ fn is_heading_shaped(line: &Line) -> bool {
 
 /// The markdown level for a line, or `None` if it is body text.
 ///
-/// Known failure modes: a document typeset entirely in one size has no
-/// headings (correctly — there is nothing to find); a document whose body is
-/// bold throughout would promote every line, which the `size >= body`
-/// requirement plus the ratio test for the non-bold case keeps rare.
-fn heading_level(line: &Line, body: f32, tiers: &[u32]) -> Option<usize> {
+/// Known failure mode: a document typeset entirely in one size, and with no
+/// bold that stands out, has no headings (correctly — there is nothing to find).
+fn heading_level(line: &Line, body: f32, tiers: &[u32], bold_marks: bool) -> Option<usize> {
     if body <= 0.0 || !is_heading_shaped(line) {
         return None;
     }
@@ -101,7 +119,7 @@ fn heading_level(line: &Line, body: f32, tiers: &[u32]) -> Option<usize> {
         return Some((2 + tier).min(DEEPEST_HEADING_LEVEL));
     }
     // A bold run at body size is the other way documents mark a subheading.
-    if line.bold() && size >= body {
+    if bold_marks && line.bold() && size >= body {
         return Some(deepest);
     }
     None
@@ -208,14 +226,20 @@ fn table_row(line: &Line, columns: &[f32]) -> String {
     format!("| {} |", cells.join(" | "))
 }
 
-pub(super) fn render_page(page: &PageLayout, body: f32, tiers: &[u32], tolerance: f32) -> String {
+pub(super) fn render_page(
+    page: &PageLayout,
+    body: f32,
+    tiers: &[u32],
+    bold_marks: bool,
+    tolerance: f32,
+) -> String {
     if let Some(text) = &page.fallback_text {
         return text.clone();
     }
     let levels: Vec<Option<usize>> = page
         .lines
         .iter()
-        .map(|line| heading_level(line, body, tiers))
+        .map(|line| heading_level(line, body, tiers, bold_marks))
         .collect();
     let headings: Vec<bool> = levels.iter().map(Option::is_some).collect();
     let mut out = String::new();

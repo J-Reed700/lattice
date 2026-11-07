@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,25 +12,28 @@ import { ModelVariantPicker } from './ModelVariantPicker';
 import { modelQuantization } from './quantization';
 
 
-vi.mock('@/features/model/api/client', () => ({ modelApi: { getModelVariants: vi.fn() } }));
+vi.mock('@/features/model/api/client', () => ({ modelApi: { getModelVariants: vi.fn(), readModelFits: vi.fn() } }));
 const base: ModelMetadata = {
   id: 'q4', name: 'Example 8B', model_id: 'publisher/example', category: 'LLM', description: '',
   default_filename: 'model-Q4_K_M.gguf', supported_quantizations: ['Q4_K_M', 'Q8_0'],
-  size_gb: 4, total_size_bytes: 4_000_000_000, minimum_ram_gb: 6, recommended_ram_gb: 8,
+  size_gb: 4, total_size_bytes: 4_000_000_000,
   context_length: 8192, performance_tier: 'Balanced', capabilities: ['chat'],
   license: 'MIT', requires_auth: false, download_url: null, files: [],
   embedding_dimensions: null, embedding_compatibility: null,
 };
-const q8 = { ...base, id: 'q8', default_filename: 'model-Q8_0.gguf', supported_quantizations: ['Q8_0'], size_gb: 8, minimum_ram_gb: 12 };
+const q8 = { ...base, id: 'q8', default_filename: 'model-Q8_0.gguf', supported_quantizations: ['Q8_0'], size_gb: 8 };
 function setup() {
   const onSelect = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<ApiProvider client={createTestApi(modelApi)}><QueryClientProvider client={client}><ModelVariantPicker model={base} selected={base} capabilities={null} onSelect={onSelect} /></QueryClientProvider></ApiProvider>);
+  render(<ApiProvider client={createTestApi(modelApi)}><QueryClientProvider client={client}><ModelVariantPicker model={base} selected={base} onSelect={onSelect} /></QueryClientProvider></ApiProvider>);
   return { user: userEvent.setup(), onSelect };
 }
 
 describe('published model versions', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(modelApi.readModelFits).mockReturnValue(new Promise(() => {}));
+  });
 
   it('shows an explicit loading state and selects the exact published artifact', async () => {
     let finish!: (value: Awaited<ReturnType<typeof modelApi.getModelVariants>>) => void;
@@ -43,7 +46,7 @@ describe('published model versions', () => {
     expect(screen.getByRole('status')).toHaveTextContent('1 of 2 standalone versions');
     const choice = screen.getByRole('button', { name: /Q8_0/ });
     expect(choice).toHaveTextContent('8.0 GB');
-    expect(choice).toHaveTextContent('Est. memory 12.0 GB');
+    expect(choice).not.toHaveTextContent('Est. memory');
     await user.click(choice);
     expect(onSelect).toHaveBeenCalledWith(q8);
   });
@@ -58,11 +61,61 @@ describe('published model versions', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('labels each file with the backend’s verdict', async () => {
+    const device = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated' as const, totalBytes: 16 * 1_073_741_824 };
+    const verdict = (kind: 'fits' | 'tight' | 'too_large') => ({ kind, needsBytes: 8e9, budgetBytes: 15e9, device });
+    const q6 = { ...base, id: 'q6', default_filename: 'model-Q6_K.gguf', supported_quantizations: ['Q6_K'], size_gb: 6 };
+    vi.mocked(modelApi.getModelVariants).mockResolvedValue({
+      ok: true,
+      data: [{ ...base, fit: verdict('fits') }, { ...q6, fit: verdict('tight') }, { ...q8, fit: verdict('too_large') }, { ...base, id: 'q3', default_filename: 'model-IQ3_S.gguf', size_gb: 3, fit: null }],
+    });
+    setup();
+    expect(await screen.findByRole('button', { name: /Q4_K_M/ })).toHaveTextContent('Fits');
+    expect(screen.getByRole('button', { name: /Q6_K/ })).toHaveTextContent('Fits with a shorter context');
+    expect(screen.getByRole('button', { name: /Q8_0/ })).toHaveTextContent('Too large for this computer');
+    expect(screen.getByRole('button', { name: /IQ3_S/ })).toHaveTextContent('Checking size');
+  });
+
+  describe('versions whose size has not been read', () => {
+    const device = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated' as const, totalBytes: 16 * 1_073_741_824 };
+    const verdict = { kind: 'fits' as const, needsBytes: 8e9, budgetBytes: 15e9, device };
+    const unread = { ...base, fit: null };
+    const unreadQ8 = { ...q8, fit: null };
+
+    it('asks once for exactly the files it lists with no verdict, and shows Checking size meanwhile', async () => {
+      vi.mocked(modelApi.getModelVariants).mockResolvedValue({ ok: true, data: [unread, unreadQ8, { ...base, id: 'q6', default_filename: 'model-Q6_K.gguf', fit: verdict }] });
+      setup();
+      expect(await screen.findByRole('button', { name: /Q4_K_M/ })).toHaveTextContent('Checking size');
+      expect(screen.getByRole('button', { name: /Q8_0/ })).toHaveTextContent('Checking size');
+      await waitFor(() => expect(modelApi.readModelFits).toHaveBeenCalledTimes(1));
+      expect(modelApi.readModelFits).toHaveBeenCalledWith([
+        expect.objectContaining({ repo: 'publisher/example', file: 'model-Q4_K_M.gguf' }),
+        expect.objectContaining({ repo: 'publisher/example', file: 'model-Q8_0.gguf' }),
+      ]);
+    });
+
+    it('shows each answer: a verdict’s label, or Size unknown for a header that could not be read', async () => {
+      vi.mocked(modelApi.getModelVariants).mockResolvedValue({ ok: true, data: [unread, unreadQ8] });
+      vi.mocked(modelApi.readModelFits).mockResolvedValue({ ok: true, data: [verdict, null] });
+      setup();
+      await waitFor(() => expect(screen.getByRole('button', { name: /Q4_K_M/ })).toHaveTextContent('Fits'));
+      expect(screen.getByRole('button', { name: /Q4_K_M/ })).not.toHaveTextContent('Checking size');
+      expect(screen.getByRole('button', { name: /Q8_0/ })).toHaveTextContent('Size unknown');
+    });
+
+    it('never asks when every file arrived with its verdict', async () => {
+      vi.mocked(modelApi.getModelVariants).mockResolvedValue({ ok: true, data: [{ ...base, fit: verdict }, { ...q8, fit: verdict }] });
+      setup();
+      await screen.findByRole('button', { name: /Q8_0/ });
+      expect(modelApi.readModelFits).not.toHaveBeenCalled();
+    });
+  });
+
   it('keeps unreported sizes unknown and never fabricates a fit', async () => {
-    vi.mocked(modelApi.getModelVariants).mockResolvedValue({ ok: true, data: [{ ...base, size_gb: 0, minimum_ram_gb: 0 }] });
+    vi.mocked(modelApi.getModelVariants).mockResolvedValue({ ok: true, data: [{ ...base, size_gb: 0 }] });
     setup();
     expect(await screen.findByText('Size unavailable')).toBeInTheDocument();
-    expect(screen.getByText('Memory estimate unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('Memory estimate unavailable')).not.toBeInTheDocument();
     expect(screen.queryByText(/Fits on this computer/)).not.toBeInTheDocument();
   });
 

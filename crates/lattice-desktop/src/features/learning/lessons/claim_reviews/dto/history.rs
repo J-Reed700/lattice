@@ -8,7 +8,8 @@ use lattice_core::domain::learning::claim_review::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ActorDto, ReopenCauseDto, RepairOutcomeDto, StandingAssessedDto, StopReasonDto, VerdictKindDto,
+    ActorDto, ClassDto, ClassifiedByDto, ReopenCauseDto, RepairOutcomeDto, StandingAssessedDto,
+    StopReasonDto, VerdictKindDto,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -23,17 +24,20 @@ pub struct ClaimEventDto {
     pub event: ClaimEventPayloadDto,
 }
 
-impl From<&RecordedEvent> for ClaimEventDto {
-    fn from(record: &RecordedEvent) -> Self {
-        Self {
+impl ClaimEventDto {
+    /// The history entry for a stored event; `None` for the acceptance
+    /// policy's own records (`Stepped`, `CitationDropped`), which the card
+    /// does not show yet.
+    pub fn of(record: &RecordedEvent) -> Option<Self> {
+        Some(Self {
             ordinal: record.ordinal,
             actor: record.provenance.actor.into(),
             at: record.provenance.at,
             job_id: record.provenance.job_id.clone(),
             app_version: record.provenance.app_version.clone(),
             checker_model: record.provenance.checker_model.clone(),
-            event: (&record.event).into(),
-        }
+            event: ClaimEventPayloadDto::of(&record.event)?,
+        })
     }
 }
 
@@ -113,11 +117,17 @@ pub enum ClaimEventPayloadDto {
     StandingAssessed {
         assessment: StandingAssessedDto,
     },
+    /// The statement's class and who decided it (claim classes design §3.1).
+    Classified {
+        class: ClassDto,
+        by: ClassifiedByDto,
+    },
 }
 
-impl From<&ClaimEvent> for ClaimEventPayloadDto {
-    fn from(event: &ClaimEvent) -> Self {
-        match event {
+impl ClaimEventPayloadDto {
+    /// How the history shows `event`; `None` when it does not.
+    pub fn of(event: &ClaimEvent) -> Option<Self> {
+        Some(match event {
             ClaimEvent::Extracted {
                 location,
                 statement,
@@ -146,6 +156,7 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
                 before,
                 after,
                 outcome,
+                ..
             } => Self::RepairAttempted {
                 attempt: *attempt,
                 escalated: *escalated,
@@ -212,7 +223,14 @@ impl From<&ClaimEvent> for ClaimEventPayloadDto {
             } => Self::StandingAssessed {
                 assessment: StandingAssessedDto::of(trust, reason, cause.as_ref()),
             },
-        }
+            ClaimEvent::Classified { class, by } => Self::Classified {
+                class: (*class).into(),
+                by: (*by).into(),
+            },
+            ClaimEvent::Stepped { .. }
+            | ClaimEvent::CitationDropped { .. }
+            | ClaimEvent::PublishedUnverified { .. } => return None,
+        })
     }
 }
 
@@ -285,6 +303,9 @@ pub enum CheckResultDto {
         #[serde(rename = "supportingQuote")]
         supporting_quote: String,
     },
+    Consistent,
+    KnownCommon,
+    NotFalse,
     Failed {
         kind: VerdictKindDto,
     },
@@ -309,6 +330,9 @@ impl From<&CheckResult> for CheckResultDto {
                 source_version_id: source_version_id.clone(),
                 supporting_quote: supporting_quote.clone(),
             },
+            CheckResult::Consistent => Self::Consistent,
+            CheckResult::KnownCommon => Self::KnownCommon,
+            CheckResult::NotFalse => Self::NotFalse,
             CheckResult::Failed { kind } => Self::Failed { kind: kind.into() },
         }
     }
@@ -349,7 +373,6 @@ pub enum UserActionDto {
         after: String,
     },
     Remove,
-    GeneralKnowledge,
     ResearchWithHint {
         hint: String,
     },
@@ -367,7 +390,6 @@ impl From<&UserAction> for UserActionDto {
                 after: after.clone(),
             },
             UserAction::Remove => Self::Remove,
-            UserAction::GeneralKnowledge => Self::GeneralKnowledge,
             UserAction::ResearchWithHint { hint } => Self::ResearchWithHint { hint: hint.clone() },
         }
     }

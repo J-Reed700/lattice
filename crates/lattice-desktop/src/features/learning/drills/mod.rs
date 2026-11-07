@@ -12,6 +12,7 @@ pub(in crate::features::learning) mod fix_grading;
 pub mod grader;
 pub mod grading;
 pub mod jobs;
+pub(in crate::features::learning) mod material;
 pub(in crate::features::learning) mod proof;
 pub mod repository;
 mod reveal;

@@ -11,9 +11,10 @@ interface FeatureErrorFallbackProps {
   reset: () => void;
   featureName: string;
   icon?: React.ReactNode;
+  exhausted?: boolean;
 }
 
-function FeatureErrorFallback({ error, reset, featureName }: FeatureErrorFallbackProps) {
+function FeatureErrorFallback({ error, reset, featureName, exhausted }: FeatureErrorFallbackProps) {
   return (
     <div className="flex min-h-[320px] items-center justify-center p-8">
       <div className="max-w-sm text-center">
@@ -27,6 +28,15 @@ function FeatureErrorFallback({ error, reset, featureName }: FeatureErrorFallbac
           <RefreshCw className="h-4 w-4" strokeWidth={1.75} />
           Try again
         </button>
+        {exhausted ? (
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-4 ml-2 inline-flex h-8 items-center gap-2 rounded-md border border-border-default bg-surface px-3 text-sm font-medium text-text-primary transition-colors duration-fast hover:bg-surface-raised"
+          >
+            Reload
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -40,8 +50,8 @@ interface FeatureErrorBoundaryProps {
 
 export function FeatureErrorBoundary({ children, featureName, icon }: FeatureErrorBoundaryProps) {
   return (
-    <ErrorBoundary renderFallback={({ error, resetError }) => (
-      <FeatureErrorFallback error={error} reset={resetError} featureName={featureName} icon={icon} />
+    <ErrorBoundary renderFallback={({ error, resetError, exhausted }) => (
+      <FeatureErrorFallback error={error} reset={resetError} featureName={featureName} icon={icon} exhausted={exhausted} />
     )}>
       {children}
     </ErrorBoundary>

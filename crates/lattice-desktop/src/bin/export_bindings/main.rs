@@ -222,11 +222,12 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::create_learning_tangent,
             lattice::features::learning::plugin::list_learning_tangents,
             lattice::features::learning::plugin::set_conversation_course,
-            lattice::features::learning::plugin::start_code_review_drill,
+            lattice::features::learning::plugin::start_review_drill,
             lattice::features::learning::plugin::submit_code_review,
             lattice::features::learning::plugin::code_review_result,
             lattice::features::learning::plugin::regrade_code_review,
             lattice::features::learning::plugin::code_review_languages,
+            lattice::features::learning::plugin::review_drill_courses,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,
@@ -253,6 +254,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::model_management::plugin::commands::last_learning_window_shortfall,
             // Catalog/discovery commands
             lattice::features::model_management::commands::detect_system_capabilities,
+            lattice::features::model_management::commands::recommend_chat_models,
+            lattice::features::model_management::commands::read_model_fits,
             lattice::features::model_management::commands::get_compatible_models,
             lattice::features::model_management::commands::get_all_recommended_models,
             lattice::features::model_management::commands::search_model_catalog,

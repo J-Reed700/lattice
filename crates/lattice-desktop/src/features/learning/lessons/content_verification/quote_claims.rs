@@ -121,7 +121,10 @@ pub(super) fn settle(
         evidence,
         supporting_quote,
         resolution: None,
+        claim_id: None,
         two_pass: Default::default(),
+        label: Some(Label::Attributed),
+        class: None,
         trust: None,
     }))
 }

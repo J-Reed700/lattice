@@ -44,10 +44,9 @@ pub async fn check_first_run_status_impl(
     tracing::info!("Command: check_first_run_status - ENTRY");
 
     let repository = container.downloaded_models();
-    // Pass the system_info probe so the chat recommendation is sized to the
-    // user's actual RAM, not a one-size-fits-all small-tier default.
-    let use_case =
-        CheckFirstRunStatusUseCase::with_system_info(repository, container.system_info());
+    // The chat recommendation is the recommender's first pick for this computer's accelerators,
+    // not a tier by RAM.
+    let use_case = CheckFirstRunStatusUseCase::new(repository, container.machine_profile_probe());
     let response = use_case
         .execute()
         .await
@@ -230,7 +229,8 @@ mod tests {
 
         // Resolve the repository from the container (proper DI) and run the use case.
         let repository = container.downloaded_models();
-        let use_case = CheckFirstRunStatusUseCase::new(repository);
+        let use_case =
+            CheckFirstRunStatusUseCase::new(repository, container.machine_profile_probe());
         let response = use_case.execute().await.unwrap();
 
         assert!(response.needs_setup);

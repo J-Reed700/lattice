@@ -309,6 +309,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
                         "test fixture",
                     ),
                 },
+                found: false,
             },
         )
         .collect();
