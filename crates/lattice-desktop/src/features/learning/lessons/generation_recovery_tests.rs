@@ -532,3 +532,76 @@ async fn a_learning_model_refused_for_memory_fails_once_naming_what_holds_it() {
     assert!(settled.finished_at.is_some());
     assert_eq!(settled.error.as_deref(), Some(REFUSAL), "shown as written");
 }
+
+#[tokio::test]
+async fn a_lesson_job_fails_once_when_the_bundled_server_cannot_start() {
+    use crate::features::llm::engine::types::LLMError;
+    let settled = run_with_model(Arc::new(|| {
+        Box::pin(async {
+            Err(AppError::from(LLMError::SidecarBinaryUnusable(
+                "llama-server.exe was not found".into(),
+            )))
+        })
+    }))
+    .await;
+
+    assert_eq!(
+        settled.status,
+        Status::Failed,
+        "waiting does not fix an install"
+    );
+    assert!(settled.finished_at.is_some());
+    let error = settled.error.unwrap_or_default();
+    assert!(
+        error.contains(
+            "The model server could not start: llama-server.exe was not found. \
+             Reinstall Lattice, or choose another model in Settings."
+        ),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_lesson_job_waits_for_a_server_that_is_still_starting() {
+    use crate::features::llm::engine::types::LLMError;
+    let settled = run_with_model(Arc::new(|| {
+        Box::pin(async {
+            Err(AppError::from(LLMError::ClientUnavailable(
+                "llama-server is still starting".into(),
+            )))
+        })
+    }))
+    .await;
+
+    assert_eq!(settled.status, Status::Pending);
+    assert!(settled.finished_at.is_none());
+    assert!(settled
+        .error
+        .unwrap_or_default()
+        .contains("retries automatically"));
+}
+
+#[tokio::test]
+async fn a_lesson_job_for_a_course_without_sources_asks_for_them_in_plain_words() {
+    let pool = crate::features::learning::tests::pool().await.unwrap();
+    let (repo, job) = repository_tests::queued_job_without_sources(&pool).await;
+    let worker = LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+        pool: pool.clone(),
+        load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
+        courses: None,
+        refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
+        research_web: None,
+        verifier: None,
+    };
+    run_attempt(worker, &job.id).await.unwrap();
+
+    let settled = repo.job(&job.id).await.unwrap();
+    assert_eq!(settled.status, Status::Failed);
+    let error = settled.error.unwrap_or_default();
+    assert!(
+        error.contains("Add reference material in Sources before preparing a lesson."),
+        "{error}"
+    );
+    assert!(!error.contains("MVP"), "{error}");
+}

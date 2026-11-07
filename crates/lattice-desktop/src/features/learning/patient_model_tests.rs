@@ -216,3 +216,77 @@ fn waiting_out_outages_keeps_the_pace_of_the_model_it_waits_on() {
     let recorder = Recorder::default();
     assert_eq!(PatientModel::new(&Paced, &recorder).pace(), Paced.pace());
 }
+
+const SERVER_FAULT: &str = "llama-server.exe was not found";
+const COULD_NOT_START: &str = "The model server could not start: llama-server.exe was not found. \
+    Reinstall Lattice, or choose another model in Settings.";
+
+fn bundled_server_cannot_run() -> AppError {
+    crate::features::llm::engine::types::LLMError::SidecarBinaryUnusable(SERVER_FAULT.into()).into()
+}
+
+#[tokio::test]
+async fn a_bundled_server_that_cannot_start_is_not_waited_for() {
+    let mut flaky = Flaky::new(vec![]);
+    flaky.always = true;
+    flaky.error = bundled_server_cannot_run;
+    let recorder = Recorder::default();
+    let long = Backoff {
+        initial: Duration::from_secs(300),
+        max: Duration::from_secs(300),
+    };
+    let request = CompletionRequest::default();
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(5),
+        patiently(&recorder, long, |_| flaky.complete(&request)),
+    )
+    .await
+    .expect("a server that cannot start ends the call, it is not waited out");
+
+    let error = outcome.err().unwrap();
+    assert!(error.to_string().contains(COULD_NOT_START), "{error}");
+    assert_eq!(flaky.calls.load(Ordering::Relaxed), 1);
+    assert!(recorder.waits.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn an_outline_stops_at_once_when_the_bundled_server_cannot_start() {
+    let mut flaky = Flaky::new(vec![]);
+    flaky.always = true;
+    flaky.error = bundled_server_cannot_run;
+    let recorder = Recorder::default();
+    let patient = PatientModel::new(&flaky, &recorder).with_backoff(FAST);
+
+    let outcome = tokio::time::timeout(Duration::from_secs(5), generate(&patient))
+        .await
+        .expect("outline generation does not wait on an install problem");
+
+    let error = outcome.err().unwrap();
+    assert!(error.to_string().contains(COULD_NOT_START), "{error}");
+    assert_eq!(flaky.calls.load(Ordering::Relaxed), 1);
+    assert!(recorder.waits.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_server_that_is_starting_busy_or_unreachable_is_still_waited_for() {
+    use crate::features::llm::engine::types::LLMError;
+    let outages: [fn() -> AppError; 4] = [
+        || AppError::ServiceNotAvailable("503: loading model".into()),
+        || LLMError::ClientUnavailable("llama-server is still starting".into()).into(),
+        || LLMError::Network("connection reset".into()).into(),
+        || AppError::RateLimitExceeded("the server is busy".into()),
+    ];
+    for outage in outages {
+        let mut flaky = Flaky::new(vec![1]);
+        flaky.error = outage;
+        let recorder = Recorder::default();
+        let response = PatientModel::new(&flaky, &recorder)
+            .with_backoff(FAST)
+            .complete(&CompletionRequest::default())
+            .await;
+        assert!(response.is_ok(), "{:?}", response.err());
+        assert_eq!(flaky.calls.load(Ordering::Relaxed), 2);
+        assert!(!recorder.waits.lock().unwrap().is_empty());
+    }
+}

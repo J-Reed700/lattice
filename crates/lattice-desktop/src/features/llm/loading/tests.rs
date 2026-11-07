@@ -519,3 +519,34 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
     let connection = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
     assert_eq!(connection.max_tokens, 8_192);
 }
+
+#[test]
+fn a_bundled_server_that_cannot_run_is_an_install_problem_the_learner_can_act_on() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    let fault = "llama-server.exe was not found";
+    let expected = "The model server could not start: llama-server.exe was not found. \
+        Reinstall Lattice, or choose another model in Settings.";
+    let error = LLMError::SidecarBinaryUnusable(fault.into());
+
+    let mapped = unusable_sidecar(&error).expect("an unusable sidecar is reported as such");
+    let converted = AppError::from(error);
+
+    for error in [mapped, converted] {
+        assert!(error.to_string().contains(expected), "{error}");
+        assert!(
+            !JobFailure::is_transient(&error),
+            "waiting does not bring a missing server back: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_server_that_is_starting_or_unreachable_stays_transient() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for error in [
+        LLMError::ClientUnavailable("llama-server is still starting".into()),
+        LLMError::Network("connection reset".into()),
+    ] {
+        assert!(JobFailure::is_transient(&AppError::from(error)));
+    }
+}
