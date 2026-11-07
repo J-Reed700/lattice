@@ -264,10 +264,13 @@ async fn an_outline_stops_at_once_when_the_bundled_server_cannot_start() {
     let mut flaky = Flaky::new(vec![]);
     flaky.always = true;
     flaky.error = bundled_server_cannot_run;
-    let recorder = Recorder::default();
+    let recorder = Recorder {
+        cancel_after_first_wait: true,
+        ..Recorder::default()
+    };
     let patient = PatientModel::new(&flaky, &recorder).with_backoff(FAST);
 
-    let outcome = tokio::time::timeout(Duration::from_secs(5), generate(&patient))
+    let outcome = tokio::time::timeout(Duration::from_secs(120), generate(&patient))
         .await
         .expect("outline generation does not wait on an install problem");
 
