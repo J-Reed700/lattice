@@ -85,6 +85,8 @@ pub(super) struct Figures {
     /// checker sends after an answer it cannot read, whose answers come back
     /// unreadable.
     unusable_asks: usize,
+    /// The judge calls a figure contradicted, not just unsupported.
+    contradicted: bool,
     asks: AtomicUsize,
     repairs: AtomicUsize,
     judged: Mutex<Vec<String>>,
@@ -98,6 +100,7 @@ impl Figures {
             repair_to_good: false,
             fail_repair_at: None,
             unusable_asks: 0,
+            contradicted: false,
             asks: AtomicUsize::new(0),
             repairs: AtomicUsize::new(0),
             judged: Mutex::new(Vec::new()),
@@ -132,6 +135,16 @@ impl Figures {
                     .collect(),
             )
             .to_string());
+        }
+        if prompt.starts_with("Verify instructional answer keys independently.") {
+            let asked = self::context(prompt)["requestedIndices"].clone();
+            let answers: Vec<Value> = asked
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."}))
+                .collect();
+            return Ok(json!({"answers":answers}).to_string());
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let data = self::context(prompt);
@@ -174,6 +187,9 @@ impl Figures {
                 .to_owned();
             self.judged.lock().unwrap().push(claim.clone());
             if claim.starts_with("DictReader buffers ") {
+                if self.contradicted {
+                    return Ok(format!("contradicted\nReason: The reference gives another buffer size.\nSource quote: {GOOD}\nSource passage: passage-0"));
+                }
                 return Ok("unsupported\nReason: The reference does not state a buffer size.\nSource passage: none".into());
             }
         }
@@ -2149,38 +2165,6 @@ async fn a_code_examples_ended_claim_blocks_nothing() -> Result<()> {
     Ok(())
 }
 
-/// A model whose rewrites change nothing, so a sentence stays as the judge
-/// last read it.
-struct Stubborn(Model);
-
-#[async_trait::async_trait]
-impl LLMPort for Stubborn {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let mut replies = Vec::new();
-        for prompt in fixture_prompts(request) {
-            if prompt.starts_with("Repair verified lesson defects.") {
-                let body = self::context(&prompt)["candidate"]["blocks"][0]["body"].clone();
-                replies.push(repair_body(&prompt, body));
-            } else {
-                replies.push(self.0.respond(&prompt).await?);
-            }
-        }
-        Ok(fixture_completion(request, replies))
-    }
-    fn model_name(&self) -> &str {
-        "stubborn-fixture"
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len() / 4
-    }
-    fn max_context_tokens(&self) -> usize {
-        128_000
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
 /// A course whose lesson is prepared against a source its library holds, so
 /// what a preparation returns can be published and read back as a learner
 /// reads it.
@@ -2374,14 +2358,19 @@ async fn a_statement_whose_cut_would_take_the_lessons_first_explanation_is_publi
 async fn a_statement_whose_last_reading_was_a_contradiction_is_published_not_verified_as_one_a_source_disagrees_with(
 ) -> Result<()> {
     let course = Course::new().await?;
+    let model = Figures {
+        contradicted: true,
+        ..Figures::new()
+    };
+    let draft = json!({"blocks":[bare(0, &figure(5))],"questions":[]});
     let prepared = course
-        .prepare(&Stubborn(Model::new()), &candidate(BAD))
+        .prepare(&model, &draft)
         .await
         .expect("the lesson publishes, its statement not verified");
 
     let shown = course.publish(prepared).await?;
 
-    shown.assert_only_not_verified(BAD, "contradicted");
+    shown.assert_only_not_verified(&figure(0), "contradicted");
     Ok(())
 }
 
