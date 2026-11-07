@@ -8,7 +8,7 @@ use crate::features::learning::{
     lesson_evidence::{
         LearningClaimEvidenceDto, LearningClaimPartDto, LearningClaimPartKindDto,
         LearningClaimResolutionDto, LearningEvidencePassageDto, LearningLessonEvidenceDto,
-        LearningStatementClassDto, SavedEvidenceVersion,
+        LearningStatementClassDto, SavedEvidenceVersion, UnverifiedReasonDto,
     },
     references::trust::dto_map,
 };
@@ -172,7 +172,17 @@ impl LessonVerificationReport {
                         None,
                         Some((*reason).into()),
                     ),
-                    None if finding.verdict != ClaimVerdict::Supported => return Err(unavailable()),
+                    None if finding.verdict != ClaimVerdict::Supported => (
+                        LearningClaimResolutionDto::NotVerified,
+                        None,
+                        Some(match finding.verdict {
+                            ClaimVerdict::Contradicted => UnverifiedReasonDto::Contradicted,
+                            ClaimVerdict::Unverified => UnverifiedReasonDto::Unchecked,
+                            ClaimVerdict::Supported | ClaimVerdict::Unsupported => {
+                                UnverifiedReasonDto::Unsupported
+                            }
+                        }),
+                    ),
                     None if source_removed => {
                         (LearningClaimResolutionDto::SourceRemoved, None, None)
                     }
@@ -248,7 +258,6 @@ mod tests {
     use crate::features::learning::dto::{
         LearningBlockDto, LearningBlockKind, PreparedLearningLesson,
     };
-    use crate::features::learning::lesson_evidence::UnverifiedReasonDto;
     use lattice_core::domain::learning::claim_review::ClassifiedBy;
     use lattice_core::domain::provenance::Label;
 
