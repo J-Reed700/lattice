@@ -192,7 +192,6 @@ pub struct CuratedChatModel {
     pub quantization: &'static str,
     /// The window the model was trained for (`<arch>.context_length`).
     pub context_length: u32,
-    kv: KvFootprint,
     pub performance_tier: PerformanceTier,
     /// The catalog's capability order: higher is more capable, and no two
     /// entries share a rank. Each entry's comment names the public results
@@ -223,45 +222,6 @@ pub struct CuratedChatModel {
     pub use_for: &'static str,
 }
 
-/// What a model's KV cache costs on top of its weights, from its GGUF header,
-/// at f16 (llama.cpp's default cache type).
-///
-/// Counted the way llama.cpp allocates it rather than as if every layer
-/// attended to the whole window: Qwen 3.5/3.6/3.8 give one layer in four full
-/// attention (`full_attention_interval = 4`; the rest keep a fixed recurrent
-/// state), and Gemma 4 gives one in six, the others attending to a sliding
-/// window whose cache stops growing at the window.
-#[derive(Debug, Clone, Copy)]
-struct KvFootprint {
-    /// Key and value bytes per token across the layers that attend to the
-    /// whole window: `layers * kv_heads * (key_len + value_len) * 2`.
-    per_token_bytes: u64,
-    /// The sliding-window layers' cache: `layers * kv_heads * (key_len +
-    /// value_len) * 2 * (window + 512-token batch)`.
-    windowed_bytes: u64,
-}
-
-/// Compute buffers, the recurrent state of hybrid layers and the server
-/// itself. llama.cpp's output buffer alone is `vocab * batch * 4` bytes, about
-/// half a gigabyte for these 250K-token vocabularies at the default batch.
-const RUNTIME_OVERHEAD_BYTES: u64 = 1_000_000_000;
-
-/// The window behind `minimum_ram_gb`.
-const MINIMUM_WINDOW_TOKENS: u64 = 8_192;
-
-/// The window behind `recommended_ram_gb`.
-const COMFORTABLE_WINDOW_TOKENS: u64 = 32_768;
-
-/// Memory the model holds while serving `window_tokens` of context, in GB
-/// (10^9 bytes, as Hugging Face sizes are), rounded up to a tenth.
-fn memory_estimate_gb(weights_bytes: u64, kv: KvFootprint, window_tokens: u64) -> f64 {
-    let bytes = weights_bytes
-        + kv.windowed_bytes
-        + kv.per_token_bytes * window_tokens
-        + RUNTIME_OVERHEAD_BYTES;
-    (bytes as f64 / 100_000_000.0).ceil() / 10.0
-}
-
 /// Every entry of the chat catalog.
 pub fn curated_chat_models() -> &'static [CuratedChatModel] {
     CURATED_CHAT_MODELS
@@ -290,12 +250,6 @@ impl CuratedChatModel {
             category: ModelCategory::LLM,
             description: self.description.into(),
             size_gb: self.size_bytes as f64 / 1_000_000_000.0,
-            minimum_ram_gb: memory_estimate_gb(self.size_bytes, self.kv, MINIMUM_WINDOW_TOKENS),
-            recommended_ram_gb: memory_estimate_gb(
-                self.size_bytes,
-                self.kv,
-                COMFORTABLE_WINDOW_TOKENS,
-            ),
             context_length: self.context_length,
             performance_tier: self.performance_tier,
             supported_quantizations: vec![self.quantization.into()],
@@ -340,18 +294,7 @@ const GEMMA_CAPABILITIES: &[&str] = &[
     TOOL_CALLING_CAPABILITY,
 ];
 
-/// Qwen 3.5 2B/4B/9B: 24 or 32 blocks, a quarter of them full attention
-/// (6 or 8), 2 or 4 KV heads, 256-wide keys and values.
-const QWEN35_2B_KV: KvFootprint = KvFootprint {
-    per_token_bytes: 6 * 2 * 512 * 2,
-    windowed_bytes: 0,
-};
-const QWEN35_4B_9B_KV: KvFootprint = KvFootprint {
-    per_token_bytes: 8 * 4 * 512 * 2,
-    windowed_bytes: 0,
-};
-
-/// The chat catalog, smallest working set first (the 8K-window estimate, then the 32K one).
+/// The chat catalog, smallest working set first.
 ///
 /// Every entry is current-generation (Qwen 3.5 or later, Gemma 4), so the
 /// tool loop, citation and grounding prompts all meet a template that knows
@@ -412,7 +355,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: QWEN35_2B_KV,
         performance_tier: PerformanceTier::Fast,
         rank: 1,
         parameters_b: 1.9,
@@ -441,7 +383,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: QWEN35_4B_9B_KV,
         performance_tier: PerformanceTier::Balanced,
         rank: 2,
         parameters_b: 4.2,
@@ -474,10 +415,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87",
         quantization: "Q4_K_M",
         context_length: 131_072,
-        kv: KvFootprint {
-            per_token_bytes: 4 * 2 * 1024 * 2,
-            windowed_bytes: 20 * 2 * 512 * 2 * (512 + 512),
-        },
         performance_tier: PerformanceTier::Balanced,
         rank: 3,
         parameters_b: 7.5,
@@ -509,7 +446,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: QWEN35_4B_9B_KV,
         performance_tier: PerformanceTier::Balanced,
         rank: 5,
         parameters_b: 9.0,
@@ -546,10 +482,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 9 * 4 * 512 * 2,
-            windowed_bytes: 0,
-        },
         performance_tier: PerformanceTier::Balanced,
         rank: 4,
         parameters_b: 9.0,
@@ -582,10 +514,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 8 * 1024 * 2,
-            windowed_bytes: 40 * 8 * 512 * 2 * (1024 + 512),
-        },
         performance_tier: PerformanceTier::Balanced,
         rank: 9,
         parameters_b: 11.9,
@@ -618,7 +546,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59",
         quantization: "Q6_K",
         context_length: 262_144,
-        kv: QWEN35_4B_9B_KV,
         performance_tier: PerformanceTier::Balanced,
         rank: 6,
         parameters_b: 9.0,
@@ -651,7 +578,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4",
         quantization: "Q8_0",
         context_length: 262_144,
-        kv: QWEN35_4B_9B_KV,
         performance_tier: PerformanceTier::Balanced,
         rank: 7,
         parameters_b: 9.0,
@@ -684,10 +610,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "6f394336500bb5409bd68c31aa9d75097b5e6104f6cf30c82a09a7b64df41faf",
         quantization: "Q6_K",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 8 * 1024 * 2,
-            windowed_bytes: 40 * 8 * 512 * 2 * (1024 + 512),
-        },
         performance_tier: PerformanceTier::Balanced,
         rank: 10,
         parameters_b: 11.9,
@@ -723,10 +645,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "40171062abb191d5fb8a04b19efea377a16daebf1fd17d5e8b25808537aa782f",
         quantization: "IQ3_S",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 17 * 4 * 512 * 2,
-            windowed_bytes: 0,
-        },
         performance_tier: PerformanceTier::Accurate,
         rank: 14,
         parameters_b: 27.3,
@@ -760,10 +678,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "878be93f9c238ea853b3fd1eb602637ce3cf1cddea56dc345d9a7bf2d6093e29",
         quantization: "UD-IQ3_S",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 5 * 2 * 1024 * 2,
-            windowed_bytes: 25 * 8 * 512 * 2 * (1024 + 512),
-        },
         performance_tier: PerformanceTier::Accurate,
         rank: 8,
         parameters_b: 25.2,
@@ -797,10 +711,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "f20e7ff1be28c283eeeb18fc895733791c56a5851d5cd3fe9691b7f7d12afa72",
         quantization: "Q8_0",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 8 * 1024 * 2,
-            windowed_bytes: 40 * 8 * 512 * 2 * (1024 + 512),
-        },
         performance_tier: PerformanceTier::Accurate,
         rank: 11,
         parameters_b: 11.9,
@@ -836,10 +746,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
         quantization: "UD-Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 17 * 4 * 512 * 2,
-            windowed_bytes: 0,
-        },
         performance_tier: PerformanceTier::Accurate,
         rank: 15,
         parameters_b: 27.3,
@@ -872,10 +778,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f",
         quantization: "UD-Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 5 * 2 * 1024 * 2,
-            windowed_bytes: 25 * 8 * 512 * 2 * (1024 + 512),
-        },
         performance_tier: PerformanceTier::Accurate,
         rank: 13,
         parameters_b: 25.2,
@@ -910,10 +812,6 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
         quantization: "UD-Q4_K_XL",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 10 * 2 * 512 * 2,
-            windowed_bytes: 0,
-        },
         performance_tier: PerformanceTier::Accurate,
         rank: 12,
         parameters_b: 34.7,

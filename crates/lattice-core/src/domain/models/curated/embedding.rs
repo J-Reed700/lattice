@@ -24,8 +24,6 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
         category: ModelCategory::Embedding,
         description: "Instruction-aware multilingual retrieval, the default on every machine. Runs in the bundled llama.cpp server (F16) and embeds up to 2048 tokens per passage.".into(),
         size_gb: 1.2,
-        minimum_ram_gb: 6.0,
-        recommended_ram_gb: 8.0,
         context_length: 2048,
         performance_tier: PerformanceTier::Balanced,
         supported_quantizations: vec!["F16".into()],

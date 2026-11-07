@@ -33,7 +33,6 @@ fn hf_row(repo: &str, file: &str, downloads: u64) -> DownloadableHfModel {
     model.model_id = Some(repo.into());
     model.default_filename = Some(file.into());
     model.files.clear();
-    model.minimum_ram_gb = 99.0;
     DownloadableHfModel {
         model,
         downloads,
@@ -62,10 +61,6 @@ fn a_catalog_repository_row_becomes_the_catalog_entry() {
         .expect("plain 9B");
     assert_eq!(plain.downloads, 1_000, "keeps the repository's popularity");
     assert_eq!(plain.likes, 7);
-    assert!(
-        plain.model.minimum_ram_gb < 10.0,
-        "catalog memory, not the guess"
-    );
     assert!(models
         .iter()
         .any(|entry| entry.model.id == "hf::someone/Other-GGUF::Other-Q4_K_M.gguf"));

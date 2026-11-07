@@ -357,8 +357,6 @@ fn hugging_face_row(size_gb: f64) -> ModelMetadata {
         model_id: Some("someone/Other-9B-GGUF".into()),
         default_filename: Some("Other-9B-Q4_K_M.gguf".into()),
         size_gb,
-        minimum_ram_gb: (size_gb * 1.5).max(4.0),
-        recommended_ram_gb: (size_gb * 2.0).max(8.0),
         total_size_bytes: (size_gb * 1e9) as u64,
         files: Vec::new(),
         ..curated_row(NINE_B)

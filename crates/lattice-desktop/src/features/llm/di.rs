@@ -11,8 +11,8 @@ use sqlx::SqlitePool;
 
 use crate::features::llm::use_cases::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
-    GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
-    GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
+    GetAvailableModelsUseCase, GetModelPathUseCase, GetSystemCapabilitiesUseCase,
+    ListDownloadedModelsUseCase,
 };
 use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
 use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
@@ -42,8 +42,6 @@ use roles::{ModelRequest, ModelSelection, RoleModels};
 pub struct LlmDi {
     pub get_system_capabilities_use_case: Arc<GetSystemCapabilitiesUseCase>,
     pub get_available_models_use_case: Arc<GetAvailableModelsUseCase>,
-    pub get_recommended_models_use_case: Arc<GetRecommendedModelsUseCase>,
-    pub get_best_model_use_case: Arc<GetBestModelUseCase>,
     pub check_model_downloaded_use_case: Arc<CheckModelDownloadedUseCase>,
     pub get_model_path_use_case: Arc<GetModelPathUseCase>,
     pub download_model_use_case: Arc<DownloadModelUseCase>,
@@ -84,13 +82,6 @@ pub fn build(
     let get_system_capabilities_use_case = Arc::new(GetSystemCapabilitiesUseCase::new(system_info));
     let get_available_models_use_case =
         Arc::new(GetAvailableModelsUseCase::new(model_catalog.clone()));
-    let get_recommended_models_use_case = Arc::new(GetRecommendedModelsUseCase::new(
-        get_system_capabilities_use_case.clone(),
-        model_catalog.clone(),
-    ));
-    let get_best_model_use_case = Arc::new(GetBestModelUseCase::new(
-        get_recommended_models_use_case.clone(),
-    ));
     let check_model_downloaded_use_case =
         Arc::new(CheckModelDownloadedUseCase::new(model_storage.clone()));
     let get_model_path_use_case = Arc::new(GetModelPathUseCase::new(
@@ -116,8 +107,6 @@ pub fn build(
     LlmDi {
         get_system_capabilities_use_case,
         get_available_models_use_case,
-        get_recommended_models_use_case,
-        get_best_model_use_case,
         check_model_downloaded_use_case,
         get_model_path_use_case,
         download_model_use_case,
@@ -424,14 +413,6 @@ impl Container {
 
     pub fn get_available_models_use_case(&self) -> Arc<GetAvailableModelsUseCase> {
         Arc::clone(self.ai.get_available_models_use_case())
-    }
-
-    pub fn get_recommended_models_use_case(&self) -> Arc<GetRecommendedModelsUseCase> {
-        Arc::clone(self.ai.get_recommended_models_use_case())
-    }
-
-    pub fn get_best_model_use_case(&self) -> Arc<GetBestModelUseCase> {
-        Arc::clone(self.ai.get_best_model_use_case())
     }
 
     pub fn check_model_downloaded_use_case(&self) -> Arc<CheckModelDownloadedUseCase> {

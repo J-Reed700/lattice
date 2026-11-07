@@ -37,7 +37,6 @@ fn catalog_variants_keep_exact_precision_size_and_identity() {
             .unwrap();
         assert_eq!(variant.supported_quantizations, vec![quant]);
         assert_eq!(variant.size_gb, size);
-        assert_eq!(variant.minimum_ram_gb, size * 1.5);
         assert_eq!(
             ExternalModelMetadata::decode_hf_download_id(&variant.id),
             Some(("publisher/model-Q4".into(), file.into()))
@@ -45,7 +44,6 @@ fn catalog_variants_keep_exact_precision_size_and_identity() {
     }
     let unknown = variants.last().unwrap().to_domain_model().unwrap();
     assert_eq!(unknown.size_gb, 0.0);
-    assert_eq!(unknown.minimum_ram_gb, 0.0);
     assert!(unknown.supported_quantizations.is_empty());
 }
 

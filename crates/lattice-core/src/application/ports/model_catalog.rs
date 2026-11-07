@@ -215,18 +215,6 @@ impl ExternalModelMetadata {
             self.estimate_size_gb()
         };
 
-        // Heuristic RAM requirements
-        let minimum_ram_gb = if size_gb > 0.0 {
-            (size_gb * 1.5).max(4.0)
-        } else {
-            0.0
-        };
-        let recommended_ram_gb = if size_gb > 0.0 {
-            (size_gb * 2.0).max(8.0)
-        } else {
-            0.0
-        };
-
         let context_length = self.extract_context_length();
 
         // Infer performance tier from size
@@ -268,8 +256,6 @@ impl ExternalModelMetadata {
             category,
             description: self.description.clone(),
             size_gb,
-            minimum_ram_gb,
-            recommended_ram_gb,
             context_length,
             performance_tier,
             supported_quantizations,
