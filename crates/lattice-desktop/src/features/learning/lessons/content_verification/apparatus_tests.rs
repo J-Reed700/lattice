@@ -142,3 +142,15 @@ fn a_text_without_apparatus_is_unchanged() {
         "Plain teaching.\r\n\r\n  - An indented item\n\n\n> A quoted line \"with quotes\" stays.\n";
     assert_eq!(strip_citation_apparatus(text), text);
 }
+
+#[test]
+fn a_quotation_item_that_names_no_source_stays() {
+    let text = "Sayings to know:\n\n- \"Measure twice, cut once.\"\n- \"A stitch in time.\" (the old saying)\n";
+    assert_eq!(strip_citation_apparatus(text), text);
+    assert_eq!(
+        strip_citation_apparatus(
+            "Sayings:\n\n- \"Measure twice.\"\n- \"Cut once.\" (SourceIndex: 0)"
+        ),
+        "Sayings:\n\n- \"Measure twice.\""
+    );
+}

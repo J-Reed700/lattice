@@ -454,6 +454,7 @@ pub async fn prepare_lesson_with_references<'a>(
         };
     let raw =
         crate::features::learning::content_verification::normalize_example_fences(llm, raw).await?;
+    let raw = crate::features::learning::content_verification::strip_draft_apparatus(raw);
     // Finish an interrupted section repair before reviewing the assembled
     // lesson. Its checkpoint is scoped to exact inputs and cannot approve it;
     // the repair path performs teaching review after all patches are saved.
