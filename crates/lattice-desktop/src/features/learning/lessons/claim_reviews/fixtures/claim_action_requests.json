@@ -18,12 +18,6 @@
     "action": "remove"
   },
   {
-    "action": "general_knowledge"
-  },
-  {
-    "action": "accept_all_general_knowledge"
-  },
-  {
     "action": "research_with_hint",
     "hint": "NIST steam tables"
   },

@@ -23,8 +23,8 @@ pub use trust::{
 };
 
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimActionKind, ClaimCounts, ClaimState, LessonReviewState, ReopenCause, RepairOutcome,
-    RequestFacts, SourceAddedBy, StopReason, UnitKind, VerdictKind,
+    Actor, ClaimActionKind, ClaimCounts, ClaimState, Class, ClassifiedBy, LessonReviewState,
+    ReopenCause, RepairOutcome, RequestFacts, SourceAddedBy, StopReason, UnitKind, VerdictKind,
 };
 use serde::{Deserialize, Serialize};
 
@@ -79,7 +79,6 @@ impl From<LessonReviewState> for LessonReviewStateDto {
 pub struct ClaimCountsDto {
     pub verified: usize,
     pub confirmed: usize,
-    pub general_knowledge: usize,
     pub queued: usize,
     pub open: usize,
     /// Removed by the user.
@@ -95,7 +94,6 @@ impl From<ClaimCounts> for ClaimCountsDto {
         Self {
             verified: counts.verified,
             confirmed: counts.confirmed,
-            general_knowledge: counts.general_knowledge,
             queued: counts.queued,
             open: counts.open,
             removed_by_you: counts.removed_by_you,
@@ -204,6 +202,9 @@ pub enum ClaimStateDto {
     },
     Queued,
     ResolvedByEvidence,
+    Consistent {
+        at: i64,
+    },
     Confirmed {
         at: i64,
     },
@@ -217,7 +218,6 @@ pub enum ClaimStateDto {
     },
     GeneralKnowledge {
         at: i64,
-        by: ActorDto,
     },
     Reopened {
         cause: ReopenCauseDto,
@@ -237,6 +237,7 @@ impl From<&ClaimState> for ClaimStateDto {
             },
             ClaimState::Queued { .. } => Self::Queued,
             ClaimState::ResolvedByEvidence { .. } => Self::ResolvedByEvidence,
+            ClaimState::Consistent { at } => Self::Consistent { at: *at },
             ClaimState::Confirmed { at, .. } => Self::Confirmed { at: *at },
             ClaimState::Removed { at, by } => Self::Removed {
                 at: *at,
@@ -246,10 +247,7 @@ impl From<&ClaimState> for ClaimStateDto {
                 at: *at,
                 successor: successor.as_ref().map(|id| id.0.clone()),
             },
-            ClaimState::GeneralKnowledge { at, by } => Self::GeneralKnowledge {
-                at: *at,
-                by: (*by).into(),
-            },
+            ClaimState::GeneralKnowledge { at } => Self::GeneralKnowledge { at: *at },
             ClaimState::Reopened { cause, previous } => Self::Reopened {
                 cause: cause.into(),
                 previous: Box::new(previous.as_ref().into()),
@@ -265,7 +263,6 @@ pub enum VerdictKindDto {
     Contradicted,
     NoSource,
     CouldNotJudge,
-    GeneralKnowledgeProposed,
     /// The Verifier's verdict on a claim the local checker verified.
     Disputed {
         verifier: Box<VerdictKindDto>,
@@ -285,7 +282,6 @@ impl From<&VerdictKind> for VerdictKindDto {
             VerdictKind::Contradicted => Self::Contradicted,
             VerdictKind::NoSource => Self::NoSource,
             VerdictKind::CouldNotJudge => Self::CouldNotJudge,
-            VerdictKind::GeneralKnowledgeProposed => Self::GeneralKnowledgeProposed,
             VerdictKind::Disputed { verifier } => Self::Disputed {
                 verifier: Box::new(verifier.as_ref().into()),
             },
@@ -309,6 +305,46 @@ impl From<Actor> for ActorDto {
         match actor {
             Actor::Machine => Self::Machine,
             Actor::User => Self::User,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassDto {
+    Sourced,
+    Reasoning,
+    Common,
+    Internal,
+}
+
+impl From<Class> for ClassDto {
+    fn from(class: Class) -> Self {
+        match class {
+            Class::Sourced => Self::Sourced,
+            Class::Reasoning => Self::Reasoning,
+            Class::Common => Self::Common,
+            Class::Internal => Self::Internal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassifiedByDto {
+    Model,
+    Rule,
+    Writer,
+    Evidence,
+}
+
+impl From<ClassifiedBy> for ClassifiedByDto {
+    fn from(by: ClassifiedBy) -> Self {
+        match by {
+            ClassifiedBy::Model => Self::Model,
+            ClassifiedBy::Rule => Self::Rule,
+            ClassifiedBy::Writer => Self::Writer,
+            ClassifiedBy::Evidence => Self::Evidence,
         }
     }
 }
@@ -433,15 +469,8 @@ pub struct RepairAttemptDto {
 pub enum RepairOutcomeDto {
     Rewritten,
     Removed,
-    Rejected {
-        reason: String,
-    },
+    Rejected { reason: String },
     SupersededByUser,
-    /// Left to the user without a rewrite: the sentence also states
-    /// something verified or waiting (claim sources design §18.5).
-    NotAttempted {
-        reason: String,
-    },
 }
 
 impl From<&RepairOutcome> for RepairOutcomeDto {
@@ -453,9 +482,6 @@ impl From<&RepairOutcome> for RepairOutcomeDto {
                 reason: reason.clone(),
             },
             RepairOutcome::SupersededByUser => Self::SupersededByUser,
-            RepairOutcome::NotAttempted { reason } => Self::NotAttempted {
-                reason: reason.clone(),
-            },
         }
     }
 }
@@ -484,7 +510,6 @@ pub enum ClaimActionKindDto {
     Confirm,
     Edit,
     Remove,
-    GeneralKnowledge,
     AttachEvidence,
     ResearchWithHint,
     Unconfirm,
@@ -497,7 +522,6 @@ impl From<ClaimActionKind> for ClaimActionKindDto {
             ClaimActionKind::Confirm => Self::Confirm,
             ClaimActionKind::Edit => Self::Edit,
             ClaimActionKind::Remove => Self::Remove,
-            ClaimActionKind::GeneralKnowledge => Self::GeneralKnowledge,
             ClaimActionKind::AttachEvidence => Self::AttachEvidence,
             ClaimActionKind::ResearchWithHint => Self::ResearchWithHint,
             ClaimActionKind::Unconfirm => Self::Unconfirm,
@@ -523,8 +547,6 @@ pub enum ClaimActionRequestDto {
         after: String,
     },
     Remove,
-    GeneralKnowledge,
-    AcceptAllGeneralKnowledge,
     ResearchWithHint {
         hint: String,
     },

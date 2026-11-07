@@ -1,4 +1,4 @@
-use super::stages::{lesson_metrics, phase_metrics};
+use super::stages::{lesson_metrics, phase_metrics, removed_by_class};
 use super::*;
 use crate::features::learning::assessment_engine::{
     self as engine, KeyedOutcome, LearningAssessmentCandidate, LearningAssessmentKey,
@@ -197,10 +197,12 @@ fn lesson_metrics_count_the_report_and_catch_what_its_gates_should_have() {
     let passage = |text: &str| json!({"source_id": "s1", "text": text, "start_byte": 0, "end_byte": 1, "retrieval_kind": "lexical", "score": 1.0});
     let report = json!({
         "findings": [
-            {"verdict": "supported", "supporting_quote": "indexes speed reads", "evidence": [passage("B-tree indexes speed reads of sorted keys.")]},
-            {"verdict": "supported", "supporting_quote": "written nowhere", "evidence": [passage("Something else.")]},
-            {"verdict": "supported", "supporting_quote": null, "evidence": []},
-            {"verdict": "unsupported", "resolution": {"kind": "general_knowledge", "at": 1}, "evidence": []},
+            {"verdict": "supported", "supporting_quote": "indexes speed reads", "evidence": [passage("B-tree indexes speed reads of sorted keys.")],
+             "class": {"class": "sourced", "by": "writer"},
+             "parts": [{"part": "indexes speed reads", "kind": "stated", "source_id": "s1"}, {"part": "a B-tree is a tree", "kind": "common"}]},
+            {"verdict": "supported", "supporting_quote": "written nowhere", "evidence": [passage("Something else.")], "class": {"class": "reasoning", "by": "model"}},
+            {"verdict": "supported", "supporting_quote": null, "evidence": [], "class": {"class": "common", "by": "model"}},
+            {"verdict": "unsupported", "evidence": []},
             {"verdict": "unsupported", "evidence": []},
             {"verdict": "contradicted", "evidence": []},
             {"verdict": "unverified", "evidence": []},
@@ -216,7 +218,8 @@ fn lesson_metrics_count_the_report_and_catch_what_its_gates_should_have() {
     assert_eq!(
         metrics["claims"],
         json!({"total": 7, "supported": 3, "unsupported": 2, "contradicted": 1, "unverified": 1,
-               "general_knowledge": 1, "quotes_unmatched": 1, "issues": 1})
+               "by_class": {"sourced": 1, "reasoning": 1, "common": 1}, "bridged": 1,
+               "quotes_unmatched": 1, "issues": 1})
     );
     assert_eq!(metrics["examples"], json!({"run": 3, "failed": 2}));
     assert_eq!(
@@ -233,25 +236,110 @@ fn lesson_metrics_count_the_report_and_catch_what_its_gates_should_have() {
 
 #[test]
 fn phases_give_deferrals_rounds_and_seconds_per_phase() {
-    let line = |at: i64, status: &str, phase: Option<&str>, page: Option<u32>| json!({"at": at, "selector": "m1.l1", "status": status, "phase": phase, "message": "", "deeper_page": page, "calls": 0});
+    let line = |at: i64, status: &str, phase: Option<&str>, ceiling: Option<u32>| json!({"at": at, "selector": "m1.l1", "status": status, "phase": phase, "message": "", "ceiling": ceiling, "calls": 0});
     let lines = vec![
         line(0, "pending", None, None),
         line(1_000, "running", Some("references"), None),
-        line(4_000, "running", Some("repair"), None),
-        line(5_000, "pending", Some("repair"), None),
-        line(9_000, "running", Some("repair"), None),
-        line(10_000, "running", Some("evidence"), Some(1)),
-        line(12_000, "running", Some("evidence"), Some(2)),
-        line(13_000, "running", Some("repair"), Some(2)),
-        line(15_000, "completed", Some("publishing"), None),
+        line(4_000, "running", Some("repair"), Some(300)),
+        line(5_000, "pending", Some("repair"), Some(300)),
+        line(9_000, "running", Some("repair"), Some(280)),
+        line(10_000, "running", Some("evidence"), Some(280)),
+        line(12_000, "running", Some("evidence"), Some(250)),
+        line(13_000, "running", Some("repair"), Some(250)),
+        line(15_000, "completed", Some("publishing"), Some(250)),
         json!({"at": 0, "selector": "m2.l1", "status": "pending"}),
     ];
     let metrics = phase_metrics(&lines, "m1.l1");
     assert_eq!(metrics["deferrals"], 1);
-    assert_eq!(metrics["rounds"], json!({"repair": 2, "deepening": 2}));
+    assert_eq!(metrics["rounds"], json!({"repair": 2}));
+    assert_eq!(metrics["ceiling_rose_seen"], false, "it only came down");
     assert_eq!(
         metrics["phase_seconds"],
         json!({"references": 3.0, "repair": 4.0, "evidence": 3.0})
+    );
+}
+
+#[test]
+fn a_ceiling_that_goes_up_is_seen() {
+    let line = |at: i64, ceiling: u32| json!({"at": at, "selector": "m1.l1", "status": "running", "phase": "evidence", "message": "", "ceiling": ceiling, "calls": 0});
+    let lines = vec![line(0, 280), line(1_000, 250), line(2_000, 260)];
+    assert_eq!(phase_metrics(&lines, "m1.l1")["ceiling_rose_seen"], true);
+}
+
+#[test]
+fn the_statements_the_machine_took_out_are_counted_by_class() {
+    use lattice_core::domain::learning::claim_review::{
+        Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
+        Class, ClassifiedBy, EventProvenance, EvidenceFingerprint, RepairOutcome, UnitKind,
+        VerdictKind,
+    };
+    let provenance = |at: i64| EventProvenance {
+        actor: Actor::Machine,
+        at,
+        job_id: Some("job".into()),
+        app_version: "fixture".into(),
+        checker_model: Some("fixture".into()),
+    };
+    // A claim of `class` that failed its check and was taken out by the
+    // machine's first attempt, or one that stands.
+    let claim = |id: &str, class: Option<Class>, removed: bool| {
+        let sentence = format!("Sentence {id}.");
+        let mut entry = ClaimLedgerEntry::extracted(
+            ClaimId(id.into()),
+            provenance(1),
+            ClaimLocation::locate(0, UnitKind::Block, "body", &sentence, &sentence),
+            sentence.clone(),
+        )
+        .unwrap();
+        if let Some(class) = class {
+            let by = ClassifiedBy::Model;
+            entry
+                .append(provenance(2), ClaimEvent::Classified { class, by })
+                .unwrap();
+        }
+        if removed {
+            let failed = Check {
+                checker: Checker::Local {
+                    model: "fixture".into(),
+                },
+                result: CheckResult::Failed {
+                    kind: VerdictKind::Contradicted,
+                },
+                reason: "No.".into(),
+                fingerprint: EvidenceFingerprint::of("strict-v1", "fixture", &[]),
+                evidence: vec![],
+                window_tokens: 1_000,
+            };
+            entry
+                .append(provenance(3), ClaimEvent::Checked(failed))
+                .unwrap();
+            entry
+                .append(
+                    provenance(4),
+                    ClaimEvent::RepairAttempted {
+                        attempt: 1,
+                        escalated: false,
+                        before: sentence.clone(),
+                        after: None,
+                        outcome: RepairOutcome::Removed,
+                        goal: None,
+                    },
+                )
+                .unwrap();
+        }
+        entry
+    };
+    let claims = [
+        claim("a", Some(Class::Sourced), true),
+        claim("b", Some(Class::Common), true),
+        claim("c", Some(Class::Common), true),
+        claim("d", Some(Class::Reasoning), false),
+        claim("e", None, true),
+    ];
+
+    assert_eq!(
+        removed_by_class(&claims),
+        json!({"sourced": 1, "reasoning": 0, "common": 2, "unclassed": 1})
     );
 }
 

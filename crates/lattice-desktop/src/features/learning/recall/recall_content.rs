@@ -14,21 +14,14 @@ pub(crate) fn validate_content(
     format: LearningRecallCardFormat,
     content: &LearningRecallContentDto,
 ) -> Result<()> {
-    if content.prompt.trim().is_empty()
-        || content.prompt.chars().count() > 2_000
-        || content.answer.trim().is_empty()
-        || content.answer.chars().count() > 1_000
-        || content.explanation.chars().count() > 3_000
-    {
-        return Err(invalid(
-            "Recall prompt, answer, or explanation is outside its allowed bounds.",
-        ));
+    if content.prompt.trim().is_empty() || content.answer.trim().is_empty() {
+        return Err(invalid("A recall card needs a prompt and an answer."));
     }
     let invalid_multiple_choice = !(2..=8).contains(&content.options.len())
         || content
             .options
             .iter()
-            .any(|choice| choice.trim().is_empty() || choice.chars().count() > 500)
+            .any(|choice| choice.trim().is_empty())
         || content
             .options
             .iter()
@@ -83,7 +76,7 @@ pub(crate) fn validate_content(
         && content
             .language
             .as_deref()
-            .is_none_or(|value| value.trim().is_empty() || value.chars().count() > 48)
+            .is_none_or(|value| value.trim().is_empty())
     {
         return Err(invalid("Code-prediction cards require a language name."));
     }

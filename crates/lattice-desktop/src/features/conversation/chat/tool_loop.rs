@@ -248,6 +248,7 @@ pub(super) async fn run_agentic_tool_loop(
                 llm.as_ref(),
                 &native_request,
                 &passages,
+                question,
                 recorder,
                 &turn_cancel,
                 &clock,
@@ -287,6 +288,9 @@ pub(super) async fn run_agentic_tool_loop(
     }
     let mut condensed = 0;
     let mut iteration = first_round;
+    // A reply with nothing in it is asked for once more: Claude's classifiers
+    // can stop one after its thinking, and the next may not be.
+    let mut asked_again_for_nothing = false;
     // A forced round runs even after the last: the round it stands in for was
     // cut short, not finished.
     while iteration < max_tool_rounds || forced.is_some() {
@@ -508,9 +512,30 @@ pub(super) async fn run_agentic_tool_loop(
             step: generate_step,
         } = round;
         if response.text.trim().is_empty() && response.tool_calls.is_empty() {
-            return Err(AppError::InvalidState(
-                "Model returned no answer or tool calls".into(),
-            ));
+            if asked_again_for_nothing {
+                return Err(if response.finish_reason == "refusal" {
+                    AppError::ModelRejected(
+                        "The model's safety filter stopped this answer twice. That can be a \
+                         mistake, so rewording the question or choosing another model may help."
+                            .into(),
+                    )
+                } else {
+                    AppError::InvalidState("Model returned no answer or tool calls".into())
+                });
+            }
+            asked_again_for_nothing = true;
+            tracing::warn!(
+                finish_reason = %response.finish_reason,
+                "The model returned nothing; asking again"
+            );
+            generate_step.failed(Some("The model returned nothing".into()));
+            recorder.note(
+                TurnStepKind::Retry,
+                "Asking again for the answer",
+                None,
+                Some("the model returned nothing".into()),
+            );
+            continue;
         }
         tracing::info!(input_tokens = response.input_tokens, output_tokens = response.output_tokens, finish_reason = %response.finish_reason, "Native LLM completion");
         // The round that produces the answer reports the turn's usage.
@@ -735,6 +760,11 @@ fn elapsed_ms(start: Instant) -> u64 {
 /// grounding check knows it by this text: it is the app's line, not a claim.
 pub(in crate::features::conversation::chat) const CUT_SHORT_NOTE: &str =
     "\n\n_(The answer was cut short: the model reached its output limit.)_";
+
+/// Appended to an answer a safety classifier stopped, which can be a mistake:
+/// what came before the stop is all there is of it. The grounding check knows
+/// it by this text.
+pub(in crate::features::conversation::chat) const DECLINED_NOTE: &str = "\n\n_(The answer was cut short: the model's safety filter stopped it. That can be a mistake, so asking again or rewording may help.)_";
 
 /// Whether a round's answer stopped at the output limit, or an error when the
 /// round has nothing worth keeping: a cut-short answer is kept, but a cut-short

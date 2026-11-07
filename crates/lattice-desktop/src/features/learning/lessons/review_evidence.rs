@@ -39,7 +39,7 @@ struct Finding {
     reason: String,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Deserialize, PartialEq, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum Verdict {
     Actionable,
@@ -71,35 +71,59 @@ fn invalid_finding(index: usize, detail: &str) -> AppError {
     ))
 }
 
+/// A decision that kept the protocol: its verdict and the finding it
+/// establishes, if any.
+type Kept = (Verdict, Option<ReviewFinding>);
+
 /// The findings `raw` establishes. A decision that breaks the protocol fails
 /// the answer, so it is asked for again; on the `last` answer such a decision
-/// leaves its finding not established instead, as the factual gate still runs.
+/// gives way to one an earlier answer reached on the same verdict within the
+/// protocol (`kept`), or else leaves its finding not established, as the
+/// factual gate still runs.
 fn accepted(
     raw: &str,
     issues: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
     last: bool,
+    kept: &mut HashMap<usize, Kept>,
 ) -> Result<Vec<ReviewFinding>> {
     let decisions: HashMap<String, Finding> = generation::parse_json(raw)?;
     if decisions.len() != issues.len() && !last {
         return Err(invalid());
     }
     let mut actionable = Vec::new();
+    let mut broken = None;
     for (index, issue) in issues.iter().enumerate() {
-        let decided = decisions
-            .get(&format!("issue-{index}"))
-            .ok_or_else(invalid)
-            .and_then(|finding| decided(index, issue, finding, evidence));
+        let finding = decisions.get(&format!("issue-{index}"));
+        let decided = finding.ok_or_else(invalid).and_then(|finding| {
+            decided(index, issue, finding, evidence)
+                .map(|established| (finding.verdict, established))
+        });
         match decided {
-            Ok(Some(finding)) => actionable.push(finding),
-            Ok(None) => {}
-            Err(error) if last => {
-                tracing::warn!(index, %error, "A review decision broke the protocol twice; its finding is not established");
+            Ok((verdict, established)) => {
+                actionable.extend(established.clone());
+                kept.insert(index, (verdict, established));
             }
-            Err(error) => return Err(error),
+            Err(error) if last => {
+                let earlier = kept.get(&index).filter(|(verdict, _)| {
+                    finding.is_some_and(|finding| finding.verdict == *verdict)
+                });
+                match earlier {
+                    Some((_, established)) => {
+                        tracing::info!(index, %error, "A review decision broke the protocol when asked again; the first answer's on the same verdict stands");
+                        actionable.extend(established.clone());
+                    }
+                    None => {
+                        tracing::warn!(index, %error, "A review decision broke the protocol twice; its finding is not established");
+                    }
+                }
+            }
+            Err(error) => {
+                broken.get_or_insert(error);
+            }
         }
     }
-    Ok(actionable)
+    broken.map_or(Ok(actionable), Err)
 }
 
 /// `issue` with its site when `finding` establishes it, `None` when it does
@@ -120,11 +144,8 @@ fn decided(
             "evidenceIds must contain at most eight unique IDs from the supplied evidence bank.",
         ));
     }
-    if !(10..=700).contains(&finding.reason.trim().chars().count()) {
-        return Err(invalid_finding(
-            index,
-            "reason must contain 10–700 characters.",
-        ));
+    if finding.reason.trim().is_empty() {
+        return Err(invalid_finding(index, "reason must not be blank."));
     }
     if finding
         .requirement_id
@@ -187,7 +208,7 @@ fn schema(keys: &[String], ids: &[String]) -> Value {
         "basis":{"type":"string","enum":["external_fact","lesson_contract","internal_conflict"]},
         "evidenceIds":{"type":"array","minItems":0,"maxItems":8,"uniqueItems":true,"items":{"type":"string","enum":ids}},
         "requirementId":{"enum":["requirements",null]},
-        "reason":{"type":"string","minLength":10,"maxLength":700}}});
+        "reason":{"type":"string","minLength":1}}});
     let properties: serde_json::Map<_, _> = keys
         .iter()
         .map(|id| (id.clone(), decision.clone()))
@@ -332,8 +353,10 @@ pub(in crate::features::learning) async fn check(
         |request| {
             let evidence = built.lock().unwrap_or_else(PoisonError::into_inner).clone();
             async move {
-                // The answer asked for again is the last.
+                // The answer asked for again is the last; `kept` holds the
+                // decisions before it that kept the protocol.
                 let answers = AtomicUsize::new(0);
+                let kept = Mutex::new(HashMap::new());
                 complete_checked_request(
                     llm,
                     request,
@@ -345,7 +368,8 @@ pub(in crate::features::learning) async fn check(
                     }),
                     |raw| {
                         let last = answers.fetch_add(1, Ordering::Relaxed) > 0;
-                        accepted(raw, issues, &evidence, last)
+                        let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
+                        accepted(raw, issues, &evidence, last, &mut kept)
                     },
                 )
                 .await
@@ -378,7 +402,7 @@ mod tests {
         issues: &[ReviewFinding],
         evidence: &HashMap<String, EvidenceKind>,
     ) -> Result<Vec<ReviewFinding>> {
-        accepted(raw, issues, evidence, false)
+        accepted(raw, issues, evidence, false, &mut HashMap::new())
     }
 
     fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
@@ -488,6 +512,64 @@ mod tests {
             vec![(issues[1].note.clone(), Some(FindingSite::Section(0)))]
         );
         assert_eq!(model.prompts.lock().unwrap().len(), 2);
+        Ok(())
+    }
+
+    /// The notes `check` establishes from two scripted answers, the second
+    /// the one asked for again.
+    async fn established_from(
+        first: &Value,
+        second: &Value,
+        issues: &[ReviewFinding],
+    ) -> Result<Vec<String>> {
+        use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+        let model = ScriptedModel {
+            outputs: std::sync::Mutex::new(vec![first.to_string(), second.to_string()].into()),
+            prompts: Default::default(),
+        };
+        let sources = ReferenceCollection::lexical(&[])?;
+        let established = check(
+            &model,
+            issues,
+            &json!({"deliverable":"Record the resulting state."}),
+            &json!({"blocks":[{"body":"Read the instructions."}],"questions":[]}),
+            &sources,
+            None,
+        )
+        .await?;
+        assert_eq!(model.prompts.lock().unwrap().len(), 2);
+        Ok(established
+            .into_iter()
+            .map(|finding| finding.note)
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn a_decision_broken_only_when_asked_again_keeps_the_grounded_one_the_first_answer_gave(
+    ) -> Result<()> {
+        let decision = |verdict: &str, ids: Value, requirement: Value| json!({"verdict":verdict,"basis":"lesson_contract","evidenceIds":ids,"requirementId":requirement,"reason":"The exercise does not ask for what the contract requires."});
+        let grounded = decision("actionable", json!(["blocks-0"]), json!("requirements"));
+        let uncited = decision("actionable", json!([]), json!("requirements"));
+        let issues = [
+            proposal("The exercise omitted its required deliverable."),
+            proposal("The exercise never asks for the recorded state."),
+        ]
+        .concat();
+        let notes: Vec<String> = issues.iter().map(|issue| issue.note.clone()).collect();
+        // The first answer cites nothing for issue-0, so it is asked for
+        // again; asked again, it cites nothing for issue-1, which the first
+        // answer grounded.
+        let first = json!({"issue-0": uncited, "issue-1": grounded});
+        let second = json!({"issue-0": grounded, "issue-1": uncited});
+        assert_eq!(established_from(&first, &second, &issues).await?, notes);
+        // An answer asked for again that breaks the protocol on another
+        // verdict does not take the first answer's.
+        let withdrawn = decision("not_established", json!([]), json!("requirements"));
+        let second = json!({"issue-0": grounded, "issue-1": withdrawn});
+        assert_eq!(
+            established_from(&first, &second, &issues).await?,
+            notes[..1].to_vec()
+        );
         Ok(())
     }
 
@@ -616,5 +698,46 @@ mod tests {
             vec![(issues[0].note.clone(), Some(FindingSite::Section(0)))]
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_short_or_long_reason_is_read_not_refused() -> Result<()> {
+        let issues = proposal("The two statements in the candidate are incompatible.");
+        let evidence = HashMap::from([("questions-0".into(), EvidenceKind::Candidate)]);
+        let long =
+            "The candidate gives incompatible descriptions of the same scenario. ".repeat(20);
+        assert!(long.trim().chars().count() > 700);
+        for reason in ["Yes.", long.as_str()] {
+            let response = json!({"issue-0":{
+                "verdict":"actionable","basis":"internal_conflict","evidenceIds":["questions-0"],
+                "requirementId":null,"reason":reason}})
+            .to_string();
+            assert_eq!(
+                placed(first(&response, &issues, &evidence)?),
+                vec![(issues[0].note.clone(), Some(FindingSite::Question(0)))]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_blank_reason_is_still_refused() {
+        let issues = proposal("The two statements in the candidate are incompatible.");
+        let evidence = HashMap::from([("questions-0".into(), EvidenceKind::Candidate)]);
+        let response = json!({"issue-0":{
+            "verdict":"actionable","basis":"internal_conflict","evidenceIds":["questions-0"],
+            "requirementId":null,"reason":"   "}})
+        .to_string();
+        assert!(first(&response, &issues, &evidence).is_err());
+    }
+
+    #[test]
+    fn the_decision_schema_bounds_no_text_but_a_blank() {
+        let keys = ["issue-0".to_owned()];
+        let ids = ["blocks-0".to_owned(), "requirements".to_owned()];
+        let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+            &schema(&keys, &ids),
+        );
+        assert!(bounds.is_empty(), "{bounds:?}");
     }
 }

@@ -1,4 +1,5 @@
 //! Instructional review and task-specific teaching contracts.
+use super::writer_excerpts::{self, WriterExcerpts};
 use crate::features::learning::dto::{
     LearningPracticeCriterionDto, LearningPracticeEvidenceDimension,
 };
@@ -11,7 +12,7 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
 mod passes;
@@ -20,26 +21,23 @@ mod quotes;
 mod waiting;
 use passes::{Next, Passes};
 use quotes::{lesson_quote_checks, reanchor_lesson_quotes, restore_lesson_quotes};
+pub(in crate::features::learning) use waiting::held as held_findings;
 pub(in crate::features::learning) use waiting::record as record_waiting;
 
 pub fn project_schema() -> Value {
-    let list = json!({"type":"array","minItems":2,"maxItems":5,"items":{"type":"string","minLength":15,"maxLength":500}});
-    json!({"type":"object","additionalProperties":false,"required":["title","brief","deliverables","successCriteria"],"properties":{"title":{"type":"string","minLength":5,"maxLength":160},"brief":{"type":"string","minLength":40,"maxLength":1600},"deliverables":list,"successCriteria":list}})
+    let list =
+        json!({"type":"array","minItems":2,"maxItems":5,"items":{"type":"string","minLength":1}});
+    json!({"type":"object","additionalProperties":false,"required":["title","brief","deliverables","successCriteria"],"properties":{"title":{"type":"string","minLength":1},"brief":{"type":"string","minLength":1},"deliverables":list,"successCriteria":list}})
 }
 
 pub fn validate_project(
     project: &crate::features::learning::dto::LearningProjectMilestoneDto,
 ) -> Result<()> {
-    if !(5..=160).contains(&project.title.trim().chars().count())
-        || !(40..=1600).contains(&project.brief.trim().chars().count())
+    if project.title.trim().is_empty()
+        || project.brief.trim().is_empty()
         || [&project.deliverables, &project.success_criteria]
             .iter()
-            .any(|list| {
-                !(2..=5).contains(&list.len())
-                    || list
-                        .iter()
-                        .any(|s| !(15..=500).contains(&s.trim().chars().count()))
-            })
+            .any(|list| !(2..=5).contains(&list.len()) || list.iter().any(|s| s.trim().is_empty()))
     {
         return Err(AppError::InvalidInput("Each project milestone needs a concrete brief, deliverables and observable success criteria.".into()));
     }
@@ -55,7 +53,7 @@ pub struct GeneratedCriterion {
 }
 
 pub fn rubric_schema() -> Value {
-    json!({"type":"array","maxItems":4,"items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":3,"maxLength":120},"description":{"type":"string","minLength":30,"maxLength":1000},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
+    json!({"type":"array","maxItems":4,"items":{"type":"object","additionalProperties":false,"required":["title","description","dimension"],"properties":{"title":{"type":"string","minLength":1},"description":{"type":"string","minLength":1},"dimension":{"enum":["recall","explanation","application","transfer"]}}}})
 }
 
 pub fn rubric(
@@ -71,8 +69,8 @@ pub fn rubric(
     criteria
         .into_iter()
         .map(|c| {
-            if !(3..=120).contains(&c.title.trim().chars().count())
-                || !(30..=1000).contains(&c.description.trim().chars().count())
+            if c.title.trim().is_empty()
+                || c.description.trim().is_empty()
                 || !titles.insert(c.title.trim().to_lowercase())
             {
                 return Err(AppError::InvalidInput(
@@ -97,8 +95,8 @@ pub fn validate_saved_rubric(criteria: &[LearningPracticeCriterionDto]) -> Resul
         || criteria.iter().any(|c| {
             uuid::Uuid::parse_str(&c.id).is_err()
                 || !ids.insert(&c.id)
-                || !(3..=120).contains(&c.title.trim().chars().count())
-                || !(30..=1000).contains(&c.description.trim().chars().count())
+                || c.title.trim().is_empty()
+                || c.description.trim().is_empty()
                 || !(1..=100).contains(&c.max_points)
         })
     {
@@ -117,7 +115,7 @@ pub(in crate::features::learning) const LESSON_REPAIR_SYSTEM: &str = "Teach a ri
 
 pub(in crate::features::learning) const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Subsequent research and factual repairs can introduce details supported by other saved references. Do not report a teaching defect solely because a detail is absent from these original excerpts. Evidence completeness is checked separately, for every extracted factual claim, against the current saved collection before publication. Still reject concrete factual or mathematical errors, internal contradictions, and citations that misrepresent their attached source. Missing evidence is not proof that a claim is false, and this teaching review is not factual publication approval.";
 
-/// Deterministic findings: the schema, each section's length and rubric,
+/// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
 /// dropped; a caller that sends six at a time decides what waits.
 pub(in crate::features::learning) fn structural_findings(
@@ -155,20 +153,12 @@ pub(in crate::features::learning) fn structural_findings(
     if let Some(blocks) = value.get("blocks").and_then(Value::as_array) {
         for (index, block) in blocks.iter().enumerate() {
             let kind = block["kind"].as_str().unwrap_or_default();
-            let minimum = match kind {
-                "reflection" | "recap" => 150,
-                "contrast" | "check" => 300,
-                _ => 600,
-            };
-            if block["body"]
-                .as_str()
-                .unwrap_or_default()
-                .trim()
-                .chars()
-                .count()
-                < minimum
-            {
-                issues.push(ReviewFinding::new(FindingKind::Structure, Some(FindingSite::Section(index)), format!("Teaching block {} needs at least {minimum} characters of substantive instruction or exercise detail.", index + 1)));
+            if block["body"].as_str().unwrap_or_default().trim().is_empty() {
+                issues.push(ReviewFinding::new(
+                    FindingKind::Structure,
+                    Some(FindingSite::Section(index)),
+                    format!("Teaching block {} has no body.", index + 1),
+                ));
             }
             if ["guided_practice", "independent_practice"].contains(&kind)
                 && block["rubric"].as_array().is_none_or(|r| r.len() < 2)
@@ -205,7 +195,7 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
                 FindingKind::Quotation,
                 Some(FindingSite::of_part(path).unwrap_or(FindingSite::Lesson)),
                 format!(
-                    "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain 25–1200 characters and at least five words.",
+                    "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least 25 characters and five words.",
                     check["error"].as_str().unwrap_or("it was not found.")
                 )
                 .chars()
@@ -214,6 +204,22 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
             )
         })
         .collect()
+}
+
+/// The structure findings a repair of the whole material answers: all but a
+/// missing citation, which the edits of the repair after the review can
+/// append (claim classes design §3.5).
+fn whole_repairs(structure: &[ReviewFinding]) -> impl Iterator<Item = &ReviewFinding> {
+    structure
+        .iter()
+        .filter(|finding| finding.kind != FindingKind::Quotation)
+}
+
+/// Whether the structure findings hold up the content review. Structure the
+/// machine stopped repairing no longer does.
+fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool {
+    whole_repairs(structure)
+        .any(|finding| passes.is_none_or(|passes| passes.repairable(&finding.key())))
 }
 
 /// A second model call critiques the actual candidate. One targeted repair is
@@ -394,6 +400,18 @@ pub async fn review_and_repair_with_progress(
     .map(|reviewed| reviewed.candidate)
 }
 
+/// Saves the draft; a lesson's review saves with it the state that decides
+/// when it stops repairing, in one write.
+async fn save_draft(candidate: &str, passes: Option<&Passes>) -> Result<()> {
+    match passes {
+        Some(passes) => {
+            crate::features::learning::lesson_drafts::save_with_passes(candidate, passes.saved()?)
+                .await
+        }
+        None => crate::features::learning::lesson_drafts::save(candidate).await,
+    }
+}
+
 async fn review_material(
     llm: &dyn LLMPort,
     system: &str,
@@ -410,7 +428,15 @@ async fn review_material(
         .lesson_references
         .is_some()
         .then(|| Passes::new(context.held));
-    crate::features::learning::lesson_drafts::save(&candidate).await?;
+    // A review cut short resumes with the repairs it had made to this draft.
+    if let Some(passes) = passes.as_mut() {
+        if let Some(saved) =
+            crate::features::learning::lesson_drafts::teaching_passes(&candidate).await?
+        {
+            passes.resume(&saved);
+        }
+    }
+    save_draft(&candidate, passes.as_ref()).await?;
     let progress = outline.as_ref().map(|context| context.progress);
     let references = outline
         .as_ref()
@@ -452,7 +478,7 @@ async fn review_material(
                     "Restoring exact saved-source quotations",
                 );
                 candidate = serde_json::to_string(&candidate_value)?;
-                crate::features::learning::lesson_drafts::save(&candidate).await?;
+                save_draft(&candidate, passes.as_ref()).await?;
                 tracing::info!(
                     restored,
                     "Restored lesson quotation typography from source bytes"
@@ -466,7 +492,7 @@ async fn review_material(
                     "Citing the saved passages the revised quotations referred to",
                 );
                 candidate = serde_json::to_string(&candidate_value)?;
-                crate::features::learning::lesson_drafts::save(&candidate).await?;
+                save_draft(&candidate, passes.as_ref()).await?;
             }
         }
         if let Some(references) = &references {
@@ -506,7 +532,7 @@ async fn review_material(
             )));
         }
         let quote_issue = (!quote_checks.is_empty()).then(|| format!(
-            "Source quote validation found {} invalid citations. Fix every field listed in sourceQuoteChecks by copying a relevant exact source span, including its punctuation and formatting. Do not turn actual line breaks into literal backslash-n text. Quotes must contain 25–1200 characters and at least five words. An approval cannot override this deterministic check.", quote_checks.len()
+            "Source quote validation found {} invalid citations. Fix every field listed in sourceQuoteChecks by copying a relevant exact source span, including its punctuation and formatting. Do not turn actual line breaks into literal backslash-n text. Quotes must contain at least 25 characters and five words. An approval cannot override this deterministic check.", quote_checks.len()
         ));
         let correctness_priority = if is_outline {
             "Check the stated curriculum plan and supporting citations. Do not invent lesson content to evaluate. Recheck original findings and any concrete errors introduced by the revision."
@@ -518,13 +544,13 @@ async fn review_material(
         }).collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
         let structure = structural_findings(schema, &candidate)?;
-        // Structure the machine stopped repairing no longer holds up the
-        // content review.
-        let blocking = structure.iter().any(|finding| {
-            passes
-                .as_ref()
-                .is_none_or(|passes| passes.repairable(&finding.key()))
-        });
+        // A rewrite of the whole lesson changes the sentences its checked
+        // claims stand on, so once there are any, what its shape asks waits
+        // for the user (claim classes design §3.10).
+        if let (Some(passes), false) = (passes.as_mut(), context.protected.is_empty()) {
+            passes.hold(whole_repairs(&structure).map(ReviewFinding::key));
+        }
+        let blocking = holds_up_review(&structure, passes.as_ref());
         let can_edit_spans = !is_outline && !blocking;
         let issues = if !blocking {
             crate::features::learning::lesson_progress::phase(
@@ -563,7 +589,7 @@ async fn review_material(
                 &candidate_value,
                 progress,
                 if passes.is_some() {
-                    LengthRule::DropShortKeepLong
+                    LengthRule::DropBlank
                 } else {
                     LengthRule::Fail
                 },
@@ -593,9 +619,7 @@ async fn review_material(
             // any other, placed at the part that cites it.
             let mut findings = quotation_findings(&quote_checks);
             findings.extend(issues);
-            // A finding too short to act on is dropped; an over-long one is
-            // kept.
-            findings.retain(|finding| finding.note.trim().chars().count() >= 10);
+            findings.retain(|finding| !finding.note.trim().is_empty());
             // A finding about a sentence a live claim stands on waits for
             // the user: the review does not rewrite what passed (§10.3).
             passes.hold(protected::on_protected(&findings, context.protected));
@@ -633,10 +657,7 @@ async fn review_material(
                     issues.insert(0, issue);
                 }
             }
-            if issues
-                .iter()
-                .any(|s| !(10..=700).contains(&s.trim().chars().count()))
-            {
+            if issues.iter().any(|s| s.trim().is_empty()) {
                 return Err(AppError::InvalidInput(
                     "The course quality review returned invalid findings. Try again.".into(),
                 ));
@@ -650,8 +671,15 @@ async fn review_material(
             original_issues = issues.clone();
             issues
         };
-        let repair = json!({"task":"Repair the teaching material", "originalRequirements":authoring_context, "candidate":candidate_value, "sourceQuoteChecks":quote_checks, "issuesToFix":issues, "instruction":"Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review in the learner-facing material."}).to_string();
-        let repair_system = format!("{system}\nYou are editing a rejected draft. Apply every listed correction to the actual content. Do not reproduce the draft unchanged.");
+        // Fitted to the window as the review is.
+        let mut requirements = authoring_context.clone();
+        let excerpts = WriterExcerpts::take(llm, &mut requirements, &candidate_value);
+        let parts = [
+            ("originalRequirements", requirements),
+            ("candidate", candidate_value.clone()),
+            ("sourceQuoteChecks", json!(quote_checks)),
+            ("issuesToFix", json!(issues)),
+        ];
         if let Some(progress) = progress {
             progress.stage(crate::features::learning::outline_progress::OutlineStage::Repairing);
         }
@@ -660,22 +688,42 @@ async fn review_material(
             "Correcting the lesson from review findings",
         );
         let repaired = if can_edit_spans {
-            crate::features::learning::generation::complete_checked(
-                llm,
-                &format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::INSTRUCTIONS),
-                json!({"originalRequirements":authoring_context,"candidate":candidate_value,"sourceQuoteChecks":quote_checks,"issuesToFix":issues}).to_string(),
-                super::text_edits::schema(&candidate_value), output_tokens, progress, None,
-                |raw| super::text_edits::apply(&candidate_value, raw).map(|value| value.to_string()),
-            ).await
-        } else {
-            crate::features::learning::generation::complete_json_with_progress(
-                llm,
-                &repair_system,
-                repair,
-                schema.clone(),
+            let edit_system = format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::instructions(schema));
+            let prompt: Map<String, Value> = parts
+                .into_iter()
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect();
+            let request = writer_excerpts::Request {
+                subject: "the teaching repair",
+                system: &edit_system,
+                prompt: &prompt,
+                context: "originalRequirements",
+                schema: super::text_edits::schema_for(&candidate_value, schema),
                 output_tokens,
-                progress,
-            )
+            };
+            writer_excerpts::complete(llm, &request, excerpts.as_ref(), progress, None, |raw| {
+                super::text_edits::apply(&candidate_value, raw).map(|value| value.to_string())
+            })
+            .await
+        } else {
+            let repair_system = format!("{system}\nYou are editing a rejected draft. Apply every listed correction to the actual content. Do not reproduce the draft unchanged.");
+            let prompt: Map<String, Value> = [("task", json!("Repair the teaching material"))]
+                .into_iter()
+                .chain(parts)
+                .chain([("instruction", json!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review in the learner-facing material."))])
+                .map(|(key, value)| (key.to_owned(), value))
+                .collect();
+            let request = writer_excerpts::Request {
+                subject: "the teaching repair",
+                system: &repair_system,
+                prompt: &prompt,
+                context: "originalRequirements",
+                schema: schema.clone(),
+                output_tokens,
+            };
+            writer_excerpts::complete(llm, &request, excerpts.as_ref(), progress, None, |text| {
+                Ok(text.to_owned())
+            })
             .await
         };
         // After a claim repair or a user edit, the repair changes only the
@@ -719,7 +767,7 @@ async fn review_material(
             }
             (repaired, _) => repaired?,
         };
-        crate::features::learning::lesson_drafts::save(&candidate).await?;
+        save_draft(&candidate, passes.as_ref()).await?;
     }
     Err(AppError::InternalError(
         "Teaching review did not complete".into(),
@@ -730,3 +778,162 @@ async fn review_material(
 mod citation_tests;
 #[cfg(test)]
 mod loop_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::learning::dto::LearningProjectMilestoneDto;
+    use crate::features::learning::lessons::course_generation_tests::length_bounds;
+
+    const TITLE: &str = "Experiment project milestone";
+    const BRIEF: &str = "Develop the next stage of the randomized experiment and revise it.";
+    const ITEM: &str = "A written protocol identifying the treatment and control groups.";
+
+    fn milestone(title: &str, brief: &str, item: &str) -> LearningProjectMilestoneDto {
+        serde_json::from_value(json!({"title":title,"brief":brief,
+            "deliverables":[item,item],"successCriteria":[item,item]}))
+        .unwrap()
+    }
+
+    fn criterion(title: &str, description: &str) -> GeneratedCriterion {
+        serde_json::from_value(
+            json!({"title":title,"description":description,"dimension":"recall"}),
+        )
+        .unwrap()
+    }
+
+    fn saved(title: &str, description: &str) -> LearningPracticeCriterionDto {
+        LearningPracticeCriterionDto {
+            id: uuid::Uuid::new_v4().to_string(),
+            dimension: LearningPracticeEvidenceDimension::Recall,
+            title: title.into(),
+            description: description.into(),
+            max_points: 4,
+        }
+    }
+
+    #[test]
+    fn a_project_milestone_of_any_length_is_read_not_refused() {
+        let cases = [
+            (
+                "a long title",
+                milestone(&"A project title that runs on. ".repeat(10), BRIEF, ITEM),
+            ),
+            ("a short title", milestone("Plan", BRIEF, ITEM)),
+            (
+                "a long brief",
+                milestone(TITLE, &"A brief that runs on and on. ".repeat(70), ITEM),
+            ),
+            ("a short brief", milestone(TITLE, "Build it.", ITEM)),
+            (
+                "a long item",
+                milestone(TITLE, BRIEF, &"A deliverable that runs on. ".repeat(30)),
+            ),
+            ("a short item", milestone(TITLE, BRIEF, "A report.")),
+        ];
+        for (what, project) in &cases {
+            let checked = validate_project(project);
+            assert!(checked.is_ok(), "{what}: {:?}", checked.as_ref().err());
+        }
+        for blank in [
+            milestone(" ", BRIEF, ITEM),
+            milestone(TITLE, " ", ITEM),
+            milestone(TITLE, BRIEF, " "),
+        ] {
+            assert!(validate_project(&blank).is_err());
+        }
+    }
+
+    #[test]
+    fn a_rubric_criterion_of_any_length_is_read_not_refused() {
+        let title = "A criterion title that runs on. ".repeat(10);
+        let description = "A description of observable work that runs on. ".repeat(40);
+        let made = rubric(
+            vec![criterion("Hi", "Short."), criterion(&title, &description)],
+            true,
+        );
+        assert!(made.is_ok(), "{:?}", made.as_ref().err());
+        assert_eq!(made.unwrap().len(), 2);
+        for blank in [criterion(" ", "A description."), criterion("Title", " ")] {
+            let other = criterion("Another", "Another description.");
+            assert!(rubric(vec![blank, other], true).is_err());
+        }
+    }
+
+    #[test]
+    fn a_saved_criterion_of_any_length_is_read_not_refused() {
+        let title = "A criterion title that runs on. ".repeat(10);
+        let description = "A description of observable work that runs on. ".repeat(40);
+        let checked = validate_saved_rubric(&[saved("Hi", "Short."), saved(&title, &description)]);
+        assert!(checked.is_ok(), "{:?}", checked.as_ref().err());
+        assert!(validate_saved_rubric(&[saved(" ", "A description.")]).is_err());
+        assert!(validate_saved_rubric(&[saved("Title", " ")]).is_err());
+    }
+
+    #[test]
+    fn the_project_schema_bounds_no_text_but_a_blank() {
+        let bounds = length_bounds(&project_schema());
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
+    #[test]
+    fn the_rubric_schema_bounds_no_text_but_a_blank() {
+        let bounds = length_bounds(&rubric_schema());
+        assert!(bounds.is_empty(), "{bounds:?}");
+    }
+
+    fn structure(blocks: Value) -> Vec<ReviewFinding> {
+        let candidate = json!({"blocks":blocks,"questions":[]});
+        structural_findings(&json!({"type":"object"}), &candidate.to_string()).unwrap()
+    }
+
+    #[test]
+    fn a_block_of_any_length_is_no_finding_for_its_length() {
+        let rubric = json!([
+            {"title":"One","description":"Observable."},
+            {"title":"Two","description":"Observable."}
+        ]);
+        let blocks: Vec<_> = [
+            "explanation",
+            "worked_example",
+            "contrast",
+            "check",
+            "guided_practice",
+            "independent_practice",
+            "reflection",
+            "recap",
+        ]
+        .iter()
+        .map(|kind| json!({"kind":kind,"title":"Part","body":"Short.","rubric":rubric}))
+        .collect();
+        let found = structure(json!(blocks));
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_block_without_a_body_is_a_finding_at_its_place() {
+        let found = structure(json!([
+            {"kind":"explanation","title":"Fine","body":"A crisp, correct explanation."},
+            {"kind":"recap","title":"Empty","body":"  "},
+            {"kind":"guided_practice","title":"Bare","rubric":[]}
+        ]));
+        let notes: Vec<_> = found.iter().map(|finding| finding.note.as_str()).collect();
+        assert_eq!(
+            notes,
+            [
+                "Teaching block 2 has no body.",
+                "Teaching block 3 has no body.",
+                "Practice block 3 needs two to four observable, task-specific rubric criteria."
+            ]
+        );
+        let sites: Vec<_> = found.iter().map(|finding| finding.key().site).collect();
+        assert_eq!(
+            sites,
+            [
+                FindingSite::Section(1),
+                FindingSite::Section(2),
+                FindingSite::Section(2)
+            ]
+        );
+    }
+}
