@@ -22,6 +22,7 @@ use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
 use self::support::SupportContext;
+use super::actions::offered;
 use super::dto::{
     CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEventPayloadDto,
     ClaimEvidencePassageDto, ClaimLocationDto, ClaimReviewItemDto, HumanVerdictDto,
@@ -147,6 +148,7 @@ impl ClaimReviewService {
             .ok()
             .and_then(|job| job.activity)
             .map_or(0, |activity| activity.verification_pass);
+        let published = review.state == LessonReviewState::Ready;
         let claims = ledger
             .claims
             .iter()
@@ -158,7 +160,7 @@ impl ClaimReviewService {
                     sources: &sources,
                     standings: &standings,
                 };
-                item(entry, &context, &units, &titles)
+                item(entry, &context, &units, &titles, published)
             })
             .collect();
         Ok(Some(LessonClaimReviewDto {
@@ -397,6 +399,7 @@ fn item(
     context: &SupportContext<'_>,
     units: &Value,
     titles: &[String],
+    published: bool,
 ) -> ClaimReviewItemDto {
     let SupportContext {
         shown,
@@ -427,6 +430,7 @@ fn item(
                 before,
                 after,
                 outcome,
+                ..
             } => repairs.push(RepairAttemptDto {
                 attempt: *attempt,
                 escalated: *escalated,
@@ -460,7 +464,13 @@ fn item(
         ),
         _ => (failed_reason(entry), None, None),
     };
-    let unit_title = titles.get(location.unit_index).cloned().unwrap_or_default();
+    // A section that went out of the lesson moved the ones after it: the
+    // title at a taken-out statement's old place is another section's.
+    let unit_title = if presentation::taken_out(entry) {
+        String::new()
+    } else {
+        titles.get(location.unit_index).cloned().unwrap_or_default()
+    };
     let presentation = presentation::presentation(entry, units, &unit_title);
     let (support, also_supported) = support::supports(entry, context);
     ClaimReviewItemDto {
@@ -502,16 +512,15 @@ fn item(
         // in the lesson's report, which a waiting lesson does not have yet.
         executions: Vec::new(),
         human,
-        available_actions: entry
-            .available_actions()
+        available_actions: offered(entry, published)
             .into_iter()
             .map(Into::into)
             .collect(),
         history: entry
             .events()
             .iter()
-            .map(|record| {
-                let mut event = ClaimEventDto::from(record);
+            .filter_map(|record| {
+                let mut event = ClaimEventDto::of(record)?;
                 if let (
                     ClaimEvent::Extracted {
                         location,
@@ -522,7 +531,7 @@ fn item(
                 {
                     (*quote, *span) = located_in(units, location, statement);
                 }
-                event
+                Some(event)
             })
             .collect(),
         local_check: checker_verdict(entry, false, sources, texts),

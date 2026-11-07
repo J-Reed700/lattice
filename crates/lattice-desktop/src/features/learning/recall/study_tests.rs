@@ -128,6 +128,70 @@ fn a_conversation_card_out_of_shape_is_left_out_and_the_others_kept() {
         [1]
     );
 }
+
+#[test]
+fn a_card_is_read_at_any_length() {
+    let excerpt = "Study the stated conditions before selecting a procedure. ".repeat(30);
+    let question = "What should be studied before selecting a procedure? ".repeat(50);
+    let explanation =
+        "The passage explicitly asks the reader to study the stated conditions. ".repeat(50);
+    let topic = "Procedures ".repeat(12);
+    let option = "Only the title of the document, and nothing else in it. ".repeat(20);
+    let mut source = source();
+    source.excerpt = excerpt.clone();
+    let mut reply = generated();
+    let card = &mut reply["cards"][0];
+    card["question"] = json!(question);
+    card["explanation"] = json!(explanation);
+    card["topic"] = json!(topic);
+    card["options"][1] = json!(option);
+    card["quote"] = json!(excerpt);
+    let cards = parse_cards(
+        &reply.to_string(),
+        std::slice::from_ref(&source),
+        "deck",
+        6,
+        0,
+    );
+    assert!(cards.is_ok(), "{:?}", cards.as_ref().err());
+    let cards = cards.unwrap();
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].question, question.trim());
+    assert_eq!(cards[0].explanation, explanation.trim());
+    assert_eq!(cards[0].topic, topic.trim());
+    assert_eq!(cards[0].options[1], option.trim());
+    assert_eq!(cards[0].source.excerpt, excerpt.trim());
+}
+
+#[test]
+fn a_conversation_card_is_read_at_any_length() {
+    let claim = VerifiedConversationClaim {
+        answer: "The first verified claim remains exact.".into(),
+        citations: vec![source()],
+    };
+    let question = "What is true of the first claim? ".repeat(70);
+    let distractor = "A plausible but false statement about it. ".repeat(30);
+    let explanation = "The cited passage supports the first claim. ".repeat(80);
+    let topic = "First claim ".repeat(10);
+    let reply = json!({"cards":[{
+        "claimIndex":0,
+        "question":question,
+        "distractors":[distractor, "Wrong B", "Wrong C", "Wrong D"],
+        "explanation":explanation,
+        "topic":topic
+    }]});
+    let cards = parse_conversation_cards(&reply.to_string(), &[claim], "deck", 10).unwrap();
+    assert_eq!(cards.len(), 1);
+    let card = &cards[0].1;
+    assert_eq!(card.question, question.trim());
+    assert_eq!(card.explanation, explanation.trim());
+    assert_eq!(card.topic, topic.trim());
+    assert!(card
+        .options
+        .iter()
+        .any(|option| option == distractor.trim()));
+}
+
 #[test]
 fn study_rejects_unknown_persisted_card_formats() {
     assert!(super::study_repository::parse_card_format("future_format").is_err());
@@ -214,6 +278,28 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
             .await?,
         0
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_card_is_edited_at_any_length() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let db = DatabaseConnection::new(dir.path().join("long-edit.db")).await?;
+    initialize_database(db.pool()).await?;
+    let repo = StudyRepository::new(db.pool().clone());
+    let d = deck();
+    repo.save(&d).await?;
+    let edit = UpdateStudyCardRequestDto {
+        card_id: d.cards[0].id.clone(),
+        question: "Which condition does the passage ask the reader to study first? ".repeat(40),
+        answer: "The complete stated conditions of the procedure, read in full. ".repeat(25),
+        explanation: "The passage says the reader studies them before choosing. ".repeat(60),
+    };
+    service::update_card(&repo, edit.clone()).await?;
+    let reopened = repo.get(&d.id).await?;
+    assert_eq!(reopened.cards[0].question, edit.question.trim());
+    assert_eq!(reopened.cards[0].explanation, edit.explanation.trim());
+    assert_eq!(reopened.cards[0].options[0], edit.answer.trim());
     Ok(())
 }
 

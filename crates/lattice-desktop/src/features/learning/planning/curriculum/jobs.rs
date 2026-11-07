@@ -2,7 +2,7 @@
 //! recovery after a restart, each validated against the job rules.
 
 use super::{
-    id, text, LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
+    id, not_blank, LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -63,7 +63,7 @@ pub fn validate_generation_job(job: &LearningGenerationJob) -> Result<()> {
         ));
     }
     if let Some(error) = &job.error {
-        text(error, "Generation error", 2_000)?;
+        not_blank(error, "Generation error")?;
     }
     Ok(())
 }
@@ -120,7 +120,7 @@ pub fn fail_generation_job(job: &mut LearningGenerationJob, error: String, now: 
             "Only a running generation job can fail.".into(),
         ));
     }
-    text(&error, "Generation error", 2_000)?;
+    not_blank(&error, "Generation error")?;
     job.status = LearningGenerationJobStatus::Failed;
     job.error = Some(error);
     job.result_id = None;

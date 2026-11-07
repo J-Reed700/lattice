@@ -93,22 +93,6 @@ impl ClaimReviewRepository {
         Ok(())
     }
 
-    /// What a claim research round cost per claim when one was last timed,
-    /// in milliseconds, across every lesson and program: the newest
-    /// `Researched` event that carries a cost (course evidence index D5).
-    /// `None` before any round was timed.
-    pub async fn research_ms_per_claim(&self) -> Result<Option<u64>> {
-        let latest: Option<i64> = sqlx::query_scalar(
-            "SELECT json_extract(payload_json,'$.event.round_ms_per_claim') FROM learning_lesson_claim_events \
-             WHERE kind='researched' AND json_extract(payload_json,'$.event.round_ms_per_claim') IS NOT NULL \
-             ORDER BY at DESC, rowid DESC LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        Ok(latest.and_then(|ms| u64::try_from(ms).ok()))
-    }
-
     /// The review row's last write by the job, as Unix milliseconds: what
     /// "changed since the job ended" is measured from (§6.2).
     pub async fn review_written_at(&self, lesson_id: &str) -> Result<Option<i64>> {
@@ -148,65 +132,8 @@ impl ClaimReviewStore for ClaimReviewRepository {
         if revision != expected_revision.0 {
             return Err(revision_conflict());
         }
-        let owner: Option<String> =
-            sqlx::query_scalar("SELECT lesson_id FROM learning_lesson_claims WHERE claim_id=?")
-                .bind(&claim_id.0)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
-        if owner.as_deref().is_some_and(|owner| owner != lesson_id) {
-            return Err(AppError::InvalidInput(
-                "That claim belongs to another lesson.".into(),
-            ));
-        }
-        let mut entry = match owner {
-            Some(_) => {
-                let events = claim_events(&mut tx, claim_id).await?;
-                ClaimLedgerEntry::from_events(claim_id.clone(), events)?
-            }
-            None => match &event {
-                ClaimEvent::Extracted {
-                    location,
-                    statement,
-                } => ClaimLedgerEntry::extracted(
-                    claim_id.clone(),
-                    provenance.clone(),
-                    location.clone(),
-                    statement.clone(),
-                )?,
-                _ => {
-                    return Err(AppError::NotFound(
-                        "No claim with that id in this lesson.".into(),
-                    ))
-                }
-            },
-        };
-        let ordinal = if owner.is_some() {
-            entry.append(provenance.clone(), event.clone())?
-        } else {
-            0
-        };
-        upsert_claim(&mut tx, lesson_id, &entry).await?;
-        sqlx::query("INSERT INTO learning_lesson_claim_events(claim_id,ordinal,actor,kind,payload_json,job_id,at) VALUES(?,?,?,?,?,?,?)")
-            .bind(&claim_id.0)
-            .bind(i64::from(ordinal))
-            .bind(provenance.actor.as_str())
-            .bind(event.kind_name())
-            .bind(encode(&StoredEvent {
-                event,
-                app_version: provenance.app_version,
-                checker_model: provenance.checker_model,
-            })?)
-            .bind(provenance.job_id)
-            .bind(provenance.at)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        sqlx::query("UPDATE learning_lesson_reviews SET revision=revision+1 WHERE lesson_id=?")
-            .bind(lesson_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        append_in(&mut tx, lesson_id, claim_id, provenance, event).await?;
+        bump_revision(&mut tx, lesson_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(Revision(revision + 1))
     }
@@ -240,11 +167,92 @@ impl ClaimReviewStore for ClaimReviewRepository {
 
 /// The refusal of a write made against an older revision (§9): the caller
 /// reloads and acts again.
-fn revision_conflict() -> AppError {
+pub(super) fn revision_conflict() -> AppError {
     AppError::InvalidState("This claim changed; reload and act again.".into())
 }
 
-async fn load_in(connection: &mut SqliteConnection, lesson_id: &str) -> Result<Ledger> {
+pub(super) async fn bump_revision(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE learning_lesson_reviews SET revision=revision+1 WHERE lesson_id=?")
+        .bind(lesson_id)
+        .execute(&mut *connection)
+        .await
+        .map_err(db)?;
+    Ok(())
+}
+
+/// Writes one event of one claim on `connection`, without the revision
+/// check or its advance: the caller's transaction owns both.
+pub(super) async fn append_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+    claim_id: &ClaimId,
+    provenance: EventProvenance,
+    event: ClaimEvent,
+) -> Result<()> {
+    let owner: Option<String> =
+        sqlx::query_scalar("SELECT lesson_id FROM learning_lesson_claims WHERE claim_id=?")
+            .bind(&claim_id.0)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(db)?;
+    if owner.as_deref().is_some_and(|owner| owner != lesson_id) {
+        return Err(AppError::InvalidInput(
+            "That claim belongs to another lesson.".into(),
+        ));
+    }
+    let mut entry = match owner {
+        Some(_) => {
+            let events = claim_events(connection, claim_id).await?;
+            ClaimLedgerEntry::from_events(claim_id.clone(), events)?
+        }
+        None => match &event {
+            ClaimEvent::Extracted {
+                location,
+                statement,
+            } => ClaimLedgerEntry::extracted(
+                claim_id.clone(),
+                provenance.clone(),
+                location.clone(),
+                statement.clone(),
+            )?,
+            _ => {
+                return Err(AppError::NotFound(
+                    "No claim with that id in this lesson.".into(),
+                ))
+            }
+        },
+    };
+    let ordinal = if owner.is_some() {
+        entry.append(provenance.clone(), event.clone())?
+    } else {
+        0
+    };
+    upsert_claim(connection, lesson_id, &entry).await?;
+    sqlx::query("INSERT INTO learning_lesson_claim_events(claim_id,ordinal,actor,kind,payload_json,job_id,at) VALUES(?,?,?,?,?,?,?)")
+        .bind(&claim_id.0)
+        .bind(i64::from(ordinal))
+        .bind(provenance.actor.as_str())
+        .bind(event.kind_name())
+        .bind(encode(&StoredEvent {
+            event,
+            app_version: provenance.app_version,
+            checker_model: provenance.checker_model,
+        })?)
+        .bind(provenance.job_id)
+        .bind(provenance.at)
+        .execute(&mut *connection)
+        .await
+        .map_err(db)?;
+    Ok(())
+}
+
+pub(in crate::features::learning) async fn load_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+) -> Result<Ledger> {
     let review = sqlx::query("SELECT program_id,job_id,state,revision,draft_sha256,checker_model,stop_reason_json FROM learning_lesson_reviews WHERE lesson_id=?")
         .bind(lesson_id)
         .fetch_optional(&mut *connection)

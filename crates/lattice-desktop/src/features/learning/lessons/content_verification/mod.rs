@@ -4,13 +4,15 @@ use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::dto::PreparedLearningLesson;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::reference_collection::{ReferenceCollection, ReferencePassage};
-use futures::{FutureExt, StreamExt, TryStreamExt};
+use futures::{FutureExt, StreamExt};
 use lattice_core::application::ports::{llm_port::SamplingOverride, LLMPort};
 #[cfg(test)]
 use lattice_core::application::services::claim_verification::ClaimEvidence;
 use lattice_core::application::services::claim_verification::{
     CheckPolicy, ClaimChecker, ClaimJudgment, ClaimVerdict, JudgeOutcome,
 };
+use lattice_core::domain::learning::claim_review::{ClaimId, Class, ClassifiedBy};
+use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -19,33 +21,32 @@ use std::collections::{HashMap, HashSet};
 
 mod citations;
 mod claim_ledger;
-use citations::{overlaps, section_citations, source_mentions, take_cited, Citations, CITED};
+use citations::{
+    overlaps, restates, section_citations, source_mentions, take_cited, Citations, CITED,
+};
 #[cfg(test)]
 pub(in crate::features::learning) use claim_ledger::locate;
 pub(in crate::features::learning) use claim_ledger::{
     field_text, held_for_review, held_lessons, located, located_quote, review_outcome, unit_texts,
     HeldForReview,
 };
+mod class_checks;
+mod classify;
+pub(in crate::features::learning) use classify::{figures, needs_citation, Givens, CITED_KINDS};
 mod coverage;
 #[cfg(test)]
 pub(in crate::features::learning) use coverage::live_mapping_fixture;
 mod claim_reuse;
 mod evidence_checks;
-pub(in crate::features::learning) use evidence_checks::Reach;
 #[cfg(test)]
-pub(in crate::features::learning) use evidence_checks::ORDERS;
-#[cfg(test)]
-pub(in crate::features::learning) use evidence_checks::{
-    page_budget, page_seconds, walk_pages, walk_standing_pages, Depth, WalkedPage,
-};
+pub(in crate::features::learning) use evidence_checks::page_budget;
 use evidence_checks::{
-    same_passage, Paging, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
+    same_passage, Reach, SupportedElsewhere, SupportingPassage, TwoPass, CHECKER_OUTPUT_TOKENS,
 };
 #[cfg(test)]
-use evidence_checks::{ContraryPassage, Pass, REACHES};
+use evidence_checks::{CheckedPart, ContraryPassage, Pass};
 mod evidence_selection;
 mod execution;
-mod general_knowledge;
 mod judge;
 pub(in crate::features::learning) use judge::{
     judge_for_publication, judge_in_order, ranking, shown_of,
@@ -53,8 +54,11 @@ pub(in crate::features::learning) use judge::{
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
+pub(in crate::features::learning) use learner_view::ClaimStates;
 mod portability;
 mod quote_claims;
+mod readings;
+mod resolution;
 #[cfg(test)]
 pub(in crate::features::learning) use inventory::revisions::live_revision_fixture;
 #[cfg(test)]
@@ -79,10 +83,7 @@ pub(in crate::features::learning) async fn live_inventory_fixture(
     .await
 }
 mod passes;
-use passes::{check_evidence, verify_with_references};
 mod provenance_gate;
-#[cfg(test)]
-pub(in crate::features::learning) use provenance_gate::Judgements;
 pub(in crate::features::learning) use provenance_gate::{
     gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
 };
@@ -91,10 +92,14 @@ pub(in crate::features::learning) use repair::{confine, Protected};
 mod repair_loop;
 mod repair_work;
 mod report;
+pub(in crate::features::learning) use report::WrittenOver;
 pub(in crate::features::learning) mod research;
 mod review_pass;
-mod scrutiny;
+mod round;
+mod rounds;
+pub(in crate::features::learning) use rounds::Rounds;
 mod section_checkpoints;
+mod sections;
 mod support_gate;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -109,7 +114,9 @@ pub(in crate::features::learning) use repair_loop::{
 use repair_loop::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
-pub(in crate::features::learning) use report::{persist_report, sources_changed};
+pub(in crate::features::learning) use report::{
+    not_verified_line, persist_report, sources_changed,
+};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
@@ -122,7 +129,7 @@ pub(in crate::features::learning) fn evidence_policy() -> &'static str {
 }
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v7";
+const INVENTORY_POLICY: &str = "lesson-evidence-v8";
 
 pub(in crate::features::learning) async fn normalize_example_fences(
     llm: &dyn LLMPort,
@@ -187,8 +194,8 @@ struct CoverageUnit {
     index: usize,
     complete: bool,
     reason: String,
-    /// Empty exactly when complete. The inventory adopts these as claims before
-    /// any evidence check, so an audit finding never blocks the lesson by itself.
+    /// Empty exactly when complete. They are not claims: the lesson reports
+    /// them as findings for the teaching review, and they never block it.
     missing_assertions: Vec<MissingAssertion>,
 }
 
@@ -203,38 +210,74 @@ struct Finding {
     supporting_quote: Option<String>,
     /// The user's resolution, set from the claim ledger at publication.
     #[serde(skip_serializing_if = "Option::is_none")]
-    resolution: Option<general_knowledge::Resolution>,
+    resolution: Option<resolution::Resolution>,
+    /// The claim this finding reports, which the learner view follows after
+    /// publication; none in a report from before findings named theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim_id: Option<String>,
     /// What the provenance gate weighed for a supported finding: the
     /// supports' levels for the claim's subject and the decision. Boxed: it
     /// is most of a finding's size and most findings have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     trust: Option<Box<provenance_gate::FindingTrust>>,
-    /// What the two passes made of the claim (course evidence index §5.1):
-    /// the pass and page that decided it, where pass B read, the passage it
-    /// found when the section's citations gave no support, and a passage
-    /// either pass found saying otherwise about a supported claim.
+    /// How the learner is told what the claim's support is (claim classes
+    /// design §3.2): the provenance gate's label for a weighed claim,
+    /// `Attributed` for a quotation found in the source it names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<Label>,
+    /// The class the claim was checked as, and who decided it (claim classes
+    /// design §3.1): the check the learner is told of, and the ledger's
+    /// record of the claim's class.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    class: Option<Classed>,
+    /// How the claim was read (course evidence index §5.1): whether its own
+    /// citation or the course's page decided it, which page and where it was
+    /// read, the passage found when the section's citations gave no support,
+    /// the parts its citation was read as, and a passage found saying
+    /// otherwise about a supported claim.
     #[serde(flatten)]
     two_pass: TwoPass,
 }
+/// A statement's class and the authority that decided it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct Classed {
+    class: Class,
+    by: ClassifiedBy,
+}
+
+impl Classed {
+    /// Whether the statement is a claim to check. Only what the rule layer
+    /// makes Internal is left out; the model's Internal meets the veto.
+    fn checked(&self) -> bool {
+        !(self.class == Class::Internal && self.by == ClassifiedBy::Rule)
+    }
+}
+
 /// Completed comparisons and evidence selections. Durable checkpoints retain
 /// both across restarts; a selection is never itself a factual approval.
 #[derive(Default)]
 struct ClaimChecks {
-    findings: HashMap<String, Finding>,
     /// Claims the ledger holds as resolved by evidence the user brought, by
     /// unit and statement: that check is their receipt (`claim_ledger`).
     settled: HashMap<(usize, String), Finding>,
+    /// What the ledger keeps for the next pass: where the lesson's statements
+    /// stand in their graphs, and the lesson before the repairs
+    /// (`claim_ledger`).
+    rewrites: claim_ledger::Rewrites,
+    /// The finding of each statement's latest reading, by claim: what the
+    /// report carries for a statement a pass does not read. Each is also saved
+    /// as a checkpoint, so a restarted job carries it still.
+    latest: HashMap<ClaimId, Finding>,
     selections: std::sync::Mutex<HashMap<String, evidence_selection::Selection>>,
     research_scopes: std::sync::Mutex<HashMap<String, HashSet<(usize, String)>>>,
-    prior_claims: std::sync::Mutex<HashMap<String, Vec<(usize, Claim)>>>,
     /// What the judge's answers have cost this job, per claim, across its
-    /// passes: the answer size a pass B page is budgeted by
+    /// readings: the answer size a page of the course is budgeted by
     /// (`evidence_checks::page_budget`).
     answers: std::sync::Mutex<evidence_checks::AnswerSize>,
-    /// What researching one claim on the web cost when this job's last
-    /// research round measured it: pass B's break-even weighs it before the
-    /// ledger's latest (`evidence_checks::walk`, D5).
-    research_cost: Option<std::time::Duration>,
+    /// The sections that go out of the lesson (claim classes design §3.10):
+    /// their statements are not sorted or judged and their examples not
+    /// reported.
+    removed: sections::Going,
 }
 type CheckedClaim = (usize, String, Finding, bool);
 
@@ -250,46 +293,6 @@ impl ClaimChecks {
         // including when requests share a bank of passages. Other targets are
         // never evidence. Fresh coverage and final content binding still run.
         digest(&json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
-    }
-
-    fn get(
-        &self,
-        key: &str,
-        unit: usize,
-        claim: &Claim,
-        evidence: &[EvidencePassage],
-    ) -> Option<Finding> {
-        self.findings.get(key).cloned().map(|mut finding| {
-            finding.unit = unit;
-            finding.quote = claim.quote.clone();
-            finding.statement = claim.statement.clone();
-            // A decision on this evidence takes its fresh retrieval metadata;
-            // one reached on a deeper page keeps that page's passages.
-            let identity = |p: &EvidencePassage| {
-                (
-                    p.source_id.clone(),
-                    p.start_byte,
-                    p.end_byte,
-                    p.text.clone(),
-                )
-            };
-            if finding
-                .evidence
-                .iter()
-                .map(identity)
-                .eq(evidence.iter().map(identity))
-            {
-                finding.evidence = evidence.to_vec();
-            }
-            finding
-        })
-    }
-
-    fn record(&mut self, key: String, finding: &Finding) {
-        // A failed/incomplete call is never a reusable decision.
-        if finding.verdict != ClaimVerdict::Unverified {
-            self.findings.insert(key, finding.clone());
-        }
     }
 }
 
@@ -353,7 +356,10 @@ impl ClaimReceipt {
             evidence: evidence.to_vec(),
             supporting_quote: self.supporting_quote,
             resolution: None,
+            claim_id: None,
             two_pass: Default::default(),
+            label: None,
+            class: None,
             trust: None,
         })
     }
@@ -385,8 +391,8 @@ pub struct LessonVerificationReport {
     issues: Vec<String>,
     retrieval_mode: String,
     embedding_model: Option<String>,
-    /// The tokens a pass B page held at the end of the pass, or why it had
-    /// no budget (course evidence index §5.3).
+    /// The tokens a page of the course held at the end of the pass, or why it
+    /// had no budget (course evidence index §5.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     page_budget: Option<String>,
     unexecuted_languages: Vec<String>,
@@ -404,7 +410,7 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
     if blocks.is_empty() || blocks.len() > 32 || questions.len() > 24 {
         return Err(invalid("Invalid verification unit count."));
     }
-    Ok(blocks.iter().map(|b| json!({"kind":"teaching", "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
+    Ok(blocks.iter().map(|b| json!({"kind":"teaching", "role":b["kind"], "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
         .chain(questions.iter().map(|q| json!({"kind":"assessment", "prompt":q["prompt"], "options":q["options"], "correctIndex":q["correctIndex"], "explanation":q["explanation"]}))).collect())
 }
 fn contains_text(value: &Value, quote: &str) -> bool {
@@ -415,6 +421,10 @@ fn contains_text(value: &Value, quote: &str) -> bool {
         _ => false,
     }
 }
+
+/// The longest quote an inventory keeps, in characters.
+const MAX_CLAIM_QUOTE_CHARS: usize = 1_600;
+
 fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     let mut seen = HashSet::new();
     let count: usize = inventory.units.iter().map(|u| u.claims.len()).sum();
@@ -428,14 +438,12 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
             .get(unit.index)
             .ok_or_else(|| invalid("Unknown verification section."))?;
         if !seen.insert(unit.index)
-            || unit.non_factual_reason.chars().count() > 500
             || (unit.claims.is_empty() && unit.non_factual_reason.trim().is_empty())
             || unit.claims.iter().any(|c| {
                 c.quote.trim().is_empty()
-                    || c.quote.chars().count() > 1600
+                    || c.quote.chars().count() > MAX_CLAIM_QUOTE_CHARS
                     || !contains_text(value, &c.quote)
                     || c.statement.trim().is_empty()
-                    || c.statement.chars().count() > 2000
             })
         {
             return Err(invalid(
@@ -517,7 +525,7 @@ pub(in crate::features::learning) fn fits_window<'p>(
 }
 
 /// The passed example runs of section `unit`, as evidence: the section's
-/// own, so pass A reads them beside its citations.
+/// own, which a statement's citation is read beside.
 fn example_runs(observations: &[execution::Observation], unit: usize) -> Vec<EvidencePassage> {
     observations
         .iter()
@@ -534,9 +542,9 @@ fn example_runs(observations: &[execution::Observation], unit: usize) -> Vec<Evi
 }
 
 /// A claim's evidence when its section cites nothing: its section's passed
-/// example runs (pass A) and then pass B's first page, as a fresh check
-/// would select it (`evidence_checks`). For tests that bind a receipt to
-/// exactly what a check compares.
+/// example runs and then the course's first page for it, as the readers
+/// select it at the start of a job (`evidence_checks`). For tests that bind a
+/// receipt to exactly what a reading compares.
 #[cfg(test)]
 async fn evidence_for(
     llm: &dyn LLMPort,
@@ -546,15 +554,17 @@ async fn evidence_for(
     observations: &[execution::Observation],
 ) -> Result<Vec<EvidencePassage>> {
     let mut evidence = example_runs(observations, unit);
-    evidence.extend(
-        evidence_checks::first_page(llm, references, claim, &Citations::default(), &[]).await?,
-    );
+    let budget = evidence_checks::PageBudget::of(llm, evidence_checks::AnswerSize::default());
+    let (mut page, _) =
+        evidence_checks::page_one(llm, references, claim, claim, &[], &budget).await?;
+    canonicalize_evidence(&mut page);
+    evidence.extend(page);
     Ok(evidence)
 }
 
-/// The order the judge reads a pass B `page` in: most needed first, the next
-/// last, the rest inward, so the most relevant passages sit at the edges of a
-/// long prompt. The page's canonical order still keys the comparison.
+/// The order the judge reads a page of the course in: most needed first, the
+/// next last, the rest inward, so the most relevant passages sit at the edges
+/// of a long prompt. The page's canonical order still keys the comparison.
 fn reading_order(page: &[EvidencePassage]) -> Vec<usize> {
     let (mut front, mut back) = (Vec::new(), Vec::new());
     for (need, position) in ranking(page).into_iter().enumerate() {
@@ -601,23 +611,6 @@ pub(in crate::features::learning) async fn live_retrieved_passages(
         .into_iter()
         .map(|passage| passage.text)
         .collect())
-}
-
-#[cfg(test)]
-async fn verify(
-    llm: &dyn LLMPort,
-    candidate: &Value,
-    sources: &[LearningSourceDto],
-) -> Result<LessonVerificationReport> {
-    let references = ReferenceCollection::lexical(sources)?;
-    verify_with_references(
-        llm,
-        &BuiltinRuntimes::for_tests(),
-        candidate,
-        &references,
-        &mut ClaimChecks::default(),
-    )
-    .await
 }
 
 pub(in crate::features::learning) async fn judge_batch_for_publication(

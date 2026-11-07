@@ -64,10 +64,11 @@ impl LearningSourceLibraryRepository {
         if full_text.trim().is_empty() {
             return Err(invalid("Source text must not be empty"));
         }
-        let title = captured.title.trim();
-        if title.is_empty() || title.chars().count() > 180 {
-            return Err(invalid("Source title must contain 1–180 characters"));
+        let title = shown(captured.title.trim());
+        if title.is_empty() {
+            return Err(invalid("Source title must not be empty"));
         }
+        let publisher = captured.publisher.as_deref().map(shown);
         if origin.trim().is_empty() || origin.chars().count() > 2048 {
             return Err(invalid("Source origin must contain 1–2048 characters"));
         }
@@ -78,13 +79,6 @@ impl LearningSourceLibraryRepository {
                 .is_some_and(|value| value.chars().count() > 2048)
         {
             return Err(invalid("Source URLs must not exceed 2048 characters"));
-        }
-        if captured
-            .publisher
-            .as_deref()
-            .is_some_and(|value| value.chars().count() > 180)
-        {
-            return Err(invalid("Publisher must not exceed 180 characters"));
         }
         if matches!(
             kind,
@@ -152,7 +146,7 @@ impl LearningSourceLibraryRepository {
                 version_id,
                 version_number: 1,
                 title,
-                publisher: captured.publisher.as_deref(),
+                publisher,
                 requested_url,
                 resolved_url: captured.resolved_url.as_deref(),
                 full_text: &text,
@@ -325,11 +319,6 @@ impl LearningSourceLibraryRepository {
             let text = normalized(&captured.text);
             if text.trim().is_empty()
                 || captured.title.trim().is_empty()
-                || captured.title.chars().count() > 180
-                || captured
-                    .publisher
-                    .as_deref()
-                    .is_some_and(|value| value.chars().count() > 180)
                 || captured
                     .resolved_url
                     .as_deref()
@@ -341,6 +330,8 @@ impl LearningSourceLibraryRepository {
                     Some("The page did not contain valid source metadata and text.".into()),
                 )
             } else {
+                let title = shown(captured.title.trim());
+                let publisher = captured.publisher.as_deref().map(shown);
                 let new_digest = hash_text(&text);
                 if active_digest.as_deref() == Some(new_digest.as_str()) {
                     (LearningSourceCheckStatus::Unchanged, None, None)
@@ -360,8 +351,8 @@ impl LearningSourceLibraryRepository {
                                 source_id: &req.source_id,
                                 version_id: &version_id,
                                 version_number: next,
-                                title: captured.title.trim(),
-                                publisher: captured.publisher.as_deref(),
+                                title,
+                                publisher,
                                 requested_url: requested_url.as_deref(),
                                 resolved_url: captured.resolved_url.as_deref(),
                                 full_text: &text,
@@ -377,7 +368,7 @@ impl LearningSourceLibraryRepository {
                             source_id: &req.source_id,
                             version_id: &version_id,
                             kind: &LearningSourceKind::Web,
-                            title: captured.title.trim(),
+                            title,
                             resolved_url: captured.resolved_url.as_deref(),
                             text: &text,
                             acquired_at_ms: checked,
@@ -393,7 +384,7 @@ impl LearningSourceLibraryRepository {
                             &mut tx,
                             &req.program_id,
                             &version_id,
-                            captured.title.trim(),
+                            title,
                             captured.resolved_url.as_deref(),
                             &text,
                             checked,

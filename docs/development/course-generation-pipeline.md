@@ -279,16 +279,16 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 `content_verification/inventory::extract` (and `extract_remaining`).
 
-- **Input** (`inventory::inputs`): each section as app-owned passages with IDs. For assessment items, wrong options are passed as `distractors` and never extracted as facts.
+- **Input** (`inventory::inputs`): each section's body and each answer's explanation as app-owned passages with IDs, and nothing else: rubric fields, reflection prompts, quiz options and the lesson's quotation of the course brief are not read (claim classes design §3.5, item 2). For assessment items, wrong options are passed as `distractors` and never extracted as facts.
 - **Call:** `complete_json`, sections in batches of four, up to two attempts per batch (the second includes the response errors), output 12,000.
 - **Schema:** one `unit-N` slot per requested section: `{"claims":[{"passageId":enum(that section's passage ids),"statement"}],"nonFactualReason"}`. The app supplies the quote from the passage ID.
-- **Rules (system text):** leave out names the lesson invented for its examples (such as `IOrderRepository`) and extract the real-world fact in general terms without them (`09d5a552`; in accept2 such names made claims no page could support); extract every independently checkable factual assertion, preserving scope, conditions, defaults and quantifiers; course organization, chosen exercise constraints, deliverables and preferences are nonfactual with a reason; record assertions even when false; do not extract quiz-label claims (the answer-key check owns those).
+- **Rules (system text):** leave out names the lesson invented for its examples and extract the real-world fact in general terms; extract every independently checkable factual assertion, preserving scope, conditions, defaults and quantifiers; course organization, chosen exercise constraints, deliverables and preferences are nonfactual with a reason; record assertions even when false; do not extract quiz-label claims (the answer-key check owns those).
 - **Checkpoint:** `InventoryCheckpoint` (policy `INVENTORY_POLICY`, model, context size, content hash, inventory, coverage, coverage policy), saved per candidate (`lesson_drafts::record_claim_inventory`). Section receipts (`section_checkpoints.rs`) keep extraction for byte-identical sections across repairs.
 - **Progress:** phase `Inventory`.
 
 ### L9. Coverage audit
 
-`content_verification/coverage.rs` (policy `passage-coverage-v6`). A mapping review accounts for every passage under its exact ID (`coverage/mapping.rs`). A fidelity judge then lists, per passage, the factual assertions the inventory fails to represent (`missingAssertions`). The application adopts those as claims for the evidence check (commit `2885fd55`); it does not argue with the judge. A malformed answer gets one correction and is never read as a gap. Phase `Coverage`.
+`content_verification/coverage.rs` (policy `passage-coverage-v9`). A mapping review accounts for every passage under its exact ID (`coverage/mapping.rs`). A fidelity judge then lists, per passage, the factual assertions the inventory fails to represent (`missingAssertions`). They are reported as teaching findings, never adopted as claims (claim classes design §3.5, item 2); a specific the audit finds missing (a figure, a quotation, an attribution) joins the inventory in the first pass, so it is checked. A malformed answer gets one correction and is never read as a gap. Phase `Coverage`.
 
 ### L10. Examples
 
@@ -296,45 +296,44 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 ### L11. Verification
 
-`content_verification/evidence_checks::check`, judge in `content_verification::judge_batch_provisionally` and `challenge_batch_for_publication`.
+Design: [`2026-11-01-lesson-claim-classes.md`](../design/2026-11-01-lesson-claim-classes.md) (§3.1 to §3.3, §3.11). Code: `content_verification/classify.rs`, `class_checks.rs`, `evidence_checks/*`, `claim_ledger.rs`, `provenance_gate.rs`.
 
-- **First page per claim** (`content_verification::evidence_for`): passed execution observations for its section, then `ReferenceCollection::verification_page`: ranked passages from the whole collection, each widened to its surrounding source text (1,700 characters each side), best first, while they fit the claim's share (`within_share`). The share (`claim_share`) is an equal part of the evidence room a strict batch call leaves after its instructions, claims and answers, for as many claims as share the call (up to 8). A claim checked alone gets the whole room. Contradicting passages are not filtered. `evidence_selection.rs` keeps passages already compared stable as research adds sources.
-- **Judge:** `ClaimChecker` (`crates/lattice-core`, `application/services/claim_verification`) with `CheckPolicy::Strict`, deterministic sampling, 512 output tokens per claim. Claims go in batches of `BATCH_SIZE = 8`; a batch that does not fit is halved; a claim a batch answer leaves unusable is checked alone.
-- **Deepening** (`evidence_checks::deepen`, since `f90f440c`): a claim the first page leaves `Unsupported` is checked again against its next page, passages it has not been shown, batched with the other claims still looking. A walk ends at the first `Supported` or `Contradicted` verdict, or when the next page has no passage that mentions the claim's subject. Another round runs only while the previous round settled at least one claim (`09d5a552`). A deciding page's finding replaces the first page's.
-- **Subject test** (`ReferenceCollection::mentions_subject_of`): a passage mentions the claim's subject when it contains one of the claim's distinctive content terms, those no more common across the collection's passages than the median of the claim's own terms. Terms in no passage (such as an invented example name) and terms in every passage are left out before the median is taken (`09d5a552`). Vector neighbours alone never continue a walk.
-- **Verdicts** (`ClaimVerdict`): `Supported` (with a supporting quote that must appear in the evidence), `Unsupported`, `Contradicted`, `Unverified` (the checker could not finish).
-- **Challenge** (`content_verification/challenge.rs`): every provisional `Supported` is challenged. A separate call plans research questions about omitted conditions, exceptions or conflicting evidence (as many as it finds; no count limit since `f90f440c`). Any question turns the verdict into `Unsupported` with the questions as the reason, so research follows. A failed challenge leaves the claim unverified.
-- **Receipts:** per claim and page `claim-v1:<digest of POLICY, model, context size, comparison>` (`ClaimReceipt`: verdict, reason, supporting quote, interpretation policy); provisional batch results under `PROVISIONAL_BATCH_POLICY`. The first page's key still names a decision reached on a deeper page, so a later pass on the same evidence reuses it.
-- **Report** (`LessonVerificationReport`): policy, checker model, source bindings (id + sha256), coverage, coverage audit, findings, executions, issues, retrieval mode. Every non-`Supported` finding becomes an issue "Section n: {statement} — {reason}", except an unsupported claim the general-knowledge gate keeps (see [section 5](#5-labelling-general-knowledge)).
-- **Progress:** phase `Evidence`, "Checking claims"; while deepening, "Checking N unsupported claims against their next page of evidence (page P)".
+- **Sorting.** Every statement the inventory extracts is sorted into a class: *Sourced* (a digit, quoted wording, an attribution cue, a named product's or system's behaviour, or a sentence the writer cited), *Reasoning* (an explanation or the lesson's own reasoning), *Common* (standard knowledge with no specific) or *Internal* (a remark about the lesson itself; counted, never written to the ledger). The rule layer decides first (`ClassifiedBy::Rule`, or `Writer` for a cited sentence); the model sorts only what the rules leave (`Model`, one call per 20 statements, in the first pass only). The ledger keeps the class of the strongest authority, and a statement a repair wrote keeps its parent's class.
+- **Each class meets its own check** (`CheckPolicy`, `crates/lattice-core` `claim_verification`). Sourced: the part-wise strict judge (`Bridge`) against the passages its sentence's own citation names, in one call: each part is stated, common knowledge, a specific no passage gives, or contradicted, so a Sourced statement can pass with a common-knowledge part beside its passage and still fails on a specific no passage gives; a statement that cites nothing is read against the course's page (`page_one`, `evidence_selection`), never both. Reasoning: the consistency judge (`consistency-v1`) against the passages its section cites, then a three-sample falsity veto that the sources can outrank. Common: the knowledge judge (`knowledge-v1`), closed-book, three samples, unanimous; a lone dissent sends the statement to its source check.
+- **Where a statement ends** (`end_state`): ResolvedByEvidence (Sourced), Consistent (Reasoning), `GeneralKnowledge` by the machine (Common), Removed by the machine, or Edited when a repair's successor answers for it. A job's own checks park nothing: no Queued, Open or InsufficientStanding at its end.
+- **The provenance gate** labels a supported Sourced statement ("per <source>", "according to <source>", "a practice, per <source>") and never demotes it.
+- **A checker that gives no answer** teaches nothing about a statement: it is asked once more, and the lesson stops (`checker_unreadable`) when it still cannot be read.
+- **Receipts:** per statement and comparison `claim-v1:<digest of POLICY, model, context size, comparison>` (`ClaimReceipt`, with the bridge's parts); a decision is restored without asking again.
+- **Report** (`LessonVerificationReport`): policy, checker model, source bindings (id + sha256), coverage, coverage audit, findings (each with its class, the gate's label and its parts), executions, issues, retrieval mode.
+- **Progress:** phase `Evidence`, "Checking claims". Once the statements are sorted the panel shows the plan, "N statements: S to check against their sources, R to check for consistency, C common knowledge", and "N calls so far, at most T" (`call_plan.rs`), a ceiling that only comes down. The calls are the requests that sort, check or rewrite statements and a section's flow repair, each counted where it is made; extracting claims, the coverage audit and the teaching review are not.
 
 ### L12. Research after writing
 
-`content_verification/research::expand` takes the `Unsupported` and `Contradicted` findings as gaps (`{"claim","missingEvidence": reason}`) and runs the same `research` function as L4. New sources are bound to the claims that asked for them (`evidence_selection::record_research_scope`, policy `claim-research-scope-v1`), so a broadly relevant page does not reopen unrelated approvals. The report is rechecked (`check_evidence`) against the expanded collection. Rounds repeat while the gap count falls and no claim is contradicted. Phase `Research`, "Finding authoritative references for unresolved claims".
+`content_verification/research::expand`. Per Sourced statement whose cited passage failed, at most one round and in it at most two pages: the selector's first choice among the web searches for the statement's gap and, when it names an owner, one owner-site result. A page is fetched only after the admission gate (`references/admission.rs`, `admission-v1`) passes its search result's own facts, and the page read passes it again before it is saved; a page fetched counts against the total whether or not it is saved. The count is written to the progress before the first request ("Looking up N statements on the web, at most 2N pages"). Research is once per statement for its life. What research saved is checked at once, and the course's page is read once for a statement whose section cites a passage, after its round. Phase `Research`.
 
-### L13. Section repair
+### L13. Statement repair and cuts
 
-`content_verification/repair_loop::verify_and_repair_with_references` and `content_verification/repair::candidate`.
+`content_verification/repair_loop::verify_and_repair_with_references`, `repair::candidate` and `repair/cut.rs`.
 
-- If any finding is `Unverified`, the job stops: "The evidence checker could not complete n claim checks. No lesson was published. Retry when the checker is available; durable jobs retain the lesson draft."
-- Otherwise the issues, the failed claims with their evidence IDs and an evidence table (each passage once), execution results and `repairHistory` (claim variants already rejected) form the repair context (`repair_context`). If the same issue set repeats, `repeatedDefects` asks the repairer to remove the disputed assertion.
-- `repair_sections` repairs each affected section in turn. `claim_groups` splits a section's failed claims into consecutive groups whose request fits: room = window minus the section context minus twice the output reservation. A claim's price is its own text plus the passages the group does not list yet. A claim whose own evidence does not fit keeps its passages in recorded order while they fit (logged). A claim that cannot carry a single passage is an error: "A failed claim's evidence passage does not fit in this model's context window." Each group's repair runs on the section as the previous group left it.
-- The repairer answers with text edits (`lessons/text_edits.rs`); an ambiguous edit falls back to one validated-section call. Each patch is checkpointed as a `PendingRepair` with the work that remains, so a stopped job resumes mid-repair.
-- After all sections, the teaching review (L7) runs on the repaired lesson, then the loop returns to L8.
-- **Progress:** phase `Repair`, "Correcting defects found by evidence checks" or "Removing a repeatedly unsupported claim"; per section "Correcting affected section n of m (part p of q)".
+- A statement gets two machine attempts in its life, whatever evidence later checks bring (`MACHINE_ATTEMPTS`): a rewrite (a model call that edits only its sentence), then taking the sentence out, made in code and never asked of the model. A Common statement the knowledge judge calls false has no rewrite to make and is cut at once. A sentence several statements stand on is rewritten for all of them, and each is checked once through its successor.
+- A sentence that is the whole of its field, or sits in a code block, cannot be taken out: its statement ends `Removed { by: Machine }` and its section goes out of the lesson. Each section that took a cut gets one flow repair; a section left with too little goes; a lesson that loses its first explanation, more than a third of its sections or every statement it had stops with `sources_do_not_support` (design §3.10).
+- `repair_sections` repairs each affected section in turn, `claim_groups` splitting a section's failed statements into groups whose request fits. The repairer answers with text edits (`lessons/text_edits.rs`); each patch is checkpointed as a `PendingRepair` so a stopped job resumes mid-repair. The teaching review (L7) runs on the repaired lesson, then the loop returns to L8.
+- **Progress:** phase `Repair`, "Correcting defects found by evidence checks" or "Removing a repeatedly unsupported claim".
 
 ### L14. Readiness gate and outcome
 
-- `prepare_lesson_with_references` decodes the final candidate and enforces the shape: 10 to 16 blocks with the required kinds and minimum lengths, unique titles, six questions (two per kind), four distinct options, valid source IDs from this program, and binds the report to the lesson (`report.bind`).
+- `prepare_lesson_with_references` decodes the final candidate and enforces the shape: 10 to 16 blocks with the required kinds and minimum lengths (a lesson that lost sections to cuts is held to the thinness rule of §3.10 instead), unique titles, six questions (two per kind), four distinct options, valid source IDs from this program, and binds the report to the lesson (`report.bind`).
 - `service::validate_prepared` rechecks the shape and source references against the program's current sources.
 - The report must validate at publication (`report.rs::validate`): its policy equals the current `POLICY`, it has no issues, and it matches the lesson's content hash. `report.reusable` additionally requires the same checker model and unchanged source hashes.
 - The prepared lesson is checkpointed as `prepared-v1`, then all staged lessons are published in one transaction with their reports (phase `Publishing`, "Publishing verified lesson material").
 
 | Outcome | Meaning |
 |---|---|
-| Job `Completed`, lesson `Ready` | Every claim passed and the report is stored |
+| Job `Completed`, lesson `Ready` | Every statement ended in a state its class allows and the report is stored |
 | Job `Pending` (deferred) | A transient model or network error; it retries automatically |
-| Job `Failed` (`generation_failed`) | A non-transient error: context overflow, teaching review still failing, checker unverified, malformed material. Drafts and checkpoints are kept; retry reuses them |
+| Lesson held, review `Stopped` | The checker's answers could not be read twice for a statement (`checker_unreadable`), or the sources do not support enough of the lesson (`sources_do_not_support`); the draft is kept and the reason is on the review |
+| Lesson held, review `NeedsReview` | Only what the user's hands hold: a Verifier dispute, a reopening, or a claim the user's own change of a source's trust re-decided |
+| Job `Failed` (`generation_failed`) | A non-transient error: context overflow, teaching review still failing, malformed material. Drafts and checkpoints are kept; retry reuses them |
 | Job `Cancelled` / `Interrupted` | User cancel or shutdown; requeued or retried from checkpoints |
 | Lesson `Outline` | Not prepared yet (the only other `LearningPreparation` value) |
 
@@ -342,23 +341,15 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 `planning/curriculum::LearningGenerationPhase`: `References`, `Writing`, `Review`, `Inventory`, `Coverage`, `Examples`, `Evidence`, `Research`, `Repair`, `Publishing`. Stage text is set with `lesson_progress::stage`; examples are quoted under each step above.
 
-## 5. Labelling: general knowledge
+## 5. Labelling: statement classes
 
-**Status: built in `569a76f7`; unit-tested. Live runs accept2 and accept3 include it; accept2 was stopped before the gate was reached.**
+**Status: built on `lesson/design` (claim classes design); not yet accepted live (§3.11's run is scored by `scripts/score_lesson_acceptance.py`).**
 
-- **The gate** (`content_verification/general_knowledge.rs`, used by `check_evidence`, `report.rs` and `repair_loop.rs`). After the research rounds, a claim that is still `Unsupported` is kept as general knowledge: it is not a lesson issue, is never repaired, stays out of `repairHistory`, and publication accepts it. Its verdict is `general_knowledge`.
-- **Exceptions that stay issues** and go to repair, which removes or softens the detail:
-  - an absolute, matched as a whole word: always, never, must, all, every, only, guarantee / guarantees / guaranteed, purely, entirely;
-  - a token containing a digit (a number, version, date or percentage) that none of the claim's evidence passages contains, or the word "percent" when no passage says "percent" or "%".
-- **Unchanged:** `Contradicted` claims and failed examples are issues and are repaired. `Unverified` still stops the job.
-- **Lesson-internal statements.** The extraction (`inventory.rs`), fidelity audit (`coverage.rs`) and revision (`inventory/revisions.rs`) prompts classify statements about the lesson's own example code, scenario or exercise answers as nonfactual with the reason "lesson-internal". Any real-world fact such a statement relies on is still extracted as a claim. Examples still run; quiz keys still go through the answer-key check.
-- **What the learner sees** (`learner_view.rs`, `lesson_evidence.rs`, `LessonEvidencePanel.tsx`):
-  - Each such claim carries a neutral badge: "General knowledge · not checked against a source".
-  - Lesson summary: "N claims checked against saved evidence · M general knowledge, not checked against a source".
-  - Section summary: "Evidence · N checked claims · M general knowledge · P passages".
-  - The general-knowledge part appears only when M > 0. The DTO carries `generalKnowledgeCount`.
+- **No regex gate.** The old "keep an unsupported claim as general knowledge unless it has an absolute or a number" gate and the user's acceptance of a proposal are gone (design §3.7). A statement is Common because the knowledge judge, closed-book, three samples, unanimously calls it standard knowledge; a Sourced statement is never lightened by the model.
+- **Lesson-internal statements** (a remark about the lesson's own code, scenario or exercise answers) are sorted Internal: counted, never checked, never in the ledger. Any real-world fact such a statement relies on is still extracted. Examples still run; quiz keys still go through the answer-key check.
+- **What the learner sees** (`learner_view.rs`, `lesson_evidence.rs`, `evidencePresentation.ts`, `LessonEvidencePanel.tsx`): each statement's class and its check. A Sourced statement reads "According to <source>", "A practice, per <source>", "Per <source>, not the owner's documentation" and the other labels of the source-provenance design, or "Stated by <source>" with none; what it says beyond its passage that is common knowledge is listed apart ("Common knowledge, not in the source"). A Reasoning statement reads "Consistent with <sources>"; a Common one "Common knowledge · not checked against a source". The summary counts the classes apart, and a statement the user confirmed is counted as theirs.
+- **Policies:** `lesson-evidence-v21`, inventory `lesson-evidence-v8`, `passage-coverage-v9`, `pending-repair-v3`, `consistency-v1`, `knowledge-v1` (see [section 7](#7-policy-strings-and-what-a-bump-invalidates)).
 - **Outlines are unchanged.**
-- **Policies** at `09d5a552`: `lesson-evidence-v19`, inventory `lesson-evidence-v7`, `passage-coverage-v8`, `pending-repair-v2` (see [section 7](#7-policy-strings-and-what-a-bump-invalidates)).
 
 ### Repair progress stop
 
@@ -394,16 +385,17 @@ Why: a sample of 40 claims the failed final2-1 lesson left unsupported, judged a
 | L5/L6 writer | `evidence_room`: window minus prompt skeleton minus (3 x 10,000 + briefs + 512) for the two-step call; if that leaves nothing, minus 2 x 10,000. The pack is measured and trimmed until the prompt fits | 10,000 |
 | L7 review evidence | per finding, an equal share of the binding call's room | 6,000, reserved twice |
 | L8 extraction | 4 sections per call | 12,000 |
-| L11 verification | first page: the claim's equal share of a batch call (up to 8 claims); deeper pages the same, for unsupported claims | 512 per claim |
-| L11 challenge | claim and its passages | 1,200 |
+| L11 sorting | 20 statements per call, in the first pass only | per statement |
+| L11 Sourced check | the passages its sentence cites, one call per statement; the course's page for one that cites nothing | 512 per claim |
+| L11 consistency, knowledge, veto | the passages its section cites; a Common statement alone, three samples | 512 per claim |
 | L13 repair | room = window minus section context minus 2 x output; claims grouped to fit | 2 x 10,000 reserved |
 
 **What remains fixed** at `09d5a552`:
 
-- **Output shape** (schema bounds on what the model writes): lesson 10 to 16 blocks, exactly 6 questions, 4 options each; outline review at most 24 new findings per pass; at most 8 evidence IDs per review finding (`review_evidence`); project milestones 2 to 5 deliverables and criteria; practice and practical tasks at most 5 citations; reference-plan subtopics at most `max_modules` (from the requested depth); text lengths such as `MAX_BODY` 5,000 (checked on decode), `MAX_QUOTE_CHARS` 1,200, titles 120 to 180 characters.
+- **Output shape** (schema bounds on what the model writes): lesson 10 to 16 blocks, exactly 6 questions, 4 options each; outline review at most 24 new findings per pass; at most 8 evidence IDs per review finding (`review_evidence`); project milestones 2 to 5 deliverables and criteria; practice and practical tasks at most 5 citations; reference-plan subtopics at most `max_modules` (from the requested depth); no length on text the model writes but non-blank, apart from the 25 characters and five words a quotation needs; `MAX_QUOTE_CHARS` 1,200 bounds only a span the code picks as a quotation.
 - **The 80,000-character response check** on an assessment response (`assessment_generation.rs`) and a practical-activity response (`practical_generation.rs`, `MAX_RESPONSE_CHARS`). A longer answer is rejected, not cut.
 - **The teaching reviewer's wording** "at most six concise, actionable defects" (`teaching.rs`). More findings are kept if the model returns them.
-- **Termination:** `ATTEMPT_LIMIT` 2 and `MODULE_REWRITE_BUDGET` 3 for outline repair; the lesson [repair progress stop](#repair-progress-stop); the deepening stop.
+- **Termination:** `ATTEMPT_LIMIT` 2 and `MODULE_REWRITE_BUDGET` 3 for outline repair; the lesson [repair progress stop](#repair-progress-stop); a statement's two machine attempts and one research round.
 - **Batch sizes that drop nothing:** 8 items per linking call, 8 claims per check batch, 4 sections per extraction call.
 - **Display:** stored source previews of 2,400 characters (`references/sources.rs`, `source_library.rs`) and 180-character titles. Retrieval and verification read the full capture.
 
@@ -411,7 +403,7 @@ The [caps audit](../design/2026-10-14-content-caps-audit.md) records the 36 fixe
 
 ## 7. Policy strings and what a bump invalidates
 
-Values at `09d5a552`.
+Values on `lesson/design` (claim classes design).
 
 | String | Where | A bump invalidates |
 |---|---|---|
@@ -423,13 +415,16 @@ Values at `09d5a552`.
 | `lesson-authoring` | `lessons/generation/lesson.rs` `AUTHORING_POLICY` | The reusable authoring context; evidence is gathered again and the lesson rewritten |
 | `lesson-draft` | `lessons/generation/lesson.rs` (draft input hash) | The saved lesson draft |
 | `lesson-teaching-review`, `section-review-v3`, `review-finding-protocol-v2` | `lessons/teaching.rs`, `teaching_review.rs`, `review_evidence.rs` | Teaching review receipts |
-| `lesson-evidence-v7` (`INVENTORY_POLICY`) | `lessons/content_verification/mod.rs` | Claim inventory checkpoints |
-| `passage-coverage-v8` | `lessons/content_verification/coverage.rs` `POLICY` | The coverage audit (the inventory is kept) |
-| `lesson-evidence-v19` (`POLICY`) | `lessons/content_verification/mod.rs` | Claim receipts (`claim-v1:`), the research query log (`research-v1:`), pending repairs, and every report: `prepared-v1` checkpoints stop being reusable and must be verified again |
-| `pending-repair-v2` | `lessons/content_verification/repair_loop.rs` (`repairPolicy` in the pending-repair fingerprint) | A saved mid-repair state; the repair starts again from the diagnosis |
+| `lesson-evidence-v8` (`INVENTORY_POLICY`) | `lessons/content_verification/mod.rs` | Claim inventory checkpoints |
+| `passage-coverage-v9` | `lessons/content_verification/coverage.rs` `POLICY` | The coverage audit (the inventory is kept) |
+| `lesson-evidence-v21` (`POLICY`) | `lessons/content_verification/mod.rs` | Claim receipts (`claim-v1:`), the research query log (`research-v1:`), pending repairs, and every report: `prepared-v1` checkpoints stop being reusable and must be verified again |
+| `pending-repair-v3` | `lessons/content_verification/repair_loop.rs` (`repairPolicy` in the pending-repair fingerprint) | A saved mid-repair state; the repair starts again from the diagnosis |
 | `repair-issue-set-v1` | `lessons/content_verification/repair_loop.rs` (`repair_issue_fingerprint`) | The fingerprint that detects a repeated issue set |
 | `claim-research-scope-v1` | `lessons/content_verification/evidence_selection.rs` | Bindings of research sources to the claims that requested them |
-| `STRICT_INTERPRETATION_POLICY` | `crates/lattice-core` claim verification | Non-supported claim receipts and provisional batch results |
+| `semantic-entailment-v2` (`STRICT_INTERPRETATION_POLICY`) | `crates/lattice-core` claim verification | Non-supported claim receipts and provisional batch results |
+| `consistency-v1`, `knowledge-v1` | `crates/lattice-core` `claim_verification/classes.rs` | The consistency and knowledge judges' receipts |
+| `admission-v1` | `references/admission.rs` `POLICY` | The gate's verdict on a saved page: the sweep reads every machine-saved page again |
+| `claim-ledger-v1:cuts`, `lesson-numbered-sources-v1` | `claim_ledger/cuts.rs`, `repair_loop.rs` checkpoint keys | A job's record of its cuts; the sources a repair numbered |
 | `prepared-v1` | `lessons/generation_jobs.rs` checkpoint key | The verified-lesson checkpoint |
 
 Change the string whenever the prompt, schema or meaning of the stored answer changes. Never reuse an old receipt under a new protocol.
@@ -455,11 +450,13 @@ Change the string whenever the prompt, schema or meaning of the stored answer ch
 | L7 | `answer_review::check` (reason-first) | questions without keys | correct indices and reasons | teaching receipt |
 | L7 | `teaching_review::review` (reason-first), `review_evidence` | sections, questions, authoring context; passages per finding | section checks, findings with evidence IDs | teaching receipt, `teaching-sources:<digest>` |
 | L7 | `teaching::review_material` repair (one step) | candidate, issues, quote checks | `lesson_schema` | staged draft |
-| L8 | `inventory::extract` | section passages | `{units:{unit-N:{claims, nonFactualReason}}}` | `InventoryCheckpoint` (`lesson-evidence-v7`) |
-| L9 | `coverage` mapping and fidelity | passages, inventory | coverage units, `missingAssertions` | inventory checkpoint (`passage-coverage-v8`), section receipts |
-| L11 | `judge_batch_provisionally` (first page, then each deepening round) | up to 8 claims, each with its page | verdicts | provisional batch key, `claim-v1:<digest>` per page |
-| L11 | `challenge::guard_batch` | provisionally supported claims | `{queries}` | `claim-v1:<digest>` |
-| L13 | `repair::candidate` (`repair_sections`) | section, failed claims, evidence table, history | text edits, or one validated section | `PendingRepair` in staged drafts (`pending-repair-v2`) |
+| L8 | `inventory::extract` | section passages | `{units:{unit-N:{claims, nonFactualReason}}}` | `InventoryCheckpoint` (`lesson-evidence-v8`) |
+| L9 | `coverage` mapping and fidelity | passages, inventory | coverage units, `missingAssertions` | inventory checkpoint (`passage-coverage-v9`), section receipts |
+| L11 | `classify` | 20 statements the rules leave | a class each | the ledger's `Classified` events |
+| L11 | `evidence_checks` (`Bridge`) | one Sourced statement, the passages its sentence cites | its parts: stated, common, specific missing, contradicted | `claim-v1:<digest>` per comparison |
+| L11 | `class_checks` (`consistency-v1`, `knowledge-v1`) | one Reasoning or Common statement | consistent or not; three samples of the veto or the knowledge judge | receipts |
+| L13 | `repair::candidate` (`repair_sections`) | section, failed statements, evidence table, history | text edits, or one validated section | `PendingRepair` in staged drafts (`pending-repair-v3`) |
+| L13 | `sections::settle` | a section that took a cut and the sentences beside the gap | a flow repair | the job's cuts (`claim-ledger-v1:cuts`) |
 
 ## 9. Where the code differs from the design records
 
@@ -480,10 +477,9 @@ Change the string whenever the prompt, schema or meaning of the stored answer ch
 
 ## 10. Known gaps
 
-1. **The acceptance bar is not met yet.** accept2 passed the outline and was stopped during lesson 1's evidence deepening after 3h20m; accept3 (`09d5a552`) is running. See [course-generation-history.md](course-generation-history.md).
-2. **§16 labelling is unproven live.** Tuning risk: the absolute-word list ("all", "only") is broad, so ordinary phrasing can still send a claim to repair.
-3. **Deepening can be slow.** In accept2 each deepening round over 22 to 42 claims took 10 to 24 minutes, its batch calls carried up to 106k input tokens, and the rounds settled 7, 4, 4, 1, 0 and 4 claims. `09d5a552` stops a round sequence once a round settles nothing and drops invented example names from claims; whether that is enough is what accept3 measures.
-4. **The live test does not wait out outages.** Only the app's outline path uses `PatientModel`; a 503 during the live test's outline stage still fails the run.
-5. **Repair can drop evidence for one claim** when that claim's recorded passages alone exceed the window. It logs a warning and keeps the passages that fit.
-6. **A non-transient outline error is not resumed automatically.** The draft waits for the learner to press Repair.
-7. **The second checker question is closed for now.** Measurement found no second judge that helps (see the testing doc). The weak point is generation grounding, not the checker.
+1. **The acceptance bar is not met yet.** No lesson has finished under the claim classes design on the real app: §3.11's run (lesson `f36400bc`, the 27B, nobody touching it) is scored by `scripts/score_lesson_acceptance.py`, and the admission gate's floors are provisional until its refused and short pages are read by eye.
+2. **The live test does not wait out outages.** Only the app's outline path uses `PatientModel`; a 503 during the live test's outline stage still fails the run.
+3. **Repair can drop evidence for one claim** when that claim's recorded passages alone exceed the window. It logs a warning and keeps the passages that fit.
+4. **A non-transient outline error is not resumed automatically.** The draft waits for the learner to press Repair.
+5. **The second checker question is closed for now.** Measurement found no second judge that helps (see the testing doc). The weak point is generation grounding, not the checker.
+6. **Restoring a statement the machine removed is not built**, and the rest of what the branch did not do is in design §6.

@@ -1,5 +1,5 @@
 //! A closing coach selects evidence; the app owns source IDs and exact quotes.
-use super::{bounded, invalid, SimulationJson};
+use super::{invalid, present, SimulationJson};
 use crate::features::learning::{
     assessment_engine::LearningRubricCriterion,
     dto::LearningPracticeCitationDto,
@@ -189,8 +189,8 @@ impl ClosingEvidence {
     ) -> Result<SimulationJson> {
         let response: Response = serde_json::from_str(raw)
             .map_err(|_| invalid("Return the structured closing scorecard, referenceApproach, nextPracticeStep, evaluatedQuestionIds and citationIds."))?;
-        bounded(&response.reference_approach, "Reference approach", 4_000)?;
-        bounded(&response.next_practice_step, "Next practice step", 1_200)?;
+        present(&response.reference_approach, "Reference approach")?;
+        present(&response.next_practice_step, "Next practice step")?;
         if response.evaluated_question_ids.len() > 6 || response.citation_ids.len() > 12 {
             return Err(invalid(
                 "Closing feedback allows at most six questions and twelve evidence choices.",
@@ -281,14 +281,14 @@ impl ClosingEvidence {
             if !seen.insert(index) {
                 return Err(invalid("Scorecard repeated a criterion."));
             }
-            bounded(&observation.feedback, "Criterion feedback", 1_200)?;
+            present(&observation.feedback, "Criterion feedback")?;
             if observation.learner_quotes.len() > 4 {
                 return Err(invalid(
                     "Each scorecard criterion allows at most four learnerQuotes.",
                 ));
             }
             for quote in &observation.learner_quotes {
-                bounded(quote, "Learner evidence quote", 700)?;
+                present(quote, "Learner evidence quote")?;
                 if !session.turns.iter().any(|turn| {
                     turn.speaker == LearningSimulationSpeaker::Learner
                         && turn.content.contains(quote)

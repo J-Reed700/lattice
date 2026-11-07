@@ -4,9 +4,9 @@
 
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLocation,
-    ClaimState, EventProvenance, EvidenceFingerprint, EvidenceSeen, HumanBinding, Provenance,
-    RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopReason, SupportedBy,
-    TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
+    ClaimState, Class, ClassifiedBy, EventProvenance, EvidenceFingerprint, EvidenceSeen,
+    HumanBinding, Provenance, RecordedEvent, ReopenCause, RepairOutcome, RequestFacts, StopReason,
+    SupportedBy, TrustAssessment, TrustCause, UnitKind, UserAction, VerdictKind,
 };
 use lattice_core::domain::provenance::{
     AddedBy, Bar, ClaimKind, ClaimProfile, ClusterId, CountedSupport, Decision, Missing,
@@ -68,8 +68,6 @@ fn every_action_request_round_trips() {
             "unconfirm",
             "edit",
             "remove",
-            "general_knowledge",
-            "accept_all_general_knowledge",
             "research_with_hint",
             "undo",
         ]
@@ -120,6 +118,9 @@ fn claim_states_mirror_the_domain() {
             source_version_id: "v1".into(),
             supporting_quote: "boils at 100 °C".into(),
         },
+        ClaimState::Consistent {
+            at: 1_760_000_250_000,
+        },
         confirmed.clone(),
         ClaimState::Removed {
             at: 1_760_000_400_000,
@@ -131,8 +132,7 @@ fn claim_states_mirror_the_domain() {
             by: Actor::Machine,
         },
         ClaimState::GeneralKnowledge {
-            at: 1_760_000_600_000,
-            by: Actor::User,
+            at: 1_760_000_650_000,
         },
         ClaimState::Reopened {
             cause: ReopenCause::SourceReplaced {
@@ -163,7 +163,6 @@ fn verdict_kinds_mirror_the_domain() {
         VerdictKind::Contradicted,
         VerdictKind::NoSource,
         VerdictKind::CouldNotJudge,
-        VerdictKind::GeneralKnowledgeProposed,
         VerdictKind::Disputed {
             verifier: Box::new(VerdictKind::Contradicted),
         },
@@ -302,6 +301,7 @@ fn claim_events_mirror_the_domain() {
             outcome: RepairOutcome::Rejected {
                 reason: "The rewrite dropped its citation.".into(),
             },
+            goal: None,
         },
         ClaimEvent::Executed {
             observation_id: "obs-1".into(),
@@ -370,6 +370,32 @@ fn claim_events_mirror_the_domain() {
                 source_version_ids: vec!["v1".into()],
             }),
         },
+        ClaimEvent::Classified {
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule,
+        },
+        ClaimEvent::Classified {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        },
+        ClaimEvent::Checked(check(
+            Checker::Local {
+                model: "qwen3.5-27b".into(),
+            },
+            CheckResult::Consistent,
+        )),
+        ClaimEvent::Checked(check(
+            Checker::Local {
+                model: "qwen3.5-27b".into(),
+            },
+            CheckResult::KnownCommon,
+        )),
+        ClaimEvent::Checked(check(
+            Checker::Local {
+                model: "qwen3.5-27b".into(),
+            },
+            CheckResult::NotFalse,
+        )),
     ];
     let records: Vec<RecordedEvent> = events
         .into_iter()
@@ -388,7 +414,7 @@ fn claim_events_mirror_the_domain() {
             }
         })
         .collect();
-    let dtos: Vec<ClaimEventDto> = records.iter().map(ClaimEventDto::from).collect();
+    let dtos: Vec<ClaimEventDto> = records.iter().filter_map(ClaimEventDto::of).collect();
     assert_mirrors(&dtos, &fixture);
 }
 
@@ -420,4 +446,75 @@ fn the_review_shows_the_claims_own_sentence_for_a_location_stored_as_a_passage()
         card.context_after,
         "This description is called a tool schema. Most APIs write it as a JSON object."
     );
+}
+
+#[test]
+fn a_statement_the_machine_removed_shows_its_own_sentence_and_names_no_section() {
+    use lattice_core::domain::learning::claim_review::ClaimLedgerEntry;
+    const SENTENCE: &str = "Water boils at 100 °C at sea level.";
+    let mut entry = ClaimLedgerEntry::extracted(
+        ClaimId("claim-1".into()),
+        provenance(Actor::Machine, 1),
+        ClaimLocation::locate(2, UnitKind::Block, "body", SENTENCE, SENTENCE),
+        SENTENCE.into(),
+    )
+    .unwrap();
+    entry
+        .append(
+            provenance(Actor::Machine, 2),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        entry.state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    // The section it stood in went out of the lesson; another section holds
+    // its place now.
+    let units = serde_json::json!({
+        "blocks": [
+            { "kind": "explanation", "title": "First", "body": "One thing." },
+            { "kind": "explanation", "title": "Second", "body": "Another thing." },
+            { "kind": "explanation", "title": "Third", "body": "Something else entirely." },
+        ],
+        "questions": [],
+    });
+    let card = super::view::presentation(&entry, &units, "Third");
+    assert_eq!(card.sentence, SENTENCE);
+    assert_eq!(card.context_before, "");
+    assert_eq!(card.context_after, "");
+    assert_eq!(card.place, "");
+}
+
+#[test]
+fn a_claim_published_not_verified_is_a_state_with_its_reason_and_has_no_history_entry() {
+    use lattice_core::domain::learning::claim_review::UnverifiedReason;
+    let state = ClaimState::Unverified {
+        at: 7,
+        reason: UnverifiedReason::Contradicted,
+    };
+    assert_eq!(
+        serde_json::to_value(ClaimStateDto::from(&state)).unwrap(),
+        serde_json::json!({"state":"unverified","at":7,"reason":"contradicted"})
+    );
+    let marked = RecordedEvent {
+        ordinal: 1,
+        provenance: EventProvenance {
+            actor: Actor::Machine,
+            at: 7,
+            job_id: None,
+            app_version: "1.0.0".into(),
+            checker_model: None,
+        },
+        event: ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::Unchecked,
+        },
+    };
+    assert!(ClaimEventDto::of(&marked).is_none());
 }

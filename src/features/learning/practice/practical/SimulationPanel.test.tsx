@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import { citationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningPracticalActivityDto, LearningSimulationSessionDto } from '@/lib/bindings';
 
@@ -126,6 +127,11 @@ describe('SimulationPanel', () => {
     expect(first).toMatchObject({ sessionId: 'sim-1', expectedRevision: 3, content: 'The paint has faded.' });
     expect(screen.getByLabelText('Your response')).toHaveValue('');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('lets a response run as long as a chat message may', () => {
+    renderPanel(session());
+    expect(screen.getByLabelText('Your response')).toHaveAttribute('maxlength', String(LEARNER_TEXT_MAX_CHARS));
   });
 
   it('finishes a simulation, retrying the same request after a failure', async () => {

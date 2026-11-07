@@ -10,6 +10,7 @@ import type {
   ReopenCauseDto,
   ResearchSummaryDto,
   SourceKindDto,
+  UnverifiedReasonDto,
   WaitingClaimsRecheckDto,
 } from '@/lib/bindings';
 
@@ -21,6 +22,7 @@ import type {
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 export const claimsCount = (count: number) => plural(count, 'claim', 'claims');
+export const statementsCount = (count: number) => plural(count, 'statement', 'statements');
 
 // ── Sources: kind, standing, "counts as" (§4.3) ─────────────────────────────
 
@@ -97,7 +99,7 @@ export function sourceLine(support: Pick<ClaimSupportDto, 'source' | 'site' | 'k
 
 // ── Why a claim waits (§4.1) ────────────────────────────────────────────────
 
-export type FixAction = 'accept' | 'accept_source' | 'edit' | 'remove' | 'add_source' | 'general_knowledge';
+export type FixAction = 'accept' | 'accept_source' | 'edit' | 'remove' | 'add_source';
 
 export type WhyItWaits = {
   chip: string;
@@ -182,10 +184,6 @@ function verdictCopy(item: ClaimReviewItemDto): WhyItWaits {
         fixes: ['edit', 'accept'],
       };
     }
-    case 'general_knowledge_proposed': return {
-      chip: 'Common knowledge?', reason: 'No source states this, and it looks like common knowledge.',
-      detail: 'Accept it as such, or add a source.', fixes: ['general_knowledge', 'add_source'],
-    };
     case 'could_not_judge': return { chip: 'Could not check', reason: 'The checker could not give an answer for this one.', detail: null, fixes: ['accept', 'edit'] };
     case 'disputed': return {
       chip: 'Disputed', reason: 'An independent check disagrees with the first one.',
@@ -197,6 +195,7 @@ function verdictCopy(item: ClaimReviewItemDto): WhyItWaits {
 
 /** The chip, the one-line reason, the specific lack and the suggested fixes. */
 export function whyItWaits(item: ClaimReviewItemDto): WhyItWaits {
+  if (item.state.state === 'unverified') return { chip: 'Not verified', reason: UNVERIFIED_REASONS[item.state.reason], detail: null, fixes: ['accept', 'edit', 'add_source'] };
   const copy = verdictCopy(item);
   if (item.state.state !== 'reopened') return copy;
   return { ...copy, chip: 'Reopened', detail: [REOPENED[item.state.cause.cause], copy.detail].filter(Boolean).join(' ') || null };
@@ -207,10 +206,12 @@ export function resolvedChip(item: ClaimReviewItemDto): string {
   const state = item.state;
   switch (state.state) {
     case 'resolved_by_evidence': return 'Verified';
+    case 'consistent': return 'Consistent with the sources';
     case 'confirmed': return 'Confirmed by you';
     case 'removed': return state.by === 'user' ? 'Removed by you' : 'Removed';
     case 'edited': return state.successor ? 'Edited' : 'Removed by an edit';
     case 'general_knowledge': return 'Common knowledge';
+    case 'unverified': return 'Not verified';
     case 'unchecked':
     case 'open': return 'Being checked';
     case 'queued':
@@ -220,24 +221,22 @@ export function resolvedChip(item: ClaimReviewItemDto): string {
 
 // ── "What fixes it" groups (§4.2) ───────────────────────────────────────────
 
-export type FixGroup = 'accept_source' | 'needs_source' | 'says_otherwise' | 'common_knowledge' | 'could_not_check';
+export type FixGroup = 'accept_source' | 'needs_source' | 'says_otherwise' | 'could_not_check';
 
 export const FIX_GROUP_LABELS: Record<FixGroup, string> = {
   accept_source: 'Accept a source',
   needs_source: 'Needs a source',
   says_otherwise: 'Says otherwise',
-  common_knowledge: 'Common knowledge?',
   could_not_check: 'Could not check',
 };
 
-export const FIX_GROUP_ORDER: FixGroup[] = ['accept_source', 'needs_source', 'says_otherwise', 'common_knowledge', 'could_not_check'];
+export const FIX_GROUP_ORDER: FixGroup[] = ['accept_source', 'needs_source', 'says_otherwise', 'could_not_check'];
 
 export function fixGroupOf(item: ClaimReviewItemDto): FixGroup {
   switch (item.verdictKind?.kind) {
     case 'insufficient_standing': return item.sufficiency?.missing === 'no_measurement_origin' ? 'needs_source' : 'accept_source';
     case 'contradicted':
     case 'disputed': return 'says_otherwise';
-    case 'general_knowledge_proposed': return 'common_knowledge';
     case 'could_not_judge': return 'could_not_check';
     default: return 'needs_source';
   }
@@ -264,7 +263,6 @@ export function tallyLine(counts: ClaimCountsDto): string {
     [counts.queued, counts.queued === 1 ? 'claim needs you' : 'claims need you'],
     [counts.verified, 'verified'],
     [counts.confirmed, 'confirmed by you'],
-    [counts.generalKnowledge, 'common knowledge'],
     [counts.rewritten, 'rewritten by the machine'],
     [counts.removedByYou, 'removed by you'],
     [counts.editedByYou, 'edited by you'],
@@ -275,7 +273,7 @@ export function tallyLine(counts: ClaimCountsDto): string {
 
 /** The running job's claims, for the preparation details: the same order and words. */
 export function jobTallyLine(tally: LearningClaimTally): string {
-  const checking = tally.unchecked + tally.searching + tally.sentBack + tally.repairing;
+  const checking = tally.unchecked + tally.searching + tally.repairing;
   const parts: Array<[number, string]> = [
     [tally.waiting, tally.waiting === 1 ? 'claim needs you' : 'claims need you'],
     [tally.verified, 'verified'],
@@ -286,12 +284,14 @@ export function jobTallyLine(tally: LearningClaimTally): string {
   return parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`).join(' · ');
 }
 
-/** "Preparing · 44 of 44 checked", from the running job's tally. */
-export function preparingLine(tally: LearningClaimTally | null | undefined): string {
-  if (!tally) return 'Preparing';
-  const total = tally.unchecked + tally.searching + tally.sentBack + tally.repairing + tally.waiting + tally.verified + tally.resolvedByYou;
-  return total > 0 ? `Preparing · ${total - tally.unchecked} of ${total} checked` : 'Preparing';
-}
+/** Why a statement went into the lesson without being verified. */
+export const UNVERIFIED_REASONS: Record<UnverifiedReasonDto, string> = {
+  unchecked: 'The check could not be completed.',
+  unsupported: 'The lesson’s sources do not state this.',
+  contradicted: 'A source appears to disagree with this.',
+};
+export const statementsNotVerified = (count: number) => `${plural(count, 'statement', 'statements')} not verified`;
+export const unverifiedReviewLine = (count: number) => `${plural(count, 'statement', 'statements')} could not be verified. You can check each one here; the lesson is already published.`;
 
 export const claimsNeedYou = (count: number) => `${claimsCount(count)} need${count === 1 ? 's' : ''} you`;
 export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching note', 'teaching notes')} for you`;
@@ -301,16 +301,14 @@ export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching
 export const ALL_RESOLVED = 'Everything is resolved. Resume verification to publish the lesson.';
 const left = (remaining: number) => (remaining > 0 ? `${remaining} left.` : ALL_RESOLVED);
 
-export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'general_knowledge' | 'accept_all_general_knowledge' | 'research_with_hint' | 'unconfirm' | 'undo';
+export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'research_with_hint' | 'unconfirm' | 'undo';
 
 export function announcement(action: AnnouncedAction, remaining: number): string {
   switch (action) {
     case 'confirm': return `Accepted. ${left(remaining)}`;
     case 'edit': return 'Sentence edited. It is checked when you resume.';
     case 'remove': return `Removed. ${left(remaining)}`;
-    case 'general_knowledge': return `Accepted as common knowledge. ${left(remaining)}`;
-    case 'accept_all_general_knowledge': return `Common-knowledge proposals accepted. ${left(remaining)}`;
-    case 'research_with_hint': return `Searched with your hint. ${left(remaining)}`;
+    case 'research_with_hint': return 'Hint saved. It is searched when you resume.';
     case 'unconfirm': return `Acceptance withdrawn. ${left(remaining)}`;
     case 'undo': return `Undone. ${left(remaining)}`;
   }

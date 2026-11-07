@@ -85,7 +85,7 @@ export function LearningStudioPage() {
   </div>;
 }
 
-const REVIEW_PARAMS = ['course', 'lesson', 'review'] as const;
+const REVIEW_PARAMS = ['course', 'lesson', 'review', 'claim'] as const;
 
 function LearningStudioContent({ destination, exportingAll, onOpenDestination }: { destination?: StudyDestination; exportingAll: boolean; onOpenDestination?: (destination: StudyDestination) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -123,6 +123,7 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   // The review screen is the address `?course=…&lesson=…&review=claims` (§2.3).
   const reviewCourse = searchParams.get('review') === 'claims' ? searchParams.get('course') : null;
   const reviewLesson = reviewCourse ? searchParams.get('lesson') : null;
+  const reviewClaim = reviewLesson ? searchParams.get('claim') : null;
   const reviewing = Boolean(reviewCourse && reviewLesson);
   const pushedReview = useRef(false);
   useEffect(() => {
@@ -132,13 +133,14 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   }, [reviewCourse]);
   // Left by the browser's Back: the next leave has no entry of ours to pop.
   useEffect(() => { if (!reviewing) pushedReview.current = false; }, [reviewing]);
-  const openReview = (programId: string, lessonId: string) => {
+  const openReview = (programId: string, lessonId: string, claimId?: string) => {
     pushedReview.current = true;
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set('course', programId);
       next.set('lesson', lessonId);
       next.set('review', 'claims');
+      if (claimId) next.set('claim', claimId); else next.delete('claim');
       return next;
     });
   };
@@ -247,7 +249,7 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   return <>
     {reviewing && <div className="h-full min-h-0">
       {detail.data?.summary.id === reviewCourse
-        ? <ClaimReviewScreen key={`${reviewCourse}:${reviewLesson}`} programId={reviewCourse!} lessonId={reviewLesson!} lessonTitle={reviewTitle} courseRevision={detail.data.summary.revision} onBack={leaveReview} />
+        ? <ClaimReviewScreen key={`${reviewCourse}:${reviewLesson}:${reviewClaim}`} programId={reviewCourse!} lessonId={reviewLesson!} focusClaimId={reviewClaim} lessonTitle={reviewTitle} courseRevision={detail.data.summary.revision} onBack={leaveReview} />
         : detail.isError ? <div role="alert" className="m-6 rounded-xl bg-danger-muted p-4 text-sm text-text-primary"><p>{message(detail.error)}</p><button type="button" onClick={leaveReview} className="mt-3 underline">Back to the course</button></div>
           : <p role="status" className="p-6 text-sm text-text-muted">Loading the review…</p>}
     </div>}

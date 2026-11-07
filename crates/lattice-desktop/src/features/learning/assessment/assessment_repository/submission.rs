@@ -120,7 +120,7 @@ async fn record_evidence(
             .bind(dimension)
             .bind(result)
             .bind((!uncertain).then_some(fraction))
-            .bind(observation.chars().take(2_000).collect::<String>())
+            .bind(observation)
             .bind(quote)
             .bind(json(&assistance_json)?)
             .bind(now())

@@ -6,12 +6,14 @@
 )]
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy};
 use lattice_core::shared::runtime::jobs::JobStore;
+use readings_tests::{claim, read_all, read_one, world_of};
 use std::sync::Mutex;
 use std::time::Duration;
 
 #[path = "batch_scheduler_tests.rs"]
-pub(super) mod batch_scheduler_tests;
+pub(in crate::features::learning::lessons) mod batch_scheduler_tests;
 
 #[path = "incremental_tests.rs"]
 mod incremental_tests;
@@ -121,10 +123,60 @@ pub(crate) fn fixture_completion(
             .next()
             .map(|reply| verdict_last(&reply, &local))
             .unwrap_or_default()
+    } else if is_claim_check(user)
+        && system == lattice_core::application::services::claim_verification::BRIDGE_SYSTEM
+    {
+        replies
+            .into_iter()
+            .next()
+            .map(|reply| part_wise_reply(&reply, user))
+            .unwrap_or_default()
     } else {
         replies.concat()
     };
     CompletionResponse::from_text(text)
+}
+
+/// A fixture's label-first verdict ("supported\nReason: …\nSource passage:
+/// passage-0") as the part-wise judge answers it: the claim as one part,
+/// stated by the passage the verdict names, contradicted by it, or not given.
+/// Anything else is returned as written.
+fn part_wise_reply(reply: &str, user: &str) -> String {
+    let mut lines = reply.lines().map(str::trim).filter(|line| !line.is_empty());
+    let Some(label) = lines
+        .next()
+        .map(str::to_ascii_lowercase)
+        .filter(|label| ["supported", "contradicted", "unsupported"].contains(&label.as_str()))
+    else {
+        return reply.to_owned();
+    };
+    let (mut reason, mut passage) = (String::new(), Value::Null);
+    for line in lines {
+        if let Some(value) = line.strip_prefix("Reason:") {
+            reason = value.trim().to_owned();
+        } else if let Some(value) = line.strip_prefix("Source passage:") {
+            let value = value.trim();
+            if value.starts_with("passage-") {
+                passage = json!(value);
+            }
+        }
+    }
+    let claim = user
+        .split("\n\nClaim: ")
+        .nth(1)
+        .and_then(|rest| rest.lines().next())
+        .unwrap_or_default();
+    let (kind, passage) = match label.as_str() {
+        "supported" => ("stated", passage),
+        "contradicted" => ("contradicted", passage),
+        _ => ("specific_missing", Value::Null),
+    };
+    json!({
+        "parts": [{"part": claim, "kind": kind, "passage": passage}],
+        "verdict": label,
+        "reason": reason,
+    })
+    .to_string()
 }
 
 /// Every schema-constrained learning request a fixture answers: its grammar
@@ -255,17 +307,20 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
-    if prompt.starts_with("Update claims after a lesson edit.") {
-        let data = context(prompt);
-        let passages = data["revisedSection"]["passages"].as_array().unwrap();
-        let changes: Vec<_> = data["existingClaims"].as_array().unwrap().iter().map(|claim| {
-            let old = claim["statement"].as_str().unwrap();
-            let statement = if passages.iter().any(|p| p["text"].as_str().unwrap().contains(old)) { old }
-                else if passages.iter().any(|p| p["text"].as_str().unwrap().contains(BAD)) { BAD } else { GOOD };
-            let passage = passages.iter().find(|p| p["text"].as_str().unwrap().contains(statement)).unwrap();
-            json!({"claimId":claim["claimId"],"passageId":passage["id"],"statement":if old == statement {Value::Null} else {json!(statement)}})
-        }).collect();
-        return Some(json!({"changes":changes,"nonFactualReason":""}).to_string());
+    if prompt.starts_with("You sort statements extracted from a lesson") {
+        // The fixtures' statements are the ones the strict check was written
+        // for.
+        let statements: serde_json::Map<String, Value> =
+            serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap();
+        return Some(
+            Value::Object(
+                statements
+                    .keys()
+                    .map(|id| (id.clone(), json!("sourced")))
+                    .collect(),
+            )
+            .to_string(),
+        );
     }
     if prompt.starts_with("Audit inventory fidelity.") {
         return Some(json!({"missingAssertions":[],"reason":"The fixture inventory faithfully represents the original assertions."}).to_string());
@@ -358,9 +413,9 @@ impl Model {
         if let Some(index) = self.coverage_gap_in {
             if prompt.starts_with("Audit inventory fidelity.") {
                 let data = context(prompt);
-                if data["section"]
-                    .to_string()
-                    .contains(&format!("Section {index}"))
+                if data["targetPassage"]["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with(&format!("unit-{index}-")))
                     && data["targetPassage"]["text"] == GOOD
                 {
                     return Ok(json!({"missingAssertions":["An additional original assertion is missing from this fixture inventory."],"reason":"The fixture names one omission."}).to_string());
@@ -444,26 +499,105 @@ fn source() -> LearningSourceDto {
     }
 }
 
+/// One pass over `candidate` as the loop makes it before any remedy: what it
+/// extracts, the statements waiting for a reading read along their graphs, and
+/// the report of what the latest readings found. For tests that need a report
+/// without the loop.
+async fn verify_with(
+    llm: &dyn LLMPort,
+    candidate: &Value,
+    references: &ReferenceCollection<'_>,
+    checks: &mut ClaimChecks,
+) -> Result<LessonVerificationReport> {
+    let extraction = passes::extract(llm, &BuiltinRuntimes::for_tests(), candidate, checks).await?;
+    verified(llm, candidate, references, extraction, checks).await
+}
+
+/// [`verify_with`] from an extraction already made.
+async fn verified(
+    llm: &dyn LLMPort,
+    candidate: &Value,
+    references: &ReferenceCollection<'_>,
+    extraction: passes::Extraction,
+    checks: &mut ClaimChecks,
+) -> Result<LessonVerificationReport> {
+    let policy = StandardPolicy::new();
+    let mut ledger = claim_ledger::ClaimLedger::open(llm, &candidate.to_string()).await?;
+    let pass = passes::identify(
+        llm,
+        &policy,
+        &mut ledger,
+        (candidate, references),
+        extraction,
+        checks,
+    )
+    .await?;
+    let due = ledger.due(&policy);
+    let readings = passes::read_steps(
+        llm,
+        &policy,
+        &readings::Readers::standard(),
+        &ledger,
+        checks,
+        (candidate, references),
+        (&pass, &due),
+    )
+    .await?;
+    passes::record_readings(&policy, &mut ledger, checks, readings).await?;
+    let findings = passes::latest_findings(&ledger, checks, &pass).await?;
+    Ok(passes::report(
+        llm, references, candidate, &pass, findings, checks,
+    ))
+}
+
+/// [`verify_with`] over lexical references and no saved choices.
+async fn verify(
+    llm: &dyn LLMPort,
+    candidate: &Value,
+    sources: &[LearningSourceDto],
+) -> Result<LessonVerificationReport> {
+    let references = ReferenceCollection::lexical(sources)?;
+    verify_with(llm, candidate, &references, &mut ClaimChecks::default()).await
+}
+
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
 
 #[path = "coverage_resume_tests.rs"]
 mod coverage_resume_tests;
 
-#[path = "coverage_adoption_tests.rs"]
-mod coverage_adoption_tests;
+#[path = "coverage_gaps_tests.rs"]
+mod coverage_gaps_tests;
 
 #[path = "claim_ledger_tests.rs"]
 mod claim_ledger_tests;
 
+#[path = "settle_published_tests.rs"]
+mod settle_published_tests;
+
+#[path = "claim_position_tests.rs"]
+mod claim_position_tests;
+
+#[path = "acceptance_switch_tests.rs"]
+mod acceptance_switch_tests;
+
+#[path = "user_hint_tests.rs"]
+mod user_hint_tests;
+
+#[path = "claim_identity_tests.rs"]
+mod claim_identity_tests;
+
+#[path = "class_checks_tests.rs"]
+mod class_checks_tests;
+
+#[path = "call_ceiling_tests.rs"]
+mod call_ceiling_tests;
+
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
 
-#[path = "two_pass_tests.rs"]
-mod two_pass_tests;
-
-#[path = "standing_reach_tests.rs"]
-mod standing_reach_tests;
+#[path = "recite_tests.rs"]
+mod recite_tests;
 
 #[path = "review_resume_tests.rs"]
 mod review_resume_tests;
@@ -477,90 +611,87 @@ mod resume_upgrade_tests;
 #[path = "audit_flow_tests.rs"]
 mod audit_flow_tests;
 
+#[path = "rounds_tests.rs"]
+mod rounds_tests;
+
+#[path = "bridge_tests.rs"]
+mod bridge_tests;
+
+#[path = "readings_tests.rs"]
+pub(super) mod readings_tests;
+
+#[path = "reading_driver_tests.rs"]
+mod reading_driver_tests;
+
+#[path = "reading_record_tests.rs"]
+mod reading_record_tests;
+
+#[path = "repair_request_tests.rs"]
+mod repair_request_tests;
+
+#[path = "unwrite_tests.rs"]
+mod unwrite_tests;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
+    use crate::features::learning::lesson_drafts;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let mut model = Model::new();
-    let runtimes = BuiltinRuntimes::for_tests();
-    let lesson = candidate(GOOD);
     let mut sources = vec![source()];
-    let mut checks = ClaimChecks::default();
-    let first = verify_with_references(
-        &model,
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert!(first.issues.is_empty());
-    assert_eq!(*model.judge_calls.lock().unwrap(), 1);
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, Citations::default());
+        let first = read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert_eq!(first.outcome, Outcome::Stands);
+        assert!(first.finding.publishable());
+        assert_eq!(*model.judge_calls.lock().unwrap(), 1);
 
-    let mut unrelated = source();
-    unrelated.excerpt = "Galaxies orbit stars.".into();
-    sources.push(unrelated);
-    let expanded = verify_with_references(
-        &model,
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(expanded.sources.len(), 2);
-    assert!(expanded.issues.is_empty());
-    assert_eq!(*model.judge_calls.lock().unwrap(), 1, "Adding an unrelated source should still retrieve current evidence without repeating an identical judgment");
+        let mut unrelated = source();
+        unrelated.excerpt = "Galaxies orbit stars.".into();
+        sources.push(unrelated);
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, Citations::default());
+        let expanded = read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert!(expanded.reused);
+        assert!(expanded.finding.publishable());
+        assert_eq!(*model.judge_calls.lock().unwrap(), 1, "Adding an unrelated source should still retrieve current evidence without repeating an identical judgment");
 
-    let mut changed = source();
-    changed.excerpt = BAD.into();
-    sources.push(changed);
-    model.failing_judge = true;
-    let failed = verify_with_references(
-        &model,
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(failed.findings[0].verdict, ClaimVerdict::Unverified);
-    assert!(
-        !failed.issues.is_empty(),
-        "New evidence cannot inherit an earlier approval"
-    );
-    assert_eq!(*model.judge_calls.lock().unwrap(), 2);
-    model.failing_judge = false;
-    verify_with_references(
-        &model,
-        &runtimes,
-        &lesson,
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(
-        *model.judge_calls.lock().unwrap(),
-        3,
-        "Failed checks must be attempted again"
-    );
+        let mut changed = source();
+        changed.excerpt = BAD.into();
+        sources.push(changed);
+        model.failing_judge = true;
+        let references = ReferenceCollection::lexical(&sources)?;
+        let world = world_of(&references, Citations::default());
+        let failed = read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert_eq!(failed.outcome, Outcome::Unjudged);
+        assert_eq!(failed.finding.verdict, ClaimVerdict::Unverified);
+        assert!(
+            !failed.finding.publishable(),
+            "New evidence cannot inherit an earlier approval"
+        );
+        assert_eq!(*model.judge_calls.lock().unwrap(), 2);
+        model.failing_judge = false;
+        read_one(Reading::Page, &model, &world, GOOD).await?;
+        assert_eq!(
+            *model.judge_calls.lock().unwrap(),
+            3,
+            "Failed checks must be attempted again"
+        );
 
-    let edited = verify_with_references(
-        &model,
-        &runtimes,
-        &candidate(BAD),
-        &ReferenceCollection::lexical(&sources)?,
-        &mut checks,
-    )
-    .await?;
-    assert_eq!(edited.findings[0].verdict, ClaimVerdict::Contradicted);
-    assert_eq!(*model.judge_calls.lock().unwrap(), 4);
-    Ok(())
+        let edited = read_one(Reading::Page, &model, &world, BAD).await?;
+        assert_eq!(edited.finding.verdict, ClaimVerdict::Contradicted);
+        assert_eq!(*model.judge_calls.lock().unwrap(), 4);
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
-async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
+async fn a_section_that_goes_is_not_checked_and_its_statements_are_not_in_the_report() -> Result<()>
+{
     let model = Model::new();
-    let runtimes = BuiltinRuntimes::for_tests();
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let mut lesson = candidate(GOOD);
@@ -568,79 +699,121 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
         .as_array_mut()
         .unwrap()
         .push(candidate(BAD)["blocks"][0].clone());
-    let mut checks = ClaimChecks::default();
-    let first =
-        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
-    assert_eq!(*model.judge_calls.lock().unwrap(), 2);
-    assert_eq!(first.findings[1].verdict, ClaimVerdict::Contradicted);
-    lesson["blocks"][1] = candidate(GOOD)["blocks"][0].clone();
-    let repaired =
-        verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
-    assert!(repaired.issues.is_empty());
-    assert_eq!(
-        *model.judge_calls.lock().unwrap(),
-        3,
-        "Repairing one section must not repeat the other section's identical comparison"
-    );
-    // Changed neighboring wording still needs coverage review, but an identical
-    // standalone factual statement keeps its completed evidence comparison.
-    lesson["blocks"][0]["body"] = json!(format!(
-        "{} Additional wording.",
-        lesson["blocks"][0]["body"].as_str().unwrap()
-    ));
-    verify_with_references(&model, &runtimes, &lesson, &references, &mut checks).await?;
-    assert_eq!(*model.judge_calls.lock().unwrap(), 3);
+    let mut checks = ClaimChecks {
+        removed: sections::Going::new([1]),
+        ..ClaimChecks::default()
+    };
+
+    let report = verify_with(&model, &lesson, &references, &mut checks).await?;
+
+    // The section that goes holds a statement the references contradict; it
+    // is neither judged nor an issue, and the report still accounts for the
+    // unit.
+    assert_eq!(*model.judge_calls.lock().unwrap(), 1);
+    assert_eq!(report.findings.len(), 1);
+    assert_eq!(report.findings[0].unit, 0);
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert_eq!(report.coverage.len(), 2);
+    assert!(report.coverage[1].claims.is_empty());
+    assert_eq!(report.coverage_audit.len(), 2);
     Ok(())
 }
 
 #[tokio::test]
-async fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_identity() -> Result<()>
-{
+async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> Result<()> {
+    use crate::features::learning::lesson_drafts;
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let model = Model::new();
-    let lesson = candidate(GOOD);
-    let report = verify(&model, &lesson, &[source()]).await?;
-    let finding = &report.findings[0];
-    let claim = Claim {
-        quote: finding.quote.clone(),
-        statement: finding.statement.clone(),
-    };
-    let key = ClaimChecks::key(finding.unit, &claim, &finding.evidence);
-    let mut checks = ClaimChecks::default();
-    checks.record(key.clone(), finding);
-    let mut evidence = finding.evidence.clone();
-    evidence[0].score += 1.0;
-    assert_eq!(key, ClaimChecks::key(finding.unit, &claim, &evidence));
-    assert_eq!(
-        checks
-            .get(&key, finding.unit, &claim, &evidence)
-            .unwrap()
-            .evidence[0]
-            .score,
-        evidence[0].score
-    );
-    evidence[0].source_id.push_str("-new-version");
-    assert!(checks
-        .get(
-            &ClaimChecks::key(finding.unit, &claim, &evidence),
-            finding.unit,
-            &claim,
-            &evidence
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let world = world_of(&references, Citations::default());
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        let first = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, claim(GOOD)), (1, claim(BAD))],
         )
-        .is_none());
-    evidence = finding.evidence.clone();
-    evidence[0].text.push(' ');
-    assert_ne!(key, ClaimChecks::key(finding.unit, &claim, &evidence));
-    assert_ne!(
-        key,
-        ClaimChecks::key(finding.unit + 1, &claim, &finding.evidence)
-    );
-    assert!(
-        ClaimChecks::default()
-            .get(&key, finding.unit, &claim, &finding.evidence)
-            .is_none(),
-        "Judgments are not inherited across preparation operations"
-    );
-    Ok(())
+        .await?;
+        assert_eq!(*model.judge_calls.lock().unwrap(), 2);
+        assert_eq!(first[1].finding.verdict, ClaimVerdict::Contradicted);
+        // The second section is repaired.
+        let repaired = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, claim(GOOD)), (1, claim(GOOD))],
+        )
+        .await?;
+        assert!(repaired.iter().all(|read| read.finding.publishable()));
+        assert_eq!(
+            *model.judge_calls.lock().unwrap(),
+            3,
+            "Repairing one section must not repeat the other section's identical comparison"
+        );
+        // Changed neighboring wording still needs coverage review, but an
+        // identical standalone factual statement keeps its completed evidence
+        // comparison.
+        let reworded = Claim {
+            quote: format!("{GOOD} Additional wording."),
+            statement: GOOD.into(),
+        };
+        let again = read_all(
+            Reading::Page,
+            &model,
+            &world,
+            &[(0, reworded), (1, claim(GOOD))],
+        )
+        .await?;
+        assert!(again.iter().all(|read| read.reused));
+        assert_eq!(*model.judge_calls.lock().unwrap(), 3);
+        Ok(())
+    })
+    .await
+}
+
+#[test]
+fn reused_comparisons_keep_current_retrieval_metadata_and_exact_source_identity() {
+    let claim = Claim {
+        quote: GOOD.into(),
+        statement: GOOD.into(),
+    };
+    let evidence = vec![EvidencePassage {
+        source_id: "source-1".into(),
+        text: SOURCE.into(),
+        start_byte: 0,
+        end_byte: SOURCE.len(),
+        retrieval_kind: "lexical".into(),
+        score: 1.0,
+    }];
+    let key = ClaimChecks::key(0, &claim, &evidence);
+    // A score is retrieval metadata, no input of the judge: the comparison is
+    // the same, and its receipt restores with the passages retrieved now.
+    let mut rescored = evidence.clone();
+    rescored[0].score += 1.0;
+    assert_eq!(key, ClaimChecks::key(0, &claim, &rescored));
+    let receipt = ClaimReceipt {
+        verdict: ClaimVerdict::Supported,
+        reason: "The passage states it.".into(),
+        supporting_quote: Some(GOOD.into()),
+        interpretation_policy: Some(
+            lattice_core::application::services::claim_verification::STRICT_INTERPRETATION_POLICY
+                .into(),
+        ),
+        shown: None,
+    };
+    let restored = receipt.finding(0, &claim, &rescored).unwrap();
+    assert_eq!(restored.evidence[0].score, rescored[0].score);
+    // Another version of the source, other text and another section are
+    // other comparisons.
+    let mut renamed = evidence.clone();
+    renamed[0].source_id.push_str("-new-version");
+    assert_ne!(key, ClaimChecks::key(0, &claim, &renamed));
+    let mut edited = evidence.clone();
+    edited[0].text.push(' ');
+    assert_ne!(key, ClaimChecks::key(0, &claim, &edited));
+    assert_ne!(key, ClaimChecks::key(1, &claim, &evidence));
 }
 
 #[test]
@@ -902,13 +1075,15 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
 }
 
 #[tokio::test]
-async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -> Result<()> {
+async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()> {
     const SECOND: &str = "DictReader removes all whitespace from CSV values by default.";
     struct GradualRepair {
         inner: Model,
-        repairs: std::sync::atomic::AtomicUsize,
-        repeats_once: bool,
-        repeated_escalations: std::sync::atomic::AtomicUsize,
+        /// The context of each repair request.
+        asked: Mutex<Vec<Value>>,
+        /// Why each section was asked for after a repair's edits could not
+        /// be applied.
+        sections: Mutex<Vec<String>>,
     }
     #[async_trait::async_trait]
     impl LLMPort for GradualRepair {
@@ -955,29 +1130,23 @@ async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -
                 .to_string());
             }
             if prompt.starts_with("Repair verified lesson defects.") {
-                let data = self::context(prompt);
-                if data["repeatedDefects"].as_bool() == Some(true) {
-                    self.repeated_escalations
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let mut asked = self.asked.lock().unwrap();
+                // The section, asked for in the conversation of the request
+                // whose edits could not be applied, comes back as it was.
+                let task = prompt.rsplit("\n\n").next().unwrap();
+                if serde_json::from_str::<Value>(task).is_err() {
+                    self.sections.lock().unwrap().push(task.to_owned());
+                    return Ok(asked.last().unwrap()["candidate"].to_string());
                 }
-                let repair = self
-                    .repairs
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                assert!(
-                    repair < 2,
-                    "A claim gets two attempts per piece of evidence"
-                );
-                let mut body = candidate(if repair == 0 || (self.repeats_once && repair == 1) {
-                    SECOND
-                } else {
-                    GOOD
-                })["blocks"][0]["body"]
+                asked.push(self::context(prompt));
+                assert!(asked.len() <= 2, "A claim's last attempt is no request");
+                assert!(!prompt.contains("lastAttempt"));
+                // The correction drops the first sentence and leaves the
+                // second as it was.
+                let body = self::context(prompt)["candidate"]["blocks"][0]["body"]
                     .as_str()
                     .unwrap()
-                    .to_owned();
-                if self.repeats_once && repair == 1 {
-                    body.push(' ');
-                }
+                    .replace(&format!("{BAD} "), "");
                 return Ok(repair_body(prompt, json!(body)));
             }
             if prompt.starts_with("Source passages:")
@@ -993,45 +1162,58 @@ async fn a_contradicted_claim_gets_a_correction_then_a_removal_then_the_user() -
         }
     }
 
-    // The first repair corrects both claims; SECOND survives it on the same
-    // evidence, so the second repair is its last: escalated (remove it whole).
-    for repeats_once in [false, true] {
-        let model = GradualRepair {
-            inner: Model::new(),
-            repairs: Default::default(),
-            repeats_once,
-            repeated_escalations: Default::default(),
-        };
-        let verified = verify_and_repair(
-            &model,
-            "{}",
-            &json!({}),
-            candidate(&format!("{BAD} {SECOND}")).to_string(),
-            &[source()],
-            3000,
-        )
-        .await;
-        assert_eq!(model.repairs.load(std::sync::atomic::Ordering::Relaxed), 2);
-        assert_eq!(
-            model
-                .repeated_escalations
-                .load(std::sync::atomic::Ordering::Relaxed),
-            1
-        );
-        if repeats_once {
-            // Two attempts on the same evidence: the claim is the user's, and
-            // the lesson waits for review instead of a third rewrite.
-            let error = verified.err().unwrap().to_string();
-            assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
-        } else {
-            let (_, report) = verified?;
-            assert!(report.issues.is_empty());
-            assert!(report
-                .findings
-                .iter()
-                .all(|finding| finding.verdict == ClaimVerdict::Supported));
-        }
-    }
+    // The first repair corrects both claims and SECOND survives it, so it is
+    // asked for once more, as the claim it is alone; it survives that too, and
+    // the cut that follows is made in code: its sentence is taken out, the
+    // lesson keeps what was verified and publishes.
+    let body = format!("{}{BAD} {SECOND}", format!("{GOOD} ").repeat(12));
+    let lesson = json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":body,"rubric":[]}],"questions":[]});
+    let model = GradualRepair {
+        inner: Model::new(),
+        asked: Default::default(),
+        sections: Default::default(),
+    };
+    let (raw, report) = verify_and_repair(
+        &model,
+        "{}",
+        &json!({}),
+        lesson.to_string(),
+        &[source()],
+        3000,
+    )
+    .await?;
+    let asked = model.asked.lock().unwrap();
+    let named = |request: &Value| -> Vec<String> {
+        request["failedClaims"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|claim| claim["statement"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(asked.len(), 2, "two requests, and the cut makes none");
+    let first = named(&asked[0]);
+    assert!(
+        first.iter().any(|statement| statement == BAD)
+            && first.iter().any(|statement| statement == SECOND),
+        "{first:?}"
+    );
+    assert_eq!(named(&asked[1]), [SECOND]);
+    let reason = asked[1]["failedClaims"][0]["reason"].as_str().unwrap();
+    assert!(reason.contains("preserves whitespace"), "{reason}");
+    assert!(!asked[1].to_string().contains("lastAttempt"));
+    // The second correction has no first sentence left to drop, so its edit
+    // changes nothing and the section is asked for once.
+    let sections = model.sections.lock().unwrap();
+    assert_eq!(sections.len(), 1, "{sections:?}");
+    assert!(sections[0].contains("changes nothing"), "{}", sections[0]);
+    assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
+    assert!(raw.contains(GOOD));
+    assert!(report.issues.is_empty());
+    assert!(report
+        .findings
+        .iter()
+        .all(|finding| finding.verdict == ClaimVerdict::Supported));
     Ok(())
 }
 
@@ -1082,14 +1264,13 @@ async fn repair_shares_exact_passages_without_dropping_conflicting_evidence() ->
         .collect();
     let references = ReferenceCollection::lexical(std::slice::from_ref(&reference))?;
     let mut ledger = claim_ledger::ClaimLedger::open(&model, "{}").await?;
-    ledger.observe(&candidate, &report).await?;
+    claim_ledger_tests::identify_findings(&mut ledger, &candidate, &report).await?;
     let targets = ledger.finding_claims().to_vec();
     let payload = repair_context(
         "{}",
         &candidate,
         &report,
-        &[],
-        &ledger,
+        (&ledger, &StandardPolicy::new()),
         &targets,
         &references,
     )?;
@@ -1136,39 +1317,6 @@ async fn a_claim_is_checked_against_every_passage_one_check_can_hold() -> Result
     )
     .await?;
     assert_eq!(evidence.len(), 12, "not the former eight");
-    Ok(())
-}
-
-#[tokio::test]
-async fn general_knowledge_is_proposed_to_the_user_never_repaired_or_published_unaccepted(
-) -> Result<()> {
-    let model = Model::new();
-    // The machine proposes the label; only the user accepts it (D1).
-    let error = verify_and_repair(
-        &model,
-        "{}",
-        &json!({"type":"object"}),
-        candidate("A short factual definition.").to_string(),
-        &[],
-        3000,
-    )
-    .await
-    .err()
-    .unwrap()
-    .to_string();
-    assert!(error.starts_with("Needs your review:"), "{error}");
-    assert!(
-        !*model.repaired.lock().unwrap(),
-        "general knowledge is never repaired"
-    );
-    let proposed = verify(&model, &candidate("A short factual definition."), &[]).await?;
-    assert!(proposed
-        .findings
-        .iter()
-        .all(|f| f.verdict == ClaimVerdict::Unsupported && f.proposes_general_knowledge()));
-    // An absolute in the same unsupported claim is still an issue.
-    let absolute = verify(&model, &candidate("A definition always applies."), &[]).await?;
-    assert!(!absolute.issues.is_empty());
     Ok(())
 }
 
@@ -1232,11 +1380,31 @@ fn saved_coverage_rejects_foreign_duplicate_or_contradictory_locations() {
     }
 }
 
+#[test]
+fn saved_coverage_with_a_long_missing_assertion_is_reused() {
+    let content = units(&candidate(GOOD)).unwrap();
+    let statement = format!(
+        "A missing condition {}holds.",
+        "that the passage states in full ".repeat(40)
+    );
+    let unit = CoverageUnit::from_missing(
+        0,
+        vec![MissingAssertion {
+            passage_id: "unit-0-passage-0".into(),
+            statement,
+        }],
+        "",
+    );
+    assert!(valid_saved_coverage(
+        &Coverage { units: vec![unit] },
+        &content
+    ));
+}
+
 #[tokio::test]
 async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -> Result<()> {
     let model = Model::new();
-    // Without evidence a claim stating a figure stays an issue; a plain one
-    // is proposed as general knowledge, for the user (see the test above).
+    // Without evidence a claim stating a figure stays an issue.
     let no_evidence = verify(&model, &candidate("A short definition from 2019."), &[]).await?;
     assert_eq!(no_evidence.findings[0].verdict, ClaimVerdict::Unsupported);
     assert!(!no_evidence.issues.is_empty());
@@ -1246,8 +1414,12 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
     };
     let report = verify(&offline, &candidate(GOOD), &[source()]).await?;
     assert_eq!(report.findings[0].verdict, ClaimVerdict::Unverified);
-    // A claim the checker could not judge waits for the user (§4).
-    let error = verify_and_repair(
+    // A claim the checker could not answer for is no failure of the claim:
+    // it is asked again once, and when the answer still cannot be read the
+    // lesson publishes with the statement not verified, never taken for
+    // verified (claim classes design §3.2; publish-unverified design, the
+    // `checker_unreadable` case, reason `unchecked`).
+    let (published, report) = verify_and_repair(
         &offline,
         "{}",
         &json!({}),
@@ -1256,11 +1428,19 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
         3000,
     )
     .await
-    .err()
-    .unwrap();
+    .expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(published.contains(GOOD), "the sentence stands: {published}");
+    assert_ne!(report.findings[0].verdict, ClaimVerdict::Supported);
     assert!(
-        error.to_string().starts_with("Needs your review:"),
-        "{error}"
+        matches!(
+            &report.findings[0].resolution,
+            Some(resolution::Resolution::Unverified {
+                reason: lattice_core::domain::learning::claim_review::UnverifiedReason::Unchecked
+            })
+        ),
+        "{:?}",
+        report.findings[0].resolution
     );
     assert!(!*offline.repaired.lock().unwrap());
     let incomplete = Model {
@@ -1342,7 +1522,10 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 evidence: vec![],
                 supporting_quote: None,
                 resolution: None,
+                claim_id: None,
                 two_pass: Default::default(),
+                label: None,
+                class: None,
                 trust: None,
             })
         })

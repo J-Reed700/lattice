@@ -159,10 +159,14 @@ impl Checking<'_> {
     }
 }
 
-/// A claim that is still open: the machine's, or waiting for the user. A
-/// claim extracted and never checked is left to the pass that checks it.
+/// A claim that is still open: the machine's, waiting for the user, or
+/// published not verified. A claim extracted and never checked is left to the
+/// pass that checks it.
 pub(super) fn open_for_recheck(state: &ClaimState) -> bool {
-    matches!(state, ClaimState::Open { .. }) || state.awaits_user()
+    matches!(
+        state,
+        ClaimState::Open { .. } | ClaimState::Unverified { .. }
+    ) || state.awaits_user()
 }
 
 fn claim<'l>(claims: &'l [ClaimLedgerEntry], claim_id: &ClaimId) -> Option<&'l ClaimLedgerEntry> {

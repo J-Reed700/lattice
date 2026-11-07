@@ -5,6 +5,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
 import { PracticalWorkbenchPanel } from "@/features/learning/practice/practical/PracticalWorkbenchPanel";
 import type { LearningLessonDto, LearningProgramDto } from "@/lib/bindings";
 
@@ -586,6 +587,18 @@ describe("Learning Studio Labs & simulations", () => {
     expect(within(dialog).getByLabelText("Your focus for this activity")).toHaveValue("A new exercise");
     await user.keyboard("{Escape}");
     expect(editor).toHaveValue("important existing work");
+  });
+
+  it("lets a learner's focus and company notes run as long as a chat message may", async () => {
+    const user = userEvent.setup();
+    renderPractical();
+
+    await user.click(await screen.findByRole("button", { name: "New activity" }));
+    const dialog = screen.getByRole("dialog");
+    const limit = String(LEARNER_TEXT_MAX_CHARS);
+    expect(within(dialog).getByLabelText("Your focus for this activity")).toHaveAttribute("maxlength", limit);
+    await user.selectOptions(within(dialog).getByLabelText("Activity type"), "interview");
+    expect(within(dialog).getByLabelText("Job description or company notes")).toHaveAttribute("maxlength", limit);
   });
 
   it("reveals company research fields when choosing interview and submits interviewTarget", async () => {

@@ -599,3 +599,25 @@ fn best_available_in_a_biology_course() {
         }
     ));
 }
+
+#[test]
+fn a_kind_below_primary_takes_the_label_its_row_names() {
+    let label = |kind| label_below_primary(&profile(kind));
+    assert_eq!(label(ClaimKind::Specification), Some(Label::Secondary));
+    assert_eq!(label(ClaimKind::VersionBound), Some(Label::Secondary));
+    assert_eq!(label(ClaimKind::Practice), Some(Label::Practice));
+    assert_eq!(label(ClaimKind::Opinion), Some(Label::Attributed));
+    assert_eq!(label(ClaimKind::Definition), None);
+    assert_eq!(label(ClaimKind::Historical), None);
+    assert_eq!(label(ClaimKind::General), None);
+    // A measurement is reported by its origin when the claim names one.
+    assert_eq!(label(ClaimKind::Measurement), Some(Label::Secondary));
+    let mut measured = profile(ClaimKind::Measurement);
+    measured.measurement_origin = Some("USDA".into());
+    assert_eq!(
+        label_below_primary(&measured),
+        Some(Label::ReportedBy {
+            attributing_to: "USDA".into()
+        })
+    );
+}
