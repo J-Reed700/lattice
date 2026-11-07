@@ -134,12 +134,12 @@ impl Candidate {
         SpeedClass::from_active_parameters(self.active_parameters_b)
     }
 
-    fn needs_at_comfortable_window(&self, buffers: ServerBuffers) -> u64 {
+    fn needs_at_comfortable_window(&self) -> u64 {
         footprint(
             self.gpu_weight_bytes,
             self.shape.as_ref(),
             COMFORTABLE_WINDOW_TOKENS,
-            buffers,
+            self.buffers,
         )
         .total()
     }
@@ -186,7 +186,6 @@ impl Recommender {
         catalog: &[Candidate],
     ) -> Vec<Recommendation> {
         let placement = choose_placement(profile, &self.companions);
-        let buffers = ServerBuffers::chat(false);
         let on_processor = placement.device().kind == DeviceKind::Processor;
         let judged: Vec<(&Candidate, FitVerdict)> = catalog
             .iter()
@@ -196,7 +195,7 @@ impl Recommender {
                 let verdict = fit(
                     candidate.gpu_weight_bytes,
                     candidate.shape.as_ref(),
-                    buffers,
+                    candidate.buffers,
                     placement.as_ref(),
                 );
                 (candidate, verdict)
@@ -216,8 +215,8 @@ impl Recommender {
             b.rank
                 .cmp(&a.rank)
                 .then(
-                    a.needs_at_comfortable_window(buffers)
-                        .cmp(&b.needs_at_comfortable_window(buffers)),
+                    a.needs_at_comfortable_window()
+                        .cmp(&b.needs_at_comfortable_window()),
                 )
                 .then_with(|| a.id.cmp(&b.id))
         });
