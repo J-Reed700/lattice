@@ -94,7 +94,7 @@ export function ModelSetupModal({
     onDismiss();
     onOpenChange(false);
     // Mounted outside RouterProvider, so useNavigate() is unavailable here.
-    void router.navigate('/settings');
+    void router.navigate('/settings?tab=models');
     onComplete();
   };
 
