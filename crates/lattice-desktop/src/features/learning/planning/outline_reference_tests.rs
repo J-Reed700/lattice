@@ -194,12 +194,19 @@ pub(super) fn model(outputs: Vec<Value>) -> ScriptedModel {
 pub(super) fn plan_output(subtopics: &[(&str, &[&str])]) -> Value {
     json!({"subtopics":subtopics.iter().map(|(title, queries)| json!({"title":title,"needs":queries.iter().map(|query| json!({"query":query,"kind":"official_docs"})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
 }
-/// A planned search for papers.
-fn paper(query: &str) -> crate::features::learning::references::web_research::PlannedNeed {
+/// A planned search for `kind` of source.
+fn planned(
+    query: &str,
+    kind: lattice_core::domain::sourcing::NeedKind,
+) -> crate::features::learning::references::web_research::PlannedNeed {
     crate::features::learning::references::web_research::PlannedNeed {
-        kind: lattice_core::domain::sourcing::NeedKind::Paper,
+        kind,
         ..crate::features::learning::references::web_research::PlannedNeed::web(query.into())
     }
+}
+/// A planned search for papers.
+fn paper(query: &str) -> crate::features::learning::references::web_research::PlannedNeed {
+    planned(query, lattice_core::domain::sourcing::NeedKind::Paper)
 }
 pub(super) fn select_all(count: usize) -> Value {
     json!({"decisions":(0..count).map(|i| json!({"id":format!("result-{i}"),"useForGap":true,"reason":"A primary reference for this subtopic."})).collect::<Vec<_>>()})
@@ -447,6 +454,68 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     let fetches = web.fetches.lock().unwrap();
     assert_eq!(fetches.len(), 4);
     assert!(!fetches.iter().any(|u| u == "https://example.org/overview"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_subtopic_planned_only_as_papers_is_also_searched_on_the_web_and_in_an_encyclopedia(
+) -> Result<()> {
+    let web = ResearchWeb::new(&[ADDITIONAL]);
+    let plan = ReferencePlan {
+        subtopics: vec![PlannedSubtopic {
+            title: "Random assignment".into(),
+            needs: vec![paper("q1"), paper("q2")],
+        }],
+    };
+    let llm = model(vec![select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(
+        web.queries.lock().unwrap().as_slice(),
+        ["q1", "q2", "q1", "Random assignment"],
+        "the planned searches, then the first query on the web, then the title"
+    );
+    assert_eq!(
+        web.kinds.lock().unwrap().as_slice(),
+        [
+            Some("paper".to_owned()),
+            Some("paper".to_owned()),
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned())
+        ]
+    );
+    assert_eq!(found.searches, 4);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_subtopic_whose_needs_already_include_web_and_encyclopedia_is_searched_as_planned(
+) -> Result<()> {
+    use lattice_core::domain::sourcing::NeedKind;
+    let web = ResearchWeb::new(&[ADDITIONAL]);
+    let plan = ReferencePlan {
+        subtopics: vec![PlannedSubtopic {
+            title: "Random assignment".into(),
+            needs: vec![
+                paper("q1"),
+                planned("q2", NeedKind::Web),
+                planned("q3", NeedKind::Encyclopedia),
+            ],
+        }],
+    };
+    let llm = model(vec![select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(web.queries.lock().unwrap().as_slice(), ["q1", "q2", "q3"]);
+    assert_eq!(
+        web.kinds.lock().unwrap().as_slice(),
+        [
+            Some("paper".to_owned()),
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned())
+        ]
+    );
+    assert_eq!(found.searches, 3);
     Ok(())
 }
 

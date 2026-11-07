@@ -11,7 +11,7 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::domain::sourcing::NeedKind;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::json;
 
 use super::web_research::{
@@ -509,6 +509,60 @@ async fn a_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full()
     assert_eq!(found.len(), 30);
     assert_eq!(*web.pages.lock().unwrap(), 3);
     assert_eq!(found[29].result.url, "https://doi.org/10.1000/3.5");
+    Ok(())
+}
+
+/// A catalog that answers every page it is asked for with a full page of
+/// results not seen before, and fails from page `fail_from` on so that a
+/// search which keeps paging still ends.
+struct Full {
+    web: MockWebService,
+    asked: Mutex<Vec<usize>>,
+    fail_from: usize,
+}
+
+#[async_trait::async_trait]
+impl WebServiceTrait for Full {
+    async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
+        self.asked.lock().unwrap().push(input.page);
+        if input.page >= self.fail_from {
+            return Err(AppError::ServiceNotAvailable("No further page".into()));
+        }
+        let mut output = self.web.search_web(input).await?;
+        output.results = (0..input.max_results)
+            .map(|i| WebSearchResult {
+                title: format!("Paper {} {i}", input.page),
+                url: format!("https://doi.org/10.1000/{}.{i}", input.page),
+                snippet: String::new(),
+                published_date: None,
+                source: Some("crossref".into()),
+            })
+            .collect();
+        Ok(output)
+    }
+    async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        self.web.fetch_url_content(url).await
+    }
+    fn validate_url(&self, url: &str) -> Result<()> {
+        self.web.validate_url(url)
+    }
+}
+
+#[tokio::test]
+async fn a_search_asks_for_the_first_page_only() -> Result<()> {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 4,
+    };
+    let found = search_need(
+        &web,
+        &need("tonal centre", NeedKind::Paper),
+        Room::for_all(),
+    )
+    .await?;
+    assert_eq!(*web.asked.lock().unwrap(), [1]);
+    assert_eq!(found.len(), 12);
     Ok(())
 }
 
