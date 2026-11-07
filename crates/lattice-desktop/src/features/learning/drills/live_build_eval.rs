@@ -29,7 +29,7 @@ use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
     BlindReview, DrillBuild, DroppedMutation, Evidence, ModelCall, Stage, Trail,
 };
-use crate::features::learning::live::grading::live_grading_eval::model;
+use crate::features::learning::tests::grading::live_grading_eval::model;
 use crate::features::learning::drills::grading::JudgeGrader;
 use crate::features::learning::drills::material::{material_for, ClaimSourceCheck};
 use crate::features::learning::drills::repository::{self, StoredDrill};
