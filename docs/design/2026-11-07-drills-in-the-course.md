@@ -89,7 +89,7 @@ passages until lessons are prepared. Everything in a brief is data, never instru
   - It fails its proof: it is dropped, as today.
 - **The key.** `KeyIssue` gets `lesson: Option<LessonLink { lesson_id, sentences, source }>`, a serde default, so old
   keys read as `None`. Code copies the sentences and the source title from the brief by number; the model never copies
-  them. The drill row gets `lesson_id` and `lesson_issues` (how many issues kept their link).
+  them. The drill row gets `lesson_id`.
 - **Grading.** The judge's task shows the cited sentences under the issue's pattern ("From the lesson: …"). A finding
   that names the broken idea in the lesson's words is then found, not only one that names the pattern.
 - **The reveal.** It shows "From the lesson", the sentences and their source, and a link to the lesson.
@@ -103,7 +103,8 @@ The passage comes from the lesson:
 Either way the passages are ranked by the brief's query. The pick is the best-ranked passage no drill has used. Once
 all have been used, it is the one used longest ago, because drilling a lesson again on the same passage is the point
 of relearning. The explanation is written with the lesson's title as its topic. Clean review, planting and the source
-check are unchanged.
+check are unchanged. If the sources hold no passage for the lesson, that build fails with the reason, and the lesson
+is recorded as having nothing to drill from in passages (§7).
 
 ## 5. What comes back when: two schedules
 
@@ -115,9 +116,9 @@ graded), so no review log is needed. SQLite's `BEGIN IMMEDIATE` serialises concu
   as `ratings()` does today. `targets()` reads these states.
 - **Lessons:** one schedule per course and lesson. The issues tied to the lesson rate it: in code, those with a lesson
   link; in a passage drill, every rated issue. The rating is the floor of their mean, counting Again as 0 up to Easy as
-  3. For example, found, found and missed gives Hard. A code drill with no lesson issue rates no lesson. That lesson is
-  then not offered next for code, because it teaches nothing code shows. It stays offered for explanations and can
-  still be picked.
+  3. For example, found, found and missed gives Hard. A code drill with no lesson issue rates no lesson. The lesson is
+  then recorded as having no code ideas (§7) and is not offered next for code. It stays offered for explanations and
+  can still be picked. Without that record the lesson would stay "never drilled" and come first again every time.
 - **Pending.** The next build is queued the moment a drill is taken, before it is graded. Without a pending state the
   next drill would repeat the same lesson and the same new patterns. A lesson or pattern is pending in three cases:
   a drill of it is submitted and waiting for its grade, it is ready on the shelf, or it belongs to the drill being
@@ -132,7 +133,8 @@ graded), so no review log is needed. SQLite's `BEGIN IMMEDIATE` serialises concu
   | 3 | rested, soonest due first | rested, soonest due first |
   | 4 | pending | pending |
 
-  Pending is ranked last rather than left out, so a one-lesson course still gets drills.
+  Pending is ranked last rather than left out, so a one-lesson course still gets drills. A lesson recorded as not
+  fitting the material is left out.
 
 FSRS never schedules a lesson sooner than a day. For a course studied in a day, that means each lesson is drilled once
 and then the weakest come back first. A course has no interview date today. When it has one, the lesson schedule
@@ -152,13 +154,20 @@ al., 2008).
 ## 7. Persistence
 
 One migration:
-- `learning_drills.lesson_id TEXT REFERENCES learning_lessons(id) ON DELETE SET NULL` and `lesson_issues INTEGER`,
-  with an index for the shelf: `(program_id, material, language, status, created_at)`. The domain-use index goes with
-  `DOMAINS`.
+- `learning_drills.lesson_id TEXT REFERENCES learning_lessons(id) ON DELETE SET NULL`, with an index for the shelf:
+  `(program_id, material, language, status, created_at)`. The domain-use index goes with `DOMAINS`.
 - `learning_drill_pattern_schedules(material, pattern_id, …)`: the `CardSchedule` fields, keyed by
   `(material, pattern_id)`.
 - `learning_drill_lesson_schedules(program_id, lesson_id, …)`: the same fields, keyed by `(program_id, lesson_id)`,
   both cascading with the course and the lesson.
+- `learning_drill_lesson_fits(program_id, lesson_id, material, fits, basis, decided_at)` records whether a lesson can
+  be drilled in code or passages.
+  - It is written when a drill of the lesson is stored: code fits when it kept a lesson issue, and a passage always
+    fits.
+  - It is also written when a passage pick or a code brief finds no evidence for the lesson.
+  - `basis` hashes the evidence the decision rested on: the lesson's blocks when it is prepared, otherwise the course's
+    active source versions. A record whose basis no longer matches is ignored. So preparing the lesson or adding a
+    source asks the question again, and no retrieval runs to find that out.
 
 `DrillSpec` gets `lesson_id` and `lesson_issues` (the most lesson issues to plant: ⌈n/2⌉ for code, 0 for a passage).
 `patterns` becomes the ranked catalogue targets, n of them. `validate()` requires a course and a lesson for every new
