@@ -8,9 +8,8 @@ use super::support::{
 use crate::features::learning::drills::build::Proved;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    check_key, Assessment, Drill, FindingOutcome, IssueOutcome, KeyIssue, LineSpan, Material, Origin,
-    Proof,
-    Severity,
+    check_key, Assessment, Drill, FindingOutcome, IssueOutcome, KeyIssue, LineSpan, Material,
+    Origin, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
