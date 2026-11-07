@@ -2,7 +2,7 @@
 //! Only the course outline and source material are fixtures. Authoring,
 //! review, repairs, extraction, verification and publication are production code.
 use super::*;
-use crate::{
+use crate::features::learning::{
     curriculum::{LearningGenerationJobKind, LearningGenerationJobStatus},
     dto::*,
     plan_dto::{LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto},
@@ -122,7 +122,7 @@ async fn live_inventory_slots_keep_every_section() -> Result<()> {
         std::env::var("LATTICE_INVENTORY_SECTIONS").unwrap(),
     )?)?;
     let result =
-        crate::content_verification::live_inventory_fixture(&model, &content)
+        crate::features::learning::content_verification::live_inventory_fixture(&model, &content)
             .await?;
     assert_eq!(result["units"].as_array().unwrap().len(), content.len());
     assert_eq!(model.call.load(std::sync::atomic::Ordering::Relaxed), 1);
@@ -150,25 +150,25 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
     let cases: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_REVIEW_CASES").unwrap(),
     )?)?;
-    let progress = crate::outline_progress::OutlineProgress::default();
+    let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     for (index, case) in cases.into_iter().enumerate() {
         let sources: Vec<LearningSourceDto> = serde_json::from_value(case["sources"].clone())?;
         let references =
-            crate::reference_collection::ReferenceCollection::lexical(
+            crate::features::learning::reference_collection::ReferenceCollection::lexical(
                 &sources,
             )?;
-        let issues: Vec<crate::review_findings::ReviewFinding> =
+        let issues: Vec<crate::features::learning::review_findings::ReviewFinding> =
             serde_json::from_value::<Vec<String>>(case["issues"].clone())?
                 .into_iter()
                 .map(|issue| {
-                    crate::review_findings::ReviewFinding::new(
-                        crate::review_findings::FindingKind::Teaching,
+                    crate::features::learning::review_findings::ReviewFinding::new(
+                        crate::features::learning::review_findings::FindingKind::Teaching,
                         None,
                         issue,
                     )
                 })
                 .collect();
-        let accepted = crate::review_evidence::check(
+        let accepted = crate::features::learning::review_evidence::check(
             &model,
             &issues,
             &case["requirements"],
@@ -213,7 +213,7 @@ async fn live_saved_inventory_revision_finishes() -> Result<()> {
         std::env::var("LATTICE_INVENTORY_DRAFT").unwrap(),
     )?)?;
     let candidate = serde_json::from_str(draft["candidate"].as_str().unwrap())?;
-    let result = crate::content_verification::live_revision_fixture(
+    let result = crate::features::learning::content_verification::live_revision_fixture(
         &model, basis, candidate,
     )
     .await?;
@@ -251,7 +251,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         .connect_with(options.clone())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
+    sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -259,7 +259,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
     let fixture: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LESSON_FIXTURE").unwrap(),
     )?)?;
-    let mut program = crate::tests::fixture();
+    let mut program = crate::features::learning::tests::fixture();
     program.modules.truncate(1);
     program.modules[0].lessons.truncate(1);
     program.summary.title = fixture["title"].as_str().unwrap().into();
@@ -294,10 +294,10 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
         .sources
         .iter()
         .map(
-            |source| crate::sources::InitialReference {
+            |source| crate::features::learning::sources::InitialReference {
                 source_id: source.id.clone(),
                 origin: format!("fixture:{}", source.id),
-                captured: crate::source_library::CapturedLearningSource {
+                captured: crate::features::learning::source_library::CapturedLearningSource {
                     title: source.title.clone(),
                     publisher: None,
                     requested_url: None,
@@ -305,7 +305,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
                     text: source.excerpt.clone(),
                     truncated: false,
                     extraction_version: "live-fixture-v1".into(),
-                    signals: crate::references::trust::capture::not_extracted(
+                    signals: crate::features::learning::references::trust::capture::not_extracted(
                         "test fixture",
                     ),
                 },
@@ -412,10 +412,10 @@ pub(super) fn worker(
     pool: &sqlx::SqlitePool,
     model: Arc<ObservedModel>,
     research_web: Arc<dyn lattice_core::application::ports::WebServiceTrait>,
-    courses: Option<Arc<crate::references::course_index::CourseIndexes>>,
+    courses: Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
 ) -> LessonGenerationWorker {
     LessonGenerationWorker {
-        runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = model.clone();
@@ -436,17 +436,17 @@ pub(super) async fn run_job(
     worker: LessonGenerationWorker,
     job_id: &str,
     directory: &std::path::Path,
-    observe: &dyn Fn(&crate::curriculum::LearningGenerationJob) -> Result<()>,
-) -> Result<crate::curriculum::LearningGenerationJob> {
+    observe: &dyn Fn(&crate::features::learning::curriculum::LearningGenerationJob) -> Result<()>,
+) -> Result<crate::features::learning::curriculum::LearningGenerationJob> {
     let repo = LearningCurriculumRepository::new(worker.pool.clone());
     let job = repo.job(job_id).await?;
     // Transient network/model failures stay queued, and the runtime
     // redelivers them when their retry is due.
     runtime
         .register(
-            crate::curriculum_repository::LESSON_PREPARATION,
+            crate::features::learning::curriculum_repository::LESSON_PREPARATION,
             Arc::new(worker),
-            crate::curriculum_repository::lesson_job_config(),
+            crate::features::learning::curriculum_repository::lesson_job_config(),
         )
         .await?;
     runtime.dispatch(&job.id);
@@ -547,7 +547,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
     // Exercise the same recovery the job runtime runs at native startup.
     lattice_core::shared::runtime::jobs::JobStore::new(pool.clone())
         .recover(
-            crate::curriculum_repository::LESSON_PREPARATION,
+            crate::features::learning::curriculum_repository::LESSON_PREPARATION,
             lattice_core::shared::runtime::jobs::RecoveryPolicy::Requeue,
         )
         .await?;

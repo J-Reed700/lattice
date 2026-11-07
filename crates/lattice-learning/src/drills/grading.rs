@@ -24,10 +24,6 @@ mod task;
 #[path = "grading_tests.rs"]
 mod tests;
 
-#[cfg(test)]
-#[path = "live_grading_eval.rs"]
-pub(in crate::drills) mod live_grading_eval;
-
 /// Why an issue is missed when the review made no findings.
 const NO_FINDINGS: &str = "The review made no findings.";
 

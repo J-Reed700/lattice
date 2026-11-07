@@ -1,10 +1,10 @@
 use super::stages::{lesson_metrics, phase_metrics, removed_by_class};
 use super::*;
-use crate::assessment_engine::{
+use crate::features::learning::assessment_engine::{
     self as engine, KeyedOutcome, LearningAssessmentCandidate, LearningAssessmentKey,
     LearningNumericKey, LearningTextKey,
 };
-use crate::assessment_repository::StoredCandidate;
+use crate::features::learning::assessment_repository::StoredCandidate;
 
 fn recipe(server: Value, settings: Value) -> Result<CourseRecipe> {
     CourseRecipe::parse(

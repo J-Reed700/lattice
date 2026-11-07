@@ -8,7 +8,7 @@
     clippy::panic
 )]
 use super::*;
-use crate::review_findings::{FindingKind, ReviewFinding};
+use crate::features::learning::review_findings::{FindingKind, ReviewFinding};
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
@@ -29,7 +29,7 @@ mod web_trace;
 struct GivenModel(Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>>);
 
 #[async_trait::async_trait]
-impl lattice_index::passage_index::EmbedderSource for GivenModel {
+impl crate::infrastructure::passage_index::EmbedderSource for GivenModel {
     async fn embedder(&self) -> Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>> {
         self.0.clone()
     }
@@ -46,7 +46,7 @@ struct ObservedModel {
 #[tokio::test]
 #[ignore = "compares serial and batched verification with a live model; never writes to the library"]
 async fn live_batched_verification_matches_individual_checks_and_measures_cost() -> Result<()> {
-    use crate::content_verification::{
+    use crate::features::learning::content_verification::{
         judge_batch_for_publication, judge_for_publication,
     };
     use lattice_core::application::services::claim_verification::{
@@ -66,7 +66,7 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
     // The checker supports what a passage states; whether that support is
     // enough is the provenance gate's (`provenance_gate_tests`).
     cases.extend(serde_json::from_str::<Vec<serde_json::Value>>(
-        include_str!("content_verification/sufficiency_cases.json"),
+        include_str!("../../../../../lattice-learning/src/lessons/content_verification/sufficiency_cases.json"),
     )?);
     // Evidence present for a different claim must not fill this claim's gap.
     cases.insert(0,serde_json::json!({"claim":"The measured value of sample A is 12.","passages":["Sample A was measured."],"expected":"unsupported"}));
@@ -193,7 +193,7 @@ async fn live_coverage_mapping_recovers_existing_claims_without_inventing_missin
     }
     for (index, (fixture, expected)) in cases.into_iter().enumerate() {
         let result =
-            crate::content_verification::live_mapping_fixture(&model, &fixture)
+            crate::features::learning::content_verification::live_mapping_fixture(&model, &fixture)
                 .await?;
         std::fs::write(
             directory.join(format!("mapping-{index}.json")),
@@ -415,7 +415,7 @@ async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
 
 #[tokio::test]
 async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()> {
-    use crate::content_verification::page_budget;
+    use crate::features::learning::content_verification::page_budget;
     use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
     use lattice_core::application::ports::llm_port::CompletionInput;
     let directory = tempfile::tempdir()?;
@@ -497,7 +497,7 @@ async fn live_source_passage_judgments() -> Result<()> {
             .verification_sources(program)
             .await?;
         Some(
-            crate::reference_collection::ReferenceCollection::lexical(
+            crate::features::learning::reference_collection::ReferenceCollection::lexical(
                 &sources,
             )?,
         )
@@ -508,7 +508,7 @@ async fn live_source_passage_judgments() -> Result<()> {
     let mut failures = Vec::new();
     for case in cases {
         let passages: Vec<String> = if let Some(references) = &references {
-            crate::content_verification::live_retrieved_passages(
+            crate::features::learning::content_verification::live_retrieved_passages(
                 &model,
                 case["claim"].as_str().unwrap(),
                 references,
@@ -518,7 +518,7 @@ async fn live_source_passage_judgments() -> Result<()> {
             serde_json::from_value(case["passages"].clone())?
         };
         let judgment = if std::env::var("LATTICE_CLAIM_POLICY").as_deref() == Ok("publication") {
-            crate::content_verification::judge_for_publication(
+            crate::features::learning::content_verification::judge_for_publication(
                 &model,
                 case["claim"].as_str().unwrap(),
                 &passages,
@@ -604,14 +604,14 @@ async fn live_reference_selection() -> Result<()> {
         let results = results
             .into_iter()
             .map(
-                |result| crate::references::web_research::Candidate {
+                |result| crate::features::learning::references::web_research::Candidate {
                     result,
                     kind: lattice_core::domain::sourcing::NeedKind::Web,
                     owner: None,
                 },
             )
             .collect();
-        let chosen = crate::content_verification::research::select_references(
+        let chosen = crate::features::learning::content_verification::research::select_references(
             &model,
             case["topic"].as_str().unwrap(),
             case["query"].as_str().unwrap(),
@@ -662,9 +662,9 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
     let system = format!(
         "{}\n{}",
         message("system"),
-        crate::teaching::LESSON_REVIEW_EVIDENCE_SCOPE
+        crate::features::learning::teaching::LESSON_REVIEW_EVIDENCE_SCOPE
     );
-    let progress = crate::outline_progress::OutlineProgress::default();
+    let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     let prompt: serde_json::Value = serde_json::from_str(&message("user"))?;
     let mut candidate = prompt["candidate"].clone();
     for block in candidate["blocks"].as_array_mut().unwrap() {
@@ -678,13 +678,13 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
         block.as_object_mut().unwrap().remove("index");
         block["body"] = serde_json::json!(body);
     }
-    let issues = crate::teaching_review::review(
+    let issues = crate::features::learning::teaching_review::review(
         &model,
         &system,
         prompt,
         &candidate,
         Some(&progress),
-        crate::teaching_review::LengthRule::Fail,
+        crate::features::learning::teaching_review::LengthRule::Fail,
     )
     .await?;
     std::fs::write(
@@ -711,7 +711,7 @@ async fn live_teaching_review_evidence_scope() -> Result<()> {
 
     // Evidence scope must not excuse a demonstrably wrong worked result.
     let wrong = serde_json::json!({"blocks":[{"kind":"explanation","title":"Adding whole numbers","body":"To add two whole numbers, combine their quantities. Worked example: start with two apples and add two more apples. The total is five apples, so 2 + 2 = 5. This is ordinary integer addition, with no rounding or special convention.","rubric":[]}],"questions":[]});
-    let issues = crate::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, Some(&progress), crate::teaching_review::LengthRule::Fail).await?;
+    let issues = crate::features::learning::teaching_review::review(&model, &system, serde_json::json!({"task":"Review instructional quality","authoringContext":{"goal":"Learn ordinary whole-number addition","sources":[]}}), &wrong, Some(&progress), crate::features::learning::teaching_review::LengthRule::Fail).await?;
     std::fs::write(
         directory.join("incorrect-example-issues.json"),
         serde_json::to_vec_pretty(&issues)?,
@@ -764,9 +764,9 @@ async fn live_passage_coverage_preserves_complete_assertions() -> Result<()> {
     cases.extend(serde_json::from_str::<Vec<serde_json::Value>>(
         include_str!("content_verification/coverage_scope_cases.json"),
     )?);
-    let progress = crate::outline_progress::OutlineProgress::default();
+    let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     for (index, case) in cases.into_iter().enumerate() {
-        let report = crate::content_verification::live_coverage_fixture(
+        let report = crate::features::learning::content_verification::live_coverage_fixture(
             &model, &case, &progress,
         )
         .await?;
@@ -805,7 +805,7 @@ async fn live_passage_coverage_preserves_complete_assertions() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires live settings, saved draft, review call, database and artifact directory"]
 async fn live_review_findings_require_evidence() -> Result<()> {
-    use crate::{reference_collection::ReferenceCollection, review_evidence};
+    use crate::features::learning::{reference_collection::ReferenceCollection, review_evidence};
     let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
     )?)?;
@@ -813,7 +813,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
-    let draft: crate::lesson_drafts::Draft = serde_json::from_slice(
+    let draft: crate::features::learning::lesson_drafts::Draft = serde_json::from_slice(
         &std::fs::read(std::env::var("LATTICE_REVIEW_DRAFT").unwrap())?,
     )?;
     let recorded: serde_json::Value = serde_json::from_slice(&std::fs::read(
@@ -841,7 +841,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         .verification_sources(&program)
         .await?;
     let references = ReferenceCollection::lexical(&sources)?;
-    let progress = crate::outline_progress::OutlineProgress::default();
+    let progress = crate::features::learning::outline_progress::OutlineProgress::default();
     let accepted = review_evidence::check(
         &model,
         &issues,
@@ -864,7 +864,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         serde_json::from_str(include_str!("content_verification/review_scope_cases.json"))?;
     for (index, case) in cases.into_iter().enumerate() {
         let sources = serde_json::from_value::<
-            Vec<crate::dto::LearningSourceDto>,
+            Vec<crate::features::learning::dto::LearningSourceDto>,
         >(case["sources"].clone())?;
         let references = ReferenceCollection::lexical(&sources)?;
         let issues: Vec<ReviewFinding> =
@@ -897,7 +897,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
 #[tokio::test]
 #[ignore = "enqueues a retry in LATTICE_LESSON_DATABASE; stop its native worker before running"]
 async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
-    use crate::{
+    use crate::features::learning::{
         curriculum::LearningGenerationJobStatus as Status,
         plan_dto::LearningGenerationJobActionRequestDto,
     };
@@ -910,7 +910,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
         .connect_with(options)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
+    sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -950,7 +950,7 @@ async fn live_enqueue_saved_lesson_for_native_resume() -> Result<()> {
 #[tokio::test]
 #[ignore = "writes to LATTICE_LESSON_DATABASE; requires settings, stopped/held job and artifact directory"]
 async fn live_retry_saved_lesson_through_publication() -> Result<()> {
-    use crate::{
+    use crate::features::learning::{
         curriculum::LearningGenerationJobStatus, dto::LearningSourcePolicy,
         plan_dto::LearningGenerationJobActionRequestDto,
     };
@@ -977,7 +977,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         .connect_with(options)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
+    sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
@@ -1008,10 +1008,10 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     // the source UI; never mutate job approval or lesson content here.
     if let Ok(path) = std::env::var("LATTICE_REMOVE_RESEARCH_SOURCES") {
         let removals: Vec<
-            crate::portability_dto::DeleteLearningSourceRequestDto,
+            crate::features::learning::portability_dto::DeleteLearningSourceRequestDto,
         > = serde_json::from_slice(&std::fs::read(path)?)?;
         let library =
-            crate::source_library::LearningSourceLibraryRepository::new(
+            crate::features::learning::source_library::LearningSourceLibraryRepository::new(
                 pool.clone(),
             );
         for removal in removals {
@@ -1032,7 +1032,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf))
                 .await?;
         Some(
-            crate::references::course_index::CourseIndexes::new(
+            crate::features::learning::references::course_index::CourseIndexes::new(
                 indexes.into(),
                 pool.clone(),
                 Arc::new(GivenModel(Some(Arc::new(model)))),
@@ -1050,7 +1050,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         "This replay has no Verifier audit adapter; it must not bypass an enabled audit"
     );
     let worker = LessonGenerationWorker {
-        runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
@@ -1064,7 +1064,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         refresh_sources: Arc::new(move |program_id| {
             let pool = source_pool.clone();
             Box::pin(async move {
-                let workspace = crate::source_library::LearningSourceLibraryRepository::new(pool).workspace(&program_id).await?;
+                let workspace = crate::features::learning::source_library::LearningSourceLibraryRepository::new(pool).workspace(&program_id).await?;
                 assert!(
                     workspace
                         .sources
@@ -1086,7 +1086,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
                 AppError::InvalidInput("The completed job is not held for review".into())
             })?;
         let service =
-            crate::lessons::claim_reviews::service::ClaimReviewService::new(
+            crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
                 pool.clone(),
             )
             .with_checker_model(Some(checker_name));
@@ -1160,7 +1160,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     .map_err(|error| AppError::Database(error.to_string()))?;
     for lesson in &held {
         let review =
-            crate::lessons::claim_reviews::service::ClaimReviewService::new(
+            crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
                 pool.clone(),
             )
             .review(&job.program_id, lesson)

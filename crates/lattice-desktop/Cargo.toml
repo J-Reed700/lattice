@@ -227,6 +227,7 @@ webview2-com = "0.38"
 [dev-dependencies]
 lattice-core = { path = "../lattice-core", features = ["test-support"] }
 lattice-index = { path = "../lattice-index", features = ["test-support"] }
+lattice-learning = { path = "../lattice-learning", default-features = false, features = ["test-support"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = { workspace = true }
 insta = { version = "1.45", features = ["json", "redactions"] }

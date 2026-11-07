@@ -3,8 +3,8 @@
 //! review and repair, acceptance and first-lesson preparation, using the
 //! configured model and the real web service. Nothing is mocked or replayed.
 use super::*;
-use crate::patient_model::PatientModel;
-use crate::{
+use crate::features::learning::patient_model::PatientModel;
+use crate::features::learning::{
     curriculum::LearningGenerationJobKind,
     dto::*,
     outline_draft::{
@@ -89,7 +89,7 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
         .connect_with(options.clone())
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    sqlx::migrate!("../lattice-desktop/migrations")
+    sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -102,7 +102,7 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
     let registry = OutlineRunRegistry::new();
     let started = std::time::Instant::now();
     let report =
-        |update: crate::outline_progress::LearningOutlineProgressDto| {
+        |update: crate::features::learning::outline_progress::LearningOutlineProgressDto| {
             println!(
                 "Live outline: {:?} at {}s, {} response characters",
                 update.stage, update.elapsed_seconds, update.response_characters
@@ -147,7 +147,7 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
         program = progress
             .run(async {
                 let patient = PatientModel::new(model.as_ref(), progress.as_ref());
-                crate::outline_draft::repair_saved(
+                crate::features::learning::outline_draft::repair_saved(
                     &repo,
                     &drafts,
                     &patient,

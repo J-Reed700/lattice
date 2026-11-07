@@ -25,8 +25,8 @@ type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<PinnedModel>> + Sen
 type SourceRefresh = Arc<dyn Fn(String) -> BoxFuture<'static, Result<()>> + Send + Sync>;
 
 /// `llm` pinned as the Learning model, for workers a test builds.
-#[cfg(test)]
-pub(crate) fn pinned_for_test(
+#[cfg(any(test, feature = "test-support"))]
+pub fn pinned_for_test(
     llm: Arc<dyn lattice_core::application::ports::LLMPort>,
 ) -> PinnedModel {
     use lattice_core::application::ports::llm_port::{ModelOrigin, ResolvedModel};
@@ -45,7 +45,7 @@ pub(crate) fn pinned_for_test(
 }
 
 #[derive(Clone)]
-pub(crate) struct LessonGenerationWorker {
+pub struct LessonGenerationWorker {
     pub pool: SqlitePool,
     /// Where a lesson's worked examples run while it is verified.
     pub runtimes: crate::embedded_runtime::BuiltinRuntimes,
@@ -496,8 +496,8 @@ impl LessonGenerationWorker {
 
 /// Runs one delivery of a saved job through a runtime of its own, as the app
 /// would after a start.
-#[cfg(test)]
-async fn run_attempt(worker: LessonGenerationWorker, job_id: &str) -> Result<()> {
+#[cfg(any(test, feature = "test-support"))]
+pub async fn run_attempt(worker: LessonGenerationWorker, job_id: &str) -> Result<()> {
     use crate::curriculum_repository::{lesson_job_config, LESSON_PREPARATION};
     use lattice_core::shared::runtime::jobs::JobRuntime;
     let runtime = JobRuntime::new(worker.pool.clone());
@@ -740,10 +740,6 @@ mod repository_tests {
         assert!(cancelled.result_id.is_none());
     }
 }
-
-#[cfg(test)]
-#[path = "live_lesson_tests.rs"]
-mod live_lesson_tests;
 
 #[cfg(test)]
 #[path = "generation_recovery_tests.rs"]

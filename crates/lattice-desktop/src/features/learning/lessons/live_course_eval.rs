@@ -5,8 +5,8 @@
 //! of §6.2; it never asserts on one.
 use super::web_trace::{TraceMode, TracedWeb};
 use super::*;
-use crate::patient_model::PatientModel;
-use crate::{
+use crate::features::learning::patient_model::PatientModel;
+use crate::features::learning::{
     curriculum::{LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus},
     dto::*,
     outline_draft::{
@@ -680,7 +680,7 @@ async fn live_course_eval() -> Result<()> {
         .connect_with(options.clone())
         .await
         .map_err(db)?;
-    sqlx::migrate!("../lattice-desktop/migrations")
+    sqlx::migrate!("./migrations")
         .run(&pool)
         .await
         .map_err(db)?;

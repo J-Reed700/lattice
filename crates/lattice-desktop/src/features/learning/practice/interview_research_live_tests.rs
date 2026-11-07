@@ -1,7 +1,7 @@
 //! Live query planning over synthetic, recorded web responses; no public web is contacted.
 #![allow(clippy::print_stdout)]
 use super::{fixture, id};
-use crate::{
+use crate::features::learning::{
     interview_research::research_interview_target, practical_dto::LearningInterviewTargetDto,
     source_library::LearningSourceLibraryRepository,
 };

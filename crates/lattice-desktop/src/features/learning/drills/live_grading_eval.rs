@@ -19,8 +19,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::JudgeGrader;
-use crate::drills::build::SourcePassage;
-use crate::drills::grader::{Review, ReviewGrader};
+use crate::features::learning::drills::build::SourcePassage;
+use crate::features::learning::drills::grader::{Review, ReviewGrader};
 use crate::features::llm::cloud::CloudLlm;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use crate::features::llm::scheduler::SchedulerRegistry;
@@ -61,7 +61,7 @@ fn grading_set() -> String {
 /// Every case under `tests/fixtures/<set>`, by file name, each with the name of its file.
 fn cases(set: &str) -> Result<Vec<(String, Case)>> {
     let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../lattice-desktop/tests/fixtures")
+        .join("tests/fixtures")
         .join(set);
     let mut paths = Vec::new();
     for entry in std::fs::read_dir(&directory)? {
@@ -259,7 +259,7 @@ fn report(model: Value, graded: &[Graded]) -> Value {
 
 /// The model the live tests are configured for: the llama.cpp server `LATTICE_LLAMACPP_SETTINGS` describes or, with
 /// `LATTICE_USE_LEARNING_MODEL=1`, the Learning model those settings name, reached as the app reaches it.
-pub(in crate::drills) async fn model() -> Result<Arc<dyn LLMPort>> {
+pub(in crate::features::learning::live) async fn model() -> Result<Arc<dyn LLMPort>> {
     let path = std::env::var("LATTICE_LLAMACPP_SETTINGS").map_err(|_| {
         AppError::InvalidConfig(
             "Set LATTICE_LLAMACPP_SETTINGS to the settings file the live tests read.".into(),

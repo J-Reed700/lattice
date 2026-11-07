@@ -25,18 +25,18 @@ use super::support::{
     code, literals_mutation, planted, proved, quiet, review, stock, KILLING_TEST, LITERALS, MODEL,
     OPERATOR, SUITE,
 };
-use crate::drills::bank;
-use crate::drills::build::{
+use crate::features::learning::drills::bank;
+use crate::features::learning::drills::build::{
     BlindReview, DrillBuild, DroppedMutation, Evidence, ModelCall, Stage, Trail,
 };
-use crate::drills::grading::live_grading_eval::model;
-use crate::drills::grading::JudgeGrader;
-use crate::drills::material::{material_for, ClaimSourceCheck};
-use crate::drills::repository::{self, StoredDrill};
-use crate::drills::runner::{runner_for, RunOutcome};
-use crate::drills::spec::DrillSpec;
-use crate::embedded_runtime::BuiltinRuntimes;
-use crate::persistence::{db, now};
+use crate::features::learning::live::grading::live_grading_eval::model;
+use crate::features::learning::drills::grading::JudgeGrader;
+use crate::features::learning::drills::material::{material_for, ClaimSourceCheck};
+use crate::features::learning::drills::repository::{self, StoredDrill};
+use crate::features::learning::drills::runner::{runner_for, RunOutcome};
+use crate::features::learning::drills::spec::DrillSpec;
+use crate::features::learning::embedded_runtime::BuiltinRuntimes;
+use crate::features::learning::persistence::{db, now};
 
 /// What a drill's build planted, proved and dropped, and what its blind review added to the key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -472,7 +472,7 @@ async fn live_build_eval() -> Result<()> {
         "context_window": llm.max_context_tokens(),
     });
     let runtimes = BuiltinRuntimes::for_tests();
-    let pool = crate::tests::pool().await?;
+    let pool = crate::features::learning::tests::pool().await?;
     let mut summary = Vec::new();
     for language in &wanted {
         // Each drill targets the patterns the earlier ones of its language left alone, so the eval covers the catalogue.
@@ -618,7 +618,7 @@ async fn copied_database(path: &str) -> Result<SqlitePool> {
         .connect_with(options)
         .await
         .map_err(db)?;
-    let mut migrator = sqlx::migrate!("../lattice-desktop/migrations");
+    let mut migrator = sqlx::migrate!("./migrations");
     migrator.set_ignore_missing(true);
     migrator
         .run(&pool)
@@ -714,7 +714,7 @@ async fn live_passage_build_eval() -> Result<()> {
 }
 
 async fn stored() -> Result<StoredDrill> {
-    let pool = crate::tests::pool().await?;
+    let pool = crate::features::learning::tests::pool().await?;
     stock(&pool, "drill").await?;
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::find_in(&mut connection, "drill")

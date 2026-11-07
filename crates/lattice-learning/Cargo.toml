@@ -60,3 +60,5 @@ wiremock = "0.6"
 [features]
 default = ["learning-labs"]
 learning-labs = ["dep:rquickjs", "dep:wasmtime", "dep:wasmtime-wasi"]
+# Helpers the live evals in lattice-desktop reach; only its dev-dependency enables it.
+test-support = []

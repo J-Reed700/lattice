@@ -1,7 +1,7 @@
 //! The course eval's stages (§3.4) and the §1.1 metrics they record: the
 //! outline as generated or continued, then each selected lesson's job.
 use super::*;
-use crate::references::course_index::CourseIndexes;
+use crate::features::learning::references::course_index::CourseIndexes;
 use lattice_core::domain::learning::claim_review::{Actor, ClaimLedgerEntry, ClaimState, Class};
 
 /// The §1.1 outline keys the program and its saved draft decide.
@@ -10,7 +10,7 @@ pub(super) fn outline_metrics(
     candidate: Option<&Value>,
     quote_failures: usize,
 ) -> Value {
-    use crate::outline_linking::{cited_count, item_count};
+    use crate::features::learning::outline_linking::{cited_count, item_count};
     let review = program.outline_review.as_ref();
     let mut hosts: BTreeMap<String, usize> = BTreeMap::new();
     for url in program.sources.iter().filter_map(|s| s.url.as_deref()) {
@@ -353,7 +353,7 @@ async fn draft_outline(
 ) -> Result<LearningProgramDto> {
     let registry = OutlineRunRegistry::new();
     let report =
-        |update: crate::outline_progress::LearningOutlineProgressDto| {
+        |update: crate::features::learning::outline_progress::LearningOutlineProgressDto| {
             println!(
                 "Course eval outline: {:?} at {}s, {} response characters",
                 update.stage, update.elapsed_seconds, update.response_characters
@@ -387,7 +387,7 @@ async fn draft_outline(
                         program_id: program.summary.id.clone(),
                         expected_revision: program.summary.revision,
                     };
-                    crate::outline_draft::repair_saved(
+                    crate::features::learning::outline_draft::repair_saved(
                         repo,
                         drafts,
                         &patient,
@@ -412,7 +412,7 @@ async fn record_outline(
     started: std::time::Instant,
     resumed: bool,
 ) -> Result<()> {
-    use crate::outline_linking::{cited_count, item_count};
+    use crate::features::learning::outline_linking::{cited_count, item_count};
     let draft = repo.outline_draft(&program.summary.id).await?;
     let saved = repo.verification_sources(&program.summary.id).await?;
     let (candidate, failures, covering) = match &draft {
@@ -422,7 +422,7 @@ async fn record_outline(
                 .iter()
                 .filter_map(|id| saved.iter().find(|s| &s.id == id).cloned())
                 .collect();
-            let failures = crate::outline_evidence::quote_checks(
+            let failures = crate::features::learning::outline_evidence::quote_checks(
                 &draft.candidate,
                 &sources,
             );
@@ -478,7 +478,7 @@ async fn lesson_stage(
     program_id: &str,
     selector: &str,
 ) -> Result<String> {
-    use crate::curriculum_repository::LESSON_PREPARATION;
+    use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
     use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
     use std::io::Write;
     let lesson_file = run.dir.join(format!("lesson-{selector}.json"));
@@ -634,7 +634,7 @@ async fn lesson_stage(
     let sources = library.verification_sources(program_id).await?;
     let ledger = {
         use lattice_core::application::ports::ClaimReviewStore;
-        crate::lessons::claim_reviews::repository::ClaimReviewRepository::new(
+        crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository::new(
             reopened.clone(),
         )
         .load(&lesson.id)

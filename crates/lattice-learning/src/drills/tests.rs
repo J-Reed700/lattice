@@ -10,8 +10,6 @@ mod clean_review_tests;
 mod fix_grading_tests;
 mod grading_job_tests;
 mod job_tests;
-#[path = "live_build_eval.rs"]
-mod live_build_eval;
 mod material_tests;
 mod passage_review_tests;
 mod passage_tests;

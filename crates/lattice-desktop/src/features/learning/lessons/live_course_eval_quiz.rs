@@ -12,19 +12,19 @@
 //! Both record outcomes and never assert on one; `scripts/course_eval.py` and
 //! `scripts/course_eval_grading.py` score what they write.
 use super::*;
-use crate::assessment_engine::{
+use crate::features::learning::assessment_engine::{
     self as engine, KeyedOutcome, LearningAssessmentCandidate, LearningAssessmentKey,
     LearningAssessmentResponse, LearningItemFormat, LearningNumericKey, LearningRubricCriterion,
     LearningTextKey,
 };
-use crate::assessment_generation::{
+use crate::features::learning::assessment_generation::{
     self as generation, RawGrade, ShortAnswer, WrittenAnswer,
 };
-use crate::assessment_repository::{
+use crate::features::learning::assessment_repository::{
     LearningAssessmentRepository, StoredCandidate,
 };
-use crate::grade_rationale::{self, Checked, Grader, GraderVerdict, Reference};
-use crate::{quiz_bank_jobs, quiz_blueprints};
+use crate::features::learning::grade_rationale::{self, Checked, Grader, GraderVerdict, Reference};
+use crate::features::learning::{quiz_bank_jobs, quiz_blueprints};
 
 const BANK_SCHEMA: &str = "course-eval-quiz-bank/1";
 const GRADES_SCHEMA: &str = "quiz-grading-grades/1";

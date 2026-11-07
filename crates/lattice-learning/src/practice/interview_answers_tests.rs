@@ -9,9 +9,6 @@ use std::sync::{
     Mutex,
 };
 
-#[path = "interview_answer_live_tests.rs"]
-mod live_tests;
-
 struct AnswerModel {
     scripted: ScriptedModel,
     independent_solutions: AtomicUsize,

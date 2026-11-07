@@ -135,7 +135,7 @@ fn text_list(values: &[String], label: &str, minimum: usize, maximum: usize) -> 
     Ok(())
 }
 
-fn check_standard(standard: &AnswerStandard, sources: &[LearningSourceVersionDto]) -> Result<()> {
+pub fn check_standard(standard: &AnswerStandard, sources: &[LearningSourceVersionDto]) -> Result<()> {
     present(&standard.reference_answer, "Interview reference answer")?;
     if !(2..=6).contains(&standard.key_points.len())
         || !(2..=4).contains(&standard.scoring_criteria.len())
@@ -238,7 +238,7 @@ fn standard_schema(evidence_ids: &[String]) -> Value {
     })
 }
 
-fn source_catalog(llm: &dyn LLMPort, sources: &[LearningSourceVersionDto]) -> Vec<Value> {
+pub fn source_catalog(llm: &dyn LLMPort, sources: &[LearningSourceVersionDto]) -> Vec<Value> {
     let mut remaining = llm.max_context_tokens() / 16;
     sources.iter().filter_map(|source| {
         let entry = json!({
