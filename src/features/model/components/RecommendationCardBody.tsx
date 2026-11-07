@@ -46,7 +46,8 @@ export function RecommendationCardBody({ recommendation, seesImages = false }: R
           {evidence.kind === 'measured' ? <span className={BADGE_CLASS}>Tested by Lattice</span> : null}
         </span>
       ) : null}
-      <span className="block text-xs text-text-secondary">{recommendation.description}</span>
+      <span className="block text-xs text-text-primary">{recommendation.useFor}</span>
+      <span className="block text-xs text-text-muted">{recommendation.description}</span>
       <span className="block text-xs tabular-nums text-text-muted">{fitUsage(verdict)}</span>
       {verdict.device.kind === 'processor' ? (
         <span className="block text-xs text-warning-fg">Runs on the processor: slower</span>
