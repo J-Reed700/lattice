@@ -265,6 +265,7 @@ pub(super) fn references(
                     "test fixture",
                 ),
             },
+            found: false,
         })
         .collect()
 }
@@ -754,5 +755,107 @@ async fn a_course_plan_keeps_rewordings_and_dates_and_refuses_an_unreadable_date
     assert!(outline_references::plan(&llm, &request, &[], &progress)
         .await
         .is_err());
+    Ok(())
+}
+
+/// A subtopic's title is the planner's own words; only a blank one is refused.
+#[tokio::test]
+async fn a_long_subtopic_title_from_the_planner_is_read_not_refused() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let title = "A randomized comparison isolates a treatment effect. "
+        .repeat(4)
+        .trim()
+        .to_owned();
+    let llm = model(vec![plan_output(&[(
+        title.as_str(),
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
+    assert_eq!(plan.subtopic_titles(), vec![title]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let recording = crate::features::learning::content_caps_tests::Recording::new(&llm);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("subtopics");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let caps = crate::features::learning::content_caps_tests::text_caps(schema);
+        assert!(caps.is_empty(), "{caps:?}");
+    }
+    Ok(())
+}
+
+/// A course made from a document the user chose and a page the outline's own
+/// research found, both short.
+async fn a_choice_and_a_find() -> Result<(sqlx::SqlitePool, String)> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let web = ResearchWeb::new(&[ADDITIONAL]);
+    let llm = model(vec![
+        plan_output(&[("Random assignment", &["random assignment confounding"])]),
+        select_all(1),
+        candidate(),
+        no_links(),
+        clean(),
+    ]);
+    let program = generate_online(&repo, &llm, &web, vec![original_source()]).await?;
+    Ok((pool, program.summary.id))
+}
+
+#[tokio::test]
+async fn a_short_source_the_user_chose_for_the_course_is_not_swept() -> Result<()> {
+    let (pool, program_id) = a_choice_and_a_find().await?;
+
+    let refused = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+        pool.clone(),
+    )
+    .sweep_admission(&program_id)
+    .await?;
+
+    let titles: Vec<&str> = refused.iter().map(|page| page.title.as_str()).collect();
+    assert!(!titles.contains(&"Brief reference overview"), "{refused:?}");
+    let held = LearningRepository::new(pool)
+        .verification_sources(&program_id)
+        .await?;
+    assert!(held
+        .iter()
+        .any(|source| source.title == "Brief reference overview"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_short_page_the_outline_research_found_is_still_swept() -> Result<()> {
+    let (pool, program_id) = a_choice_and_a_find().await?;
+
+    let refused = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+        pool.clone(),
+    )
+    .sweep_admission(&program_id)
+    .await?;
+
+    let found: Vec<_> = refused
+        .iter()
+        .filter(|page| page.title == "Research reference")
+        .collect();
+    assert_eq!(found.len(), 1, "{refused:?}");
+    assert!(
+        found[0].reason.starts_with("too short"),
+        "{}",
+        found[0].reason
+    );
+    let held = LearningRepository::new(pool)
+        .verification_sources(&program_id)
+        .await?;
+    assert!(held
+        .iter()
+        .all(|source| source.title != "Research reference"));
     Ok(())
 }

@@ -427,6 +427,7 @@ fn item(
                 before,
                 after,
                 outcome,
+                ..
             } => repairs.push(RepairAttemptDto {
                 attempt: *attempt,
                 escalated: *escalated,
@@ -460,7 +461,13 @@ fn item(
         ),
         _ => (failed_reason(entry), None, None),
     };
-    let unit_title = titles.get(location.unit_index).cloned().unwrap_or_default();
+    // A section that went out of the lesson moved the ones after it: the
+    // title at a taken-out statement's old place is another section's.
+    let unit_title = if presentation::taken_out(entry) {
+        String::new()
+    } else {
+        titles.get(location.unit_index).cloned().unwrap_or_default()
+    };
     let presentation = presentation::presentation(entry, units, &unit_title);
     let (support, also_supported) = support::supports(entry, context);
     ClaimReviewItemDto {
@@ -510,8 +517,8 @@ fn item(
         history: entry
             .events()
             .iter()
-            .map(|record| {
-                let mut event = ClaimEventDto::from(record);
+            .filter_map(|record| {
+                let mut event = ClaimEventDto::of(record)?;
                 if let (
                     ClaimEvent::Extracted {
                         location,
@@ -522,7 +529,7 @@ fn item(
                 {
                     (*quote, *span) = located_in(units, location, statement);
                 }
-                event
+                Some(event)
             })
             .collect(),
         local_check: checker_verdict(entry, false, sources, texts),

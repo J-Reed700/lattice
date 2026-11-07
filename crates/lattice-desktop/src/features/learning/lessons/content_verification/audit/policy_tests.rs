@@ -114,7 +114,7 @@ fn general_knowledge_is_marked_for_contradiction_only() {
 }
 
 #[test]
-fn the_schema_names_the_labels_and_bounds_every_string() {
+fn the_schema_names_the_labels_and_bounds_the_counts() {
     let claims = vec![claim(
         "Water boils at 100 °C at sea level.",
         vec![shared()],
@@ -138,7 +138,6 @@ fn the_schema_names_the_labels_and_bounds_every_string() {
             "could_not_verify"
         ])
     );
-    assert_eq!(verdict["reason"]["maxLength"], json!(REASON_MAX_CHARS));
     assert_eq!(
         verdict["passagesUsed"]["maxItems"],
         json!(QUOTES_PER_VERDICT)
@@ -152,6 +151,23 @@ fn the_schema_names_the_labels_and_bounds_every_string() {
             .is_none(),
         "a fetched page's label is not known in advance"
     );
+}
+
+#[test]
+fn the_answer_schema_has_no_text_length_rule() {
+    use crate::features::learning::practice::practice_tests::text_length_rules;
+
+    let claims = vec![claim(
+        "Water boils at 100 °C at sea level.",
+        vec![shared()],
+        false,
+    )];
+    let rendered = render(&claims, &units(), &[item(0, vec![0], Context::Unit)]);
+
+    for web in [false, true] {
+        let schema = schema(&rendered, web);
+        assert!(text_length_rules(&schema).is_empty(), "{schema}");
+    }
 }
 
 fn read_one(answer: Value) -> Judged {
@@ -393,13 +409,52 @@ fn consent_names_a_cloud_provider_and_nothing_else_needs_it() {
 }
 
 #[test]
-fn the_answer_reservation_is_measured_from_the_schema_bounds() {
+fn the_answer_reservation_is_measured_from_the_planned_room() {
     let llm = ScriptedVerifier::answering(200_000, |_, _| json!({}));
     let reserve = verdict_reserve(&llm);
-    let bounded_text = REASON_MAX_CHARS + QUOTE_MAX_CHARS * QUOTES_PER_VERDICT;
+    let planned_text = REASON_ROOM_CHARS + QUOTE_ROOM_CHARS * QUOTES_PER_VERDICT;
     assert!(
-        reserve >= bounded_text / 4,
-        "{reserve} tokens cannot hold {bounded_text} characters"
+        reserve >= planned_text / 4,
+        "{reserve} tokens cannot hold {planned_text} characters"
     );
     assert!(envelope_reserve(&llm) > 0);
+}
+
+/// Guards that pass before and after the schema stopped bounding the text:
+/// the reader never cut a reason or a quote, and must not start to.
+#[test]
+fn a_reason_and_quote_longer_than_the_planned_room_are_read_whole() {
+    let text = "Pure water boils at 100 °C at sea level. ".repeat(20);
+    let quote = text.trim().to_string();
+    let reason = "The passage says so at length. "
+        .repeat(30)
+        .trim()
+        .to_string();
+    assert!(quote.chars().count() > QUOTE_ROOM_CHARS && reason.chars().count() > REASON_ROOM_CHARS);
+    let claims = vec![claim(
+        "Water boils at 100 °C at sea level.",
+        vec![passage("v1", &text)],
+        false,
+    )];
+    let rendered = render(&claims, &units(), &[item(0, vec![0], Context::Unit)]);
+    let answer = json!({"verdicts": [{
+        "claim": "C1",
+        "verdict": "supported",
+        "reason": reason,
+        "passagesUsed": [{"passage": "P1", "quote": quote}]
+    }]});
+
+    let judged = read(&answer.to_string(), &rendered, &[])
+        .unwrap()
+        .remove(0)
+        .unwrap();
+
+    assert_eq!(judged.reason, reason);
+    assert_eq!(
+        judged.result,
+        CheckResult::Supported {
+            source_version_id: "v1".into(),
+            supporting_quote: quote
+        }
+    );
 }

@@ -96,6 +96,50 @@ fn longest_fitting_prefix(
     low
 }
 
+/// The bytes verification reads for the passage at `start..end` of `text`:
+/// the passage and up to 1,700 characters either side, cut back to a line
+/// break that falls within 300 bytes of either end.
+pub(in crate::features::learning) fn checked_span(
+    text: &str,
+    start: usize,
+    end: usize,
+) -> (usize, usize) {
+    const SURROUNDING_CHARS: usize = 1700;
+    let (Some(before), Some(after)) = (text.get(..start), text.get(end..)) else {
+        return (start, end);
+    };
+    let mut from = before
+        .char_indices()
+        .rev()
+        .nth(SURROUNDING_CHARS - 1)
+        .map_or(0, |(index, _)| index);
+    let mut to = after
+        .char_indices()
+        .nth(SURROUNDING_CHARS)
+        .map_or(text.len(), |(index, _)| end + index);
+    if let Some(index) = before
+        .get(from..)
+        .and_then(|lead| lead.find('\n'))
+        .filter(|index| *index <= 300)
+    {
+        // Preserve the start of a short source instead of trimming its
+        // first line merely because the entire prefix fits.
+        if from != 0 {
+            from += index + 1;
+        }
+    }
+    if let Some(index) = after
+        .get(..to - end)
+        .and_then(|trail| trail.rfind('\n'))
+        .filter(|index| to - (end + *index) <= 300)
+    {
+        if to != text.len() {
+            to = end + index;
+        }
+    }
+    (from, to)
+}
+
 /// A lesson job's stage text while a course's index is brought up to date.
 /// Outside a lesson job the stage goes nowhere, so a command can use it too.
 #[derive(Default)]
@@ -461,7 +505,6 @@ impl<'a> ReferenceCollection<'a> {
         &self,
         passages: Vec<ReferencePassage>,
     ) -> Result<Vec<ReferencePassage>> {
-        const SURROUNDING_CHARS: usize = 1700;
         let mut selected: Vec<ReferencePassage> = Vec::new();
         for mut passage in passages {
             let source = self
@@ -473,33 +516,7 @@ impl<'a> ReferenceCollection<'a> {
             if text.get(passage.start_byte..passage.end_byte) != Some(passage.text.as_str()) {
                 return Err(invalid("Verification passage does not match its source."));
             }
-            let mut start = text[..passage.start_byte]
-                .char_indices()
-                .rev()
-                .nth(SURROUNDING_CHARS - 1)
-                .map_or(0, |(index, _)| index);
-            let mut end = text[passage.end_byte..]
-                .char_indices()
-                .nth(SURROUNDING_CHARS)
-                .map_or(text.len(), |(index, _)| passage.end_byte + index);
-            if let Some(index) = text[start..passage.start_byte]
-                .find('\n')
-                .filter(|index| *index <= 300)
-            {
-                // Preserve the start of a short source instead of trimming its
-                // first line merely because the entire prefix fits.
-                if start != 0 {
-                    start += index + 1;
-                }
-            }
-            if let Some(index) = text[passage.end_byte..end]
-                .rfind('\n')
-                .filter(|index| end - (passage.end_byte + *index) <= 300)
-            {
-                if end != text.len() {
-                    end = passage.end_byte + index;
-                }
-            }
+            let (start, end) = checked_span(text, passage.start_byte, passage.end_byte);
             if let Some(previous) = selected.iter_mut().find(|previous| {
                 previous.source_id == passage.source_id
                     && previous.start_byte < end
@@ -576,7 +593,6 @@ mod pages;
 mod ranking;
 mod snapshots;
 mod subject;
-pub(in crate::features::learning) use pages::ClaimList;
 pub(in crate::features::learning) use snapshots::{snapshot_passages, snapshot_room};
 pub(in crate::features::learning) use subject::shared_terms;
 

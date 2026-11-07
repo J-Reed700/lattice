@@ -22,7 +22,6 @@ pub use bank::BankItem;
 pub use contests::{ContestInput, Regrade};
 pub use submission::ItemGrade;
 
-const MAX_RESPONSE_CHARS: usize = 24_000;
 const STALE_EVIDENCE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 
 fn invalid(s: impl Into<String>) -> AppError {

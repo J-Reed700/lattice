@@ -23,29 +23,15 @@ export function splitCheck(body: string): CheckParts | null {
 }
 
 /**
- * `text` within `limit` characters, cut at the last sentence or line end that
- * fits, so a card never stops mid-word. The recall card's own bounds
- * (`recall_content.rs`) are 2,000 for a prompt, 1,000 for an answer and
- * 3,000 for an explanation.
- */
-export function clip(text: string, limit: number): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= limit) return trimmed;
-  const room = trimmed.slice(0, limit - 1);
-  const end = Math.max(room.lastIndexOf('. '), room.lastIndexOf('\n'), room.lastIndexOf('? '), room.lastIndexOf('! '));
-  return `${(end > limit / 2 ? room.slice(0, end + 1) : room).trimEnd()}…`;
-}
-
-/**
  * The review card a check becomes: the case is the prompt, the reveal's first
  * paragraph the answer, and the rest of the reasoning the explanation.
  */
 export function checkCardContent({ question, reveal }: CheckParts): LearningRecallContentDto {
   const [first = '', ...rest] = reveal.split(/\n\s*\n/);
   return {
-    prompt: clip(question, 2000),
-    answer: clip(first, 1000),
-    explanation: clip(rest.join('\n\n'), 3000),
+    prompt: question.trim(),
+    answer: first.trim(),
+    explanation: rest.join('\n\n').trim(),
     options: [],
     correctOptionIndex: null,
     language: null,

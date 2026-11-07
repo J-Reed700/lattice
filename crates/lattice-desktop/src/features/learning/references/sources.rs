@@ -36,6 +36,9 @@ pub struct InitialReference {
     pub source_id: String,
     pub origin: String,
     pub captured: crate::features::learning::source_library::CapturedLearningSource,
+    /// The course's outline research found the page; the user did not choose
+    /// it.
+    pub found: bool,
 }
 pub struct AcquiredSources {
     pub sources: Vec<LearningSourceDto>,
@@ -157,6 +160,7 @@ pub async fn acquire(
             source_id: id,
             origin: document_id.clone(),
             captured,
+            found: false,
         });
     }
     let safe_web = &deps.web;
@@ -187,6 +191,7 @@ pub async fn acquire(
             source_id: id,
             origin: url.into(),
             captured,
+            found: false,
         });
     }
     if sources.is_empty() && (!request.document_ids.is_empty() || !request.source_urls.is_empty()) {

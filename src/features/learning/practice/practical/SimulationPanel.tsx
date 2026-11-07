@@ -6,6 +6,7 @@ import { LoaderCircle, Play, Send, Users } from "lucide-react";
 import { TiptapViewer } from "@/components/TiptapEditor";
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey } from "@/features/learning/api/learningQueryKeys";
+import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
 import { AnswerTimer } from "@/features/learning/practice/practical/AnswerTimer";
 import { errorText, questionLabel, unwrap, uuid } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
 import { PracticeCitation } from "@/features/learning/practice/PracticeCitation";
@@ -371,7 +372,7 @@ export function SimulationPanel({
                 <textarea
                   id="simulation-message"
                   rows={3}
-                  maxLength={4000}
+                  maxLength={LEARNER_TEXT_MAX_CHARS}
                   disabled={busy}
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}

@@ -284,3 +284,10 @@ fn a_short_collection_is_measured_per_character_not_as_one_passage() {
     let topics = vec![topic("Saved reference")];
     assert_eq!(depth(&llm, &short, &topics, 10 * full), 10);
 }
+
+#[test]
+fn the_plan_schema_bounds_no_text_but_a_blank() {
+    let bounds =
+        crate::features::learning::lessons::course_generation_tests::length_bounds(&plan_schema());
+    assert!(bounds.is_empty(), "{bounds:?}");
+}
