@@ -20,6 +20,7 @@ pub mod review;
 pub mod runner;
 pub mod spec;
 #[cfg(any(test, feature = "test-support"))]
+#[path = "tests/support.rs"]
 pub mod test_support;
 
 #[cfg(test)]

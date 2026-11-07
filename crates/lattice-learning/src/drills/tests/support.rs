@@ -2,6 +2,8 @@
 //! the grader are scripted, the code under review is a small Python project, and the passage under review is from a
 //! course's source about spacing study sessions.
 
+#![cfg_attr(not(test), allow(dead_code))]
+
 use crate::drills::attempt_grading::AttemptGrading;
 use crate::drills::attempts::{self, Attempt, AttemptMode, Submission};
 use crate::drills::bank;
