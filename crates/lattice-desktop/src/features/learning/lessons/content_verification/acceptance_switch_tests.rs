@@ -1233,22 +1233,34 @@ async fn a_claim_that_ended_at_a_node_of_its_graph_is_planned_as_ended() -> Resu
     Ok(())
 }
 
-/// A statement at `s.cut` on `quote` of `body`, with its last attempt sent.
+/// A lesson of three sections whose second is `body`: a cut that takes the
+/// second section leaves a lesson that publishes, its first explanation
+/// untouched.
+fn around(body: &str) -> Value {
+    json!({"blocks":[
+        {"kind":"explanation","title":"First","body":"The first section stands. It says two things.","rubric":[]},
+        {"kind":"explanation","title":"Rows","body":body,"rubric":[]},
+        {"kind":"explanation","title":"Last","body":"The last section stands. It says two things.","rubric":[]}
+    ],"questions":[]})
+}
+
+/// A statement of the second section at `s.cut` on `quote` of `body`, with its
+/// last attempt sent.
 async fn cut_sent(quote: &str, body: &str) -> Result<(claim_ledger::ClaimLedger, ClaimId, Value)> {
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
-    let id = claim(&mut ledger, "cut", (quote, quote), body, SOURCED).await?;
+    let id = claim_in(&mut ledger, "cut", 1, (quote, quote), body, Some(SOURCED)).await?;
     // Another statement stands, so the lesson keeps one.
     claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
     walk(&mut ledger, &id, Class::Sourced, &CUTTING).await?;
     assert_eq!(node_of(&ledger, &id), Some("s.cut"));
     ledger
-        .begin_repairs(&policy, &lesson_of(body), std::slice::from_ref(&id))
+        .begin_repairs(&policy, &around(body), std::slice::from_ref(&id))
         .await?;
     let context = json!({
-        "candidate": lesson_of(body), "requirements": {}, "evidence": [],
+        "candidate": around(body), "requirements": {}, "evidence": [],
         "executions": [], "repairHistory": [],
-        "failedClaims": [{"unit":0,"claimId":"cut","sentence":quote,"evidence":[],"lastAttempt":true}],
+        "failedClaims": [{"unit":1,"claimId":"cut","sentence":quote,"evidence":[],"lastAttempt":true}],
     });
     Ok((ledger, id, context))
 }
@@ -1260,7 +1272,7 @@ async fn a_cut_that_takes_the_sentence_out_ends_the_statement_removed() -> Resul
 
     repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    assert_eq!(context["candidate"]["blocks"][0]["body"], HEADER);
+    assert_eq!(context["candidate"]["blocks"][1]["body"], HEADER);
     let entry = ledger.entry(&id).unwrap();
     assert_eq!(
         entry.decided(),
@@ -1306,7 +1318,7 @@ async fn a_refused_cut_ends_removed_and_its_section_goes() -> Result<()> {
             ..
         }
     ));
-    assert!(ledger.cuts.going.contains_key(&0));
+    assert!(ledger.cuts.going.contains_key(&1));
     Ok(())
 }
 
