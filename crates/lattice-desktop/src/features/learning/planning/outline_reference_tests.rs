@@ -945,7 +945,9 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     assert_eq!(review.issues[0].kind, LearningOutlineIssueKind::References);
     assert_eq!(review.issues[0].path, "");
     assert!(review.note.contains("no references could be gathered"));
-    assert_eq!(offline.queries.lock().unwrap().len(), 3);
+    // The planned searches, then the community and paper searches, then the
+    // title: every search fails, so the subtopic is widened to the end.
+    assert_eq!(offline.queries.lock().unwrap().len(), 6);
     assert_eq!(llm.prompts.lock().unwrap().len(), 3);
     assert!(saved.sources.is_empty());
     let drafts = DraftRunRegistry::new();
