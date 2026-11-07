@@ -8,9 +8,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
-    Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome, Identifier,
-    Identity, KeyService, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed,
-    WaveSlot,
+    is_email, Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome,
+    Identifier, Identity, KeyService, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role,
+    SourceNeed, WaveSlot,
 };
 use reqwest::header::{HeaderName, HeaderValue};
 use url::Url;
@@ -84,7 +84,12 @@ impl Crossref {
         api: String,
         plus_token: Option<String>,
     ) -> Self {
-        let mailto = email_contact(http.contact.as_deref()).map(str::to_string);
+        let mailto = http
+            .contact
+            .as_deref()
+            .map(str::trim)
+            .filter(|contact| is_email(contact))
+            .map(str::to_string);
         let mut descriptor = DESCRIPTOR;
         if mailto.is_some() {
             descriptor.rate.min_interval = POLITE_LIST_INTERVAL;
@@ -111,20 +116,6 @@ impl Crossref {
             None => url,
         }
     }
-}
-
-/// The contact when it is an email address (one `@`, a dotted domain, no
-/// spaces or slashes), the only form Crossref's polite pool reads.
-fn email_contact(contact: Option<&str>) -> Option<&str> {
-    let contact = contact?.trim();
-    let (local, domain) = contact.split_once('@')?;
-    let plain = !contact.chars().any(|c| c.is_whitespace() || c == '/');
-    (plain
-        && !local.is_empty()
-        && !domain.contains('@')
-        && domain.contains('.')
-        && domain.split('.').all(|label| !label.is_empty()))
-    .then_some(contact)
 }
 
 fn clean_doi(doi: &str) -> String {

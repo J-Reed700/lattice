@@ -1,5 +1,6 @@
 //! Per-site request pacing, shared by page reads and every finder.
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
@@ -34,6 +35,10 @@ pub(crate) struct SitePacer {
     /// Per-site slot, holding when that site's last request started.
     sites: parking_lot::Mutex<HashMap<String, Arc<AsyncMutex<Option<Instant>>>>>,
     min_interval: Duration,
+    /// The longest spacing any caller has asked for, in nanoseconds. A slot
+    /// is idle only once that has passed, so a short-interval caller's
+    /// eviction never drops a slot a longer interval still holds.
+    longest_interval: AtomicU64,
 }
 
 impl Default for SitePacer {
@@ -41,6 +46,7 @@ impl Default for SitePacer {
         Self {
             sites: parking_lot::Mutex::new(HashMap::new()),
             min_interval: MIN_SITE_REQUEST_INTERVAL,
+            longest_interval: AtomicU64::new(0),
         }
     }
 }
@@ -84,7 +90,9 @@ impl SitePacer {
         min_interval: Duration,
     ) -> Option<OwnedMutexGuard<Option<Instant>>> {
         let key = Self::site_key(url)?;
-        let kept_for = min_interval.max(self.min_interval);
+        let asked = u64::try_from(min_interval.as_nanos()).unwrap_or(u64::MAX);
+        let longest = self.longest_interval.fetch_max(asked, Ordering::Relaxed);
+        let kept_for = Duration::from_nanos(longest.max(asked)).max(self.min_interval);
         let slot = {
             let mut sites = self.sites.lock();
             if sites.len() >= MAX_TRACKED_SITES {

@@ -123,7 +123,10 @@ impl SourceFinder for Marginalia {
     async fn find(&self, need: &SourceNeed, page: usize, _budget: &Budget) -> FinderOutcome {
         let started = Instant::now();
         let query = urlencoding::encode(need.query.trim());
-        let url = format!("{}/search?query={query}", self.api);
+        let url = format!(
+            "{}/search?query={query}&count={RESULTS_PER_PAGE}&page={page}",
+            self.api
+        );
 
         let mut headers =
             identity::declared_client_headers(self.http.contact.as_deref(), "application/json");

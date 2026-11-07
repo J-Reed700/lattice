@@ -16,8 +16,8 @@ use url::Url;
 
 use crate::domain::sourcing::policy::DEFAULT_FINDER_CONCURRENCY;
 use crate::domain::sourcing::{
-    is_known_finder, Auth, FinderDescriptor, FinderId, InstanceSetting, KeyService, Reach,
-    SkipReason,
+    is_email, is_known_finder, Auth, FinderDescriptor, FinderId, InstanceSetting, KeyService,
+    Reach, SkipReason,
 };
 
 /// Source-finding settings.
@@ -170,21 +170,15 @@ impl SourcingSettingsDto {
     }
 }
 
-/// An email address (one `@`, something before it, a dotted domain after
-/// it, no spaces) or an http(s) URL with a host. The services that pool by
-/// contact accept either; the check is shape only.
+/// An email address (see [`is_email`]) or an http(s) URL with a host. The
+/// services that pool by contact accept either; the check is shape only.
 fn is_contact(contact: &str) -> bool {
     if contact.is_empty() || contact.chars().any(char::is_whitespace) {
         return false;
     }
-    if let Some((local, domain)) = contact.split_once('@') {
-        return !local.is_empty()
-            && !domain.contains('@')
-            && domain.contains('.')
-            && domain.split('.').all(|label| !label.is_empty());
-    }
-    Url::parse(contact)
-        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
+    is_email(contact)
+        || Url::parse(contact)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())
 }
 
 #[cfg(test)]
