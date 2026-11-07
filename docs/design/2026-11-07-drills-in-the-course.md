@@ -87,9 +87,10 @@ passages until lessons are prepared. Everything in a brief is data, never instru
   reasons first, then whether the change breaks what those sentences say and whether the clean code follows them.
   - It fails the check but passed its proof: it stays in the key as a plain issue with no lesson link.
   - It fails its proof: it is dropped, as today.
-- **The key.** `KeyIssue` gets `lesson: Option<LessonLink { lesson_id, sentences, source }>`, a serde default, so old
-  keys read as `None`. Code copies the sentences and the source title from the brief by number; the model never copies
-  them. The drill row gets `lesson_id`.
+- **The key.** `KeyIssue` gets `lesson: Option<LessonLink { lesson_id, sentences }>`, a serde default, so old keys
+  read as `None`. Each sentence keeps the title of the source it comes from (`LessonSentence { text, source }`),
+  because an outline lesson's evidence comes from several sources. Code copies the sentences and their sources from
+  the brief by number; the model never copies them. The drill row gets `lesson_id`.
 - **Grading.** The judge's task shows the cited sentences under the issue's pattern ("From the lesson: …"). A finding
   that names the broken idea in the lesson's words is then found, not only one that names the pattern.
 - **The reveal.** It shows "From the lesson", the sentences and their source, and a link to the lesson.
@@ -168,7 +169,8 @@ One migration:
   be drilled in code or passages.
   - It is written when a drill of the lesson is stored: code fits when it kept a lesson issue, and a passage always
     fits.
-  - It is also written when a passage pick or a code brief finds no evidence for the lesson.
+  - It is also written when a passage pick finds nothing for the lesson. A code brief with no evidence needs no
+    record of its own: its drill is stored with no lesson issue, and that records that code does not fit.
   - `basis` hashes the evidence the decision rested on: the lesson's blocks when it is prepared, and the course's
     active source versions, which a prepared lesson's passages come from too. A record whose basis no longer matches
     is ignored. So preparing the lesson or changing a source asks the question again, and no retrieval runs to find
