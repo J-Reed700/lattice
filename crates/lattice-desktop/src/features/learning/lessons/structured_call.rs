@@ -43,6 +43,10 @@ const REASK: &str = "That answer could not be used:";
 /// full to carry that answer. Like [`ANSWER_STEP`] it names no format.
 const RESTATE: &str = "An earlier answer to this task could not be used, so avoid this:";
 
+/// What a learning call's window refusal says does not fit.
+pub(in crate::features::learning) const MATERIAL_DOES_NOT_FIT: &str =
+    "The requested learning material does not fit";
+
 /// Which knob in [`model_call`] decides whether a call reasons first.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::features::learning) enum CallKind {
@@ -562,7 +566,7 @@ async fn send(
         llm,
         request,
         unbounded.then_some(&streaming),
-        model_call::TooLarge::Window("The requested learning material does not fit"),
+        model_call::TooLarge::Window(MATERIAL_DOES_NOT_FIT),
     )
     .await?;
     tracing::info!(

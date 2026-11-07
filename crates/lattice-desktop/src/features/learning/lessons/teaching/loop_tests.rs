@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::features::learning::lesson_drafts;
-use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+use crate::features::learning::lessons::course_generation_tests::{ScriptedModel, Windowed};
 use crate::features::learning::reference_collection::ReferenceCollection;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
@@ -274,6 +274,68 @@ async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<
         original
     );
     assert_eq!(reviewed.set_aside.len(), 1);
+    Ok(())
+}
+
+/// The repair carries the writer's prompt beside the lesson and a whole
+/// lesson's answer room: on a 9B's 32k window the first repair of a
+/// PostgreSQL lesson did not fit, so every teaching finding waited for the
+/// user and none was repaired (2026-11-06). Six excerpts of 2,000 tokens
+/// here, the lesson citing the fifth, in a window that holds the repair
+/// beside some.
+#[tokio::test]
+async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_first() -> Result<()>
+{
+    let excerpts: Vec<_> = (0..6)
+        .map(|index| json!({"sourceIndex":index,"title":format!("Source {index}"),"url":null,"excerpt":"x ".repeat(4000)}))
+        .collect();
+    let mut candidate = lesson("x x x x x x x x x x x x x x");
+    candidate["blocks"][0]["sourceIndex"] = json!(4);
+    let scripted = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        retitle("Corrected example"),
+        review(None),
+    ]);
+    let window = Windowed(&scripted, 13_000);
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let reviewed = review_material(
+        &window,
+        LESSON_REPAIR_SYSTEM,
+        &json!({"sources":excerpts}).to_string(),
+        &json!({"type":"object"}),
+        candidate.to_string(),
+        4000,
+        ReviewContext {
+            outline: None,
+            protected: &[],
+            lesson_references: Some(&references),
+            held: BTreeSet::new(),
+        },
+    )
+    .await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert_eq!(
+        serde_json::from_str::<Value>(&reviewed.candidate)?["blocks"][0]["title"],
+        "Corrected example"
+    );
+    let prompts = scripted.prompts.lock().unwrap();
+    let repair = prompts
+        .iter()
+        .find(|prompt| prompt.contains("issuesToFix"))
+        .unwrap();
+    let sent: Value = serde_json::from_str(repair.rsplit("\n\n").next().unwrap())?;
+    let kept: Vec<_> = sent["originalRequirements"]["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|excerpt| excerpt["sourceIndex"].as_u64().unwrap())
+        .collect();
+    assert!(kept.contains(&4));
+    assert!(!kept.contains(&5));
     Ok(())
 }
 
