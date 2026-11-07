@@ -632,6 +632,25 @@ async fn a_second_refusal_fails_with_its_own_reason_without_blaming_the_input() 
 }
 
 #[tokio::test]
+async fn a_refused_answer_asked_again_shows_the_learner_only_that_it_is_asking_again() -> Result<()>
+{
+    let llm = Recorder::answering_first(32_000, &["{\"answer\":\"Blue.\"}"]);
+    let (value, stages) =
+        crate::features::learning::lesson_progress::traced(checked(&llm, None)).await;
+    assert_eq!(value?, ANSWER);
+
+    let asking = "The model's answer could not be used; asking once more.";
+    assert!(stages.iter().any(|stage| stage == asking), "{stages:?}");
+    assert!(
+        stages
+            .iter()
+            .all(|stage| !stage.contains("explains nothing") && !stage.contains("Blue.")),
+        "{stages:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_window_too_full_for_the_refused_answer_sends_the_task_again_with_the_reason(
 ) -> Result<()> {
     let refused: &'static str = Box::leak("blue ".repeat(4_000).into_boxed_str());
