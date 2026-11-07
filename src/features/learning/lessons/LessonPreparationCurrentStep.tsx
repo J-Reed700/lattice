@@ -12,8 +12,6 @@ export function LessonPreparationCurrentStep({ job, now }: { job: LearningGenera
   const idle = Math.max(0, (now - activity.lastActivityAt) / 1000);
   const followingChecks = activity.phase === 'repair' || activity.phase === 'research';
   const checkedAll = activity.checksTotal > 0 && activity.checksCompleted >= activity.checksTotal;
-  const sentBack = activity.checksSentBack > 0 ? ` and ${activity.checksSentBack} ${activity.checksSentBack === 1 ? 'was' : 'were'} sent back for stronger sources` : '';
-  const findings = `${activity.checksUnresolved} ${activity.checksUnresolved === 1 ? 'claim needed' : 'claims needed'} attention${sentBack} in the last pass`;
   return <div aria-label="Current preparation step" className="rounded-xl border border-accent/40 bg-background/80 p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <p className="text-xs font-semibold uppercase tracking-wide text-accent">{activity.phase === 'publishing' ? 'Final step · Saving your lesson' : 'Lesson not ready yet'}</p>
@@ -21,7 +19,7 @@ export function LessonPreparationCurrentStep({ job, now }: { job: LearningGenera
     </div>
     <div aria-live="polite" aria-atomic="true" className="mt-3">
       <h4 className="text-lg font-semibold text-text-primary">{phase.title}</h4>
-      {followingChecks && checkedAll && <p className="mt-2 text-sm leading-6 text-text-primary">Checking finished; {findings}. {activity.phase === 'repair' ? 'The affected sections are being corrected before another review.' : 'Additional evidence is being researched before another review.'}</p>}
+      {followingChecks && checkedAll && <p className="mt-2 text-sm leading-6 text-text-primary">Checking finished. {activity.phase === 'repair' ? 'The affected sections are being corrected before another review.' : 'Additional evidence is being researched before another review.'}</p>}
       <p className="mt-3 wrap-break-word border-l-2 border-accent pl-3 text-base font-medium leading-6 text-text-primary">{job.progressMessage}</p>
     </div>
     <p className="mt-3 text-sm leading-6 text-text-secondary">{phase.detail}</p>

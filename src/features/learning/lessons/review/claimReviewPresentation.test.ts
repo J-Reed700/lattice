@@ -22,11 +22,12 @@ import {
   heldLessonIds,
   jobHoldingLesson,
   reviewHold,
+  takenOutSentences,
   unitLabel,
 } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { support, sufficiency, thirtyThreeClaims, tried, waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { claimItem, review, STOPPED_AT, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { CheckerVerdictDto, ClaimAttachReportDto, ClaimEventDto, LearningGenerationJob, LearningTrustLevel, SourceKindDto } from '@/lib/bindings';
+import type { CheckerVerdictDto, ClaimAttachReportDto, ClaimEventDto, ClaimReviewItemDto, LearningGenerationJob, LearningTrustLevel, SourceKindDto } from '@/lib/bindings';
 
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 1,
@@ -106,10 +107,10 @@ describe('claim review presentation', () => {
   });
 
   it('the tally never counts the machine’s rewrites as the user’s', () => {
-    const counts = { verified: 12, confirmed: 0, generalKnowledge: 0, queued: 33, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 };
+    const counts = { verified: 12, confirmed: 0, queued: 33, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 };
     expect(tallyLine(counts)).toBe('33 claims need you · 12 verified · 74 rewritten by the machine');
     expect(tallyLine({ ...counts, queued: 1, confirmed: 2, removedByYou: 1 })).toBe('1 claim needs you · 12 verified · 2 confirmed by you · 74 rewritten by the machine · 1 removed by you');
-    const tally = { unchecked: 0, searching: 2, sentBack: 1, repairing: 0, waiting: 5, verified: 40, resolvedByYou: 0, rewritten: 9 };
+    const tally = { unchecked: 0, searching: 3, repairing: 0, waiting: 5, verified: 40, resolvedByYou: 0, rewritten: 9 };
     expect(jobTallyLine(tally)).toBe('5 claims need you · 40 verified · 9 rewritten by the machine · 3 being checked');
     expect(jobTallyLine(tally)).not.toMatch(/resolved by you/);
   });
@@ -153,5 +154,43 @@ describe('claim review presentation', () => {
     };
     expect(attachSummary(report, 15, 18).line).toBe('Added Monarch Watch. Verified 12 of 15 claims; 2 do not match what it says; 1 is not mentioned by it.');
     expect(attachSummary(report, 1, 32).line).toBe('Added Monarch Watch; it states this. 32 left.');
+  });
+});
+
+describe('what the machine took out of the lesson', () => {
+  const SENTENCE = 'Tesseract is an OCR engine written in 2019 that reads pixels into text.';
+
+  /** A statement the machine removed, on `sentence`. */
+  const taken = (claimId: string, statement: string, overrides: Partial<ClaimReviewItemDto> = {}, sentence = SENTENCE): ClaimReviewItemDto => claimItem({
+    claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: [], verdictKind: null, reason: null,
+    location: { unitIndex: 2, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null },
+    presentation: { statement, sentence, contextBefore: '', contextAfter: '', place: '' },
+    ...overrides,
+  });
+
+  it('lists a sentence several statements stood on once, naming each with the reason that is its own', () => {
+    const failed = taken('a', 'Tesseract was written in 2019.', { verdictKind: { kind: 'unsupported' }, reason: 'No passage gives the year.' });
+    const rider = taken('b', 'Tesseract reads pixels into text.');
+    const other = taken('c', 'Water boils at 100 °C.', { verdictKind: { kind: 'contradicted' }, reason: 'A passage says otherwise.' }, 'Water boils at 100 °C.');
+    const byYou = taken('d', 'Removed by you.', { state: { state: 'removed', at: 6, by: 'user' } });
+    const waiting = claimItem({ claimId: 'e' });
+
+    expect(takenOutSentences([failed, rider, other, byYou, waiting])).toEqual([
+      {
+        key: `2:body:${SENTENCE}`, sentence: SENTENCE,
+        statements: [
+          { claimId: 'a', statement: 'Tesseract was written in 2019.', why: 'Not stated by the passages compared · No passage gives the year.' },
+          { claimId: 'b', statement: 'Tesseract reads pixels into text.', why: 'Taken out with the sentence or section it stood in' },
+        ],
+      },
+      {
+        key: '2:body:Water boils at 100 °C.', sentence: 'Water boils at 100 °C.',
+        statements: [{ claimId: 'c', statement: 'Water boils at 100 °C.', why: 'A source says otherwise · A passage says otherwise.' }],
+      },
+    ]);
+  });
+
+  it('lists nothing when the machine took nothing out', () => {
+    expect(takenOutSentences([claimItem(), taken('d', 'Removed by you.', { state: { state: 'removed', at: 6, by: 'user' } })])).toEqual([]);
   });
 });

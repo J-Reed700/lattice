@@ -63,6 +63,20 @@ pub enum LessonQuestionKind {
     Quiz,
     Test,
 }
+
+impl LessonQuestionKind {
+    /// Every kind a prepared lesson asks: it is saved only with a question of
+    /// each.
+    pub const ALL: [Self; 3] = [Self::Practice, Self::Quiz, Self::Test];
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Practice => "practice",
+            Self::Quiz => "quiz",
+            Self::Test => "test",
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningSourceDto {

@@ -11,8 +11,23 @@ pub struct ActiveVersion {
 }
 
 impl LearningSourceLibraryRepository {
+    /// The program's sources, with what the library offers the user to remove
+    /// (claim classes design 3.6).
     pub async fn workspace(&self, program_id: &str) -> Result<LearningSourceWorkspaceDto> {
-        self.workspace_with_deleted(program_id, false).await
+        let mut workspace = self.workspace_with_deleted(program_id, false).await?;
+        workspace.not_sources = self
+            .refused_sources(program_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        workspace.unused_research = self
+            .unused_research_sources(program_id)
+            .await?
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        Ok(workspace)
     }
 
     /// Build a source snapshot for portable exports, including tombstones whose
@@ -73,6 +88,7 @@ impl LearningSourceLibraryRepository {
                 id: id.clone(),
                 kind: parse_kind(row.get("kind"))?,
                 added_by: parse_added_by(row.get("added_by"))?.into(),
+                found_by_search: Some(row.get::<i64, _>("found_by_search") != 0),
                 origin: row.get("origin"),
                 requested_url: row.get("requested_url"),
                 freshness_policy: parse_policy(row.get("freshness_policy"))?,
@@ -97,6 +113,8 @@ impl LearningSourceLibraryRepository {
         Ok(LearningSourceWorkspaceDto {
             program_id: program_id.into(),
             sources,
+            not_sources: Vec::new(),
+            unused_research: Vec::new(),
             recheck: None,
         })
     }
@@ -164,7 +182,7 @@ impl LearningSourceLibraryRepository {
         })
     }
 
-    async fn version_usage(
+    pub(super) async fn version_usage(
         &self,
         program_id: &str,
         version_id: &str,
@@ -245,7 +263,7 @@ impl LearningSourceLibraryRepository {
 
     pub async fn prepare_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
-        let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
+        let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
             .bind(program_id).fetch_all(&self.pool).await.map_err(db)?;
         Ok(rows
             .into_iter()
@@ -265,7 +283,7 @@ impl LearningSourceLibraryRepository {
     /// text: what the course index holds, read cheaply enough to compare with
     /// it on every use.
     pub async fn active_versions(&self, program_id: &str) -> Result<Vec<ActiveVersion>> {
-        let rows = sqlx::query("SELECT v.id,v.title,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
+        let rows = sqlx::query("SELECT v.id,v.title,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
             .bind(program_id)
             .fetch_all(&self.pool)
             .await
@@ -309,7 +327,7 @@ impl LearningSourceLibraryRepository {
 
     pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
-        let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
+        let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
             .bind(program_id).fetch_all(&self.pool).await.map_err(db)?;
         Ok(rows
             .into_iter()

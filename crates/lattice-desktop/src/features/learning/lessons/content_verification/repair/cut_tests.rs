@@ -1,0 +1,99 @@
+use super::*;
+
+fn done(cut: Cut) -> Option<String> {
+    match cut {
+        Cut::Done(text) => Some(text),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_sentence_taken_out_leaves_the_rest_as_written() {
+    let cut = |text: &str, quote: &str| done(sentence(text, quote));
+    assert_eq!(
+        cut("A one. B two. C three.", "B two.").as_deref(),
+        Some("A one. C three.")
+    );
+    assert_eq!(cut("A one. B two.", "A one.").as_deref(), Some("B two."));
+    assert_eq!(cut("A one. B two.", "B two.").as_deref(), Some("A one."));
+    assert_eq!(
+        cut("- A.\n- B.\n- C.", "- B.").as_deref(),
+        Some("- A.\n- C.")
+    );
+    // A paragraph break stays where it was.
+    assert_eq!(
+        cut("P1 a. P1 b.\n\nP2 a.", "P1 b.").as_deref(),
+        Some("P1 a.\n\nP2 a.")
+    );
+    assert_eq!(
+        cut("P1 a. P1 b.\n\nP2 a.\n", "P2 a.").as_deref(),
+        Some("P1 a. P1 b.\n")
+    );
+    assert_eq!(cut("P1 a.\n\nP2 a.", "P1 a.").as_deref(), Some("P2 a."));
+}
+
+#[test]
+fn every_place_a_sentence_is_written_goes_with_it() {
+    let cut = |text: &str, quote: &str| done(sentence(text, quote));
+    assert_eq!(cut("Dup. Keep. Dup.", "Dup.").as_deref(), Some("Keep."));
+    // A quote over several sentences takes them all; one inside a sentence
+    // takes the sentence it is in.
+    assert_eq!(
+        cut("A one. B two. C three.", "A one. B two.").as_deref(),
+        Some("C three.")
+    );
+    assert_eq!(
+        cut("A one. B two. C three.", "two").as_deref(),
+        Some("A one. C three.")
+    );
+    assert_eq!(
+        cut("```py\nx\n```\nProse one. Prose two.", "Prose one.").as_deref(),
+        Some("```py\nx\n```\nProse two.")
+    );
+}
+
+#[test]
+fn text_already_out_needs_no_cut_and_the_whole_of_a_field_or_a_code_block_stays() {
+    assert!(matches!(sentence("A one.", "B two."), Cut::Absent));
+    assert!(matches!(sentence("A one.", ""), Cut::Absent));
+    assert!(matches!(sentence("Only. Only.", "Only."), Cut::Refused));
+    assert!(matches!(
+        sentence("Text.\n```py\nx = 1. y = 2\n```\n", "x = 1."),
+        Cut::Refused
+    ));
+    assert!(matches!(
+        sentence("A.\n```\nB\n```\n", "```\nB"),
+        Cut::Refused
+    ));
+}
+
+#[test]
+fn a_fenced_example_is_taken_out_with_its_fences() {
+    let code = "print(1)\n";
+    let cut = |text: &str| done(fence(text, code));
+    assert_eq!(
+        cut("Intro.\n\n```python\nprint(1)\n```\n\nAfter.").as_deref(),
+        Some("Intro.\n\nAfter.")
+    );
+    assert_eq!(
+        cut("Intro.\n```python\nprint(1)\n```\nAfter.").as_deref(),
+        Some("Intro.\nAfter.")
+    );
+    assert_eq!(
+        cut("Intro.\n\n```python\nprint(1)\n```\n").as_deref(),
+        Some("Intro.\n")
+    );
+    assert_eq!(
+        cut("```python\nprint(1)\n```\n\nAfter.").as_deref(),
+        Some("After.")
+    );
+    assert!(matches!(fence("Intro.", code), Cut::Absent));
+    assert!(
+        matches!(fence("print(1)\n", code), Cut::Refused),
+        "no fence around it"
+    );
+    assert!(
+        matches!(fence("```python\nprint(1)\n```\n", code), Cut::Refused),
+        "nothing would be left"
+    );
+}

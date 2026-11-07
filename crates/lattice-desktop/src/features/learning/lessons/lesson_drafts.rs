@@ -28,6 +28,9 @@ pub(in crate::features::learning) struct Draft {
     /// Failed checks and evidence for a pending rewrite, never approval.
     #[serde(default)]
     pub pending_repair: Option<String>,
+    /// What decides when a teaching review that repairs this draft stops.
+    #[serde(default)]
+    pub teaching_passes: Option<String>,
 }
 
 /// Keep the author's original citation indices stable when research adds new
@@ -109,18 +112,6 @@ pub(in crate::features::learning) async fn checkpoint(
         .await
 }
 
-pub(in crate::features::learning) async fn checkpoints_with_prefix(
-    prefix: &str,
-) -> Result<Vec<serde_json::Value>> {
-    let Ok(context) = CURRENT.try_with(Clone::clone) else {
-        return Ok(Vec::new());
-    };
-    context
-        .repo
-        .lesson_checkpoints_with_prefix(&context.job_id, &context.lesson_id, prefix)
-        .await
-}
-
 pub(in crate::features::learning) async fn record_checkpoint(
     key: &str,
     value: serde_json::Value,
@@ -197,17 +188,30 @@ pub(in crate::features::learning) async fn resume(input_hash: String) -> Result<
 }
 
 pub(in crate::features::learning) async fn save(candidate: &str) -> Result<()> {
-    save_checkpoint(candidate, None).await
+    save_checkpoint(candidate, None, None).await
 }
 
 pub(in crate::features::learning) async fn save_repair(
     candidate: &str,
     pending: Option<String>,
 ) -> Result<()> {
-    save_checkpoint(candidate, Some(pending)).await
+    save_checkpoint(candidate, Some(pending), None).await
 }
 
-async fn save_checkpoint(candidate: &str, repair_override: Option<Option<String>>) -> Result<()> {
+/// The draft and the stopping state of the teaching review repairing it, in
+/// one write.
+pub(in crate::features::learning) async fn save_with_passes(
+    candidate: &str,
+    passes: String,
+) -> Result<()> {
+    save_checkpoint(candidate, None, Some(passes)).await
+}
+
+async fn save_checkpoint(
+    candidate: &str,
+    repair_override: Option<Option<String>>,
+    passes_override: Option<String>,
+) -> Result<()> {
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
         return Ok(());
     };
@@ -228,6 +232,11 @@ async fn save_checkpoint(candidate: &str, repair_override: Option<Option<String>
         let claim_inventory = previous
             .as_ref()
             .and_then(|draft| draft.claim_inventory.clone());
+        let teaching_passes = passes_override.or_else(|| {
+            previous
+                .as_ref()
+                .and_then(|draft| draft.teaching_passes.clone())
+        });
         let pending_repair =
             repair_override.unwrap_or_else(|| previous.and_then(|draft| draft.pending_repair));
         let authoring = context
@@ -247,6 +256,7 @@ async fn save_checkpoint(candidate: &str, repair_override: Option<Option<String>
                     authoring,
                     claim_inventory,
                     pending_repair,
+                    teaching_passes,
                 },
             )
             .await?;
@@ -310,6 +320,16 @@ pub(in crate::features::learning) async fn pending_repair(
     Ok(current(candidate)
         .await?
         .and_then(|(_, draft)| draft.pending_repair))
+}
+
+/// The stopping state a teaching review cut short saved with this exact
+/// draft.
+pub(in crate::features::learning) async fn teaching_passes(
+    candidate: &str,
+) -> Result<Option<String>> {
+    Ok(current(candidate)
+        .await?
+        .and_then(|(_, draft)| draft.teaching_passes))
 }
 
 pub(in crate::features::learning) async fn record_pending_repair(

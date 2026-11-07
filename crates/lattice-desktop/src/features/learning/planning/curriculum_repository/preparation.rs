@@ -63,17 +63,6 @@ impl LearningCurriculumRepository {
             .await
     }
 
-    pub(in crate::features::learning) async fn lesson_checkpoints_with_prefix(
-        &self,
-        job_id: &str,
-        lesson_id: &str,
-        prefix: &str,
-    ) -> Result<Vec<serde_json::Value>> {
-        self.jobs_store()
-            .checkpoints_with_prefix(job_id, &lesson_checkpoint_key(lesson_id, prefix))
-            .await
-    }
-
     pub(in crate::features::learning) async fn save_lesson_checkpoint(
         &self,
         job_id: &str,

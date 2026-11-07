@@ -379,3 +379,89 @@ async fn a_grader_may_name_only_the_rubric_criteria() {
         serde_json::json!(["evidence", "mechanism"])
     );
 }
+
+#[test]
+fn the_item_schemas_hold_no_text_length_cap() {
+    use crate::features::learning::practice::practice_tests::text_length_rules;
+    for format in [
+        LearningItemFormat::SingleChoice,
+        LearningItemFormat::TrueFalse,
+        LearningItemFormat::MultiSelect,
+        LearningItemFormat::ShortAnswer,
+        LearningItemFormat::Cloze,
+        LearningItemFormat::Matching,
+        LearningItemFormat::Ordering,
+        LearningItemFormat::Explanation,
+        LearningItemFormat::Artifact,
+    ] {
+        // A written item's criteria are shaped by the lessons' rubric schema,
+        // and a quote must run to a clause to show the item rests on its passage.
+        let rules: Vec<String> = text_length_rules(&item_schema(format, 3, 2, 3))
+            .into_iter()
+            .filter(|rule| {
+                !rule.starts_with("/properties/rubric/")
+                    && rule.as_str() != "/properties/quote/minLength = 12"
+            })
+            .collect();
+        assert!(rules.is_empty(), "{format:?}: {rules:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_grading_schemas_ask_for_no_text_length() {
+    use crate::features::learning::practice::practice_tests::text_length_rules;
+    let criterion = |id: &str| LearningRubricCriterion {
+        id: id.into(),
+        title: id.into(),
+        description: "Explains it.".into(),
+        max_points: 2,
+    };
+    let written = |note: Option<&str>| WrittenAnswer {
+        item_id: "q1".into(),
+        prompt: "Why does the ore reduce?".into(),
+        rubric: vec![criterion("mechanism"), criterion("evidence")],
+        answer: "Carbon monoxide takes the oxygen.".into(),
+        reference: "CO reduces Fe2O3.".into(),
+        learner_note: note.map(str::to_owned),
+    };
+    let llm = SchemaRecorder(Mutex::new(Vec::new()));
+    grade_written(&llm, &[written(None)]).await.unwrap();
+    grade_written(&llm, &[written(Some("I named the mechanism."))])
+        .await
+        .unwrap();
+    judge_short_answers(&llm, &[short("a")]).await.unwrap();
+    let mut noted = short("b");
+    noted.learner_note = Some("I meant the same thing.".into());
+    judge_short_answers(&llm, &[noted]).await.unwrap();
+    let schemas = llm.0.lock().unwrap();
+    assert!(schemas.len() >= 4, "{} schemas were sent", schemas.len());
+    for schema in schemas.iter() {
+        let rules = text_length_rules(schema);
+        assert!(rules.is_empty(), "{rules:?}");
+    }
+}
+
+#[test]
+fn a_long_distractor_rationale_is_kept_whole() {
+    let mut authored = need("Reduce iron oxide.".into(), 1);
+    authored.requirement.format = LearningItemFormat::SingleChoice;
+    authored.requirement.outcome_id = uuid::Uuid::new_v4().to_string();
+    let passage = authored.material[0].clone();
+    let rationale = "This option names a gas that does not take the oxygen away. ".repeat(12);
+    let raw: RawItem = serde_json::from_value(serde_json::json!({
+        "prompt": "Which gas takes the oxygen from the ore in a blast furnace?",
+        "options": ["Carbon monoxide", "Nitrogen dioxide", "Sulfur dioxide", "Carbon dioxide"],
+        "answerIndex": 0,
+        "distractorRationales": ["", rationale, "Not a reducing gas here.", "Already fully oxidised."],
+        "explanation": "Carbon monoxide takes the oxygen from the oxide.",
+        "blockIndex": 0,
+        "quote": "iron oxide reduction Fe₂O₃ + 3CO",
+        "difficulty": 2
+    }))
+    .unwrap();
+    let item = to_candidate(raw, &authored, &[&passage]).unwrap();
+    assert!(item
+        .candidate
+        .distractor_rationales
+        .contains(&rationale.trim().to_string()));
+}

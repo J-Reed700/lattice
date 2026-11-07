@@ -713,6 +713,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
                 authoring: None,
                 claim_inventory: None,
                 pending_repair: None,
+                teaching_passes: None,
             }
         )
         .await

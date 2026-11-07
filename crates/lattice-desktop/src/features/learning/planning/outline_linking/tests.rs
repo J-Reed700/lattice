@@ -622,3 +622,40 @@ async fn one_item_whose_every_candidate_overflows_the_window_stays_unlinked_with
     );
     assert!(draft.citation_receipts.is_empty());
 }
+
+#[test]
+fn the_chooser_schema_bounds_no_text_but_a_blank_one() {
+    let (_, schema, _, _) = request(&[], &sources());
+    let caps = crate::features::learning::content_caps_tests::text_caps(&schema);
+    assert!(caps.is_empty(), "{caps:?}");
+}
+
+#[tokio::test]
+async fn a_chooser_reason_is_kept_whole() {
+    let reason = "The passage explains random assignment and confounding. ".repeat(10);
+    let mut draft = draft(candidate());
+    let llm = model(vec![json!({"links":[
+        {"id":"/modules/0/summary","candidate":"p2","reason":reason},
+        {"id":"/modules/0/outcomes/0","candidate":"p1","reason":reason},
+        {"id":"/modules/0/outcomes/1","candidate":"p2","reason":reason},
+        {"id":"/modules/0/lessons/0","candidate":"none","reason":reason}
+    ]})]);
+    link(
+        &llm,
+        &mut draft,
+        &sources(),
+        None,
+        &OutlineProgress::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(draft.citation_receipts.len(), 4);
+    assert!(
+        draft
+            .citation_receipts
+            .values()
+            .all(|receipt| receipt.reason == reason),
+        "every receipt keeps the whole reason, {} characters",
+        reason.chars().count()
+    );
+}
