@@ -16,8 +16,8 @@ use url::Url;
 
 use crate::domain::sourcing::policy::DEFAULT_FINDER_CONCURRENCY;
 use crate::domain::sourcing::{
-    is_known_finder, Auth, FinderDescriptor, FinderId, InstanceSetting, KeyService, Reach,
-    SkipReason,
+    is_known_finder, is_retired_finder, Auth, FinderDescriptor, FinderId, InstanceSetting,
+    KeyService, Reach, SkipReason,
 };
 
 /// Source-finding settings.
@@ -25,8 +25,8 @@ use crate::domain::sourcing::{
 #[serde(rename_all = "camelCase")]
 pub struct SourcingSettingsDto {
     /// Per-finder switches by finder id; a finder left out is on (its `Auth`
-    /// still gates it).
-    #[serde(default)]
+    /// still gates it). A switch for a retired finder is dropped on load.
+    #[serde(default, deserialize_with = "without_retired_finders")]
     pub finders: BTreeMap<String, FinderSettingDto>,
 
     /// The user's SearXNG instance (its JSON API must be enabled). Unset
@@ -55,6 +55,17 @@ pub struct SourcingSettingsDto {
 #[serde(rename_all = "camelCase")]
 pub struct FinderSettingDto {
     pub enabled: bool,
+}
+
+fn without_retired_finders<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, FinderSettingDto>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let mut finders = BTreeMap::<String, FinderSettingDto>::deserialize(deserializer)?;
+    finders.retain(|id, _| !is_retired_finder(id));
+    Ok(finders)
 }
 
 fn default_archive_fallback() -> bool {

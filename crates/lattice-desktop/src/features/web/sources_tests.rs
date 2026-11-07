@@ -249,7 +249,7 @@ async fn switches_instance_contact_and_archive_apply_on_reload() {
     let mut updates = HashMap::new();
     updates.insert(
         "finders".to_string(),
-        serde_json::json!({ "bing_html": { "enabled": false } }),
+        serde_json::json!({ "marginalia": { "enabled": false } }),
     );
     updates.insert(
         "searxngUrl".to_string(),
@@ -267,13 +267,13 @@ async fn switches_instance_contact_and_archive_apply_on_reload() {
     reload(&f.web, &f.settings, &f.keyring).await;
 
     let status = f.web.sources_status();
-    let bing = status
+    let marginalia = status
         .finders
         .iter()
-        .find(|finder| finder.id == "bing_html")
+        .find(|finder| finder.id == "marginalia")
         .unwrap();
-    assert!(!bing.enabled);
-    assert_eq!(bing.gate, Some(FinderGateDto::Disabled));
+    assert!(!marginalia.enabled);
+    assert_eq!(marginalia.gate, Some(FinderGateDto::Disabled));
     assert_eq!(gate_of(&status, "searxng"), None);
     assert_eq!(gate_of(&status, "unpaywall"), None);
     assert_eq!(
@@ -282,11 +282,14 @@ async fn switches_instance_contact_and_archive_apply_on_reload() {
     );
 
     let health = f.web.source_finding().health();
-    let bing = health
+    let marginalia = health
         .iter()
-        .find(|finder| finder.id == FinderId::new("bing_html"))
+        .find(|finder| finder.id == FinderId::new("marginalia"))
         .unwrap();
-    assert_eq!(bing.state, HealthState::Unavailable(SkipReason::Disabled));
+    assert_eq!(
+        marginalia.state,
+        HealthState::Unavailable(SkipReason::Disabled)
+    );
 }
 
 #[derive(Clone, Default)]

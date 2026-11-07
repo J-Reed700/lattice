@@ -4,8 +4,11 @@
 //! dispatch table in [`super`], so every handler receives already-normalized
 //! arguments.
 
-use super::{FunctionExecutor, TOOL_LIST_DOCUMENTS, TOOL_SEMANTIC_SEARCH};
+use super::{FunctionExecutor, TOOL_LIST_DOCUMENTS, TOOL_SEMANTIC_SEARCH, TOOL_WEB_SEARCH};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+
+/// Providers `web_search` offered once and no longer does.
+const RETIRED_SEARCH_PROVIDERS: [&str; 2] = ["bing", "bing_html"];
 
 impl FunctionExecutor {
     pub(super) fn parse_datetime(value: &str) -> Option<DateTime<Utc>> {
@@ -28,6 +31,10 @@ impl FunctionExecutor {
         function_name: &str,
         arguments: &serde_json::Value,
     ) -> serde_json::Value {
+        if function_name == TOOL_WEB_SEARCH {
+            return Self::without_retired_providers(arguments);
+        }
+
         if !matches!(function_name, TOOL_SEMANTIC_SEARCH | TOOL_LIST_DOCUMENTS) {
             return arguments.clone();
         }
@@ -41,6 +48,24 @@ impl FunctionExecutor {
         Self::normalize_datetime_filter(object, "date_to", true);
 
         normalized
+    }
+
+    /// A call from an older conversation may name a provider the tool no
+    /// longer offers. Dropping the name leaves a search with the providers
+    /// still named, or the router's own choice when none is.
+    pub(super) fn without_retired_providers(arguments: &serde_json::Value) -> serde_json::Value {
+        let mut cleaned = arguments.clone();
+        if let Some(providers) = cleaned
+            .get_mut("providers")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            providers.retain(|provider| {
+                !provider.as_str().is_some_and(|name| {
+                    RETIRED_SEARCH_PROVIDERS.contains(&name.trim().to_ascii_lowercase().as_str())
+                })
+            });
+        }
+        cleaned
     }
 
     fn normalize_datetime_filter(

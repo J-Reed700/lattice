@@ -17,10 +17,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::runner::Clock;
 use super::{HopReader, SiteHomes, SourcingService};
-use crate::features::web::mocks::web::ScriptedFinder;
-use crate::features::web::services::finders::{
-    bing_html, duckduckgo, github, site_discovery, FinderEntry,
-};
+use crate::features::web::mocks::web::{second_web_engine, ScriptedFinder};
+use crate::features::web::services::finders::{duckduckgo, github, site_discovery, FinderEntry};
 
 /// A clock that stands still until the runner sleeps, then jumps.
 struct FakeClock {
@@ -109,7 +107,7 @@ fn result_of<'a>(
 }
 
 /// A challenge from DuckDuckGo opens its breaker at once (scraped engines
-/// trip on the first refusal), the same call still returns Bing's leads,
+/// trip on the first refusal), the same call still returns the second engine's leads,
 /// and DuckDuckGo is never asked again within the call: its later step is
 /// skipped as circuit-open, naming the challenge.
 #[tokio::test]
@@ -121,23 +119,23 @@ async fn a_challenged_engine_opens_its_breaker_and_the_call_still_returns_the_ot
         FailureCause::Challenge,
     ));
     // Short pages, so the first wave is thin and the reworded wave runs.
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 4));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 4));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&second, 10)], &clock);
 
     let findings = sourcing
         .find(web_need(10, &["rust async runtime"]), budget(PLENTY))
         .await
-        .expect("Bing answered");
+        .expect("the second engine answered");
 
     assert_eq!(
         findings.leads.len(),
         8,
-        "both of Bing's queries, deduplicated"
+        "both of the second engine's queries, deduplicated"
     );
     assert!(findings.leads.iter().all(|lead| lead
         .found_by
         .iter()
-        .all(|(finder, _)| finder.as_str() == "bing_html")));
+        .all(|(finder, _)| finder.as_str() == "second_engine")));
     assert_eq!(
         ddg.calls().len(),
         1,
@@ -150,7 +148,7 @@ async fn a_challenged_engine_opens_its_breaker_and_the_call_still_returns_the_ot
         other => panic!("DuckDuckGo should be skipped as circuit-open, got {other:?}"),
     }
     assert_eq!(
-        result_of(&findings.outcomes, "bing_html"),
+        result_of(&findings.outcomes, "second_engine"),
         &FinderResult::Answered
     );
     let ddg_health = sourcing
@@ -173,8 +171,8 @@ async fn an_open_breaker_skips_its_finder_on_the_next_call_without_a_request() {
         duckduckgo::DESCRIPTOR,
         FailureCause::Challenge,
     ));
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&second, 10)], &clock);
 
     sourcing
         .find(web_need(5, &[]), budget(PLENTY))
@@ -185,7 +183,7 @@ async fn an_open_breaker_skips_its_finder_on_the_next_call_without_a_request() {
     let second = sourcing
         .find(web_need(5, &[]), budget(Duration::from_secs(1)))
         .await
-        .expect("Bing answered");
+        .expect("the second engine answered");
 
     assert_eq!(ddg.calls().len(), 1);
     assert!(matches!(
@@ -205,14 +203,14 @@ async fn a_challenged_engine_is_skipped_not_waited_for_by_a_caller_with_time() {
         duckduckgo::DESCRIPTOR,
         FailureCause::Challenge,
     ));
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&second, 10)], &clock);
 
     for _ in 0..3 {
         sourcing
             .find(web_need(20, &[]), budget(PLENTY))
             .await
-            .expect("Bing answered");
+            .expect("the second engine answered");
     }
 
     assert!(clock.slept().is_empty(), "waited {:?}", clock.slept());
@@ -264,14 +262,14 @@ async fn retry_after_of_hours_is_not_waited_out_even_within_the_deadline() {
             },
         ]),
     );
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
-    let sourcing = service(vec![entry(&limited, 10), entry(&bing, 10)], &clock);
+    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
+    let sourcing = service(vec![entry(&limited, 10), entry(&second, 10)], &clock);
 
     for _ in 0..2 {
         sourcing
             .find(web_need(20, &[]), budget(Duration::from_secs(24 * 60 * 60)))
             .await
-            .expect("Bing answered");
+            .expect("the second engine answered");
     }
 
     assert!(clock.slept().is_empty(), "waited {:?}", clock.slept());
@@ -292,8 +290,8 @@ async fn retry_after_past_the_deadline_is_not_waited_and_holds_the_finder_until_
             },
         ]),
     );
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 3));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 3));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&second, 10)], &clock);
     let short = Duration::from_secs(30);
 
     let first = sourcing
@@ -346,8 +344,8 @@ async fn transport_failures_are_retried_until_the_breaker_trips() {
         duckduckgo::DESCRIPTOR,
         cause.clone(),
     ));
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&second, 10)], &clock);
 
     let findings = sourcing
         .find(web_need(5, &[]), budget(PLENTY))
@@ -371,14 +369,14 @@ async fn when_every_finder_fails_the_error_names_every_cause() {
         duckduckgo::DESCRIPTOR,
         FailureCause::Challenge,
     ));
-    let bing = Arc::new(ScriptedFinder::failing(
-        bing_html::DESCRIPTOR,
+    let second = Arc::new(ScriptedFinder::failing(
+        second_web_engine(),
         FailureCause::Status {
             code: 403,
             retry_after: None,
         },
     ));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+    let sourcing = service(vec![entry(&ddg, 10), entry(&second, 10)], &clock);
 
     let error = sourcing
         .find(web_need(5, &[]), budget(PLENTY))
@@ -390,7 +388,10 @@ async fn when_every_finder_fails_the_error_names_every_cause() {
         error.contains("duckduckgo: failed (bot challenge)"),
         "{error}"
     );
-    assert!(error.contains("bing_html: failed (HTTP 403)"), "{error}");
+    assert!(
+        error.contains("second_engine: failed (HTTP 403)"),
+        "{error}"
+    );
 }
 
 /// A page that answered is reused within its TTL; a later call that needs
@@ -399,8 +400,8 @@ async fn when_every_finder_fails_the_error_names_every_cause() {
 async fn a_cached_page_costs_no_request_and_only_missing_pages_are_fetched() {
     let clock = FakeClock::new();
     let ddg = Arc::new(ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 10));
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
-    let sourcing = service(vec![entry(&ddg, 10), entry(&bing, 10)], &clock);
+    let other = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
+    let sourcing = service(vec![entry(&ddg, 10), entry(&other, 10)], &clock);
 
     let first = sourcing
         .find(web_need(12, &[]), budget(PLENTY))
@@ -415,7 +416,7 @@ async fn a_cached_page_costs_no_request_and_only_missing_pages_are_fetched() {
     let query = "rust async".to_string();
     assert_eq!(ddg.calls(), vec![(query.clone(), 1), (query.clone(), 2)]);
     assert_eq!(
-        bing.calls(),
+        other.calls(),
         vec![(query, 1)],
         "page 1 is never fetched twice"
     );
