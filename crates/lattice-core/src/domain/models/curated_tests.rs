@@ -203,20 +203,26 @@ fn every_entry_has_a_unique_rank_and_parameter_counts() {
     assert_eq!(ranks, expected, "ranks are unique and without gaps");
     for model in CURATED_CHAT_MODELS {
         assert!(model.parameters_b > 0.0, "{}", model.id);
-        if let Some(active) = model.active_parameters_b {
-            assert!(
-                active > 0.0 && active < model.parameters_b,
-                "{}: active parameters are fewer than the total",
-                model.id
-            );
-        }
+        assert!(
+            model.active_parameters_b > 0.0 && model.active_parameters_b <= model.parameters_b,
+            "{}: active parameters are at most the total",
+            model.id
+        );
         let mixture_of_experts = model.id.contains("-a3b-") || model.id.contains("-a4b-");
         assert!(
-            !mixture_of_experts || model.active_parameters_b.is_some(),
+            !mixture_of_experts || model.active_parameters_b < model.parameters_b,
             "{} names its active parameters",
             model.id
         );
-        if model.quantization.contains("IQ3") {
+        let bits = match model.quantization {
+            q if q.contains("IQ3") || q.contains("Q3_") => 3,
+            q if q.contains("Q6") => 6,
+            q if q.contains("Q8") => 8,
+            q if q.contains("Q5") => 5,
+            _ => 4,
+        };
+        assert_eq!(model.quantization_bits, bits, "{}", model.id);
+        if model.quantization_bits < 4 {
             assert!(
                 model.parameters_b >= 20.0,
                 "{}: a small model is never offered below 4 bits",
