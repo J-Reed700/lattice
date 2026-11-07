@@ -3,6 +3,32 @@
 //! author could not match to the nearest real passage.
 use serde_json::{json, Value};
 
+/// The supplied excerpt `index` names.
+fn excerpt_of(sources: &[Value], index: Option<u64>) -> Option<&str> {
+    let index = index?;
+    sources
+        .iter()
+        .find(|source| source.get("sourceIndex").and_then(Value::as_u64) == Some(index))
+        .and_then(|source| source.get("excerpt"))
+        .and_then(Value::as_str)
+}
+
+/// Why a quotation fails against the supplied excerpts; `None` when it holds.
+fn quote_error(sources: &[Value], index: Option<u64>, quote: &str) -> Option<String> {
+    if sources.is_empty() {
+        return (index.is_some() || !quote.trim().is_empty())
+            .then(|| "Topic-based material must not invent source citations.".to_owned());
+    }
+    match excerpt_of(sources, index) {
+        Some(excerpt) => {
+            crate::features::learning::generation::validate_excerpt_quote(quote, excerpt)
+                .err()
+                .map(|e| e.to_string())
+        }
+        None => Some("The citation must select a supplied sourceIndex.".to_owned()),
+    }
+}
+
 pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<Value> {
     let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
         return Vec::new();
@@ -16,38 +42,46 @@ pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<V
             .flatten()
             .enumerate()
         {
+            let path = format!("{field}[{ordinal}]");
             let index = item.get("sourceIndex").and_then(Value::as_u64);
             let quote = item
                 .get("quote")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let error = if sources.is_empty() {
-                (index.is_some() || !quote.trim().is_empty())
-                    .then(|| "Topic-based material must not invent source citations.".to_owned())
-            } else {
-                match index
-                    .and_then(|index| {
-                        sources.iter().find(|source| {
-                            source.get("sourceIndex").and_then(Value::as_u64) == Some(index)
-                        })
-                    })
-                    .and_then(|source| source.get("excerpt"))
+            if let Some(error) = quote_error(sources, index, quote) {
+                failures.push(json!({"path":path,"sourceIndex":index,"quote":quote,"error":error}));
+            }
+            // A sentence the writer cited carries its own source and quote.
+            for (position, cited) in item
+                .get("citations")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let index = cited.get("sourceIndex").and_then(Value::as_u64);
+                let quote = cited
+                    .get("quote")
                     .and_then(Value::as_str)
-                {
-                    Some(excerpt) => crate::features::learning::generation::validate_excerpt_quote(
-                        quote, excerpt,
-                    )
-                    .err()
-                    .map(|e| e.to_string()),
-                    None => Some("The citation must select a supplied sourceIndex.".to_owned()),
+                    .unwrap_or_default();
+                if let Some(error) = quote_error(sources, index, quote) {
+                    failures.push(json!({"path":path,"sourceIndex":index,"quote":quote,"error":format!("Citation {} of this part: {error}", position + 1)}));
                 }
-            };
-            if let Some(error) = error {
-                failures.push(json!({"path":format!("{field}[{ordinal}]"),"sourceIndex":index,"quote":quote,"error":error}));
             }
         }
     }
     failures
+}
+
+/// The exact words of the excerpt `index` names that a quotation of it
+/// matches but for typography; `None` when it already holds or matches none.
+fn restored_quote(sources: &[Value], index: Option<u64>, quote: &str) -> Option<String> {
+    let excerpt = excerpt_of(sources, index)?;
+    if crate::features::learning::generation::validate_excerpt_quote(quote, excerpt).is_ok() {
+        return None;
+    }
+    crate::features::learning::outline_citations::exact_source_quote(excerpt, quote)
+        .map(str::to_owned)
 }
 
 pub(super) fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
@@ -55,6 +89,19 @@ pub(super) fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) ->
         return 0;
     };
     let mut restored = 0;
+    let mut restore = |part: &mut Value| {
+        let exact = restored_quote(
+            sources,
+            part.get("sourceIndex").and_then(Value::as_u64),
+            part.get("quote")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+        if let (Some(exact), Some(quote)) = (exact, part.get_mut("quote")) {
+            *quote = json!(exact);
+            restored += 1;
+        }
+    };
     for field in ["blocks", "questions"] {
         for item in candidate
             .get_mut(field)
@@ -62,32 +109,14 @@ pub(super) fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) ->
             .into_iter()
             .flatten()
         {
-            let Some(index) = item.get("sourceIndex").and_then(Value::as_u64) else {
-                continue;
-            };
-            let Some(excerpt) = sources
-                .iter()
-                .find(|source| source.get("sourceIndex").and_then(Value::as_u64) == Some(index))
-                .and_then(|source| source.get("excerpt"))
-                .and_then(Value::as_str)
-            else {
-                continue;
-            };
-            let Some(quote) = item.get("quote").and_then(Value::as_str) else {
-                continue;
-            };
-            if crate::features::learning::generation::validate_excerpt_quote(quote, excerpt).is_ok()
+            restore(item);
+            for cited in item
+                .get_mut("citations")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
             {
-                continue;
-            }
-            let Some(exact) =
-                crate::features::learning::outline_citations::exact_source_quote(excerpt, quote)
-            else {
-                continue;
-            };
-            if let Some(quote) = item.get_mut("quote") {
-                *quote = json!(exact);
-                restored += 1;
+                restore(cited);
             }
         }
     }
@@ -185,12 +214,62 @@ fn item_text(item: &Value) -> String {
     parts.join(" ")
 }
 
+/// The nearest span of the supplied excerpts to `target` that shares at least
+/// `terms` of its terms and the share `minimum` of them, with the source it is
+/// in; the cited source `index` wins a tie.
+fn nearest(
+    excerpts: &[(u64, &str)],
+    index: Option<u64>,
+    (target, minimum, terms): (&str, f64, usize),
+) -> Option<(f64, u64, String)> {
+    excerpts
+        .iter()
+        .filter_map(|(source, excerpt)| {
+            nearest_passage_span(excerpt, target)
+                .filter(|(_, shared, _)| *shared >= terms)
+                .map(|(share, _, text)| (share, *source, text))
+        })
+        .max_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| (Some(a.1) == index).cmp(&(Some(b.1) == index)))
+        })
+        .filter(|(share, _, _)| *share >= minimum && *share > 0.0)
+}
+
+/// The source and passage a quotation the author could not match is cited to
+/// instead: the span closest to the quotation (at least 60% of its terms),
+/// otherwise the one that shares the most terms (at least two) with
+/// `own_text`, the sentence or item it supports. `None` when the quotation
+/// holds or nothing is near.
+fn reanchored(
+    excerpts: &[(u64, &str)],
+    index: Option<u64>,
+    quote: &str,
+    own_text: &str,
+) -> Option<(u64, String)> {
+    let valid = index
+        .and_then(|index| excerpts.iter().find(|(source, _)| *source == index))
+        .is_some_and(|(_, excerpt)| {
+            crate::features::learning::generation::validate_excerpt_quote(quote, excerpt).is_ok()
+        });
+    if valid {
+        return None;
+    }
+    let (_, source, text) = (!quote.trim().is_empty())
+        .then(|| nearest(excerpts, index, (quote, 0.6, 1)))
+        .flatten()
+        .or_else(|| nearest(excerpts, index, (own_text, 0.0, 2)))?;
+    Some((source, text))
+}
+
 /// After the author has had its chance to correct its quotations, cite the
 /// real passage it meant instead of discarding the lesson: the span closest
 /// to its quotation (at least 60% of its terms) in the cited or another
 /// supplied excerpt, otherwise the span that shares the most terms (at least
-/// two) with the item itself. Citations are provenance; the final review below and claim
-/// verification still check every claim before anything is published.
+/// two) with the item itself, or with the sentence a citation is for.
+/// Citations are provenance; the final review below and claim verification
+/// still check every claim before anything is published.
 pub(super) fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
     let Some(sources) = authoring.get("sources").and_then(Value::as_array) else {
         return 0;
@@ -208,6 +287,26 @@ pub(super) fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -
         return 0;
     }
     let mut changed = 0;
+    let mut cite = |part: &mut Value, own_text: &str| {
+        let quote = part
+            .get("quote")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let index = part.get("sourceIndex").and_then(Value::as_u64);
+        let Some((source, text)) = reanchored(&excerpts, index, &quote, own_text) else {
+            return;
+        };
+        if let Some(object) = part.as_object_mut() {
+            object.insert("sourceIndex".into(), json!(source));
+            object.insert("quote".into(), json!(text));
+            changed += 1;
+            tracing::info!(
+                source,
+                "Cited the nearest real passage for a quotation the author could not match"
+            );
+        }
+    };
     for field in ["blocks", "questions"] {
         for item in candidate
             .get_mut(field)
@@ -215,54 +314,20 @@ pub(super) fn reanchor_lesson_quotes(candidate: &mut Value, authoring: &Value) -
             .into_iter()
             .flatten()
         {
-            let index = item.get("sourceIndex").and_then(Value::as_u64);
-            let quote = item
-                .get("quote")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let valid = index
-                .and_then(|index| excerpts.iter().find(|(source, _)| *source == index))
-                .is_some_and(|(_, excerpt)| {
-                    crate::features::learning::generation::validate_excerpt_quote(&quote, excerpt)
-                        .is_ok()
-                });
-            if valid {
-                continue;
-            }
-            let nearest = |target: &str, minimum: f64, terms: usize| {
-                excerpts
-                    .iter()
-                    .filter_map(|(source, excerpt)| {
-                        nearest_passage_span(excerpt, target)
-                            .filter(|(_, shared, _)| *shared >= terms)
-                            .map(|(share, _, text)| (share, *source, text))
-                    })
-                    // The cited source wins a tie.
-                    .max_by(|a, b| {
-                        a.0.partial_cmp(&b.0)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                            .then_with(|| (Some(a.1) == index).cmp(&(Some(b.1) == index)))
-                    })
-                    .filter(|(share, _, _)| *share >= minimum && *share > 0.0)
-            };
             let own_text = item_text(item);
-            let Some((_, source, text)) = (!quote.trim().is_empty())
-                .then(|| nearest(&quote, 0.6, 1))
+            cite(item, &own_text);
+            for cited in item
+                .get_mut("citations")
+                .and_then(Value::as_array_mut)
+                .into_iter()
                 .flatten()
-                .or_else(|| nearest(&own_text, 0.0, 2))
-            else {
-                continue;
-            };
-            if let Some(object) = item.as_object_mut() {
-                object.insert("sourceIndex".into(), json!(source));
-                object.insert("quote".into(), json!(text));
-                changed += 1;
-                tracing::info!(
-                    field,
-                    source,
-                    "Cited the nearest real passage for a quotation the author could not match"
-                );
+            {
+                let sentence = cited
+                    .get("sentence")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned();
+                cite(cited, &sentence);
             }
         }
     }

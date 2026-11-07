@@ -41,7 +41,7 @@ pub(super) struct RawItem {
 }
 
 fn strings(min: usize, max: usize) -> Value {
-    json!({"type":"array","minItems":min,"maxItems":max,"items":{"type":"string","minLength":1,"maxLength":500}})
+    json!({"type":"array","minItems":min,"maxItems":max,"items":{"type":"string","minLength":1}})
 }
 
 pub(super) fn item_schema(
@@ -54,10 +54,7 @@ pub(super) fn item_schema(
     let mut put = |name: &str, schema: Value| {
         properties.insert(name.into(), schema);
     };
-    put(
-        "prompt",
-        json!({"type":"string","minLength":8,"maxLength":2000}),
-    );
+    put("prompt", json!({"type":"string","minLength":1}));
     match format {
         LearningItemFormat::SingleChoice => {
             put("options", strings(4, 4));
@@ -83,7 +80,7 @@ pub(super) fn item_schema(
             put("tolerance", json!({"type":"number","minimum":0}));
             put(
                 "units",
-                json!({"type":"array","maxItems":8,"items":{"type":"string","maxLength":40}}),
+                json!({"type":"array","maxItems":8,"items":{"type":"string"}}),
             );
         }
         LearningItemFormat::Cloze => put(
@@ -93,9 +90,9 @@ pub(super) fn item_schema(
         LearningItemFormat::Matching => {
             put(
                 "pairs",
-                json!({"type":"array","minItems":3,"maxItems":5,"items":{"type":"object","additionalProperties":false,"required":["left","right"],"properties":{"left":{"type":"string","minLength":1,"maxLength":300},"right":{"type":"string","minLength":1,"maxLength":300}}}}),
+                json!({"type":"array","minItems":3,"maxItems":5,"items":{"type":"object","additionalProperties":false,"required":["left","right"],"properties":{"left":{"type":"string","minLength":1},"right":{"type":"string","minLength":1}}}}),
             );
-            put("extraRight", json!({"type":"string","maxLength":300}));
+            put("extraRight", json!({"type":"string"}));
         }
         LearningItemFormat::Ordering => put("orderedValues", strings(3, 8)),
         LearningItemFormat::Explanation | LearningItemFormat::Artifact => put(
@@ -103,18 +100,12 @@ pub(super) fn item_schema(
             crate::features::learning::teaching::rubric_schema(),
         ),
     }
-    put(
-        "explanation",
-        json!({"type":"string","minLength":8,"maxLength":1200}),
-    );
+    put("explanation", json!({"type":"string","minLength":1}));
     put(
         "blockIndex",
         json!({"type":"integer","minimum":0,"maximum":passages.saturating_sub(1)}),
     );
-    put(
-        "quote",
-        json!({"type":"string","minLength":12,"maxLength":700}),
-    );
+    put("quote", json!({"type":"string","minLength":12}));
     put(
         "difficulty",
         json!({"type":"integer","minimum":min_d,"maximum":max_d}),
@@ -253,7 +244,7 @@ pub(super) fn to_candidate(
         explanation: raw.explanation.trim().to_string(),
         distractor_rationales: rationales
             .into_iter()
-            .map(|r| r.trim().chars().take(500).collect())
+            .map(|r| r.trim().to_string())
             .collect(),
     };
     engine::validate_candidate(&candidate).map_err(|e| e.to_string())?;

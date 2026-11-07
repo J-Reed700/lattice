@@ -54,8 +54,9 @@ pub(in crate::features::learning::lessons::content_verification) fn name_stronge
         return;
     };
     let strongest = finding.two_pass.also_supported.remove(at);
-    // What the section cites: as pass B recorded it, else the passages pass
-    // A compared, which are the section's citations.
+    // What the section cites: as a page of the course recorded it, else the
+    // passages the claim's own citation compared, which are the section's
+    // citations.
     let cited: Vec<String> = match &finding.two_pass.supported_by {
         Some(found) => found.cited.clone(),
         None => {

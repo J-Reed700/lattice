@@ -626,3 +626,164 @@ fn recall_content_rejects_invalid_keys_and_format_metadata() {
         .is_err()
     );
 }
+
+#[test]
+fn recall_content_is_checked_for_blank_text_never_for_how_long_it_is() {
+    use crate::features::learning::recall::recall_content::validate_content;
+    let choice = "An option that restates the condition in full. ".repeat(20);
+    let plain = LearningRecallContentDto {
+        prompt: "What does the stated rule require of the reader? ".repeat(60),
+        answer: "It requires the reader to check the stated conditions. ".repeat(25),
+        explanation: "The passage says so in its own words. ".repeat(100),
+        options: vec![],
+        correct_option_index: None,
+        language: None,
+        cloze_deletions: vec![],
+    };
+    let multiple_choice = LearningRecallContentDto {
+        prompt: "Which option restates the condition?".into(),
+        answer: choice.clone(),
+        explanation: String::new(),
+        options: vec![choice, "Another option".into()],
+        correct_option_index: Some(0),
+        language: None,
+        cloze_deletions: vec![],
+    };
+    let code = LearningRecallContentDto {
+        prompt: "What does this print?".into(),
+        answer: "42".into(),
+        explanation: String::new(),
+        options: vec![],
+        correct_option_index: None,
+        language: Some("A programming language whose name runs on and on forever".into()),
+        cloze_deletions: vec![],
+    };
+    for (what, format, content) in [
+        (
+            "a prompt, an answer and an explanation past their old ceilings",
+            LearningRecallCardFormat::QuestionAnswer,
+            plain,
+        ),
+        (
+            "an option past its old ceiling",
+            LearningRecallCardFormat::MultipleChoice,
+            multiple_choice,
+        ),
+        (
+            "a language name past its old ceiling",
+            LearningRecallCardFormat::CodePrediction,
+            code,
+        ),
+    ] {
+        let checked = validate_content(format, &content);
+        assert!(checked.is_ok(), "{what}: {checked:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_recall_card_of_any_length_is_saved_and_read_back() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    LearningRepository::new(pool.clone())
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let long = |sentence: &str, count: usize| sentence.repeat(count).trim().to_owned();
+    let choice = long("An option that restates the condition in full. ", 20);
+    let multiple_choice = LearningRecallContentDto {
+        prompt: long("What does the stated rule require of the reader? ", 60),
+        answer: choice.clone(),
+        explanation: long("The passage says so in its own words. ", 100),
+        options: vec![choice, "Another option".into()],
+        correct_option_index: Some(0),
+        language: None,
+        cloze_deletions: vec![],
+    };
+    let code = LearningRecallContentDto {
+        prompt: "What does this print?".into(),
+        answer: "42".into(),
+        explanation: String::new(),
+        options: vec![],
+        correct_option_index: None,
+        language: Some("A programming language whose name runs on and on forever".into()),
+        cloze_deletions: vec![],
+    };
+    let recall = LearningRecallRepository::new(pool.clone());
+    let mut saved = Vec::new();
+    for (format, content) in [
+        (LearningRecallCardFormat::MultipleChoice, multiple_choice),
+        (LearningRecallCardFormat::CodePrediction, code),
+    ] {
+        let card_id = id();
+        recall
+            .save_card(&SaveLearningRecallCardRequestDto {
+                operation_id: id(),
+                program_id: program.summary.id.clone(),
+                card_id: card_id.clone(),
+                expected_content_revision: None,
+                format,
+                content: content.clone(),
+                source_version_ids: vec![],
+                change_reason: "A long card".into(),
+            })
+            .await?;
+        saved.push((card_id, content));
+    }
+    let workspace = recall.workspace(&program.summary.id).await?;
+    for (card_id, content) in saved {
+        let card = workspace.cards.iter().find(|card| card.id == card_id);
+        assert_eq!(card.map(|card| &card.content), Some(&content));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_accepted_deck_card_with_a_long_option_joins_recall() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program = active_program(&pool).await?;
+    let lesson = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("Fixture has no lesson".into())
+        })?;
+    LearningRepository::new(pool.clone())
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Notes", "")
+        .await?;
+    let deck_id: String =
+        sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
+            .bind(&program.summary.id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+    let wrong = "An option that restates the condition in full. "
+        .repeat(15)
+        .trim()
+        .to_owned();
+    let options = serde_json::json!([wrong, "Yes"]).to_string();
+    let card_id = id();
+    sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,review_count,format) VALUES(?,?,?,?,?,?,?,?,?,?,0,?)")
+        .bind(&card_id).bind(&deck_id).bind("Accepted question").bind("Yes")
+        .bind(&options).bind(1_i64).bind("Old note")
+        .bind("{}").bind("accepted").bind(chrono::Utc::now().timestamp_millis())
+        .bind("multiple_choice")
+        .execute(&pool).await
+        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?;
+
+    let workspace = LearningRecallRepository::new(pool.clone())
+        .workspace(&program.summary.id)
+        .await?;
+    let card = workspace.cards.iter().find(|card| card.id == card_id);
+    assert_eq!(
+        card.and_then(|card| card.content.options.first().map(String::as_str)),
+        Some(wrong.as_str())
+    );
+    Ok(())
+}

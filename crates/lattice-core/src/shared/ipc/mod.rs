@@ -216,6 +216,10 @@ pub enum ErrorCode {
     ModelNotLoaded,
     /// AI model loading failed
     ModelLoadError,
+    /// A request's prompt alone fills the model's context window
+    PromptExceedsWindow,
+    /// No Learning model is set
+    LearningModelNotSet,
 
     // Processing Errors
     /// Data processing failed

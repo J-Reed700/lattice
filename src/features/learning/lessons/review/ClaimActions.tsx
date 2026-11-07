@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 
 import { ChevronDown, LoaderCircle } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
 import { ClaimHistory } from '@/features/learning/lessons/review/ClaimHistory';
 import type { AnnouncedAction, FixAction } from '@/features/learning/lessons/review/claimReviewCopy';
@@ -37,7 +38,7 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
   sharing: number;
   suggested: FixAction;
   busy: boolean;
-  error: string | null;
+  error: Error | null;
   form: ActionForm | null;
   onFormChange: (form: ActionForm | null) => void;
   onAct: ClaimActionRunner;
@@ -102,8 +103,6 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
             More <ChevronDown aria-hidden="true" />
           </Button>
           {moreOpen && <div id={`${id}-more`} role="menu" aria-label="More actions" className="absolute left-0 top-full z-20 mt-1 w-56 rounded-xl border border-border bg-surface p-1.5 shadow-sheet">
-            {available.has('general_knowledge') && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMoreOpen(false); void run({ action: 'general_knowledge' }, 'general_knowledge'); }}
-              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background disabled:opacity-50">General knowledge</button>}
             {available.has('research_with_hint') && <button type="button" role="menuitem" onClick={() => toggle('hint')}
               className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background">Search with a hint</button>}
             {confirmed && available.has('unconfirm') && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMoreOpen(false); void run({ action: 'unconfirm' }, 'unconfirm'); }}
@@ -153,7 +152,8 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
         <ClaimHistory history={item.history} />
       </div>}
 
-      {(formError || error) && <p role="alert" className="text-xs leading-5 text-danger-fg">{formError || error}</p>}
+      {formError && <p role="alert" className="text-xs leading-5 text-danger-fg">{formError}</p>}
+      {!formError && error && <PlainError error={error} className="text-xs leading-5 text-danger-fg" />}
     </div>
   );
 }

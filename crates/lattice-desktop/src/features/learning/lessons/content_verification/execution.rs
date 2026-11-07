@@ -412,7 +412,7 @@ mod capacity_tests {
         );
         assert!(
             evidence.iter().any(|p| p.source_id == "example-reference"),
-            "Long execution output must not erase source evidence: the runs are pass A's, the source pass B's"
+            "Long execution output must not erase source evidence: the runs are the citation's page, the source the course's"
         );
         Ok(())
     }

@@ -30,16 +30,13 @@ impl SectionCheckpoint {
         let unit = &self.inventory;
         unit.index == index
             && self.coverage.index == index
-            && self.coverage.complete
-            && self.coverage.missing_assertions.is_empty()
-            && unit.non_factual_reason.chars().count() <= 500
+            && self.coverage.complete == self.coverage.missing_assertions.is_empty()
             && (!unit.claims.is_empty() || !unit.non_factual_reason.trim().is_empty())
             && unit.claims.iter().all(|claim| {
                 !claim.quote.trim().is_empty()
-                    && claim.quote.chars().count() <= 1600
+                    && claim.quote.chars().count() <= MAX_CLAIM_QUOTE_CHARS
                     && contains_text(content, &claim.quote)
                     && !claim.statement.trim().is_empty()
-                    && claim.statement.chars().count() <= 2000
             })
     }
 }
@@ -119,5 +116,30 @@ mod capacity_tests {
         };
         assert!(checkpoint.valid(&content, 0));
         assert!(!checkpoint.valid(&json!({"body":"Changed section"}), 0));
+    }
+
+    #[test]
+    fn a_section_saved_with_a_long_statement_or_reason_is_reused() {
+        let content = json!({"body":"A saved section with many measurements."});
+        let checkpoint = SectionCheckpoint {
+            inventory: UnitClaims {
+                index: 0,
+                claims: vec![Claim {
+                    quote: "A saved section with many measurements.".into(),
+                    statement: format!(
+                        "The section {}measures.",
+                        "states a measurement under its own condition ".repeat(50)
+                    ),
+                }],
+                non_factual_reason: "Its title frames the section. ".repeat(20),
+            },
+            coverage: CoverageUnit {
+                index: 0,
+                complete: true,
+                reason: "All assertions are represented.".into(),
+                missing_assertions: vec![],
+            },
+        };
+        assert!(checkpoint.valid(&content, 0));
     }
 }

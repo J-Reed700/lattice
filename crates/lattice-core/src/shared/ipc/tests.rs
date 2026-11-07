@@ -163,3 +163,33 @@ fn test_comprehensive_error_conversions() {
     let api_err: ApiError = app_error.into();
     assert_eq!(api_err.code, ErrorCode::NotFound);
 }
+
+#[test]
+fn a_prompt_that_fills_the_window_has_a_code_of_its_own() {
+    let api_err: ApiError = AppError::PromptExceedsWindow {
+        prompt_tokens: 8500,
+        window: 8192,
+        counted_exactly: true,
+        message: "This request does not fit.".into(),
+    }
+    .into();
+    assert_eq!(api_err.code, ErrorCode::PromptExceedsWindow);
+    assert_eq!(api_err.message, "This request does not fit.");
+    assert_eq!(
+        serde_json::to_string(&api_err.code).unwrap(),
+        "\"PROMPT_EXCEEDS_WINDOW\""
+    );
+}
+
+#[test]
+fn an_unset_learning_model_has_a_code_of_its_own() {
+    let sentence = "No Learning model is set. Choose one in Settings -> Models under Learning.";
+    let api_err: ApiError = AppError::LearningModelNotSet(sentence.into()).into();
+    assert_eq!(api_err.code, ErrorCode::LearningModelNotSet);
+    assert_eq!(api_err.message, "No Learning model is set");
+    assert_eq!(api_err.details.as_deref(), Some(sentence));
+    assert_eq!(
+        serde_json::to_string(&api_err.code).unwrap(),
+        "\"LEARNING_MODEL_NOT_SET\""
+    );
+}

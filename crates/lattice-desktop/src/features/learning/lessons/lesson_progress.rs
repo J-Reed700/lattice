@@ -1,11 +1,16 @@
 //! Progress for the current durable lesson job, scoped to its future. Keeping
 //! this context task-local lets nested review calls report without affecting
-//! concurrent chat, outline generation, or other jobs.
+//! concurrent chat, outline generation, or other jobs. The calls it counts are
+//! those made inside [`checks`], the work of the call plan's readers and
+//! rewrites; every other request shows the model working and counts nothing.
+use super::call_plan::{CallPlan, Joining, Planned};
 pub(in crate::features::learning) use crate::features::learning::curriculum::LearningGenerationPhase as Phase;
 use crate::features::learning::curriculum::{
-    LearningClaimTally, LearningDeeperEvidence, LearningGenerationActivity,
-    LearningGenerationPhase, LearningGenerationStep,
+    LearningClaimTally, LearningGenerationActivity, LearningGenerationPhase,
+    LearningGenerationStep, LearningStatementPlan,
 };
+use lattice_core::domain::learning::acceptance::AcceptancePolicy;
+use lattice_core::domain::learning::claim_review::{ClaimId, Class};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobContext;
 use std::sync::{Arc, Mutex};
@@ -19,15 +24,65 @@ struct State {
     /// The course this job prepares; its model calls share the course's
     /// sources as a prompt prefix.
     program_id: Option<String>,
+    /// The most calls the lesson's checks can make, once its statements are
+    /// sorted.
+    plan: Option<CallPlan>,
+    /// The claims the plan follows, in its order: those of the pass it was
+    /// made for, then each it took in.
+    planned: Vec<ClaimId>,
+    /// The sorting calls made since the plan's last event: once it is made, a
+    /// sort sorts only statements new to it, which it takes in.
+    sorted: u32,
+    /// Every ceiling the plan published, in order.
+    #[cfg(test)]
+    ceilings: Vec<u32>,
 }
 
 #[derive(Clone, Default)]
 struct Progress(Arc<Mutex<State>>);
 
-tokio::task_local! { static CURRENT: Progress; }
+tokio::task_local! {
+    static CURRENT: Progress;
+    /// Whether the work running is the plan's checks.
+    static CHECKS: bool;
+}
 
 pub(in crate::features::learning) fn active() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
+}
+
+/// Runs `future` as the plan's checks: the calls it makes are the calls the
+/// panel counts (acceptance design §2.4).
+pub(in crate::features::learning) async fn checks<F: std::future::Future>(future: F) -> F::Output {
+    CHECKS.scope(true, future).await
+}
+
+/// Runs `future`, a stage inside a check step that checks none of the plan's
+/// statements: its calls count nothing.
+pub(in crate::features::learning) async fn outside_checks<F: std::future::Future>(
+    future: F,
+) -> F::Output {
+    CHECKS.scope(false, future).await
+}
+
+fn in_checks() -> bool {
+    CHECKS.try_with(|inside| *inside).unwrap_or(false)
+}
+
+/// The term of the call plan a counted call is drawn from.
+#[derive(Clone, Copy, Debug)]
+pub(in crate::features::learning) enum Term {
+    /// The sort: among the calls made before the plan, or of a statement it
+    /// takes in.
+    Sort,
+    /// A statement's reading: its share, or its statement's reserve when it is
+    /// a successor.
+    Reading,
+    /// A rewrite or narrowing of statements' sentences, or a section asked for
+    /// whole in its place: their shares.
+    Rewrite,
+    /// A section's flow repair: one of the flow repairs held.
+    FlowRepair,
 }
 
 /// The slot-affinity key for this job's model calls: its course, so calls
@@ -88,7 +143,46 @@ impl Drop for ModelCall {
     }
 }
 
-pub(in crate::features::learning) fn model_call() -> ModelCall {
+pub(in crate::features::learning) fn model_call(term: Term) -> ModelCall {
+    model_calls(1, term)
+}
+
+/// `count` calls drawn from `term` are about to be made: a knowledge check
+/// asks its samples one after another. Inside [`checks`] they are counted;
+/// elsewhere they are a [`request`].
+pub(in crate::features::learning) fn model_calls(count: u32, term: Term) -> ModelCall {
+    let call = request();
+    if let (true, Some(progress)) = (in_checks(), &call.0) {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        let before = state.activity.model_calls;
+        state.activity.model_calls = before.saturating_add(count);
+        if matches!(term, Term::Sort) {
+            state.sorted = state.sorted.saturating_add(count);
+        }
+        tracing::debug!(
+            ?term,
+            calls = count,
+            made = state.activity.model_calls,
+            "claim.plan: a call of the checks"
+        );
+        if let Some(ceiling) = state.activity.model_calls_ceiling {
+            if before <= ceiling && state.activity.model_calls > ceiling {
+                tracing::error!(
+                    pass = state.activity.verification_pass,
+                    calls = state.activity.model_calls,
+                    ceiling,
+                    "claim.plan: the checks made more calls than the plan allowed"
+                );
+            }
+        }
+    }
+    call
+}
+
+/// A model request is running: the panel shows the model working and the
+/// calls made stay as they are. A call of the checks is counted where they
+/// make it.
+pub(in crate::features::learning) fn request() -> ModelCall {
     let progress = CURRENT.try_with(Clone::clone).ok();
     if let Some(progress) = &progress {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -164,10 +258,13 @@ pub(in crate::features::learning) fn lesson(title: &str) {
             state.activity.checks_total = 0;
             state.activity.checks_completed = 0;
             state.activity.checks_reused = 0;
-            state.activity.checks_unresolved = 0;
-            state.activity.model_checks_total = None;
-            state.activity.deeper_evidence = None;
             state.activity.verification_pass = 0;
+            state.activity.statements = None;
+            state.activity.model_calls = 0;
+            state.activity.model_calls_ceiling = None;
+            state.plan = None;
+            state.planned.clear();
+            state.sorted = 0;
         }
         state.activity.lesson_title = Some(title.into());
     });
@@ -185,8 +282,8 @@ pub(in crate::features::learning) fn checkpoint_saved() {
 }
 
 /// A new candidate text is about to be verified: the first draft, a repair or
-/// the user's edits (§6.3). Research rechecks and deeper evidence pages are
-/// steps inside a pass, not passes.
+/// the user's edits (§6.3). Research rechecks are steps inside a pass, not
+/// passes.
 pub(in crate::features::learning) fn new_pass() {
     let _ = CURRENT.try_with(|progress| {
         progress
@@ -217,44 +314,15 @@ pub(in crate::features::learning) fn begin_checks(total: usize) {
         activity.checks_total = total as u32;
         activity.checks_completed = 0;
         activity.checks_reused = 0;
-        activity.checks_unresolved = 0;
-        activity.checks_sent_back = 0;
-        activity.model_checks_total = None;
-        activity.deeper_evidence = None;
-    });
-}
-
-pub(in crate::features::learning) fn plan_model_checks(total: usize) {
-    let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .model_checks_total = Some(total as u32);
     });
 }
 
 /// A claim's first check in this pass finished.
-pub(in crate::features::learning) fn checked(reused: bool, unresolved: bool) {
+pub(in crate::features::learning) fn checked(reused: bool) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         state.activity.checks_completed += 1;
         state.activity.checks_reused += u32::from(reused);
-        state.activity.checks_unresolved += u32::from(unresolved);
-    });
-}
-
-/// The source check sent back `count` of this pass's supported claims: their
-/// sources are too weak for them, and research looks for stronger ones.
-pub(in crate::features::learning) fn sent_back(count: usize) {
-    let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .checks_sent_back = u32::try_from(count).unwrap_or(u32::MAX);
     });
 }
 
@@ -271,58 +339,208 @@ pub(in crate::features::learning) fn new_references(count: Option<usize>) {
     });
 }
 
-/// Unsupported claims of this pass start their check against evidence `page`.
-pub(in crate::features::learning) fn deeper_page(page: usize, claims: usize) {
-    let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .deeper_evidence = Some(LearningDeeperEvidence {
-            page: page as u32,
-            claims: claims as u32,
-            checked: 0,
-        });
-    });
-}
-
-/// An unsupported claim's check against the current deeper page finished.
-/// The claim was counted when first checked; support moves it out of the
-/// unresolved count, and any other verdict leaves it there.
-pub(in crate::features::learning) fn rechecked(supported: bool) {
+/// The lesson's statements are sorted: from here its checks' calls have a
+/// ceiling (claim classes design §3.12). A later sort changes nothing here: a
+/// statement new to the ledger is taken in when its pass is named
+/// ([`statements_moved`]).
+pub(in crate::features::learning) fn calls_planned(
+    policy: &dyn AcceptancePolicy,
+    statements: &[Planned],
+    sections: u32,
+) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
-        let activity = &mut state.activity;
-        if let Some(deeper) = &mut activity.deeper_evidence {
-            deeper.checked += 1;
-        }
-        if supported {
-            activity.checks_unresolved = activity.checks_unresolved.saturating_sub(1);
+        if state.plan.is_none() {
+            let count = |class: Class| {
+                let of_class = statements
+                    .iter()
+                    .filter(|statement| statement.class == class);
+                u32::try_from(of_class.count()).unwrap_or(u32::MAX)
+            };
+            state.activity.statements = Some(LearningStatementPlan {
+                sourced: count(Class::Sourced),
+                reasoning: count(Class::Reasoning),
+                common: count(Class::Common),
+            });
+            state.plan = Some(CallPlan::new(policy, statements, sections));
+            publish_ceiling(&mut state, Change::default());
         }
     });
 }
 
-/// No unsupported claim of this pass has another evidence page to check.
-pub(in crate::features::learning) fn deeper_done() {
+/// The cuts are known: `sections` took one and are left, and only they get a
+/// flow repair (claim classes design §3.10).
+pub(in crate::features::learning) fn cuts_known(sections: usize) {
     let _ = CURRENT.try_with(|progress| {
-        progress
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .activity
-            .deeper_evidence = None;
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(plan) = state.plan.as_mut() {
+            plan.cuts_known(u32::try_from(sections).unwrap_or(u32::MAX));
+        }
+        publish_ceiling(&mut state, Change::default());
     });
 }
 
-/// Runs `future` with fresh progress and returns the activity it left.
+/// A section's flow repair is done: it made the call held for it, or none.
+pub(in crate::features::learning) fn flow_repaired() {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(plan) = state.plan.as_mut() {
+            plan.flow_repaired();
+        }
+        publish_ceiling(&mut state, Change::default());
+    });
+}
+
+/// The claims the plan follows, in its order, once it is made: none until a
+/// pass names the claims it was made for.
+pub(in crate::features::learning) fn plan_claims() -> Option<Vec<ClaimId>> {
+    CURRENT
+        .try_with(|progress| {
+            let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+            state.plan.as_ref().map(|_| state.planned.clone())
+        })
+        .ok()
+        .flatten()
+}
+
+/// The plan's statements have moved through their graphs: `moved` are where
+/// the ledger now has the plan's claims, in its order, and `joining` the
+/// statements of `claims` beyond them, which it was not made for and takes in
+/// where they stand. The plan follows `claims` from now on.
+pub(in crate::features::learning) fn statements_moved(
+    policy: &dyn AcceptancePolicy,
+    claims: &[ClaimId],
+    moved: &[Planned],
+    joining: &[Joining],
+) {
+    let _ = CURRENT.try_with(|progress| {
+        let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(plan) = state.plan.as_mut() else {
+            return;
+        };
+        let taken_in = plan.take_in(policy, joining);
+        let beyond = plan.moved(policy, moved);
+        state.planned = claims.to_vec();
+        publish_ceiling(&mut state, Change { taken_in, beyond });
+    });
+}
+
+/// What an event of the plan changed in it beside the calls made.
+#[derive(Clone, Copy, Default)]
+struct Change {
+    /// The calls of the statements it took in, which it was not made for.
+    taken_in: u32,
+    /// The calls statements can cost beyond their share and their reserve.
+    beyond: u32,
+}
+
+fn publish_ceiling(state: &mut State, change: Change) {
+    let taken_in = change
+        .taken_in
+        .saturating_add(std::mem::take(&mut state.sorted));
+    let made = state.activity.model_calls;
+    let ceiling = state.plan.as_ref().map(|plan| plan.ceiling(made));
+    if let (Some(before), Some(now), Some(plan)) = (
+        state.activity.model_calls_ceiling,
+        ceiling,
+        state.plan.as_ref(),
+    ) {
+        if now > before {
+            state.activity.model_calls_ceiling_rises += 1;
+            let unheld = (now - before).saturating_sub(taken_in.saturating_add(change.beyond));
+            let cause = if unheld > 0 {
+                "the checks made calls no slot held"
+            } else if taken_in > 0 {
+                "it took in statements it was not made for"
+            } else {
+                "a statement can cost more than its share and its reserve"
+            };
+            tracing::error!(
+                made,
+                most = plan.shares(),
+                reserve = plan.reserves(),
+                flow_repairs = plan.flow_repairs(),
+                previous = before,
+                ceiling = now,
+                taken_in,
+                beyond = change.beyond,
+                unheld,
+                "claim.plan: the ceiling rose; {cause}"
+            );
+        }
+    }
+    state.activity.model_calls_ceiling = ceiling;
+    #[cfg(test)]
+    {
+        if let Some(ceiling) = state.activity.model_calls_ceiling {
+            state.ceilings.push(ceiling);
+        }
+    }
+}
+
+/// What a traced run recorded.
 #[cfg(test)]
-pub(in crate::features::learning) async fn observed<T>(
+pub(in crate::features::learning) struct Trace {
+    /// The calls made.
+    pub calls: u32,
+    /// The ceiling after each event of the plan.
+    pub ceilings: Vec<u32>,
+    /// The checks finished, and how many of them reused saved checks.
+    pub checked: u32,
+    pub reused: u32,
+    /// The latest stage message.
+    pub message: String,
+}
+
+#[cfg(test)]
+impl Trace {
+    /// Whether the ceiling only came down across the plan's events.
+    pub(in crate::features::learning) fn only_came_down(&self) -> bool {
+        self.ceilings
+            .windows(2)
+            .all(|pair| matches!(pair, [before, after] if after <= before))
+    }
+
+    /// Whether the calls made stayed within the ceiling the run ended on.
+    pub(in crate::features::learning) fn within_the_ceiling(&self) -> bool {
+        self.ceilings
+            .last()
+            .is_some_and(|ceiling| self.calls <= *ceiling)
+    }
+}
+
+/// `future` run with its progress recorded.
+#[cfg(test)]
+pub(in crate::features::learning) async fn traced<T>(
     future: impl std::future::Future<Output = T>,
-) -> (T, LearningGenerationActivity) {
+) -> (T, Trace) {
     let progress = Progress::default();
     let value = CURRENT.scope(progress.clone(), future).await;
-    (value, progress.snapshot().2)
+    let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+    let trace = Trace {
+        calls: state.activity.model_calls,
+        ceilings: state.ceilings.clone(),
+        checked: state.activity.checks_completed,
+        reused: state.activity.checks_reused,
+        message: state.message.clone(),
+    };
+    (value, trace)
+}
+
+/// The activity a job restarts with: where it left off, its time and its
+/// calls counted anew.
+fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
+    let mut activity: LearningGenerationActivity = saved
+        .and_then(|activity| serde_json::from_value(activity).ok())
+        .unwrap_or_default();
+    // A new run starts by reopening references, even when the prior run
+    // stopped in that same phase. Do not count time with the app closed.
+    activity.phase_started_at = 0;
+    activity.model_calls = 0;
+    activity.model_calls_ceiling = None;
+    activity.model_calls_ceiling_rises = 0;
+    activity.statements = None;
+    activity
 }
 
 impl Progress {
@@ -366,15 +584,8 @@ pub(in crate::features::learning) async fn run<T>(
     {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         state.completed = job.progress_current;
-        state.activity = job
-            .activity
-            .clone()
-            .and_then(|activity| serde_json::from_value(activity).ok())
-            .unwrap_or_default();
+        state.activity = resumed(job.activity.clone());
         state.program_id = job.subject_id.clone();
-        // A new run starts by reopening references, even when the prior run
-        // stopped in that same phase. Do not count time with the app closed.
-        state.activity.phase_started_at = 0;
     }
     CURRENT
         .scope(progress.clone(), async {
@@ -426,6 +637,8 @@ pub(in crate::features::learning) async fn run<T>(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
     use super::*;
+    use crate::features::learning::lessons::call_plan::PlannedAt;
+    use lattice_core::domain::learning::acceptance::StandardPolicy;
 
     #[tokio::test]
     async fn structured_progress_tracks_repeated_phases_and_concurrent_model_requests() {
@@ -436,29 +649,28 @@ mod tests {
                 new_pass();
                 phase(Phase::Evidence, "Checking claims");
                 begin_checks(3);
-                let first = model_call();
-                let second = model_call();
+                let first = model_call(Term::Reading);
+                let second = model_call(Term::Reading);
                 received("Answer");
                 drop(first);
-                checked(false, true);
+                checked(false);
                 stage("Checked 1 of 3 claims");
                 assert!(
                     progress.snapshot().2.model_running,
                     "One request is still active"
                 );
-                assert_eq!(progress.snapshot().2.checks_unresolved, 1);
+                assert_eq!(progress.snapshot().2.checks_completed, 1);
                 drop(second);
                 assert!(!progress.snapshot().2.model_running);
                 checkpoint_saved();
                 phase(Phase::Research, "Finding missing evidence");
                 phase(Phase::Evidence, "Rechecking evidence");
                 begin_checks(3);
-                checked(true, false);
+                checked(true);
                 let activity = progress.snapshot().2;
                 // A recheck after research is a step of the same pass (§6.3).
                 assert_eq!(activity.verification_pass, 1);
                 assert_eq!(activity.checks_reused, 1);
-                assert_eq!(activity.checks_unresolved, 0);
                 assert!(activity.last_checkpoint_at.is_some());
                 assert_eq!(
                     activity
@@ -473,72 +685,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_deeper_page_moves_claims_between_counts_without_adding_checks() {
+    async fn a_recheck_against_new_references_is_named() {
         let progress = Progress::default();
         CURRENT
             .scope(progress.clone(), async {
-                begin_checks(4);
-                checked(true, false);
-                checked(false, true);
-                checked(false, true);
-                checked(false, true);
-                deeper_page(2, 3);
-                rechecked(true);
-                rechecked(false);
-                let activity = progress.snapshot().2;
-                assert_eq!(
-                    (activity.checks_completed, activity.checks_unresolved),
-                    (4, 2),
-                    "A re-check is not a new check; support resolves the claim"
-                );
-                assert_eq!(
-                    activity.deeper_evidence,
-                    Some(LearningDeeperEvidence {
-                        page: 2,
-                        claims: 3,
-                        checked: 2
-                    })
-                );
-                rechecked(false);
-                deeper_page(3, 2);
-                rechecked(false);
-                rechecked(false);
-                let activity = progress.snapshot().2;
-                assert_eq!(
-                    (activity.checks_completed, activity.checks_unresolved),
-                    (4, 2),
-                    "A claim still unsupported on another page counts once"
-                );
-                deeper_done();
-                assert_eq!(progress.snapshot().2.deeper_evidence, None);
-                deeper_page(2, 1);
-                begin_checks(4);
-                assert_eq!(progress.snapshot().2.deeper_evidence, None);
-            })
-            .await;
-    }
-
-    #[tokio::test]
-    async fn sent_back_claims_and_a_recheck_against_new_references_are_named() {
-        let progress = Progress::default();
-        CURRENT
-            .scope(progress.clone(), async {
-                begin_checks(3);
-                checked(false, true);
-                checked(false, false);
-                checked(false, false);
-                sent_back(2);
-                let activity = progress.snapshot().2;
-                assert_eq!(
-                    (activity.checks_unresolved, activity.checks_sent_back),
-                    (1, 2),
-                    "the source check's claims are not the checker's"
-                );
                 new_references(Some(5));
                 begin_checks(3);
                 let activity = progress.snapshot().2;
                 assert_eq!(activity.new_references, Some(5));
-                assert_eq!(activity.checks_sent_back, 0, "a new check counts afresh");
                 new_references(None);
                 assert_eq!(progress.snapshot().2.new_references, None);
             })
@@ -640,5 +794,237 @@ mod tests {
             })
             .await;
         assert!(!active());
+    }
+
+    #[tokio::test]
+    async fn only_the_calls_made_inside_the_checks_are_counted() {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                drop(model_call(Term::Reading));
+                drop(request());
+                assert_eq!(progress.snapshot().2.model_calls, 0);
+                checks(async {
+                    drop(model_calls(3, Term::Reading));
+                    // The teaching review after a repair's patches is no
+                    // check of the plan's statements.
+                    outside_checks(async { drop(model_call(Term::Rewrite)) }).await;
+                    drop(request());
+                })
+                .await;
+                assert_eq!(progress.snapshot().2.model_calls, 3);
+                assert!(!progress.snapshot().2.model_running);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorted() {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                lesson("A lesson");
+                checks(async { drop(model_call(Term::Sort)) }).await;
+                let activity = progress.snapshot().2;
+                assert_eq!(
+                    (activity.model_calls, activity.model_calls_ceiling),
+                    (1, None)
+                );
+
+                let policy = StandardPolicy::new();
+                let alone = |class, at| Planned {
+                    class,
+                    at,
+                    sentence: None,
+                };
+                let statements = [
+                    alone(Class::Sourced, PlannedAt::Entry),
+                    alone(Class::Common, PlannedAt::Entry),
+                    alone(Class::Common, PlannedAt::Entry),
+                ];
+                assert_eq!(progress.snapshot().2.statements, None);
+                calls_planned(&policy, &statements, 1);
+                // The plan is what the statements were sorted into.
+                assert_eq!(
+                    progress.snapshot().2.statements,
+                    Some(LearningStatementPlan {
+                        sourced: 1,
+                        reasoning: 0,
+                        common: 2
+                    })
+                );
+                // The sorting call made (1), the longest path of each
+                // statement from its entry (16 for the Sourced one, 16 for
+                // each Common one) and the flow repair of the section (1).
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
+                calls_planned(&policy, &[], 0);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
+
+                // The Sourced statement is resolved: its path is over.
+                statements_moved(
+                    &policy,
+                    &[],
+                    &[alone(Class::Sourced, PlannedAt::Ended)],
+                    &[],
+                );
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(34));
+                cuts_known(0);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(33));
+                checks(async { drop(model_calls(3, Term::Reading)) }).await;
+                assert_eq!(progress.snapshot().2.model_calls, 4);
+
+                lesson("Another lesson");
+                let activity = progress.snapshot().2;
+                assert_eq!(
+                    (activity.model_calls, activity.model_calls_ceiling),
+                    (0, None)
+                );
+            })
+            .await;
+    }
+
+    #[test]
+    fn a_ceiling_that_goes_up_is_counted_and_one_that_comes_down_is_not() {
+        let policy = StandardPolicy::new();
+        let sourced = |at| Planned {
+            class: Class::Sourced,
+            at,
+            sentence: None,
+        };
+        // The sort made one call.
+        let mut state = State {
+            plan: Some(CallPlan::new(&policy, &[sourced(PlannedAt::Entry)], 1)),
+            activity: LearningGenerationActivity {
+                model_calls: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        publish_ceiling(&mut state, Change::default());
+        let first = state.activity.model_calls_ceiling.unwrap();
+        assert_eq!(first, 1 + 16 + 1);
+        assert_eq!(state.activity.model_calls_ceiling_rises, 0);
+
+        // The plan's own events only lower it.
+        if let Some(plan) = state.plan.as_mut() {
+            plan.moved(&policy, &[sourced(PlannedAt::Ended)]);
+        }
+        publish_ceiling(&mut state, Change::default());
+        assert_eq!(state.activity.model_calls_ceiling, Some(2));
+        assert!(state.activity.model_calls_ceiling.unwrap() <= first);
+        assert_eq!(state.activity.model_calls_ceiling_rises, 0);
+
+        // A ceiling shown lower and then published higher is a rise.
+        state.activity.model_calls_ceiling = Some(1);
+        publish_ceiling(&mut state, Change::default());
+        assert_eq!(state.activity.model_calls_ceiling_rises, 1);
+    }
+
+    #[tokio::test]
+    async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_without_brings_it_down(
+    ) {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                lesson("A lesson");
+                checks(async { drop(model_call(Term::Sort)) }).await;
+                let policy = StandardPolicy::new();
+                let statement = |at| Planned {
+                    class: Class::Sourced,
+                    at,
+                    sentence: None,
+                };
+                let ceiling = || progress.snapshot().2.model_calls_ceiling;
+                calls_planned(&policy, &[statement(PlannedAt::Entry)], 2);
+                statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
+                cuts_known(2);
+                // The sorting call made (1) and the flow repair of each of the
+                // two sections that took a cut.
+                assert_eq!(ceiling(), Some(3));
+
+                // The first repair makes its call and marks its section mended.
+                checks(async { drop(model_call(Term::FlowRepair)) }).await;
+                flow_repaired();
+                assert_eq!(ceiling(), Some(3));
+                // The pass after the repairs does not raise it.
+                statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
+                assert_eq!(ceiling(), Some(3));
+
+                // The second finds no gap to mend: it makes no call, and the
+                // call held for it is not needed.
+                flow_repaired();
+                assert_eq!(ceiling(), Some(2));
+                assert_eq!(progress.snapshot().2.model_calls, 2);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling_rises, 0);
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its_sort_and_share(
+    ) {
+        let progress = Progress::default();
+        CURRENT
+            .scope(progress.clone(), async {
+                let policy = StandardPolicy::new();
+                let planned = |class, at| Planned {
+                    class,
+                    at,
+                    sentence: None,
+                };
+                let done = planned(Class::Sourced, PlannedAt::Ended);
+                calls_planned(&policy, &[done], 0);
+                assert_eq!(plan_claims(), Some(Vec::new()));
+                let first = ClaimId("first".into());
+                statements_moved(&policy, std::slice::from_ref(&first), &[done], &[]);
+                assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(0));
+
+                // A later sort sorts a statement new to the plan, which joins it.
+                checks(async { drop(model_call(Term::Sort)) }).await;
+                let joined = ClaimId("joined".into());
+                let joining = Joining {
+                    planned: planned(Class::Common, PlannedAt::Entry),
+                    beside: Vec::new(),
+                };
+                statements_moved(
+                    &policy,
+                    &[first.clone(), joined.clone()],
+                    &[done],
+                    &[joining],
+                );
+
+                // The sorting call made and the newcomer's longest path from
+                // its entry: a rise, counted.
+                let activity = progress.snapshot().2;
+                assert_eq!(activity.model_calls_ceiling, Some(1 + 16));
+                assert_eq!(activity.model_calls_ceiling_rises, 1);
+                assert_eq!(plan_claims(), Some(vec![first, joined]));
+            })
+            .await;
+    }
+
+    #[test]
+    fn a_restarted_job_counts_its_calls_again_and_keeps_the_rest() {
+        let saved = LearningGenerationActivity {
+            model_calls: 40,
+            model_calls_ceiling: Some(300),
+            model_calls_ceiling_rises: 2,
+            checks_total: 10,
+            phase_started_at: 5,
+            ..Default::default()
+        };
+
+        let activity = resumed(Some(serde_json::to_value(&saved).unwrap()));
+
+        assert_eq!(
+            (
+                activity.model_calls,
+                activity.model_calls_ceiling,
+                activity.model_calls_ceiling_rises,
+                activity.phase_started_at
+            ),
+            (0, None, 0, 0)
+        );
+        assert_eq!(activity.checks_total, 10);
     }
 }

@@ -1,7 +1,7 @@
 //! Keep completed coverage findings, including omissions, across interruptions.
 //! Unlike a completed section inventory, these receipts bind the exact extracted
-//! assertions as well as the original section. Adoption does not re-audit: its only
-//! additions are the judged gaps, so the section checkpoint records it as complete.
+//! assertions as well as the original section. A section whose audit found a gap
+//! keeps its receipt: the gap is a finding, not an addition to the inventory.
 use super::*;
 
 fn key(llm: &dyn LLMPort, input: &Value) -> String {

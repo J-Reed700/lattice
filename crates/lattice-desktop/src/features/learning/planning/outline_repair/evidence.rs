@@ -18,7 +18,10 @@ fn citable_span(
     sources: &[LearningSourceDto],
 ) -> Option<String> {
     let source = sources.iter().find(|s| s.id == passage.source_id)?;
-    let fits = |text: &str| generation::validate_excerpt_quote(text, &source.excerpt).is_ok();
+    let fits = |text: &str| {
+        text.trim().chars().count() <= generation::MAX_QUOTE_CHARS
+            && generation::validate_excerpt_quote(text, &source.excerpt).is_ok()
+    };
     if fits(&passage.text) {
         return Some(passage.text.trim().to_owned());
     }

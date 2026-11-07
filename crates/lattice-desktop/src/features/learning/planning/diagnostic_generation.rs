@@ -128,7 +128,7 @@ async fn author_group(
     }
     let prompt = prompt.to_string();
     let output_tokens = output_tokens(selected.len());
-    let schema = json!({"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":selected.len(),"maxItems":selected.len(),"items":{"type":"object","additionalProperties":false,"required":["outcomeId","prompt","expectedAnswer","criteria"],"properties":{"outcomeId":{"type":"string","enum":selected.iter().map(|o|o.id.clone()).collect::<Vec<_>>()},"prompt":{"type":"string","minLength":30,"maxLength":1600},"expectedAnswer":{"type":"string","minLength":30,"maxLength":2000},"criteria":{"type":"string","minLength":30,"maxLength":1200}}}}}});
+    let schema = json!({"type":"object","additionalProperties":false,"required":["tasks"],"properties":{"tasks":{"type":"array","minItems":selected.len(),"maxItems":selected.len(),"items":{"type":"object","additionalProperties":false,"required":["outcomeId","prompt","expectedAnswer","criteria"],"properties":{"outcomeId":{"type":"string","enum":selected.iter().map(|o|o.id.clone()).collect::<Vec<_>>()},"prompt":{"type":"string","minLength":1},"expectedAnswer":{"type":"string","minLength":1},"criteria":{"type":"string","minLength":1}}}}}});
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Response {
@@ -141,13 +141,14 @@ async fn author_group(
             || response.tasks.iter().any(|t| {
                 !selected.iter().any(|o| o.id == t.outcome_id)
                     || !seen.insert(&t.outcome_id)
-                    || !(30..=1600).contains(&t.prompt.trim().chars().count())
-                    || !(30..=2000).contains(&t.expected_answer.trim().chars().count())
-                    || !(30..=1200).contains(&t.criteria.trim().chars().count())
+                    || t.prompt.trim().is_empty()
+                    || t.expected_answer.trim().is_empty()
+                    || t.criteria.trim().is_empty()
             })
         {
             return Err(AppError::InvalidInput(
-                "Starting-point tasks did not match the course outcomes or required bounds.".into(),
+                "Starting-point tasks did not match the course outcomes or left a field blank."
+                    .into(),
             ));
         }
         Ok(response.tasks)
@@ -226,11 +227,10 @@ pub async fn evaluate(
 /// fields in this order, and with the signal first it commits to one before it
 /// has read the response back.
 fn findings_schema(count: usize) -> serde_json::Value {
-    json!({"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["promptId","outcomeId","evidenceQuote","feedback","signal"],"properties":{"promptId":{"type":"string"},"outcomeId":{"type":"string"},"evidenceQuote":{"type":["string","null"],"maxLength":700},"feedback":{"type":"string","minLength":20,"maxLength":1200},"signal":{"enum":["needs_practice","ready_for_challenge","uncertain"]}}}}}})
+    json!({"type":"object","additionalProperties":false,"required":["findings"],"properties":{"findings":{"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["promptId","outcomeId","evidenceQuote","feedback","signal"],"properties":{"promptId":{"type":"string"},"outcomeId":{"type":"string"},"evidenceQuote":{"type":["string","null"]},"feedback":{"type":"string","minLength":1},"signal":{"enum":["needs_practice","ready_for_challenge","uncertain"]}}}}}})
 }
 
-/// What one finding takes: up to 1,200 characters of feedback and a 700
-/// character quote, at about four characters a token, with its fields.
+/// What one finding takes: its feedback, its quote and its fields.
 const FINDING_OUTPUT_TOKENS: usize = 600;
 
 /// A finding whose quote is not in its response loses the quote, and with it
@@ -244,7 +244,6 @@ fn unquoted_are_uncertain(
             continue;
         };
         let quoted = !quote.trim().is_empty()
-            && quote.chars().count() <= 700
             && responses
                 .iter()
                 .any(|r| r.prompt_id == finding.prompt_id && r.response.contains(quote.as_str()));
@@ -269,12 +268,10 @@ pub fn validate_findings(
                     .prompts
                     .iter()
                     .any(|p| p.id == f.prompt_id && p.outcome_id == f.outcome_id)
-                || !(20..=1200).contains(&f.feedback.trim().chars().count())
+                || f.feedback.trim().is_empty()
                 || match &f.evidence_quote {
                     Some(q) => {
-                        q.trim().is_empty()
-                            || q.chars().count() > 700
-                            || !response.is_some_and(|r| r.response.contains(q))
+                        q.trim().is_empty() || !response.is_some_and(|r| r.response.contains(q))
                     }
                     None => f.signal != LearningDiagnosticSignal::Uncertain,
                 }
@@ -341,5 +338,95 @@ mod tests {
         );
         assert_eq!(findings[1].signal, LearningDiagnosticSignal::Uncertain);
         assert_eq!(findings[1].evidence_quote, None);
+    }
+
+    fn attempt() -> LearningDiagnosticAttemptDto {
+        LearningDiagnosticAttemptDto {
+            id: "a1".into(),
+            program_id: "program".into(),
+            status: LearningDiagnosticStatus::Active,
+            revision: 0,
+            prompts: vec![LearningDiagnosticPromptDto {
+                id: "p1".into(),
+                prompt: "Which join column would you index first?".into(),
+                outcome_id: "o1".into(),
+                outcome_title: "Index a join".into(),
+                source_version_ids: vec![],
+            }],
+            responses: vec![],
+            source_coverage_gaps: vec![],
+            interpretation: String::new(),
+            findings: vec![],
+            created_at: 0,
+            submitted_at: None,
+        }
+    }
+
+    fn answer() -> String {
+        "I would index the join column first, because it lets the planner skip a scan. ".repeat(12)
+    }
+
+    #[test]
+    fn the_evaluator_bounds_no_text_but_a_blank_one() {
+        let caps = crate::features::learning::content_caps_tests::text_caps(&findings_schema(2));
+        assert!(caps.is_empty(), "{caps:?}");
+    }
+
+    #[test]
+    fn feedback_and_a_quote_of_any_length_are_read_not_refused() {
+        let answer = answer();
+        let responses = [LearningDiagnosticResponseDto {
+            prompt_id: "p1".into(),
+            response: answer.clone(),
+        }];
+        let finding = |feedback: String, quote: &str| LearningDiagnosticFindingDto {
+            prompt_id: "p1".into(),
+            outcome_id: "o1".into(),
+            signal: LearningDiagnosticSignal::ReadyForChallenge,
+            feedback,
+            evidence_quote: Some(quote.into()),
+        };
+        for (what, feedback, quote) in [
+            (
+                "a quote past 700 characters",
+                "You chose the right first step and said why.".to_owned(),
+                answer.as_str(),
+            ),
+            (
+                "feedback past 1,200 characters",
+                "You chose the right first step and said why. ".repeat(30),
+                "index the join column",
+            ),
+            (
+                "feedback under 20 characters",
+                "Right idea.".to_owned(),
+                "index the join column",
+            ),
+        ] {
+            let checked = validate_findings(&attempt(), &responses, &[finding(feedback, quote)]);
+            assert!(checked.is_ok(), "{what}: {checked:?}");
+        }
+    }
+
+    #[test]
+    fn a_long_quote_found_in_the_response_keeps_its_finding() {
+        let answer = answer();
+        let responses = [LearningDiagnosticResponseDto {
+            prompt_id: "p1".into(),
+            response: answer.clone(),
+        }];
+        let mut findings = [LearningDiagnosticFindingDto {
+            prompt_id: "p1".into(),
+            outcome_id: "o1".into(),
+            signal: LearningDiagnosticSignal::ReadyForChallenge,
+            feedback: "You chose the right first step and said why.".into(),
+            evidence_quote: Some(answer.clone()),
+        }];
+        unquoted_are_uncertain(&responses, &mut findings);
+        assert_eq!(
+            findings[0].signal,
+            LearningDiagnosticSignal::ReadyForChallenge
+        );
+        assert_eq!(findings[0].evidence_quote.as_deref(), Some(answer.as_str()));
     }
 }
