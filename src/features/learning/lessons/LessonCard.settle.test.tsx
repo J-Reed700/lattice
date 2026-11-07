@@ -174,6 +174,40 @@ describe('Settling a published lesson’s unverified statements from the note', 
     expect(screen.getByText('Not verified:')).toBeVisible();
   });
 
+  it('keeps Save disabled in the edit box while the text is blank or unchanged, and enables it once the user changes it', async () => {
+    serve('unsupported');
+    show();
+    await userEvent.click((await note()).getByRole('button', { name: 'Edit' }));
+    const box = screen.getByLabelText('Your version');
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    await userEvent.type(box, '   ');
+    expect(save).toBeDisabled();
+    await userEvent.clear(box);
+    expect(save).toBeDisabled();
+    await userEvent.type(box, `  ${SENTENCE}  `);
+    expect(save).toBeDisabled();
+    await userEvent.type(box, ' Changed.');
+    expect(save).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(api.resolve).not.toHaveBeenCalled();
+  });
+
+  it('keeps Save disabled in the reason box while the reason is blank', async () => {
+    serve('contradicted');
+    show();
+    await userEvent.click((await note()).getByRole('button', { name: 'This is right' }));
+    const box = await screen.findByRole('textbox');
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save).toBeDisabled();
+    await userEvent.type(box, '   ');
+    expect(save).toBeDisabled();
+    await userEvent.type(box, 'The section states sea level.');
+    expect(save).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
+    expect(api.resolve).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['a confirm', async () => { await userEvent.click((await note()).getByRole('button', { name: 'This is right' })); }],
     ['an edit', async () => {
