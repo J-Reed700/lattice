@@ -46,7 +46,7 @@ impl FindingKind {
 /// zero-based `section-N` and question indices.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "unit", content = "index")]
-pub(crate) enum FindingSite {
+pub enum FindingSite {
     Lesson,
     Section(usize),
     Question(usize),
@@ -113,7 +113,7 @@ impl ReviewFinding {
 
 /// A finding's identity across passes and reviews.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub(crate) struct FindingKey {
+pub struct FindingKey {
     pub kind: FindingKind,
     pub site: FindingSite,
 }

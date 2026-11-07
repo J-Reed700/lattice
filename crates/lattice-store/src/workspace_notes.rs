@@ -319,7 +319,7 @@ impl DailyNotesRepository {
         Ok(saved)
     }
 
-    pub(crate) async fn update_in_transaction(
+    pub async fn update_in_transaction(
         tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         note: &WorkspaceNoteRecord,
     ) -> Result<()> {

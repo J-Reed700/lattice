@@ -41,7 +41,7 @@ impl SourceSays {
 
 /// What the check found for one sentence.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SourceFinding {
+pub struct SourceFinding {
     pub says: SourceSays,
     /// The exact words of the passage a supported or contradicted verdict rests on.
     pub quote: Option<String>,
@@ -63,7 +63,7 @@ impl SourceFinding {
 
 /// Checks a sentence against a source passage.
 #[async_trait]
-pub(crate) trait SourceCheck:
+pub trait SourceCheck:
     Send + Sync
 {
     /// What `passage` says of `sentence`. A check that came to no usable verdict is an unusable finding; an error is
@@ -80,7 +80,7 @@ pub struct ClaimSourceCheck<'a> {
 }
 
 impl<'a> ClaimSourceCheck<'a> {
-    pub(crate) fn new(llm: &'a dyn LLMPort) -> Self {
+    pub fn new(llm: &'a dyn LLMPort) -> Self {
         Self { llm }
     }
 }

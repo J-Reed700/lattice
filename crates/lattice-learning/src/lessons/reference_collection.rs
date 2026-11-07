@@ -216,7 +216,7 @@ impl<'a> ReferenceCollection<'a> {
     /// text. When there is no index, or it cannot be brought up to date, the
     /// sources are searched by their words from memory, and the stage text
     /// says why.
-    pub(crate) async fn current(
+    pub async fn current(
         course: Option<&'a CourseSearch>,
         sources: &[LearningSourceDto],
     ) -> Result<Self> {
@@ -248,7 +248,7 @@ impl<'a> ReferenceCollection<'a> {
     /// command: new versions are chunked in but nothing is embedded, so what is
     /// not embedded yet is searched by words (the mode says so) while a background
     /// build embeds it.
-    pub(crate) async fn searchable_now(
+    pub async fn searchable_now(
         course: Option<&'a CourseSearch>,
         sources: &[LearningSourceDto],
     ) -> Result<Self> {

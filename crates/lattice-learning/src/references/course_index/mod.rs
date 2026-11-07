@@ -15,7 +15,7 @@
 mod job;
 mod manager;
 mod search;
-mod sync;
+pub mod sync;
 
 pub use manager::{CourseIndexStatusDto, CourseIndexes};
 pub use search::{CourseSearch, IndexView};

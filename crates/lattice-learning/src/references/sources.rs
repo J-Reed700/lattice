@@ -57,7 +57,7 @@ pub(crate) fn validate_capture(
     }
     Ok(())
 }
-pub(crate) fn preview(
+pub fn preview(
     id: &str,
     captured: &crate::source_library::CapturedLearningSource,
 ) -> LearningSourceDto {

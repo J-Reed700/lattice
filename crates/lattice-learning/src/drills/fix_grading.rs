@@ -96,7 +96,7 @@ pub(crate) fn choose(issue: &KeyIssue) -> StrategyKind {
 }
 
 #[async_trait]
-pub(crate) trait FixStrategy:
+pub trait FixStrategy:
     Send + Sync
 {
     /// What the check of the issue at `position` in the key finds in the learner's files.

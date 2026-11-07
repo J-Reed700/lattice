@@ -97,7 +97,7 @@ impl USearchVectorIndex {
     }
 
     /// Return the count under the snapshot lock, before any later mutation.
-    pub(crate) fn save_snapshot(&self) -> Result<usize> {
+    pub fn save_snapshot(&self) -> Result<usize> {
         let _snapshot = self.persistence.lock();
         // Hold the same read lock used by searches while saving the vectors
         // and metadata, so additions cannot split the two snapshots.

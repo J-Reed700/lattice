@@ -7,7 +7,7 @@ use crate::{
 use lattice_core::shared::error::{AppError, Result};
 
 impl LearningRepository {
-    pub(crate) async fn outline_draft(
+    pub async fn outline_draft(
         &self,
         id: &str,
     ) -> Result<Option<OutlineDraft>> {

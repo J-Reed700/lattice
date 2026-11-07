@@ -25,14 +25,14 @@ use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 /// What a material's stages are given to work with: the model, the database and the build's cancellation.
-pub(crate) struct StageCtx<'a> {
+pub struct StageCtx<'a> {
     pub llm: &'a dyn LLMPort,
     pub pool: &'a SqlitePool,
     pub cancel: &'a CancellationToken,
 }
 
 /// What the planter is told and shown.
-pub(crate) struct PlantWording {
+pub struct PlantWording {
     /// The planter's instructions.
     pub system: String,
     /// The material, the patterns to plant and whatever else the planter is shown.
@@ -42,7 +42,7 @@ pub(crate) struct PlantWording {
 }
 
 /// What the blind reviewer and the describer of a problem it found are told.
-pub(crate) struct ReviewerWording {
+pub struct ReviewerWording {
     /// The blind reviewer's instructions.
     pub reviewer: &'static str,
     /// The instructions for describing a valid extra as an entry of the key.
@@ -84,7 +84,7 @@ impl JudgeWording {
 
 /// The parts of a drill's build, proofs and grading that depend on what is reviewed.
 #[async_trait]
-pub(crate) trait DrillMaterial:
+pub trait DrillMaterial:
     Send + Sync
 {
     /// What the proofs and the hidden suite run on, when the material has anything to run.

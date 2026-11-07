@@ -52,7 +52,7 @@ fn day(value: &str) -> Option<String> {
 
 /// One planned search: what to search for and the kind of source it needs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct PlannedNeed {
+pub struct PlannedNeed {
     pub query: String,
     pub kind: NeedKind,
     /// The product, organisation, package, standard or law it is about.
@@ -371,7 +371,7 @@ pub struct Candidate {
 /// Crossref never runs out of further pages, so a search that pages ends when
 /// its results fill this, not when the finders stop answering.
 #[derive(Clone, Copy)]
-pub(crate) struct Room<'a> {
+pub struct Room<'a> {
     pub tokens: usize,
     pub cost: &'a (dyn Fn(&Candidate) -> usize + Sync),
 }

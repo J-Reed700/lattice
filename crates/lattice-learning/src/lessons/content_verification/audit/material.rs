@@ -44,7 +44,7 @@ impl AuditMaterial {
 
     /// The lesson as its review stands: the draft that waits for review, or
     /// the published lesson once it is ready ("Audit this lesson now").
-    pub(crate) async fn of_lesson(
+    pub async fn of_lesson(
         pool: &SqlitePool,
         program_id: &str,
         lesson_id: &str,

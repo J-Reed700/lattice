@@ -22,7 +22,7 @@ pub struct ProgramVerifierAudit {
 }
 
 impl LearningCurriculumRepository {
-    pub(crate) async fn verifier_audit(&self, program_id: &str) -> Result<ProgramVerifierAudit> {
+    pub async fn verifier_audit(&self, program_id: &str) -> Result<ProgramVerifierAudit> {
         let row = sqlx::query(
             "SELECT verifier_audit, verifier_web_search, verifier_consent_at, \
              verifier_consent_provider FROM learning_programs WHERE id=?",
@@ -42,7 +42,7 @@ impl LearningCurriculumRepository {
 
     /// Writes the whole setting. Turning the audit off clears the consent:
     /// turning it on again asks for it again.
-    pub(crate) async fn set_verifier_audit(
+    pub async fn set_verifier_audit(
         &self,
         program_id: &str,
         setting: &ProgramVerifierAudit,

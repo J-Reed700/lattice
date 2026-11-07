@@ -99,7 +99,7 @@ impl LearningRepository {
         self.create_with_references(program, &[]).await
     }
 
-    pub(super) async fn create_with_references(
+    pub async fn create_with_references(
         &self,
         program: &LearningProgramDto,
         references: &[super::sources::InitialReference],

@@ -42,7 +42,7 @@ impl CourseIndexes {
     }
 
     /// Whether anyone waits on `program`'s index.
-    pub(in crate::references::course_index) fn is_awaited(
+    pub fn is_awaited(
         &self,
         program: &str,
     ) -> bool {

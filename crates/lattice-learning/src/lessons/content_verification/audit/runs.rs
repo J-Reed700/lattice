@@ -29,7 +29,7 @@ pub enum BatchOutcome {
 /// ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BatchRecord {
+pub struct BatchRecord {
     /// 1-based within the pass that sent it, of `of` planned.
     pub index: usize,
     pub of: usize,
@@ -73,7 +73,7 @@ impl RunState {
 
 /// The row an audit writes: one lesson draft audited by one Verifier model.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RunKey {
+pub struct RunKey {
     pub lesson_id: String,
     pub draft_sha256: String,
     pub verifier_model: String,
@@ -125,7 +125,7 @@ pub struct SqliteAuditRuns {
 }
 
 impl SqliteAuditRuns {
-    pub(crate) fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
@@ -145,7 +145,7 @@ impl SqliteAuditRuns {
     }
 
     /// The lesson's most recently started audit.
-    pub(crate) async fn latest(&self, lesson_id: &str) -> Result<Option<AuditRun>> {
+    pub async fn latest(&self, lesson_id: &str) -> Result<Option<AuditRun>> {
         sqlx::query(
             "SELECT * FROM learning_lesson_audits WHERE lesson_id=? \
              ORDER BY started_at DESC, rowid DESC LIMIT 1",
@@ -158,7 +158,7 @@ impl SqliteAuditRuns {
         .transpose()
     }
 
-    pub(crate) async fn course_usage(&self, program_id: &str) -> Result<CourseAuditUsage> {
+    pub async fn course_usage(&self, program_id: &str) -> Result<CourseAuditUsage> {
         let row = sqlx::query(
             "SELECT count(*) AS audits, coalesce(sum(a.input_tokens),0) AS input_tokens, \
              coalesce(sum(a.output_tokens),0) AS output_tokens \

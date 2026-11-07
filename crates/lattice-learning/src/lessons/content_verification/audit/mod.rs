@@ -37,7 +37,7 @@ use tools::VerifierWeb;
 /// One lesson unit as the audit sends it: a section, a question or an
 /// answer key, with the report's unit index.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AuditUnit {
+pub struct AuditUnit {
     pub index: usize,
     pub title: String,
     pub text: String,
@@ -45,7 +45,7 @@ pub(crate) struct AuditUnit {
 
 /// A passage the local checker compared, or that resolved the claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AuditPassage {
+pub struct AuditPassage {
     pub source_version_id: String,
     pub title: String,
     pub start_byte: usize,
@@ -86,7 +86,7 @@ pub enum AuditStop {
 
 impl AuditStop {
     /// The stop a consent state calls for; `None` when sending is allowed.
-    pub(crate) fn from_consent(consent: &Consent) -> Option<Self> {
+    pub fn from_consent(consent: &Consent) -> Option<Self> {
         match consent {
             Consent::NotNeeded | Consent::Given { .. } => None,
             Consent::Missing { provider } => Some(Self::ConsentMissing {
@@ -113,7 +113,7 @@ impl AuditStop {
 
     /// What the lesson card says; `progress` is `(batches done, planned)`
     /// when the audit had started.
-    pub(crate) fn message(&self, progress: Option<(usize, usize)>) -> String {
+    pub fn message(&self, progress: Option<(usize, usize)>) -> String {
         match (self, progress) {
             (Self::TurnedOff, Some((done, of))) => {
                 format!("Audit stopped: Verifier turned off after batch {done} of {of}")
@@ -133,7 +133,7 @@ impl AuditStop {
         }
     }
 
-    pub(crate) fn fix(&self) -> String {
+    pub fn fix(&self) -> String {
         match self {
             Self::TurnedOff => {
                 "The lesson publishes without the audit at the next Resume; turn the audit on \
@@ -159,7 +159,7 @@ impl AuditStop {
     }
 
     /// The review row's `stop_reason` for this stop.
-    pub(crate) fn stop_reason(&self, progress: Option<(usize, usize)>, at: i64) -> StopReason {
+    pub fn stop_reason(&self, progress: Option<(usize, usize)>, at: i64) -> StopReason {
         StopReason {
             code: self.code().into(),
             message: self.message(progress),
@@ -202,7 +202,7 @@ pub enum AuditProgress {
 }
 
 impl AuditProgress {
-    pub(crate) fn label(self) -> String {
+    pub fn label(self) -> String {
         match self {
             Self::Batch { index, of } => format!("Audit batch {index} of {of}"),
         }
@@ -211,7 +211,7 @@ impl AuditProgress {
 
 /// What an audit run did, for the card and the course's totals.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct AuditSummary {
+pub struct AuditSummary {
     pub batches_done: usize,
     pub batches_planned: usize,
     /// Claims that received a Verifier check in this run.
@@ -242,7 +242,7 @@ pub enum AuditOutcome {
 }
 
 impl AuditOutcome {
-    pub(crate) fn summary(&self) -> &AuditSummary {
+    pub fn summary(&self) -> &AuditSummary {
         match self {
             Self::Completed(summary)
             | Self::Stopped { summary, .. }
@@ -253,7 +253,7 @@ impl AuditOutcome {
     /// Whether the audit lets the lesson publish: no dispute, and either
     /// finished or switched off (opt-in off means no audit gate). An audit
     /// that is on but cannot run, or is waiting to retry, holds the lesson.
-    pub(crate) fn publishable(&self) -> bool {
+    pub fn publishable(&self) -> bool {
         match self {
             Self::Completed(summary)
             | Self::Stopped {

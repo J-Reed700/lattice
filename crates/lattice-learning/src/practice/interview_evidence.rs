@@ -34,7 +34,7 @@ fn same_citation(left: &LearningPracticeCitationDto, right: &LearningPracticeCit
 }
 
 impl EvidenceBank {
-    pub(super) async fn gather(
+    pub async fn gather(
         llm: &dyn LLMPort,
         sources: &[LearningSourceVersionDto],
         query: &str,
@@ -142,7 +142,7 @@ impl EvidenceBank {
             .collect()
     }
 
-    pub(super) fn view(&self) -> Value {
+    pub fn view(&self) -> Value {
         json!(self
             .choices
             .iter()

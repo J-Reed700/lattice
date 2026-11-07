@@ -21,7 +21,7 @@ pub mod interview_evidence;
 use interview_evidence::{EvidenceBank, MAX_EVIDENCE_CHOICES};
 
 #[path = "interview_answer_review.rs"]
-mod interview_answer_review;
+pub mod interview_answer_review;
 
 #[cfg(any(test, feature = "test-support"))]
 #[path = "interview_answers_test_support.rs"]

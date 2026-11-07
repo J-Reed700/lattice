@@ -126,7 +126,7 @@ pub struct DrillBuild<'a> {
 
 impl<'a> DrillBuild<'a> {
     /// A build of a drill of `material`.
-    pub(crate) fn new(
+    pub fn new(
         llm: &'a dyn LLMPort,
         material: Box<dyn DrillMaterial + 'a>,
         grader: &'a dyn ReviewGrader,
@@ -153,7 +153,7 @@ impl<'a> DrillBuild<'a> {
 
     /// Runs the stages in order, resuming at the first without a checkpoint. `Stopped` when the job is cancelled;
     /// `Committed` when the drill is stored and the job completed with it.
-    pub(crate) async fn run(
+    pub async fn run(
         &self,
         context: &JobContext,
         spec: &DrillSpec,

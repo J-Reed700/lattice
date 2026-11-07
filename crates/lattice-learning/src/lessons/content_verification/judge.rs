@@ -35,8 +35,8 @@ pub(crate) fn shown_of<T: Clone>(page: &[T], shown: &[usize]) -> Vec<T> {
 }
 
 /// One claim's strict judgment, as [`judge_for_publication`] gives it.
-pub(crate) struct Judged {
-    pub(crate) judgment: ClaimJudgment,
+pub struct Judged {
+    pub judgment: ClaimJudgment,
     /// The positions of the passages the judge was shown, in page order.
     pub(crate) shown: Vec<usize>,
     /// Output tokens the judge's replies took: what this claim's answer cost.

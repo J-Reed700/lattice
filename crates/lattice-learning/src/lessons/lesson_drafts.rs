@@ -37,7 +37,7 @@ pub struct Draft {
 /// references. These inputs can be reused only while every original snapshot
 /// remains active and unchanged; factual approval is never inherited.
 #[derive(Clone, Deserialize, Serialize)]
-pub(crate) struct AuthoringContext {
+pub struct AuthoringContext {
     pub scope_hash: String,
     pub prompt: String,
     pub sources: Vec<LearningSourceDto>,

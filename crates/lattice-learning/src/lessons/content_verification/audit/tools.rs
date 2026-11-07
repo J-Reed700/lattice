@@ -24,7 +24,7 @@ use super::AuditPassage;
 
 /// One search result: what the model may choose to fetch.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SearchHit {
+pub struct SearchHit {
     pub title: String,
     pub url: String,
     pub snippet: String,

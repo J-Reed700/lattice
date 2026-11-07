@@ -37,7 +37,7 @@ pub struct CourseIndexes {
     pool: SqlitePool,
     embedders: Arc<dyn EmbedderSource>,
     searches: Arc<dyn HybridSearchFactory>,
-    pub(super) jobs: Arc<JobRuntime>,
+    pub jobs: Arc<JobRuntime>,
     /// Index directories open for readers and builds.
     live: LiveIndexes,
     /// How many readers hold each course.

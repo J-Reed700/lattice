@@ -60,7 +60,7 @@ pub(crate) enum ProofVerdict {
 }
 
 #[async_trait]
-pub(crate) trait ProofStrategy:
+pub trait ProofStrategy:
     Send + Sync
 {
     async fn prove(&self, case: &ProofCase<'_>) -> Result<ProofVerdict>;
@@ -68,7 +68,7 @@ pub(crate) trait ProofStrategy:
 
 /// What a strategy runs on and asks.
 #[derive(Clone, Copy)]
-pub(crate) struct Tools<'a> {
+pub struct Tools<'a> {
     pub llm: &'a dyn LLMPort,
     pub runner: Option<&'a dyn CodeRunner>,
     pub cancel: &'a CancellationToken,

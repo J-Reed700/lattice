@@ -361,7 +361,7 @@ async fn candidates_in(
 
 impl LearningAssessmentRepository {
     /// One bank item with its key, for the grading job.
-    pub(crate) async fn stored_candidate_in(
+    pub async fn stored_candidate_in(
         connection: &mut SqliteConnection,
         program_id: &str,
         candidate_id: &str,

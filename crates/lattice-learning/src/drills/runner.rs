@@ -45,7 +45,7 @@ impl RunOutcome {
 
 /// Something that can run a test against files.
 #[async_trait]
-pub(crate) trait CodeRunner:
+pub trait CodeRunner:
     Send + Sync
 {
     /// What the suite and the proofs ran on, as a drill records it: `builtin-python`.
