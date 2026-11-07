@@ -712,7 +712,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     let candidate = json!({"blocks":[{"kind":"explanation","body":original},{"kind":"explanation","body":CAPTURE},{"kind":"explanation","body":SECOND_CAPTURE}],"questions":[]});
     let references = ReferenceCollection::lexical(&sources)?;
     let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
-    let (_, report) = run(
+    let (_, report, owned) = run(
         pool,
         program.summary.id,
         program.summary.goal,
@@ -733,6 +733,8 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     .await?;
     assert!(report.issues.is_empty());
     assert_eq!(report.sources.len(), 3);
+    assert_eq!(owned.len(), sources.len() + 2);
+    assert!(sources.iter().all(|source| owned.contains(&source.id)));
     assert_eq!(*llm.plans.lock().unwrap(), 1);
     let checks = llm.claims.lock().unwrap();
     assert_eq!(

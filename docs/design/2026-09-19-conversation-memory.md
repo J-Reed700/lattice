@@ -286,6 +286,8 @@ Deterministic validation cannot distinguish a genuine instruction from the user 
 
 The verifier receives original source passages with adjacent context, the old item's exact evidence, the proposed new evidence, and explicit questions about subject, scope, negation, and whether the old requirement is actually revoked. For a long message, its bounded context excerpt is centred on the proposed evidence instead of always taking the message prefix. It returns `supported`, `ambiguous`, or `unsupported` with source IDs. Use the configured utility model for v1; this is a separate call, not an assurance of independent model errors.
 
+A verdict counts only with its reason: an empty or one-word reason is read as no verdict, because the reason is the only sign the passages were read. Reviews a reply did not read are asked for once more, on their own. What the second ask does not read stays `ambiguous` and marks the review degraded.
+
 `ambiguous` transitions do not retire the old item. If all source spans are valid, create a host-owned `UnresolvedChange` referencing the old item and the later transition evidence; render both without accepting the proposed replacement interpretation. A confidently `unsupported` transition or addition is filtered individually. Other supported operations from the same batch still commit, and the working summary still covers the source, so a speculative extractor proposal cannot stall compaction forever. An ambiguous mandatory addition similarly becomes an unresolved source-evidence item. An ambiguous optional addition is not committed and holds the batch watermark: uncertainty or a reviewer outage must not silently turn into discarded user memory. Keep genuinely ambiguous old and new evidence visible and mark the conflict for continuation. If an unresolved addition cannot be safely included as a scoped quotation within the mandatory budget, do not advance compaction past it. Keep the original raw segment or return a recoverable compaction error.
 
 A transition that names a replacement is atomic with that replacement. If semantic review rejects the replacement addition, the host also ignores the transition; it must never retire the old active item and leave neither version in force.
@@ -347,7 +349,6 @@ Initial limits, all named configuration constants with tests:
 - One fresh-snapshot retry after a commit conflict.
 - At most 32 proposed additions/transitions per response; batches may produce more across the full job.
 - At most 4 evidence spans per item; 2,048 UTF-8 bytes per proposed span. Over-limit evidence cannot be silently clipped.
-- 64 KiB maximum structured output response before parsing.
 - At most 256 source messages or 1 MiB source bytes processed in one automatic foreground compaction attempt. Hitting this work cap returns resumable progress/error; it does not skip the remaining source range.
 
 Do not persist incomplete candidate ledger changes as active. For a large manual rebuild, intermediate fully validated chunks may be committed as staging data under a run ID, invisible to readers until the final atomic activation. Staging is optional in v1; without it, a canceled attempt restarts from the last committed watermark. No requirement to finish arbitrary archive sizes in one five-minute call.

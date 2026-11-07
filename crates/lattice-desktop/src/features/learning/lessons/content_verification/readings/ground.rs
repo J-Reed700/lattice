@@ -38,7 +38,7 @@ impl Reader for Ground {
             }
             match restore_parts(at, ordinal, statement, &checked, evidence).await? {
                 Restored::Receipt(finding, reused) => {
-                    made.put(at, ordinal, read_of(statement, finding, reused));
+                    made.put(at, ordinal, read_of(statement, *finding, reused));
                 }
                 Restored::Ask(pending) => asks.push((ordinal, *statement, pending)),
             }

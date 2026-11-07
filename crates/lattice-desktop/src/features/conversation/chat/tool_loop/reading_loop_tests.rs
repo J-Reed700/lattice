@@ -311,6 +311,64 @@ async fn a_continuation_that_adds_no_passage_is_dropped_and_ends_the_check() {
     }
 }
 
+/// Claude's classifiers can stop a reply after its thinking with no text at all.
+/// That is not the end of a turn whose notes are already written.
+#[tokio::test]
+async fn a_reply_with_nothing_in_it_is_asked_for_again() {
+    let model = Model::new([
+        reply(NOTES),
+        reply(""),
+        reply("The roof was mended in 1851 [2]."),
+        reply("-"),
+    ]);
+    let run = grounded(&model).await;
+    assert_eq!(
+        run.outcome.expect("an answer").response,
+        "The roof was mended in 1851 [2]."
+    );
+    assert_eq!(model.requests().len(), 4);
+}
+
+#[tokio::test]
+async fn a_second_reply_with_nothing_in_it_ends_the_turn() {
+    let model = Model::new([
+        reply(NOTES),
+        reply(""),
+        reply(""),
+        reply("Never asked for."),
+    ]);
+    let run = grounded(&model).await;
+    assert!(run.outcome.is_err());
+    assert_eq!(model.requests().len(), 3, "one more ask, and no further");
+}
+
+fn stopped(text: &str) -> CompletionResponse {
+    CompletionResponse {
+        finish_reason: "refusal".into(),
+        ..CompletionResponse::from_text(text)
+    }
+}
+
+/// Claude's classifiers can stop a reply two words in: on a contract's renewal,
+/// the answer was "The Ren". It must not pass for the whole answer.
+#[tokio::test]
+async fn an_answer_a_safety_filter_stopped_says_so() {
+    let model = Model::new([reply(NOTES), stopped("The roof was")]);
+    let run = grounded(&model).await;
+    let answer = run.outcome.expect("what came before the stop").response;
+    assert!(answer.starts_with("The roof was"), "{answer}");
+    assert!(answer.contains("safety filter"), "{answer}");
+    assert_eq!(model.requests().len(), 2, "nothing more is asked of it");
+}
+
+#[tokio::test]
+async fn a_safety_filter_that_stops_two_empty_replies_says_so() {
+    let model = Model::new([reply(NOTES), stopped(""), stopped("")]);
+    let run = grounded(&model).await;
+    let error = run.outcome.expect_err("no answer").to_string();
+    assert!(error.contains("safety filter"), "{error}");
+}
+
 #[tokio::test]
 async fn a_note_that_is_not_a_copy_never_asks_for_more() {
     let model = Model::new([

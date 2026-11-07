@@ -131,6 +131,32 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
 }
 
 #[test]
+fn a_question_citing_a_numbered_source_the_program_does_not_own_is_refused() {
+    const KETTLE: &str = "The kettle whistles once the water inside it has boiled away.";
+    let kettle = LearningSourceDto {
+        id: "source-b".into(),
+        title: "Kettle notes".into(),
+        url: None,
+        excerpt: KETTLE.into(),
+        acquired_at: 2,
+    };
+    let mut lesson = off_shape(true);
+    lesson.questions[1].citations = vec![GeneratedCitation {
+        sentence: "A kettle whistles when it runs dry.".into(),
+        source_index: Some(1),
+        quote: KETTLE.into(),
+    }];
+
+    let error = assemble(lesson, &[source(), kettle], &HashSet::from(["source-a"])).unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::ModelAnswerUnusable(message)
+            if message == "A question referred to a source outside this program."),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn the_schema_asks_for_a_citation_list_per_part_and_none_without_sources() {
     let pointer = "/properties/blocks/items/properties/citations/maxItems";
     assert_eq!(lesson_schema(2).pointer(pointer), Some(&json!(24)));

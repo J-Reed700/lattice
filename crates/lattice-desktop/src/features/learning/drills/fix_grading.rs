@@ -6,6 +6,9 @@
 //! | proven by a killing test | that test runs on the learner's files, beside the key's fixes of the other planted issues | judged, and the result says why |
 //! | proven by judgement | judged | judged |
 //!
+//! Every planted issue is graded. An issue found in review is graded only when the learner raised it: one the
+//! assessment calls missed, or has no outcome for, gets no result and no judge call.
+//!
 //! An issue is graded on its own: a defect the learner left in another issue cannot fail its test, because the key's
 //! fix for every other planted issue is applied to the learner's text where it applies. A fix found in review is never
 //! applied. A test that cannot decide, because its run timed out, no runtime was there or the runtime refused the files,
@@ -21,8 +24,8 @@ use crate::features::learning::generation::parse_json;
 use crate::features::learning::lessons::structured_call::complete_checked;
 use async_trait::async_trait;
 use lattice_core::domain::learning::drills::{
-    apply, overlaps, pattern, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck, IssueFix,
-    KeyIssue, LineSpan, Origin, Proof, SuiteVerdict,
+    apply, overlaps, pattern, Assessment, DecidedBy, Drill, DrillFile, FixOutcome, IssueCheck,
+    IssueFix, IssueOutcome, KeyIssue, LineSpan, Origin, Proof, SuiteVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -39,10 +42,12 @@ pub(in crate::features::learning) struct FixCase<'a> {
     pub learner: &'a [DrillFile],
     /// The hidden suite, in a runner language.
     pub suite: Option<&'a str>,
+    /// The judge's assessment of the learner's review.
+    pub assessment: &'a Assessment,
 }
 
-/// The result for every key issue, in the key's order. A run cancelled while grading is an error, which the job
-/// treats as a stop.
+/// The result for every planted issue and every issue found in review that the learner raised, in the key's order. A
+/// run cancelled while grading is an error, which the job treats as a stop.
 pub(in crate::features::learning) async fn grade_fix(
     tools: Tools<'_>,
     case: &FixCase<'_>,
@@ -50,6 +55,13 @@ pub(in crate::features::learning) async fn grade_fix(
     let suite = run_suite(tools, case).await?;
     let mut graded = Vec::with_capacity(case.drill.key.len());
     for (position, issue) in case.drill.key.iter().enumerate() {
+        let raised = !matches!(
+            case.assessment.issues.get(position),
+            None | Some((IssueOutcome::Missed, _))
+        );
+        if issue.origin != Origin::Planted && !raised {
+            continue;
+        }
         let checked_by = strategy(choose(issue), tools);
         let check = checked_by.grade(case, position, issue).await?;
         graded.push(IssueFix::settle(position, check, &suite));

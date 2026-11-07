@@ -270,10 +270,7 @@ impl GroundingReport {
                         .map(|quote| fit_utf16(quote, MAX_QUOTE_UNITS)),
                     "method": claim.method.as_str(),
                     "confidence": claim.confidence,
-                    "reason": claim
-                        .reason
-                        .as_deref()
-                        .map(|reason| fit_utf16(reason, MAX_QUOTE_UNITS)),
+                    "reason": claim.reason.as_deref(),
                     "unverifiedReason": claim.unverified_reason.map(UnverifiedReason::as_str),
                 })
             })

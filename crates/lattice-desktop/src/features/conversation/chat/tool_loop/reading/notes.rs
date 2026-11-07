@@ -105,10 +105,13 @@ pub(super) fn locate(note: &str, passages: &Passages) -> Vec<u32> {
         .collect()
 }
 
-/// A note split into sentences at Unicode (UAX #29) boundaries, so the
-/// sentences it copied need not have stood side by side in the passage.
+/// A note split into sentences at Unicode (UAX #29) boundaries and a table's
+/// cells at their bars, so what it copied need not have stood side by side in
+/// the passage: a model lays a row out under its heading.
 fn sentences(note: &str) -> Vec<&str> {
-    note.split_sentence_bounds().collect()
+    note.split_sentence_bounds()
+        .flat_map(|sentence| sentence.split('|'))
+        .collect()
 }
 
 /// Puts each note under the passage it was copied from. Returns the labels

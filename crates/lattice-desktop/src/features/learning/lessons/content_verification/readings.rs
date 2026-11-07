@@ -221,7 +221,7 @@ fn comparison(
 enum Restored {
     /// The finding, and whether it came from a saved check: a statement with no
     /// passage to read is decided on the spot, with no saved check.
-    Receipt(Finding, bool),
+    Receipt(Box<Finding>, bool),
     Ask(PendingClaim),
 }
 
@@ -266,7 +266,7 @@ async fn restore_parts(
 ) -> Result<Restored> {
     let pending = comparison(at, ordinal, statement, checked, evidence, Pass::Attribution);
     Ok(match restored(at, pending).await? {
-        Restored::Receipt(finding, reused) => Restored::Receipt(alone(finding), reused),
+        Restored::Receipt(finding, reused) => Restored::Receipt(Box::new(alone(*finding)), reused),
         asked => asked,
     })
 }

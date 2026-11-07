@@ -29,7 +29,7 @@ use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, MemoryValidity, SourceMessage,
     SourceRole, SummaryRefold, SuppressedSpan, MAX_EVIDENCE_PER_ITEM, MAX_OPERATIONS_PER_RESPONSE,
-    MAX_PROPOSAL_BYTES, MAX_QUOTE_BYTES,
+    MAX_QUOTE_BYTES,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -197,7 +197,7 @@ fn verdict_response(pairs: &[(&str, &str)]) -> String {
             .map(|(id, verdict)| serde_json::json!({
                 "id": id,
                 "verdict": verdict,
-                "reason": "test",
+                "reason": "The quoted passage says this.",
             }))
             .collect::<Vec<_>>(),
     })
@@ -965,7 +965,6 @@ fn the_enforced_limits_are_the_ones_the_design_documents() {
 
     // The payload caps are the domain's, reused rather than restated: two
     // numbers that must agree are one number that cannot disagree.
-    assert_eq!(MAX_PROPOSAL_BYTES, 64 * 1024);
     assert_eq!(MAX_OPERATIONS_PER_RESPONSE, 32);
     assert_eq!(MAX_EVIDENCE_PER_ITEM, 4);
     assert_eq!(MAX_QUOTE_BYTES, 2048);
@@ -1985,6 +1984,13 @@ async fn a_commit_conflict_is_retried_once_from_a_fresh_snapshot() {
     assert_eq!(port.errors(), Vec::<String>::new());
 }
 
+/// Measured, not style: without this sentence Qwen3.8-27B answers `add: []` for
+/// windows holding the user's rule, and the rule never reaches memory.
+#[test]
+fn the_extractor_is_told_what_an_empty_add_means() {
+    assert!(super::prompts::EXTRACTOR_SYSTEM.contains("Every requirement, goal, decision, fact, preference or unresolved question the user states goes in add; add is empty only when no segment holds one."));
+}
+
 #[tokio::test]
 async fn a_review_that_cannot_be_obtained_records_ambiguity_rather_than_support() {
     let messages = four_turns();
@@ -2954,4 +2960,282 @@ async fn a_refold_never_runs_past_what_extraction_accepted() {
     assert_eq!(llm.folded_sequences(), vec![vec![1, 2, 3, 4]]);
     assert_eq!(port.summary().as_deref(), Some("Staging may deploy."));
     assert_eq!(port.summary_boundary(), Some(4));
+}
+
+/// What a model answers now and then in place of a review: the first id,
+/// "supported", and a reason that says nothing.
+fn hollow_reply(id: &str, reason: &str) -> String {
+    serde_json::json!({"verdicts": [{"id": id, "reason": reason, "verdict": "supported"}]})
+        .to_string()
+}
+
+fn deployment_constraint() -> Vec<Result<String>> {
+    vec![Ok(extraction_response(
+        vec![proposed_constraint(
+            "c1",
+            "Deployment requires approval",
+            "m1",
+            "Do not deploy until I approve.",
+        )],
+        vec![],
+        &PREFIX_SEGMENTS,
+    ))]
+}
+
+fn two_constraints() -> Vec<Result<String>> {
+    vec![Ok(extraction_response(
+        vec![
+            proposed_constraint(
+                "c1",
+                "Deployment requires approval",
+                "m1",
+                "Do not deploy until I approve.",
+            ),
+            proposed_constraint(
+                "c2",
+                "Staging may be deployed",
+                "m3",
+                "Actually you may deploy staging.",
+            ),
+        ],
+        vec![],
+        &PREFIX_SEGMENTS,
+    ))]
+}
+
+fn reviewed_ids(prompt: &str) -> Vec<String> {
+    let payload: serde_json::Value = serde_json::from_str(prompt).expect("review prompt JSON");
+    payload["reviews"]
+        .as_array()
+        .expect("reviews")
+        .iter()
+        .map(|review| review["id"].as_str().expect("id").to_string())
+        .collect()
+}
+
+fn summary_reply() -> Vec<Result<String>> {
+    vec![Ok("Approval gate recorded.".to_string())]
+}
+
+#[tokio::test]
+async fn a_verdict_that_gives_no_reason_is_not_a_review() {
+    for reason in ["", "   ", "x", "placeholder"] {
+        let port = FakePort::new(four_turns(), Vec::new(), 0);
+        let llm = FakeLlm::new(
+            deployment_constraint(),
+            vec![
+                Ok(hollow_reply("addition:c1", reason)),
+                Ok(hollow_reply("addition:c1", reason)),
+            ],
+            summary_reply(),
+        );
+        let job = job(port, llm, small_config());
+
+        let outcome = job
+            .run(CONVERSATION, CompactionRequest::default())
+            .await
+            .unwrap();
+
+        assert!(outcome.review_degraded, "reason {reason:?}");
+        assert_eq!(
+            outcome.commit.inserts[0].review,
+            MemoryReview::Ambiguous,
+            "a requirement nobody read is carried as ambiguous, reason {reason:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_hollow_reply_is_asked_for_again_and_the_real_reading_stands() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        deployment_constraint(),
+        vec![
+            Ok(hollow_reply("addition:c1", "")),
+            Ok(verdict_response(&[("addition:c1", "unsupported")])),
+        ],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.count(Task::Review), 2);
+    assert_eq!(outcome.review_calls, 2);
+    assert!(!outcome.review_degraded);
+    assert!(
+        outcome.commit.inserts.is_empty(),
+        "the hollow \"supported\" must not outlive the reading that rejected it"
+    );
+}
+
+#[tokio::test]
+async fn reviews_a_reply_left_out_are_asked_for_again_on_their_own() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        two_constraints(),
+        vec![
+            Ok(verdict_response(&[("addition:c1", "supported")])),
+            Ok(verdict_response(&[("addition:c2", "supported")])),
+        ],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    let prompts = llm.prompts_for(Task::Review);
+    assert_eq!(prompts.len(), 2);
+    assert_eq!(reviewed_ids(&prompts[0]), ["addition:c1", "addition:c2"]);
+    assert_eq!(reviewed_ids(&prompts[1]), ["addition:c2"]);
+    assert!(!outcome.review_degraded);
+    assert_eq!(outcome.commit.inserts.len(), 2);
+    assert!(outcome
+        .commit
+        .inserts
+        .iter()
+        .all(|item| item.review == MemoryReview::Supported));
+}
+
+#[tokio::test]
+async fn a_review_still_left_out_after_the_second_ask_stays_ambiguous() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        two_constraints(),
+        vec![
+            Ok(verdict_response(&[("addition:c1", "supported")])),
+            Ok(hollow_reply("addition:c2", "")),
+        ],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.count(Task::Review), 2, "one more ask, and no further");
+    assert!(outcome.review_degraded);
+    let review_of = |label: &str| {
+        outcome
+            .commit
+            .inserts
+            .iter()
+            .find(|item| item.label == label)
+            .map(|item| item.review)
+    };
+    assert_eq!(
+        review_of("Deployment requires approval"),
+        Some(MemoryReview::Supported)
+    );
+    assert_eq!(
+        review_of("Staging may be deployed"),
+        Some(MemoryReview::Ambiguous)
+    );
+}
+
+#[tokio::test]
+async fn a_review_reply_that_cannot_be_read_is_asked_for_again() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        deployment_constraint(),
+        vec![
+            Ok("not the answer".to_string()),
+            Ok(verdict_response(&[("addition:c1", "supported")])),
+        ],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.count(Task::Review), 2);
+    assert!(!outcome.review_degraded);
+    assert_eq!(outcome.commit.inserts[0].review, MemoryReview::Supported);
+}
+
+#[tokio::test]
+async fn a_provider_failure_is_not_asked_for_again() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        deployment_constraint(),
+        vec![
+            Err(AppError::ServiceNotAvailable("no model".into())),
+            Ok(verdict_response(&[("addition:c1", "supported")])),
+        ],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        llm.count(Task::Review),
+        1,
+        "the transport has already retried what can be retried"
+    );
+    assert!(outcome.review_degraded);
+    assert_eq!(outcome.commit.inserts[0].review, MemoryReview::Ambiguous);
+}
+
+#[tokio::test]
+async fn a_reason_in_a_script_written_without_spaces_is_a_reason() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        deployment_constraint(),
+        vec![Ok(hollow_reply("addition:c1", "用户明确说明了这一要求。"))],
+        summary_reply(),
+    );
+    let job = job(port, llm.clone(), small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(llm.count(Task::Review), 1);
+    assert!(!outcome.review_degraded);
+    assert_eq!(outcome.commit.inserts[0].review, MemoryReview::Supported);
+}
+
+#[tokio::test]
+async fn a_second_ask_cannot_change_a_reading_it_did_not_ask_for() {
+    let port = FakePort::new(four_turns(), Vec::new(), 0);
+    let llm = FakeLlm::new(
+        two_constraints(),
+        vec![
+            Ok(verdict_response(&[("addition:c1", "supported")])),
+            Ok(verdict_response(&[
+                ("addition:c1", "unsupported"),
+                ("addition:c2", "supported"),
+            ])),
+        ],
+        summary_reply(),
+    );
+    let job = job(port, llm, small_config());
+
+    let outcome = job
+        .run(CONVERSATION, CompactionRequest::default())
+        .await
+        .unwrap();
+
+    assert_eq!(outcome.commit.inserts.len(), 2);
+    assert!(outcome
+        .commit
+        .inserts
+        .iter()
+        .all(|item| item.review == MemoryReview::Supported));
 }

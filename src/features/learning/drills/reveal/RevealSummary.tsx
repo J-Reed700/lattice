@@ -55,7 +55,7 @@ export function RevealSummary({ result, reveal }: { result: CodeReviewResultDto;
       <div className="space-y-5 px-5 py-5 sm:px-6">
         <div className="grid gap-5 md:grid-cols-2">
           <div>
-            <h3 className={eyebrow}>Of the {plural(issues, 'issue')} in the code</h3>
+            <h3 className={eyebrow}>Of the {plural(issues, 'planted issue')}</h3>
             <dl className="mt-2 grid grid-cols-3 gap-2">
               <Stat label="Found" value={score.found} />
               <Stat label="Half found" value={score.halfFound} />
@@ -77,7 +77,7 @@ export function RevealSummary({ result, reveal }: { result: CodeReviewResultDto;
               {score.precision !== null && (
                 <Stat label="Precision" value={percentText(score.precision)} hint="Comments that matched an issue or were a valid extra." />
               )}
-              <Stat label="Valid extras" value={score.validExtras} hint="Real problems the key does not hold." />
+              <Stat label="Valid extras" value={score.validExtras} hint="Real problems beyond the planted ones." />
               <Stat label="False positives" value={score.falsePositives} />
             </dl>
           </div>
