@@ -6,7 +6,7 @@
 
 use super::clock::TurnClock;
 use super::final_round::{say_last, written_call_start};
-use super::{answer_was_cut_short, tool_schema_text, StreamEmitter, CUT_SHORT_NOTE};
+use super::{answer_was_cut_short, tool_schema_text, StreamEmitter, CUT_SHORT_NOTE, DECLINED_NOTE};
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::turn_record::{TurnRecorder, TurnStepKind};
 use crate::features::conversation::chat::verification::cited_labels;
@@ -166,6 +166,7 @@ pub(super) async fn read_passages(
     llm: &dyn LLMPort,
     request: &CompletionRequest,
     passages: &Passages,
+    question: &str,
     recorder: &TurnRecorder,
     cancel: &CancellationToken,
     clock: &TurnClock,
@@ -175,7 +176,7 @@ pub(super) async fn read_passages(
         "Reading the passages",
         Some(format!("{} passages", passages.len())),
     );
-    let mut lines = read_in_groups(llm, request, passages, cancel, clock).await?;
+    let mut lines = read_in_groups(llm, request, passages, question, cancel, clock).await?;
     if lines.is_empty() {
         warn!("The reading wrote no notes; answering without them");
         step.failed(Some("No notes".into()));
@@ -326,7 +327,7 @@ pub(super) async fn add_what_was_left_out(
     cancel: &CancellationToken,
     clock: &TurnClock,
 ) -> Result<()> {
-    if answer.ends_with(CUT_SHORT_NOTE) {
+    if answer.ends_with(CUT_SHORT_NOTE) || answer.ends_with(DECLINED_NOTE) {
         return Ok(());
     }
     let mut left = left_out(&notes.noted, &cited_labels(answer));
