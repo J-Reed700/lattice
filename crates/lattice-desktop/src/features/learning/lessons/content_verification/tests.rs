@@ -629,6 +629,9 @@ mod repair_request_tests;
 #[path = "unwrite_tests.rs"]
 mod unwrite_tests;
 
+#[path = "apparatus_tests.rs"]
+mod apparatus_tests;
+
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
 {
