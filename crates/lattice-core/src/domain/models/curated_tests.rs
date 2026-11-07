@@ -251,17 +251,12 @@ fn catalog_search_matches_every_term() {
     assert!(ids("llama").is_empty());
 }
 
-/// The default install runs whatever tier first run picks, so each tier is
-/// what turns the tool loop on for most users.
+/// First run installs whatever the recommender puts first, so every catalog entry is what turns
+/// the tool loop on for most users.
 #[test]
-fn every_first_run_tier_can_call_tools_and_unknown_files_cannot() {
-    for ram in [4.0, 12.0, 32.0] {
-        let id = recommend_chat_model_for_ram(ram);
-        let entry = get_curated_llm_models()
-            .into_iter()
-            .find(|model| model.id == id)
-            .expect("tier is in the catalog");
-        let file = entry.default_filename.expect("tier names a file");
+fn every_catalog_entry_can_call_tools_and_unknown_files_cannot() {
+    for entry in get_curated_llm_models() {
+        let file = entry.default_filename.expect("entry names a file");
         assert!(chat_model_file_supports_tool_calling(&file), "{file}");
         assert!(chat_model_file_supports_tool_calling(&file.to_lowercase()));
     }

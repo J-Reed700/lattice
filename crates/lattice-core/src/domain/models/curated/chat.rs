@@ -838,29 +838,3 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
         .map(CuratedChatModel::metadata)
         .collect()
 }
-
-/// Deprecated: first run recommends through `fit::Recommender`, which counts
-/// the graphics card and the companions; this reads system RAM alone.
-///
-/// First-run chat-model tier, by system RAM. One family, sized to the
-/// machine: a model that does not fit swaps, and a first chat that swaps looks
-/// broken.
-///
-/// - `< 8 GB`  → Qwen 3.5 2B Q4 (2.4 GB working set)
-/// - `8–16 GB` → Qwen 3.5 4B Q4 (4.1 GB)
-/// - `≥ 16 GB` → Qwen 3.5 9B Q4 (7.0 GB)
-///
-/// Each fits inside 56% of its tier's smallest machine, the share the catalog
-/// browser calls "Fits". Larger machines still start on the 9B: it is what
-/// the evaluations measure, it downloads in minutes rather than the better
-/// part of an hour, and the 27B and the mixture-of-experts models are one
-/// choice away in the catalog.
-pub fn recommend_chat_model_for_ram(effective_ram_gb: f64) -> &'static str {
-    if effective_ram_gb < 8.0 {
-        "qwen3.5-2b-q4_k_m"
-    } else if effective_ram_gb < 16.0 {
-        "qwen3.5-4b-q4_k_m"
-    } else {
-        "qwen3.5-9b-q4_k_m"
-    }
-}
