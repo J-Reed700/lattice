@@ -1,5 +1,6 @@
 //! Shared builders for the drills' tests.
 
+mod brief_tests;
 mod catalogue_tests;
 mod diff_tests;
 mod drill_tests;

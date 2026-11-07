@@ -3,7 +3,8 @@
 
 use crate::features::learning::drills::runner::RunOutcome;
 use lattice_core::domain::learning::drills::{
-    Assessment, DrillFile, Edit, IssueOutcome, KeyIssue, LineSpan, Origin, Proof, Severity,
+    Assessment, DrillFile, Edit, IssueOutcome, KeyIssue, LessonBrief, LineSpan, Origin, Proof,
+    Severity,
 };
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +73,14 @@ pub struct CleanCode {
     /// The passage an explanation was written from. A checkpoint saved before passages has none.
     #[serde(default)]
     pub source: Option<SourcePassage>,
+    /// The brief of the lesson the writer was shown; `None` for a passage, and in checkpoints saved before drills
+    /// were built from lessons.
+    #[serde(default)]
+    pub brief: Option<LessonBrief>,
+    /// What the lesson's fit for the material rests on, read before the brief was; `None` in checkpoints saved
+    /// before drills were built from lessons.
+    #[serde(default)]
+    pub basis: Option<String>,
     pub trail: Trail,
 }
 
@@ -101,6 +110,7 @@ pub struct Baseline {
     pub tests: Vec<String>,
     pub suite: Option<String>,
     pub source: Option<SourcePassage>,
+    pub brief: Option<LessonBrief>,
 }
 
 impl Baseline {
@@ -113,6 +123,7 @@ impl Baseline {
             tests: code.tests.clone(),
             suite: code.suite.clone(),
             source: code.source.clone(),
+            brief: None,
         }
     }
 }
@@ -275,6 +286,9 @@ pub struct Evidence {
     pub proofs: Vec<ProofEvidence>,
     pub dropped: Vec<DroppedMutation>,
     pub blind_review: BlindReviewEvidence,
+    /// The brief of the lesson the drill was built from, when it was built from one for the writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brief: Option<LessonBrief>,
 }
 
 impl Evidence {
@@ -313,6 +327,7 @@ impl Evidence {
                 extras: blind.extras.iter().map(|issue| issue.id.clone()).collect(),
                 trail: blind.trail.clone(),
             },
+            brief: None,
         }
     }
 }

@@ -1,27 +1,26 @@
 //! Stage 1: the clean code, and in a runner language the suite that passes on it.
 
 use super::support::{
-    build, clean_code_answer, files, idle_grader, last, messages, spec, system, FakeRunner,
-    ScriptedModel, LITERALS, MODEL, OPERATOR, SUITE,
+    build, clean_code_answer, code_spec, course, files, idle_grader, last, lesson_titled, messages,
+    system, FakeRunner, ScriptedModel, LITERALS, MODEL, OPERATOR, SPACING_LESSON, SUITE,
 };
-use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{ModelCall, RunRecord};
 use crate::features::learning::drills::runner::RunOutcome;
+use crate::features::learning::drills::schedules;
 use crate::features::learning::drills::spec::DrillSpec;
+use crate::features::learning::persistence::db;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{DrillFile, Material};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 
-fn go_spec() -> DrillSpec {
-    DrillSpec {
+/// A spec for code in Go on a new course, built from its spacing lesson.
+async fn go_spec(pool: &sqlx::SqlitePool) -> Result<DrillSpec> {
+    Ok(DrillSpec {
         material: Material::code("go"),
-        domain: Some("rate limiting".into()),
         lines: 30,
-        patterns: vec![OPERATOR.into(), LITERALS.into()],
-        program_id: None,
-        lesson_id: None,
-    }
+        ..code_spec(pool).await?
+    })
 }
 
 /// An answer for the Python project with its files and suite chosen by the test.
@@ -48,7 +47,7 @@ async fn the_code_of_a_language_without_a_runner_is_accepted_with_its_lines_made
     .to_string()]);
     let grader = idle_grader();
     let code = build(&pool, &model, None, &grader)
-        .clean_code(&go_spec())
+        .clean_code(&go_spec(&pool).await?)
         .await?;
     assert_eq!(
         code.files,
@@ -59,7 +58,7 @@ async fn the_code_of_a_language_without_a_runner_is_accepted_with_its_lines_made
     );
     assert!(code.tests.is_empty());
     assert_eq!(code.suite, None);
-    assert_eq!(code.domain, "rate limiting");
+    assert_eq!(code.domain, SPACING_LESSON);
     assert_eq!(code.title, "A limiter");
     assert!(uuid::Uuid::parse_str(&code.drill_id).is_ok());
     assert_eq!(
@@ -82,7 +81,7 @@ async fn a_runner_language_asks_for_a_suite_and_runs_it_on_the_code() -> Result<
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await?;
     assert_eq!(code.files, files());
     assert_eq!(code.suite.as_deref(), Some(SUITE));
@@ -119,7 +118,7 @@ async fn a_suite_that_fails_is_sent_back_once_with_the_output_and_then_accepted(
     ]);
     let grader = idle_grader();
     let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await?;
     let requests = model.requests();
     assert_eq!(requests.len(), 2);
@@ -169,7 +168,7 @@ async fn a_suite_that_fails_twice_fails_the_stage_with_the_output() -> Result<()
     });
     let grader = idle_grader();
     let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await
         .unwrap_err();
     assert!(
@@ -195,7 +194,7 @@ async fn a_suite_that_does_not_finish_is_sent_back_once_like_a_failure_with_what
     let runner = FakeRunner::scripted(vec![timed_out("waiting 1\nwaiting 2"), RunOutcome::Passed]);
     let grader = idle_grader();
     let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await?;
     assert_eq!(code.files, files());
     let requests = model.requests();
@@ -243,7 +242,7 @@ async fn a_timeout_that_wrote_nothing_says_only_that_the_suite_did_not_finish() 
     let runner = FakeRunner::scripted(vec![timed_out(""), RunOutcome::Passed]);
     let grader = idle_grader();
     build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await?;
     let reask = last(&model.requests()[1]);
     assert!(
@@ -261,7 +260,7 @@ async fn a_suite_that_does_not_finish_twice_fails_the_stage_as_an_unusable_answe
     let runner = FakeRunner::new(|_, _| timed_out("still going"));
     let grader = idle_grader();
     let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await
         .unwrap_err();
     assert!(
@@ -289,7 +288,7 @@ async fn a_failure_and_a_timeout_in_either_order_fail_the_stage() -> Result<()> 
         let runner = FakeRunner::scripted(outcomes);
         let grader = idle_grader();
         let error = build(&pool, &model, Some(&runner), &grader)
-            .clean_code(&spec())
+            .clean_code(&code_spec(&pool).await?)
             .await
             .unwrap_err();
         assert!(
@@ -311,7 +310,7 @@ async fn a_runtime_that_is_not_there_is_an_unavailable_service_and_the_answer_is
     });
     let grader = idle_grader();
     let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await
         .unwrap_err();
     assert!(
@@ -329,7 +328,7 @@ async fn a_cancelled_run_is_a_cancelled_build_and_the_answer_is_not_blamed() -> 
     let runner = FakeRunner::new(|_, _| RunOutcome::Cancelled);
     let grader = idle_grader();
     let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await
         .unwrap_err();
     assert!(
@@ -347,7 +346,7 @@ async fn refused_then_accepted(bad: String, fragment: &str) -> Result<()> {
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let code = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await?;
     assert_eq!(code.files, files(), "{fragment}");
     let requests = model.requests();
@@ -447,7 +446,7 @@ async fn an_answer_refused_twice_fails_the_stage_with_the_second_reason() -> Res
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     let error = build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await
         .unwrap_err();
     assert!(
@@ -462,7 +461,7 @@ async fn an_answer_refused_twice_fails_the_stage_with_the_second_reason() -> Res
 #[tokio::test]
 async fn a_testing_pattern_asks_for_a_test_file_that_is_part_of_the_code() -> Result<()> {
     let pool = pool().await?;
-    let mut spec = spec();
+    let mut spec = code_spec(&pool).await?;
     spec.patterns = vec!["testing.assertion_free_test".into()];
     let limiter = super::support::limiter();
     let without = answer(vec![file("src/limiter.py", &limiter)], Some(SUITE));
@@ -493,7 +492,7 @@ async fn the_writer_is_told_nothing_of_the_patterns_to_plant() -> Result<()> {
     let runner = FakeRunner::passing();
     let grader = idle_grader();
     build(&pool, &model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&code_spec(&pool).await?)
         .await?;
     let sent: String = messages(&model.requests()[0])
         .into_iter()
@@ -506,19 +505,89 @@ async fn the_writer_is_told_nothing_of_the_patterns_to_plant() -> Result<()> {
 }
 
 #[tokio::test]
-async fn without_a_domain_the_bank_picks_the_one_used_least_recently() -> Result<()> {
+async fn the_writer_is_given_the_lessons_brief_and_no_domain() -> Result<()> {
     let pool = pool().await?;
+    let spec = code_spec(&pool).await?;
     let model = ScriptedModel::new([clean_code_answer()]);
     let runner = FakeRunner::passing();
     let grader = idle_grader();
-    let mut spec = spec();
-    spec.domain = None;
+    build(&pool, &model, Some(&runner), &grader)
+        .clean_code(&spec)
+        .await?;
+    let prompt = last(&model.requests()[0]);
+    assert!(
+        prompt.starts_with("Language: python\nSize: about 40 lines of code in all\n\n<brief>\nCourse: A generic learning program\n"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("\nLesson: Spacing study over sessions\nLesson objective: Explain why spreading study over several sessions improves recall\n"),
+        "{prompt}"
+    );
+    assert!(prompt.ends_with("\n</brief>"), "{prompt}");
+    assert!(!prompt.contains("Domain:"), "{prompt}");
+    assert!(!prompt.contains("rate limiting"), "{prompt}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_clean_stage_keeps_the_brief_the_writer_was_shown_and_the_basis_read_before_it(
+) -> Result<()> {
+    let pool = pool().await?;
+    let spec = code_spec(&pool).await?;
+    let model = ScriptedModel::new([clean_code_answer()]);
+    let runner = FakeRunner::passing();
+    let grader = idle_grader();
     let code = build(&pool, &model, Some(&runner), &grader)
         .clean_code(&spec)
         .await?;
-    assert_eq!(code.domain, bank::DOMAINS[0]);
-    assert!(messages(&model.requests()[0])
-        .iter()
-        .any(|(_, content)| content.contains(&format!("Domain: {}", bank::DOMAINS[0]))));
+    let brief = code.brief.clone().expect("the brief the writer was shown");
+    assert!(last(&model.requests()[0]).contains(&brief.render()));
+    assert_eq!(Some(brief.lesson_id.as_str()), spec.lesson_id.as_deref());
+    assert_eq!(brief.lesson, SPACING_LESSON);
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let basis = schedules::fit_basis_in(
+        &mut connection,
+        spec.course().expect("a course"),
+        spec.lesson_id.as_deref().expect("a lesson"),
+    )
+    .await?;
+    assert!(!basis.is_empty());
+    assert_eq!(code.basis, Some(basis));
+    assert_eq!(code.domain, SPACING_LESSON);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_code_spec_without_a_lesson_or_with_one_of_another_course_fails_before_any_model_call(
+) -> Result<()> {
+    let pool = pool().await?;
+    let spec = code_spec(&pool).await?;
+    let other = course(&pool).await?;
+    let foreign = lesson_titled(&pool, &other, SPACING_LESSON).await?;
+    let cases = [
+        DrillSpec {
+            lesson_id: None,
+            ..spec.clone()
+        },
+        DrillSpec {
+            program_id: None,
+            ..spec.clone()
+        },
+        DrillSpec {
+            lesson_id: Some(foreign),
+            ..spec.clone()
+        },
+    ];
+    for case in cases {
+        let model = ScriptedModel::new([clean_code_answer()]);
+        let runner = FakeRunner::passing();
+        let grader = idle_grader();
+        let error = build(&pool, &model, Some(&runner), &grader)
+            .clean_code(&case)
+            .await
+            .unwrap_err();
+        assert!(matches!(&error, AppError::InvalidInput(_)), "{error:?}");
+        assert!(model.requests().is_empty(), "{case:?}");
+    }
     Ok(())
 }

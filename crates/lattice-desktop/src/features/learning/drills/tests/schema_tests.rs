@@ -3,14 +3,14 @@
 
 use super::support::{
     blind_answer, blind_assessment, clean_code_answer, entry_answer, judge_answer, plant_answer,
-    review_answer, spec, FakeGrader, FakeRunner, Harness, ScriptedModel,
+    review_answer, FakeGrader, FakeRunner, Harness, ScriptedModel,
 };
 use crate::features::learning::practice::practice_tests::text_length_rules;
 use lattice_core::shared::error::Result;
 
 #[tokio::test]
 async fn the_schemas_of_a_build_hold_no_text_length_cap() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let model = ScriptedModel::new([
         clean_code_answer(),
         review_answer(vec![]),
@@ -24,7 +24,7 @@ async fn the_schemas_of_a_build_hold_no_text_length_cap() -> Result<()> {
     let context = harness.context().await?;
     harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await?;
     let requests = model.requests();
     assert_eq!(requests.len(), 6);
@@ -42,7 +42,7 @@ async fn the_schemas_of_a_build_hold_no_text_length_cap() -> Result<()> {
 #[tokio::test]
 async fn an_answer_is_never_cut_down_by_the_code() -> Result<()> {
     // A long file, a long suite and a long comment are all kept whole.
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let long = "x = 1\n".repeat(20_000);
     let answer = serde_json::json!({
         "title": "A long file",
@@ -55,7 +55,7 @@ async fn an_answer_is_never_cut_down_by_the_code() -> Result<()> {
     let grader = FakeGrader::failing("unused");
     let code = harness
         .build(&model, Some(&runner), &grader)
-        .clean_code(&spec())
+        .clean_code(&spec)
         .await?;
     assert_eq!(code.files[0].text, long);
     assert_eq!(code.suite.as_deref(), Some(long.as_str()));

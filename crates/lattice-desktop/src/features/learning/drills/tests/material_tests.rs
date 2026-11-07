@@ -1,9 +1,10 @@
 //! Code as a drill's material: every text that reaches a model for a code drill is, byte for byte, the text the
 //! stages carried before the material was a Strategy. The texts of that time are kept in `tests/golden`, taken from
-//! the stages as they were; a spec stored before passages is still read.
+//! the stages as they were, except the clean code's system text, which is the one the writer has had since drills
+//! were built from a lesson; a spec stored before passages is still read.
 
 use super::support::{
-    baseline, build, code, idle_grader, last, review_answer, spec, system, FakeRunner,
+    baseline, build, code, code_spec, idle_grader, last, review_answer, spec, system, FakeRunner,
     ScriptedModel, OPERATOR,
 };
 use crate::features::learning::drills::build::ask::render_files;
@@ -45,28 +46,37 @@ fn targets_of(spec: &DrillSpec) -> Vec<&'static Pattern> {
     spec.targets().expect("the patterns are in the catalogue")
 }
 
-/// The first request a stage made. The model's script is empty, so the stage fails after it; the failure is not
-/// what is looked at.
+/// The first request the clean code stage made for a spec of a new course's spacing lesson, with `patterns` when
+/// there are any. The model's script is empty, so the stage fails after it; the failure is not what is looked at.
 async fn first_request_of_clean_code(
-    spec: &DrillSpec,
+    patterns: &[&str],
     runner: Option<&FakeRunner>,
 ) -> Result<(String, String)> {
     let pool = pool().await?;
+    let mut spec = code_spec(&pool).await?;
+    if !patterns.is_empty() {
+        spec.patterns = patterns.iter().map(|id| (*id).to_owned()).collect();
+    }
     let model = ScriptedModel::new(["{}".to_owned()]);
     let grader = idle_grader();
-    let _ = build(&pool, &model, runner, &grader).clean_code(spec).await;
+    let _ = build(&pool, &model, runner, &grader)
+        .clean_code(&spec)
+        .await;
     let request = model.requests().remove(0);
     Ok((system(&request), last(&request)))
 }
 
 #[tokio::test]
 async fn the_clean_code_request_for_code_without_a_runner_is_what_it_was() -> Result<()> {
-    let (system, user) = first_request_of_clean_code(&spec(), None).await?;
+    let (system, user) = first_request_of_clean_code(&[], None).await?;
     assert_eq!(system, golden(CLEAN_SYSTEM));
-    assert_eq!(
-        user,
-        "Language: python\nDomain: rate limiting\nSize: about 40 lines of code in all"
+    assert!(
+        user.starts_with(
+            "Language: python\nSize: about 40 lines of code in all\n\n<brief>\nCourse: "
+        ),
+        "{user}"
     );
+    assert!(user.ends_with("\n</brief>"), "{user}");
     Ok(())
 }
 
@@ -74,7 +84,7 @@ async fn the_clean_code_request_for_code_without_a_runner_is_what_it_was() -> Re
 async fn the_clean_code_request_with_a_runner_names_its_contract_and_the_suite_it_asks_for(
 ) -> Result<()> {
     let runner = FakeRunner::passing();
-    let (system, _) = first_request_of_clean_code(&spec(), Some(&runner)).await?;
+    let (system, _) = first_request_of_clean_code(&[], Some(&runner)).await?;
     let runs = golden(CLEAN_RUNNER)
         .replace("{entrypoint}", runner.entrypoint())
         .replace("{extension}", "py");
@@ -87,7 +97,7 @@ async fn the_clean_code_request_with_a_runner_names_its_contract_and_the_suite_i
 
 #[tokio::test]
 async fn the_clean_code_request_for_a_testing_pattern_asks_for_a_test_file() -> Result<()> {
-    let testing = spec_of(&["testing.untested_branch"]);
+    let testing = ["testing.untested_branch"];
     let (system, _) = first_request_of_clean_code(&testing, None).await?;
     assert_eq!(
         system,

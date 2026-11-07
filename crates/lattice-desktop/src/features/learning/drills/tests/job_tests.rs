@@ -2,8 +2,8 @@
 //! reviews, and that cancelling it stops the model and stores nothing.
 
 use super::support::{
-    blind_answer, blind_assessment, clean_code_answer, entry_answer, grade_answer, judge_answer,
-    messages, plant_answer, review_answer, spec, ScriptedModel,
+    blind_answer, blind_assessment, clean_code_answer, code_spec, entry_answer, grade_answer,
+    judge_answer, messages, plant_answer, review_answer, spec, ScriptedModel,
 };
 use crate::features::learning::drills::bank::queue_build;
 use crate::features::learning::drills::jobs::{
@@ -112,7 +112,8 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
         grade_answer(),
         entry_answer(),
     ]));
-    let id = queue_build(&pool, &spec(), "end to end").await?;
+    let spec = code_spec(&pool).await?;
+    let id = queue_build(&pool, &spec, "end to end").await?;
     run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
 
     let job = JobStore::new(pool.clone()).get(&id).await?;
@@ -214,7 +215,8 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
         nothing(),
         nothing(),
     ]));
-    let id = queue_build(&pool, &spec(), "ungradable").await?;
+    let spec = code_spec(&pool).await?;
+    let id = queue_build(&pool, &spec, "ungradable").await?;
     run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
 
     let store = JobStore::new(pool.clone());
@@ -278,7 +280,8 @@ async fn cancelling_a_build_stops_its_model_call_and_stores_nothing() -> Result<
     let model = Arc::new(Hang {
         started: AtomicUsize::new(0),
     });
-    let id = queue_build(&pool, &spec(), "cancelled").await?;
+    let spec = code_spec(&pool).await?;
+    let id = queue_build(&pool, &spec, "cancelled").await?;
     let runtime = JobRuntime::new(pool.clone());
     runtime
         .register(

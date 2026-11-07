@@ -536,6 +536,8 @@ pub(super) fn code() -> CleanCode {
         tests: Vec::new(),
         suite: Some(SUITE.into()),
         source: None,
+        brief: None,
+        basis: None,
         trail: Trail::default(),
     }
 }
@@ -679,6 +681,17 @@ pub(super) struct Harness {
 impl Harness {
     pub(super) async fn new(spec: &DrillSpec) -> Result<Self> {
         let pool = crate::features::learning::tests::pool().await?;
+        Self::on(pool, spec).await
+    }
+
+    /// A harness over a new course from [`code_spec`], and the spec of its build.
+    pub(super) async fn lesson() -> Result<(Self, DrillSpec)> {
+        let pool = crate::features::learning::tests::pool().await?;
+        let spec = code_spec(&pool).await?;
+        Ok((Self::on(pool, &spec).await?, spec))
+    }
+
+    async fn on(pool: SqlitePool, spec: &DrillSpec) -> Result<Self> {
         let job = bank::queue_build(&pool, spec, "test").await?;
         let store = JobStore::new(pool.clone());
         store
@@ -1221,6 +1234,8 @@ pub(super) fn passage_code() -> CleanCode {
         tests: Vec::new(),
         suite: None,
         source: Some(spacing_passage()),
+        brief: None,
+        basis: None,
         trail: Trail::default(),
     }
 }
@@ -1252,31 +1267,122 @@ pub(super) fn passage_build<'a>(
     )
 }
 
+/// The title of the first lesson of a course from [`course`]: its subject is what [`SPACING`] says.
+pub(super) const SPACING_LESSON: &str = "Spacing study over sessions";
+
+/// The title of the second lesson of a course from [`course`]: its subject is what [`SLEEP`] says.
+pub(super) const SLEEP_LESSON: &str = "Sleep after learning";
+
 /// A course with the sources [`SPACING`] and [`SLEEP`], in that order, and its id.
 pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
+    course_of(
+        pool,
+        &[("Spacing and memory", SPACING), ("Sleep and memory", SLEEP)],
+    )
+    .await
+}
+
+/// A course with `sources` (a title and a text each), in that order, and its id. The first module's two lessons are
+/// [`SPACING_LESSON`] and [`SLEEP_LESSON`], so that a lesson's query finds what the fixture sources say; the second
+/// module keeps the fixture's.
+pub(super) async fn course_of(pool: &SqlitePool, sources: &[(&str, &str)]) -> Result<String> {
     use crate::features::learning::dto::LearningSourceDto;
     use crate::features::learning::repository::LearningRepository;
     let mut program = crate::features::learning::tests::fixture();
-    program.sources = vec![
-        LearningSourceDto {
-            id: format!("spacing-{}", uuid::Uuid::new_v4()),
-            title: "Spacing and memory".into(),
+    let lessons = &mut program.modules[0].lessons;
+    lessons[0].title = SPACING_LESSON.into();
+    lessons[0].objective =
+        "Explain why spreading study over several sessions improves recall".into();
+    lessons[1].title = SLEEP_LESSON.into();
+    lessons[1].objective = "Explain how sleep after learning helps memory".into();
+    program.sources = sources
+        .iter()
+        .enumerate()
+        .map(|(position, (title, text))| LearningSourceDto {
+            id: format!("source-{position}-{}", uuid::Uuid::new_v4()),
+            title: (*title).into(),
             url: None,
-            excerpt: SPACING.into(),
-            acquired_at: 1,
-        },
-        LearningSourceDto {
-            id: format!("sleep-{}", uuid::Uuid::new_v4()),
-            title: "Sleep and memory".into(),
-            url: None,
-            excerpt: SLEEP.into(),
-            acquired_at: 2,
-        },
-    ];
+            excerpt: (*text).into(),
+            acquired_at: i64::try_from(position).unwrap_or(0) + 1,
+        })
+        .collect();
     LearningRepository::new(pool.clone())
         .create(&program)
         .await?;
     Ok(program.summary.id)
+}
+
+/// The id of the lesson of the course `program_id` titled `title`.
+pub(super) async fn lesson_titled(
+    pool: &SqlitePool,
+    program_id: &str,
+    title: &str,
+) -> Result<String> {
+    sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND title=?")
+        .bind(program_id)
+        .bind(title)
+        .fetch_one(pool)
+        .await
+        .map_err(db)
+}
+
+/// Gives the lesson `lesson_id` these teaching blocks, in order: a kind, a body and the source versions it cites each.
+pub(super) async fn add_blocks(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    blocks: &[(&str, &str, &[&str])],
+) -> Result<()> {
+    for (ordinal, (kind, body, cited)) in blocks.iter().enumerate() {
+        sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,?,?,?,?,?)")
+            .bind(lesson_id)
+            .bind(i64::try_from(ordinal).unwrap_or(0))
+            .bind(*kind)
+            .bind("Title")
+            .bind(*body)
+            .bind(serde_json::to_string(cited).unwrap_or_default())
+            .execute(pool)
+            .await
+            .map_err(db)?;
+    }
+    Ok(())
+}
+
+/// [`add_blocks`], and the lesson is prepared.
+pub(super) async fn prepare_lesson(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    blocks: &[(&str, &str, &[&str])],
+) -> Result<()> {
+    add_blocks(pool, lesson_id, blocks).await?;
+    sqlx::query("UPDATE learning_lessons SET preparation='ready' WHERE id=?")
+        .bind(lesson_id)
+        .execute(pool)
+        .await
+        .map(drop)
+        .map_err(db)
+}
+
+/// A spec for code in Python on a new course from [`course`], built from its spacing lesson.
+pub(super) async fn code_spec(pool: &SqlitePool) -> Result<DrillSpec> {
+    let program = course(pool).await?;
+    let lesson = lesson_titled(pool, &program, SPACING_LESSON).await?;
+    Ok(DrillSpec {
+        program_id: Some(program),
+        lesson_id: Some(lesson),
+        ..spec()
+    })
+}
+
+/// [`passage_spec`] for the course `program_id`, built from its lesson titled `lesson_title`.
+pub(super) async fn passage_lesson_spec(
+    pool: &SqlitePool,
+    program_id: &str,
+    lesson_title: &str,
+) -> Result<DrillSpec> {
+    Ok(DrillSpec {
+        lesson_id: Some(lesson_titled(pool, program_id, lesson_title).await?),
+        ..passage_spec(program_id)
+    })
 }
 
 /// The patterns of a drill's key, each once and in the key's order, as the schedule holds them back while the drill

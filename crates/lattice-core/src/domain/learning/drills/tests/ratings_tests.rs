@@ -145,8 +145,10 @@ fn a_review_found_issue_with_no_outcome_gives_no_rating() {
 fn linked(mut known: KeyIssue) -> KeyIssue {
     known.lesson = Some(LessonLink {
         lesson_id: "lesson-1".to_owned(),
-        sentences: vec!["A sentence.".to_owned()],
-        source: None,
+        sentences: vec![LessonSentence {
+            text: "A sentence.".to_owned(),
+            source: None,
+        }],
     });
     known
 }

@@ -66,6 +66,8 @@ impl PassageMaterial<'_> {
             tests: Vec::new(),
             suite: None,
             source: Some(source),
+            brief: None,
+            basis: None,
             trail,
         })
     }

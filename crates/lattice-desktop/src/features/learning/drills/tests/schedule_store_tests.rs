@@ -19,8 +19,8 @@ use crate::features::learning::recall::study_dto::StudyRating;
 use crate::features::learning::repository::LearningRepository;
 use crate::features::learning::tests::{fixture, pool};
 use lattice_core::domain::learning::drills::{
-    ratings, score, Drill, IssueRating, LessonLink, LessonStanding, Material, PatternDue,
-    PatternRating,
+    ratings, score, Drill, IssueRating, LessonLink, LessonSentence, LessonStanding, Material,
+    PatternDue, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobOutcome, JobStore};
@@ -165,8 +165,10 @@ impl<'a> Put<'a> {
         if let (true, Some(lesson), Some(issue)) = (self.link, self.lesson, key.first_mut()) {
             issue.lesson = Some(LessonLink {
                 lesson_id: lesson.to_owned(),
-                sentences: vec!["A sentence of the lesson.".into()],
-                source: None,
+                sentences: vec![LessonSentence {
+                    text: "A sentence of the lesson.".into(),
+                    source: None,
+                }],
             });
         }
         let drill = Drill {

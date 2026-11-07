@@ -7,6 +7,7 @@
 //!
 //! Design: docs/design/2026-11-04-code-review-drills.md §2–§4.
 
+mod brief;
 mod catalogue;
 mod diff;
 mod drill;
@@ -19,13 +20,14 @@ mod schedule;
 #[cfg(test)]
 mod tests;
 
+pub use brief::{evidence_units, LessonBrief};
 pub use catalogue::{
     language_of_code, pattern, patterns_for, Family, Languages, Pattern, CATALOGUE, LANGUAGES,
 };
 pub use diff::{line_diff, DiffKind, DiffLine};
 pub use drill::{
-    weight, Drill, DrillFile, Edit, KeyIssue, LessonLink, LineSpan, Material, Origin, Proof,
-    Severity, SourceVerdict,
+    weight, Drill, DrillFile, Edit, KeyIssue, LessonLink, LessonSentence, LineSpan, Material,
+    Origin, Proof, Severity, SourceVerdict,
 };
 pub use edits::{apply, overlaps, EditFault};
 pub use fix::{DecidedBy, FixOutcome, IssueCheck, IssueFix, SuiteVerdict};
