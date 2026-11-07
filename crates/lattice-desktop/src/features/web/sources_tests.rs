@@ -184,6 +184,21 @@ async fn the_status_lists_every_catalogue_finder_with_its_disclosure() {
 }
 
 #[tokio::test]
+async fn wikibooks_is_on_by_default_and_joins_a_general_web_search() {
+    let f = fixture(SettingsDto::default());
+    reload(&f.web, &f.settings, &f.keyring).await;
+    let status = f.web.sources_status();
+    assert_eq!(gate_of(&status, "wikibooks"), None);
+    let wikibooks = status
+        .finders
+        .iter()
+        .find(|finder| finder.id == "wikibooks")
+        .unwrap();
+    assert_eq!(wikibooks.needs, FinderNeedDto::Nothing);
+    assert_eq!(routed(&f.web, "wikibooks"), Ok(()));
+}
+
+#[tokio::test]
 async fn a_stored_key_makes_its_finder_eligible_live_and_removing_it_skips_it_again() {
     let f = fixture(SettingsDto::default());
     reload(&f.web, &f.settings, &f.keyring).await;

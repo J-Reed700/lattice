@@ -406,3 +406,5 @@ mod software_registries_b_tests;
 mod standards_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wikibooks_tests;
