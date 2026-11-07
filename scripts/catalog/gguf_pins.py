@@ -168,7 +168,7 @@ def opt(value):
 
 def heads(kept):
     if kept is None:
-        return "Heads::None"
+        raise ValueError("a header lacks a head count; every curated file has both")
     if kept[0] == "number":
         return f"Heads::Uniform({kept[1]})"
     return "Heads::Layers(&[" + ", ".join(str(v) for v in kept[1]) + "])"
@@ -219,17 +219,15 @@ use crate::domain::models::fit::{ModelShape, PerLayer, PinnedModel};
 
 /// A header value that is one number for every layer or one per layer.
 pub(super) enum Heads {
-    None,
     Uniform(u32),
     Layers(&'static [u32]),
 }
 
 impl Heads {
-    fn per_layer(&self) -> Option<PerLayer> {
+    fn per_layer(&self) -> PerLayer {
         match self {
-            Self::None => None,
-            Self::Uniform(value) => Some(PerLayer::Uniform(*value)),
-            Self::Layers(values) => Some(PerLayer::Layers(values.to_vec())),
+            Self::Uniform(value) => PerLayer::Uniform(*value),
+            Self::Layers(values) => PerLayer::Layers(values.to_vec()),
         }
     }
 }
@@ -264,8 +262,8 @@ impl Pin {
         PinnedModel {
             shape: ModelShape {
                 block_count: self.block_count,
-                head_count_kv: self.head_count_kv.per_layer(),
-                head_count: self.head_count.per_layer(),
+                head_count_kv: Some(self.head_count_kv.per_layer()),
+                head_count: Some(self.head_count.per_layer()),
                 key_length: self.key_length,
                 value_length: self.value_length,
                 key_length_swa: self.key_length_swa,

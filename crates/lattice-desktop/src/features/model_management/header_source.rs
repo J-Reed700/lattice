@@ -208,10 +208,16 @@ impl Read for RangeReader {
                 self.position
             }
         };
-        let bytes = &self.blocks[&start];
-        let offset = (self.position - start) as usize;
-        let count = buf.len().min(bytes.len() - offset);
-        buf[..count].copy_from_slice(&bytes[offset..offset + count]);
+        let held_bytes = self
+            .blocks
+            .get(&start)
+            .and_then(|bytes| bytes.get((self.position - start) as usize..))
+            .unwrap_or_default();
+        let count = buf.len().min(held_bytes.len());
+        let (Some(from), Some(to)) = (held_bytes.get(..count), buf.get_mut(..count)) else {
+            return Err(std::io::Error::other("a header block was not held"));
+        };
+        to.copy_from_slice(from);
         self.position += count as u64;
         Ok(count)
     }

@@ -39,7 +39,7 @@ fn profile(output: &str) -> MachineProfile {
     machine_profile(&parse_list_devices(output), 32 * GIB, 500 * GIB, "windows")
 }
 
-fn find<'a>(profile: &'a MachineProfile, kind: AcceleratorKind) -> Vec<&'a Accelerator> {
+fn find(profile: &MachineProfile, kind: AcceleratorKind) -> Vec<&Accelerator> {
     profile
         .accelerators
         .iter()
