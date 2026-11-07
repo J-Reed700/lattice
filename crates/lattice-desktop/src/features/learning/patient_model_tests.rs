@@ -303,9 +303,11 @@ async fn a_server_that_is_starting_busy_or_unreachable_is_still_waited_for() {
     }
 }
 
+type Cause = (fn() -> AppError, &'static str);
+
 #[tokio::test]
 async fn a_wait_carries_the_code_of_its_cause_and_ends_when_the_server_answers() {
-    let causes: [(fn() -> AppError, &str); 3] = [
+    let causes: [Cause; 3] = [
         (
             || AppError::Network("connection reset".into()),
             "NetworkError",
