@@ -296,6 +296,13 @@ export const modelApi = {
     apiCall<string>('check_first_run_status'),
 
   /**
+   * The chat models recommended for this computer, best first, each judged
+   * by the backend against the memory it would run in.
+   */
+  recommendChatModels: async (): Promise<ApiResult<Wire.RecommendationDto[]>> =>
+    apiCall<Wire.RecommendationDto[]>('recommend_chat_models'),
+
+  /**
    * Starts the first-run download of the recommended embedding model.
    *
    * @returns The backend's start message

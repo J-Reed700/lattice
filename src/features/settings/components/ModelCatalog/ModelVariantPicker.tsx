@@ -4,11 +4,11 @@ import { Check, ExternalLink } from 'lucide-react';
 
 import { settingsFieldClass } from '@/components/ui';
 import { useModelVariantsQuery } from '@/features/model/hooks/useModelVariantsQuery';
+import { fitLabel } from '@/features/model/utils/fitText';
 import { cn } from '@/lib/utils';
-import type { SystemCapabilities } from '@/types/api/models';
 import type { ModelMetadata } from '@/types/modelCatalog';
 
-import { computeModelFit, FIT_LABEL, formatSize } from './catalogUtils';
+import { formatSize } from './catalogUtils';
 import { modelQuantization, quantizationDescription } from './quantization';
 import { SECONDARY_BUTTON_CLASS } from '../settingsStyles';
 
@@ -16,11 +16,10 @@ import { SECONDARY_BUTTON_CLASS } from '../settingsStyles';
 interface Props {
   model: ModelMetadata;
   selected: ModelMetadata;
-  capabilities: SystemCapabilities | null;
   onSelect: (model: ModelMetadata) => void;
 }
 
-export function ModelVariantPicker({ model, selected, capabilities, onSelect }: Props) {
+export function ModelVariantPicker({ model, selected, onSelect }: Props) {
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState('size');
   const repoId = model.model_id!;
@@ -77,7 +76,7 @@ export function ModelVariantPicker({ model, selected, capabilities, onSelect }: 
       <div role="group" aria-label="Model files" className="max-h-80 space-y-2 overflow-y-auto pr-1">
         {files.map(file => {
           const quantization = modelQuantization(file);
-          const fit = computeModelFit(file, capabilities);
+          const fit = file.fit;
           const chosen = selected.default_filename === file.default_filename;
           return <button key={file.id} type="button" aria-pressed={chosen} onClick={() => selectFile(file)} className={cn('w-full rounded-md border p-3 text-left transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring', chosen ? 'border-accent bg-accent/5' : 'border-border-subtle hover:bg-surface-hover')}>
             <span className="flex flex-wrap items-center justify-between gap-2 text-sm font-medium text-text-primary">
@@ -86,7 +85,7 @@ export function ModelVariantPicker({ model, selected, capabilities, onSelect }: 
             </span>
             <span className="mt-1 block text-xs text-text-secondary">{quantizationDescription(quantization)}</span>
             <span className="mt-1 block break-all font-mono text-xs text-text-muted">{file.default_filename}</span>
-            <span className="mt-2 block text-xs text-text-secondary">{file.minimum_ram_gb > 0 ? `Est. memory ${file.minimum_ram_gb.toFixed(1)} GB` : 'Memory estimate unavailable'}{fit ? ` · ${FIT_LABEL[fit.verdict]} on this computer` : ''}</span>
+            <span className="mt-2 block text-xs text-text-secondary">{file.minimum_ram_gb > 0 ? `Est. memory ${file.minimum_ram_gb.toFixed(1)} GB` : 'Memory estimate unavailable'}{fit !== undefined ? ` · ${fitLabel(fit)}` : ''}</span>
           </button>;
         })}
       </div>

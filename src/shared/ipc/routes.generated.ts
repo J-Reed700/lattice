@@ -308,6 +308,7 @@ export const COMMAND_PLUGINS = {
   read_file_content: 'file',
   read_web_page: 'web',
   reassess_learning_source_trust: 'learning',
+  recommend_chat_models: 'model',
   refresh_learning_source: 'learning',
   refresh_model_catalog: 'model',
   regenerate_response: 'conversation',

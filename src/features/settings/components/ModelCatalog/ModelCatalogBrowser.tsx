@@ -11,15 +11,17 @@ import { useCallback, useMemo, useState } from 'react';
 import { ChevronDown, Monitor } from 'lucide-react';
 
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
+import { useRecommendedChatModels } from '@/features/model/hooks/useRecommendedChatModels';
 import { useModelCatalogStore } from '@/features/model/stores/modelCatalogStore';
 
 import { CatalogManagementSection } from './CatalogManagementSection';
-import { CATALOG_TEXT_BUTTON_CLASS, computeModelFit, hasActiveFilters } from './catalogUtils';
+import { CATALOG_TEXT_BUTTON_CLASS, hasActiveFilters } from './catalogUtils';
 import { ModelDetailPanel } from './ModelDetailPanel';
 import { ModelFilterPanel } from './ModelFilterPanel';
 import { ModelListView } from './ModelListView';
 import { ModelSearchBar } from './ModelSearchBar';
 import { modelQuantization } from './quantization';
+import { RecommendedSection } from './RecommendedSection';
 import { SystemCapabilitiesCard } from './SystemCapabilitiesCard';
 import './modelCatalog.css';
 
@@ -48,6 +50,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     loadCompatibleModels,
   } = useModelCatalog({ loadCacheStats: true });
   const { quantizationFilter, fitFilter, resetFilters } = useModelCatalogStore();
+  const recommendations = useRecommendedChatModels().data;
   const [browseAll, setBrowseAll] = useState(false);
   const [pagination, setPagination] = useState({ key: '', page: 1 });
   const resultsKey = JSON.stringify([searchQuery, filters, sortBy, browseAll, quantizationFilter, fitFilter]);
@@ -66,6 +69,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
 
   // Determine which models to display
   const displayedModels = useMemo(() => {
+    const recommendedOrder = new Map((recommendations ?? []).map((entry, index) => [entry.modelId, index]));
     const sortModels = <T extends {
       ranking_score: number;
       popularity_downloads?: number | null;
@@ -99,6 +103,9 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         }
 
         if (sortBy === 'recommended') {
+          const rankA = recommendedOrder.get(a.model.id) ?? Infinity;
+          const rankB = recommendedOrder.get(b.model.id) ?? Infinity;
+          if (rankA !== rankB) return rankA - rankB;
           // Blend ranking score with popularity so obscure models don't dominate
           const scoreA = a.ranking_score + Math.log10(Math.max(a.popularity_downloads ?? 1, 1)) * 5;
           const scoreB = b.ranking_score + Math.log10(Math.max(b.popularity_downloads ?? 1, 1)) * 5;
@@ -180,20 +187,20 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
         ranking_score: result.relevance_score,
         popularity_downloads: result.popularity_downloads ?? null,
         popularity_likes: result.popularity_likes ?? null,
+        fit: result.fit,
       }));
       return sortModels(applyFilters(mapped));
     }
 
     return sortModels(applyFilters(compatibleModels));
-  }, [compatibleModels, searchResults, searchQuery, filters, sortBy]);
+  }, [compatibleModels, searchResults, searchQuery, filters, sortBy, recommendations]);
 
   const quantizations = useMemo(() => [...new Set((isSearching ? searchResults : compatibleModels)
     .map(({ model }) => modelQuantization(model)).filter((value): value is string => Boolean(value)))], [isSearching, searchResults, compatibleModels]);
-  const filteredModels = displayedModels.filter(({ model }) => {
+  const filteredModels = displayedModels.filter(({ model, fit }) => {
     if (quantizationFilter && modelQuantization(model) !== quantizationFilter) return false;
     if (fitFilter === 'all') return true;
-    const verdict = computeModelFit(model, systemCapabilities)?.verdict;
-    return verdict === 'fits' || (fitFilter === 'fits-or-tight' && verdict === 'tight');
+    return fit?.kind === 'fits' || (fitFilter === 'fits-or-tight' && fit?.kind === 'tight');
   });
 
   const isLoading = isSearching ? searchLoading : compatibleModelsLoading;
@@ -214,6 +221,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
 
   return (
     <div className="space-y-5">
+      <RecommendedSection recommendations={recommendations ?? []} models={compatibleModels} onSelect={selectModel} />
       <details className="catalog-computer group rounded-lg border border-border-subtle bg-surface">
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-xs text-text-secondary">
           <Monitor className="h-4 w-4 text-accent" aria-hidden="true" />

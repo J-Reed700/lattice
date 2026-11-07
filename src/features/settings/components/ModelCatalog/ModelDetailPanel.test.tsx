@@ -117,7 +117,8 @@ describe('ModelDetailPanel', () => {
   });
 
   it('describes the model, its fit and its specifications', async () => {
-    const { onBack } = renderPanel(recommendation());
+    const fit = { kind: 'fits', needsBytes: 11.2 * 1_073_741_824, budgetBytes: 15 * 1_073_741_824, device: { name: 'Test GPU', kind: 'dedicated', totalBytes: 16 * 1_073_741_824 } };
+    const { onBack } = renderPanel(recommendation({}, { fit } as never));
     expect(screen.getByRole('heading', { name: 'Saga 7B' })).toBeInTheDocument();
     expect(screen.getByText('saga/Saga-7B-GGUF')).toBeInTheDocument();
     expect(screen.getByText('A storytelling model.')).toBeInTheDocument();
@@ -132,7 +133,7 @@ describe('ModelDetailPanel', () => {
     expect(screen.getByText('Apache-2.0')).toBeInTheDocument();
     expect(screen.getByText('chat, tools')).toBeInTheDocument();
     expect(screen.getByText(new Intl.NumberFormat(undefined).format(12_000))).toBeInTheDocument();
-    expect(screen.getAllByText(/^Fits · /).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Fits · Uses 11.2 of 16 GB on Test GPU').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: 'Back' }));
     expect(onBack).toHaveBeenCalled();
   });
@@ -161,7 +162,6 @@ describe('ModelDetailPanel', () => {
 
   it('switches to another version of the model', async () => {
     renderPanel(recommendation());
-    expect(h.pickerProps?.capabilities).toBe(h.capabilities);
     fireEvent.click(screen.getByRole('button', { name: 'Pick Q8' }));
     expect(await screen.findByText('saga-7b-Q8_0.gguf')).toBeInTheDocument();
     expect(screen.getByText('Chat · Q8_0 · 7.7 GB')).toBeInTheDocument();

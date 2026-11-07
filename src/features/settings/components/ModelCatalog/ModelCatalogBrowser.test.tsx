@@ -19,6 +19,7 @@ const { stub } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () => h.catalog }));
+vi.mock('@/features/model/hooks/useRecommendedChatModels', () => ({ useRecommendedChatModels: () => ({ data: undefined }) }));
 vi.mock('@/features/model/stores/modelCatalogStore', () => ({ useModelCatalogStore: () => h.store }));
 vi.mock('./ModelDetailPanel', () => ({ ModelDetailPanel: stub('ModelDetailPanel') }));
 vi.mock('./ModelFilterPanel', () => ({ ModelFilterPanel: stub('ModelFilterPanel') }));
@@ -139,11 +140,12 @@ describe('ModelCatalogBrowser', () => {
     expect(listed().sort()).toEqual(['chatty', 'e5', 'mystery']);
   });
 
-  it('filters by precision and by fit', () => {
+  it('filters by precision and by the backend’s fit verdict', () => {
+    const verdict = (kind: string) => ({ kind, needsBytes: 1, budgetBytes: 2, device: { name: 'GPU', kind: 'dedicated', totalBytes: 2 } });
     h.catalog.compatibleModels = [
-      rec('small', { default_filename: 'small-Q4_K_M.gguf', minimum_ram_gb: 4 }),
-      rec('tight', { default_filename: 'tight-Q8_0.gguf', minimum_ram_gb: 10.5 }),
-      rec('huge', { default_filename: 'huge-Q8_0.gguf', minimum_ram_gb: 64 }),
+      rec('small', { default_filename: 'small-Q4_K_M.gguf' }, { fit: verdict('fits') }),
+      rec('tight', { default_filename: 'tight-Q8_0.gguf' }, { fit: verdict('tight') }),
+      rec('huge', { default_filename: 'huge-Q8_0.gguf' }, { fit: verdict('too_large') }),
     ];
     h.store = { ...h.store, quantizationFilter: 'Q8_0' };
     const first = render(<ModelCatalogBrowser />);

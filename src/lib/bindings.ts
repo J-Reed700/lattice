@@ -1416,6 +1416,17 @@ async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
 }
 },
 /**
+ * The chat models recommended for this computer, best first.
+ */
+async recommendChatModels() : Promise<Result<RecommendationDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|recommend_chat_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Start downloading the default embedding model used during first run.
  *
  * Returns a JSON string for compatibility with existing first-run flow.
@@ -5787,6 +5798,7 @@ export type DeleteConversationResponseDto = {
 status: string }
 export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
+export type DeviceKindDto = "dedicated" | "integrated" | "unified" | "processor"
 /**
  * What a diff does with one line.
  */
@@ -6158,6 +6170,7 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
+export type EvidenceDto = { kind: "measured"; suites: string[] } | { kind: "untested" }
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
 /**
  * A code example's run, as the checker saw it (§5.5).
@@ -6443,6 +6456,9 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type FitDeviceDto = { name: string; kind: DeviceKindDto; totalBytes: number }
+export type FitKindDto = "fits" | "tight" | "too_large"
+export type FitVerdictDto = { kind: FitKindDto; needsBytes: number; budgetBytes: number; device: FitDeviceDto }
 /**
  * The fix of an issue as the lines it removes and the lines it adds, in the file the issue is in.
  */
@@ -8683,7 +8699,8 @@ embedding_dimensions: number | null;
  * models. Frontend uses this to disable + badge incompatible rows so
  * users don't waste a 1GB+ download on a model that won't load.
  */
-embedding_compatibility: EmbeddingCompatibilityDto | null }
+embedding_compatibility: EmbeddingCompatibilityDto | null;
+fit?: FitVerdictDto | null }
 /**
  * Why a turn or job runs on the model it runs on.
  */
@@ -8731,7 +8748,8 @@ popularity_downloads?: number | null;
 /**
  * Popularity metric from upstream provider (likes)
  */
-popularity_likes?: number | null }
+popularity_likes?: number | null;
+fit: FitVerdictDto | null }
 /**
  * A model a chat or a role can name.
  *
@@ -8968,6 +8986,8 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
+export type RecommendationDto = { modelId: string; name: string; description: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto; reason: string }
+export type RecommendationLabelDto = "best" | "fastest" | "smallest_download"
 export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**
  * Function registry statistics
@@ -9934,6 +9954,7 @@ modelId: string; modelName: string;
  * Total bytes of the download.
  */
 downloadBytes: number }
+export type SpeedClassDto = "fast" | "balanced" | "thorough"
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for

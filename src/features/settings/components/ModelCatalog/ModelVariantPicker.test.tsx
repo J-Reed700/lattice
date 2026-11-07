@@ -25,7 +25,7 @@ const q8 = { ...base, id: 'q8', default_filename: 'model-Q8_0.gguf', supported_q
 function setup() {
   const onSelect = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<ApiProvider client={createTestApi(modelApi)}><QueryClientProvider client={client}><ModelVariantPicker model={base} selected={base} capabilities={null} onSelect={onSelect} /></QueryClientProvider></ApiProvider>);
+  render(<ApiProvider client={createTestApi(modelApi)}><QueryClientProvider client={client}><ModelVariantPicker model={base} selected={base} onSelect={onSelect} /></QueryClientProvider></ApiProvider>);
   return { user: userEvent.setup(), onSelect };
 }
 
@@ -56,6 +56,21 @@ describe('published model versions', () => {
     await user.click(screen.getByRole('button', { name: 'Retry versions' }));
     expect(await screen.findByText('No standalone GGUF downloads are available in this repository.')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('labels each file with the backend’s verdict', async () => {
+    const device = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated' as const, totalBytes: 16 * 1_073_741_824 };
+    const verdict = (kind: 'fits' | 'tight' | 'too_large') => ({ kind, needsBytes: 8e9, budgetBytes: 15e9, device });
+    const q6 = { ...base, id: 'q6', default_filename: 'model-Q6_K.gguf', supported_quantizations: ['Q6_K'], size_gb: 6 };
+    vi.mocked(modelApi.getModelVariants).mockResolvedValue({
+      ok: true,
+      data: [{ ...base, fit: verdict('fits') }, { ...q6, fit: verdict('tight') }, { ...q8, fit: verdict('too_large') }, { ...base, id: 'q3', default_filename: 'model-IQ3_S.gguf', size_gb: 3, fit: null }],
+    });
+    setup();
+    expect(await screen.findByRole('button', { name: /Q4_K_M/ })).toHaveTextContent('Fits');
+    expect(screen.getByRole('button', { name: /Q6_K/ })).toHaveTextContent('Fits with a shorter context');
+    expect(screen.getByRole('button', { name: /Q8_0/ })).toHaveTextContent('Too large for this computer');
+    expect(screen.getByRole('button', { name: /IQ3_S/ })).toHaveTextContent('Checking size');
   });
 
   it('keeps unreported sizes unknown and never fabricates a fit', async () => {

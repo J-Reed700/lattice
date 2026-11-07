@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ModelMetadata, ModelRecommendation } from '@/types/modelCatalog';
 
-import { computeModelFit } from './catalogUtils';
 import { ModelRow } from './ModelRow';
 
 const GB = 1_073_741_824;
@@ -58,12 +57,6 @@ const verdict = (kind: 'fits' | 'tight' | 'too_large') => ({
 
 const rowProps = { isDownloaded: false, activeDownload: null, isStarting: false, onDownload: vi.fn(), onSelect: vi.fn() };
 
-// A machine on which the old frontend rule would say "Fits" for an 8 GB model.
-const ROOMY = { total_ram_gb: 64, gpu_acceleration: 'None', gpu_type: 'None', vram_gb: null, available_disk_gb: 500 };
-// ...and one on which it would say "Too large".
-const CRAMPED = { total_ram_gb: 4, gpu_acceleration: 'None', gpu_type: 'None', vram_gb: null, available_disk_gb: 500 };
-const withCapabilities = (capabilities: unknown) => ({ capabilities }) as object;
-
 describe('ModelRow fit label', () => {
   it.each([
     ['fits', 'Fits'],
@@ -85,24 +78,9 @@ describe('ModelRow fit label', () => {
     expect(screen.getByText('Fits').closest('[title]')?.getAttribute('title')).toContain('NVIDIA GeForce RTX 4080');
   });
 
-  it('shows the backend’s "Too large" where the old frontend rule says "Fits"', () => {
-    expect(computeModelFit(metadata(), ROOMY as never)?.verdict).toBe('fits');
-    render(<ModelRow model={row(verdict('too_large'))} {...rowProps} {...withCapabilities(ROOMY)} />);
+  it('shows the backend’s verdict whatever the catalog’s own memory estimate says', () => {
+    render(<ModelRow model={row(verdict('too_large'), { minimum_ram_gb: 1 })} {...rowProps} />);
     expect(screen.getByText('Too large for this computer')).toBeInTheDocument();
-    expect(screen.queryByText('Fits')).not.toBeInTheDocument();
-  });
-
-  it('shows the backend’s "Fits" where the old frontend rule says "Too large"', () => {
-    expect(computeModelFit(metadata(), CRAMPED as never)?.verdict).toBe('too-large');
-    render(<ModelRow model={row(verdict('fits'))} {...rowProps} {...withCapabilities(CRAMPED)} />);
-    expect(screen.getByText('Fits')).toBeInTheDocument();
-    expect(screen.queryByText('Too large for this computer')).not.toBeInTheDocument();
-    expect(screen.queryByText('Too large')).not.toBeInTheDocument();
-  });
-
-  it('says Checking size, not a computed verdict, when the backend sent none', () => {
-    render(<ModelRow model={row(null)} {...rowProps} {...withCapabilities(ROOMY)} />);
-    expect(screen.getByText('Checking size')).toBeInTheDocument();
     expect(screen.queryByText('Fits')).not.toBeInTheDocument();
   });
 });

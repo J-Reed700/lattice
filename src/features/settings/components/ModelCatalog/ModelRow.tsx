@@ -9,13 +9,13 @@
 import { Check, CircleCheck, Download, Loader2, TriangleAlert } from 'lucide-react';
 
 import { SeesImagesMark } from '@/features/model/components/SeesImagesMark';
+import { fitLabel, fitUsage } from '@/features/model/utils/fitText';
 import { cn } from '@/lib/utils';
-import type { SystemCapabilities } from '@/types/api/models';
 import type { DownloadStatus } from '@/types/downloads';
 import type { ModelRecommendation } from '@/types/modelCatalog';
 import { VISION_CAPABILITY } from '@/utils/visionGeometry';
 
-import { computeModelFit, embeddingBlockReason, FIT_LABEL, formatCompact, formatSize, modelMetaLine } from './catalogUtils';
+import { embeddingBlockReason, formatCompact, formatSize, modelMetaLine } from './catalogUtils';
 import { hasModelVersions, modelQuantization } from './quantization';
 import { SECONDARY_BUTTON_CLASS } from '../settingsStyles';
 
@@ -27,8 +27,6 @@ interface ModelRowProps {
   activeDownload: DownloadStatus | null;
   isStarting: boolean;
   onDownload: () => void;
-  /** This machine, for the one-word fit verdict. Null while unknown. */
-  capabilities?: SystemCapabilities | null;
   /** True when a Hugging Face token is stored. Gated rows need one. */
   hasHfToken?: boolean;
   /** Sends the user to the token field on this page. */
@@ -44,18 +42,17 @@ export function ModelRow({
   activeDownload,
   isStarting,
   onDownload,
-  capabilities,
   hasHfToken = false,
   onAddToken,
   compact = false,
 }: ModelRowProps) {
   const { model: metadata } = model;
-  const fit = computeModelFit(metadata, capabilities);
+  const fit = model.fit;
   const repoId = metadata.model_id ?? metadata.id;
   const blockReason = embeddingBlockReason(metadata);
   const isDownloadable =
     Boolean(metadata.model_id && metadata.default_filename) || Boolean(metadata.download_url);
-  const FitIcon = fit?.verdict === 'fits' ? CircleCheck : TriangleAlert;
+  const FitIcon = fit?.kind === 'fits' ? CircleCheck : TriangleAlert;
   const downloads = formatCompact(model.popularity_downloads);
   const compactMeta = [formatSize(metadata.size_gb), downloads ? `${downloads} downloads` : null].filter(Boolean).join(' · ');
 
@@ -130,16 +127,16 @@ export function ModelRow({
         {!compact ? <div className="break-all font-mono text-xs text-text-muted">{repoId}</div> : null}
         {!compact && metadata.description ? <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{metadata.description}</p> : null}
         <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-text-muted">
-          {fit ? (
+          {fit !== undefined ? (
               <span
                 className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium',
-                  fit.verdict === 'fits' ? 'bg-success-muted text-success-fg'
-                    : fit.verdict === 'too-large' ? 'bg-danger-muted text-danger-fg'
-                      : fit.verdict === 'tight' ? 'bg-warning-muted text-warning-fg' : 'bg-surface-raised text-text-secondary')}
-                title={fit.reason}
+                  fit?.kind === 'fits' ? 'bg-success-muted text-success-fg'
+                    : fit?.kind === 'too_large' ? 'bg-danger-muted text-danger-fg'
+                      : fit?.kind === 'tight' ? 'bg-warning-muted text-warning-fg' : 'bg-surface-raised text-text-secondary')}
+                title={fit ? fitUsage(fit) : undefined}
               >
                 <FitIcon className="h-3 w-3" aria-hidden="true" />
-                {FIT_LABEL[fit.verdict]}
+                {fitLabel(fit)}
               </span>
           ) : null}
           {metadata.capabilities.includes(VISION_CAPABILITY) ? <SeesImagesMark /> : null}

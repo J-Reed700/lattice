@@ -14,7 +14,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useApi } from '@/contexts/ApiContext';
 import { DOWNLOADED_MODELS_QUERY_KEY, useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
-import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
+import { fitLabel, fitUsage } from '@/features/model/utils/fitText';
 import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '@/features/settings/hooks/useHuggingFaceTokenQuery';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
@@ -26,9 +26,7 @@ import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
 import {
   CATEGORY_LABELS,
-  computeModelFit,
   embeddingBlockReason,
-  FIT_LABEL,
   formatSize,
 } from './catalogUtils';
 import { ModelVariantPicker } from './ModelVariantPicker';
@@ -100,7 +98,6 @@ export function ModelDetailPanel(props: ModelDetailPanelProps) {
   useEffect(() => {
     setSelected(props.model.model);
   }, [props.model.model]);
-  const { systemCapabilities } = useModelCatalog({ autoLoadModels: false });
   return <div className="space-y-5">
     <button type="button" onClick={props.onBack} className={cn(GHOST_BUTTON_CLASS, 'gap-1.5 pl-1.5')}>
       <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
@@ -110,7 +107,7 @@ export function ModelDetailPanel(props: ModelDetailPanelProps) {
       <p className="mt-1 break-all font-mono text-xs text-text-muted">{props.model.model.model_id ?? props.model.model.id}</p>
       <p className="mt-2 max-w-[75ch] text-sm leading-relaxed text-text-secondary">{props.model.model.description}</p>
     </div>
-    {hasModelVersions(props.model.model) ? <ModelVariantPicker model={props.model.model} selected={selected} capabilities={systemCapabilities} onSelect={setSelected} /> : null}
+    {hasModelVersions(props.model.model) ? <ModelVariantPicker model={props.model.model} selected={selected} onSelect={setSelected} /> : null}
     <ModelDetailContent key={selected.id} {...props} model={{ ...props.model, model: selected }} />
   </div>;
 }
@@ -123,12 +120,9 @@ function ModelDetailContent({
 }: ModelDetailPanelProps) {
   const api = useApi();
   const { model: metadata } = model;
-  const { systemCapabilities } = useModelCatalog({
-    autoLoadCapabilities: true,
-    autoLoadModels: false,
-  });
   const { data: hfTokenStatus } = useHuggingFaceTokenStatusQuery();
-  const fit = computeModelFit(metadata, systemCapabilities);
+  const fit = metadata.fit !== undefined ? metadata.fit : model.fit;
+  const fitSummary = fit === undefined ? null : fit ? `${fitLabel(fit)} · ${fitUsage(fit)}` : fitLabel(fit);
   const hasHfToken = hfTokenStatus?.isSet ?? false;
   const popularityDownloads = model.popularity_downloads ?? null;
   const popularityLikes = model.popularity_likes ?? null;
@@ -455,7 +449,7 @@ function ModelDetailContent({
       </div>
 
       <DetailSection title="Estimated fit on this machine">
-        <NoteRow>{fit ? `${FIT_LABEL[fit.verdict]} · ${fit.reason}` : 'Not enough size or hardware information to estimate fit.'}</NoteRow>
+        <NoteRow>{fitSummary ?? 'Not enough size or hardware information to estimate fit.'}</NoteRow>
         <NoteRow>Memory estimates are approximate, not measured performance. Longer contexts and other loaded models need additional memory. A size estimate does not guarantee runtime support.</NoteRow>
       </DetailSection>
 
@@ -472,7 +466,7 @@ function ModelDetailContent({
         ) : null}
         <DetailRow label="Format" value={metadata.format === 'safetensors' ? 'Safetensors' : 'GGUF'} />
         <DetailRow label="License" value={metadata.license} />
-        {fit ? <DetailRow label="Fit" value={`${FIT_LABEL[fit.verdict]} · ${fit.reason}`} /> : null}
+        {fitSummary ? <DetailRow label="Fit" value={fitSummary} /> : null}
         {metadata.requires_auth ? (
           <DetailRow
             label="Access"

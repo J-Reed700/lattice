@@ -6,6 +6,8 @@
  */
 
 
+import type { FitVerdictDto } from '@/lib/bindings';
+
 import type {
   ModelCategory,
   PerformanceTier,
@@ -90,6 +92,8 @@ export interface ModelMetadata {
    *   multimodal. Unquantized — significantly larger on disk + RAM.
    */
   format?: ModelFormat;
+  /** The backend's verdict for this machine; null while the file's size is being read. */
+  fit?: FitVerdictDto | null;
 }
 
 /**
@@ -152,6 +156,8 @@ export interface ModelRecommendation {
   popularity_downloads?: number | null;
   /** Upstream popularity metric (like count), when available */
   popularity_likes?: number | null;
+  /** The backend's verdict for this machine; null while its size is being read. */
+  fit?: FitVerdictDto | null;
 }
 
 
@@ -196,6 +202,8 @@ export interface ModelSearchResult {
   popularity_downloads?: number | null;
   /** Upstream popularity metric (like count), when available */
   popularity_likes?: number | null;
+  /** The backend's verdict for this machine; null while its size is being read. */
+  fit?: FitVerdictDto | null;
 }
 
 

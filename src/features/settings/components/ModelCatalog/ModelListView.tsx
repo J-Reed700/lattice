@@ -14,7 +14,6 @@ import { Skeleton } from '@/components/Skeleton';
 import { useApi } from '@/contexts/ApiContext';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
-import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '@/features/settings/hooks/useHuggingFaceTokenQuery';
 import { useToastStore } from '@/stores/toastStore';
@@ -58,11 +57,6 @@ export function ModelListView({
   const api = useApi();
   const { downloadedModels } = useDownloadedModels();
   const { getActiveDownloadForModel } = useDownloadState();
-  // Read the machine once for the whole list rather than once per row.
-  const { systemCapabilities } = useModelCatalog({
-    autoLoadCapabilities: true,
-    autoLoadModels: false,
-  });
   const { data: tokenStatus } = useHuggingFaceTokenStatusQuery();
   const addToast = useToastStore((state) => state.addToast);
   const queryClient = useQueryClient();
@@ -156,7 +150,6 @@ export function ModelListView({
           activeDownload={getActiveDownloadForModel(model.model.id)}
           isStarting={startingIds.has(model.model.id)}
           onDownload={() => void handleDownload(model)}
-          capabilities={systemCapabilities}
           hasHfToken={tokenStatus?.isSet ?? false}
           onAddToken={onAddToken}
         />
