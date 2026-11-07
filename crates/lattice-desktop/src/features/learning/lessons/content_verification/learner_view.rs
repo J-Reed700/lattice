@@ -1,7 +1,7 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
 use super::provenance_gate::FindingTrust;
-use super::resolution::{standing, Resolution, Standing};
+use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
 use super::{ClaimVerdict, Finding, LessonVerificationReport};
 use crate::features::learning::{
     dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
@@ -19,17 +19,33 @@ use std::collections::{HashMap, HashSet};
 
 /// A lesson's claims as its ledger holds them now, by claim id.
 #[derive(Default)]
-pub(in crate::features::learning) struct ClaimStates(HashMap<String, ClaimState>);
+pub(in crate::features::learning) struct ClaimStates {
+    states: HashMap<String, ClaimState>,
+    /// Each claim's id, unit and quote.
+    places: Vec<(String, usize, String)>,
+}
 
 impl ClaimStates {
     pub(in crate::features::learning) fn of(ledger: &Ledger) -> Self {
-        Self(
-            ledger
+        Self {
+            states: ledger
                 .claims
                 .iter()
                 .map(|entry| (entry.claim_id().0.clone(), entry.state().clone()))
                 .collect(),
-        )
+            places: ledger
+                .claims
+                .iter()
+                .map(|entry| {
+                    let location = entry.location();
+                    (
+                        entry.claim_id().0.clone(),
+                        location.unit_index,
+                        location.quote.clone(),
+                    )
+                })
+                .collect(),
+        }
     }
 }
 
@@ -130,21 +146,49 @@ impl LessonVerificationReport {
         // ledger holds it now; a finding whose claim the ledger does not know
         // keeps the resolution it was published with.
         // The second is whether the ledger says the machine verified it.
-        let resolved = |finding: &Finding| match finding
-            .claim_id
-            .as_ref()
-            .and_then(|id| states.0.get(id))
-            .map(|state| standing(state, &|id| states.0.get(&id.0)))
-        {
-            Some(Standing::Resolved(resolution)) => (Some(resolution), false),
-            Some(Standing::Verified) => (None, true),
-            Some(Standing::Unsettled) => (
-                Some(Resolution::Unverified {
-                    reason: UnverifiedReason::Unchecked,
-                }),
-                false,
-            ),
-            Some(Standing::Gone) | None => (finding.resolution.clone(), false),
+        let finding_claims: HashSet<&str> = self
+            .findings
+            .iter()
+            .filter_map(|finding| finding.claim_id.as_deref())
+            .collect();
+        let resolved = |finding: &Finding| {
+            let Some(state) = finding
+                .claim_id
+                .as_ref()
+                .and_then(|id| states.states.get(id))
+            else {
+                return (finding.resolution.clone(), false);
+            };
+            let (own, verified) = match standing(state, &|id| states.states.get(&id.0)) {
+                Standing::Resolved(resolution) => (Some(resolution), false),
+                Standing::Verified => (None, true),
+                Standing::Unsettled => (
+                    Some(Resolution::Unverified {
+                        reason: UnverifiedReason::Unchecked,
+                    }),
+                    false,
+                ),
+                Standing::Gone => (finding.resolution.clone(), false),
+            };
+            match own {
+                Some(own) => (Some(own), verified),
+                None => match ended_mark(
+                    states.places.iter().filter_map(|(id, unit, quote)| {
+                        Some(Placed {
+                            id,
+                            unit: *unit,
+                            quote,
+                            state: states.states.get(id)?,
+                        })
+                    }),
+                    &|id| finding_claims.contains(id),
+                    finding.unit,
+                    &finding.quote,
+                ) {
+                    Some(mark) => (Some(mark), false),
+                    None => (None, verified),
+                },
+            }
         };
         // A sentence that carries a claim published not verified reads not
         // verified, whatever another claim on it found.

@@ -31,7 +31,7 @@ pub(super) use stops::UNREADABLE;
 pub(super) use successor::Rewrites;
 
 use super::provenance_gate::ProvenanceGate;
-use super::resolution::{standing, Resolution, Standing};
+use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
 use super::sections::Cuts;
 use super::support_gate::SupportGate;
 use super::*;
@@ -820,22 +820,18 @@ impl ClaimLedger {
                 Some(Standing::Resolved(resolution)) => Some(resolution),
                 _ => None,
             };
-            // A claim the machine ended whose sentence stands, published not
-            // verified, is no finding of the pass: the finding on its sentence
-            // carries its resolution.
             finding.resolution = own.or_else(|| {
-                self.entries
-                    .iter()
-                    .filter(|entry| !self.findings.contains(entry.claim_id()))
-                    .find_map(|entry| match entry.state() {
-                        ClaimState::Unverified { reason, .. }
-                            if entry.location().unit_index == finding.unit
-                                && entry.location().quote == finding.quote =>
-                        {
-                            Some(Resolution::Unverified { reason: *reason })
-                        }
-                        _ => None,
-                    })
+                ended_mark(
+                    self.entries.iter().map(|entry| Placed {
+                        id: &entry.claim_id().0,
+                        unit: entry.location().unit_index,
+                        quote: &entry.location().quote,
+                        state: entry.state(),
+                    }),
+                    &|id| self.findings.iter().any(|claim| claim.0 == id),
+                    finding.unit,
+                    &finding.quote,
+                )
             });
         }
         let confirmed: Vec<String> = report

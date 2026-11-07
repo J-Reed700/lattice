@@ -65,6 +65,36 @@ pub(super) fn standing<'a>(
     }
 }
 
+/// A claim as the ledger places it: its sentence's unit and quote, and where
+/// it stands.
+pub(super) struct Placed<'a> {
+    pub id: &'a str,
+    pub unit: usize,
+    pub quote: &'a str,
+    pub state: &'a ClaimState,
+}
+
+/// What a claim that is no finding of the pass, on the same unit and quote as
+/// a finding, adds to it: a claim the machine ended whose sentence still
+/// stands is published not verified, and the finding on that sentence carries
+/// its resolution. Publication and the learner view both read it here.
+pub(super) fn ended_mark<'a>(
+    claims: impl IntoIterator<Item = Placed<'a>>,
+    is_finding: &dyn Fn(&str) -> bool,
+    unit: usize,
+    quote: &str,
+) -> Option<Resolution> {
+    claims
+        .into_iter()
+        .filter(|claim| !is_finding(claim.id))
+        .find_map(|claim| match claim.state {
+            ClaimState::Unverified { reason, .. } if claim.unit == unit && claim.quote == quote => {
+                Some(Resolution::Unverified { reason: *reason })
+            }
+            _ => None,
+        })
+}
+
 impl Finding {
     /// May publish: supported by a passage, or resolved by the user.
     pub(super) fn publishable(&self) -> bool {
