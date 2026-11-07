@@ -1159,6 +1159,7 @@ pub(super) fn passage_finding(
         supporting_quote: supported.then(|| source.to_owned()),
         resolution: None,
         trust: None,
+        claim_id: None,
         two_pass: Default::default(),
         label: None,
         class: None,

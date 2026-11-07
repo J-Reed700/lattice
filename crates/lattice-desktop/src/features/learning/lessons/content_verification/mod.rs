@@ -54,6 +54,7 @@ pub(in crate::features::learning) use judge::{
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
+pub(in crate::features::learning) use learner_view::ClaimStates;
 mod portability;
 mod quote_claims;
 mod readings;
@@ -209,6 +210,10 @@ struct Finding {
     /// The user's resolution, set from the claim ledger at publication.
     #[serde(skip_serializing_if = "Option::is_none")]
     resolution: Option<resolution::Resolution>,
+    /// The claim this finding reports, which the learner view follows after
+    /// publication; none in a report from before findings named theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim_id: Option<String>,
     /// What the provenance gate weighed for a supported finding: the
     /// supports' levels for the claim's subject and the decision. Boxed: it
     /// is most of a finding's size and most findings have none.
@@ -350,6 +355,7 @@ impl ClaimReceipt {
             evidence: evidence.to_vec(),
             supporting_quote: self.supporting_quote,
             resolution: None,
+            claim_id: None,
             two_pass: Default::default(),
             label: None,
             class: None,

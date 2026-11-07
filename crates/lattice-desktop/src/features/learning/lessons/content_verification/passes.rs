@@ -469,6 +469,7 @@ fn from_ledger(
         trust: None,
         label: None,
         class: entry.classified().map(|(class, by)| Classed { class, by }),
+        claim_id: None,
         two_pass: TwoPass {
             supported_by,
             ..Default::default()

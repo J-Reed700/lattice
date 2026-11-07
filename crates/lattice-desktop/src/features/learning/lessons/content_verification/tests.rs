@@ -1509,6 +1509,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 evidence: vec![],
                 supporting_quote: None,
                 resolution: None,
+                claim_id: None,
                 two_pass: Default::default(),
                 label: None,
                 class: None,

@@ -815,9 +815,10 @@ impl ClaimLedger {
         };
         let state_of = |id: &ClaimId| self.entry(id).map(ClaimLedgerEntry::state);
         for (finding, id) in report.findings.iter_mut().zip(&self.findings) {
+            finding.claim_id = Some(id.0.clone());
             finding.resolution = match state_of(id).map(|state| standing(state, &state_of)) {
-                Some(Standing::Settled(resolution)) => resolution,
-                Some(Standing::Unsettled) | None => None,
+                Some(Standing::Resolved(resolution)) => Some(resolution),
+                _ => None,
             };
         }
         let confirmed: Vec<String> = report

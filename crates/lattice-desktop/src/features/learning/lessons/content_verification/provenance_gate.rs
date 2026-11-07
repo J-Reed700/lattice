@@ -549,6 +549,7 @@ pub(in crate::features::learning) async fn weigh_claim(
         evidence: page.to_vec(),
         supporting_quote: Some(supported.supporting_quote.clone()),
         resolution: None,
+        claim_id: None,
         two_pass: Default::default(),
         trust: None,
         label: None,

@@ -122,6 +122,10 @@ pub struct LearningClaimEvidenceDto {
     pub parts: Vec<LearningClaimPartDto>,
     #[serde(default)]
     pub unverified_reason: Option<UnverifiedReasonDto>,
+    /// The claim behind this statement, for acting on it; none in a report
+    /// from before findings named theirs.
+    #[serde(default)]
+    pub claim_id: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +156,6 @@ pub async fn get(
     snapshot
         .report
         .as_ref()
-        .map(|report| report.learner_view(&snapshot.lesson, &snapshot.versions))
+        .map(|report| report.learner_view(&snapshot.lesson, &snapshot.versions, &snapshot.claims))
         .transpose()
 }

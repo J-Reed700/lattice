@@ -21,9 +21,13 @@ pub(in crate::features::learning) enum Resolution {
 
 /// How a claim's state reads to the learner.
 pub(super) enum Standing {
-    /// The claim has ended. `Some` is what the learner is told of it; `None`
-    /// leaves it to the machine's reading of the finding.
-    Settled(Option<Resolution>),
+    /// The machine verified it, found it consistent or passed it as common
+    /// knowledge.
+    Verified,
+    /// The user confirmed it, or it was published not verified.
+    Resolved(Resolution),
+    /// The sentence is gone: nothing is told of it.
+    Gone,
     /// The claim is open, waiting or reopened.
     Unsettled,
 }
@@ -36,24 +40,24 @@ pub(super) fn standing<'a>(
     claim: &dyn Fn(&ClaimId) -> Option<&'a ClaimState>,
 ) -> Standing {
     match state {
-        ClaimState::Confirmed { at, note, .. } => Standing::Settled(Some(Resolution::Confirmed {
+        ClaimState::Confirmed { at, note, .. } => Standing::Resolved(Resolution::Confirmed {
             at: *at,
             note: note.clone(),
-        })),
+        }),
         ClaimState::Unverified { reason, .. } => {
-            Standing::Settled(Some(Resolution::Unverified { reason: *reason }))
+            Standing::Resolved(Resolution::Unverified { reason: *reason })
         }
         ClaimState::ResolvedByEvidence { .. }
         | ClaimState::Consistent { .. }
-        | ClaimState::GeneralKnowledge { .. }
-        | ClaimState::Removed { .. }
+        | ClaimState::GeneralKnowledge { .. } => Standing::Verified,
+        ClaimState::Removed { .. }
         | ClaimState::Edited {
             successor: None, ..
-        } => Standing::Settled(None),
+        } => Standing::Gone,
         ClaimState::Edited {
             successor: Some(successor),
             ..
-        } => claim(successor).map_or(Standing::Settled(None), |state| standing(state, claim)),
+        } => claim(successor).map_or(Standing::Gone, |state| standing(state, claim)),
         ClaimState::Unchecked
         | ClaimState::Open { .. }
         | ClaimState::Queued { .. }
