@@ -453,8 +453,8 @@ impl CloudLlm {
                 return Ok(response);
             }
             // Avoid echoing provider bodies which can contain submitted user text.
-            let error = status_error(&self.provider, self.provider_name(), status, "");
             if status == reqwest::StatusCode::BAD_REQUEST {
+                let error = status_error(&self.provider, self.provider_name(), status, "");
                 let reason = rejection_reason(response).await;
                 return Err(bad_request_error(
                     shown_name(&self.provider, self.provider_name()),
@@ -463,18 +463,25 @@ impl CloudLlm {
                     error,
                 ));
             }
-            if attempt == 2 || !(status.as_u16() == 429 || status.is_server_error()) {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok());
+            // Only a 429's body is read: it alone tells an account with nothing
+            // left from a busy one.
+            let refusal = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                response.text().await.unwrap_or_default()
+            } else {
+                String::new()
+            };
+            let error = status_error(&self.provider, self.provider_name(), status, &refusal);
+            let resend =
+                matches!(error, AppError::RateLimitExceeded(_)) || status.is_server_error();
+            if attempt == 2 || !resend {
                 return Err(error);
             }
-            let delay = Duration::from_secs(
-                response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(1 << attempt)
-                    .min(30),
-            );
+            let delay = Duration::from_secs(retry_after.unwrap_or(1 << attempt).min(30));
             // Sleeping past the deadline would report a budget expiry instead of
             // the provider's own reason for refusing.
             if deadline
@@ -727,6 +734,17 @@ fn bad_request_error(
         .unwrap_or(error)
 }
 
+/// Whether a 429's body says the account has no quota left, by its error's
+/// type or code. The body is read for this and is never shown.
+fn out_of_quota(body: &str) -> bool {
+    let Ok(reply) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    ["/error/type", "/error/code"]
+        .iter()
+        .any(|field| reply.pointer(field).and_then(Value::as_str) == Some("insufficient_quota"))
+}
+
 /// A provider's refusal, typed by what waiting can change: a rejected key or
 /// an unknown model is a setting to fix, a rate limit or server error is an
 /// outage, and any other refusal would be refused again.
@@ -734,7 +752,7 @@ fn status_error(
     provider: &LLMProvider,
     name: &str,
     status: reqwest::StatusCode,
-    _body: &str,
+    body: &str,
 ) -> AppError {
     let shown = shown_name(provider, name);
     match status.as_u16() {
@@ -749,7 +767,12 @@ fn status_error(
             "{shown} does not offer the configured model (HTTP {status}): choose another in \
              Settings → AI"
         )),
-        408 | 429 => AppError::Network(format!("{name} API returned HTTP {status}")),
+        429 if out_of_quota(body) => AppError::InvalidConfig(format!(
+            "{shown} says the account has no credit or quota left (HTTP 429): add credit to the \
+             account, or choose another model in Settings → AI"
+        )),
+        429 => AppError::RateLimitExceeded(format!("{name} API returned HTTP {status}")),
+        408 => AppError::Network(format!("{name} API returned HTTP {status}")),
         _ if status.is_server_error() => {
             AppError::Network(format!("{name} API returned HTTP {status}"))
         }
