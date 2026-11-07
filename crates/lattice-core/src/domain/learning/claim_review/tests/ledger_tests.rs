@@ -1261,3 +1261,207 @@ fn a_check_that_gave_no_answer_changes_nothing_about_the_claim() {
     waiting.append(machine(7), unjudged("v3")).unwrap();
     assert_eq!(waiting.state(), &before);
 }
+
+fn not_verified(reason: UnverifiedReason) -> ClaimEvent {
+    ClaimEvent::PublishedUnverified { reason }
+}
+
+#[test]
+fn a_claim_the_machine_cannot_settle_is_published_not_verified_and_the_lesson_is_ready() {
+    let waiting = [
+        claim("unchecked"),
+        queued_claim("queued", VerdictKind::Unsupported),
+        {
+            let mut open = claim("open");
+            open.append(machine(2), checked(Some(VerdictKind::Unsupported), "v1"))
+                .unwrap();
+            open
+        },
+        {
+            let mut reopened = verified_claim("reopened");
+            reopened
+                .append(
+                    machine(3),
+                    ClaimEvent::Reopened {
+                        cause: ReopenCause::SourceDeleted("v1".into()),
+                    },
+                )
+                .unwrap();
+            reopened
+        },
+    ];
+    for mut entry in waiting {
+        assert_ne!(end_state([&entry]), LessonReviewState::Ready);
+        entry
+            .append(machine(20), not_verified(UnverifiedReason::Unsupported))
+            .unwrap();
+        assert_eq!(
+            entry.state(),
+            &ClaimState::Unverified {
+                at: 20,
+                reason: UnverifiedReason::Unsupported
+            }
+        );
+        assert!(entry.state().is_resolved());
+        assert!(!entry.state().is_machine_owned() && !entry.state().awaits_user());
+        assert_eq!(end_state([&entry]), LessonReviewState::Ready);
+        assert!(!entry.may_repair());
+    }
+}
+
+#[test]
+fn a_claim_published_not_verified_is_never_counted_as_verified_or_waiting() {
+    let mut entry = claim("c1");
+    entry
+        .append(machine(2), not_verified(UnverifiedReason::Unchecked))
+        .unwrap();
+    let counts = ClaimCounts::tally([&entry]);
+    assert_eq!(counts.unverified, 1);
+    assert_eq!(
+        (
+            counts.verified,
+            counts.confirmed,
+            counts.queued,
+            counts.open
+        ),
+        (0, 0, 0, 0)
+    );
+}
+
+#[test]
+fn a_claim_already_settled_or_gone_is_not_published_not_verified() {
+    let mut confirmed = queued_claim("confirmed", VerdictKind::Unsupported);
+    confirmed
+        .append(user(10), act(confirm(), Some("Checked by hand.")))
+        .unwrap();
+    let mut removed = claim("removed");
+    removed
+        .append(user(10), act(UserAction::Remove, None))
+        .unwrap();
+    for mut entry in [verified_claim("verified"), confirmed, removed] {
+        let before = entry.state().clone();
+        let error = entry
+            .append(machine(30), not_verified(UnverifiedReason::Unchecked))
+            .unwrap_err();
+        assert!(matches!(error, LedgerError::NotAllowed { .. }), "{error:?}");
+        assert_eq!(entry.state(), &before);
+    }
+}
+
+#[test]
+fn the_event_is_the_machines_and_replays_to_the_same_state() {
+    let mut entry = claim("c1");
+    let error = entry
+        .append(user(2), not_verified(UnverifiedReason::Unchecked))
+        .unwrap_err();
+    assert!(matches!(error, LedgerError::WrongActor { .. }), "{error:?}");
+
+    entry
+        .append(machine(3), not_verified(UnverifiedReason::Contradicted))
+        .unwrap();
+    let stored = serde_json::to_string(entry.events()).unwrap();
+    assert!(stored.contains("\"published_unverified\""), "{stored}");
+    let replayed =
+        ClaimLedgerEntry::from_events(ClaimId("c1".into()), serde_json::from_str(&stored).unwrap())
+            .unwrap();
+    assert_eq!(replayed.state(), entry.state());
+    assert_eq!(entry.events()[1].event.kind_name(), "published_unverified");
+}
+
+#[test]
+fn a_user_confirm_a_reopen_or_a_new_check_moves_a_claim_published_not_verified_as_an_open_one() {
+    let unverified = |reason| {
+        let mut entry = claim("c1");
+        entry.append(machine(2), not_verified(reason)).unwrap();
+        entry
+    };
+
+    let mut confirmed = unverified(UnverifiedReason::Unchecked);
+    assert!(confirmed.allows(ClaimActionKind::Confirm));
+    assert!(confirmed.allows(ClaimActionKind::AttachEvidence));
+    confirmed.append(user(5), act(confirm(), None)).unwrap();
+    assert!(matches!(confirmed.state(), ClaimState::Confirmed { .. }));
+    assert_eq!(end_state([&confirmed]), LessonReviewState::Ready);
+
+    let mut reopened = unverified(UnverifiedReason::Unsupported);
+    reopened
+        .append(
+            machine(5),
+            ClaimEvent::Reopened {
+                cause: ReopenCause::SourceDeleted("v1".into()),
+            },
+        )
+        .unwrap();
+    assert!(matches!(reopened.state(), ClaimState::Reopened { .. }));
+    assert_eq!(end_state([&reopened]), LessonReviewState::NeedsReview);
+
+    let mut verified = unverified(UnverifiedReason::Unchecked);
+    verified.append(machine(5), checked(None, "v1")).unwrap();
+    assert!(matches!(
+        verified.state(),
+        ClaimState::ResolvedByEvidence { .. }
+    ));
+
+    let mut failing = unverified(UnverifiedReason::Unchecked);
+    failing
+        .append(machine(5), checked(Some(VerdictKind::Unsupported), "v1"))
+        .unwrap();
+    assert!(matches!(failing.state(), ClaimState::Open { .. }));
+}
+
+#[test]
+fn a_contradicted_claim_published_not_verified_still_needs_a_note_to_confirm() {
+    let mut entry = claim("c1");
+    entry
+        .append(machine(2), checked(Some(VerdictKind::Contradicted), "v1"))
+        .unwrap();
+    entry
+        .append(machine(3), not_verified(UnverifiedReason::Contradicted))
+        .unwrap();
+    assert!(matches!(
+        entry.append(user(4), act(confirm(), None)).unwrap_err(),
+        LedgerError::NoteRequired { .. }
+    ));
+    entry
+        .append(user(5), act(confirm(), Some("The source is outdated.")))
+        .unwrap();
+    assert!(matches!(entry.state(), ClaimState::Confirmed { .. }));
+}
+
+#[test]
+fn a_claim_the_machine_ended_is_published_not_verified_when_its_sentence_stands_but_not_one_the_user_removed(
+) {
+    let mut ended = claim("ended");
+    ended
+        .append(machine(2), checked(Some(VerdictKind::Contradicted), "v1"))
+        .unwrap();
+    ended
+        .append(
+            machine(3),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        ended.state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+
+    ended
+        .append(machine(4), not_verified(UnverifiedReason::Contradicted))
+        .unwrap();
+
+    assert_eq!(
+        ended.state(),
+        &ClaimState::Unverified {
+            at: 4,
+            reason: UnverifiedReason::Contradicted
+        }
+    );
+    assert_eq!(end_state([&ended]), LessonReviewState::Ready);
+}

@@ -18,7 +18,7 @@
 //!
 //! - **Headings** — a line set in at least [`HEADING_RATIO`]× the document's
 //!   body size becomes `## `/`### `/`#### ` by size tier; a bold line at body
-//!   size becomes the deepest tier.
+//!   size becomes the deepest tier where bold stands out among the body text.
 //! - **Tables** — consecutive lines whose runs land on the same three or more
 //!   x-positions become a markdown table with a header separator row.
 //!
@@ -32,7 +32,7 @@ mod fonts;
 mod render;
 
 use content::{page_has_image, page_runs};
-use render::{body_size, group_lines, heading_tiers, render_page};
+use render::{body_size, bold_stands_out, group_lines, heading_tiers, render_page};
 
 /// A line at or above this multiple of the body size is a heading.
 const HEADING_RATIO: f32 = 1.2;
@@ -230,10 +230,11 @@ pub(super) fn read_page(
 pub(super) fn render(pages: &[PageLayout]) -> Vec<String> {
     let body = body_size(pages);
     let tiers = heading_tiers(pages, body);
+    let bold_marks = bold_stands_out(pages, body);
     let tolerance = (body * 0.6).max(4.0);
     pages
         .iter()
-        .map(|page| render_page(page, body, &tiers, tolerance))
+        .map(|page| render_page(page, body, &tiers, bold_marks, tolerance))
         .collect()
 }
 

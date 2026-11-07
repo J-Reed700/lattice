@@ -71,7 +71,7 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
   /** Waiting claims on the same source, this one included. */
   sharing: number;
   busy: boolean;
-  error: string | null;
+  error: Error | null;
   form: ActionForm | null;
   onFormChange: (form: ActionForm | null) => void;
   onAct: ClaimActionRunner;
@@ -83,11 +83,13 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
   onOpenRelevant: (source: SourceRefDto) => void;
   /** The Add a source sheet, open on this claim. */
   sheet?: ReactNode;
+  /** The lesson is published. */
+  published?: boolean;
   /** A back link for the stacked narrow layout. */
   back?: ReactNode;
   /** The action row is a sticky bar at narrow widths. */
   stickyActions?: boolean;
-}>(({ programId, item, position, total, onPrevious, onNext, sharing, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest, onOpenSource, onOpenRelevant, sheet, back, stickyActions = false }, statementRef) => {
+}>(({ programId, item, position, total, onPrevious, onNext, sharing, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest, onOpenSource, onOpenRelevant, sheet, back, stickyActions = false, published = false }, statementRef) => {
   const waiting = isWaitingForYou(item);
   const why = whyItWaits(item);
   const support = item.support;
@@ -128,7 +130,7 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
 
       <div className={stickyActions ? 'sticky bottom-0 -mx-4 border-t border-border bg-surface px-4 pb-3 pt-3' : undefined}>
         <ClaimActions item={item} sharing={sharing} suggested={why.fixes[0] ?? 'accept'} busy={busy} error={error} form={form}
-          onFormChange={onFormChange} onAct={onAct} onAcceptSource={onAcceptSource} onAddSource={onAddSource} closest={Boolean(closest)} />
+          onFormChange={onFormChange} onAct={onAct} onAcceptSource={onAcceptSource} onAddSource={onAddSource} closest={Boolean(closest)} published={published} />
       </div>
 
       <p aria-hidden="true" className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted [@media(pointer:coarse)]:hidden">

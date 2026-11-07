@@ -101,6 +101,7 @@ fn job(status: LearningGenerationJobStatus) -> LearningGenerationJob {
         activity: None,
         result_id: None,
         error: None,
+        error_code: None,
         retry_of_job_id: None,
         created_at: 10,
         started_at: None,
@@ -181,4 +182,19 @@ fn a_failure_is_recorded_whatever_its_message_says() -> Result<()> {
     assert_eq!(value.status, LearningGenerationJobStatus::Failed);
     assert_eq!(value.error.as_deref(), Some(message.as_str()));
     Ok(())
+}
+
+#[test]
+fn a_job_carries_its_error_code_as_error_code_and_reads_null_without_one() {
+    use lattice_core::shared::ipc::ErrorCode;
+    let mut value = job(LearningGenerationJobStatus::Pending);
+    value.error = Some("Connection interrupted".into());
+    value.error_code = Some(ErrorCode::NetworkError);
+    let wire = serde_json::to_value(&value).unwrap();
+    assert_eq!(wire["errorCode"], "NETWORK_ERROR");
+
+    let mut stored = wire;
+    stored.as_object_mut().unwrap().remove("errorCode");
+    let read: LearningGenerationJob = serde_json::from_value(stored).unwrap();
+    assert_eq!(read.error_code, None);
 }

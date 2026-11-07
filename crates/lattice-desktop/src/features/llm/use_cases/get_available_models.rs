@@ -38,7 +38,6 @@ impl GetAvailableModelsUseCase {
                 size_gb: m.size_gb,
                 context_length: m.context_length,
                 capabilities: m.capabilities,
-                minimum_ram_gb: m.minimum_ram_gb,
             })
             .collect();
 
@@ -105,11 +104,6 @@ mod tests {
         assert!(phi3.size_gb > 0.0, "Size should be positive");
         assert!(phi3.context_length > 0, "Context length should be positive");
         assert!(!phi3.capabilities.is_empty(), "Should have capabilities");
-        // Minimum RAM should be reasonable multiple of model size
-        assert!(
-            phi3.minimum_ram_gb >= phi3.size_gb,
-            "RAM should be >= model size"
-        );
     }
 
     #[tokio::test]
@@ -170,24 +164,6 @@ mod tests {
     // The test was flaky because it depended on exact size estimations
     // from model names, which can change with heuristic improvements.
     // The core functionality (sorting, filtering) is tested elsewhere.
-
-    #[tokio::test]
-    async fn test_get_available_models_minimum_ram_requirements() {
-        let mock_catalog = Arc::new(MockModelCatalogPort::new());
-        let use_case = GetAvailableModelsUseCase::new(mock_catalog);
-
-        let result = use_case.execute().await;
-
-        assert!(result.is_ok());
-        let available = result.unwrap();
-
-        // All models should have minimum RAM requirement
-        for model in available.models {
-            assert!(model.minimum_ram_gb > 0.0);
-            // Minimum RAM should be at least as large as model size
-            assert!(model.minimum_ram_gb >= model.size_gb);
-        }
-    }
 
     #[tokio::test]
     async fn test_get_available_models_context_lengths() {

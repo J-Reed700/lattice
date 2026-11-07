@@ -19,6 +19,10 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
+mod apparatus;
+#[cfg(test)]
+use apparatus::strip_citation_apparatus;
+pub(in crate::features::learning) use apparatus::strip_draft_apparatus;
 mod citations;
 mod claim_ledger;
 use citations::{
@@ -54,6 +58,7 @@ pub(in crate::features::learning) use judge::{
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
+pub(in crate::features::learning) use learner_view::ClaimStates;
 mod portability;
 mod quote_claims;
 mod readings;
@@ -91,6 +96,7 @@ pub(in crate::features::learning) use repair::{confine, Protected};
 mod repair_loop;
 mod repair_work;
 mod report;
+pub(in crate::features::learning) use report::WrittenOver;
 pub(in crate::features::learning) mod research;
 mod review_pass;
 mod round;
@@ -112,7 +118,9 @@ pub(in crate::features::learning) use repair_loop::{
 use repair_loop::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
-pub(in crate::features::learning) use report::{persist_report, sources_changed};
+pub(in crate::features::learning) use report::{
+    not_verified_line, persist_report, sources_changed,
+};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
@@ -207,6 +215,10 @@ struct Finding {
     /// The user's resolution, set from the claim ledger at publication.
     #[serde(skip_serializing_if = "Option::is_none")]
     resolution: Option<resolution::Resolution>,
+    /// The claim this finding reports, which the learner view follows after
+    /// publication; none in a report from before findings named theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    claim_id: Option<String>,
     /// What the provenance gate weighed for a supported finding: the
     /// supports' levels for the claim's subject and the decision. Boxed: it
     /// is most of a finding's size and most findings have none.
@@ -348,6 +360,7 @@ impl ClaimReceipt {
             evidence: evidence.to_vec(),
             supporting_quote: self.supporting_quote,
             resolution: None,
+            claim_id: None,
             two_pass: Default::default(),
             label: None,
             class: None,
@@ -479,6 +492,7 @@ pub(in crate::features::learning) fn unchecked(cause: impl Into<String>) -> Clai
         reason: Some(cause.into()),
         quote: None,
         confidence: None,
+        uncertain: false,
     })
 }
 

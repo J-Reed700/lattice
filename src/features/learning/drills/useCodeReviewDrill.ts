@@ -6,7 +6,7 @@ import { isJobFinished, useJobStatus, type JobDto } from '@/features/jobs/api';
 import type { StartedCodeReviewDto } from '@/lib/bindings';
 
 import { drillsApi } from './api';
-import { readChoices, sizeOf, validMinutes, writeChoices, type DrillOptions } from './drillOptions';
+import { materialOf, readChoices, sizeOf, validMinutes, writeChoices, type DrillOptions } from './drillOptions';
 import { initialState, limitOf, reduce, type DrillAction, type DrillState } from './drillState';
 import { changedFiles, toFindingDto, type FindingInput } from './findings';
 import { clearReviewDraft, EMPTY_DRAFT, readReviewDraft, writeReviewDraft } from './reviewDraft';
@@ -21,6 +21,9 @@ const DRILL_GRADING = 'learning.drill_grading';
 const BUILD_POLL_MS = 30_000;
 /** How often an attempt that waits for its grade is read again, in case the report that ended its job was missed. */
 const GRADING_POLL_MS = 10_000;
+
+/** The shelf of the bank a drill is taken from, which is the subject of the jobs that build for it. */
+const shelfOf = (options: DrillOptions) => (options.material === 'passage' ? `passage:${options.programId}` : options.language);
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -114,10 +117,15 @@ export function useCodeReviewDrill() {
 
   const attemptOnce = useCallback(
     async (run: number) => {
-      const { language, mode, size } = stateRef.current.options;
-      const { lines, issues } = sizeOf(size);
+      const { options } = stateRef.current;
+      const material = materialOf(options);
+      if (!material) {
+        dispatch({ type: 'failed', failure: { message: 'Choose a course to take a passage from.', retry: 'start' } });
+        return;
+      }
+      const { lines, issues } = sizeOf(options.size, options.material);
       try {
-        const started = await drillsApi.startCodeReviewDrill(language, mode, lines, issues);
+        const started = await drillsApi.startReviewDrill(material, options.mode, lines, issues);
         if (!live(run)) return;
         if (started.status === 'started') open(started);
         else dispatch({ type: 'building', jobId: started.jobId });
@@ -151,6 +159,7 @@ export function useCodeReviewDrill() {
       if (patch) dispatch({ type: 'options', patch });
       const { options } = stateRef.current;
       if (options.mode === 'interview' && !validMinutes(options.minutes)) return;
+      if (!materialOf(options)) return;
       runRef.current += 1;
       writeChoices(options);
       // The address keeps naming the last attempt until the new one opens, so it changes once, not twice.
@@ -253,7 +262,7 @@ export function useCodeReviewDrill() {
     const current = stateRef.current;
     if (current.stage === 'starting' && !current.failure && job.kind === DRILL_BUILD) {
       const ours = current.building?.jobId === job.id;
-      if (!ours && job.subjectId !== current.options.language) return;
+      if (!ours && job.subjectId !== shelfOf(current.options)) return;
       if (job.status === 'completed') void ask();
       else if (ours && isJobFinished(job)) dispatch({ type: 'failed', failure: { message: buildFailure(job), retry: 'start' } });
       else if (ours) dispatch({ type: 'job', job });
@@ -299,12 +308,16 @@ export function useCodeReviewDrill() {
     }
   }, [refresh, regrade, restore, start, submit]);
 
-  /** Another drill in the language and mode of the one just done. */
+  /** Another drill on the same material and in the mode of the one just done. */
   const nextDrill = useCallback(() => {
-    const { result } = stateRef.current;
+    const { result, options } = stateRef.current;
     if (!result) return;
-    start({ language: result.drill.language, mode: result.mode === 'interview' ? 'interview' : 'practice' });
-  }, [start]);
+    const mode = result.mode === 'interview' ? 'interview' : 'practice';
+    const { material } = result.drill;
+    if (material.kind === 'code') start({ material: 'code', language: material.language, mode });
+    else if (options.programId) start({ material: 'passage', mode });
+    else reset();
+  }, [reset, start]);
 
   const setOptions = useCallback((patch: Partial<DrillOptions>) => dispatch({ type: 'options', patch }), [dispatch]);
   const add = useCallback((input: FindingInput) => dispatch({ type: 'add', input }), [dispatch]);

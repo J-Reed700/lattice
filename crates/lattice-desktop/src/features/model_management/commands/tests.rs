@@ -33,7 +33,6 @@ fn hf_row(repo: &str, file: &str, downloads: u64) -> DownloadableHfModel {
     model.model_id = Some(repo.into());
     model.default_filename = Some(file.into());
     model.files.clear();
-    model.minimum_ram_gb = 99.0;
     DownloadableHfModel {
         model,
         downloads,
@@ -53,19 +52,15 @@ fn a_catalog_repository_row_becomes_the_catalog_entry() {
         .iter()
         .filter(|entry| entry.model.id.starts_with("qwen3.5-9b"))
         .collect();
-    // The plain 9B replaced its Hugging Face row; the MTP build matched the
-    // search too and was added.
-    assert_eq!(catalog.len(), 2);
+    // The plain 9B replaced its Hugging Face row; the MTP build and the Q6_K
+    // and Q8_0 files matched the search too and were added.
+    assert_eq!(catalog.len(), 4);
     let plain = catalog
         .iter()
         .find(|entry| entry.model.id == "qwen3.5-9b-q4_k_m")
         .expect("plain 9B");
     assert_eq!(plain.downloads, 1_000, "keeps the repository's popularity");
     assert_eq!(plain.likes, 7);
-    assert!(
-        plain.model.minimum_ram_gb < 10.0,
-        "catalog memory, not the guess"
-    );
     assert!(models
         .iter()
         .any(|entry| entry.model.id == "hf::someone/Other-GGUF::Other-Q4_K_M.gguf"));
@@ -105,4 +100,66 @@ fn test_map_cpu_architecture() {
         lattice_core::domain::CpuArchitecture::ARM64
             | lattice_core::domain::CpuArchitecture::X86_64
     ));
+}
+
+fn row_of(id: &str) -> ModelRecommendationDto {
+    let model = lattice_core::domain::models::curated::get_curated_llm_models()
+        .into_iter()
+        .find(|m| m.id == id)
+        .expect("in the catalog");
+    ModelRecommendationDto {
+        model: model.into(),
+        popularity_downloads: None,
+        popularity_likes: None,
+        fit: None,
+    }
+}
+
+#[test]
+fn the_recommenders_models_come_first_in_its_order_and_the_rest_keep_theirs() {
+    let mut rows = vec![
+        row_of("qwen3.5-2b-q4_k_m"),
+        row_of("qwen3.5-4b-q4_k_m"),
+        row_of("qwen3.5-9b-q4_k_m"),
+        row_of("gemma-4-12b-it-q4_k_m"),
+    ];
+
+    order_by_recommendation(
+        &mut rows,
+        &[
+            "gemma-4-12b-it-q4_k_m".to_string(),
+            "qwen3.5-2b-q4_k_m".to_string(),
+        ],
+    );
+
+    let ids: Vec<_> = rows.iter().map(|row| row.model.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        [
+            "gemma-4-12b-it-q4_k_m",
+            "qwen3.5-2b-q4_k_m",
+            "qwen3.5-4b-q4_k_m",
+            "qwen3.5-9b-q4_k_m"
+        ]
+    );
+}
+
+#[test]
+fn a_file_reference_cannot_leave_its_repository() {
+    assert!(is_plain_repo("unsloth/Qwen3.5-9B-GGUF"));
+    for repo in ["", "a", "a/b/c", "../b", "a/..", "a/b c"] {
+        assert!(!is_plain_repo(repo), "{repo:?}");
+    }
+    assert!(is_plain_file("Qwen3.5-9B-Q4_K_M.gguf"));
+    assert!(is_plain_file("folder/model.gguf"));
+    for file in [
+        "",
+        "../x.gguf",
+        "a//b.gguf",
+        "a\\b.gguf",
+        "/abs.gguf",
+        "a/./b.gguf",
+    ] {
+        assert!(!is_plain_file(file), "{file:?}");
+    }
 }

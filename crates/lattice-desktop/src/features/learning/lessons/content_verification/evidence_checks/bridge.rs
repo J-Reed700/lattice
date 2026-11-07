@@ -173,6 +173,7 @@ pub(super) fn weigh(
             quote,
             reason: Some(reason.trim().to_owned()),
             confidence: None,
+            uncertain: false,
         }),
         parts,
     )

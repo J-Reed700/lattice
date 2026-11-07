@@ -33,6 +33,8 @@ pub enum DecidedBy {
     Suite,
     /// A judge, shown the code, the learner's code and the issue.
     Judge,
+    /// The source passage of an explanation, checked against what the learner wrote.
+    Source,
 }
 
 /// What the hidden suite made of the learner's files as a whole, run beside the key's fixes of the planted issues the

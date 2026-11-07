@@ -120,6 +120,11 @@ impl LearningCurriculumRepository {
         &self,
         program_id: &str,
     ) -> Result<()> {
+        let seeded: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
+            .bind(program_id).fetch_one(&self.pool).await.map_err(db)?;
+        if seeded > 0 {
+            return Ok(());
+        }
         // The UI and a background worker may initialize the same legacy plan.
         // Claim the writer before reading so they cannot both seed a snapshot.
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;

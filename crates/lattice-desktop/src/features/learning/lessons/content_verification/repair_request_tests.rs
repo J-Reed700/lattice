@@ -289,6 +289,7 @@ fn unsupported(statement: &str) -> Finding {
         trust: None,
         label: None,
         class: None,
+        claim_id: None,
         two_pass: Default::default(),
     }
 }

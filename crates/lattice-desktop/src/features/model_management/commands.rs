@@ -18,10 +18,11 @@
 use crate::features::model_management::cache_adapter::ModelCatalogStats;
 use crate::features::model_management::domain::ModelMetadata;
 use crate::interfaces::di::Container;
-use crate::interfaces::dto::{ModelRecommendationDto, ModelSearchResultDto};
+use crate::interfaces::dto::{
+    FitVerdictDto, ModelFileRefDto, ModelRecommendationDto, ModelSearchResultDto, RecommendationDto,
+};
 use lattice_core::domain::{
-    CompatibilityScorer, ModelCatalogService, ModelCategory, ModelRecommendation, ModelSource,
-    SearchFilters, SystemCapabilities,
+    ModelCatalogService, ModelCategory, ModelSource, SearchFilters, SystemCapabilities,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -91,10 +92,9 @@ pub async fn detect_system_capabilities(
     Ok(SystemCapabilitiesResponse::from_domain(capabilities))
 }
 
-/// Get compatible models for a specific category.
-///
-/// Returns models ranked by compatibility score, with detailed
-/// compatibility analysis for each model.
+/// Get the catalog's models for a specific category, with the popularity the provider reports and,
+/// for chat models, whether each fits this computer. Chat models come in the recommender's order,
+/// the others in the catalog's.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_compatible_models(
@@ -102,20 +102,6 @@ pub async fn get_compatible_models(
     category: String,
 ) -> Result<Vec<ModelRecommendationDto>> {
     let category = parse_model_category(&category)?;
-
-    let system_info_port = container.system_info();
-    let system_info = system_info_port.get_system_info().await?;
-
-    let capabilities = SystemCapabilities {
-        total_ram_gb: system_info.total_ram_gb,
-        // available_ram_gb removed from domain - domain uses total_ram_gb only
-        cpu_cores: system_info.cpu_cores,
-        cpu_architecture: map_cpu_architecture(),
-        gpu_type: map_gpu_type(&system_info.gpu_info),
-        gpu_acceleration: map_gpu_acceleration(&system_info.gpu_info),
-        vram_gb: system_info.gpu_info.as_ref().and_then(|g| g.vram_gb),
-        available_disk_gb: get_available_disk_space(),
-    };
 
     let models = if category == ModelCategory::Embedding {
         fetch_embedding_hf_models(container.inner(), 500).await?
@@ -125,133 +111,183 @@ pub async fn get_compatible_models(
     .into_iter()
     .filter(|entry| entry.model.category == category)
     .collect::<Vec<_>>();
-    let downloads_by_model_id: HashMap<String, u64> = models
-        .iter()
-        .map(|entry| (entry.model.id.clone(), entry.downloads))
-        .collect();
-    let likes_by_model_id: HashMap<String, u64> = models
-        .iter()
-        .map(|entry| (entry.model.id.clone(), entry.likes))
-        .collect();
 
-    // Score compatibility for each model
-    let scorer = CompatibilityScorer::new();
-    let mut recommendations: Vec<ModelRecommendation> = models
-        .into_iter()
-        .filter_map(|entry| {
-            scorer
-                .score_compatibility(&entry.model, &capabilities)
-                .ok()
-                .map(|score| ModelRecommendation::new(entry.model, score))
-        })
-        .collect();
-
-    ModelRecommendation::sort_by_ranking(&mut recommendations);
-
-    let dto_recommendations: Vec<ModelRecommendationDto> = recommendations
-        .into_iter()
-        .map(|recommendation| {
-            let popularity_downloads = downloads_by_model_id.get(&recommendation.model.id).copied();
-            let popularity_likes = likes_by_model_id.get(&recommendation.model.id).copied();
-            let mut dto: ModelRecommendationDto = recommendation.into();
-            dto.popularity_downloads = popularity_downloads;
-            dto.popularity_likes = popularity_likes;
-            dto
-        })
-        .collect();
-
-    Ok(dto_recommendations)
+    let context = FitContext::new(container.inner()).await?;
+    let mut rows = context.rows(models).await;
+    if category == ModelCategory::LLM {
+        let order = context.recommended_order().await;
+        order_by_recommendation(&mut rows, &order);
+    }
+    Ok(rows)
 }
 
-/// Get all recommended models across all categories.
-///
-/// Returns models ranked by compatibility, grouped by category.
+/// The chat models recommended for this computer, best first, each with its fit, the device it was
+/// judged against and the labels it earned.
+#[tauri::command]
+#[specta::specta]
+pub async fn recommend_chat_models(
+    container: State<'_, Container>,
+) -> Result<Vec<RecommendationDto>> {
+    let settings = container.get_settings_use_case().execute().await?;
+    let probe = container.machine_profile_probe();
+    Ok(
+        super::recommend::recommend_chat_models(probe.as_ref(), &settings.llm.local_model_configs)
+            .await,
+    )
+}
+
+/// Get all the catalog's models across all categories.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_all_recommended_models(
     container: State<'_, Container>,
 ) -> Result<Vec<ModelRecommendationDto>> {
-    tracing::info!("get_all_recommended_models: Command invoked");
-
-    let system_info_port = container.system_info();
-    tracing::info!("get_all_recommended_models: Getting system info");
-    let system_info = system_info_port.get_system_info().await?;
-    tracing::info!(
-        "get_all_recommended_models: Got system info - RAM: {}GB, CPU cores: {}",
-        system_info.total_ram_gb,
-        system_info.cpu_cores
-    );
-
-    let capabilities = SystemCapabilities {
-        total_ram_gb: system_info.total_ram_gb,
-        // available_ram_gb removed from domain - domain uses total_ram_gb only
-        cpu_cores: system_info.cpu_cores,
-        cpu_architecture: map_cpu_architecture(),
-        gpu_type: map_gpu_type(&system_info.gpu_info),
-        gpu_acceleration: map_gpu_acceleration(&system_info.gpu_info),
-        vram_gb: system_info.gpu_info.as_ref().and_then(|g| g.vram_gb),
-        available_disk_gb: get_available_disk_space(),
-    };
-    tracing::info!("get_all_recommended_models: Built system capabilities");
-
-    tracing::info!("get_all_recommended_models: Getting Hugging Face models");
     let mut models = fetch_downloadable_hf_models(container.inner(), "gguf", 200).await?;
-
     merge_unique_models(
         &mut models,
         fetch_embedding_hf_models(container.inner(), 500).await?,
     );
-
-    let downloads_by_model_id: HashMap<String, u64> = models
-        .iter()
-        .map(|entry| (entry.model.id.clone(), entry.downloads))
-        .collect();
-    let likes_by_model_id: HashMap<String, u64> = models
-        .iter()
-        .map(|entry| (entry.model.id.clone(), entry.likes))
-        .collect();
     tracing::info!(
-        "get_all_recommended_models: Got {} Hugging Face models",
+        "get_all_recommended_models: returning {} models",
         models.len()
     );
 
-    // Score every discovered model. Embedding runtime compatibility is
-    // metadata for the catalog UI: unsupported and unknown models remain
-    // visible with their reason, while the download action stays disabled.
-    let scorer = CompatibilityScorer::new();
-    let mut recommendations: Vec<ModelRecommendation> = models
-        .into_iter()
-        .filter_map(|entry| {
-            scorer
-                .score_compatibility(&entry.model, &capabilities)
-                .ok()
-                .map(|score| ModelRecommendation::new(entry.model, score))
+    let context = FitContext::new(container.inner()).await?;
+    Ok(context.rows(models).await)
+}
+
+/// Whether each GGUF file fits this computer, in the order asked. A file whose header is not yet
+/// known is read (by range request, once: the answer is kept on disk); `null` means the header
+/// could not be read.
+#[tauri::command]
+#[specta::specta]
+pub async fn read_model_fits(
+    container: State<'_, Container>,
+    files: Vec<ModelFileRefDto>,
+) -> Result<Vec<Option<FitVerdictDto>>> {
+    use futures::stream::{self, StreamExt};
+
+    let profile = container.machine_profile_probe().profile().await;
+    let source = container.gguf_header_source();
+    let (profile, source) = (&profile, source.as_ref());
+    Ok(stream::iter(files)
+        .map(|file| async move {
+            if !is_plain_repo(&file.repo) || !is_plain_file(&file.file) {
+                return None;
+            }
+            super::recommend::file_fit(
+                &file.repo,
+                &file.file,
+                file.revision.as_deref(),
+                profile,
+                source,
+                false,
+            )
+            .await
         })
-        .collect();
-    tracing::info!(
-        "get_all_recommended_models: Scored {} compatible models",
-        recommendations.len()
-    );
+        .buffered(FIT_READS_AT_ONCE)
+        .collect::<Vec<_>>()
+        .await)
+}
 
-    ModelRecommendation::sort_by_ranking(&mut recommendations);
+/// How many headers are read at once for one `read_model_fits` call.
+const FIT_READS_AT_ONCE: usize = 4;
 
-    let dto_recommendations: Vec<ModelRecommendationDto> = recommendations
-        .into_iter()
-        .map(|recommendation| {
-            let popularity_downloads = downloads_by_model_id.get(&recommendation.model.id).copied();
-            let popularity_likes = likes_by_model_id.get(&recommendation.model.id).copied();
-            let mut dto: ModelRecommendationDto = recommendation.into();
-            dto.popularity_downloads = popularity_downloads;
-            dto.popularity_likes = popularity_likes;
-            dto
+/// What every row of a list is judged with: this computer's profile, the KV setting and the
+/// headers already read.
+struct FitContext {
+    profile: lattice_core::domain::models::fit::MachineProfile,
+    configs: std::collections::BTreeMap<
+        String,
+        lattice_core::application::contracts::settings::LocalModelConfigDto,
+    >,
+    headers: super::header_source::CachedHeadersOnly,
+}
+
+impl FitContext {
+    async fn new(container: &Container) -> Result<Self> {
+        let settings = container.get_settings_use_case().execute().await?;
+        Ok(Self {
+            profile: container.machine_profile_probe().profile().await,
+            configs: settings.llm.local_model_configs,
+            headers: super::header_source::CachedHeadersOnly(container.gguf_header_source()),
         })
-        .collect();
-    tracing::info!(
-        "get_all_recommended_models: Returning {} model recommendations",
-        dto_recommendations.len()
-    );
+    }
 
-    Ok(dto_recommendations)
+    async fn fit(&self, model: &ModelMetadata) -> Option<FitVerdictDto> {
+        super::recommend::row_fit(model, &self.profile, &self.headers, &self.configs).await
+    }
+
+    async fn rows(&self, models: Vec<DownloadableHfModel>) -> Vec<ModelRecommendationDto> {
+        let mut rows = Vec::with_capacity(models.len());
+        for entry in models {
+            let fit = self.fit(&entry.model).await;
+            rows.push(catalog_row(entry, fit));
+        }
+        rows
+    }
+
+    /// The ids of the chat models the recommender offers, best first.
+    async fn recommended_order(&self) -> Vec<String> {
+        let probe =
+            crate::features::model_management::recommend::FixedMachineProfile(self.profile.clone());
+        super::recommend::recommend_chat_models(&probe, &self.configs)
+            .await
+            .into_iter()
+            .map(|recommendation| recommendation.model_id)
+            .collect()
+    }
+}
+
+/// Puts the rows the recommender offers first, in its order; the rest keep the order they came in.
+fn order_by_recommendation(rows: &mut [ModelRecommendationDto], order: &[String]) {
+    rows.sort_by_key(|row| {
+        order
+            .iter()
+            .position(|id| *id == row.model.id)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+/// A Hugging Face repository such as `publisher/model`, with nothing that could leave it.
+fn is_plain_repo(repo: &str) -> bool {
+    let parts: Vec<_> = repo.split('/').collect();
+    parts.len() == 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && !part.contains("..")
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        })
+}
+
+/// A file path inside a repository: no way out of it and no empty parts.
+fn is_plain_file(file: &str) -> bool {
+    !file.is_empty()
+        && !file.contains('\\')
+        && file
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+fn catalog_row(entry: DownloadableHfModel, fit: Option<FitVerdictDto>) -> ModelRecommendationDto {
+    ModelRecommendationDto {
+        model: with_fit(entry.model, fit.clone()),
+        popularity_downloads: Some(entry.downloads),
+        popularity_likes: Some(entry.likes),
+        fit,
+    }
+}
+
+/// A catalog row's metadata for the frontend, carrying its verdict.
+fn with_fit(
+    model: ModelMetadata,
+    fit: Option<FitVerdictDto>,
+) -> crate::interfaces::dto::ModelMetadataDto {
+    let mut dto: crate::interfaces::dto::ModelMetadataDto = model.into();
+    dto.fit = fit;
+    dto
 }
 
 fn is_downloadable_model(model: &ModelMetadata) -> bool {
@@ -309,8 +345,8 @@ async fn fetch_downloadable_hf_models(
 /// Put the catalog's chat entries into a Hugging Face listing.
 ///
 /// A row for a catalog repository becomes the catalog entry, keeping the
-/// repository's download and like counts: the entry's memory comes from the
-/// GGUF header rather than `1.5 x file size`, its download is checked against
+/// repository's download and like counts: its footprint is pinned from the
+/// GGUF header, its download is checked against
 /// a pinned digest, and it is the id first run installs, so the catalog and
 /// first run never offer the same file twice. Entries the search matched but
 /// Hugging Face did not return are added, so a 22 GB model outside the top
@@ -575,23 +611,24 @@ pub async fn search_model_catalog(
 
     let limited_results: Vec<_> = results.into_iter().take(request.limit).collect();
 
-    let dto_results: Vec<ModelSearchResultDto> = limited_results
-        .into_iter()
-        .map(|result| {
-            let popularity_downloads = downloads_by_model_id.get(&result.model.id).copied();
-            let popularity_likes = likes_by_model_id.get(&result.model.id).copied();
-            let mut dto: ModelSearchResultDto = result.into();
-            dto.popularity_downloads = popularity_downloads;
-            dto.popularity_likes = popularity_likes;
-            dto
-        })
-        .collect();
+    let context = FitContext::new(container.inner()).await?;
+    let mut dto_results: Vec<ModelSearchResultDto> = Vec::with_capacity(limited_results.len());
+    for result in limited_results {
+        let popularity_downloads = downloads_by_model_id.get(&result.model.id).copied();
+        let popularity_likes = likes_by_model_id.get(&result.model.id).copied();
+        let fit = context.fit(&result.model).await;
+        let mut dto: ModelSearchResultDto = result.into();
+        dto.popularity_downloads = popularity_downloads;
+        dto.popularity_likes = popularity_likes;
+        dto.model.fit = fit;
+        dto_results.push(dto);
+    }
 
     Ok(dto_results)
 }
 
 /// List the actual standalone GGUF files published in a Hugging Face repository.
-/// Sizes come from the repository, while memory requirements are estimates.
+/// Sizes come from the repository; each file carries its fit once its header is known.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_model_variants(
@@ -612,23 +649,26 @@ pub async fn get_model_variants(
             "Expected a Hugging Face repository such as publisher/model".into(),
         ));
     }
-    container
+    let context = FitContext::new(container.inner()).await?;
+    let mut variants = Vec::new();
+    for metadata in container
         .model_catalog()
         .get_model_variants(&repo_id)
         .await?
-        .into_iter()
-        .map(|metadata| {
-            // The catalog's own file keeps its catalog id and figures, so
-            // picking it here is the same download first run makes.
-            let curated = metadata.preferred_filename.as_deref().and_then(|file| {
-                lattice_core::domain::models::curated::curated_chat_model_for_file(&repo_id, file)
-            });
-            match curated {
-                Some(model) => Ok(model.into()),
-                None => metadata.to_domain_model().map(Into::into),
-            }
-        })
-        .collect()
+    {
+        // The catalog's own file keeps its catalog id and figures, so
+        // picking it here is the same download first run makes.
+        let curated = metadata.preferred_filename.as_deref().and_then(|file| {
+            lattice_core::domain::models::curated::curated_chat_model_for_file(&repo_id, file)
+        });
+        let model = match curated {
+            Some(model) => model,
+            None => metadata.to_domain_model()?,
+        };
+        let fit = context.fit(&model).await;
+        variants.push(with_fit(model, fit));
+    }
+    Ok(variants)
 }
 
 /// Refresh model catalog cache.

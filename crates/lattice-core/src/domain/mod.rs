@@ -50,9 +50,8 @@ pub use qa::{
 };
 
 pub use models::selection::{
-    CompatibilityLevel, CompatibilityScore, CompatibilityScorer, CpuArchitecture, GpuAcceleration,
-    GpuType, ModelCategory, ModelFormat, ModelMetadata as ModelManagementMetadata,
-    ModelRecommendation, PerformanceTier, SystemCapabilities,
+    CpuArchitecture, GpuAcceleration, GpuType, ModelCategory, ModelFormat,
+    ModelMetadata as ModelManagementMetadata, PerformanceTier, SystemCapabilities,
 };
 
 pub use models::curated::{

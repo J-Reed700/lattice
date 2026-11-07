@@ -296,6 +296,20 @@ export const modelApi = {
     apiCall<string>('check_first_run_status'),
 
   /**
+   * The chat models recommended for this computer, best first, each judged
+   * by the backend against the memory it would run in.
+   */
+  recommendChatModels: async (): Promise<ApiResult<Wire.RecommendationDto[]>> =>
+    apiCall<Wire.RecommendationDto[]>('recommend_chat_models'),
+
+  /**
+   * The backend's verdict for each listed file, in the order asked. `null`
+   * means that file's header could not be read.
+   */
+  readModelFits: async (files: Wire.ModelFileRefDto[]): Promise<ApiResult<(Wire.FitVerdictDto | null)[]>> =>
+    apiCall<(Wire.FitVerdictDto | null)[]>('read_model_fits', { files }),
+
+  /**
    * Starts the first-run download of the recommended embedding model.
    *
    * @returns The backend's start message

@@ -3,6 +3,7 @@ import { useEffect, useId, useRef } from 'react';
 import { ArrowRight, LoaderCircle, RotateCcw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { kindOf } from '@/features/learning/drills/drillMaterial';
 import { CommentCard } from '@/features/learning/drills/reveal/CommentCard';
 import { MODE_LABEL } from '@/features/learning/drills/reveal/revealCopy';
 import { eyebrow, panel, sectionHeading } from '@/features/learning/drills/reveal/revealStyle';
@@ -26,7 +27,7 @@ export function UngradedReview({ result, onRegrade, onNextDrill, regrading }: {
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
       <section aria-labelledby={headingId} className={`${panel} px-5 py-5 sm:px-6`}>
-        <p className={eyebrow}>Result · {MODE_LABEL[result.mode]} · {result.drill.language}</p>
+        <p className={eyebrow}>Result · {MODE_LABEL[result.mode]} · {result.drill.material.kind === 'code' ? result.drill.material.language : 'Explanation'}</p>
         <h2 id={headingId} ref={headingRef} tabIndex={-1} className="mt-1 font-serif text-2xl leading-tight text-text-primary outline-hidden">
           This review could not be graded
         </h2>
@@ -60,7 +61,7 @@ export function UngradedReview({ result, onRegrade, onNextDrill, regrading }: {
           <ol className="space-y-3">
             {result.findings.map((finding, index) => (
               <li key={index}>
-                <CommentCard number={index + 1} span={finding.span} text={finding.text} severity={finding.severity} />
+                <CommentCard number={index + 1} span={finding.span} text={finding.text} severity={finding.severity} material={kindOf(result.drill)} />
               </li>
             ))}
           </ol>

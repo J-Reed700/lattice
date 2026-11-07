@@ -242,7 +242,7 @@ impl LessonGenerationWorker {
             ));
         }
         if program.sources.is_empty() {
-            return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. The MVP needs saved evidence to check its teaching.".into()));
+            return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. Lattice checks what it teaches against saved sources.".into()));
         }
         let workspace =
             crate::features::learning::source_library::LearningSourceLibraryRepository::new(
@@ -397,7 +397,17 @@ impl LessonGenerationWorker {
                 staged.push((lesson.id.clone(), generated));
                 completed_count = completed_count.max(index as u32 + 1);
                 crate::features::learning::lesson_progress::completed(completed_count);
-                crate::features::learning::lesson_progress::stage("Saving verified lesson");
+                let unverified = staged
+                    .last()
+                    .and_then(|(_, lesson)| lesson.verification.as_ref())
+                    .map_or(0, |report| report.unverified_count());
+                crate::features::learning::lesson_progress::stage(
+                    crate::features::learning::content_verification::not_verified_line(unverified)
+                        .map_or_else(
+                            || "Saving verified lesson".to_owned(),
+                            |line| format!("Lesson ready · {line}"),
+                        ),
+                );
                 if !context
                     .progress(
                         completed_count,
@@ -529,8 +539,31 @@ mod repository_tests {
         LearningCurriculumRepository,
         crate::features::learning::curriculum::LearningGenerationJob,
     ) {
+        queued_job_with(pool, true).await
+    }
+
+    /// A course the learner has not added any reference material to.
+    pub(super) async fn queued_job_without_sources(
+        pool: &SqlitePool,
+    ) -> (
+        LearningCurriculumRepository,
+        crate::features::learning::curriculum::LearningGenerationJob,
+    ) {
+        queued_job_with(pool, false).await
+    }
+
+    async fn queued_job_with(
+        pool: &SqlitePool,
+        with_sources: bool,
+    ) -> (
+        LearningCurriculumRepository,
+        crate::features::learning::curriculum::LearningGenerationJob,
+    ) {
         let program_repo = LearningRepository::new(pool.clone());
-        let program = crate::features::learning::tests::fixture();
+        let mut program = crate::features::learning::tests::fixture();
+        if !with_sources {
+            program.sources.clear();
+        }
         let references: Vec<_> = program
             .sources
             .iter()

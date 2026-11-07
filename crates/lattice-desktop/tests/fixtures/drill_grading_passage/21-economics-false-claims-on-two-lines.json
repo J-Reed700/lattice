@@ -1,0 +1,133 @@
+{
+  "name": "21-economics-false-claims-on-two-lines",
+  "kind": "false_claim_on_issue_lines",
+  "why": "The first two findings are on the lines of two issues but claim other errors that are not there: that the target was dropped by 2014 (the source has the bank missing it in 2015 to 2019) and that the figures should be percent, not percentage points (the source says percentage points). They earn nothing: the high-side misses stay missed. The third names the reversal of the standard deviation from the fall in expectations in sentence 6: found.",
+  "source": {
+    "versionId": "orsland-inflation-target-v1",
+    "startByte": 41007,
+    "endByte": 42012,
+    "title": "Macroeconomics 220, case study: Inflation targeting in Orsland",
+    "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent, to be met over a horizon of eight quarters. Economist Tamsin Ridgewell studied the 60 months after the change and found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points. She argues that the target worked chiefly by anchoring expectations: surveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\n\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall. Her study compares Orsland only with its own past, so it does not show that a neighbouring country without a target would have done worse. The central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side, after a large wage settlement in the mining sector. Ridgewell regards these misses as small, the largest being 0.9 percentage points."
+  },
+  "drill": {
+    "id": "orsland-inflation-target",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "The Orsland inflation target",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 months after the change.\nShe found that the standard deviation of annual inflation rose from 1.2 to 3.4 percentage points.\nShe argues that the target worked chiefly by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore does not show that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the low side.\nThis followed a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "orsland-inflation-target-sd",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 4,
+          "end": 4
+        },
+        "consequence": "A reader concludes the target made inflation less stable, the opposite of the study's finding.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "She found that the standard deviation of annual inflation rose from 1.2 to 3.4 percentage points.",
+          "after": "She found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points."
+        },
+        "explanation": "The standard deviation fell from 3.4 to 1.2 percentage points.",
+        "proof": {
+          "sourced": {
+            "quote": "the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points",
+            "planted": "contradicted",
+            "reason": "The source says the standard deviation fell from 3.4 to 1.2; the sentence says it rose from 1.2 to 3.4."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "orsland-inflation-target-side",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 10,
+          "end": 10
+        },
+        "consequence": "A reader thinks the bank let inflation fall short, when the misses were mostly above target.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the low side.",
+          "after": "The central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side."
+        },
+        "explanation": "The misses were mostly on the high side.",
+        "proof": {
+          "sourced": {
+            "quote": "mostly on the high side",
+            "planted": "contradicted",
+            "reason": "The source says the misses were mostly on the high side; the sentence says the low side."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 months after the change.\nShe found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points.\nShe argues that the target worked chiefly by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore does not show that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side.\nThis followed a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 10,
+        "end": 10
+      },
+      "text": "The bank can't have missed its target in 2015 to 2019, because the target had already been dropped by 2014.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 4,
+        "end": 4
+      },
+      "text": "These should be percent rather than percentage points, since a standard deviation of inflation is a rate.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 6,
+        "end": 6
+      },
+      "text": "If the share of firms expecting high inflation fell from 41 to 12 percent, the spread of actual inflation should have shrunk too, so sentence 4 has it backwards.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 2
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      "false_positive",
+      "false_positive",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

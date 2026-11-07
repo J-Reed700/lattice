@@ -13,7 +13,7 @@ use super::super::{
 use crate::domain::sourcing::{
     Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderHealth, FinderId, HealthState,
     Identity, InstanceSetting, KeyPlan, KeyService, NeedKind, Privacy, RatePolicy, Reach, Role,
-    WaveSlot, FINDER_IDS,
+    SkipReason, WaveSlot, FINDER_IDS,
 };
 
 fn descriptor(id: &'static str, reaches: Reach, auth: Auth, privacy: Privacy) -> FinderDescriptor {
@@ -108,7 +108,9 @@ fn a_contact_is_an_email_or_an_http_address() {
     for good in [
         "me@example.org",
         " me@example.org ",
+        "me@example.org\n",
         "https://example.org/about",
+        "https://user@host.example/x",
     ] {
         let settings = SourcingSettingsDto {
             contact: Some(good.to_string()),
@@ -126,6 +128,7 @@ fn a_contact_is_an_email_or_an_http_address() {
         "me@.org",
         "me@@example.org",
         "me @example.org",
+        "https://example.org/a b",
         "ftp://example.org",
     ] {
         let settings = SourcingSettingsDto {
@@ -279,6 +282,47 @@ fn instance_contact_and_archive_gates_are_named() {
 }
 
 #[test]
+fn a_contact_finder_runs_only_when_the_contact_is_an_email() {
+    let unpaywall = descriptor(
+        "unpaywall",
+        Reach::Scholarly,
+        Auth::Contact,
+        Privacy::IdentifiedByContact { by: "Unpaywall" },
+    );
+    let with_contact = |contact: Option<&str>| SourcingSettingsDto {
+        contact: contact.map(str::to_string),
+        ..SourcingSettingsDto::default()
+    };
+    let keys = BTreeSet::new();
+    let gate = |contact: Option<&str>| with_contact(contact).gate(&unpaywall, &keys);
+
+    assert_eq!(gate(None), Some(SkipReason::NoContact));
+    assert_eq!(gate(Some("me@example.org")), None);
+    assert_eq!(gate(Some(" me@example.org ")), None);
+    assert_eq!(
+        gate(Some("https://example.org/about")),
+        Some(SkipReason::NoEmail)
+    );
+    assert_eq!(
+        gate(Some("https://user@host.example/x")),
+        Some(SkipReason::NoEmail)
+    );
+
+    let health = healthy("any");
+    let finders = [(&unpaywall, &health)];
+    let status = SourcesStatusDto::new(
+        &finders,
+        &with_contact(Some("https://example.org/about")),
+        &keys,
+    );
+    assert_eq!(status.finders[0].gate, Some(FinderGateDto::NoEmail));
+    assert_eq!(
+        serde_json::to_value(FinderGateDto::NoEmail).unwrap(),
+        "noEmail"
+    );
+}
+
+#[test]
 fn health_reports_a_pause_and_the_last_error() {
     let brave = brave();
     let until = Utc.with_ymd_and_hms(2026, 10, 18, 14, 2, 0).unwrap();
@@ -340,6 +384,9 @@ fn every_key_service_is_listed_with_its_wire_name() {
             "\"semanticScholar\"",
             "\"apiDataGov\"",
             "\"stackExchange\"",
+            "\"openAlex\"",
+            "\"marginalia\"",
+            "\"crossrefPlus\"",
         ]
     );
     for service in KeyService::ALL {

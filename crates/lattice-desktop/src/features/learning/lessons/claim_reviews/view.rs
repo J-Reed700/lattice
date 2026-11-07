@@ -22,6 +22,7 @@ use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
 use self::support::SupportContext;
+use super::actions::offered;
 use super::dto::{
     CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEventPayloadDto,
     ClaimEvidencePassageDto, ClaimLocationDto, ClaimReviewItemDto, HumanVerdictDto,
@@ -147,6 +148,7 @@ impl ClaimReviewService {
             .ok()
             .and_then(|job| job.activity)
             .map_or(0, |activity| activity.verification_pass);
+        let published = review.state == LessonReviewState::Ready;
         let claims = ledger
             .claims
             .iter()
@@ -158,7 +160,7 @@ impl ClaimReviewService {
                     sources: &sources,
                     standings: &standings,
                 };
-                item(entry, &context, &units, &titles)
+                item(entry, &context, &units, &titles, published)
             })
             .collect();
         Ok(Some(LessonClaimReviewDto {
@@ -397,6 +399,7 @@ fn item(
     context: &SupportContext<'_>,
     units: &Value,
     titles: &[String],
+    published: bool,
 ) -> ClaimReviewItemDto {
     let SupportContext {
         shown,
@@ -509,8 +512,7 @@ fn item(
         // in the lesson's report, which a waiting lesson does not have yet.
         executions: Vec::new(),
         human,
-        available_actions: entry
-            .available_actions()
+        available_actions: offered(entry, published)
             .into_iter()
             .map(Into::into)
             .collect(),

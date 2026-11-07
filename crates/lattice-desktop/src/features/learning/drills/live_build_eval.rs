@@ -3,13 +3,16 @@
 //! Markdown for a person to read, with the counts: what was planted, what a test and what the judge proved, what was
 //! dropped and why, and what the blind review found. Whether a planted issue is real is a person's judgement, so
 //! nothing here scores it.
+//!
+//! The passage case builds drills on passages of a course in a copy of the app's database, and writes for each the
+//! source passage, the clean explanation, every planted edit with its proof, and what was dropped and why.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DiffKind, KeyIssue, Origin, PatternDue, Proof,
+    line_diff, pattern, targets, DiffKind, KeyIssue, Material, Origin, PatternDue, Proof,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
@@ -28,6 +31,7 @@ use crate::features::learning::drills::build::{
 };
 use crate::features::learning::drills::grading::live_grading_eval::model;
 use crate::features::learning::drills::grading::JudgeGrader;
+use crate::features::learning::drills::material::{material_for, ClaimSourceCheck};
 use crate::features::learning::drills::repository::{self, StoredDrill};
 use crate::features::learning::drills::runner::{runner_for, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
@@ -92,7 +96,7 @@ fn drill_json(stored: &StoredDrill, counts: &Counts, seconds: f64) -> Value {
         .collect();
     json!({
         "id": stored.drill.id,
-        "language": stored.drill.language,
+        "language": stored.drill.material.language(),
         "title": stored.drill.title,
         "domain": stored.domain,
         "model": stored.model,
@@ -184,7 +188,11 @@ fn runs(trail: &Trail) -> String {
 /// fix as a diff, what was dropped, the clean code, the clean review, the blind review and the models.
 fn markdown(stored: &StoredDrill, counts: &Counts, seconds: f64) -> String {
     let evidence = &stored.evidence;
-    let mut out = format!("# {} ({})\n\n", stored.drill.title, stored.drill.language);
+    let mut out = format!(
+        "# {} ({})\n\n",
+        stored.drill.title,
+        stored.drill.material.language().unwrap_or_default()
+    );
     out.push_str(&format!(
         "- Domain: {}\n- Built by: {}\n- Runner: {}\n- Built in {seconds:.0} seconds\n- Patterns asked for: {}\n\n",
         stored.domain,
@@ -236,6 +244,11 @@ fn markdown(stored: &StoredDrill, counts: &Counts, seconds: f64) -> String {
             }
             Proof::Judged { reason } => {
                 out.push_str(&format!("Proven by the judge: {reason}\n\n"));
+            }
+            Proof::Sourced { quote, reason, .. } => {
+                out.push_str(&format!(
+                    "Proven by the source, which says \"{quote}\": {reason}\n\n"
+                ));
             }
         }
         if let Some(proof) = evidence.proofs.iter().find(|proof| proof.issue == issue.id) {
@@ -368,17 +381,16 @@ async fn build(
         ));
     }
     let context = JobContext::detached(&store, &job).await?;
-    let runner = runner_for(&spec.language, runtimes);
+    let runner = spec
+        .material
+        .language()
+        .and_then(|language| runner_for(language, runtimes));
+    let check = ClaimSourceCheck::new(llm);
+    let material = material_for(&spec.material, runner.as_deref(), &check);
     let grader = JudgeGrader::new(llm);
-    let outcome = DrillBuild::new(
-        llm,
-        runner.as_deref(),
-        &grader,
-        pool,
-        CancellationToken::new(),
-    )
-    .run(&context, spec)
-    .await;
+    let outcome = DrillBuild::new(llm, material, &grader, pool, CancellationToken::new())
+        .run(&context, spec)
+        .await;
     match outcome {
         Ok(JobOutcome::Committed) => {
             let id = store
@@ -467,14 +479,15 @@ async fn live_build_eval() -> Result<()> {
         let mut tried: Vec<PatternDue> = Vec::new();
         for index in 1..=count {
             let name = format!("{language}-{index:02}");
+            let material = Material::code(language.clone());
             let spec = DrillSpec {
-                language: language.clone(),
                 domain: None,
                 lines,
-                patterns: targets(language, &tried, now(), patterns)
+                patterns: targets(&material, &tried, now(), patterns)
                     .iter()
                     .map(|pattern| pattern.id.to_owned())
                     .collect(),
+                material,
                 program_id: None,
             };
             tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
@@ -528,6 +541,169 @@ async fn live_build_eval() -> Result<()> {
         }
     }
     let report = json!({"model": described, "drills": summary});
+    write(
+        &out,
+        "summary.json",
+        &serde_json::to_string_pretty(&report)?,
+    )?;
+    println!("{described}: report in {}", out.display());
+    Ok(())
+}
+
+/// A drill on a passage as a person reads it: the source passage, the explanation before and after the errors were
+/// planted, each issue of the key with its edit and its proof, the repairs of the clean review, and the mutations
+/// dropped and why.
+fn passage_json(name: &str, stored: &StoredDrill, seconds: f64) -> Value {
+    let issues: Vec<Value> = stored
+        .drill
+        .key
+        .iter()
+        .map(|issue| {
+            json!({
+                "id": issue.id,
+                "pattern": issue.pattern,
+                "severity": issue.severity,
+                "origin": issue.origin,
+                "span": issue.span,
+                "clean": issue.fix.after,
+                "planted": issue.fix.before,
+                "consequence": issue.consequence,
+                "explanation": issue.explanation,
+                "proof": issue.proof,
+            })
+        })
+        .collect();
+    let dropped: Vec<Value> = stored
+        .evidence
+        .dropped
+        .iter()
+        .map(|dropped| {
+            json!({
+                "pattern": dropped.mutation.pattern,
+                "clean": dropped.mutation.edit.before,
+                "planted": dropped.mutation.edit.after,
+                "why": dropped.why,
+            })
+        })
+        .collect();
+    let models: Vec<Value> = models_of(stored)
+        .iter()
+        .map(|call| json!({"purpose": call.purpose, "model": call.model}))
+        .collect();
+    json!({
+        "name": name,
+        "id": stored.drill.id,
+        "title": stored.drill.title,
+        "model": stored.model,
+        "seconds": seconds,
+        "spec": stored.spec,
+        "source": stored.source,
+        "clean_explanation": stored.clean_files.first().map(|file| file.text.as_str()),
+        "explanation": stored.drill.files.first().map(|file| file.text.as_str()),
+        "clean_review": stored.evidence.clean_review.repairs,
+        "issues": issues,
+        "dropped": dropped,
+        "models": models,
+    })
+}
+
+/// A copy of the app's database, its migrations brought up to this build's.
+async fn copied_database(path: &str) -> Result<SqlitePool> {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .foreign_keys(true)
+        .create_if_missing(false);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(db)?;
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_ignore_missing(true);
+    migrator
+        .run(&pool)
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    Ok(pool)
+}
+
+/// Builds `LATTICE_DRILL_EVAL_COUNT` drills on passages of the course `LATTICE_COURSE`, in the copy of the app's
+/// database at `LATTICE_DB_COPY` (never the live one: the drills are stored in it, so a second run takes passages the
+/// first did not), each an explanation of about `LATTICE_DRILL_EVAL_LINES` sentences (8 without it) with
+/// `LATTICE_DRILL_EVAL_PATTERNS` patterns (3 without it). Writes a JSON file for each, and a summary, to the directory
+/// `LATTICE_DRILL_EVAL_OUT`.
+#[tokio::test]
+#[ignore = "requires LATTICE_LLAMACPP_SETTINGS, LATTICE_DB_COPY (a copy of the app's database), LATTICE_COURSE, LATTICE_DRILL_EVAL_OUT and LATTICE_DRILL_EVAL_COUNT; makes real model requests"]
+async fn live_passage_build_eval() -> Result<()> {
+    let out = PathBuf::from(required("LATTICE_DRILL_EVAL_OUT")?);
+    let database = required("LATTICE_DB_COPY")?;
+    let course = required("LATTICE_COURSE")?;
+    let count: usize = number("LATTICE_DRILL_EVAL_COUNT", None)?;
+    let lines: u32 = number("LATTICE_DRILL_EVAL_LINES", Some(8))?;
+    let patterns: usize = number("LATTICE_DRILL_EVAL_PATTERNS", Some(3))?;
+    std::fs::create_dir_all(&out)?;
+
+    let llm = model().await?;
+    let described = json!({
+        "name": llm.model_name(),
+        "provider": llm.provider_name(),
+        "context_window": llm.max_context_tokens(),
+    });
+    let runtimes = BuiltinRuntimes::for_tests();
+    let pool = copied_database(&database).await?;
+    let run = uuid::Uuid::new_v4();
+    let mut tried: Vec<PatternDue> = Vec::new();
+    let mut summary = Vec::new();
+    for index in 1..=count {
+        let name = format!("passage-{index:02}");
+        let material = Material::Passage;
+        let spec = DrillSpec {
+            domain: None,
+            lines,
+            patterns: targets(&material, &tried, now(), patterns)
+                .iter()
+                .map(|pattern| pattern.id.to_owned())
+                .collect(),
+            material,
+            program_id: Some(course.clone()),
+        };
+        tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
+            pattern: pattern.clone(),
+            due_at: Some(i64::MAX),
+        }));
+        let started = Instant::now();
+        let seed = format!("{run}:{name}");
+        let built = build(llm.as_ref(), &runtimes, &pool, &spec, &seed).await?;
+        let seconds = started.elapsed().as_secs_f64();
+        let shown = match built {
+            Ok(stored) => {
+                println!(
+                    "{name}: built in {seconds:.0} s, {} issues, {} dropped",
+                    stored.drill.key.len(),
+                    stored.evidence.dropped.len()
+                );
+                summary.push(json!({"name": name, "built": true, "seconds": seconds, "model": stored.model, "issues": stored.drill.key.len(), "dropped": stored.evidence.dropped.len()}));
+                passage_json(&name, &stored, seconds)
+            }
+            Err(failure) => {
+                println!("{name}: no drill in {seconds:.0} s: {}", failure.error);
+                summary.push(json!({"name": name, "built": false, "seconds": seconds, "error": failure.error}));
+                json!({
+                    "name": name,
+                    "spec": spec,
+                    "seconds": seconds,
+                    "error": failure.error,
+                    "checkpoints": failure.checkpoints,
+                })
+            }
+        };
+        write(
+            &out,
+            &format!("{name}.json"),
+            &serde_json::to_string_pretty(&shown)?,
+        )?;
+    }
+    let report = json!({"model": described, "course": course, "drills": summary});
     write(
         &out,
         "summary.json",

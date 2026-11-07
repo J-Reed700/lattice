@@ -11,10 +11,12 @@ use crate::features::learning::{
     outline_progress::{OutlineProgress, OutlineStage},
     persistence::hash_text,
     reference_collection::ReferenceCollection,
+    references::gathering::{Round, Rounds, TopicResearch},
     references::web_research::{self, PlannedNeed},
     sources::{preview, InitialReference},
 };
 use futures::StreamExt;
+use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::{
     application::ports::LLMPort,
@@ -278,67 +280,115 @@ pub(in crate::features::learning) async fn gather_for(
                 [json!({"claim":subtopic.title,"missingEvidence":reason})],
             ),
         };
-        let needs = web_research::with_breadth(&subtopic.needs, &subtopic.title);
-        let mut queries: Vec<&str> = Vec::new();
-        for need in &needs {
-            if !queries.contains(&need.query.as_str()) {
-                queries.push(&need.query);
+        SubtopicResearch {
+            llm,
+            web,
+            progress,
+            title: &subtopic.title,
+            topic,
+            gaps,
+            label: label(number, total),
+            urls: &mut urls,
+            hashes: &mut hashes,
+            gathered: &mut gathered,
+            shown: HashSet::new(),
+            hint: String::new(),
+        }
+        .research(
+            Rounds::new(&subtopic.needs, &subtopic.title),
+            REFERENCES_PER_SUBTOPIC,
+        )
+        .await?;
+    }
+    progress.detail(format!(
+        "{} reference pages saved from {} searches",
+        gathered.sources.len(),
+        gathered.searches
+    ));
+    Ok(gathered)
+}
+
+/// A subtopic is researched until one page is saved for its lesson to cite.
+const REFERENCES_PER_SUBTOPIC: usize = 1;
+
+/// The steps of researching one subtopic's references. What is saved for the
+/// program, and what the subtopic was shown, carry across its rounds.
+struct SubtopicResearch<'a> {
+    llm: &'a dyn LLMPort,
+    web: &'a dyn WebServiceTrait,
+    progress: &'a OutlineProgress,
+    title: &'a str,
+    topic: &'a str,
+    gaps: [serde_json::Value; 1],
+    label: String,
+    urls: &'a mut HashSet<String>,
+    hashes: &'a mut HashSet<String>,
+    gathered: &'a mut Gathered,
+    shown: HashSet<String>,
+    hint: String,
+}
+
+#[async_trait::async_trait]
+impl TopicResearch for SubtopicResearch<'_> {
+    async fn search(&mut self, round: &mut Round<'_>) -> Result<Vec<web_research::Candidate>> {
+        let mut queries: Vec<String> = Vec::new();
+        for (query, _, _) in round.asks() {
+            if !queries.contains(&query) {
+                queries.push(query);
             }
         }
-        let hint = queries.join(" | ");
-        // One selection reads every need's results together, so each
+        self.hint = queries.join(" | ");
+        // One selection reads every search's results together, so each
         // search fills an equal share of its room.
-        let cost = selection_cost(llm, &gaps);
+        let cost = selection_cost(self.llm, &self.gaps);
         let room = web_research::Room {
-            tokens: selection_room(llm, topic, &hint, &gaps),
+            tokens: selection_room(self.llm, self.topic, &self.hint, &self.gaps),
             cost: &cost,
         }
-        .share(needs.len());
+        .share(round.len());
         let mut merged: Vec<web_research::Candidate> = Vec::new();
-        let mut seen = HashSet::new();
-        for need in &needs {
-            progress.check_cancelled()?;
-            progress.detail(format!(
-                "{}: searching for {}",
-                label(number, total),
-                subtopic.title
-            ));
-            gathered.searches += 1;
-            match web_research::search_need(web, need, room).await {
+        for search in round.iter_mut() {
+            self.progress.check_cancelled()?;
+            self.progress
+                .detail(format!("{}: searching for {}", self.label, self.title));
+            self.gathered.searches += 1;
+            match search.next_page(self.web, room).await {
                 Ok(candidates) => {
                     for candidate in candidates {
-                        if !urls.contains(&candidate.result.url)
-                            && seen.insert(candidate.result.url.clone())
+                        if !self.urls.contains(&candidate.result.url)
+                            && self.shown.insert(candidate.result.url.clone())
                         {
                             merged.push(candidate);
                         }
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(%error, subtopic = %subtopic.title, "Outline reference search unavailable");
-                    gathered.unavailable += 1;
+                    tracing::warn!(%error, subtopic = %self.title, "Outline reference search unavailable");
+                    self.gathered.unavailable += 1;
                 }
             }
         }
-        if merged.is_empty() {
-            continue;
-        }
-        progress.check_cancelled()?;
-        progress.detail(format!(
+        Ok(merged)
+    }
+
+    async fn pick(&mut self, found: Vec<web_research::Candidate>) -> Result<Vec<WebSearchResult>> {
+        self.progress.check_cancelled()?;
+        self.progress.detail(format!(
             "{}: choosing among {} results",
-            label(number, total),
-            merged.len()
+            self.label,
+            found.len()
         ));
-        let selected = select_references(llm, topic, &hint, &gaps, merged).await?;
-        if selected.is_empty() {
-            continue;
-        }
-        progress.detail(format!(
+        select_references(self.llm, self.topic, &self.hint, &self.gaps, found).await
+    }
+
+    async fn read(&mut self, picked: Vec<WebSearchResult>) -> Result<usize> {
+        self.progress.detail(format!(
             "{}: saving {} selected pages",
-            label(number, total),
-            selected.len()
+            self.label,
+            picked.len()
         ));
-        let jobs = selected
+        let web = self.web;
+        let jobs = picked
             .into_iter()
             .enumerate()
             .map(|(order, result)| async move {
@@ -350,18 +400,19 @@ pub(in crate::features::learning) async fn gather_for(
             .collect()
             .await;
         captures.sort_by_key(|(order, _, _)| *order);
+        let mut saved = 0;
         for (_, result, captured) in captures {
-            progress.check_cancelled()?;
+            self.progress.check_cancelled()?;
             let captured = match captured {
                 Ok(Some(captured)) => captured,
                 Ok(None) => {
                     tracing::info!(url = %result.url, "Skipped a reference page that was truncated or empty");
-                    gathered.unavailable += 1;
+                    self.gathered.unavailable += 1;
                     continue;
                 }
                 Err(error) => {
                     tracing::warn!(%error, "Outline reference page unavailable");
-                    gathered.unavailable += 1;
+                    self.gathered.unavailable += 1;
                     continue;
                 }
             };
@@ -371,30 +422,26 @@ pub(in crate::features::learning) async fn gather_for(
                 .resolved_url
                 .clone()
                 .unwrap_or_else(|| result.url.clone());
-            if !urls.insert(resolved.clone()) && resolved != result.url {
+            if !self.urls.insert(resolved.clone()) && resolved != result.url {
                 continue;
             }
-            urls.insert(result.url.clone());
-            if !hashes.insert(hash_text(captured.text.trim())) {
+            self.urls.insert(result.url.clone());
+            if !self.hashes.insert(hash_text(captured.text.trim())) {
                 continue;
             }
             let id = uuid::Uuid::new_v4().to_string();
-            tracing::info!(subtopic = %subtopic.title, url = %result.url, chars = captured.text.chars().count(), "Saved an outline reference page");
-            gathered.sources.push(preview(&id, &captured));
-            gathered.references.push(InitialReference {
+            tracing::info!(subtopic = %self.title, url = %result.url, chars = captured.text.chars().count(), "Saved an outline reference page");
+            self.gathered.sources.push(preview(&id, &captured));
+            self.gathered.references.push(InitialReference {
                 source_id: id,
                 origin: result.url,
                 captured,
                 found: true,
             });
+            saved += 1;
         }
+        Ok(saved)
     }
-    progress.detail(format!(
-        "{} reference pages saved from {} searches",
-        gathered.sources.len(),
-        gathered.searches
-    ));
-    Ok(gathered)
 }
 
 #[cfg(test)]

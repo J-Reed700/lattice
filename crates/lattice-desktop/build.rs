@@ -105,6 +105,8 @@ fn main() {
                     "clear_active_embedding_model",
                     "clear_active_utility_model",
                     "detect_system_capabilities",
+                    "recommend_chat_models",
+                    "read_model_fits",
                     "get_compatible_models",
                     "get_all_recommended_models",
                     "search_model_catalog",
@@ -608,11 +610,12 @@ fn main() {
                     "create_learning_tangent",
                     "list_learning_tangents",
                     "set_conversation_course",
-                    "start_code_review_drill",
+                    "start_review_drill",
                     "submit_code_review",
                     "code_review_result",
                     "regrade_code_review",
                     "code_review_languages",
+                    "review_drill_courses",
                 ]),
             )
             .plugin(

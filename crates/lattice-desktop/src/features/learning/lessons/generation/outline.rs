@@ -15,7 +15,7 @@ use crate::features::learning::lessons::structured_call::{
 };
 use crate::features::learning::model_call;
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -219,11 +219,41 @@ pub(in crate::features::learning) async fn draft_outline<T>(
             )
         },
         "the course outline",
-        "The course goal and the outline's instructions do not fit",
+        OUTLINE_DOES_NOT_FIT,
     )
-    .await?;
+    .await
+    .map_err(|error| description_too_long(llm, error))?;
     let context = built.into_inner().unwrap_or_else(PoisonError::into_inner);
     Ok((outline, context, output_tokens))
+}
+
+const OUTLINE_DOES_NOT_FIT: &str = "The course goal and the outline's instructions do not fit";
+
+/// A window refusal on a model whose window meets the outline's own minimum
+/// is the learner's text being too long, not the window being too small.
+fn description_too_long(llm: &dyn LLMPort, error: AppError) -> AppError {
+    let window_needed = crate::features::learning::model_requirements::outline()
+        .min_context_tokens
+        .unwrap_or(0);
+    if llm.max_context_tokens() < window_needed {
+        return error;
+    }
+    let refusals = [
+        OUTLINE_DOES_NOT_FIT,
+        crate::features::learning::lessons::structured_call::MATERIAL_DOES_NOT_FIT,
+    ]
+    .map(|what| model_call::window_too_small(llm, what));
+    if matches!(error, AppError::InvalidConfig(_))
+        && refusals
+            .iter()
+            .any(|refusal| refusal.to_string() == error.to_string())
+    {
+        return AppError::InvalidInput(
+            "Your course description is too long for the Learning model's context window. Shorten the course description and try again."
+                .into(),
+        );
+    }
+    error
 }
 
 /// One piece of an outline's reference material.

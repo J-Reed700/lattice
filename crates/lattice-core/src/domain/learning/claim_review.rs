@@ -350,6 +350,22 @@ pub enum ClaimState {
         cause: ReopenCause,
         previous: Box<ClaimState>,
     },
+    /// The machine did all it will do and could not settle the statement: the
+    /// lesson publishes with it, marked not verified. It is the machine's
+    /// word, never a verification and never the user's decision.
+    Unverified { at: i64, reason: UnverifiedReason },
+}
+
+/// Why a statement was published without being verified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnverifiedReason {
+    /// The check could not be completed.
+    Unchecked,
+    /// The lesson's sources do not state it.
+    Unsupported,
+    /// A source appears to disagree with it.
+    Contradicted,
 }
 
 impl ClaimState {
@@ -364,8 +380,8 @@ impl ClaimState {
     }
 
     /// Closed in one of the ways a lesson may publish with (§2.1): verified,
-    /// found consistent, passed as common knowledge, confirmed, removed or
-    /// edited (the successor answers for it).
+    /// found consistent, passed as common knowledge, confirmed, removed,
+    /// edited (the successor answers for it) or published not verified.
     pub fn is_resolved(&self) -> bool {
         !self.is_machine_owned() && !self.awaits_user()
     }
@@ -778,6 +794,11 @@ pub enum ClaimEvent {
         /// A rewrite is reachable from `then`: the Open state's attempt left.
         rewrite_ahead: bool,
     },
+    /// The machine has done all it will do for the claim and the lesson
+    /// publishes with it, not verified.
+    PublishedUnverified {
+        reason: UnverifiedReason,
+    },
 }
 
 impl ClaimEvent {
@@ -801,6 +822,7 @@ impl ClaimEvent {
             Self::Stopped { .. } => "stopped",
             Self::StandingAssessed { .. } => "standing_assessed",
             Self::Stepped { .. } => "stepped",
+            Self::PublishedUnverified { .. } => "published_unverified",
         }
     }
 }

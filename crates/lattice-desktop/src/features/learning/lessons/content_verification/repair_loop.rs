@@ -5,13 +5,15 @@ use super::claim_ledger::{self, ClaimLedger, StepKind};
 use super::passes;
 use super::readings::Readers;
 use super::repair::{goal_words, Cited};
-use super::round::{self, Audit, Researched, Review, Settled, Verdict};
+use super::round::{self, Audit, Researched, Review, Settled, Unsettled, Verdict};
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
     AcceptancePolicy, Goal, Outcome, Position, StandardPolicy, Step, Taken,
 };
-use lattice_core::domain::learning::claim_review::{ClaimEvent, ClaimId, ClaimState, StopReason};
+use lattice_core::domain::learning::claim_review::{
+    ClaimEvent, ClaimId, ClaimState, StopReason, UnverifiedReason,
+};
 
 /// [`verify_and_repair_with_references`] over lexical references, for tests.
 #[cfg(test)]
@@ -514,6 +516,10 @@ impl Review for PreparationReview<'_, '_> {
         self.ledger.decide(policy, stopped)
     }
 
+    fn hinted_waiting(&self) -> Vec<claim_ledger::Waiting> {
+        self.ledger.hinted_waiting()
+    }
+
     fn again(&mut self, waiting: &[claim_ledger::Waiting]) {
         crate::features::learning::lesson_progress::phase(
             crate::features::learning::lesson_progress::Phase::Evidence,
@@ -608,6 +614,24 @@ impl Review for PreparationReview<'_, '_> {
             sections::Settled::Stopped(error) => Err(error),
             sections::Settled::Done => Ok(Settled::Done),
         }
+    }
+
+    async fn publish_unverified(
+        &mut self,
+        _policy: &dyn AcceptancePolicy,
+        unsettled: Unsettled,
+    ) -> Result<usize> {
+        self.ledger.sync().await?;
+        let (claims, reason) = match unsettled {
+            Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => {
+                (claims, Some(UnverifiedReason::Unchecked))
+            }
+            // A dispute is the Verifier audit's hold, which stays.
+            Unsettled::AwaitingUser if self.ledger.disputed() => return Ok(0),
+            Unsettled::AwaitingUser => (self.ledger.unsettled(), Some(UnverifiedReason::Unchecked)),
+            Unsettled::Ended => (self.ledger.ended_standing(&self.candidate), None),
+        };
+        self.ledger.publish_unverified(&claims, reason).await
     }
 
     fn ended_but_standing(&self) -> Option<(StopReason, usize)> {

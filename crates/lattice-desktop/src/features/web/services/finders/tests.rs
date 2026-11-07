@@ -315,6 +315,21 @@ fn the_keyless_registry_holds_the_three_providers_with_honest_identities() {
     assert!(!wikipedia.rate.trip_on_first_refusal);
 }
 
+#[test]
+fn every_key_service_is_taken_by_a_registered_finder() {
+    use lattice_core::domain::sourcing::Auth;
+    let registry = keyless_registry(&http());
+    for service in KeyService::ALL {
+        let taken = registry.iter().any(|entry| match entry.descriptor().auth {
+            Auth::OptionalKey { service: taken } | Auth::RequiredKey { service: taken, .. } => {
+                taken == service
+            }
+            _ => false,
+        });
+        assert!(taken, "no registered finder takes the {service:?} key");
+    }
+}
+
 /// A URL from a tool call or a robots.txt can name a local address outright,
 /// and an IP literal never reaches the public client's resolver, so the public
 /// helper must refuse it without sending anything. The user's own SearXNG

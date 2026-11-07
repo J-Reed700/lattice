@@ -572,6 +572,9 @@ mod coverage_gaps_tests;
 #[path = "claim_ledger_tests.rs"]
 mod claim_ledger_tests;
 
+#[path = "settle_published_tests.rs"]
+mod settle_published_tests;
+
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
 
@@ -628,6 +631,9 @@ mod repair_request_tests;
 
 #[path = "unwrite_tests.rs"]
 mod unwrite_tests;
+
+#[path = "apparatus_tests.rs"]
+mod apparatus_tests;
 
 #[tokio::test]
 async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_do_not() -> Result<()>
@@ -1203,7 +1209,7 @@ async fn a_contradicted_claim_gets_a_correction_then_is_taken_out() -> Result<()
     // changes nothing and the section is asked for once.
     let sections = model.sections.lock().unwrap();
     assert_eq!(sections.len(), 1, "{sections:?}");
-    assert!(sections[0].contains("changes nothing"), "{}", sections[0]);
+    assert!(sections[0].contains("changed nothing"), "{}", sections[0]);
     assert!(!raw.contains(BAD) && !raw.contains(SECOND), "{raw}");
     assert!(raw.contains(GOOD));
     assert!(report.issues.is_empty());
@@ -1412,9 +1418,11 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
     let report = verify(&offline, &candidate(GOOD), &[source()]).await?;
     assert_eq!(report.findings[0].verdict, ClaimVerdict::Unverified);
     // A claim the checker could not answer for is no failure of the claim:
-    // it is asked again once, and the lesson stops when the answer still
-    // cannot be read (claim classes design §3.2).
-    let error = verify_and_repair(
+    // it is asked again once, and when the answer still cannot be read the
+    // lesson publishes with the statement not verified, never taken for
+    // verified (claim classes design §3.2; publish-unverified design, the
+    // `checker_unreadable` case, reason `unchecked`).
+    let (published, report) = verify_and_repair(
         &offline,
         "{}",
         &json!({}),
@@ -1423,9 +1431,20 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
         3000,
     )
     .await
-    .err()
-    .unwrap();
-    assert!(error.to_string().contains("could not be read"), "{error}");
+    .expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(published.contains(GOOD), "the sentence stands: {published}");
+    assert_ne!(report.findings[0].verdict, ClaimVerdict::Supported);
+    assert!(
+        matches!(
+            &report.findings[0].resolution,
+            Some(resolution::Resolution::Unverified {
+                reason: lattice_core::domain::learning::claim_review::UnverifiedReason::Unchecked
+            })
+        ),
+        "{:?}",
+        report.findings[0].resolution
+    );
     assert!(!*offline.repaired.lock().unwrap());
     let incomplete = Model {
         incomplete_coverage: true,
@@ -1506,6 +1525,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
                 evidence: vec![],
                 supporting_quote: None,
                 resolution: None,
+                claim_id: None,
                 two_pass: Default::default(),
                 label: None,
                 class: None,

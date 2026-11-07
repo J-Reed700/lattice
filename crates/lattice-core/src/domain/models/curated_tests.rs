@@ -10,7 +10,7 @@ use std::path::Path;
 #[test]
 fn test_llm_models_count() {
     let models = get_curated_llm_models();
-    assert_eq!(models.len(), 9);
+    assert_eq!(models.len(), 15);
 }
 
 /// Every chat entry is one file whose size and digest were read from Hugging
@@ -45,95 +45,30 @@ fn every_chat_entry_downloads_one_pinned_file() {
     }
 }
 
-/// The figures the catalog browser shows as "Est. memory": weights, KV
-/// cache at 8K (minimum) and 32K (comfortable) from each GGUF header, and
-/// a gigabyte of runtime. Pinned so a changed entry changes them on
-/// purpose.
+/// The catalog lists its entries smallest working set first, which is the order
+/// the catalog browser shows them in.
 #[test]
-fn memory_estimates_are_weights_plus_kv_plus_runtime() {
+fn the_catalog_is_listed_smallest_working_set_first() {
     let expected = [
-        ("qwen3.5-2b-q4_k_m", 2.4, 2.7),
-        ("qwen3.5-4b-q4_k_m", 4.1, 4.9),
-        ("gemma-4-e4b-it-q4_k_m", 6.2, 6.6),
-        ("qwen3.5-9b-q4_k_m", 7.0, 7.8),
-        ("qwen3.5-9b-mtp-q4_k_m", 7.2, 8.1),
-        ("gemma-4-12b-it-q4_k_m", 8.8, 9.2),
-        ("qwen3.8-27b-ud-q4_k_m", 18.1, 19.8),
-        ("gemma-4-26b-a4b-it-ud-q4_k_m", 18.5, 19.0),
-        ("qwen3.6-35b-a3b-ud-q4_k_xl", 23.6, 24.1),
+        "qwen3.5-2b-q4_k_m",
+        "qwen3.5-4b-q4_k_m",
+        "gemma-4-e4b-it-q4_k_m",
+        "qwen3.5-9b-q4_k_m",
+        "qwen3.5-9b-mtp-q4_k_m",
+        "gemma-4-12b-it-q4_k_m",
+        "qwen3.5-9b-q6_k",
+        "qwen3.5-9b-q8_0",
+        "gemma-4-12b-it-q6_k",
+        "qwen3.8-27b-iq3_s",
+        "gemma-4-26b-a4b-it-ud-iq3_s",
+        "gemma-4-12b-it-q8_0",
+        "qwen3.8-27b-ud-q4_k_m",
+        "gemma-4-26b-a4b-it-ud-q4_k_m",
+        "qwen3.6-35b-a3b-ud-q4_k_xl",
     ];
     let models = get_curated_llm_models();
     let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
-    let expected_ids: Vec<&str> = expected.iter().map(|(id, _, _)| *id).collect();
-    assert_eq!(ids, expected_ids, "smallest working set first");
-    for (model, (id, minimum, comfortable)) in models.iter().zip(expected) {
-        assert!(
-            (model.minimum_ram_gb - minimum).abs() < 1e-9,
-            "{id}: minimum {} GB, expected {minimum}",
-            model.minimum_ram_gb
-        );
-        assert!(
-            (model.recommended_ram_gb - comfortable).abs() < 1e-9,
-            "{id}: comfortable {} GB, expected {comfortable}",
-            model.recommended_ram_gb
-        );
-        assert!(
-            model.minimum_ram_gb > model.size_gb,
-            "{id} counts its weights"
-        );
-    }
-}
-
-/// The verdict `computeModelFit` (catalogUtils.ts) gives an Apple Silicon
-/// or CPU-only machine: memory may use 70% of RAM, and "Fits" means the
-/// model needs at most 80% of that.
-fn fits(minimum_ram_gb: f64, machine_ram_gb: f64) -> bool {
-    minimum_ram_gb <= 0.8 * 0.7 * machine_ram_gb
-}
-
-/// First run downloads what this picks, so on every machine size it has to
-/// read "Fits" in the catalog, not merely load. A 4 GB machine is the one
-/// exception: nothing current fits it comfortably, and the 2B still loads.
-#[test]
-fn first_run_tier_fits_every_machine_size() {
-    let models = get_curated_llm_models();
-    for ram in [4.0, 6.0, 8.0, 12.0, 15.9, 16.0, 24.0, 32.0, 36.0, 64.0] {
-        let id = recommend_chat_model_for_ram(ram);
-        let entry = models
-            .iter()
-            .find(|m| m.id == id)
-            .unwrap_or_else(|| panic!("{id} is recommended at {ram} GB but is not in the catalog"));
-        if ram < 6.0 {
-            assert!(entry.minimum_ram_gb <= 0.7 * ram, "{id} at {ram} GB");
-        } else {
-            assert!(fits(entry.minimum_ram_gb, ram), "{id} at {ram} GB");
-        }
-    }
-}
-
-/// The large entries are honest about the machines they need: the 27B
-/// and the Gemma MoE fit from 36 GB, the 35B A3B is too large for 32 GB.
-#[test]
-fn large_entries_name_the_machines_they_fit() {
-    let models = get_curated_llm_models();
-    let minimum = |id: &str| {
-        models
-            .iter()
-            .find(|m| m.id == id)
-            .map(|m| m.minimum_ram_gb)
-            .expect("in the catalog")
-    };
-    for id in ["qwen3.8-27b-ud-q4_k_m", "gemma-4-26b-a4b-it-ud-q4_k_m"] {
-        assert!(
-            !fits(minimum(id), 32.0) && minimum(id) <= 0.7 * 32.0,
-            "{id}"
-        );
-        assert!(fits(minimum(id), 36.0), "{id}");
-    }
-    let moe = minimum("qwen3.6-35b-a3b-ud-q4_k_xl");
-    assert!(moe > 0.7 * 32.0, "too large for 32 GB");
-    assert!(moe <= 0.7 * 36.0, "loads on 36 GB");
-    assert!(fits(moe, 48.0), "fits on 48 GB");
+    assert_eq!(ids, expected);
 }
 
 /// Only the entry built for the MTP experiment opts in, and only where a
@@ -159,6 +94,100 @@ fn only_the_mtp_build_is_served_with_mtp() {
         .map(|model| model.id)
         .collect();
     assert_eq!(flagged, ["qwen3.5-9b-mtp-q4_k_m"]);
+}
+
+/// Ids are unique, and the entries that give up bits to fit a 16 GB card say
+/// so in their name and description rather than leaving it to a file name.
+#[test]
+fn entries_are_unique_and_three_bit_files_are_marked() {
+    let mut ids = std::collections::HashSet::new();
+    let mut files = std::collections::HashSet::new();
+    for model in CURATED_CHAT_MODELS {
+        assert!(ids.insert(model.id), "{} appears twice", model.id);
+        assert!(
+            files.insert((model.repo, model.file)),
+            "{} pins a file another entry pins",
+            model.id
+        );
+        let three_bit = model.quantization.contains("IQ3");
+        assert_eq!(
+            three_bit,
+            model.description.contains("3-bit"),
+            "{}: description and quantization disagree about 3 bits",
+            model.id
+        );
+        assert_eq!(three_bit, model.name.contains("3-bit"), "{}", model.id);
+    }
+}
+
+/// The recommender orders by `rank` and reads the parameter counts, so every
+/// entry carries them: ranks are unique and run 1 to the catalog's size,
+/// a mixture-of-experts model names its active parameters, and a quantization
+/// below 4 bits belongs only to a model of 20B parameters or more.
+#[test]
+fn every_entry_has_a_unique_rank_and_parameter_counts() {
+    let mut ranks: Vec<u8> = CURATED_CHAT_MODELS.iter().map(|m| m.rank).collect();
+    ranks.sort_unstable();
+    let expected: Vec<u8> = (1..=CURATED_CHAT_MODELS.len() as u8).collect();
+    assert_eq!(ranks, expected, "ranks are unique and without gaps");
+    for model in CURATED_CHAT_MODELS {
+        assert!(model.parameters_b > 0.0, "{}", model.id);
+        assert!(
+            model.active_parameters_b > 0.0 && model.active_parameters_b <= model.parameters_b,
+            "{}: active parameters are at most the total",
+            model.id
+        );
+        let mixture_of_experts = model.id.contains("-a3b-") || model.id.contains("-a4b-");
+        assert!(
+            !mixture_of_experts || model.active_parameters_b < model.parameters_b,
+            "{} names its active parameters",
+            model.id
+        );
+        let bits = match model.quantization {
+            q if q.contains("IQ3") || q.contains("Q3_") => 3,
+            q if q.contains("Q6") => 6,
+            q if q.contains("Q8") => 8,
+            q if q.contains("Q5") => 5,
+            _ => 4,
+        };
+        assert_eq!(model.quantization_bits, bits, "{}", model.id);
+        if model.quantization_bits < 4 {
+            assert!(
+                model.parameters_b >= 20.0,
+                "{}: a small model is never offered below 4 bits",
+                model.id
+            );
+        }
+    }
+}
+
+/// The order the survey's public results support, spelled out so a change to
+/// one entry's rank is a visible change here.
+#[test]
+fn the_capability_order_is_the_documented_one() {
+    let mut by_rank: Vec<_> = CURATED_CHAT_MODELS.iter().collect();
+    by_rank.sort_by_key(|model| std::cmp::Reverse(model.rank));
+    let ids: Vec<&str> = by_rank.iter().map(|model| model.id).collect();
+    assert_eq!(
+        ids,
+        [
+            "qwen3.8-27b-ud-q4_k_m",
+            "qwen3.8-27b-iq3_s",
+            "gemma-4-26b-a4b-it-ud-q4_k_m",
+            "qwen3.6-35b-a3b-ud-q4_k_xl",
+            "gemma-4-12b-it-q8_0",
+            "gemma-4-12b-it-q6_k",
+            "gemma-4-12b-it-q4_k_m",
+            "gemma-4-26b-a4b-it-ud-iq3_s",
+            "qwen3.5-9b-q8_0",
+            "qwen3.5-9b-q6_k",
+            "qwen3.5-9b-q4_k_m",
+            "qwen3.5-9b-mtp-q4_k_m",
+            "gemma-4-e4b-it-q4_k_m",
+            "qwen3.5-4b-q4_k_m",
+            "qwen3.5-2b-q4_k_m",
+        ]
+    );
 }
 
 /// Pre-Qwen-3.5 families were removed, not hidden.
@@ -191,8 +220,12 @@ fn a_catalog_file_in_the_version_list_is_the_catalog_entry() {
     assert_eq!(mtp.id, "qwen3.5-9b-mtp-q4_k_m");
     // Another quantisation of a catalog repository is not vouched for.
     assert!(
-        curated_chat_model_for_file("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q8_0.gguf").is_none()
+        curated_chat_model_for_file("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q5_K_M.gguf").is_none()
     );
+    let q8 = curated_chat_model_for_file("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q8_0.gguf")
+        .expect("a catalog file");
+    assert_eq!(q8.id, "qwen3.5-9b-q8_0");
+    assert_eq!(q8.files[0].size_bytes, 9_527_502_048);
 }
 
 #[test]
@@ -205,23 +238,25 @@ fn catalog_search_matches_every_term() {
     };
     assert_eq!(ids("").len(), CURATED_CHAT_MODELS.len());
     assert_eq!(ids("gguf").len(), CURATED_CHAT_MODELS.len());
-    assert_eq!(ids("gemma 12b"), ["gemma-4-12b-it-q4_k_m".to_string()]);
+    assert_eq!(
+        ids("gemma 12b"),
+        [
+            "gemma-4-12b-it-q4_k_m".to_string(),
+            "gemma-4-12b-it-q6_k".to_string(),
+            "gemma-4-12b-it-q8_0".to_string(),
+        ]
+    );
     assert_eq!(ids("Qwen3.6").len(), 1);
     assert!(ids("qwen").len() >= 6);
     assert!(ids("llama").is_empty());
 }
 
-/// The default install runs whatever tier first run picks, so each tier is
-/// what turns the tool loop on for most users.
+/// First run installs whatever the recommender puts first, so every catalog entry is what turns
+/// the tool loop on for most users.
 #[test]
-fn every_first_run_tier_can_call_tools_and_unknown_files_cannot() {
-    for ram in [4.0, 12.0, 32.0] {
-        let id = recommend_chat_model_for_ram(ram);
-        let entry = get_curated_llm_models()
-            .into_iter()
-            .find(|model| model.id == id)
-            .expect("tier is in the catalog");
-        let file = entry.default_filename.expect("tier names a file");
+fn every_catalog_entry_can_call_tools_and_unknown_files_cannot() {
+    for entry in get_curated_llm_models() {
+        let file = entry.default_filename.expect("entry names a file");
         assert!(chat_model_file_supports_tool_calling(&file), "{file}");
         assert!(chat_model_file_supports_tool_calling(&file.to_lowercase()));
     }
@@ -289,7 +324,7 @@ fn all_curated_models_have_unique_ids_and_valid_categories() {
 #[test]
 fn test_get_by_category() {
     let llms = get_curated_models_by_category(ModelCategory::LLM);
-    assert_eq!(llms.len(), 9);
+    assert_eq!(llms.len(), 15);
 
     let embeddings = get_curated_models_by_category(ModelCategory::Embedding);
     assert_eq!(embeddings.len(), 1);
@@ -392,8 +427,6 @@ fn test_all_models_have_required_fields() {
         assert!(!model.name.is_empty());
         assert!(!model.description.is_empty());
         assert!(model.size_gb > 0.0);
-        assert!(model.minimum_ram_gb > 0.0);
-        assert!(model.recommended_ram_gb >= model.minimum_ram_gb);
         assert!(model.context_length > 0);
         assert!(!model.capabilities.is_empty());
         assert!(!model.license.is_empty());
@@ -426,17 +459,6 @@ fn test_model_categories_match() {
     let ocr = get_curated_ocr_models();
     for model in ocr {
         assert_eq!(model.category, ModelCategory::OCR);
-    }
-}
-
-#[test]
-fn test_small_llm_models() {
-    let models = get_curated_llm_models();
-    let small_models: Vec<_> = models.iter().filter(|m| m.size_gb < 2.5).collect();
-
-    assert!(!small_models.is_empty());
-    for model in small_models {
-        assert!(model.minimum_ram_gb <= 4.0);
     }
 }
 
@@ -537,8 +559,15 @@ fn every_chat_entry_pins_a_projector_and_is_tagged_as_seeing() {
         let vision = model
             .vision
             .expect("every catalog repository ships a projector");
+        // ByteShape publishes only a bf16 projector; every other
+        // repository an F16 one.
+        let expected_projector = if model.repo.starts_with("byteshape/") {
+            "mmproj-bf16.gguf"
+        } else {
+            "mmproj-F16.gguf"
+        };
         assert_eq!(
-            vision.projector_remote_file, "mmproj-F16.gguf",
+            vision.projector_remote_file, expected_projector,
             "{}",
             model.id
         );

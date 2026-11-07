@@ -430,7 +430,7 @@ pub(in crate::features::learning) fn with_breadth(
 /// `site` is kept to it by the source finder, which searches the site where
 /// it lives now.
 pub(in crate::features::learning) struct NeedSearch<'a> {
-    need: &'a PlannedNeed,
+    need: std::borrow::Cow<'a, PlannedNeed>,
     page: usize,
     done: bool,
     owner: Option<ResolvedOwnerDto>,
@@ -440,6 +440,16 @@ pub(in crate::features::learning) struct NeedSearch<'a> {
 
 impl<'a> NeedSearch<'a> {
     pub(in crate::features::learning) fn new(need: &'a PlannedNeed) -> Self {
+        Self::of(std::borrow::Cow::Borrowed(need))
+    }
+
+    /// A search that keeps its own need, for one that outlives the code that
+    /// built the need.
+    pub(in crate::features::learning) fn owned(need: PlannedNeed) -> NeedSearch<'static> {
+        NeedSearch::of(std::borrow::Cow::Owned(need))
+    }
+
+    fn of(need: std::borrow::Cow<'a, PlannedNeed>) -> Self {
         Self {
             need,
             page: 1,
@@ -448,6 +458,15 @@ impl<'a> NeedSearch<'a> {
             returned: HashSet::new(),
             spent: 0,
         }
+    }
+
+    pub(in crate::features::learning) fn need(&self) -> &PlannedNeed {
+        &self.need
+    }
+
+    /// The page the next call asks for.
+    pub(in crate::features::learning) fn page(&self) -> usize {
+        self.page
     }
 
     /// Whether the search has nothing more to give: a page added nothing new
@@ -468,7 +487,7 @@ impl<'a> NeedSearch<'a> {
         if self.is_done() {
             return Ok(Vec::new());
         }
-        let need = self.need;
+        let need: &PlannedNeed = &self.need;
         let page = self.page;
         let input: WebSearchInput = serde_json::from_value(serde_json::json!({
             "query": need.query,

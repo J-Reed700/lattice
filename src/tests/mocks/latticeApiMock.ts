@@ -154,6 +154,8 @@ export function createVaultAPIMock() {
     checkFirstRunStatus: vi
       .fn()
       .mockResolvedValue({ ok: true, data: JSON.stringify({ needs_setup: false }) }),
+    recommendChatModels: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+    readModelFits: vi.fn().mockResolvedValue({ ok: true, data: [] }),
     downloadDefaultEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: '' }),
     listLeftoverEmbeddingFiles: vi
       .fn()

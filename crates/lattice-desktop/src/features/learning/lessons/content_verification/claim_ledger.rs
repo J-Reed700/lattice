@@ -21,15 +21,17 @@ mod readings;
 mod receipts;
 mod stops;
 mod successor;
+mod unverified;
 mod written;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};
 pub(super) use position::StepKind;
+pub(super) use stops::UNREADABLE;
 pub(super) use successor::Rewrites;
 
 use super::provenance_gate::ProvenanceGate;
-use super::resolution::Resolution;
+use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
 use super::sections::Cuts;
 use super::support_gate::SupportGate;
 use super::*;
@@ -804,15 +806,33 @@ impl ClaimLedger {
     /// The report the lesson publishes with: each finding carries the user's
     /// resolution, and the issues are what the ledger leaves open.
     pub(super) fn bind(&self, mut report: LessonVerificationReport) -> LessonVerificationReport {
-        let resolution = |id: &ClaimId| match self.entry(id).map(ClaimLedgerEntry::state) {
+        let confirmed = |id: &ClaimId| match self.entry(id).map(ClaimLedgerEntry::state) {
             Some(ClaimState::Confirmed { at, note, .. }) => Some(Resolution::Confirmed {
                 at: *at,
                 note: note.clone(),
             }),
             _ => None,
         };
+        let state_of = |id: &ClaimId| self.entry(id).map(ClaimLedgerEntry::state);
         for (finding, id) in report.findings.iter_mut().zip(&self.findings) {
-            finding.resolution = resolution(id);
+            finding.claim_id = Some(id.0.clone());
+            let own = match state_of(id).map(|state| standing(state, &state_of)) {
+                Some(Standing::Resolved(resolution)) => Some(resolution),
+                _ => None,
+            };
+            finding.resolution = own.or_else(|| {
+                ended_mark(
+                    self.entries.iter().map(|entry| Placed {
+                        id: &entry.claim_id().0,
+                        unit: entry.location().unit_index,
+                        quote: &entry.location().quote,
+                        state: entry.state(),
+                    }),
+                    &|id| self.findings.iter().any(|claim| claim.0 == id),
+                    finding.unit,
+                    &finding.quote,
+                )
+            });
         }
         let confirmed: Vec<String> = report
             .executions
@@ -822,7 +842,7 @@ impl ClaimLedger {
                     && self
                         .examples
                         .get(&observation.id)
-                        .is_some_and(|id| resolution(id).is_some())
+                        .is_some_and(|id| confirmed(id).is_some())
             })
             .map(|observation| observation.id.clone())
             .collect();

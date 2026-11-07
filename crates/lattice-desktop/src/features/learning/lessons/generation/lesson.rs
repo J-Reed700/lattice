@@ -267,7 +267,7 @@ pub async fn prepare_lesson_with_references<'a>(
     references: &ReferenceCollection<'a>,
 ) -> Result<PreparedLearningLesson> {
     if references.sources.is_empty() {
-        return Err(invalid("Add reference material in Sources before preparing a lesson. The MVP needs saved evidence to check its teaching."));
+        return Err(invalid("Add reference material in Sources before preparing a lesson. Lattice checks what it teaches against saved sources."));
     }
     validate_source_snapshot_ids(&program.sources)?;
     if !validate_text(&lesson.title) || !validate_text(&lesson.objective) {
@@ -454,6 +454,7 @@ pub async fn prepare_lesson_with_references<'a>(
         };
     let raw =
         crate::features::learning::content_verification::normalize_example_fences(llm, raw).await?;
+    let raw = crate::features::learning::content_verification::strip_draft_apparatus(raw);
     // Finish an interrupted section repair before reviewing the assembled
     // lesson. Its checkpoint is scoped to exact inputs and cannot approve it;
     // the repair path performs teaching review after all patches are saved.

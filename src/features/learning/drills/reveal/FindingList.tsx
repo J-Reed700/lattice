@@ -1,5 +1,6 @@
 import { useId } from 'react';
 
+import type { ReviewKind } from '@/features/learning/drills/drillOptions';
 import { CommentCard } from '@/features/learning/drills/reveal/CommentCard';
 import { FINDING_OUTCOME } from '@/features/learning/drills/reveal/revealCopy';
 import { matchLabel, type RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
@@ -7,9 +8,10 @@ import { sectionHeading } from '@/features/learning/drills/reveal/revealStyle';
 import type { RevealedFindingDto } from '@/lib/bindings';
 
 /** The learner's comments in the order they made them, each with what the grader made of it. */
-export function FindingList({ findings, ranked }: {
+export function FindingList({ findings, ranked, material = 'code' }: {
   findings: readonly RevealedFindingDto[];
   ranked: readonly RankedIssue[];
+  material?: ReviewKind;
 }) {
   const headingId = useId();
   return (
@@ -28,6 +30,7 @@ export function FindingList({ findings, ranked }: {
                   span={finding.span}
                   text={finding.text}
                   severity={finding.severity}
+                  material={material}
                   verdict={{
                     label: finding.outcome === 'matches' ? matchLabel(finding, ranked) : words.label,
                     tone: words.tone,

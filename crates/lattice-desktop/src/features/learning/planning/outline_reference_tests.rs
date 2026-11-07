@@ -43,7 +43,12 @@ pub(super) struct ResearchWeb {
     inner: MockWebService,
     pages: Vec<Page>,
     routes: HashMap<String, Vec<usize>>,
+    /// Exact results by (query, kind, page); once any is set, a search with no
+    /// entry finds nothing.
+    served: HashMap<(String, String, usize), Vec<String>>,
     pub queries: Mutex<Vec<String>>,
+    /// The page each search asked for, in search order.
+    pub asked_pages: Mutex<Vec<usize>>,
     /// The kind each search asked for, in search order.
     pub kinds: Mutex<Vec<Option<String>>>,
     pub fetches: Mutex<Vec<String>>,
@@ -67,7 +72,9 @@ impl ResearchWeb {
             inner: MockWebService::new(),
             pages,
             routes: HashMap::new(),
+            served: HashMap::new(),
             queries: Mutex::new(vec![]),
+            asked_pages: Mutex::new(vec![]),
             kinds: Mutex::new(vec![]),
             fetches: Mutex::new(vec![]),
         }
@@ -76,12 +83,65 @@ impl ResearchWeb {
         self.routes.insert(query.into(), pages.to_vec());
         self
     }
+    /// The addresses one search returns; a page that is not among the fixture's
+    /// pages fails when fetched.
+    pub fn serve(mut self, query: &str, kind: &str, page: usize, urls: &[String]) -> Self {
+        self.served
+            .insert((query.into(), kind.into(), page), urls.to_vec());
+        self
+    }
+    /// Every search made, as (query, kind, page), in order.
+    pub fn searches(&self) -> Vec<(String, String, usize)> {
+        let queries = self.queries.lock().unwrap();
+        let kinds = self.kinds.lock().unwrap();
+        let pages = self.asked_pages.lock().unwrap();
+        (0..queries.len())
+            .map(|i| {
+                (
+                    queries[i].clone(),
+                    kinds[i].clone().unwrap_or_default(),
+                    pages[i],
+                )
+            })
+            .collect()
+    }
+}
+fn search_result(url: &str) -> WebSearchResult {
+    WebSearchResult {
+        title: "Research reference".into(),
+        url: url.into(),
+        snippet: "SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE".into(),
+        published_date: None,
+        source: None,
+    }
 }
 #[async_trait::async_trait]
 impl WebServiceTrait for ResearchWeb {
     async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
         self.queries.lock().unwrap().push(input.query.clone());
         self.kinds.lock().unwrap().push(input.kind.clone());
+        self.asked_pages.lock().unwrap().push(input.page);
+        if !self.served.is_empty() {
+            let key = (
+                input.query.clone(),
+                input.kind.clone().unwrap_or_default(),
+                input.page,
+            );
+            let results = self
+                .served
+                .get(&key)
+                .into_iter()
+                .flatten()
+                .map(|url| search_result(url))
+                .collect();
+            self.inner.set_search_results(results);
+            let first = WebSearchInput {
+                page: 1,
+                offset: 0,
+                ..input.clone()
+            };
+            return self.inner.search_web(&first).await;
+        }
         if self.pages.is_empty() {
             return Err(AppError::ServiceNotAvailable(
                 "Search fixture unavailable".into(),
@@ -94,13 +154,7 @@ impl WebServiceTrait for ResearchWeb {
         let results: Vec<_> = indices
             .iter()
             .filter_map(|i| self.pages.get(*i))
-            .map(|page| WebSearchResult {
-                title: "Research reference".into(),
-                url: page.url.clone(),
-                snippet: "SEARCH_SNIPPET_MUST_NOT_BE_EVIDENCE".into(),
-                published_date: None,
-                source: None,
-            })
+            .map(|page| search_result(&page.url))
             .collect();
         self.inner.set_search_results(results);
         self.inner.search_web(input).await
@@ -536,6 +590,256 @@ async fn a_subtopic_whose_needs_already_include_web_and_encyclopedia_is_searched
     Ok(())
 }
 
+fn url_list(prefix: &str, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| format!("https://example.org/{prefix}-{i}"))
+        .collect()
+}
+fn readable(url: &str) -> Page {
+    Page {
+        url: url.into(),
+        text: ADDITIONAL.repeat(3),
+        truncated: false,
+    }
+}
+fn search(query: &str, kind: &str, page: usize) -> (String, String, usize) {
+    (query.into(), kind.into(), page)
+}
+/// A selection that turns down every one of `count` results.
+fn reject_all(count: usize) -> Value {
+    json!({"decisions":(0..count).map(|i| json!({"id":format!("result-{i}"),"useForGap":false,"reason":"Off topic for this subtopic."})).collect::<Vec<_>>()})
+}
+fn one_subtopic(title: &str, query: &str) -> ReferencePlan {
+    ReferencePlan {
+        subtopics: vec![PlannedSubtopic {
+            title: title.into(),
+            needs: vec![paper(query)],
+        }],
+    }
+}
+fn shown_urls(prompt: &str) -> Vec<String> {
+    payload(prompt)["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| result["url"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_subtopic_whose_first_round_reads_nothing_is_saved_by_a_later_round() -> Result<()> {
+    let (cut, gone, good) = (
+        "https://example.org/cut".to_owned(),
+        "https://example.org/gone".to_owned(),
+        "https://example.org/good".to_owned(),
+    );
+    let web = ResearchWeb::with_pages(vec![
+        Page {
+            url: cut.clone(),
+            text: SECOND.repeat(3),
+            truncated: true,
+        },
+        readable(&good),
+    ])
+    .serve("q1", "paper", 1, &[cut.clone(), gone.clone()])
+    .serve("q1", "community", 1, std::slice::from_ref(&good));
+    let plan = one_subtopic("Random assignment", "q1");
+    let llm = model(vec![select_all(2), select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(found.references.len(), 1);
+    assert_eq!(found.references[0].origin, good);
+    assert_eq!(found.references[0].captured.text, ADDITIONAL.repeat(3));
+    let searches = web.searches();
+    assert_eq!(
+        searches[..3],
+        [
+            search("q1", "paper", 1),
+            search("q1", "web", 1),
+            search("Random assignment", "encyclopedia", 1)
+        ]
+    );
+    assert_eq!(searches[3], search("q1", "community", 1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_subtopic_whose_first_selection_picks_nothing_is_selected_again_in_a_later_round(
+) -> Result<()> {
+    let (off, good) = (
+        "https://example.org/off-topic".to_owned(),
+        "https://example.org/good".to_owned(),
+    );
+    let web = ResearchWeb::with_pages(vec![readable(&off), readable(&good)])
+        .serve("q1", "paper", 1, std::slice::from_ref(&off))
+        .serve("q1", "community", 1, std::slice::from_ref(&good));
+    let plan = one_subtopic("Random assignment", "q1");
+    let llm = model(vec![reject_all(1), select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(found.references.len(), 1);
+    assert_eq!(found.references[0].origin, good);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 2);
+    assert!(!web.fetches.lock().unwrap().contains(&off));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_subtopic_saved_in_its_first_round_sends_no_further_searches() -> Result<()> {
+    let good = "https://example.org/good".to_owned();
+    let web = ResearchWeb::with_pages(vec![readable(&good)])
+        .serve("q1", "paper", 1, std::slice::from_ref(&good))
+        .serve("q1", "community", 1, &url_list("late", 3));
+    let plan = one_subtopic("Random assignment", "q1");
+    let llm = model(vec![select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(found.references.len(), 1);
+    assert_eq!(
+        web.searches(),
+        [
+            search("q1", "paper", 1),
+            search("q1", "web", 1),
+            search("Random assignment", "encyclopedia", 1)
+        ]
+    );
+    assert_eq!(llm.prompts.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_subtopic_that_never_reads_a_page_asks_the_four_rounds_and_stops() -> Result<()> {
+    let (paper_hits, web_hits, encyclopedia_hits) = (
+        url_list("paper", 12),
+        url_list("web", 3),
+        url_list("encyclopedia", 12),
+    );
+    let web = ResearchWeb::with_pages(vec![])
+        .serve("q1", "paper", 1, &paper_hits)
+        .serve("q1", "web", 1, &web_hits)
+        .serve("Random assignment", "encyclopedia", 1, &encyclopedia_hits);
+    let plan = one_subtopic("Random assignment", "q1");
+    let llm = model(vec![select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert!(found.references.is_empty());
+    assert_eq!(
+        web.searches(),
+        [
+            // Planned: the plan's need, then the web and encyclopedia.
+            search("q1", "paper", 1),
+            search("q1", "web", 1),
+            search("Random assignment", "encyclopedia", 1),
+            // Deeper: page 2 of the two searches whose first page was full.
+            search("q1", "paper", 2),
+            search("Random assignment", "encyclopedia", 2),
+            // Other kinds: the general kind not yet asked, with the first query.
+            search("q1", "community", 1),
+            // Shorter: the title on the web.
+            search("Random assignment", "web", 1),
+        ]
+    );
+    assert_eq!(llm.prompts.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_later_round_shows_the_selector_only_results_it_has_not_shown_before() -> Result<()> {
+    let good = "https://example.org/good".to_owned();
+    let (first, second) = (
+        "https://example.org/first".to_owned(),
+        "https://example.org/second".to_owned(),
+    );
+    let saved_already = original_source();
+    let saved_url = saved_already.url.clone().unwrap();
+    let web = ResearchWeb::with_pages(vec![readable(&good)])
+        .serve("q1", "paper", 1, &[first.clone(), second.clone()])
+        .serve(
+            "q1",
+            "community",
+            1,
+            &[
+                first.clone(),
+                saved_url.clone(),
+                second.clone(),
+                good.clone(),
+            ],
+        );
+    let plan = one_subtopic("Random assignment", "q1");
+    let llm = model(vec![select_all(2), select_all(1)]);
+    let found = outline_references::gather(
+        &llm,
+        &web,
+        &plan,
+        &[saved_already],
+        &OutlineProgress::default(),
+    )
+    .await?;
+    let prompts = llm.prompts.lock().unwrap().clone();
+    assert_eq!(prompts.len(), 2);
+    assert_eq!(shown_urls(&prompts[0]), [first, second]);
+    assert_eq!(shown_urls(&prompts[1]), std::slice::from_ref(&good));
+    assert_eq!(found.references.len(), 1);
+    assert_eq!(found.references[0].origin, good);
+    Ok(())
+}
+
+#[tokio::test]
+async fn only_a_subtopic_with_nothing_saved_gets_later_rounds() -> Result<()> {
+    let good = "https://example.org/good".to_owned();
+    let web = ResearchWeb::with_pages(vec![readable(&good)]).serve(
+        "q3",
+        "paper",
+        1,
+        std::slice::from_ref(&good),
+    );
+    let plan = ReferencePlan {
+        subtopics: vec![
+            PlannedSubtopic {
+                title: "Random assignment".into(),
+                needs: vec![paper("q1")],
+            },
+            PlannedSubtopic {
+                title: "Uncertainty".into(),
+                needs: vec![paper("q3")],
+            },
+        ],
+    };
+    let llm = model(vec![select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(found.references.len(), 1);
+    assert_eq!(found.references[0].origin, good);
+    let searches = web.searches();
+    let of = |query: &str, title: &str| -> Vec<(String, String, usize)> {
+        searches
+            .iter()
+            .filter(|(q, _, _)| q == query || q == title)
+            .cloned()
+            .collect()
+    };
+    assert_eq!(
+        of("q1", "Random assignment"),
+        [
+            search("q1", "paper", 1),
+            search("q1", "web", 1),
+            search("Random assignment", "encyclopedia", 1),
+            search("q1", "community", 1),
+            search("Random assignment", "web", 1),
+        ]
+    );
+    assert_eq!(
+        of("q3", "Uncertainty"),
+        [
+            search("q3", "paper", 1),
+            search("q3", "web", 1),
+            search("Uncertainty", "encyclopedia", 1),
+        ]
+    );
+    assert_eq!(searches.len(), 8);
+    Ok(())
+}
+
 #[tokio::test]
 async fn references_are_gathered_before_drafting_and_saved_in_full_with_the_program() -> Result<()>
 {
@@ -645,7 +949,9 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     assert_eq!(review.issues[0].kind, LearningOutlineIssueKind::References);
     assert_eq!(review.issues[0].path, "");
     assert!(review.note.contains("no references could be gathered"));
-    assert_eq!(offline.queries.lock().unwrap().len(), 3);
+    // The planned searches, then the community and paper searches, then the
+    // title: every search fails, so the subtopic is widened to the end.
+    assert_eq!(offline.queries.lock().unwrap().len(), 6);
     assert_eq!(llm.prompts.lock().unwrap().len(), 3);
     assert!(saved.sources.is_empty());
     let drafts = DraftRunRegistry::new();

@@ -328,6 +328,8 @@ pub struct ClaimCounts {
     pub queued: usize,
     /// The machine's: Unchecked or Open.
     pub open: usize,
+    /// Published not verified: the machine could not settle them.
+    pub unverified: usize,
     /// Removed by the user.
     pub removed_by_you: usize,
     /// Edited away by the user: no successor claim.
@@ -346,6 +348,7 @@ impl ClaimCounts {
                 | ClaimState::Consistent { .. }
                 | ClaimState::GeneralKnowledge { .. } => &mut counts.verified,
                 ClaimState::Confirmed { .. } => &mut counts.confirmed,
+                ClaimState::Unverified { .. } => &mut counts.unverified,
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => &mut counts.queued,
                 ClaimState::Open { .. } if claim.held_for_standing() => &mut counts.queued,
                 ClaimState::Unchecked | ClaimState::Open { .. } => &mut counts.open,

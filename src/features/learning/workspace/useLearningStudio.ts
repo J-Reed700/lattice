@@ -13,12 +13,14 @@ import type {
   PrepareLearningLessonRequestDto,
   CompleteLearningLessonRequestDto,
 } from '@/lib/bindings';
+import { failureToError } from '@/lib/errorHandling';
+import type { ApiFailure } from '@/types/api/result';
 
 
 export { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 
-function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
+function unwrap<T>(result: { ok: true; data: T } | ApiFailure): T {
+  if (!result.ok) throw failureToError(result);
   return result.data;
 }
 

@@ -86,6 +86,7 @@ fn finding(statement: &str, quote: &str, evidence: Vec<EvidencePassage>) -> Find
         evidence,
         supporting_quote: Some(quote.into()),
         resolution: None,
+        claim_id: None,
         two_pass: Default::default(),
         label: None,
         class: None,

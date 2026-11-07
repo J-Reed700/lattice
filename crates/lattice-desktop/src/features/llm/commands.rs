@@ -36,30 +36,5 @@ pub async fn get_available_models(
     Ok(result.models)
 }
 
-/// Catalog models suited to the system's hardware, optionally filtered by
-/// performance tier.
-///
-/// # Errors
-///
-/// * `AppError::Other` - Failed to detect system capabilities or generate recommendations
-pub async fn get_recommended_models(
-    tier: Option<PerformanceTier>,
-    container: State<'_, Container>,
-) -> Result<RecommendedModelsDto, AppError> {
-    let use_case = container.get_recommended_models_use_case();
-    let request = GetRecommendationsRequestDto { tier };
-    use_case.execute(request).await
-}
-
-/// The single best model for the system's hardware.
-///
-/// # Errors
-///
-/// * `AppError::Other` - Failed to detect capabilities or no suitable model found
-pub async fn get_best_model(container: State<'_, Container>) -> Result<BestModelDto, AppError> {
-    let use_case = container.get_best_model_use_case();
-    use_case.execute().await
-}
-
 #[cfg(test)]
 mod tests;
