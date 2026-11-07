@@ -15,7 +15,7 @@ pub(super) struct Parts;
 /// What a statement's own passages give without a call.
 enum Own {
     /// Its reading: settled, or restored from its receipt.
-    Read(Read),
+    Read(Box<Read>),
     /// A comparison with its passages that no receipt restored.
     Ask(PendingClaim),
     /// It has no passage of its own.
@@ -35,7 +35,7 @@ impl Reader for Parts {
         let mut bare = Vec::new();
         for (ordinal, statement) in statements.iter().enumerate() {
             match restore(at, ordinal, statement).await? {
-                Own::Read(read) => made.put(at, ordinal, read),
+                Own::Read(read) => made.put(at, ordinal, *read),
                 Own::Ask(pending) => asks.push((ordinal, *statement, pending)),
                 Own::Bare => bare.push((ordinal, *statement)),
             }
@@ -77,7 +77,7 @@ async fn restore(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_>
             .map(|finding| (finding, true)),
     };
     if let Some((finding, reused)) = settled {
-        return Ok(Own::Read(read_of(statement, finding, reused)));
+        return Ok(Own::Read(Box::new(read_of(statement, finding, reused))));
     }
     let checked = as_checked(claim, at.citations, at.references);
     let (evidence, _) = attribution_page(
@@ -92,7 +92,9 @@ async fn restore(at: &ReadContext<'_>, ordinal: usize, statement: &Statement<'_>
     }
     Ok(
         match restore_parts(at, ordinal, statement, &checked, evidence).await? {
-            Restored::Receipt(finding, reused) => Own::Read(read_of(statement, finding, reused)),
+            Restored::Receipt(finding, reused) => {
+                Own::Read(Box::new(read_of(statement, *finding, reused)))
+            }
             Restored::Ask(pending) => Own::Ask(pending),
         },
     )

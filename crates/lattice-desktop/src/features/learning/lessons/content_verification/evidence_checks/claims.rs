@@ -6,7 +6,7 @@ use super::*;
 /// One of a claim's comparisons.
 pub(in crate::features::learning::lessons::content_verification) enum Comparison {
     /// Its finding, and whether a saved check gave it.
-    Done(Finding, bool),
+    Done(Box<Finding>, bool),
     Pending(PendingClaim),
 }
 
@@ -54,7 +54,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn compar
             .and_then(|receipt| receipt.finding(unit, claim, evidence))
         {
             finding.two_pass.parts = parts;
-            return Ok(Comparison::Done(finding, true));
+            return Ok(Comparison::Done(Box::new(finding), true));
         }
     }
     if let Some(receipt) = claim_reuse::legacy_receipt(llm, unit, claim, evidence).await? {
@@ -65,7 +65,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn compar
                 saved,
             )
             .await?;
-            return Ok(Comparison::Done(finding, true));
+            return Ok(Comparison::Done(Box::new(finding), true));
         }
     }
     if evidence.is_empty() {
@@ -76,7 +76,7 @@ pub(in crate::features::learning::lessons::content_verification) async fn compar
             confidence: None,
         });
         let (_, _, finding, _) = finish(pending, judgment, None, Vec::new()).await?;
-        return Ok(Comparison::Done(finding, false));
+        return Ok(Comparison::Done(Box::new(finding), false));
     }
     Ok(Comparison::Pending(pending))
 }
