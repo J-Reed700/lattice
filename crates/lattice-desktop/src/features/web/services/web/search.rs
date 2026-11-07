@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use super::WebService;
-use crate::features::web::services::finders::{bing_html, duckduckgo, wikipedia};
+use crate::features::web::services::finders::{duckduckgo, wikipedia};
 use crate::features::web::services::sourcing::Search;
 
 /// The chat tool's own bounds on its arguments (its schema states them).
@@ -142,7 +142,6 @@ fn deadline_less_budget() -> Budget {
 fn finder_for_provider(name: &str) -> Option<FinderId> {
     match name.trim().to_ascii_lowercase().as_str() {
         "ddg" | "duckduckgo" | "duckduckgo_html" => Some(duckduckgo::ID),
-        "bing" | "bing_html" => Some(bing_html::ID),
         "wiki" | "wikipedia" => Some(wikipedia::ID),
         _ => None,
     }

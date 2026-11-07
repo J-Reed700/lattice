@@ -101,7 +101,7 @@ fn an_after_date_bypasses_pages_stored_before_it() {
 #[test]
 fn provider_page_keys_fold_spelling_and_split_what_matters() {
     let ddg = FinderId::from_static("duckduckgo");
-    let bing = FinderId::from_static("bing_html");
+    let brave = FinderId::from_static("brave");
     let web = need(NeedKind::Web, Freshness::Any);
     let scope = Origin::parse("docs.python.org/3").unwrap();
     let base = provider_page_key(&ddg, &web, "asyncio  Task Groups", None, 1);
@@ -114,7 +114,7 @@ fn provider_page_keys_fold_spelling_and_split_what_matters() {
     let differs = [
         (
             "finder",
-            provider_page_key(&bing, &web, "asyncio task groups", None, 1),
+            provider_page_key(&brave, &web, "asyncio task groups", None, 1),
         ),
         (
             "page",

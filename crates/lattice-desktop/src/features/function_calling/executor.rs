@@ -293,6 +293,13 @@ impl FunctionExecutorTrait for FunctionExecutor {
                     "Arguments must be a JSON object".to_string(),
                 ));
             }
+            let retired_removed;
+            let arguments = if function_name == TOOL_WEB_SEARCH {
+                retired_removed = Self::without_retired_providers(arguments);
+                &retired_removed
+            } else {
+                arguments
+            };
 
             let schema = JSONSchema::compile(&tool.input_schema).map_err(|e| {
                 AppError::InvalidInput(format!("Invalid schema for '{}': {}", function_name, e))

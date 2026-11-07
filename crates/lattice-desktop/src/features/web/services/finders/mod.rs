@@ -4,7 +4,6 @@
 //! what a failure means for the finder's breaker.
 
 pub(crate) mod arxiv;
-pub(crate) mod bing_html;
 pub(crate) mod brave;
 pub(crate) mod crates_io;
 pub(crate) mod crossref;
@@ -192,10 +191,6 @@ pub(crate) fn registry(
         entry(
             duckduckgo::DuckDuckGo::new(http.clone()),
             duckduckgo::RESULTS_PER_PAGE,
-        ),
-        entry(
-            bing_html::BingHtml::new(http.clone()),
-            bing_html::RESULTS_PER_PAGE,
         ),
         entry(
             brave::Brave::new(http.clone(), key(KeyService::Brave)),

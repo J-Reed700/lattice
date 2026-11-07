@@ -1,4 +1,4 @@
-//! The three finders against fixture servers: what each sends, and how each
+//! The search finders against fixture servers: what each sends, and how each
 //! reads answers, refusals, challenges and a host's `Retry-After`.
 
 use std::sync::Arc;
@@ -165,13 +165,14 @@ async fn a_second_duckduckgo_page_is_asked_by_offset_and_ranked_after_the_first(
 /// A 429 with `Retry-After: 60` is reported with the wait, for the breaker
 /// to hold the finder exactly that long.
 #[tokio::test]
-async fn a_bing_429_carries_its_retry_after() {
+async fn a_duckduckgo_429_carries_its_retry_after() {
     let server = MockServer::start().await;
-    Mock::given(path("/search"))
+    Mock::given(path("/html/"))
         .respond_with(ResponseTemplate::new(429).insert_header("Retry-After", "60"))
         .mount(&server)
         .await;
-    let finder = bing_html::BingHtml::with_endpoint(http(), format!("{}/search", server.uri()));
+    let finder =
+        duckduckgo::DuckDuckGo::with_endpoints(http(), vec![format!("{}/html/", server.uri())]);
 
     let outcome = finder.find(&need("rust"), 1, &budget()).await;
 
@@ -181,28 +182,6 @@ async fn a_bing_429_carries_its_retry_after() {
             code: 429,
             retry_after: Some(Duration::from_secs(60)),
         })
-    );
-}
-
-/// Bing's automated-query refusal is a challenge, not an empty page.
-#[tokio::test]
-async fn a_bing_refusal_page_is_a_challenge() {
-    let server = MockServer::start().await;
-    Mock::given(path("/search"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_string(
-                "<html><title>403 - Forbidden</title><p>automated queries</p></html>",
-            ),
-        )
-        .mount(&server)
-        .await;
-    let finder = bing_html::BingHtml::with_endpoint(http(), format!("{}/search", server.uri()));
-
-    let outcome = finder.find(&need("rust"), 1, &budget()).await;
-
-    assert_eq!(
-        outcome.result,
-        FinderResult::Failed(FailureCause::Challenge)
     );
 }
 
@@ -290,13 +269,13 @@ fn retry_after_reads_seconds_and_http_dates() {
 }
 
 #[test]
-fn the_keyless_registry_holds_the_three_providers_with_honest_identities() {
+fn the_keyless_registry_holds_the_web_providers_with_honest_identities() {
     let registry = keyless_registry(&http());
     let ids: Vec<&str> = registry
         .iter()
         .map(|entry| entry.descriptor().id.as_str())
         .collect();
-    assert!(ids.starts_with(&["duckduckgo", "bing_html"]));
+    assert!(ids.starts_with(&["duckduckgo"]));
     assert!(ids.contains(&"wikipedia"));
     use lattice_core::domain::sourcing::Identity;
     // Read from the registered entries, not the descriptor constants, so the
