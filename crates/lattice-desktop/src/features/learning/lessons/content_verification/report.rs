@@ -1,4 +1,5 @@
 //! Binding, validating and persisting the verification report at publication.
+use super::resolution::Resolution;
 use super::*;
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 
@@ -9,7 +10,31 @@ pub(super) fn content_hash(lesson: &PreparedLearningLesson) -> Result<String> {
         &lesson.keys,
     ))?))
 }
+/// How a lesson's preparation ends when `count` of its statements are
+/// published not verified; `None` when none are.
+pub(in crate::features::learning) fn not_verified_line(count: usize) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "{count} statement{} not verified",
+            if count == 1 { "" } else { "s" }
+        )
+    })
+}
+
 impl LessonVerificationReport {
+    /// The statements this lesson publishes not verified.
+    pub(in crate::features::learning) fn unverified_count(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| matches!(finding.resolution, Some(Resolution::Unverified { .. })))
+            .filter(|finding| {
+                finding.class.is_none_or(|classed| {
+                    classed.class != lattice_core::domain::learning::claim_review::Class::Internal
+                })
+            })
+            .count()
+    }
+
     pub(in crate::features::learning) fn reusable(
         &self,
         lesson_id: &str,

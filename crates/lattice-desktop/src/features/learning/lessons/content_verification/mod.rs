@@ -112,7 +112,9 @@ pub(in crate::features::learning) use repair_loop::{
 use repair_loop::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
-pub(in crate::features::learning) use report::{persist_report, sources_changed};
+pub(in crate::features::learning) use report::{
+    not_verified_line, persist_report, sources_changed,
+};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.

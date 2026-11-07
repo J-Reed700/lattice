@@ -294,7 +294,18 @@ impl LearningCurriculumRepository {
             .bind(&snapshot.reason).bind(snapshot_json).bind(snapshot_hash).bind(required).bind(resume)
             .bind(snapshot.created_at).bind(snapshot.created_at).execute(&mut *tx).await.map_err(db)?;
         let (result_ref, message) = if held.is_empty() {
-            (program_id.clone(), "Published prepared lessons".to_owned())
+            let unverified: usize = lessons
+                .iter()
+                .filter_map(|(_, prepared)| prepared.verification.as_ref())
+                .map(|report| report.unverified_count())
+                .sum();
+            let message = match crate::features::learning::content_verification::not_verified_line(
+                unverified,
+            ) {
+                Some(line) => format!("Published prepared lessons · {line}"),
+                None => "Published prepared lessons".to_owned(),
+            };
+            (program_id.clone(), message)
         } else {
             // Publishing these lessons changed the course's content. The held
             // lessons continue from this job (§6.2), and its own publication

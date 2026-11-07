@@ -380,6 +380,26 @@ mod tests {
     }
 
     #[test]
+    fn a_report_counts_the_statements_it_publishes_not_verified_and_says_so() {
+        use crate::features::learning::content_verification::not_verified_line;
+        let (_, mut report) = fixture();
+        assert_eq!(report.unverified_count(), 0);
+        report.findings[0].verdict = ClaimVerdict::Unsupported;
+        report.findings[0].resolution = not_verified(UnverifiedReason::Unchecked);
+        assert_eq!(report.unverified_count(), 1);
+
+        assert_eq!(not_verified_line(0), None);
+        assert_eq!(
+            not_verified_line(1).as_deref(),
+            Some("1 statement not verified")
+        );
+        assert_eq!(
+            not_verified_line(2).as_deref(),
+            Some("2 statements not verified")
+        );
+    }
+
+    #[test]
     fn a_verified_claim_carries_no_reason_on_the_wire() {
         let (lesson, report) = fixture();
 
