@@ -167,7 +167,7 @@ fn an_unset_learning_model_refuses_instead_of_borrowing_the_chat_default() {
     assert!(matches!(
         error,
         AppError::InvalidConfig(message)
-            if message == "No Learning model is set. Choose one in Settings → Models under Learning."
+            if message == "No Learning model is set. Choose one in Settings → Downloaded."
     ));
 }
 

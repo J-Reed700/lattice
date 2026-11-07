@@ -70,7 +70,7 @@ fn a_window_below_the_floor_is_refused_with_the_numbers_and_the_fix() {
     assert_eq!(
         message,
         &format!(
-            "Preparing 'Transformers from scratch' needs a context window of at least {needed} tokens. Your Learning model, Ornith-1.5-9B, has a 8704-token window. Set its context length in Settings → Models to Auto or to {needed} or more, or choose a Learning model with a larger window"
+            "Preparing 'Transformers from scratch' needs a context window of at least {needed} tokens. Your Learning model, Ornith-1.5-9B, has a 8704-token window. Set its context length in Settings → Downloaded to Auto or to {needed} or more, or choose a Learning model with a larger window"
         )
     );
     // The error's display adds its own ". Please check your settings."

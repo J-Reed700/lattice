@@ -444,7 +444,7 @@ async fn a_floor_above_the_trained_window_is_refused_before_loading() {
         message,
         "Learning work needs a context window of at least 20,000 tokens. Your Learning model, \
          Short-8K, was trained for 8,192 tokens. Set its context window to 20,000 or more in \
-         Settings → Models (a stretched window costs some quality), or choose a larger Learning \
+         Settings → Downloaded (a stretched window costs some quality), or choose a larger Learning \
          model."
     );
     assert!(models.instances.snapshot().is_empty(), "nothing was loaded");

@@ -62,7 +62,7 @@ type TabGroup = {
   tabs: Tab[];
 };
 
-const tabGroups: TabGroup[] = [
+export const tabGroups: TabGroup[] = [
   {
     label: 'General',
     tabs: [
