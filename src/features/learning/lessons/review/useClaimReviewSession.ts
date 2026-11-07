@@ -60,7 +60,7 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
   const [settling, setSettling] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<ActionForm | null>(null);
   const [acting, setActing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [message, setMessage] = useState('');
   const [undo, setUndo] = useState<Undo>(null);
   const [closest, setClosest] = useState<{ claimId: string; versionId: string; report: ClaimAttachReportDto } | null>(null);
@@ -135,7 +135,7 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
       }
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The action could not be saved.');
+      setError(cause instanceof Error ? cause : new Error('The action could not be saved.'));
       return false;
     } finally {
       setActing(false);

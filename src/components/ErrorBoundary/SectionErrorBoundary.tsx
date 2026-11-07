@@ -21,6 +21,7 @@ interface SectionErrorBoundaryProps {
     error: Error;
     errorInfo?: React.ErrorInfo;
     resetError: () => void;
+    exhausted?: boolean;
   }>;
 }
 
@@ -34,11 +35,12 @@ export function SectionErrorBoundary({
   fallback,
 }: SectionErrorBoundaryProps) {
   // Default fallback component
-  const DefaultFallback = fallback || (({ error, errorInfo, resetError }) => (
+  const DefaultFallback = fallback || (({ error, errorInfo, resetError, exhausted }) => (
     <SectionError
       error={error}
       errorInfo={errorInfo}
       resetError={resetError}
+      exhausted={exhausted}
       sectionName={sectionName}
       icon={icon}
     />

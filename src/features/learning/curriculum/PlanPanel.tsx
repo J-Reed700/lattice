@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ArrowUp, Check, Plus, RotateCcw, Sparkles, X } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -25,6 +26,7 @@ import type {
   LearningGenerationJob,
   LearningPlanDto,
 } from '@/lib/bindings';
+import { jobErrorToError } from '@/lib/errorHandling';
 
 
 function uuid() { return globalThis.crypto?.randomUUID?.() ?? '00000000-0000-4000-8000-000000000002'; }
@@ -69,7 +71,7 @@ function OtherJobCard({ job, programId, revision }: { job: LearningGenerationJob
   const active = ['pending', 'running', 'interrupted'].includes(job.status);
   const percent = job.progressTotal > 0 ? Math.min(100, Math.round(job.progressCompleted / job.progressTotal * 100)) : 0;
   const request = () => ({ operationId: uuid(), programId, jobId: job.id, expectedRevision: revision });
-  return <article className="rounded-xl border border-border bg-background/40 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-medium capitalize text-text-primary">{job.kind.replace('_', ' ')}</h4><span className="rounded-full bg-surface px-2.5 py-1 text-[10px] capitalize text-text-muted">{job.status}</span></div><p className="mt-1 text-[10px] text-text-muted">Created {dateLabel(job.createdAt)}</p></div><div className="flex gap-2">{active && <button type="button" disabled={pending} onClick={() => cancel.mutate(request())} className="rounded-full border border-border px-3 py-2 text-[10px] disabled:opacity-50">Cancel</button>}{['failed', 'interrupted', 'cancelled'].includes(job.status) && <button type="button" disabled={pending} onClick={() => retry.mutate(request())} className="inline-flex items-center gap-1 rounded-full border border-accent/30 px-3 py-2 text-[10px] font-semibold text-accent disabled:opacity-50"><RotateCcw size={12} /> Retry</button>}</div></div>{job.status === 'running' || job.status === 'pending' ? <><div className="mt-3 flex items-center justify-between text-[10px] text-text-muted"><span>{job.progressMessage || 'Working on this request…'}</span><span>{job.progressCompleted}/{job.progressTotal || '—'}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent}%` }} /></div></> : job.error && <p role="alert" className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700">{job.error}</p>}{(cancel.error || retry.error) && <p role="alert" className="mt-2 text-xs text-rose-700">{message(cancel.error ?? retry.error)}</p>}</article>;
+  return <article className="rounded-xl border border-border bg-background/40 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-medium capitalize text-text-primary">{job.kind.replace('_', ' ')}</h4><span className="rounded-full bg-surface px-2.5 py-1 text-[10px] capitalize text-text-muted">{job.status}</span></div><p className="mt-1 text-[10px] text-text-muted">Created {dateLabel(job.createdAt)}</p></div><div className="flex gap-2">{active && <button type="button" disabled={pending} onClick={() => cancel.mutate(request())} className="rounded-full border border-border px-3 py-2 text-[10px] disabled:opacity-50">Cancel</button>}{['failed', 'interrupted', 'cancelled'].includes(job.status) && <button type="button" disabled={pending} onClick={() => retry.mutate(request())} className="inline-flex items-center gap-1 rounded-full border border-accent/30 px-3 py-2 text-[10px] font-semibold text-accent disabled:opacity-50"><RotateCcw size={12} /> Retry</button>}</div></div>{job.status === 'running' || job.status === 'pending' ? <><div className="mt-3 flex items-center justify-between text-[10px] text-text-muted"><span>{job.progressMessage || 'Working on this request…'}</span><span>{job.progressCompleted}/{job.progressTotal || '—'}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent}%` }} /></div></> : job.error && <PlainError error={jobErrorToError(job)} className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700" />}{(cancel.error || retry.error) && <p role="alert" className="mt-2 text-xs text-rose-700">{message(cancel.error ?? retry.error)}</p>}</article>;
 }
 
 const ATTEMPT_OUTCOMES: Record<LearningGenerationJob['status'], string> = {
