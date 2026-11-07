@@ -112,6 +112,12 @@ impl From<AppError> for ApiError {
                 details: Some(details.clone()),
             },
 
+            AppError::LearningModelNotSet(ref details) => ApiError {
+                code: ErrorCode::InvalidConfig,
+                message: "Invalid configuration".to_string(),
+                details: Some(details.clone()),
+            },
+
             // Resource errors
             AppError::NotFound(ref msg) => ApiError {
                 code: ErrorCode::NotFound,

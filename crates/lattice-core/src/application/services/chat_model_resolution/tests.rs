@@ -166,7 +166,7 @@ fn an_unset_learning_model_refuses_instead_of_borrowing_the_chat_default() {
     let error = resolve_learning(&settings(LLMProvider::Ollama)).unwrap_err();
     assert!(matches!(
         error,
-        AppError::InvalidConfig(message)
+        AppError::LearningModelNotSet(message)
             if message == "No Learning model is set. Choose one in Settings → Models under Learning."
     ));
 }

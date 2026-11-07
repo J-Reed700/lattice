@@ -40,15 +40,28 @@ pub struct LearningOutlineProgressDto {
     /// dive's gathering and evidence linking are never a silent spinner.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Set while the run waits out a temporary failure of the model server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<ModelWaitDto>,
     pub elapsed_seconds: u32,
     pub stage_seconds: u32,
     pub response_characters: u32,
     pub model_name: Option<String>,
 }
 
+/// A wait for the model server: when the next attempt is, and the code of
+/// the failure being waited out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelWaitDto {
+    pub retry_in_seconds: u64,
+    pub error_code: ErrorCode,
+}
+
 struct State {
     stage: OutlineStage,
     detail: Option<String>,
+    waiting: Option<ModelWaitDto>,
     program_id: Option<String>,
     since: Instant,
     characters: u32,
@@ -74,6 +87,7 @@ impl Default for OutlineProgress {
             state: Mutex::new(State {
                 stage: OutlineStage::ReadingSources,
                 detail: None,
+                waiting: None,
                 program_id: None,
                 since: Instant::now(),
                 characters: 0,
@@ -133,6 +147,7 @@ impl OutlineProgress {
             program_id: state.program_id.clone(),
             stage: state.stage,
             detail: state.detail.clone(),
+            waiting: state.waiting.clone(),
             elapsed_seconds: self.started.elapsed().as_secs().min(u32::MAX as u64) as u32,
             stage_seconds: state.since.elapsed().as_secs().min(u32::MAX as u64) as u32,
             response_characters: state.characters,
@@ -432,5 +447,29 @@ mod tests {
             progress.snapshot().model_name.as_deref(),
             Some("test model")
         );
+    }
+
+    #[test]
+    fn a_wait_for_the_model_server_is_a_field_while_it_lasts_and_gone_after() {
+        use crate::features::learning::patient_model::WaitObserver;
+        let progress = OutlineProgress::default();
+        let quiet = serde_json::to_value(progress.snapshot()).unwrap();
+        assert!(quiet.get("waiting").is_none(), "{quiet}");
+
+        progress.waiting(30, &AppError::Network("connection reset".into()));
+        let waiting = serde_json::to_value(progress.snapshot()).unwrap();
+        assert_eq!(
+            waiting["waiting"],
+            serde_json::json!({"retryInSeconds": 30, "errorCode": "NETWORK_ERROR"}),
+            "{waiting}"
+        );
+        assert_eq!(
+            waiting["detail"],
+            "Waiting for the model server (retrying in 30s)"
+        );
+
+        progress.answered();
+        let answered = serde_json::to_value(progress.snapshot()).unwrap();
+        assert!(answered.get("waiting").is_none(), "{answered}");
     }
 }

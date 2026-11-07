@@ -58,16 +58,25 @@ impl LLMPort for Flaky {
 #[derive(Default)]
 struct Recorder {
     waits: Mutex<Vec<u64>>,
+    events: Mutex<Vec<String>>,
     cancel_after_first_wait: bool,
     cancelled: AtomicBool,
 }
 
 impl WaitObserver for Recorder {
-    fn waiting(&self, seconds: u64) {
+    fn waiting(&self, seconds: u64, cause: &AppError) {
+        let code = lattice_core::shared::ipc::ApiError::from(cause.clone()).code;
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("waiting {code:?}"));
         self.waits.lock().unwrap().push(seconds);
         if self.cancel_after_first_wait {
             self.cancelled.store(true, Ordering::Relaxed);
         }
+    }
+    fn answered(&self) {
+        self.events.lock().unwrap().push("answered".into());
     }
     fn check_cancelled(&self) -> Result<()> {
         if self.cancelled.load(Ordering::Relaxed) {
@@ -289,4 +298,73 @@ async fn a_server_that_is_starting_busy_or_unreachable_is_still_waited_for() {
         assert_eq!(flaky.calls.load(Ordering::Relaxed), 2);
         assert!(!recorder.waits.lock().unwrap().is_empty());
     }
+}
+
+#[tokio::test]
+async fn a_wait_carries_the_code_of_its_cause_and_ends_when_the_server_answers() {
+    let causes: [(fn() -> AppError, &str); 3] = [
+        (
+            || AppError::Network("connection reset".into()),
+            "NetworkError",
+        ),
+        (
+            || AppError::RateLimitExceeded("the server is busy".into()),
+            "RateLimitExceeded",
+        ),
+        (
+            || AppError::ServiceNotAvailable("503: loading model".into()),
+            "ServiceNotAvailable",
+        ),
+    ];
+    for (error, expected) in causes {
+        let mut flaky = Flaky::new(vec![1, 2]);
+        flaky.error = error;
+        let recorder = Recorder::default();
+        PatientModel::new(&flaky, &recorder)
+            .with_backoff(FAST)
+            .complete(&CompletionRequest::default())
+            .await
+            .unwrap();
+
+        let events = recorder.events.lock().unwrap().clone();
+        assert_eq!(
+            events.first().map(String::as_str),
+            Some(format!("waiting {expected}").as_str()),
+            "{events:?}"
+        );
+        assert_eq!(
+            events.last().map(String::as_str),
+            Some("answered"),
+            "{events:?}"
+        );
+        assert_eq!(
+            events.iter().filter(|event| *event == "answered").count(),
+            1,
+            "{events:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_failure_that_is_not_an_outage_also_ends_the_wait() {
+    let recorder = Recorder::default();
+    let calls = AtomicUsize::new(0);
+    let error = patiently(&recorder, FAST, |_| {
+        let call = calls.fetch_add(1, Ordering::Relaxed);
+        async move {
+            if call == 0 {
+                Err::<(), _>(AppError::Network("connection reset".into()))
+            } else {
+                Err(AppError::InvalidInput("The prompt is malformed.".into()))
+            }
+        }
+    })
+    .await
+    .err()
+    .unwrap();
+    assert!(matches!(error, AppError::InvalidInput(_)));
+    assert_eq!(
+        recorder.events.lock().unwrap().last().map(String::as_str),
+        Some("answered")
+    );
 }

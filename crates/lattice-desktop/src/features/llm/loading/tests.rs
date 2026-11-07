@@ -550,3 +550,22 @@ fn a_server_that_is_starting_or_unreachable_stays_transient() {
         assert!(JobFailure::is_transient(&AppError::from(error)));
     }
 }
+
+#[test]
+fn a_bundled_server_that_cannot_run_reaches_the_wire_as_a_model_load_error() {
+    use lattice_core::shared::ipc::{ApiError, ErrorCode};
+    let error = AppError::from(LLMError::SidecarBinaryUnusable(
+        "llama-server.exe was not found".into(),
+    ));
+    let wire = ApiError::from(error);
+    assert_eq!(wire.code, ErrorCode::ModelLoadError);
+    assert!(
+        wire.details
+            .as_deref()
+            .is_some_and(|details| details.contains(
+                "The model server could not start: llama-server.exe was not found. \
+             Reinstall Lattice, or choose another model in Settings."
+            )),
+        "{wire:?}"
+    );
+}

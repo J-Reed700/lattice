@@ -10,20 +10,22 @@ use std::time::Duration;
 use crate::features::learning::outline_progress::OutlineProgress;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{Backoff, JobFailure};
 
 /// Where a wait is reported, and how it learns that the work was cancelled.
 pub(in crate::features::learning) trait WaitObserver:
     Send + Sync
 {
-    /// The next attempt is `seconds` away.
-    fn waiting(&self, seconds: u64);
+    /// The next attempt is `seconds` away, after `cause`.
+    fn waiting(&self, seconds: u64, cause: &AppError);
+    /// An attempt got an answer, so the wait is over.
+    fn answered(&self) {}
     fn check_cancelled(&self) -> Result<()>;
 }
 
 impl WaitObserver for OutlineProgress {
-    fn waiting(&self, seconds: u64) {
+    fn waiting(&self, seconds: u64, _cause: &AppError) {
         self.detail(format!(
             "Waiting for the model server (retrying in {seconds}s)"
         ));
@@ -58,7 +60,7 @@ where
                     if left.is_zero() {
                         break;
                     }
-                    observer.waiting(left.as_secs_f64().ceil() as u64);
+                    observer.waiting(left.as_secs_f64().ceil() as u64, &error);
                     tokio::time::sleep(left.min(Duration::from_secs(1))).await;
                 }
                 retries += 1;

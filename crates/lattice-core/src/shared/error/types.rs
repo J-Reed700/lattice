@@ -35,6 +35,9 @@ pub enum AppError {
     /// Configuration file errors
     InvalidConfig(String),
 
+    /// No Learning model is set; the text says where to choose one
+    LearningModelNotSet(String),
+
     /// Resource not found
     NotFound(String),
 
@@ -250,6 +253,7 @@ impl AppError {
             AppError::Json { .. } => "JSON_ERROR",
             AppError::Database(_) => "DATABASE_ERROR",
             AppError::InvalidConfig(_) => "INVALID_CONFIG",
+            AppError::LearningModelNotSet(_) => "LEARNING_MODEL_NOT_SET",
             AppError::NotFound(_) => "NOT_FOUND",
             AppError::PermissionDenied(_) => "PERMISSION_DENIED",
             AppError::InvalidInput(_) => "INVALID_INPUT",
@@ -355,6 +359,7 @@ impl AppError {
             AppError::InvalidInput(_)
             | AppError::PromptExceedsWindow { .. }
             | AppError::InvalidConfig(_)
+            | AppError::LearningModelNotSet(_)
             | AppError::PermissionDenied(_)
             | AppError::FileTooLarge { .. }
             | AppError::UnsupportedFileType { .. }
@@ -508,6 +513,7 @@ impl fmt::Display for AppError {
                 "Configuration error: {}. Please check your settings.",
                 e
             ),
+            AppError::LearningModelNotSet(e) => write!(f, "{}", e),
             AppError::NotFound(e) => write!(f, "Not found: {}", e),
             AppError::PermissionDenied(e) => write!(
                 f,

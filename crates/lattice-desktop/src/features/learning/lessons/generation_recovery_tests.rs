@@ -605,3 +605,83 @@ async fn a_lesson_job_for_a_course_without_sources_asks_for_them_in_plain_words(
     );
     assert!(!error.contains("MVP"), "{error}");
 }
+
+#[tokio::test]
+async fn a_failed_lesson_job_records_the_code_of_its_error() {
+    let pool = crate::features::learning::tests::pool().await.unwrap();
+    let (repo, job) = repository_tests::queued_job_without_sources(&pool).await;
+    let worker = LessonGenerationWorker {
+        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+        pool: pool.clone(),
+        load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
+        courses: None,
+        refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
+        research_web: None,
+        verifier: None,
+    };
+    run_attempt(worker, &job.id).await.unwrap();
+
+    let settled = repo.job(&job.id).await.unwrap();
+    assert_eq!(settled.status, Status::Failed);
+    assert_eq!(
+        settled.error_code,
+        Some(lattice_core::shared::ipc::ErrorCode::InvalidInput)
+    );
+}
+
+#[tokio::test]
+async fn a_lesson_job_waiting_out_an_outage_records_the_code_of_its_cause() {
+    use lattice_core::shared::ipc::ErrorCode;
+    for (error, expected) in [
+        (
+            AppError::Network("connection lost".into()),
+            ErrorCode::NetworkError,
+        ),
+        (
+            AppError::RateLimitExceeded("provider busy".into()),
+            ErrorCode::RateLimitExceeded,
+        ),
+        (
+            AppError::ServiceNotAvailable("provider unavailable".into()),
+            ErrorCode::ServiceNotAvailable,
+        ),
+    ] {
+        let pool = crate::features::learning::tests::pool().await.unwrap();
+        let (repo, job) = repository_tests::queued_job(&pool).await;
+        let worker = LessonGenerationWorker {
+            runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+            pool: pool.clone(),
+            load_llm: Arc::new(|| {
+                Box::pin(async { panic!("Reference refresh must finish first") })
+            }),
+            courses: None,
+            refresh_sources: Arc::new(move |_| {
+                let error = error.clone();
+                Box::pin(async move { Err(error) })
+            }),
+            research_web: None,
+            verifier: None,
+        };
+        run_attempt(worker, &job.id).await.unwrap();
+
+        let waiting = repo.job(&job.id).await.unwrap();
+        assert_eq!(waiting.status, Status::Pending);
+        assert_eq!(waiting.error_code, Some(expected));
+    }
+}
+
+#[tokio::test]
+async fn a_job_stored_without_a_code_reads_null() {
+    let pool = crate::features::learning::tests::pool().await.unwrap();
+    let (repo, job) = repository_tests::queued_job(&pool).await;
+    assert_eq!(repo.job(&job.id).await.unwrap().error_code, None);
+
+    sqlx::query("UPDATE jobs SET status='failed',finished_at=1,error_code='generation_failed',error_message='old failure' WHERE id=?")
+        .bind(&job.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let old = repo.job(&job.id).await.unwrap();
+    assert_eq!(old.error.as_deref(), Some("old failure"));
+    assert_eq!(old.error_code, None);
+}
