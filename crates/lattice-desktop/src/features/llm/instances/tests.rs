@@ -1028,7 +1028,7 @@ fn verifier_refusals_name_the_verifier_role_and_its_fix() {
             "qwen3.5-27b"
         )),
         "Your Verifier model, qwen3.5-27b, is not downloaded any more. Choose one in \
-         Settings → Models under Verifier."
+         Settings → Downloaded."
     );
     assert_eq!(
         message(no_tools(ModelRole::Verifier, "Qwen3.5-27B")),

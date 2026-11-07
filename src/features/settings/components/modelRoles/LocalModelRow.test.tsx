@@ -97,7 +97,7 @@ describe('LocalModelRow load status', () => {
 
   it('shows a start the server refused, worded as the backend wrote it', () => {
     const refusal = 'This llama-server cannot draft and see at once. Turn off either Vision '
-      + 'or Speculative decoding for this model in Settings → Models.';
+      + 'or Speculative decoding for this model in Settings → Downloaded.';
     useModelWarmupStore.getState().setRolePhase('utility', 'failed', refusal);
 
     renderRow();

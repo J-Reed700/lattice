@@ -105,6 +105,17 @@ mod tests {
     }
 
     #[test]
+    fn the_refusal_names_the_tab_that_declares_vision() {
+        let AppError::InvalidConfig(message) = not_set_up_to_see("llava:7b") else {
+            panic!("a model nobody declared able to see is a configuration refusal");
+        };
+        assert_eq!(
+            message,
+            "llava:7b is not set up to see images (Settings → Downloaded → Vision)"
+        );
+    }
+
+    #[test]
     fn a_remote_server_model_sees_only_when_declared_and_enabled() {
         let mut settings = LLMSettingsDto::default();
         let llama = ModelRef::LlamaCpp {

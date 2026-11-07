@@ -475,7 +475,7 @@ async fn the_verifier_runs_on_its_own_model_and_refuses_unset_without_loading() 
     let refused = unset.llm_for(&verifier()).await;
     assert!(
         matches!(&refused, Err(AppError::InvalidConfig(message))
-            if message == "No Verifier model is set. Choose one in Settings → Models under Verifier."),
+            if message == "No Verifier model is set. Choose one in Settings → Downloaded."),
         "never the chat default or the Learning model: {:?}",
         refused.err()
     );

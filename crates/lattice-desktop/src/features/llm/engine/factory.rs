@@ -259,11 +259,7 @@ async fn create_local_llm_sidecar(
         .map_or(0, |registry| registry.other_models_gpu_bytes(model_path));
     let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
     let Some(window) = launch_window(server, gguf_info.as_ref()) else {
-        return Err(LLMError::InvalidConfig(format!(
-            "{} does not say in its header how long a context it was trained for. Set its \
-             context length in Settings → Models.",
-            model_path.display()
-        )));
+        return Err(no_trained_length(model_path));
     };
     if let Some(trained) = gguf_info
         .as_ref()
@@ -366,6 +362,16 @@ async fn create_local_llm_sidecar(
         llm: llm.schedule(schedulers).await,
         server: Some(facts),
     })
+}
+
+/// The refusal for a model whose header does not say what window it was
+/// trained for, when the user has saved none.
+fn no_trained_length(model_path: &Path) -> LLMError {
+    LLMError::InvalidConfig(format!(
+        "{} does not say in its header how long a context it was trained for. Set its \
+         context length in Settings → Models.",
+        model_path.display()
+    ))
 }
 
 /// The window a bundled server of a model is launched with: the one the user

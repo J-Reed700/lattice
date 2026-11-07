@@ -394,8 +394,10 @@ fn every_stop_says_what_is_wrong_and_the_fix() {
     let unset = AuditStop::NoVerifier.stop_reason(None, 7);
     assert_eq!(unset.code, "verifier_unset");
     assert_eq!(unset.message, "Audit cannot run: no Verifier model is set.");
-    assert!(unset.fix.contains("Settings → Models under Verifier"));
-    assert!(unset.fix.contains("turn the audit off"));
+    assert_eq!(
+        unset.fix,
+        "Choose one in Settings → Downloaded, or turn the audit off for this course."
+    );
     assert_eq!(unset.at, 7);
 
     let no_key = AuditStop::Unavailable {
@@ -406,6 +408,10 @@ fn every_stop_says_what_is_wrong_and_the_fix() {
         "Audit cannot run: Your Verifier model Anthropic/claude-x has no API key saved."
     );
     assert_eq!(no_key.code(), "verifier_unavailable");
+    assert_eq!(
+        no_key.fix(),
+        "Fix the Verifier in Settings → Downloaded, or turn the audit off for this course."
+    );
 
     let missing = AuditStop::ConsentMissing {
         provider: CloudProvider::Google,
