@@ -1468,8 +1468,15 @@ mod builds {
     /// A job database holding a build of `root` that the runtime failed for
     /// stopping the app, and that build's id.
     async fn stopped_build(root: &Path) -> (SqlitePool, String) {
-        use lattice_core::shared::runtime::jobs::{JobStore, NewJob, RecoveryPolicy};
         let pool = jobs_database().await;
+        let id = stopped_build_on(&pool, root).await;
+        (pool, id)
+    }
+
+    /// Fails a build of `root` for stopping the app, in `pool`'s jobs, with
+    /// no runtime registered to run it. Returns its id.
+    async fn stopped_build_on(pool: &SqlitePool, root: &Path) -> String {
+        use lattice_core::shared::runtime::jobs::{JobStore, NewJob, RecoveryPolicy};
         let store = JobStore::new(pool.clone());
         let id = store
             .submit(&NewJob {
@@ -1498,7 +1505,55 @@ mod builds {
         let stopped = store.get(&id).await.unwrap();
         assert_eq!(stopped.status, JobStatus::Failed);
         assert_eq!(stopped.error_code.as_deref(), Some("stopped_the_app"));
-        (pool, id)
+        id
+    }
+
+    /// With no build running, a folder stays "scanning": opening it is
+    /// not waited on to settle.
+    async fn open_only(manager: &FolderIndexManager, root: &Path) {
+        manager.open(&text(root)).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_explicit_rebuild_of_a_sub_folder_runs_its_parents_build_that_stopped_the_app() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let parent = rig.project(
+            "repo",
+            &[
+                ("README.md", "# Repo\n\nThe retry story starts here.\n"),
+                (
+                    "crates/net/src/retry.rs",
+                    "pub fn retry_with_backoff() {}\n",
+                ),
+            ],
+        );
+        let pool = jobs_database().await;
+        let before = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .await;
+        open_settled(&before, &parent).await;
+        before.close().await;
+        before.jobs.close();
+        before.jobs.drain().await;
+        let id = stopped_build_on(&pool, &parent).await;
+
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .await;
+        let child = parent.join("crates/net");
+        open_only(&manager, &child).await;
+        let reopened = builds_of(&manager, &parent).await;
+        assert_eq!(
+            reopened[0].id, id,
+            "a plain open of the sub-folder queues nothing"
+        );
+
+        manager.rebuild(&text(&child)).await.unwrap();
+        let done = finished(&manager, &parent).await;
+        assert_ne!(done.id, id, "Rebuild submits a new build");
+        assert_eq!(done.status, JobStatus::Completed);
+        manager.close().await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -1510,9 +1565,9 @@ mod builds {
         let manager = rig
             .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
             .await;
-        open_settled(&manager, &root).await;
+        open_only(&manager, &root).await;
         manager.close().await;
-        open_settled(&manager, &root).await;
+        open_only(&manager, &root).await;
         let reopened = builds_of(&manager, &root).await;
         assert_eq!(
             reopened
@@ -1539,9 +1594,9 @@ mod builds {
         let manager = rig
             .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
             .await;
-        open_settled(&manager, &root).await;
+        open_only(&manager, &root).await;
         manager.close().await;
-        open_settled(&manager, &root).await;
+        open_only(&manager, &root).await;
 
         let after = builds_of(&manager, &root).await;
         assert_eq!(
