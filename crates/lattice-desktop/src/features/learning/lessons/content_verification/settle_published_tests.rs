@@ -11,7 +11,7 @@ use super::claim_ledger_tests::{figure, lesson, unreadable, Course, Figures};
 use super::{fixture_completion, fixture_prompts, GOOD};
 use crate::features::learning::lesson_evidence::{self, LearningLessonEvidenceDto};
 use crate::features::learning::lessons::claim_reviews::attach::{
-    attach, AttachDeps, AttachRequest, Evidence,
+    attach_to, AttachDeps, AttachRequest, Evidence, Others,
 };
 use crate::features::learning::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
@@ -642,7 +642,7 @@ async fn a_source_the_user_attaches_that_supports_a_published_not_verified_state
     let revision = ledger(&course).await?.revision;
     let store = ClaimReviewRepository::new(course.pool.clone());
 
-    attach(
+    attach_to(
         &AttachDeps {
             pool: &course.pool,
             store: &store,
@@ -663,6 +663,8 @@ async fn a_source_the_user_attaches_that_supports_a_published_not_verified_state
                 text: format!("{GOOD} Rows without a value read as None."),
             },
         },
+        Others::Only(&[]),
+        &|_| {},
     )
     .await?;
 
