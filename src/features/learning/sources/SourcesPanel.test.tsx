@@ -84,6 +84,25 @@ describe('Learning Studio Sources workspace', () => {
     await waitFor(() => expect(mocks.version).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-1', versionId: 'version-2' }));
   });
 
+  it('offers the pages the gate refused and the research no lesson cites for the user to remove', async () => {
+    renderSources({
+      ...workspace,
+      notSources: [{ sourceId: 'source-login', revision: 3, title: 'Sign in', url: 'https://access.example.com/login', reason: 'login page, 65 words' }],
+      unusedResearch: [{ sourceId: 'source-stale', revision: 7, title: 'Parsing guide', url: 'https://docs.example.org/parsing', reason: null }],
+    });
+
+    const refused = await screen.findByRole('region', { name: 'Pages that are not sources' });
+    expect(within(refused).getByText('login page, 65 words')).toBeVisible();
+    const research = screen.getByRole('region', { name: 'Added by research for a statement that no longer needs it' });
+    expect(within(research).getByText('Parsing guide')).toBeVisible();
+  });
+
+  it('offers nothing to remove when the library holds no refused page and no unused research', async () => {
+    renderSources();
+    await screen.findByText('A saved passage about careful observation.');
+    expect(screen.queryByTestId('source-cleanup')).not.toBeInTheDocument();
+  });
+
   it('renders legacy web snapshots as a formatted reader and keeps the exact capture available', async () => {
     const saved = {
       ...version,

@@ -1,7 +1,7 @@
 //! Independent checks receive the public task, never a reference answer.
 use super::{
     invalid, validate_files, FileJson, GeneratedPracticalFile, PracticalFileRole,
-    PracticalRuntimeContext, MAX_RESPONSE_CHARS,
+    PracticalRuntimeContext,
 };
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::Deserialize;
@@ -120,7 +120,6 @@ pub(super) async fn generate(
         json!({"brief":brief,"publicFiles":public_files,"executionEnvironment":runtime}).to_string(),
         schema(runtime), 2_500, None, None,
         |raw| {
-            if raw.chars().count() > MAX_RESPONSE_CHARS { return Err(invalid("The generated evaluator is too large.")); }
             let checks: ChecksJson = serde_json::from_str(raw).map_err(|_| invalid("The model returned malformed evaluator JSON."))?;
             if !(1..=16).contains(&checks.check_files.len()) { return Err(invalid("Return 1–16 independent evaluator files.")); }
             let checks = validate_files(checks.check_files.into_iter().map(|file| (file, PracticalFileRole::Check)))?;

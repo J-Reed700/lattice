@@ -38,8 +38,8 @@ fn card_for(
         Some((
             LearningRecallCardFormat::QuestionAnswer,
             LearningRecallContentDto {
-                prompt: prompt.chars().take(2_000).collect(),
-                answer: answer.chars().take(1_000).collect(),
+                prompt,
+                answer,
                 explanation: one_line.clone(),
                 options: vec![],
                 correct_option_index: None,
@@ -62,8 +62,8 @@ fn card_for(
             Some((
                 LearningRecallCardFormat::Cloze,
                 LearningRecallContentDto {
-                    answer: deletions.join(", ").chars().take(1_000).collect(),
-                    prompt: prompt.chars().take(2_000).collect(),
+                    answer: deletions.join(", "),
+                    prompt,
                     explanation: one_line,
                     options: vec![],
                     correct_option_index: None,
@@ -206,5 +206,74 @@ impl LearningAssessmentRepository {
         };
         operation.record(&self.pool, &done).await?;
         Ok(done)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::learning::recall::recall_content::validate_content;
+
+    fn candidate(
+        format: LearningItemFormat,
+        prompt: String,
+        key: engine::LearningAssessmentKey,
+    ) -> engine::LearningAssessmentCandidate {
+        engine::LearningAssessmentCandidate {
+            id: "q1".into(),
+            outcome_ids: vec![],
+            format,
+            difficulty: 1,
+            prompt,
+            options: vec![],
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key,
+            explanation: "Energy is made there.".into(),
+            distractor_rationales: vec![],
+        }
+    }
+
+    fn text_key(answer: &str) -> engine::LearningTextKey {
+        engine::LearningTextKey {
+            variants: vec![answer.into()],
+            numeric: None,
+        }
+    }
+
+    #[test]
+    fn a_missed_question_keeps_a_long_prompt_and_answer_whole() {
+        let prompt = "Describe the setting in detail. ".repeat(100);
+        let answer = "The answer runs on and on. ".repeat(60);
+        assert!(prompt.chars().count() > 2_000 && answer.chars().count() > 1_000);
+        let missed = candidate(
+            LearningItemFormat::ShortAnswer,
+            prompt.clone(),
+            engine::LearningAssessmentKey::Text(text_key(&answer)),
+        );
+
+        let (format, content) = card_for(&missed).unwrap();
+
+        assert_eq!(content.prompt, prompt);
+        assert_eq!(content.answer, answer);
+        validate_content(format, &content).unwrap();
+    }
+
+    #[test]
+    fn a_cloze_whose_blank_is_past_character_2000_makes_a_valid_card() {
+        let prompt = format!("{}The {{{{1}}}} makes energy.", "Context. ".repeat(300));
+        assert!(prompt.find("{{1}}").unwrap() > 2_000);
+        let missed = candidate(
+            LearningItemFormat::Cloze,
+            prompt,
+            engine::LearningAssessmentKey::Cloze(vec![text_key("mitochondria")]),
+        );
+
+        let (format, content) = card_for(&missed).unwrap();
+
+        assert!(content.prompt.contains("mitochondria"));
+        assert_eq!(content.cloze_deletions, vec!["mitochondria".to_string()]);
+        validate_content(format, &content).unwrap();
     }
 }

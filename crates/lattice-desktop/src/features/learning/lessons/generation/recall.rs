@@ -2,8 +2,7 @@
 //! snapshots its blocks cite.
 
 use super::{
-    invalid, normalize, parse_json, send_packed, validate_quote, validate_text, MAX_BODY,
-    MAX_EXPLANATION, MAX_QUESTION, MAX_QUOTE_CHARS, MIN_QUOTE_CHARS, MIN_TEXT,
+    invalid, normalize, parse_json, send_packed, validate_quote, validate_text, MIN_QUOTE_CHARS,
 };
 use crate::features::learning::dto::{
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningProgramStatus,
@@ -75,14 +74,14 @@ fn parse_recall_drafts_with_lesson(
         .cards
         .into_iter()
         .map(|card| {
-            if !validate_text(&card.question, MAX_QUESTION)
-                || !validate_text(&card.answer, 3000)
-                || !validate_text(&card.explanation, MAX_EXPLANATION)
+            if !validate_text(&card.question)
+                || !validate_text(&card.answer)
+                || !validate_text(&card.explanation)
                 || !seen_questions.insert(normalize(&card.question))
                 || (card.source_ids.is_empty() && !allowed_sources.is_empty())
             {
                 return Err(invalid(
-                    "The model returned an empty, oversized, or duplicate recall draft. Try again.",
+                    "The model returned an empty or duplicate recall draft. Try again.",
                 ));
             }
             let mut card_source_ids = HashSet::new();
@@ -124,17 +123,15 @@ pub(super) fn recall_draft_schema(
     allowed_source_ids: &HashSet<String>,
 ) -> serde_json::Value {
     let source_ids: Vec<_> = allowed_source_ids.iter().cloned().collect();
-    // The answer's 3000-character cap is checked when the drafts are parsed;
-    // as a schema bound above 2000 it would void llama.cpp's whole grammar.
     json!({
         "type":"object","additionalProperties":false,"required":["cards"],
         "properties":{"cards":{"type":"array","minItems":count,"maxItems":count,"items":{
             "type":"object","additionalProperties":false,"required":["question","answer","explanation","sourceIds","quote"],"properties":{
-                "question":{"type":"string","minLength":MIN_TEXT,"maxLength":MAX_QUESTION},
-                "answer":{"type":"string","minLength":MIN_TEXT},
-                "explanation":{"type":"string","minLength":MIN_TEXT,"maxLength":MAX_EXPLANATION},
+                "question":{"type":"string","minLength":1},
+                "answer":{"type":"string","minLength":1},
+                "explanation":{"type":"string","minLength":1},
                 "sourceIds":{"type":"array","minItems":if source_ids.is_empty() {0} else {1},"maxItems":source_ids.len(),"items":if source_ids.is_empty() {json!({"type":"string"})} else {json!({"type":"string","enum":source_ids})}},
-                "quote":{"type":"string","minLength":MIN_QUOTE_CHARS,"maxLength":MAX_QUOTE_CHARS}
+                "quote":{"type":"string","minLength":MIN_QUOTE_CHARS}
             }
         }}}
     })
@@ -223,7 +220,7 @@ pub async fn generate_recall_drafts(
     let mut referenced_ids = Vec::new();
     let mut seen_references = HashSet::new();
     for block in &lesson.blocks {
-        if !validate_text(&block.title, 160) || !validate_text(&block.body, MAX_BODY) {
+        if !validate_text(&block.title) || !validate_text(&block.body) {
             return Err(invalid("This lesson contains an invalid teaching block."));
         }
         for source_id in &block.source_ids {

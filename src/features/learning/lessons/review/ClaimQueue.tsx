@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ChevronRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { claimsCount, resolvedChip, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { claimsCount, resolvedChip, statementsCount, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { GROUP_MODE_LABELS, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
 import type { ClaimReviewItemDto } from '@/lib/bindings';
 
@@ -46,8 +46,8 @@ function Row({ item, active, opened, settled, tabIndex, onSelect }: {
  * one tab stop; arrows, Home and End move between them.
  */
 export function ClaimQueue({
-  groups, mode, onModeChange, activeId, openedIds, settledIds, onSelect, onAcceptSource, onAddSource, onAcceptProposals,
-  resolved, teachingWaiting, teachingActive, onOpenTeaching, busy,
+  groups, mode, onModeChange, activeId, openedIds, settledIds, onSelect, onAcceptSource, onAddSource,
+  resolved, teachingWaiting, teachingActive, onOpenTeaching, removedCount, removedActive, onOpenRemoved, busy,
 }: {
   groups: ClaimGroup[];
   mode: GroupMode;
@@ -59,13 +59,15 @@ export function ClaimQueue({
   onSelect: (claimId: string) => void;
   onAcceptSource: (group: ClaimGroup) => void;
   onAddSource: (group: ClaimGroup) => void;
-  /** Accepts every common-knowledge proposal of the lesson, in one action. */
-  onAcceptProposals: (claims: ClaimReviewItemDto[]) => void;
   /** Claims that no longer wait, for "Show resolved". */
   resolved: ClaimReviewItemDto[];
   teachingWaiting: number;
   teachingActive: boolean;
   onOpenTeaching: () => void;
+  /** Statements the machine took out of the lesson, which have a list of their own. */
+  removedCount: number;
+  removedActive: boolean;
+  onOpenRemoved: () => void;
   busy: boolean;
 }) {
   const id = useId();
@@ -104,7 +106,6 @@ export function ClaimQueue({
   };
 
   const total = groups.reduce((sum, group) => sum + group.claims.length, 0);
-  const proposals = groups.flatMap((group) => group.claims).filter((claim) => claim.verdictKind?.kind === 'general_knowledge_proposed' && !settledIds.has(claim.claimId));
   return (
     <nav aria-label="Claims waiting for you" className="flex min-h-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
@@ -117,9 +118,6 @@ export function ClaimQueue({
         </label>
         {total > 1 && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => onAddSource({ key: 'queue', label: '', detail: null, claims: groups.flatMap((group) => group.claims), source: null })}>
           Add a source for these {total}
-        </Button>}
-        {proposals.length > 0 && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => onAcceptProposals(proposals)}>
-          Accept all {proposals.length} common-knowledge {proposals.length === 1 ? 'proposal' : 'proposals'}
         </Button>}
       </div>
 
@@ -160,6 +158,15 @@ export function ClaimQueue({
             <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
             <span className="font-medium text-text-primary">Teaching notes</span>
             <span className="text-xs text-text-muted">· {teachingNotesForYou(teachingWaiting)}</span>
+          </button>
+        </section>}
+
+        {removedCount > 0 && <section aria-label="Taken out of the lesson" className="rounded-xl border border-border bg-surface">
+          <button type="button" data-queue-row="" tabIndex={-1} aria-current={removedActive ? 'true' : undefined} onClick={onOpenRemoved}
+            className={`row-hover flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm ${removedActive ? 'bg-accent/10' : ''}`}>
+            <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
+            <span className="font-medium text-text-primary">Taken out of the lesson</span>
+            <span className="text-xs text-text-muted">· {statementsCount(removedCount)}</span>
           </button>
         </section>}
 

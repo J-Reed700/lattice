@@ -214,6 +214,8 @@ pub(super) async fn workspace(
         Err(AppError::NotFound(_)) => crate::features::learning::dto::LearningSourceWorkspaceDto {
             program_id: program_id.into(),
             sources: vec![],
+            not_sources: vec![],
+            unused_research: vec![],
             recheck: None,
         },
         Err(error) => return Err(error),

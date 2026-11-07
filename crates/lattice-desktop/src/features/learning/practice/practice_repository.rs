@@ -4,6 +4,7 @@ use crate::features::learning::{
     operations::Operation,
     persistence::{db, hash_text, now},
 };
+use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
@@ -14,9 +15,6 @@ mod sessions;
 mod submissions;
 #[cfg(test)]
 mod workbench_tests;
-
-const MAX_ARTIFACT_CHARS: usize = 24_000;
-const MAX_TUTOR_PROMPT_CHARS: usize = 2_000;
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
@@ -301,11 +299,13 @@ pub fn default_rubric() -> Vec<LearningPracticeCriterionDto> {
 }
 
 pub fn validate_tutor_bounds(prompt: &str, response: &str) -> Result<()> {
-    if prompt.trim().is_empty() || prompt.chars().count() > MAX_TUTOR_PROMPT_CHARS {
-        return Err(invalid("Tutor prompt must be 1–2,000 characters."));
+    if prompt.trim().is_empty() || prompt.chars().count() > MAX_CHAT_MESSAGE_CHARS {
+        return Err(invalid(format!(
+            "Tutor prompt must be 1–{MAX_CHAT_MESSAGE_CHARS} characters."
+        )));
     }
-    if response.trim().is_empty() || response.chars().count() > 6_000 {
-        return Err(invalid("Tutor response must be 1–6,000 characters."));
+    if response.trim().is_empty() {
+        return Err(invalid("Tutor response must not be blank."));
     }
     Ok(())
 }

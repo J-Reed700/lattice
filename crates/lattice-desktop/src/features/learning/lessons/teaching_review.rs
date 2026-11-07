@@ -1,7 +1,6 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
-use crate::features::learning::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
-};
+use crate::features::learning::lessons::structured_call::{CallKind, ReasonFirst};
+use crate::features::learning::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use crate::features::learning::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
@@ -14,15 +13,17 @@ use std::collections::BTreeMap;
 
 pub(super) const POLICY: &str = "section-review-v3";
 
-/// What the review does with a finding still outside its length bounds
-/// after the response correction.
+/// The room the review's answer is given.
+const REVIEW_ANSWER_TOKENS: usize = 6000;
+
+/// What the review does with a blank finding after the response correction.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::features::learning) enum LengthRule {
     /// The review fails.
     Fail,
-    /// A too-short finding is dropped and an over-long one kept: no
-    /// teaching-review finding fails a lesson job.
-    DropShortKeepLong,
+    /// A blank finding is dropped: no teaching-review finding fails a lesson
+    /// job.
+    DropBlank,
 }
 
 /// What the reviewer works through in prose before its findings are written
@@ -146,7 +147,7 @@ fn schema(indices: &[usize], passages: &[Vec<String>]) -> Value {
     let mut required = vec!["issues"];
     let mut properties = serde_json::Map::from_iter([(
         "issues".into(),
-        json!({"type":"array","items":{"type":"string","minLength":10,"maxLength":700}}),
+        json!({"type":"array","items":{"type":"string","minLength":1}}),
     )]);
     if !passages.is_empty() {
         required.push("blockChecks");
@@ -154,7 +155,7 @@ fn schema(indices: &[usize], passages: &[Vec<String>]) -> Value {
         // The model cannot renumber its findings or cite a different section.
         let slots: serde_json::Map<_, _> = indices.iter().map(|index| (
             format!("section-{index}"),
-            json!({"type":"object","additionalProperties":false,"required":["passageId","finding","hasDefect"],"properties":{"passageId":{"type":"string","enum":passages.get(*index).cloned().unwrap_or_default()},"finding":{"type":"string","minLength":20,"maxLength":700},"hasDefect":{"type":"boolean"}}})
+            json!({"type":"object","additionalProperties":false,"required":["passageId","finding","hasDefect"],"properties":{"passageId":{"type":"string","enum":passages.get(*index).cloned().unwrap_or_default()},"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}}})
         )).collect();
         properties.insert("blockChecks".into(), json!({"type":"object","additionalProperties":false,"required":slots.keys().collect::<Vec<_>>(),"properties":slots}));
     }
@@ -209,14 +210,17 @@ async fn review_sections(
         ));
     };
     prompt.insert("candidate".into(), reviewed);
+    let excerpts = prompt
+        .get_mut("authoringContext")
+        .and_then(|context| WriterExcerpts::take(llm, context, candidate));
     let mut accepted = BTreeMap::<usize, BlockCheck>::new();
     let mut issues: Vec<ReviewFinding> = Vec::new();
     let mut problems = Vec::new();
     // The first correction is always asked for; later ones while each answer
     // validates another section.
     for attempt in 0usize.. {
-        // After the correction, lengths no longer fail a lesson's review.
-        let settle = lengths == LengthRule::DropShortKeepLong && attempt > 0;
+        // After the correction, a blank finding no longer fails a lesson's review.
+        let settle = lengths == LengthRule::DropBlank && attempt > 0;
         let checked = accepted.len();
         let indices: Vec<_> = (0..passages.len())
             .filter(|i| !accepted.contains_key(i))
@@ -239,45 +243,39 @@ async fn review_sections(
             );
             prompt.insert("responseCorrection".into(), json!("Correct the review response, not the lesson. Return checks only for sectionIndicesToReview. Read all passages in each requested section; select a passageId from that same section. Keep every established defect. Do not regenerate the lesson or treat a response-format error as a content defect."));
         }
-        let request = serde_json::to_string(&prompt)?;
-        let response_schema = schema(&indices, &passages);
+        let request = writer_excerpts::Request {
+            subject: "the teaching review",
+            system,
+            prompt: &prompt,
+            context: "authoringContext",
+            schema: schema(&indices, &passages),
+            output_tokens: REVIEW_ANSWER_TOKENS,
+        };
         // A correction repairs the response, not the judgement, so only the
         // first review reasons in prose before answering.
-        let raw = if attempt == 0 {
-            complete_reasoned_json(
-                llm,
-                system,
-                request,
-                response_schema,
-                6000,
-                progress,
-                ReasonFirst {
-                    kind: CallKind::Authoring,
-                    subject: "the teaching review",
-                    brief: REVIEW_DRAFT_BRIEF,
-                },
-            )
-            .await?
-        } else {
-            generation::complete_json_with_progress(
-                llm,
-                system,
-                request,
-                response_schema,
-                6000,
-                progress,
-            )
-            .await?
-        };
+        let reasoning = (attempt == 0).then_some(ReasonFirst {
+            kind: CallKind::Authoring,
+            subject: "the teaching review",
+            brief: REVIEW_DRAFT_BRIEF,
+        });
+        let raw = writer_excerpts::complete(
+            llm,
+            &request,
+            excerpts.as_ref(),
+            progress,
+            reasoning,
+            |text| Ok(text.to_owned()),
+        )
+        .await?;
         problems.clear();
         match generation::parse_json::<Review>(&raw) {
             Err(_) => problems.push("The previous review was incomplete. Give the issues and a check for every requested section.".into()),
             Ok(review) => {
                 for issue in review.issues {
-                    let length = issue.trim().chars().count();
-                    if !(10..=700).contains(&length) && !settle {
-                        problems.push("An issue must contain 10–700 characters.".into());
-                    } else if length >= 10 && !issues.iter().any(|known| known.note == issue) {
+                    let blank = issue.trim().is_empty();
+                    if blank && !settle {
+                        problems.push("An issue must not be blank.".into());
+                    } else if !blank && !issues.iter().any(|known| known.note == issue) {
                         issues.push(ReviewFinding::new(FindingKind::Teaching, None, issue));
                     }
                 }
@@ -291,9 +289,8 @@ async fn review_sections(
                     if let (Some(finding), Some(true)) = (
                         value.get("finding").and_then(Value::as_str), value.get("hasDefect").and_then(Value::as_bool),
                     ) {
-                        let length = finding.trim().chars().count();
-                        if indices.contains(&index) && length >= 20 && (length <= 700 || settle) {
-                            let note: String = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding).chars().take(700).collect();
+                        if indices.contains(&index) && !finding.trim().is_empty() {
+                            let note = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding);
                             if !issues.iter().any(|known| known.note == note) {
                                 let mut issue = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(index)), note);
                                 issue.passage = value.get("passageId").and_then(Value::as_str).and_then(|id| passage_text(&shown, index, id));
@@ -319,8 +316,8 @@ async fn review_sections(
                     }
                     if passages.get(check.index).is_none_or(|ids| !ids.contains(&check.passage_id)) {
                         problems.push(format!("Section {}: passageId must be one of that section's bodyPassages IDs.", check.index));
-                    } else if !(20..=700).contains(&check.finding.trim().chars().count()) && !settle {
-                        problems.push(format!("Section {}: finding must contain 20–700 characters.", check.index));
+                    } else if check.finding.trim().is_empty() && !settle {
+                        problems.push(format!("Section {}: finding must not be blank.", check.index));
                     } else {
                         accepted.insert(check.index, check);
                     }
@@ -352,7 +349,7 @@ async fn review_sections(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
-    use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+    use crate::features::learning::lessons::course_generation_tests::{ScriptedModel, Windowed};
 
     fn check(index: usize) -> Value {
         json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
@@ -526,7 +523,7 @@ mod tests {
     async fn invalid_global_findings_can_be_corrected_without_losing_section_checks() -> Result<()>
     {
         let model = model(vec![
-            json!({"issues":["short"],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
+            json!({"issues":["  "],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![check(0),check(1),check(2)])}),
             json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks(vec![])}),
         ]);
         assert!(review(
@@ -544,16 +541,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_lesson_s_corrected_review_drops_short_findings_and_keeps_long_ones() -> Result<()> {
+    async fn a_lesson_s_corrected_review_drops_blank_findings_and_keeps_the_rest() -> Result<()> {
         let long = format!(
             "The worked example's stated result is wrong: {}",
             "x".repeat(720)
         );
-        let mut terse = check(1);
-        terse["hasDefect"] = json!(true);
-        terse["finding"] = json!("Wrong.");
-        let first = json!({"issues":["short"],"blockChecks":fixture_checks(vec![check(0),terse.clone(),check(2)])});
-        let second = json!({"issues":["tiny",long],"blockChecks":fixture_checks(vec![terse])});
+        let mut blank = check(1);
+        blank["hasDefect"] = json!(true);
+        blank["finding"] = json!("  ");
+        let first = json!({"issues":["  "],"blockChecks":fixture_checks(vec![check(0),blank.clone(),check(2)])});
+        let second = json!({"issues":[" ",long],"blockChecks":fixture_checks(vec![blank])});
         let lesson = model(vec![first.clone(), second.clone()]);
         let issues = review(
             &lesson,
@@ -561,7 +558,7 @@ mod tests {
             json!({}),
             &candidate(),
             None,
-            LengthRule::DropShortKeepLong,
+            LengthRule::DropBlank,
         )
         .await?;
         assert_eq!(issues.len(), 1);
@@ -594,7 +591,7 @@ mod tests {
             json!({}),
             &candidate(),
             None,
-            LengthRule::DropShortKeepLong,
+            LengthRule::DropBlank,
         )
         .await?;
         assert_eq!(issues.len(), 1);
@@ -656,6 +653,113 @@ mod tests {
             .starts_with("Section 2 (candidate blocks-1):"));
         assert_eq!(issues[0].site, Some(FindingSite::Section(1)));
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_long_issue_from_the_teaching_review_is_read_not_refused() -> Result<()> {
+        let long = format!(
+            "The worked example's stated result is wrong: {}",
+            "it contradicts the premise it was given. ".repeat(25)
+        );
+        assert!(long.chars().count() > 700);
+        let response =
+            json!({"issues":[long],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
+        for lengths in [LengthRule::Fail, LengthRule::DropBlank] {
+            let model = model(vec![response.clone()]);
+            let issues = review(
+                &model,
+                "Review instructional quality.",
+                json!({}),
+                &candidate(),
+                None,
+                lengths,
+            )
+            .await?;
+            assert_eq!(issues.len(), 1);
+            assert_eq!(issues[0].note, long);
+            assert_eq!(model.prompts.lock().unwrap().len(), 1);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_section_finding_of_any_length_is_read_not_refused() -> Result<()> {
+        let long = format!(
+            "The stated boundary condition is contradicted: {}",
+            "the membrane passes what it should hold back. ".repeat(20)
+        );
+        assert!(long.chars().count() > 700);
+        let mut terse = check(1);
+        terse["hasDefect"] = json!(true);
+        terse["finding"] = json!("Wrong.");
+        let mut lengthy = check(2);
+        lengthy["hasDefect"] = json!(true);
+        lengthy["finding"] = json!(long);
+        let model = model(vec![
+            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),terse,lengthy])}),
+        ]);
+        let issues = review(
+            &model,
+            "Review instructional quality.",
+            json!({}),
+            &candidate(),
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
+        let notes: Vec<_> = issues.iter().map(|issue| issue.note.clone()).collect();
+        assert_eq!(
+            notes,
+            vec![
+                "Section 2 (candidate blocks-1): Wrong.".to_owned(),
+                format!("Section 3 (candidate blocks-2): {long}"),
+            ]
+        );
+        assert_eq!(model.prompts.lock().unwrap().len(), 1);
+        Ok(())
+    }
+
+    /// The review carries the lesson beside the writer's prompt, whose
+    /// excerpts filled the room the writer had: on a 9B's 32k window the
+    /// review of a PostgreSQL lesson did not fit, and the lesson failed after
+    /// an hour of checked work (2026-11-06). Six excerpts of 2,000 tokens
+    /// here, the lesson citing the fifth, in a window that holds some.
+    #[tokio::test]
+    async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_first(
+    ) -> Result<()> {
+        let sources: Vec<_> = (0..6)
+            .map(|index| json!({"sourceIndex":index,"title":format!("Source {index}"),"url":null,"excerpt":"x ".repeat(4000)}))
+            .collect();
+        let mut lesson = candidate();
+        lesson["blocks"][1]["sourceIndex"] = json!(4);
+        let scripted = model(vec![
+            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])}),
+        ]);
+        let window = Windowed(&scripted, 13_000);
+
+        review(
+            &window,
+            "Review instructional quality.",
+            json!({"authoringContext":{"goal":"Read query plans.","sources":sources}}),
+            &lesson,
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
+
+        let sent = scripted.prompts.lock().unwrap()[0].clone();
+        assert!(sent.contains("Source 4"));
+        assert!(!sent.contains("Source 5"));
+        Ok(())
+    }
+
+    #[test]
+    fn the_review_schema_bounds_no_text_but_a_blank() {
+        let (_, passages) = review_candidate(&candidate());
+        let bounds = crate::features::learning::lessons::course_generation_tests::length_bounds(
+            &schema(&[0, 1, 2], &passages),
+        );
+        assert!(bounds.is_empty(), "{bounds:?}");
     }
 
     /// Opt-in provider acceptance check. No application data is written and

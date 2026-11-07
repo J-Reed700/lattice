@@ -149,7 +149,7 @@ pub(super) fn confine_review(
             .cloned()
             .collect();
         let targets = targets_of(before, unit, &here, &guarded);
-        *after = confine(before, after, &targets, &guarded)?;
+        *after = confine(before, after, &targets, &guarded)?.section;
     }
     Ok((lesson != *previous).then(|| lesson.to_string()))
 }

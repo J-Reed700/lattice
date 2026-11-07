@@ -21,7 +21,7 @@ fn repository() -> Option<(TeachingFindingsRepository, String, String)> {
 
 /// The findings the user already has for this text: waiting, or kept as
 /// written, for parts that have not changed since.
-pub(super) async fn held(candidate: &Value) -> Result<BTreeSet<FindingKey>> {
+pub(in crate::features::learning) async fn held(candidate: &Value) -> Result<BTreeSet<FindingKey>> {
     match repository() {
         Some((store, lesson_id, _)) => store.held(&lesson_id, candidate).await,
         None => Ok(BTreeSet::new()),

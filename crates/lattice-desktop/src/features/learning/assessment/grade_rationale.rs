@@ -176,14 +176,9 @@ pub fn check(
             },
             points: Some(points),
             max_points: max,
-            what_was_missing: missing.chars().take(1_200).collect(),
+            what_was_missing: missing,
             your_words: kept,
-            full_credit_includes: graded
-                .full_credit_includes
-                .trim()
-                .chars()
-                .take(800)
-                .collect(),
+            full_credit_includes: graded.full_credit_includes.trim().to_string(),
             source_quote: if source_ok {
                 source_quote.map(str::to_owned)
             } else {
@@ -202,7 +197,7 @@ pub fn check(
     }
     Checked::Graded {
         rationale: LearningGradeRationaleDto {
-            summary: summary.chars().take(1_200).collect(),
+            summary,
             criteria,
             grader_model: grader.model.to_string(),
             rubric_version: rubric_version(rubric),

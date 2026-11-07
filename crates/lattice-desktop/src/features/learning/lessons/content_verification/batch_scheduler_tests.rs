@@ -1,3 +1,6 @@
+use super::super::readings::Read;
+use super::bridge_tests::{citing, STATED};
+use super::readings_tests::{claim, driven, paged, read_observed, world_of};
 use super::*;
 use crate::features::learning::curriculum_repository::LESSON_PREPARATION;
 use crate::features::learning::{
@@ -154,16 +157,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         ..Default::default()
     };
     let result = lesson_drafts::run(&repo, &job, &lesson, async {
-        check_evidence(
-            &model,
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await
+        paged(&model, &references, &inventory(8), &measured()).await
     })
     .await;
     assert!(matches!(result, Err(AppError::Network(_))));
@@ -185,38 +179,18 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         ..Default::default()
     };
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert!(report.issues.is_empty());
-        assert_eq!(report.findings.len(), 8);
-        assert!(report
-            .findings
+        let reads = paged(&model, &references, &inventory(8), &measured()).await?;
+        assert_eq!(reads.len(), 8);
+        assert!(reads
             .iter()
-            .all(|finding| finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         assert_eq!(
             *model.batch_sizes.lock().unwrap(),
             vec![4, 4],
             "Never replay the failed eight-claim group after reopening"
         );
         // All eight decisions are reusable.
-        check_evidence(
-            &model,
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
+        paged(&model, &references, &inventory(8), &measured()).await?;
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![4, 4]);
         // One check per group: no second call follows a check.
         assert_eq!(model.calls.lock().unwrap().len(), 2);
@@ -238,22 +212,11 @@ async fn a_group_counted_past_the_window_is_split_and_every_claim_is_judged() ->
         ..Default::default()
     };
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert!(report.issues.is_empty(), "{:?}", report.issues);
-        assert_eq!(report.findings.len(), 8);
-        assert!(report
-            .findings
+        let reads = paged(&model, &references, &inventory(8), &measured()).await?;
+        assert_eq!(reads.len(), 8);
+        assert!(reads
             .iter()
-            .all(|finding| finding.verdict == ClaimVerdict::Supported));
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         // The refused group is checked in halves on the same evidence; no
         // claim falls back to a check of its own.
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![8, 4, 4]);
@@ -280,16 +243,7 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
             )),
             ..Default::default()
         };
-        let result = check_evidence(
-            &interrupted,
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await;
+        let result = paged(&interrupted, &references, &inventory(8), &measured()).await;
         assert!(matches!(result, Err(AppError::Network(_))));
         assert_eq!(*interrupted.batch_sizes.lock().unwrap(), vec![8, 4]);
         // Resumed, the recorded split sends halves straight away.
@@ -297,17 +251,8 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
             window_holds: Some(4),
             ..Default::default()
         };
-        let report = check_evidence(
-            &resumed,
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert_eq!(report.findings.len(), 8);
+        let reads = paged(&resumed, &references, &inventory(8), &measured()).await?;
+        assert_eq!(reads.len(), 8);
         assert_eq!(
             *resumed.batch_sizes.lock().unwrap(),
             vec![4, 4],
@@ -335,16 +280,7 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
             ..Default::default()
         };
         let result = lesson_drafts::run(&repo, &job, &lesson, async {
-            check_evidence(
-                &model,
-                &candidate(GOOD),
-                &references,
-                inventory(8),
-                coverage(8),
-                vec![],
-                &mut measured(),
-            )
-            .await
+            paged(&model, &references, &inventory(8), &measured()).await
         })
         .await;
         assert_eq!(result.unwrap_err().error_code(), error.error_code());
@@ -376,20 +312,7 @@ fn sections(sections: usize, claims: usize) -> Inventory {
             .collect(),
     }
 }
-fn coverage(count: usize) -> Coverage {
-    Coverage {
-        units: (0..count)
-            .map(|index| CoverageUnit {
-                index,
-                complete: true,
-                reason: "Fixture coverage".into(),
-                missing_assertions: vec![],
-            })
-            .collect(),
-    }
-}
-
-pub(in crate::features::learning::lessons::content_verification) async fn setup(
+pub(in crate::features::learning::lessons) async fn setup(
     pool: &sqlx::SqlitePool,
 ) -> Result<(LearningCurriculumRepository, String, String)> {
     let programs = LearningRepository::new(pool.clone());
@@ -431,21 +354,11 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
                 sources[0].excerpt.push_str(" Additional source context.");
             }
             let references = ReferenceCollection::lexical(&sources)?;
-            let report = check_evidence(
-                &model,
-                &candidate(GOOD),
-                &references,
-                inventory(10),
-                coverage(10),
-                vec![],
-                &mut measured(),
-            )
-            .await?;
-            assert_eq!(report.findings.len(), 10);
-            assert!(report
-                .findings
+            let reads = paged(&model, &references, &inventory(10), &measured()).await?;
+            assert_eq!(reads.len(), 10);
+            assert!(reads
                 .iter()
-                .all(|f| f.verdict == ClaimVerdict::Supported));
+                .all(|read| read.finding.verdict == ClaimVerdict::Supported));
             let expected = if pass < 2 { 1 } else { 2 };
             assert_eq!(
                 model.calls.lock().unwrap().len(),
@@ -498,14 +411,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         .claims
         .retain(|claim| !missing.contains(&claim.statement));
     lesson_drafts::run(&repo, &job, &lesson, async {
-        evidence_checks::check(
-            &BatchModel::default(),
-            &references,
-            &saved,
-            &[],
-            &measured(),
-        )
-        .await?;
+        paged(&BatchModel::default(), &references, &saved, &measured()).await?;
         Ok(())
     })
     .await?;
@@ -517,7 +423,8 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo, &job, &lesson, async {
         let inventory = inventory(170);
         let retained = measured();
-        let work = evidence_checks::check(&blocked, &references, &inventory, &[], &retained);
+        crate::features::learning::lesson_progress::begin_checks(170);
+        let work = driven(&blocked, &references, &inventory, &retained);
         tokio::select! {
             result = work => panic!("The unfinished checks should still be running: {result:?}"),
             result = tokio::time::timeout(Duration::from_secs(5), async {
@@ -543,7 +450,6 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         "Late saved checks must be visible before the slow first request finishes"
     );
     assert_eq!(activity.checks_completed, 167);
-    assert_eq!(activity.model_checks_total, Some(3));
     assert_eq!(
         *blocked.batch_sizes.lock().unwrap(),
         vec![3],
@@ -563,18 +469,12 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let resumed = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let results =
-            evidence_checks::check(&resumed, &references, &inventory(170), &[], &measured())
-                .await?;
-        assert_eq!(results.len(), 170);
-        assert_eq!(results.iter().filter(|result| result.3).count(), 167);
-        assert!(results
+        let reads = paged(&resumed, &references, &inventory(170), &measured()).await?;
+        assert_eq!(reads.len(), 170);
+        assert_eq!(reads.iter().filter(|read| read.reused).count(), 167);
+        assert!(reads
             .iter()
-            .all(|result| result.2.verdict == ClaimVerdict::Supported));
-        assert_eq!(
-            results.iter().map(|result| result.0).collect::<Vec<_>>(),
-            (0..170).collect::<Vec<_>>()
-        );
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         Ok(())
     })
     .await?;
@@ -612,9 +512,10 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let claim = &input.units[0].claims[7];
     let evidence = evidence_for(&model, &claim.statement, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
+    let retained = measured();
     crate::features::learning::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
-        let mut retained=measured();let candidate=candidate(GOOD);
-        let work=check_evidence(&model,&candidate,&references,input,coverage(8),vec![],&mut retained);
+        crate::features::learning::lesson_progress::begin_checks(8);
+        let work=driven(&model,&references,&input,&retained);
         tokio::select! {
             result=work=>panic!("The incomplete claim should be waiting: {result:?}"),
             result=tokio::time::timeout(Duration::from_secs(5),async {
@@ -631,7 +532,6 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         activity.checks_completed, 7,
         "Progress must include completed siblings while the last check is blocked"
     );
-    assert_eq!(activity.checks_unresolved, 0);
     assert_eq!(activity.checks_reused, 0);
     drop(repo);
     pool.close().await;
@@ -647,23 +547,190 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let model = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &candidate(GOOD),
-            &references,
-            inventory(8),
-            coverage(8),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert!(report.issues.is_empty());
+        let reads = paged(&model, &references, &inventory(8), &measured()).await?;
+        assert!(reads
+            .iter()
+            .all(|read| read.finding.verdict == ClaimVerdict::Supported));
         assert_eq!(*model.calls.lock().unwrap(), vec!["individual-evidence"]);
         Ok(())
     })
     .await?;
     pool.close().await;
     Ok(())
+}
+
+/// `reading` over a batch whose first statement waits on a model that never
+/// answers, and whose other two have receipts saved under the earlier key: a
+/// reader restores one by saving it again under the current key, which it must
+/// have done for both, and told of both, by the time the first call is made.
+async fn restores_the_receipts_behind_a_slow_call(reading: Reading) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = super::bridge_tests::sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let citations = citing(&references)?;
+    let mut page = citations.of(0).to_vec();
+    canonicalize_evidence(&mut page);
+    let world = world_of(&references, citations);
+    let blocked = BatchModel {
+        block_batch: true,
+        block_individual: true,
+        ..Default::default()
+    };
+    let slow = claim("Quillet is a lexer that turns characters into tokens.");
+    let saved = [
+        claim("Quillet is a lexer that reads characters."),
+        claim("Quillet is a lexer that emits tokens."),
+    ];
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        for one in &saved {
+            let receipt = ClaimReceipt {
+                verdict: ClaimVerdict::Supported,
+                reason: "The earlier key's receipt.".into(),
+                supporting_quote: Some(STATED.into()),
+                interpretation_policy: None,
+                shown: None,
+            };
+            lesson_drafts::record_checkpoint(
+                &claim_reuse::legacy_key(&blocked, 0, one, &page),
+                serde_json::to_value(&receipt)?,
+            )
+            .await?;
+        }
+        let claims = [(0, slow), (0, saved[0].clone()), (0, saved[1].clone())];
+        let told = Mutex::new(Vec::new());
+        let record = |ordinal: usize, _: &Read| told.lock().unwrap().push(ordinal);
+        let work = read_observed(reading, &blocked, &world, &claims, &record);
+        tokio::select! {
+            result = work => panic!("The slow call should still be waiting: {result:?}"),
+            result = tokio::time::timeout(Duration::from_secs(5), async {
+                while blocked.calls.lock().unwrap().is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("The slow call never started"),
+        }
+        for one in &saved {
+            let compared = ClaimChecks::key(0, one, &page);
+            let key = claim_receipt_key(&blocked, &format!("{compared}|guard:rule-layer"));
+            assert!(
+                lesson_drafts::checkpoint(&key).await?.is_some(),
+                "A receipt behind a slow call must be restored before the call is made"
+            );
+        }
+        assert_eq!(
+            *told.lock().unwrap(),
+            vec![1, 2],
+            "The receipts behind a slow call are told of before it returns"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn parts_restores_the_receipts_behind_a_slow_call_before_making_the_call() -> Result<()> {
+    restores_the_receipts_behind_a_slow_call(Reading::Parts).await
+}
+
+#[tokio::test]
+async fn ground_restores_the_receipts_behind_a_slow_call_before_making_the_call() -> Result<()> {
+    restores_the_receipts_behind_a_slow_call(Reading::Ground).await
+}
+
+#[tokio::test]
+async fn a_page_batch_restores_the_pages_it_has_saved_before_it_asks_what_an_answer_costs(
+) -> Result<()> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    // The first statement has no page saved; the others do, and a receipt each
+    // under the earlier key.
+    let everything = inventory(3);
+    let mut saved = everything.clone();
+    saved.units[0].claims.remove(0);
+    let blocked = BatchModel {
+        block_batch: true,
+        block_individual: true,
+        ..Default::default()
+    };
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        // A run that read their pages and went down before it asked about them.
+        let down = BatchModel {
+            batch_error: Some(AppError::Network("down".into())),
+            ..Default::default()
+        };
+        let failed = paged(&down, &references, &saved, &measured()).await;
+        assert!(matches!(failed, Err(AppError::Network(_))));
+        for one in &saved.units[0].claims {
+            let page = evidence_for(&blocked, &one.statement, 0, &references, &[]).await?;
+            let receipt = ClaimReceipt {
+                verdict: ClaimVerdict::Supported,
+                reason: "The earlier key's receipt.".into(),
+                supporting_quote: page.first().map(|passage| passage.text.clone()),
+                interpretation_policy: None,
+                shown: None,
+            };
+            lesson_drafts::record_checkpoint(
+                &claim_reuse::legacy_key(&blocked, 0, one, &page),
+                serde_json::to_value(&receipt)?,
+            )
+            .await?;
+        }
+        // No answer is measured: the first statement's page is read now, and
+        // the request about it is alone.
+        let retained = ClaimChecks::default();
+        let work = paged(&blocked, &references, &everything, &retained);
+        tokio::select! {
+            result = work => panic!("The first request should still be waiting: {result:?}"),
+            result = tokio::time::timeout(Duration::from_secs(5), async {
+                while blocked.calls.lock().unwrap().is_empty() {
+                    tokio::task::yield_now().await;
+                }
+            }) => result.expect("The first request never started"),
+        }
+        for one in &saved.units[0].claims {
+            let page = evidence_for(&blocked, &one.statement, 0, &references, &[]).await?;
+            let key = claim_receipt_key(&blocked, &ClaimChecks::key(0, one, &page));
+            assert!(
+                lesson_drafts::checkpoint(&key).await?.is_some(),
+                "A saved page's receipt must be restored before the request that measures an answer"
+            );
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_statement_parts_hands_to_the_page_is_counted_once_after_its_page_reading() -> Result<()>
+{
+    let pool = crate::features::learning::tests::pool().await?;
+    let (repo, job, lesson) = setup(&pool).await?;
+    let sources = vec![source()];
+    let references = ReferenceCollection::lexical(&sources)?;
+    // The first and third statements have page receipts; the second is asked.
+    let mut saved = inventory(3);
+    let asked = saved.units[0].claims[1].statement.clone();
+    saved.units[0].claims.retain(|one| one.statement != asked);
+    lesson_drafts::run(&repo, &job, &lesson, async {
+        paged(&BatchModel::default(), &references, &saved, &measured()).await?;
+        let model = BatchModel::default();
+        let (steps, trace) = crate::features::learning::lesson_progress::traced(async {
+            crate::features::learning::lesson_progress::begin_checks(3);
+            driven(&model, &references, &inventory(3), &measured()).await
+        })
+        .await;
+        assert_eq!(steps?.len(), 3);
+        assert_eq!(
+            (trace.checked, trace.reused),
+            (3, 2),
+            "Each statement counts once, reused when its reading came from a saved check"
+        );
+        assert_eq!(model.calls.lock().unwrap().len(), 1);
+        Ok(())
+    })
+    .await
 }
 
 #[tokio::test]
@@ -674,22 +741,48 @@ async fn claims_of_two_sections_never_share_a_request() -> Result<()> {
     let references = ReferenceCollection::lexical(&sources)?;
     let model = BatchModel::default();
     lesson_drafts::run(&repo, &job, &lesson, async {
-        let report = check_evidence(
-            &model,
-            &candidate(GOOD),
-            &references,
-            sections(2, 3),
-            coverage(2),
-            vec![],
-            &mut measured(),
-        )
-        .await?;
-        assert_eq!(report.findings.len(), 6);
+        let reads = paged(&model, &references, &sections(2, 3), &measured()).await?;
+        assert_eq!(reads.len(), 6);
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![3, 3]);
         Ok(())
     })
     .await?;
     Ok(())
+}
+
+/// The comparisons `pack` puts in each request, as `(ordinal, pass)`, for
+/// comparisons given as `(ordinal, unit, statement, pass, page)`.
+fn packed(
+    llm: &dyn LLMPort,
+    comparisons: Vec<(usize, usize, String, Pass, Vec<EvidencePassage>)>,
+) -> Vec<Vec<(usize, Pass)>> {
+    let pending = comparisons
+        .into_iter()
+        .map(
+            |(ordinal, unit, statement, pass, evidence)| evidence_checks::PendingClaim {
+                ordinal,
+                key: String::new(),
+                receipt_key: String::new(),
+                unit,
+                claim: Claim {
+                    quote: statement.clone(),
+                    statement: statement.clone(),
+                },
+                checked: statement,
+                evidence,
+                pass,
+            },
+        )
+        .collect();
+    evidence_checks::pack(llm, pending, &evidence_checks::Labels::new())
+        .into_iter()
+        .map(|request| {
+            request
+                .iter()
+                .map(|item| (item.ordinal, item.pass))
+                .collect()
+        })
+        .collect()
 }
 
 #[test]
@@ -708,8 +801,8 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
             score: 0.0,
         }]
     };
-    // Sections interleaved in claim order; every claim has pass B's first
-    // page, and the even ones a pass A comparison too.
+    // Sections interleaved in claim order; every claim has the course's first
+    // page, and the even ones a comparison with their own citation too.
     let mut comparisons = Vec::new();
     for claim in 0..12 {
         let chars = if claim == 5 { 400_000 } else { 20_000 };
@@ -731,10 +824,10 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
             ));
         }
     }
-    let requests = evidence_checks::packed(&model, comparisons.clone());
+    let requests = packed(&model, comparisons.clone());
     assert_eq!(
         requests,
-        evidence_checks::packed(&model, comparisons.clone()),
+        packed(&model, comparisons.clone()),
         "the same pages pack the same way, so a split is found again"
     );
     let find = |(ordinal, pass): (usize, Pass)| {
@@ -768,7 +861,7 @@ fn claims_are_packed_by_section_with_both_comparisons_together() {
     for (at, request) in requests.iter().enumerate() {
         let unit = find(request[0]).1;
         assert!(request.iter().all(|item| find(*item).1 == unit));
-        // A claim's comparisons travel together, pass A first.
+        // A claim's comparisons travel together, its citation's first.
         for item in request {
             let together: Vec<_> = request.iter().filter(|other| other.0 == item.0).collect();
             let all = comparisons.iter().filter(|c| c.0 == item.0).count();

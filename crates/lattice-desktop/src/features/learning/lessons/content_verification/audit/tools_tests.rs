@@ -75,6 +75,29 @@ async fn a_search_call_carries_its_rewordings_and_dates_or_is_refused() {
     assert_eq!(needs[1].kind, NeedKind::Leads);
 }
 
+#[tokio::test]
+async fn a_search_is_refused_only_when_no_terms_are_left_once_its_sites_are_lifted_out() {
+    let web = Recording::default();
+    let mut answer = Answer::default();
+    for call in [
+        json!({"query": "   ", "kind": "web"}),
+        json!({"query": "site:docs.python.org", "kind": "official_docs"}),
+        json!({"query": "tool result error handling", "kind": "web", "alternatives": ["  "]}),
+    ] {
+        let refused = run(SEARCH, &call, &web, Room::for_all(), &mut answer).await;
+        assert!(refused.starts_with("Search not run"), "{refused}");
+        assert!(
+            refused.contains("not blank once any site: operators are lifted out"),
+            "{refused}"
+        );
+        assert!(!refused.contains("3 to 240"), "{refused}");
+    }
+    assert!(
+        web.needs.lock().unwrap().is_empty(),
+        "a refused call never searched"
+    );
+}
+
 /// Answers each site's search with one page on it, and fails the sites in
 /// `down`, as a provider failing for one scoped search would.
 struct PerSite {

@@ -1,7 +1,7 @@
 //! Content reaching a model is bounded by its window, never by a fixed count
 //! or a character prefix.
 use crate::features::learning::dto::{
-    LearningOutcomeDefinitionDto, LearningSourceDto, LearningSourceVersionDto,
+    LearningOutcomeDefinitionDto, LearningProgramDto, LearningSourceDto, LearningSourceVersionDto,
     LearningSourceVersionSummaryDto,
 };
 use crate::features::learning::lessons::course_generation_tests::{Model, ScriptedModel};
@@ -353,4 +353,200 @@ fn the_tutor_sees_the_newest_whole_turns_that_fit_and_counts_the_rest() {
         shown["earlierTurns"],
         format!("{} earlier turns not shown", 400 - turns.len())
     );
+}
+
+/// Every text length a schema bounds beyond a non-blank string: a `maxLength`
+/// anywhere, a `minLength` above 1.
+pub(in crate::features::learning) fn text_caps(schema: &Value) -> Vec<String> {
+    fn walk(value: &Value, at: &str, found: &mut Vec<String>) {
+        match value {
+            Value::Object(fields) => {
+                for (key, inner) in fields {
+                    let here = format!("{at}/{key}");
+                    let capped = match key.as_str() {
+                        "maxLength" => true,
+                        "minLength" => inner.as_u64().is_some_and(|bound| bound > 1),
+                        _ => false,
+                    };
+                    if capped {
+                        found.push(format!("{here} = {inner}"));
+                    }
+                    walk(inner, &here, found);
+                }
+            }
+            Value::Array(items) => {
+                for (index, inner) in items.iter().enumerate() {
+                    walk(inner, &format!("{at}/{index}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", &mut found);
+    found
+}
+
+/// Answers as the model it wraps does, keeping every schema a request carried.
+pub(in crate::features::learning) struct Recording<'a> {
+    inner: &'a dyn LLMPort,
+    schemas: Mutex<Vec<Value>>,
+}
+
+impl<'a> Recording<'a> {
+    pub(in crate::features::learning) fn new(inner: &'a dyn LLMPort) -> Self {
+        Self {
+            inner,
+            schemas: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The schemas sent so far that mention `field`.
+    pub(in crate::features::learning) fn schemas_naming(&self, field: &str) -> Vec<Value> {
+        self.schemas
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|schema| schema.to_string().contains(field))
+            .cloned()
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Recording<'_> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if let Some(schema) = &request.json_schema {
+            self.schemas.lock().unwrap().push(schema.clone());
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.inner.is_ready().await
+    }
+}
+
+#[test]
+fn a_schema_is_searched_for_every_text_length_it_bounds() {
+    let schema = json!({"type":"object","properties":{
+        "blank":{"type":"string","minLength":1},
+        "nested":{"type":"array","items":{"type":["string","null"],"maxLength":700}},
+        "floor":{"anyOf":[{"type":"string","minLength":30}]},
+        "count":{"type":"array","minItems":2,"maxItems":6}
+    }});
+    let mut found = text_caps(&schema);
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "/properties/floor/anyOf/0/minLength = 30",
+            "/properties/nested/items/maxLength = 700"
+        ]
+    );
+}
+
+fn module_outcomes(program: &LearningProgramDto) -> Vec<LearningOutcomeDefinitionDto> {
+    program
+        .modules
+        .iter()
+        .enumerate()
+        .map(|(i, module)| LearningOutcomeDefinitionDto {
+            id: format!("outcome-{i}"),
+            module_id: Some(module.id.clone()),
+            lesson_id: None,
+            title: format!("Apply skill {i}"),
+            description: String::new(),
+            ordinal: i as i64,
+            created_at: 0,
+        })
+        .collect()
+}
+
+/// A model's answer: the same task for every outcome.
+fn starting_point_tasks(
+    outcomes: &[LearningOutcomeDefinitionDto],
+    prompt: &str,
+    expected_answer: &str,
+    criteria: &str,
+) -> String {
+    let tasks: Vec<_> = outcomes
+        .iter()
+        .map(|outcome| {
+            json!({"outcomeId":outcome.id,"prompt":prompt,"expectedAnswer":expected_answer,"criteria":criteria})
+        })
+        .collect();
+    json!({ "tasks": tasks }).to_string()
+}
+
+#[tokio::test]
+async fn starting_point_tasks_are_read_at_any_length() -> Result<()> {
+    let program = crate::features::learning::tests::fixture();
+    let outcomes = module_outcomes(&program);
+    let sources = vec![source("s", "Skill guidance for every module.".into())];
+    for (what, prompt, expected, criteria) in [
+        (
+            "tasks past their old ceilings",
+            "Predict the result of this concrete case and explain why. ".repeat(40),
+            "The result follows from the stated rule applied to the case. ".repeat(40),
+            "Names the rule, applies it, and states the predicted result. ".repeat(25),
+        ),
+        (
+            "tasks under their old floors",
+            "Name the rule.".to_owned(),
+            "Rule one.".to_owned(),
+            "Rule.".to_owned(),
+        ),
+    ] {
+        let llm = Model(starting_point_tasks(
+            &outcomes, &prompt, &expected, &criteria,
+        ));
+        let authored = crate::features::learning::diagnostic_generation::author(
+            &llm, &program, &outcomes, &sources,
+        )
+        .await;
+        assert!(authored.is_ok(), "{what}: {authored:?}");
+        let authored = authored?;
+        assert_eq!(authored.len(), outcomes.len(), "{what}");
+        assert!(
+            authored.iter().all(|task| task.prompt == prompt
+                && task.expected_answer == expected
+                && task.criteria == criteria),
+            "{what}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_starting_point_tasks_schema_bounds_no_text_but_a_blank_one() -> Result<()> {
+    let program = crate::features::learning::tests::fixture();
+    let outcomes = module_outcomes(&program);
+    let sources = vec![source("s", "Skill guidance for every module.".into())];
+    let model = Model(starting_point_tasks(
+        &outcomes,
+        "Predict the result of this concrete case and explain why.",
+        "The result follows from the stated rule applied to the case.",
+        "Names the rule, applies it, and states the predicted result.",
+    ));
+    let recording = Recording::new(&model);
+    crate::features::learning::diagnostic_generation::author(
+        &recording, &program, &outcomes, &sources,
+    )
+    .await?;
+    let schemas = recording.schemas_naming("expectedAnswer");
+    assert!(!schemas.is_empty(), "the tasks schema was sent");
+    for schema in &schemas {
+        let caps = text_caps(schema);
+        assert!(caps.is_empty(), "{caps:?}");
+    }
+    Ok(())
 }

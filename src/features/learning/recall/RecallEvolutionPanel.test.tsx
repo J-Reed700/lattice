@@ -57,6 +57,16 @@ describe('Learning Studio versioned recall', () => {
     expect(mocks.save.mock.calls[1][0]).toEqual(request);
   });
 
+  it('does not cap the prompt, answer or explanation of a card', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: 'Create a typed card' }));
+    await user.selectOptions(screen.getByLabelText('Card format'), 'question_answer');
+    for (const name of ['Card prompt', 'Card answer', 'Card explanation']) {
+      expect(screen.getByRole('textbox', { name })).not.toHaveAttribute('maxlength');
+    }
+  });
+
   it('hides a due answer until reveal and retries the same review ID after failure', async () => {
     const user = userEvent.setup();
     mocks.review.mockResolvedValueOnce(fail('Temporary review error'));

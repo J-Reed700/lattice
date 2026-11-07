@@ -40,13 +40,7 @@ async fn complete_json(
     )
     .await?;
     complete_reason(&response.finish_reason)?;
-    let output = response.text;
-    if output.chars().count() > 20_000 {
-        return Err(invalid(
-            "The model response exceeded the structured-output limit.",
-        ));
-    }
-    Ok(output)
+    Ok(response.text)
 }
 
 #[derive(Debug, Deserialize)]
@@ -163,8 +157,6 @@ async fn with_snapshots(
     Ok(prompt.to_string())
 }
 fn tutor_schema() -> serde_json::Value {
-    // Length caps above 2000 are checked after parsing: as schema bounds they
-    // would void llama.cpp's whole grammar.
     serde_json::json!({
         "type":"object", "additionalProperties":false,
         "required":["response","citations","proposals"],
@@ -173,26 +165,24 @@ fn tutor_schema() -> serde_json::Value {
             "citations":{"type":"array","maxItems":5,"items":{
                 "type":"object","additionalProperties":false,
                 "required":["sourceId","versionId","quote"],
-                "properties":{"sourceId":{"type":"string","maxLength":256},"versionId":{"type":"string","maxLength":256},"quote":{"type":"string","minLength":1,"maxLength":700}}
+                "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
             }},
             "proposals":{"type":"array","maxItems":4,"items":{
                 "type":"object","additionalProperties":false,
                 "required":["kind","text","evidenceQuote"],
-                "properties":{"kind":{"enum":["misconception","follow_up"]},"text":{"type":"string","minLength":1,"maxLength":700},"evidenceQuote":{"type":["string","null"],"maxLength":500}}
+                "properties":{"kind":{"enum":["misconception","follow_up"]},"text":{"type":"string","minLength":1},"evidenceQuote":{"type":["string","null"]}}
             }}
         }
     })
 }
 fn solution_schema() -> serde_json::Value {
-    // Length caps above 2000 are checked after parsing: as schema bounds they
-    // would void llama.cpp's whole grammar.
     serde_json::json!({
         "type":"object", "additionalProperties":false,
         "required":["solution","citations"],
         "properties":{"solution":{"type":"string","minLength":1},"citations":{"type":"array","maxItems":5,"items":{
             "type":"object","additionalProperties":false,
             "required":["sourceId","versionId","quote"],
-            "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1,"maxLength":700}}
+            "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
         }}}
     })
 }
@@ -210,20 +200,18 @@ pub async fn tutor(
     let raw = complete_json(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
     let parsed: TutorJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
-    if parsed.response.trim().is_empty()
-        || parsed.response.chars().count() > 6000
-        || parsed.citations.len() > 5
-        || parsed.proposals.len() > 4
+    if parsed.response.trim().is_empty() || parsed.citations.len() > 5 || parsed.proposals.len() > 4
     {
-        return Err(invalid("Tutor response exceeded its allowed bounds."));
+        return Err(invalid(
+            "The tutor returned an empty response, or more citations or proposals than allowed.",
+        ));
     }
     validate_citations(&parsed.citations, sources)?;
     for p in &parsed.proposals {
         if p.text.trim().is_empty()
-            || p.text.chars().count() > 700
-            || p.evidence_quote.as_ref().is_some_and(|q| {
-                q.chars().count() > 500 || (!q.is_empty() && !session.artifact.text.contains(q))
-            })
+            || p.evidence_quote
+                .as_ref()
+                .is_some_and(|q| !q.is_empty() && !session.artifact.text.contains(q))
         {
             return Err(invalid("Tutor proposal contains invalid evidence."));
         }
@@ -244,11 +232,10 @@ pub async fn solution(
     let raw = complete_json(llm, SOLUTION_SYSTEM, prompt, solution_schema(), 1400).await?;
     let parsed: SolutionJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The model returned a malformed reference solution."))?;
-    if parsed.solution.trim().is_empty()
-        || parsed.solution.chars().count() > 6000
-        || parsed.citations.len() > 5
-    {
-        return Err(invalid("Reference solution exceeded its allowed bounds."));
+    if parsed.solution.trim().is_empty() || parsed.citations.len() > 5 {
+        return Err(invalid(
+            "The reference solution was empty or had more citations than allowed.",
+        ));
     }
     validate_citations(&parsed.citations, sources)?;
     Ok(parsed)
@@ -259,8 +246,8 @@ pub fn validate_citations(
     sources: &[LearningSourceVersionDto],
 ) -> Result<()> {
     for citation in citations {
-        if citation.quote.trim().is_empty() || citation.quote.chars().count() > 700 {
-            return Err(invalid("Citation quote must be 1–700 characters."));
+        if citation.quote.trim().is_empty() {
+            return Err(invalid("Citation quote must not be blank."));
         }
         let source = sources
             .iter()
@@ -294,8 +281,8 @@ pub(crate) fn grade_schema(rubric: &[LearningPracticeCriterionDto]) -> serde_jso
                     "required": ["criterion_id", "evidence_quote", "observation", "score"],
                     "properties": {
                         "criterion_id": { "type": "string" },
-                        "evidence_quote": { "type": ["string", "null"], "maxLength": 500 },
-                        "observation": { "type": "string", "minLength": 1, "maxLength": 900 },
+                        "evidence_quote": { "type": ["string", "null"] },
+                        "observation": { "type": "string", "minLength": 1 },
                         "score": {
                             "type": ["integer", "null"],
                             "minimum": 0,
@@ -373,10 +360,10 @@ fn validate_grade(
                     .as_ref()
                     .is_none_or(|q| q.trim().is_empty()))
             || result.observation.trim().is_empty()
-            || result.observation.chars().count() > 900
-            || result.evidence_quote.as_ref().is_some_and(|q| {
-                q.chars().count() > 500 || (!q.is_empty() && !session.artifact.text.contains(q))
-            })
+            || result
+                .evidence_quote
+                .as_ref()
+                .is_some_and(|q| !q.is_empty() && !session.artifact.text.contains(q))
         {
             return Err(invalid("The grader returned invalid rubric evidence."));
         }

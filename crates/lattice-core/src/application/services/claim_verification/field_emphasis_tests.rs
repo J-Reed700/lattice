@@ -47,3 +47,30 @@ fn emphasis_in_prose_is_left_as_written() {
     let reply = "Reason: The **key** date is 1887.\nNote: *not a field*";
     assert_eq!(without_field_emphasis(reply), reply);
 }
+
+#[test]
+fn a_supported_page_stands_on_a_cited_passage_and_elsewhere_on_any_other() {
+    assert_eq!(page_outcome(ClaimVerdict::Supported, true), Outcome::Stands);
+    assert_eq!(
+        page_outcome(ClaimVerdict::Supported, false),
+        Outcome::StandsElsewhere
+    );
+}
+
+#[test]
+fn a_page_that_does_not_support_the_claim_reads_the_same_whatever_the_citation() {
+    for on_cited in [true, false] {
+        assert_eq!(
+            page_outcome(ClaimVerdict::Unsupported, on_cited),
+            Outcome::Unproven
+        );
+        assert_eq!(
+            page_outcome(ClaimVerdict::Contradicted, on_cited),
+            Outcome::Refuted
+        );
+        assert_eq!(
+            page_outcome(ClaimVerdict::Unverified, on_cited),
+            Outcome::Unjudged
+        );
+    }
+}

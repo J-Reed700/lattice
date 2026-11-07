@@ -1,5 +1,6 @@
 //! Lessons capabilities owned by Learning Studio.
 
+pub(crate) mod call_plan;
 pub mod claim_reviews;
 pub(crate) mod content_verification;
 #[cfg(test)]
@@ -21,3 +22,4 @@ mod text_edits;
 /// track L1's. Integration may move the declaration there.
 #[path = "content_verification/audit/mod.rs"]
 pub(crate) mod verifier_audit;
+mod writer_excerpts;
