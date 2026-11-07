@@ -7,15 +7,15 @@ pub mod content_verification;
 pub(crate) mod course_generation_tests;
 pub mod generation;
 pub mod generation_jobs;
-pub(crate) mod lesson_drafts;
+pub mod lesson_drafts;
 pub mod lesson_evidence;
 pub(crate) mod lesson_progress;
 pub mod reference_collection;
-pub(crate) mod review_evidence;
-pub(crate) mod review_findings;
+pub mod review_evidence;
+pub mod review_findings;
 pub(crate) mod structured_call;
 pub mod teaching;
-pub(crate) mod teaching_review;
+pub mod teaching_review;
 mod text_edits;
 /// The Verifier audit (lesson claim review §14). Its files live under
 /// `content_verification/audit/`; declared here so that module's list stays

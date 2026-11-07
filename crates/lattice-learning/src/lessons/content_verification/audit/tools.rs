@@ -34,7 +34,7 @@ pub(crate) struct SearchHit {
 /// as a learning source with `added_by = 'verifier'` and returns its saved
 /// version as a passage over its whole text.
 #[async_trait]
-pub(crate) trait VerifierWeb: Send + Sync {
+pub trait VerifierWeb: Send + Sync {
     /// Searches for `need`, bringing no more results than `room` holds.
     async fn search(&self, need: &PlannedNeed, room: Room<'_>) -> Result<Vec<SearchHit>>;
     async fn save_page(&self, url: &str) -> Result<AuditPassage>;

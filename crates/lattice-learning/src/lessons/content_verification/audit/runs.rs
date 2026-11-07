@@ -20,7 +20,7 @@ use super::{AuditGate, AuditStop};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum BatchOutcome {
+pub enum BatchOutcome {
     Done,
     Failed,
 }
@@ -48,7 +48,7 @@ pub(crate) struct BatchRecord {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RunState {
+pub enum RunState {
     Running,
     Completed,
     Stopped,
@@ -80,7 +80,7 @@ pub(crate) struct RunKey {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AuditRun {
+pub struct AuditRun {
     pub key: RunKey,
     pub policy: String,
     pub state: RunState,
@@ -120,7 +120,7 @@ pub(crate) struct CourseAuditUsage {
 }
 
 #[derive(Clone)]
-pub(crate) struct SqliteAuditRuns {
+pub struct SqliteAuditRuns {
     pool: SqlitePool,
 }
 

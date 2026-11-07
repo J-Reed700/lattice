@@ -23,7 +23,7 @@ struct Choice {
 }
 
 #[derive(Default)]
-pub(super) struct EvidenceBank {
+pub struct EvidenceBank {
     choices: Vec<Choice>,
 }
 

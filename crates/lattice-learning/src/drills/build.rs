@@ -55,7 +55,7 @@ pub(crate) const STEPS: u32 = 6;
 
 /// A checkpointed stage of a build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Stage {
+pub enum Stage {
     CleanCode,
     CleanReview,
     Plant,
@@ -115,7 +115,7 @@ const STORE_INDEX: u32 = 5;
 
 /// Builds one drill. The model, the material, the grader and the database are the build's own; the job runtime's
 /// context carries the checkpoints and the cancellation.
-pub(crate) struct DrillBuild<'a> {
+pub struct DrillBuild<'a> {
     llm: &'a dyn LLMPort,
     material: Box<dyn DrillMaterial + 'a>,
     grader: &'a dyn ReviewGrader,

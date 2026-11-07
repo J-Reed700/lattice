@@ -358,7 +358,7 @@ const PAGE_RESULTS: usize = 12;
 /// A search result with what the search that found it asked for and learned,
 /// for the reference selector to weigh.
 #[derive(Debug, Clone)]
-pub(crate) struct Candidate {
+pub struct Candidate {
     pub result: WebSearchResult,
     /// The kind of source the search asked for.
     pub kind: NeedKind,

@@ -19,7 +19,7 @@ use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::source_library::LearningSourceLibraryRepository;
 
-pub(crate) struct AuditMaterial {
+pub struct AuditMaterial {
     pub draft_sha256: String,
     pub units: Vec<AuditUnit>,
     pub passages: HashMap<ClaimId, Vec<AuditPassage>>,

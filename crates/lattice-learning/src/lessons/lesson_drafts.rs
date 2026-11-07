@@ -16,7 +16,7 @@ pub(crate) struct Drafts {
 }
 
 #[derive(Clone, Deserialize, Serialize)]
-pub(crate) struct Draft {
+pub struct Draft {
     pub input_hash: String,
     pub candidate: String,
     #[serde(default)]

@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 /// Map a SQLite error. A pool timeout means the database is busy rather than
 /// broken, so it is reported as a retryable condition.
-pub(crate) fn db(error: sqlx::Error) -> AppError {
+pub fn db(error: sqlx::Error) -> AppError {
     match error {
         sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(
             "The learning database is temporarily busy. Saved work is retained.".into(),
@@ -15,7 +15,7 @@ pub(crate) fn db(error: sqlx::Error) -> AppError {
 }
 
 /// Wall-clock time in Unix milliseconds, the unit every Learning table stores.
-pub(crate) fn now() -> i64 {
+pub fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 

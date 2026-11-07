@@ -221,7 +221,7 @@ pub(crate) fn strip_unmatched(
 }
 
 /// How many items in the candidate currently carry a citation.
-pub(crate) fn cited_count(candidate: &Value) -> u32 {
+pub fn cited_count(candidate: &Value) -> u32 {
     fields(candidate, None)
         .iter()
         .filter(|(path, _)| {
@@ -234,7 +234,7 @@ pub(crate) fn cited_count(candidate: &Value) -> u32 {
 }
 
 /// How many items in the candidate can carry a citation.
-pub(crate) fn item_count(candidate: &Value) -> u32 {
+pub fn item_count(candidate: &Value) -> u32 {
     fields(candidate, None).len() as u32
 }
 

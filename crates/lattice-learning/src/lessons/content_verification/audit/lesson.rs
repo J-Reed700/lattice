@@ -30,7 +30,7 @@ use lattice_core::application::ports::claim_review::ClaimReviewStore;
 
 /// The Verifier as the app configures it.
 #[async_trait]
-pub(crate) trait VerifierAccess: Send + Sync {
+pub trait VerifierAccess: Send + Sync {
     /// The Verifier reference in Settings, unloaded (consent names its
     /// provider); `None` when no Verifier is set.
     async fn model(&self) -> Result<Option<ModelRef>>;
@@ -59,7 +59,7 @@ pub(crate) fn verifier() -> Option<Arc<dyn VerifierAccess>> {
     VERIFIER.try_with(Arc::clone).ok()
 }
 
-pub(crate) struct LessonAuditRequest<'a> {
+pub struct LessonAuditRequest<'a> {
     pub program_id: &'a str,
     pub lesson_id: &'a str,
     pub job_id: Option<&'a str>,
@@ -68,7 +68,7 @@ pub(crate) struct LessonAuditRequest<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) enum LessonAudit {
+pub enum LessonAudit {
     /// The course has not opted in: there is no audit gate.
     Off,
     /// The audit is on but cannot send anything; nothing was sent.
@@ -87,7 +87,7 @@ pub(crate) enum LessonAudit {
 /// # Errors
 ///
 /// Storage failures, and the audit's own (see [`super::run`]).
-pub(crate) async fn audit_lesson(
+pub async fn audit_lesson(
     verifier: &dyn VerifierAccess,
     pool: &SqlitePool,
     request: &LessonAuditRequest<'_>,

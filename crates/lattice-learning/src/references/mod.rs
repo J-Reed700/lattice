@@ -11,6 +11,6 @@ pub mod source_selector;
 pub mod source_workflows;
 pub mod sources;
 pub mod trust;
-pub(crate) mod web_research;
+pub mod web_research;
 #[cfg(test)]
 mod web_research_tests;

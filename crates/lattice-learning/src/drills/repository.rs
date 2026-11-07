@@ -196,7 +196,7 @@ pub(crate) async fn drilled_passages(
 }
 
 /// A drill by its id, ready or taken.
-pub(crate) async fn find_in(
+pub async fn find_in(
     connection: &mut SqliteConnection,
     id: &str,
 ) -> Result<Option<StoredDrill>> {

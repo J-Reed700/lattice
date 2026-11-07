@@ -22,7 +22,7 @@ pub(crate) fn lesson_queries(candidate: &Value) -> Vec<String> {
 /// Citations are optional; only a present citation can fail. Field-level
 /// diagnostics let typography restoration copy the real punctuation, and the
 /// evidence linking strips whatever still does not match.
-pub(crate) fn quote_checks(
+pub fn quote_checks(
     candidate: &Value,
     sources: &[crate::dto::LearningSourceDto],
 ) -> Vec<Value> {

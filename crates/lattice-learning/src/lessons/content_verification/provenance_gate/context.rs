@@ -82,7 +82,7 @@ tokio::task_local! {
 /// installs [`with_trust`]; the course may not exist yet, so the outline's
 /// review and repair loop opens the course's scope itself
 /// ([`outline_trust`]). Outside it (unit tests) no outline is weighed.
-pub(crate) async fn with_outline_trust<T>(
+pub async fn with_outline_trust<T>(
     pool: SqlitePool,
     future: impl std::future::Future<Output = T>,
 ) -> T {

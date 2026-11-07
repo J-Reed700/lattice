@@ -9,7 +9,8 @@ mod code;
 pub(crate) mod passage;
 
 pub(crate) use code::CodeMaterial;
-pub(crate) use passage::{ClaimSourceCheck, PassageMaterial, SourceCheck};
+pub(crate) use passage::{PassageMaterial, SourceCheck};
+pub use passage::ClaimSourceCheck;
 
 use super::build::{Baseline, CleanCode, CleanReview, Mutation};
 use super::fix_grading::FixStrategy;
@@ -131,7 +132,7 @@ pub(crate) trait DrillMaterial:
 
 /// The material of drills of `material`: code run on `runner` where the language has one, or a passage checked
 /// against its source by `check`.
-pub(crate) fn material_for<'a>(
+pub fn material_for<'a>(
     material: &Material,
     runner: Option<&'a dyn CodeRunner>,
     check: &'a dyn SourceCheck,

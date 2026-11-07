@@ -18,7 +18,7 @@ const REVIEW_ANSWER_TOKENS: usize = 6000;
 
 /// What the review does with a blank finding after the response correction.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LengthRule {
+pub enum LengthRule {
     /// The review fails.
     Fail,
     /// A blank finding is dropped: no teaching-review finding fails a lesson
@@ -167,7 +167,7 @@ fn schema(indices: &[usize], passages: &[Vec<String>]) -> Value {
 /// An unavailable provider propagates immediately; this is not a network retry.
 /// A section's finding is placed in that section; a reviewer's issue is
 /// placed later, by the evidence check.
-pub(crate) async fn review(
+pub async fn review(
     llm: &dyn LLMPort,
     system: &str,
     prompt: Value,

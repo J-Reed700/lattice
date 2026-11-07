@@ -76,7 +76,7 @@ fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
 
-pub(crate) async fn runtime_generation_context(
+pub async fn runtime_generation_context(
     repo: &LearningPracticalRepository,
     runtimes: &BuiltinRuntimes,
     profile_id: Option<&str>,

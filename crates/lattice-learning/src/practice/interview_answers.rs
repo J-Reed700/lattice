@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 
 #[path = "interview_evidence.rs"]
-mod interview_evidence;
+pub mod interview_evidence;
 use interview_evidence::{EvidenceBank, MAX_EVIDENCE_CHOICES};
 
 #[path = "interview_answer_review.rs"]

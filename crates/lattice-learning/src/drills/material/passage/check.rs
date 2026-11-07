@@ -75,7 +75,7 @@ pub(crate) trait SourceCheck:
 }
 
 /// The claim checker on `llm`, in its strict policy.
-pub(crate) struct ClaimSourceCheck<'a> {
+pub struct ClaimSourceCheck<'a> {
     llm: &'a dyn LLMPort,
 }
 

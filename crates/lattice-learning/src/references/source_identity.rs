@@ -1,4 +1,4 @@
-pub(crate) fn source_request_hash<T: serde::Serialize>(
+pub fn source_request_hash<T: serde::Serialize>(
     request: &T,
 ) -> lattice_core::shared::error::Result<String> {
     use sha2::Digest;
@@ -7,7 +7,7 @@ pub(crate) fn source_request_hash<T: serde::Serialize>(
     Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
 }
 
-pub(crate) fn validate_source_ids(
+pub fn validate_source_ids(
     program_id: &str,
     source_id: &str,
     version_id: &str,

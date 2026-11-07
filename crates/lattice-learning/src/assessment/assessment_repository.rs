@@ -239,7 +239,7 @@ fn assessment_operation<'a>(
 
 /// A bank item read back with what the bank keeps beside it.
 #[derive(Debug, Clone)]
-pub(crate) struct StoredCandidate {
+pub struct StoredCandidate {
     pub candidate: engine::LearningAssessmentCandidate,
     pub artifact_kind: Option<String>,
     pub source_quote: String,

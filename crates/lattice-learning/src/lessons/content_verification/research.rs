@@ -111,7 +111,7 @@ const SELECTION_ID_PLACEHOLDER: usize = 9999;
 /// evidence of relevance or authority, and factual checks use only the
 /// complete capture. The selector reads the candidates, in order, that its
 /// window holds.
-pub(crate) async fn select_references(
+pub async fn select_references(
     llm: &dyn LLMPort,
     topic: &str,
     query: &str,

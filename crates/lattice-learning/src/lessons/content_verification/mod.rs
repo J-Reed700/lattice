@@ -52,9 +52,8 @@ use evidence_checks::{CheckedPart, ContraryPassage, Pass};
 mod evidence_selection;
 mod execution;
 mod judge;
-pub(crate) use judge::{
-    judge_for_publication, judge_in_order, ranking, shown_of,
-};
+pub(crate) use judge::{judge_in_order, ranking, shown_of};
+pub use judge::judge_for_publication;
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
@@ -88,16 +87,15 @@ pub(crate) async fn live_inventory_fixture(
 }
 mod passes;
 mod provenance_gate;
-pub(crate) use provenance_gate::{
-    gate_reason, outline_trust, relevel, weigh_claim, with_outline_trust, with_trust,
-};
+pub(crate) use provenance_gate::{gate_reason, outline_trust, relevel, weigh_claim, with_trust};
+pub use provenance_gate::with_outline_trust;
 mod repair;
 pub(crate) use repair::{confine, Protected};
 mod repair_loop;
 mod repair_work;
 mod report;
 pub(crate) use report::WrittenOver;
-pub(crate) mod research;
+pub mod research;
 mod review_pass;
 mod round;
 mod rounds;
@@ -618,7 +616,7 @@ pub(crate) async fn live_retrieved_passages(
         .collect())
 }
 
-pub(crate) async fn judge_batch_for_publication(
+pub async fn judge_batch_for_publication(
     llm: &dyn LLMPort,
     claims: &[lattice_core::application::services::claim_verification::LocatedClaim],
 ) -> Result<lattice_core::application::services::claim_verification::Answered<Vec<ClaimJudgment>>> {

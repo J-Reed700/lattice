@@ -8,7 +8,7 @@ use serde_json::Value;
 /// What raised a finding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum FindingKind {
+pub enum FindingKind {
     /// The teaching review: a section's check or a reviewer's issue.
     Teaching,
     /// An independent solution disagreed with a question's answer key.
@@ -82,7 +82,7 @@ impl FindingSite {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ReviewFinding {
+pub struct ReviewFinding {
     pub kind: FindingKind,
     /// `None` for a reviewer's issue until the evidence check places it;
     /// an issue it cannot place is about the whole lesson.

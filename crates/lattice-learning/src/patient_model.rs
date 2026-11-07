@@ -42,7 +42,7 @@ impl WaitObserver for OutlineProgress {
 /// Run `attempt` until it succeeds or fails with a non-transient error,
 /// waiting `backoff` between transient failures. `attempt` receives the
 /// number of retries so far.
-pub(crate) async fn patiently<T, F, Fut>(
+pub async fn patiently<T, F, Fut>(
     observer: &dyn WaitObserver,
     backoff: Backoff,
     mut attempt: F,
@@ -78,7 +78,7 @@ where
 }
 
 /// `inner`, retrying each request through a temporary outage.
-pub(crate) struct PatientModel<'a> {
+pub struct PatientModel<'a> {
     inner: &'a dyn LLMPort,
     observer: &'a dyn WaitObserver,
     backoff: Backoff,

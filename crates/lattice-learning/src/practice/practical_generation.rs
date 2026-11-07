@@ -109,7 +109,7 @@ struct FileJson {
     content: String,
 }
 
-pub(super) fn invalid(message: impl Into<String>) -> AppError {
+pub fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
 

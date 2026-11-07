@@ -409,7 +409,7 @@ fn normalize(text: &str) -> String {
 /// Consent names a cloud provider; a model that is not a cloud model sends
 /// nothing off the machine's configured servers and needs none (§14.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Consent {
+pub enum Consent {
     NotNeeded,
     Given {
         provider: CloudProvider,
@@ -425,7 +425,7 @@ pub(crate) enum Consent {
 }
 
 /// The consent `model` needs, given the provider the course consented to.
-pub(crate) fn consent(model: &ModelRef, consented_provider: Option<&str>) -> Consent {
+pub fn consent(model: &ModelRef, consented_provider: Option<&str>) -> Consent {
     let ModelRef::Cloud { provider, .. } = model else {
         return Consent::NotNeeded;
     };

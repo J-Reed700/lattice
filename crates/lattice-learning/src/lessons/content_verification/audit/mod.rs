@@ -10,12 +10,12 @@
 pub(crate) mod batches;
 mod calls;
 mod ledger;
-pub(crate) mod lesson;
-pub(crate) mod material;
-pub(crate) mod pages;
-pub(crate) mod policy;
-pub(crate) mod runs;
-pub(crate) mod tools;
+pub mod lesson;
+pub mod material;
+pub mod pages;
+pub mod policy;
+pub mod runs;
+pub mod tools;
 
 use std::collections::HashMap;
 
@@ -67,7 +67,7 @@ pub(crate) struct AuditClaim {
 
 /// Why an audit does not run, or stopped (§14.6).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum AuditStop {
+pub enum AuditStop {
     /// The course's audit is off, or was switched off during the run.
     TurnedOff,
     /// The audit is on and no Verifier model is set.
@@ -197,7 +197,7 @@ pub(crate) trait AuditGate: Send + Sync {
 
 /// The audit's progress, for the lesson's progress line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AuditProgress {
+pub enum AuditProgress {
     Batch { index: usize, of: usize },
 }
 
@@ -225,7 +225,7 @@ pub(crate) struct AuditSummary {
 }
 
 #[derive(Debug)]
-pub(crate) enum AuditOutcome {
+pub enum AuditOutcome {
     /// Every claim carries a current Verifier receipt.
     Completed(AuditSummary),
     /// Nothing more is sent: see the stop. Verdicts written so far stand.

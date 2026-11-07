@@ -60,7 +60,7 @@ impl Judged {
 /// count and then by any refusal; the claim is left unchecked only when not
 /// even the most needed passage fits. Whether support is enough is the
 /// provenance gate's decision.
-pub(crate) async fn judge_for_publication(
+pub async fn judge_for_publication(
     llm: &dyn LLMPort,
     claim: &str,
     passages: &[String],

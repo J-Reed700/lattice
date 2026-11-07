@@ -17,9 +17,8 @@ mod review;
 
 #[cfg(test)]
 pub(crate) use check::finding_of;
-pub(crate) use check::{
-    ClaimSourceCheck, SourceCheck, SourceFinding, SourceSays,
-};
+pub(crate) use check::{SourceCheck, SourceFinding, SourceSays};
+pub use check::ClaimSourceCheck;
 pub(super) use judge::judge_wording;
 
 use super::{DrillMaterial, PlantWording, ReviewerWording, StageCtx};

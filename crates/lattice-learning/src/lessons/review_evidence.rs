@@ -216,7 +216,7 @@ fn schema(keys: &[String], ids: &[String]) -> Value {
     json!({"type":"object","additionalProperties":false,"required":keys,"properties":properties})
 }
 
-pub(crate) async fn check(
+pub async fn check(
     llm: &dyn LLMPort,
     issues: &[ReviewFinding],
     authoring: &Value,

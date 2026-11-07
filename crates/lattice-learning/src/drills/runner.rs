@@ -187,7 +187,7 @@ fn output_of(result: &LearningLabExecutionResult) -> String {
 }
 
 /// A runner for `language`, where the runtime that runs it is available here.
-pub(crate) fn runner_for(
+pub fn runner_for(
     language: &str,
     runtimes: &BuiltinRuntimes,
 ) -> Option<Box<dyn CodeRunner>> {

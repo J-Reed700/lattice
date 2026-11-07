@@ -21,7 +21,7 @@ use crate::references::web_research;
 use crate::source_library::LearningSourceLibraryRepository;
 
 /// One course's web, as its Verifier audit may use it.
-pub(crate) struct VerifierPages {
+pub struct VerifierPages {
     pub pool: SqlitePool,
     pub program_id: String,
     pub web: Arc<dyn WebServiceTrait>,
