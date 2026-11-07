@@ -145,7 +145,7 @@ impl Held<'_> {
         let (page, opened) = open(at, ordinal, &self.statement).await?;
         match opened {
             Restored::Receipt(finding, reused) => {
-                let read = read_of(&self.statement, &page, finding, reused);
+                let read = read_of(&self.statement, &page, *finding, reused);
                 at.report(ordinal, &read);
                 self.read = Some(read);
             }

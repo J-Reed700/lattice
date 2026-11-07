@@ -22,3 +22,4 @@ mod text_edits;
 /// track L1's. Integration may move the declaration there.
 #[path = "content_verification/audit/mod.rs"]
 pub(crate) mod verifier_audit;
+mod writer_excerpts;

@@ -1,7 +1,6 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
-use crate::features::learning::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
-};
+use crate::features::learning::lessons::structured_call::{CallKind, ReasonFirst};
+use crate::features::learning::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use crate::features::learning::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
@@ -13,6 +12,9 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 pub(super) const POLICY: &str = "section-review-v3";
+
+/// The room the review's answer is given.
+const REVIEW_ANSWER_TOKENS: usize = 6000;
 
 /// What the review does with a blank finding after the response correction.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -208,6 +210,9 @@ async fn review_sections(
         ));
     };
     prompt.insert("candidate".into(), reviewed);
+    let excerpts = prompt
+        .get_mut("authoringContext")
+        .and_then(|context| WriterExcerpts::take(llm, context, candidate));
     let mut accepted = BTreeMap::<usize, BlockCheck>::new();
     let mut issues: Vec<ReviewFinding> = Vec::new();
     let mut problems = Vec::new();
@@ -238,36 +243,30 @@ async fn review_sections(
             );
             prompt.insert("responseCorrection".into(), json!("Correct the review response, not the lesson. Return checks only for sectionIndicesToReview. Read all passages in each requested section; select a passageId from that same section. Keep every established defect. Do not regenerate the lesson or treat a response-format error as a content defect."));
         }
-        let request = serde_json::to_string(&prompt)?;
-        let response_schema = schema(&indices, &passages);
+        let request = writer_excerpts::Request {
+            subject: "the teaching review",
+            system,
+            prompt: &prompt,
+            context: "authoringContext",
+            schema: schema(&indices, &passages),
+            output_tokens: REVIEW_ANSWER_TOKENS,
+        };
         // A correction repairs the response, not the judgement, so only the
         // first review reasons in prose before answering.
-        let raw = if attempt == 0 {
-            complete_reasoned_json(
-                llm,
-                system,
-                request,
-                response_schema,
-                6000,
-                progress,
-                ReasonFirst {
-                    kind: CallKind::Authoring,
-                    subject: "the teaching review",
-                    brief: REVIEW_DRAFT_BRIEF,
-                },
-            )
-            .await?
-        } else {
-            generation::complete_json_with_progress(
-                llm,
-                system,
-                request,
-                response_schema,
-                6000,
-                progress,
-            )
-            .await?
-        };
+        let reasoning = (attempt == 0).then_some(ReasonFirst {
+            kind: CallKind::Authoring,
+            subject: "the teaching review",
+            brief: REVIEW_DRAFT_BRIEF,
+        });
+        let raw = writer_excerpts::complete(
+            llm,
+            &request,
+            excerpts.as_ref(),
+            progress,
+            reasoning,
+            |text| Ok(text.to_owned()),
+        )
+        .await?;
         problems.clear();
         match generation::parse_json::<Review>(&raw) {
             Err(_) => problems.push("The previous review was incomplete. Give the issues and a check for every requested section.".into()),
@@ -350,7 +349,7 @@ async fn review_sections(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
-    use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+    use crate::features::learning::lessons::course_generation_tests::{ScriptedModel, Windowed};
 
     fn check(index: usize) -> Value {
         json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
@@ -717,6 +716,40 @@ mod tests {
             ]
         );
         assert_eq!(model.prompts.lock().unwrap().len(), 1);
+        Ok(())
+    }
+
+    /// The review carries the lesson beside the writer's prompt, whose
+    /// excerpts filled the room the writer had: on a 9B's 32k window the
+    /// review of a PostgreSQL lesson did not fit, and the lesson failed after
+    /// an hour of checked work (2026-11-06). Six excerpts of 2,000 tokens
+    /// here, the lesson citing the fifth, in a window that holds some.
+    #[tokio::test]
+    async fn a_review_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_first(
+    ) -> Result<()> {
+        let sources: Vec<_> = (0..6)
+            .map(|index| json!({"sourceIndex":index,"title":format!("Source {index}"),"url":null,"excerpt":"x ".repeat(4000)}))
+            .collect();
+        let mut lesson = candidate();
+        lesson["blocks"][1]["sourceIndex"] = json!(4);
+        let scripted = model(vec![
+            json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])}),
+        ]);
+        let window = Windowed(&scripted, 13_000);
+
+        review(
+            &window,
+            "Review instructional quality.",
+            json!({"authoringContext":{"goal":"Read query plans.","sources":sources}}),
+            &lesson,
+            None,
+            LengthRule::Fail,
+        )
+        .await?;
+
+        let sent = scripted.prompts.lock().unwrap()[0].clone();
+        assert!(sent.contains("Source 4"));
+        assert!(!sent.contains("Source 5"));
         Ok(())
     }
 

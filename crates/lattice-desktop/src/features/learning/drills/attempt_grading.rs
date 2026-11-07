@@ -89,6 +89,7 @@ impl<'a> AttemptGrading<'a> {
                     drill: &stored.drill,
                     learner,
                     suite: stored.suite.as_deref(),
+                    assessment: &assessment,
                 };
                 let tools = Tools {
                     llm: self.llm,
