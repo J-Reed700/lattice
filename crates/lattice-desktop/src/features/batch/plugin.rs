@@ -37,7 +37,7 @@ async fn require_embedding(container: &Container) -> Result<(), AppError> {
     })?;
     if !embedding.is_ready().await? {
         return Err(AppError::AiModelsNotInstalled(
-            "AI embedding model is not ready yet. Activate an embedding model in Settings -> Models and try again."
+            "AI embedding model is not ready yet. Activate an embedding model in Settings → Downloaded and try again."
                 .into(),
         ));
     }
@@ -169,12 +169,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             };
             // Registration settles imports the last process left running,
             // then resumes them from their pending items.
-            tauri::async_runtime::block_on(super::worker::register(
-                container.jobs(),
-                &BatchItems::new(container.db_pool().clone()),
-                files,
-                urls,
-            ))?;
+            tauri::async_runtime::block_on(container.jobs().register_all(
+                super::worker::job_kinds(
+                    &BatchItems::new(container.db_pool().clone()),
+                    files,
+                    urls,
+                ),
+            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

@@ -460,7 +460,7 @@ mod tests {
 
         assert_eq!(
             error,
-            "Service not available: AI embedding model is not ready yet. Activate an embedding model in Settings -> Models and try again."
+            "Service not available: AI embedding model is not ready yet. Activate an embedding model in Settings → Downloaded and try again."
         );
         assert_eq!(f.index.last_path(), None, "use case must not run");
     }

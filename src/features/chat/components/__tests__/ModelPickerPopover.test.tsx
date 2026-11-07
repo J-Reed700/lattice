@@ -210,7 +210,7 @@ describe('ModelPickerPopover', () => {
     await userEvent.click(screen.getByText('Model'));
 
     expect(screen.getByRole('menuitemradio', { name: /^Use default/ })).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('No chat model is selected in Settings → Models.')).toBeInTheDocument();
+    expect(screen.getByText('No chat model is selected in Settings → Downloaded.')).toBeInTheDocument();
     expect(screen.getByRole('menuitemradio', { name: /^Ornith-1\.5-9B/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('menuitemradio', { name: /^Llama 3\.2 3B/ })).toHaveAttribute('aria-checked', 'false');
   });

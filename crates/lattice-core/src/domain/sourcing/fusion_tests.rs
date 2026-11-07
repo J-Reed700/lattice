@@ -25,18 +25,18 @@ fn urls(leads: &[Lead]) -> Vec<&str> {
 
 #[test]
 fn matches_a_fusion_computed_by_hand() {
-    let (ddg, bing, wiki) = (id("duckduckgo"), id("bing_html"), id("wikipedia"));
+    let (ddg, brave, wiki) = (id("duckduckgo"), id("brave"), id("wikipedia"));
     let ddg_list = vec![
         lead("https://a.example/", &ddg, 1),
         lead("https://b.example/page", &ddg, 2),
         lead("https://c.example/", &ddg, 3),
         lead("https://d.example/doc#top", &ddg, 4),
     ];
-    let bing_list = vec![
+    let brave_list = vec![
         // B again, utm-tagged: folds into B.
-        lead("https://b.example/page?utm_source=x", &bing, 1),
-        lead("https://d.example/doc", &bing, 2),
-        lead("https://a.example/", &bing, 3),
+        lead("https://b.example/page?utm_source=x", &brave, 1),
+        lead("https://d.example/doc", &brave, 2),
+        lead("https://a.example/", &brave, 3),
     ];
     let mut archived_d = lead(
         "https://web.archive.org/web/2024/https://d.example/doc",
@@ -57,9 +57,9 @@ fn matches_a_fusion_computed_by_hand() {
                 leads: &ddg_list,
             },
             RankedList {
-                finder: &bing,
+                finder: &brave,
                 wave: 0,
-                leads: &bing_list,
+                leads: &brave_list,
             },
             RankedList {
                 finder: &wiki,
@@ -94,9 +94,9 @@ fn matches_a_fusion_computed_by_hand() {
     assert_eq!(d.kind, LeadKind::Page);
     assert_eq!(
         d.found_by,
-        vec![(ddg.clone(), 4), (bing.clone(), 2), (wiki.clone(), 1)]
+        vec![(ddg.clone(), 4), (brave.clone(), 2), (wiki.clone(), 1)]
     );
-    assert_eq!(fused[1].0.found_by, vec![(ddg, 2), (bing, 1)]);
+    assert_eq!(fused[1].0.found_by, vec![(ddg, 2), (brave, 1)]);
 }
 
 #[test]

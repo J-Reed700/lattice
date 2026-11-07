@@ -656,7 +656,7 @@ async fn web_search_result_carries_every_providers_outcome() {
             url: "https://tokio.rs/".into(),
             snippet: String::new(),
             published_date: None,
-            source: Some("bing_html".into()),
+            source: Some("brave".into()),
         },
     ]);
     web.set_search_outcomes(vec![
@@ -668,7 +668,7 @@ async fn web_search_result_carries_every_providers_outcome() {
             cause: Some("paused until 14:02:00 UTC (bot challenge)".into()),
         },
         FinderOutcomeDto {
-            finder: "bing_html".into(),
+            finder: "brave".into(),
             result: "answered".into(),
             leads: 1,
             elapsed_ms: 640,

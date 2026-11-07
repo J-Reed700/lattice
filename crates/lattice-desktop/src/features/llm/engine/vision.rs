@@ -1,7 +1,7 @@
 //! Which models may be sent pictures, and with what geometry.
 //!
 //! Capability is declared, never probed: a remote llama.cpp or Ollama model
-//! sees only when the user declared it in Settings → Models; a cloud model
+//! sees only when the user declared it in Settings → Downloaded; a cloud model
 //! sees by its declaration or, without one, by its provider's documented
 //! default. Every adapter is built with the answer and refuses pictures
 //! without one.
@@ -75,7 +75,7 @@ fn kind(geometry: VisionGeometry) -> &'static str {
 /// chat falls back to caption lines before it gets here; this is the net.
 pub(crate) fn not_set_up_to_see(model: &str) -> AppError {
     AppError::InvalidConfig(format!(
-        "{model} is not set up to see images (Settings → Models → Vision)"
+        "{model} is not set up to see images (Settings → Downloaded → Vision)"
     ))
 }
 
@@ -101,6 +101,17 @@ mod tests {
                 enabled,
                 geometry: VisionPreset::Qwen25Vl.geometry(),
             },
+        );
+    }
+
+    #[test]
+    fn the_refusal_names_the_tab_that_declares_vision() {
+        let AppError::InvalidConfig(message) = not_set_up_to_see("llava:7b") else {
+            panic!("a model nobody declared able to see is a configuration refusal");
+        };
+        assert_eq!(
+            message,
+            "llava:7b is not set up to see images (Settings → Downloaded → Vision)"
         );
     }
 

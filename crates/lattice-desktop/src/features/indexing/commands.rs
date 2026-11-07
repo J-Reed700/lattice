@@ -40,7 +40,7 @@ pub(crate) async fn require_embedding_ready(
 
     if !is_ready {
         return Err(AppError::ServiceNotAvailable(
-            "AI embedding model is not ready yet. Activate an embedding model in Settings -> Models and try again."
+            "AI embedding model is not ready yet. Activate an embedding model in Settings → Downloaded and try again."
                 .to_string(),
         ));
     }

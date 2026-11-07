@@ -56,7 +56,7 @@ describe('useChatSwitchActions spaces and defaults', () => {
     const { actions } = render();
     await act(() => actions.handleUseDefault());
     expect(h.state.setConversationModelChoice).toHaveBeenCalledWith('c1', { kind: 'default' });
-    expect(h.toast.success).toHaveBeenCalledWith('This chat now uses the app default', { message: 'No chat model is selected in Settings → Models.' });
+    expect(h.toast.success).toHaveBeenCalledWith('This chat now uses the app default', { message: 'No chat model is selected in Settings → Downloaded.' });
   });
 
   it('says why the default could not be restored', async () => {

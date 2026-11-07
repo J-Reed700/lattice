@@ -425,9 +425,7 @@ async fn answer<T>(
         reason,
         "The model's answer could not be used; asking once more"
     );
-    lesson_progress::stage(format!(
-        "The model's answer could not be used; asking once more. {reason}"
-    ));
+    lesson_progress::stage("The model's answer could not be used; asking once more.");
     let second = send_completing(llm, again, output_tokens, progress, step).await?;
     reject_incomplete_finish_reason(&second.finish_reason)?;
     match accept(&second.text) {

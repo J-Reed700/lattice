@@ -1,14 +1,15 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
 use super::arrivals::{poll_once, Arrival, Arrivals};
 use super::{
-    Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome, JobRecord, JobStore, NewJob,
-    RecoveryPolicy,
+    repository::STOPPED_THE_APP, Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome,
+    JobRecord, JobStatus, JobStore, NewJob, RecoveryPolicy,
 };
 use crate::shared::{
     error::{AppError, Result},
     runtime::background::BackgroundTasks,
 };
 use async_trait::async_trait;
+use futures::FutureExt;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -28,6 +29,17 @@ const WAITING_TURN: &str = "Waiting for its turn";
 /// The error code of a job ended because its failure repeated with nothing
 /// saved in between.
 pub const REPEATED_FAILURE: &str = "repeated_failure";
+/// The error code of a job whose handler panicked.
+pub const INTERNAL_ERROR: &str = "internal_error";
+const INTERNAL_ERROR_MESSAGE: &str = "Lattice hit an internal error while working on this. Retry it; if it happens again, Settings → Logs has the details.";
+
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a non-text panic payload".to_string())
+}
 
 type Observer = Arc<dyn Fn(&JobDto) + Send + Sync>;
 type Subjects = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
@@ -68,6 +80,13 @@ pub trait JobHandler: Send + Sync + 'static {
     fn failure(&self, job: &JobRecord, error: &AppError) -> JobFailure {
         let _ = job;
         JobFailure::classify(error)
+    }
+
+    /// Called after the runtime itself failed `job` with `code` (a panic, or a
+    /// job that stopped the app), so the feature can settle the state it keeps
+    /// outside the jobs table.
+    async fn failed_by_runtime(&self, job: &JobRecord, code: &str) {
+        let _ = (job, code);
     }
 }
 
@@ -324,7 +343,8 @@ impl JobRuntime {
         if self.kind(kind).is_some() {
             return Err(duplicate());
         }
-        let recovered = self.store().recover(kind, config.recovery).await?;
+        let recovered = self.store().recover_settling(kind, config.recovery).await?;
+        let told = handler.clone();
         {
             let mut kinds = self.kinds.write().unwrap_or_else(PoisonError::into_inner);
             if kinds.contains_key(kind) {
@@ -339,12 +359,34 @@ impl JobRuntime {
                 }),
             );
         }
-        for id in recovered {
+        for id in &recovered.stopped {
+            self.tell_failed(&told, id, STOPPED_THE_APP).await;
+        }
+        for id in recovered.settled {
             self.events.publish(&id).await;
         }
         self.start_dispatcher();
         self.wake.notify_one();
         Ok(())
+    }
+
+    /// Tells `handler` that the runtime failed job `id` with `code`, after the
+    /// failure was stored. A hook that fails or panics is logged, never fatal.
+    async fn tell_failed(&self, handler: &Arc<dyn JobHandler>, id: &str, code: &str) {
+        let job = match self.store().get(id).await {
+            Ok(job) if job.status == JobStatus::Failed => job,
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(job_id = id, %error, "Could not read a failed job to tell its handler");
+                return;
+            }
+        };
+        if let Err(payload) = std::panic::AssertUnwindSafe(handler.failed_by_runtime(&job, code))
+            .catch_unwind()
+            .await
+        {
+            tracing::error!(job_id = id, panic = %panic_text(payload.as_ref()), "A job handler panicked while told its job failed");
+        }
     }
 
     fn start_dispatcher(self: &Arc<Self>) {
@@ -503,7 +545,26 @@ impl JobRuntime {
             events: self.events.clone(),
             cancel: cancel.clone(),
         };
-        let outcome = kind.handler.run(&context).await;
+        let mut panicked = false;
+        let outcome = match std::panic::AssertUnwindSafe(kind.handler.run(&context))
+            .catch_unwind()
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(payload) => {
+                tracing::error!(job_id = id, kind = %context.job().kind, panic = %panic_text(payload.as_ref()), "A job handler panicked");
+                // A panic on the way out of a cancellation is the stop, as an error is.
+                if cancel.is_cancelled() {
+                    Ok(JobOutcome::Stopped)
+                } else {
+                    panicked = true;
+                    Ok(JobOutcome::Failed {
+                        code: INTERNAL_ERROR.into(),
+                        message: INTERNAL_ERROR_MESSAGE.into(),
+                    })
+                }
+            }
+        };
         if outcome.is_ok() || cancel.is_cancelled() {
             lock(&self.deferred).remove(id);
         }
@@ -528,8 +589,10 @@ impl JobRuntime {
             Err(_) if cancel.is_cancelled() => self.stop(id, kind.config).await,
             Err(error) => self.record_failure(id, &kind, &error).await,
         };
-        if let Err(error) = finalized {
-            tracing::warn!(job_id = id, %error, "Could not finalize job");
+        match finalized {
+            Ok(()) if panicked => self.tell_failed(&kind.handler, id, INTERNAL_ERROR).await,
+            Ok(()) => {}
+            Err(error) => tracing::warn!(job_id = id, %error, "Could not finalize job"),
         }
         self.events.publish(id).await;
     }
@@ -748,10 +811,102 @@ impl JobRuntime {
         self.tasks.wait().await;
     }
 
+    /// For an orderly exit that did not wait for every worker: suspends, in
+    /// one statement, the running jobs of the kinds registered to resume, and
+    /// clears the unsaved-start count of the rest, which the next recovery
+    /// settles by their kind's policy. Returns the jobs touched.
+    pub async fn suspend_running(&self) -> Result<usize> {
+        let resumable: Vec<String> = self
+            .kinds
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|(_, kind)| kind.config.recovery == RecoveryPolicy::Requeue)
+            .map(|(name, _)| name.clone())
+            .collect();
+        let resumable: Vec<&str> = resumable.iter().map(String::as_str).collect();
+        self.store().suspend_all_running(&resumable).await
+    }
+
     /// Waits until no worker is running or waiting for `id`.
     pub async fn finished(&self, id: &str) {
         while lock(&self.active).contains_key(id) {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
+
+    /// Registers each kind, returning at once with the kinds that could not
+    /// be. Each of those keeps being tried in the background, on its own
+    /// backoff, until it registers, so its saved jobs run once the cause has
+    /// passed. Nothing here waits on a failed kind.
+    pub async fn register_all(
+        self: &Arc<Self>,
+        kinds: Vec<JobKindRegistration>,
+    ) -> Vec<RegistrationFailure> {
+        let mut failures = Vec::new();
+        for registration in kinds {
+            let Err(error) = self
+                .register(
+                    &registration.kind,
+                    registration.handler.clone(),
+                    registration.config,
+                )
+                .await
+            else {
+                continue;
+            };
+            tracing::warn!(kind = %registration.kind, %error, "Could not register a job kind; retrying in the background");
+            self.retry_registration(&registration);
+            failures.push(RegistrationFailure {
+                kind: registration.kind,
+                error,
+            });
+        }
+        failures
+    }
+
+    fn retry_registration(self: &Arc<Self>, registration: &JobKindRegistration) {
+        let runtime = Arc::downgrade(self);
+        let cancel = self.tasks.token();
+        let kind = registration.kind.clone();
+        let handler = registration.handler.clone();
+        let config = registration.config;
+        let _ = self.tasks.spawn(async move {
+            let mut retries = 0u32;
+            loop {
+                let wait = tokio::time::sleep(config.backoff.delay(retries));
+                if until_cancelled(&cancel, wait).await.is_none() {
+                    return;
+                }
+                let Some(runtime) = Weak::upgrade(&runtime) else {
+                    return;
+                };
+                match runtime.register(&kind, handler.clone(), config).await {
+                    Ok(()) => {
+                        tracing::info!(%kind, retries, "Registered a job kind that had failed to");
+                        return;
+                    }
+                    Err(AppError::InvalidState(_)) if runtime.kind(&kind).is_some() => return,
+                    Err(error) => {
+                        tracing::warn!(%kind, %error, retries, "Could not register a job kind; retrying in the background");
+                        retries = retries.saturating_add(1);
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// One kind to register at startup.
+pub struct JobKindRegistration {
+    pub kind: String,
+    pub handler: Arc<dyn JobHandler>,
+    pub config: JobKindConfig,
+}
+
+/// A kind that could not be registered, and why.
+#[derive(Debug)]
+pub struct RegistrationFailure {
+    pub kind: String,
+    pub error: AppError,
 }

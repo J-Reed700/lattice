@@ -202,6 +202,120 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
         );
     }
 }
+fn openai_status(status: u16, body: &str) -> AppError {
+    status_error(
+        &LLMProvider::Openai,
+        "openai",
+        reqwest::StatusCode::from_u16(status).unwrap(),
+        body,
+    )
+}
+
+/// Only the body tells an account with nothing left from a busy one. No
+/// amount of waiting refills an account, so it is a setting to fix.
+#[test]
+fn an_account_out_of_quota_is_a_setting_to_fix_not_an_outage() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for body in [
+        r#"{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#,
+        r#"{"error":{"type":"insufficient_quota"}}"#,
+        r#"{"error":{"code":"insufficient_quota"}}"#,
+    ] {
+        let error = openai_status(429, body);
+        let AppError::InvalidConfig(text) = &error else {
+            panic!("{body}: {error:?}");
+        };
+        assert_eq!(
+            text,
+            "OpenAI says the account has no credit or quota left (HTTP 429): add credit to the account, or choose another model in Settings → AI"
+        );
+        assert!(!JobFailure::is_transient(&error), "{body}");
+    }
+}
+
+#[test]
+fn any_other_rate_limit_is_a_transient_rate_limit() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for body in [
+        "",
+        "not json",
+        r#"{"error":{"message":"Rate limit reached for requests","type":"requests","code":"rate_limit_exceeded"}}"#,
+        r#"{"error":{"type":"tokens","code":"rate_limit_exceeded"}}"#,
+    ] {
+        let error = openai_status(429, body);
+        assert!(
+            matches!(error, AppError::RateLimitExceeded(_)),
+            "{body}: {error:?}"
+        );
+        assert!(JobFailure::is_transient(&error), "{body}");
+        assert!(JobFailure::is_outage(&error), "{body}");
+    }
+}
+
+#[test]
+fn a_timeout_and_a_server_error_stay_network_outages() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for status in [408, 500, 502, 503, 529] {
+        for body in ["", r#"{"error":{"type":"insufficient_quota"}}"#] {
+            let error = openai_status(status, body);
+            assert!(
+                matches!(error, AppError::Network(_)),
+                "HTTP {status}: {error:?}"
+            );
+            assert!(JobFailure::is_transient(&error));
+        }
+    }
+}
+
+/// A refused account is told once: the request is not resent while it is
+/// refused, and nothing waits for it.
+#[tokio::test]
+async fn a_request_refused_for_quota_is_sent_once_and_reaches_the_caller_as_a_setting() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "0")
+                .set_body_json(json!({"error":{
+                    "message":"You exceeded your current quota, sensitive-provider-reason",
+                    "type":"insufficient_quota","code":"insufficient_quota"
+                }})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let error = client(&server)
+        .await
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::InvalidConfig(_)), "{error:?}");
+    assert!(!JobFailure::is_transient(&error));
+    assert!(!error.to_string().contains("sensitive-provider-reason"));
+}
+
+/// An ordinary rate limit is still retried, and when it persists the caller
+/// hears a rate limit, not a lost connection.
+#[tokio::test]
+async fn a_persistent_rate_limit_reaches_the_caller_as_a_rate_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "0")
+                .set_body_json(json!({"error":{"type":"requests","code":"rate_limit_exceeded"}})),
+        )
+        .mount(&server)
+        .await;
+    let error = client(&server)
+        .await
+        .complete(&CompletionRequest::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AppError::RateLimitExceeded(_)), "{error:?}");
+}
+
 async fn anthropic_client(server: &MockServer) -> CloudLlm {
     let settings = LLMSettingsDto {
         provider: LLMProvider::Anthropic,

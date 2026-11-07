@@ -90,7 +90,7 @@ pub(in crate::features::learning) async fn send<'a>(
 /// setting, not something the learner typed.
 pub(in crate::features::learning) fn window_too_small(llm: &dyn LLMPort, what: &str) -> AppError {
     AppError::InvalidConfig(format!(
-        "{what} in {}'s {}-token context window. Raise your Learning model's context length in Settings → Models, or choose a Learning model with a larger window",
+        "{what} in {}'s {}-token context window. Raise your Learning model's context length in Settings → Downloaded, or choose a Learning model with a larger window",
         llm.model_name(),
         llm.max_context_tokens()
     ))

@@ -56,7 +56,7 @@ export function statusLine(
     case 'noKey': {
       const service = keyServiceOf(finder);
       return {
-        text: service ? `Needs a ${keyName(service, keys)} key` : 'Needs a key',
+        text: service ? `Needs your ${keyName(service, keys)} key` : 'Needs a key',
         tone: 'muted',
       };
     }

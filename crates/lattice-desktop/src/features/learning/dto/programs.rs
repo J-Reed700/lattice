@@ -15,7 +15,7 @@ pub struct LearningVerifierAuditDto {
     pub consent_at: Option<i64>,
     /// The cloud provider consented to (`openai`, `anthropic`, `google`).
     pub consent_provider: Option<String>,
-    /// The Verifier set in Settings → Models; null when none is.
+    /// The Verifier set in Settings → Downloaded; null when none is.
     pub verifier: Option<ModelRef>,
     /// Where an audit sends lesson text, in words: "Anthropic (claude-x)",
     /// "your llama.cpp server (qwen3.5-27b)". Null when no Verifier is set.

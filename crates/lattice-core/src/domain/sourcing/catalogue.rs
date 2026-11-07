@@ -10,7 +10,6 @@
 pub const FINDER_IDS: &[&str] = &[
     // Open web engines
     "duckduckgo",
-    "bing_html",
     "brave",
     "tavily",
     "exa",
@@ -18,6 +17,7 @@ pub const FINDER_IDS: &[&str] = &[
     "marginalia",
     // Encyclopedia and owner sites
     "wikipedia",
+    "wikibooks",
     "wikidata",
     "site_discovery",
     // Code host and registries
@@ -57,7 +57,17 @@ pub const FINDER_IDS: &[&str] = &[
     "wayback_replay",
 ];
 
+/// Ids of finders that were registered once and are gone. Saved settings may
+/// still carry a switch for one: it is dropped on load rather than reported as
+/// a finder that never existed.
+pub const RETIRED_FINDER_IDS: &[&str] = &["bing_html"];
+
 /// Whether `id` names a registered finder.
 pub fn is_known_finder(id: &str) -> bool {
     FINDER_IDS.contains(&id)
+}
+
+/// Whether `id` names a finder that has been removed.
+pub fn is_retired_finder(id: &str) -> bool {
+    RETIRED_FINDER_IDS.contains(&id)
 }

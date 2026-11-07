@@ -7,7 +7,7 @@ use lattice_core::shared::error::AppError;
 /// The window a model has, as a refusal describes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Window {
-    /// Saved for the model in Settings → Models.
+    /// Saved for the model in Settings → Downloaded.
     Set(u32),
     /// What the bundled server running now came up with.
     Running(u32),
@@ -51,21 +51,21 @@ pub(crate) fn window_too_small(
     let model = model_phrase(role, name);
     let message = match window {
         Window::Set(set) => format!(
-            "{needs} {model} is set to {} in Settings → Models. Set it to {} or more, or {}.",
+            "{needs} {model} is set to {} in Settings → Downloaded. Set it to {} or more, or {}.",
             tokens(set),
             tokens(floor),
             larger(role)
         ),
         Window::Running(running) => format!(
             "{needs} {model} is running with {}. Set its context window to {} or more in \
-             Settings → Models, or {}.",
+             Settings → Downloaded, or {}.",
             tokens(running),
             tokens(floor),
             larger(role)
         ),
         Window::Trained(trained) => format!(
             "{needs} {model} was trained for {} tokens. Set its context window to {} or more in \
-             Settings → Models (a stretched window costs some quality), or {}.",
+             Settings → Downloaded (a stretched window costs some quality), or {}.",
             tokens(trained),
             tokens(floor),
             larger(role)
@@ -93,11 +93,11 @@ pub(crate) fn not_downloaded(role: ModelRole, origin: ModelOrigin, model_id: &st
     AppError::AiModelsNotInstalled(match (role, origin) {
         (ModelRole::Learning, _) | (_, ModelOrigin::LearningRole) => format!(
             "Your Learning model, {model_id}, is not downloaded any more. Choose one in \
-             Settings → Models under Learning."
+             Settings → Downloaded."
         ),
         (ModelRole::Verifier, _) | (_, ModelOrigin::VerifierRole) => format!(
             "Your Verifier model, {model_id}, is not downloaded any more. Choose one in \
-             Settings → Models under Verifier."
+             Settings → Downloaded."
         ),
         (_, ModelOrigin::ChatOverride) => {
             format!("This chat is set to {model_id}, which is no longer downloaded.")

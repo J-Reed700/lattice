@@ -2,15 +2,6 @@
 
 use super::*;
 
-#[test]
-fn test_normalize_search_url_accepts_bing_redirect_links() {
-    let raw = "/ck/a?!&&p=abc123";
-    assert_eq!(
-        normalize_search_url(raw).as_deref(),
-        Some("https://www.bing.com/ck/a?!&&p=abc123")
-    );
-}
-
 /// The exact protocol-relative href shape DuckDuckGo's HTML endpoint emits is
 /// unwrapped.
 #[test]
@@ -31,26 +22,13 @@ fn an_absolute_duckduckgo_redirect_resolves_to_its_destination() {
     );
 }
 
-/// Bing hides the destination in `u` as base64url behind a two-character
-/// marker. Taken verbatim from a search that fetched the wrapper and got
-/// back a page with no article text in it.
-#[test]
-fn a_bing_redirect_with_a_payload_resolves_to_its_destination() {
-    let raw = "https://www.bing.com/ck/a?!&&p=fc5438df02&ptn=3&fclid=398e7e7c&u=a1aHR0cHM6Ly9lbi5tLndpa2lwZWRpYS5vcmcvd2lraS9TaWxvXyhUVl9zZXJpZXMp&ntb=1";
-    assert_eq!(
-        normalize_search_url(raw).as_deref(),
-        Some("https://en.m.wikipedia.org/wiki/Silo_(TV_series)")
-    );
-}
-
 /// A wrapper we cannot read is still a better result than no result: the
 /// fetch may follow it server-side. Only a decodable payload is replaced.
 #[test]
 fn a_redirect_without_a_readable_destination_is_left_alone() {
     for raw in [
-        "https://www.bing.com/ck/a?!&&p=abc123",
         "https://duckduckgo.com/l/?rut=deadbeef",
-        "https://www.bing.com/ck/a?u=a1bm90LWEtdXJs",
+        "https://duckduckgo.com/l/?uddg=not-a-url",
     ] {
         assert_eq!(normalize_search_url(raw).as_deref(), Some(raw));
     }
@@ -63,13 +41,11 @@ fn an_ordinary_result_url_passes_through_untouched() {
 }
 
 #[test]
-fn both_engines_challenge_pages_are_recognised() {
+fn duckduckgos_challenge_page_is_recognised() {
     let duckduckgo = r#"<html><body>
             <div class="anomaly-modal__title">Unfortunately, bots use DuckDuckGo too.</div>
         </body></html>"#;
-    let bing = "<html><title>403 - Forbidden</title><p>Our systems have detected automated queries</p></html>";
     assert!(is_challenge_page(duckduckgo));
-    assert!(is_challenge_page(bing));
     assert!(!is_challenge_page(
         "<html><a class='result__a' href='https://a.example/'>A</a></html>"
     ));
@@ -100,18 +76,15 @@ fn test_parse_search_results_generic_fallback_skips_search_hosts() {
     let html = r#"
             <html>
                 <body>
-                    <a href="https://www.bing.com/search?q=arugula">Bing navigation</a>
-                    <a href="/ck/a?!&&p=abc123">Result via redirect</a>
+                    <a href="https://duckduckgo.com/?q=arugula">Search navigation</a>
+                    <a href="https://example.com/arugula">Result outside the engine</a>
                 </body>
             </html>
         "#;
 
     let hits = parse_results(html, 5);
     assert_eq!(hits.len(), 1);
-    assert_eq!(
-        hits[0].url.as_str(),
-        "https://www.bing.com/ck/a?!&&p=abc123"
-    );
+    assert_eq!(hits[0].url.as_str(), "https://example.com/arugula");
 }
 
 #[test]

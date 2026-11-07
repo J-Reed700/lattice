@@ -19,7 +19,7 @@ use std::time::Duration;
 /// A database on disk with room for a build's progress writes beside its
 /// reads, as the app's has: the one-connection test database would make a
 /// running build's progress write wait on the build's own read.
-async fn pool(dir: &Path) -> Result<SqlitePool> {
+pub(super) async fn pool(dir: &Path) -> Result<SqlitePool> {
     let options = SqliteConnectOptions::new()
         .filename(dir.join("lattice.db"))
         .create_if_missing(true)
@@ -68,7 +68,8 @@ async fn opened_course_goes_first(open_before_queueing: bool) -> Result<()> {
         &temp.path().join("course-index"),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
-    courses.register().await?;
+    let failures = courses.jobs.register_all(vec![courses.job_kind()]).await;
+    assert!(failures.is_empty(), "{failures:?}");
     let (a, _) = course(&pool, &texts("alpha", BATCH_SIZE * 3)).await?;
     let (b, _) = course(&pool, &texts("beta", BATCH_SIZE)).await?;
 

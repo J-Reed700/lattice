@@ -11,6 +11,7 @@ use super::store::{new_id, sha256_hex};
 use super::*;
 use crate::features::web::mocks::MockPageCapture;
 use crate::features::web::traits::page_snapshot::CaptureError;
+use lattice_core::shared::runtime::jobs::JobHandler;
 
 const CONVERSATION: &str = "conv-snap";
 const URL: &str = "https://Example.com/article";
@@ -45,6 +46,11 @@ struct Fixture {
 }
 
 async fn fixture() -> Fixture {
+    fixture_with(true).await
+}
+
+/// The snapshot kind's handler is registered unless the test does it itself.
+async fn fixture_with(register: bool) -> Fixture {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .idle_timeout(None)
@@ -76,7 +82,10 @@ async fn fixture() -> Fixture {
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
         sweep_gate,
     ));
-    service.register_job().await.unwrap();
+    if register {
+        let failures = service.jobs.register_all(vec![service.job_kind()]).await;
+        assert!(failures.is_empty(), "{failures:?}");
+    }
     Fixture {
         pool,
         dir,
@@ -233,6 +242,121 @@ async fn failed_row_is_retried_only_on_request_with_a_new_job() {
     assert!(second_job.is_some());
     assert_ne!(first_job, second_job);
     assert_eq!(f.capture.calls(), 2);
+}
+
+/// Panics on its first run, as a capture that hit a bug would, then runs the
+/// real job; the runtime's word that it failed the job goes to the real job.
+struct PanicsOnce {
+    real: job::WebPageSnapshotJob,
+    panicked: std::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl JobHandler for PanicsOnce {
+    async fn run(
+        &self,
+        context: &lattice_core::shared::runtime::jobs::JobContext,
+    ) -> Result<lattice_core::shared::runtime::jobs::JobOutcome> {
+        if !self
+            .panicked
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            panic!("capture exploded");
+        }
+        self.real.run(context).await
+    }
+
+    async fn failed_by_runtime(
+        &self,
+        record: &lattice_core::shared::runtime::jobs::JobRecord,
+        code: &str,
+    ) {
+        self.real.failed_by_runtime(record, code).await;
+    }
+}
+
+#[tokio::test]
+async fn a_panic_in_the_job_leaves_a_failed_row_that_can_be_retried() {
+    use lattice_core::shared::runtime::jobs::JobKindRegistration;
+    let f = fixture_with(false).await;
+    let failures = f
+        .service
+        .jobs
+        .register_all(vec![JobKindRegistration {
+            kind: job::KIND.into(),
+            handler: Arc::new(PanicsOnce {
+                real: job::WebPageSnapshotJob::new(Arc::clone(f.service.shared())),
+                panicked: std::sync::atomic::AtomicBool::new(false),
+            }),
+            config: job::job_config(),
+        }])
+        .await;
+    assert!(failures.is_empty(), "{failures:?}");
+
+    f.service
+        .ensure_capture(CONVERSATION, URL, false)
+        .await
+        .unwrap();
+    let failed = f.settled(URL).await;
+    assert_eq!(failed.status, WebPageSnapshotStatus::Failed);
+
+    f.service
+        .ensure_capture(CONVERSATION, URL, true)
+        .await
+        .unwrap();
+    assert_eq!(f.settled(URL).await.status, WebPageSnapshotStatus::Ready);
+}
+
+#[tokio::test]
+async fn a_job_the_runtime_failed_for_stopping_the_app_leaves_a_failed_row_that_can_be_retried() {
+    use lattice_core::shared::runtime::jobs::RecoveryPolicy;
+    let f = fixture_with(false).await;
+    // No handler is registered, so the queued job stays queued.
+    let queued = f
+        .service
+        .ensure_capture(CONVERSATION, URL, false)
+        .await
+        .unwrap();
+    let job_id = repository::SnapshotRepository::new(f.pool.clone())
+        .get(&queued.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .job_id
+        .expect("the row names its job");
+    let store = f.service.jobs.store();
+    store.claim(&job_id).await.unwrap().unwrap();
+    store
+        .recover(job::KIND, RecoveryPolicy::Requeue)
+        .await
+        .unwrap();
+    store.claim(&job_id).await.unwrap().unwrap();
+
+    let failures = f
+        .service
+        .jobs
+        .register_all(vec![f.service.job_kind()])
+        .await;
+    assert!(failures.is_empty(), "{failures:?}");
+    assert_eq!(
+        f.service
+            .jobs
+            .store()
+            .get(&job_id)
+            .await
+            .unwrap()
+            .error_code
+            .as_deref(),
+        Some("stopped_the_app")
+    );
+    let failed = f.settled(URL).await;
+    assert_eq!(failed.status, WebPageSnapshotStatus::Failed);
+
+    f.service
+        .ensure_capture(CONVERSATION, URL, true)
+        .await
+        .unwrap();
+    assert_eq!(f.settled(URL).await.status, WebPageSnapshotStatus::Ready);
 }
 
 #[tokio::test]

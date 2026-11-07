@@ -19,7 +19,7 @@ export function apiFailure(code: ApiError['code'], message: string, details: str
 /** What `AppError::PromptExceedsWindow` says, as `rejection.rs` words it; its code is PROMPT_EXCEEDS_WINDOW and it has no details. */
 export const TOO_LARGE_TEXT = 'llama.cpp rejected this request: 400 exceed_context_size_error. The request was 9,120 tokens; the configured context window is 8,192. The server refused it as too large. The prompt\'s size was estimated, not counted, so the request may not fit the configured context window of 8192 after all: shorten the request.';
 
-export const NO_LEARNING_MODEL_TEXT = 'No Learning model is set. Choose one in Settings → Models under Learning.';
+export const NO_LEARNING_MODEL_TEXT = 'No Learning model is set. Choose one in Settings → Downloaded.';
 
 export type PlainErrorCase = {
   name: string;

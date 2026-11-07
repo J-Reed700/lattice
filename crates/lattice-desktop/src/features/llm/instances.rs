@@ -251,7 +251,7 @@ impl Drop for LoadingGuard<'_> {
 
 /// Learning work refused because the Learning model's window was smaller
 /// than it needed, kept until that model serves learning work with a window
-/// that covers it, so Settings → Models can say so beside the model.
+/// that covers it, so Settings → Downloaded can say so beside the model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LearningShortfall {
     pub(crate) model: ModelRef,

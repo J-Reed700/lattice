@@ -73,7 +73,7 @@ pub struct WebSearchInput {
     #[serde(default)]
     pub offset: usize,
 
-    /// Preferred provider order (duckduckgo, bing, wikipedia).
+    /// Preferred provider order (duckduckgo, wikipedia).
     #[serde(default)]
     pub providers: Vec<String>,
 
