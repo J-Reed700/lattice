@@ -383,11 +383,11 @@ fn an_integrated_gpu_takes_the_companions_off_the_card() {
     let beside = choose_placement(&rtx_4080_with_integrated_gpu(), &c);
 
     assert!(c.bytes() > 0);
+    assert_eq!(beside.budget_bytes(), 16 * GIB - FIT_TARGET_BYTES);
     assert_eq!(
-        beside.budget_bytes(),
-        16 * GIB - FIT_TARGET_BYTES - DISPLAY_RESERVE_BYTES
+        beside.budget_bytes() - alone.budget_bytes(),
+        c.bytes() + DISPLAY_RESERVE_BYTES
     );
-    assert_eq!(beside.budget_bytes() - alone.budget_bytes(), c.bytes());
     assert_eq!(beside.device().name, RTX_4080);
     assert_eq!(beside.device().kind, DeviceKind::Dedicated);
 }
@@ -973,4 +973,123 @@ fn prints_the_recommended_lists_for_reference_machines() {
             );
         }
     }
+}
+
+fn laptop_card_beside_an_integrated_gpu() -> MachineProfile {
+    machine(
+        vec![
+            accelerator(
+                "NVIDIA GeForce RTX 4070 Laptop GPU",
+                7948 * (1 << 20),
+                AcceleratorKind::Dedicated,
+                Backend::Vulkan,
+            ),
+            accelerator(
+                "Intel(R) Iris(R) Xe Graphics",
+                32581 * (1 << 20),
+                AcceleratorKind::Integrated,
+                Backend::Vulkan,
+            ),
+        ],
+        32 * GIB,
+    )
+}
+
+#[test]
+fn a_card_beside_an_integrated_gpu_holds_no_desktop_so_only_the_fit_target_comes_off() {
+    let placement = choose_placement(&laptop_card_beside_an_integrated_gpu(), &companions());
+
+    assert_eq!(
+        placement.budget_bytes(),
+        7948 * (1 << 20) - FIT_TARGET_BYTES
+    );
+    assert_eq!(placement.device().kind, DeviceKind::Dedicated);
+}
+
+#[test]
+fn the_9b_fits_an_8_gib_laptop_card_beside_an_integrated_gpu() {
+    let nine = curated("qwen3.5-9b-q4_k_m");
+
+    let list = Recommender::new(Companions::default_pair(), false).recommend(
+        &laptop_card_beside_an_integrated_gpu(),
+        std::slice::from_ref(&nine),
+    );
+
+    assert_eq!(ids(&list), ["qwen3.5-9b-q4_k_m"]);
+    assert_eq!(list[0].verdict.kind, FitKind::Fits);
+}
+
+#[test]
+fn a_card_alone_keeps_the_display_reserve() {
+    let placement = choose_placement(&card_machine(8 * GIB), &Companions::none());
+
+    assert_eq!(
+        placement.budget_bytes(),
+        8 * GIB - FIT_TARGET_BYTES - DISPLAY_RESERVE_BYTES
+    );
+}
+
+fn with_active_parameters(id: &str, active_parameters_b: f32, rank: u8) -> Candidate {
+    Candidate {
+        active_parameters_b,
+        ..plain(id, "Q4_K_M", 4, active_parameters_b, 3_000_000_000, rank)
+    }
+}
+
+#[test]
+fn on_the_processor_only_fast_and_balanced_models_are_offered() {
+    let catalog = [
+        with_active_parameters("thorough", 14.1, 90),
+        with_active_parameters("balanced-edge", 14.0, 50),
+        with_active_parameters("fast-edge", 5.0, 40),
+    ];
+
+    let list = recommend_alone(&processor_only(), &catalog);
+
+    assert_eq!(ids(&list), ["balanced-edge", "fast-edge"]);
+}
+
+#[test]
+fn a_dedicated_card_still_offers_thorough_models() {
+    let catalog = [
+        with_active_parameters("thorough", 14.1, 90),
+        with_active_parameters("balanced-edge", 14.0, 50),
+        with_active_parameters("fast-edge", 5.0, 40),
+    ];
+
+    let list = recommend_alone(&card_machine(24 * GIB), &catalog);
+
+    assert_eq!(ids(&list), ["thorough", "balanced-edge", "fast-edge"]);
+}
+
+#[test]
+fn a_32_gib_processor_only_machine_is_not_given_a_thorough_model_as_best() {
+    let catalog: Vec<Candidate> = curated_chat_models()
+        .iter()
+        .map(Candidate::from_curated)
+        .collect();
+    let placement = choose_placement(&processor_only(), &Companions::default_pair());
+    let fits = |c: &&Candidate| judge(c, placement.as_ref()).kind == FitKind::Fits;
+    assert!(
+        catalog
+            .iter()
+            .filter(fits)
+            .any(|c| c.active_parameters_b > 14.0),
+        "the fixture must have a thorough model that would otherwise be offered"
+    );
+    let want = catalog
+        .iter()
+        .filter(|c| c.active_parameters_b <= 14.0)
+        .filter(fits)
+        .max_by_key(|c| c.rank)
+        .unwrap();
+
+    let list =
+        Recommender::new(Companions::default_pair(), false).recommend(&processor_only(), &catalog);
+
+    let by_id = |id: &str| catalog.iter().find(|c| c.id == id).unwrap();
+    assert!(list
+        .iter()
+        .all(|r| by_id(&r.id).active_parameters_b <= 14.0));
+    assert_eq!(list[0].id, want.id);
 }
