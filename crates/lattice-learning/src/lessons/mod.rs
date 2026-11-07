@@ -2,11 +2,11 @@
 
 pub(crate) mod call_plan;
 pub mod claim_reviews;
-pub(crate) mod content_verification;
+pub mod content_verification;
 #[cfg(test)]
 pub(crate) mod course_generation_tests;
 pub mod generation;
-pub(crate) mod generation_jobs;
+pub mod generation_jobs;
 pub(crate) mod lesson_drafts;
 pub mod lesson_evidence;
 pub(crate) mod lesson_progress;
@@ -21,5 +21,5 @@ mod text_edits;
 /// `content_verification/audit/`; declared here so that module's list stays
 /// track L1's. Integration may move the declaration there.
 #[path = "content_verification/audit/mod.rs"]
-pub(crate) mod verifier_audit;
+pub mod verifier_audit;
 mod writer_excerpts;

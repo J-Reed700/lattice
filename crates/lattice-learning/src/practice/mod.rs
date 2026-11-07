@@ -8,7 +8,7 @@ pub mod practical_repository;
 pub mod practical_runs;
 #[cfg(test)]
 pub(crate) mod practical_tests;
-pub(crate) mod practical_workspace;
+pub mod practical_workspace;
 pub mod practice_generation;
 pub mod practice_repository;
 #[cfg(test)]

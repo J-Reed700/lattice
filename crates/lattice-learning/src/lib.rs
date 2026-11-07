@@ -13,10 +13,10 @@ pub mod drills;
 pub mod dto;
 pub mod lessons;
 mod model_call;
-pub(crate) mod model_requirements;
+pub mod model_requirements;
 pub(crate) mod operations;
-mod patient_model;
-pub(crate) mod persistence;
+pub mod patient_model;
+pub mod persistence;
 pub mod planning;
 pub mod portability;
 pub mod practice;
@@ -67,8 +67,8 @@ pub use runtime::lab_runtime;
 pub use runtime::python_runtime;
 pub use runtime::runtime_catalog;
 
-pub(crate) use lessons::content_verification;
-use lessons::generation_jobs;
+pub use lessons::content_verification;
+pub use lessons::generation_jobs;
 use lessons::lesson_drafts;
 use lessons::lesson_progress;
 use lessons::review_evidence;
@@ -82,9 +82,9 @@ use planning::outline_references;
 use planning::outline_repair;
 use planning::outline_review;
 use planning::outline_review_scope;
-use practice::practical_workspace;
-use references::source_identity;
-use references::source_workflows;
+pub use practice::practical_workspace;
+pub use references::source_identity;
+pub use references::source_workflows;
 
 #[cfg(test)]
 mod backend_boundary_tests;

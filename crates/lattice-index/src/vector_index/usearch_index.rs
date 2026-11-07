@@ -181,7 +181,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
 
 /// Write `bytes` so that readers see either the previous file or the whole new
 /// one, never a prefix of it.
-pub(crate) fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
+pub fn write_file_atomically(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
             AppError::FileStorage(format!(

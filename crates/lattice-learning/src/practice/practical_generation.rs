@@ -30,7 +30,7 @@ mod practical_evaluator;
 use super::interview_answers::{
     generate_answer_guides, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH,
 };
-pub(crate) use interview_generation::generate_interview_plan;
+pub use interview_generation::generate_interview_plan;
 use interview_generation::public_interview_activity;
 
 pub const INTERVIEW_PLAN_FILE_PATH: &str = "interview/plan.json";
@@ -131,7 +131,7 @@ pub(super) fn present(value: &str, label: &str) -> Result<()> {
 }
 
 /// What a learner may write to ask for an activity: the bound a chat message has.
-pub(crate) fn validate_request(learner_brief: &str) -> Result<()> {
+pub fn validate_request(learner_brief: &str) -> Result<()> {
     bounded(learner_brief, "Practical request", MAX_CHAT_MESSAGE_CHARS)
 }
 
@@ -291,7 +291,7 @@ pub async fn generate_activity(
     .await
 }
 
-pub(crate) async fn generate_activity_with_plan(
+pub async fn generate_activity_with_plan(
     llm: &dyn LLMPort,
     kind: LearningPracticalActivityKind,
     learner_brief: &str,

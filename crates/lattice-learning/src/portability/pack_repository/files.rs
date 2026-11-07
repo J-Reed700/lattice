@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use lattice_core::shared::error::Result;
 use std::path::{Path, PathBuf};
 
-pub(crate) const PACK_EXTENSION: &str = "lattice-learning";
+pub const PACK_EXTENSION: &str = "lattice-learning";
 const MAX_STEM_BYTES: usize = 80;
 const MAX_PACK_BYTES: u64 = 256 * 1024 * 1024;
 

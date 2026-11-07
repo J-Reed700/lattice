@@ -660,7 +660,7 @@ pub(crate) async fn finish(
     Ok(program)
 }
 
-pub(crate) async fn repair_saved(
+pub async fn repair_saved(
     repo: &LearningRepository,
     drafts: &DraftRunRegistry,
     llm: &dyn LLMPort,

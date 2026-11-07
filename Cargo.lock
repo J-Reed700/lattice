@@ -4532,6 +4532,9 @@ dependencies = [
  "jsonschema",
  "keyring",
  "lattice-core",
+ "lattice-index",
+ "lattice-learning",
+ "lattice-store",
  "lazy-regex",
  "lol_html",
  "lopdf",
@@ -4612,6 +4615,78 @@ dependencies = [
  "zeroize",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "lattice-index"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "lattice-core",
+ "parking_lot",
+ "proptest",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "usearch",
+]
+
+[[package]]
+name = "lattice-learning"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs 5.0.1",
+ "fsrs",
+ "futures",
+ "hex",
+ "jsonschema",
+ "lattice-core",
+ "lattice-index",
+ "lattice-store",
+ "lazy-regex",
+ "parking_lot",
+ "rand 0.8.6",
+ "regex",
+ "reqwest 0.12.28",
+ "rquickjs",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "specta",
+ "sqlx",
+ "tar",
+ "tauri-utils",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "url",
+ "uuid",
+ "walkdir",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wiremock",
+ "zstd",
+]
+
+[[package]]
+name = "lattice-store"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "lattice-core",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]

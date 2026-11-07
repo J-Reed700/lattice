@@ -11,7 +11,7 @@ use sqlx::Row;
 
 /// The course's audit setting as stored.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct ProgramVerifierAudit {
+pub struct ProgramVerifierAudit {
     pub on: bool,
     pub web_search: bool,
     /// When consent to send lesson text to a cloud provider was confirmed.

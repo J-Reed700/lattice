@@ -5,10 +5,10 @@ pub mod course_index;
 pub(crate) mod gathering;
 #[cfg(test)]
 mod gathering_tests;
-pub(crate) mod source_identity;
+pub mod source_identity;
 pub mod source_library;
 pub mod source_selector;
-pub(crate) mod source_workflows;
+pub mod source_workflows;
 pub mod sources;
 pub mod trust;
 pub(crate) mod web_research;

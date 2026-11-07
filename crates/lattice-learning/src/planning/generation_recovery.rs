@@ -6,7 +6,7 @@ use lattice_core::shared::runtime::jobs::{
     Backoff, Deferral, JobFailure, JobKindConfig, JobRecord, RecoveryPolicy,
 };
 
-pub(crate) const LESSON_PREPARATION: &str = "learning.lesson_preparation";
+pub const LESSON_PREPARATION: &str = "learning.lesson_preparation";
 
 /// Jobs for a course share its source snapshots and accepted outline: each one
 /// refreshes and re-embeds the same sources and seeds the same snapshot, and
@@ -14,7 +14,7 @@ pub(crate) const LESSON_PREPARATION: &str = "learning.lesson_preparation";
 /// are independent, and how their model calls share the backend is the
 /// inference scheduler's decision. A running preparation resumes from its
 /// checkpoints after a restart.
-pub(crate) fn lesson_job_config() -> JobKindConfig {
+pub fn lesson_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
         .exclusive_per_subject()
         .backoff(Backoff::default())

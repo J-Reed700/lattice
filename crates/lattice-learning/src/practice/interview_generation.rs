@@ -486,7 +486,7 @@ pub(super) fn unanswered_interview_feedback(
     })
 }
 
-pub(crate) async fn generate_interview_plan(
+pub async fn generate_interview_plan(
     llm: &dyn LLMPort,
     target: &LearningInterviewTargetDto,
     lesson: &LearningLessonDto,

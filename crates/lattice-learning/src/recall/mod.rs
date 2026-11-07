@@ -13,6 +13,6 @@ pub(crate) use study_generation::deck_output_tokens;
 pub mod study_repository;
 #[cfg(test)]
 mod study_repository_tests;
-pub(crate) mod study_service;
+pub mod study_service;
 #[cfg(test)]
 mod study_tests;

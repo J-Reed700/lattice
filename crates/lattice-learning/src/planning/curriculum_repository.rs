@@ -23,15 +23,14 @@ use sqlx::{Row, SqlitePool};
 
 #[path = "generation_recovery.rs"]
 mod generation_recovery;
-pub(crate) use generation_recovery::{
-    lesson_failure, lesson_job_config, LESSON_PREPARATION,
-};
+pub(crate) use generation_recovery::lesson_failure;
+pub use generation_recovery::{LESSON_PREPARATION, lesson_job_config};
 
 mod diagnostics;
 mod jobs;
 mod preparation;
 mod programs;
-pub(crate) use programs::ProgramVerifierAudit;
+pub use programs::ProgramVerifierAudit;
 
 use diagnostics::decode_diagnostic_row;
 
@@ -39,7 +38,7 @@ use diagnostics::decode_diagnostic_row;
 #[path = "generation_context_tests.rs"]
 mod generation_context_tests;
 
-pub(crate) fn stable_job_operation_id(program_id: &str, lesson_id: &str, revision: i64) -> String {
+pub fn stable_job_operation_id(program_id: &str, lesson_id: &str, revision: i64) -> String {
     use sha2::Digest;
     let digest = sha2::Sha256::digest(
         format!("learning-prepare:{program_id}:{lesson_id}:{revision}").as_bytes(),

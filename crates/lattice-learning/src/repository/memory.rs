@@ -2,7 +2,7 @@
 use super::*;
 
 /// The title and first text a lesson's note starts from.
-pub(crate) fn lesson_note_draft(
+pub fn lesson_note_draft(
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
 ) -> (String, String) {

@@ -12,7 +12,7 @@ use lattice_core::shared::error::{AppError, Result};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 
-pub(crate) const NOTE_COLUMNS: &str = r#"
+pub const NOTE_COLUMNS: &str = r#"
     id,
     revision,
     title,
@@ -30,7 +30,7 @@ pub(crate) const NOTE_COLUMNS: &str = r#"
 
 /// Decodes one `NOTE_COLUMNS` row. The record lives in core, which does not
 /// depend on the database driver, so it cannot derive `sqlx::FromRow`.
-pub(crate) fn note_from_row(
+pub fn note_from_row(
     row: SqliteRow,
 ) -> std::result::Result<WorkspaceNoteRecord, sqlx::Error> {
     Ok(WorkspaceNoteRecord {
@@ -51,7 +51,7 @@ pub(crate) fn note_from_row(
 }
 
 /// Decodes an `id, updated_at, created_at` row.
-pub(crate) fn timestamp_from_row(
+pub fn timestamp_from_row(
     row: SqliteRow,
 ) -> std::result::Result<NoteTimestampRecord, sqlx::Error> {
     Ok(NoteTimestampRecord {

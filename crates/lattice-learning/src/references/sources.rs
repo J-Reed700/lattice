@@ -90,7 +90,7 @@ pub(crate) fn preview(
 }
 /// Capture every indexed chunk of a library document, in order. The joined
 /// text is what retrieval later maps the library's chunk hits back onto.
-pub(crate) async fn capture_document(
+pub async fn capture_document(
     library: &dyn LibraryPassagesPort,
     document_id: &str,
 ) -> Result<crate::source_library::CapturedLearningSource> {
@@ -213,7 +213,7 @@ pub async fn acquire(
     })
 }
 
-pub(crate) async fn ensure_before_use_sources(
+pub async fn ensure_before_use_sources(
     deps: &SourceDeps,
     program_id: &str,
 ) -> lattice_core::shared::error::Result<()> {
