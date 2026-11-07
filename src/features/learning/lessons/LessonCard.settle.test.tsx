@@ -34,6 +34,8 @@ const lesson: LearningLessonDto = { id: 'lesson-1', title: 'Phase changes', obje
 const program = { summary: { id: 'program-1', revision: 44, status: 'active' }, sources: [], modules: [] } as unknown as LearningProgramDto;
 
 const STATEMENT = 'Water boils at 100 °C on Everest.';
+// The sentence the review holds for the claim, which neither the statement nor the evidence's quote repeats.
+const SENTENCE = 'Water boils at 100 °C on Everest, as the guide notes.';
 const REVISION = 9;
 const ok = <T,>(data: T) => ({ ok: true, data });
 
@@ -42,18 +44,18 @@ const evidenceClaim = (overrides: Record<string, unknown>) => ({
   passages: [], resolution: 'verified', note: null, sufficiency: null, class: 'sourced', label: null, parts: [], unverifiedReason: null, claimId: 'claim-v', ...overrides,
 }) as LearningClaimEvidenceDto;
 const unverified = (reason: Reason, overrides: Record<string, unknown> = {}) => evidenceClaim({
-  claim: STATEMENT, contentQuote: STATEMENT, resolution: 'not_verified', unverifiedReason: reason, verdict: 'unsupported', claimId: 'claim-1', ...overrides,
+  claim: STATEMENT, contentQuote: 'Everest water boils at 100 °C.', resolution: 'not_verified', unverifiedReason: reason, verdict: 'unsupported', claimId: 'claim-1', ...overrides,
 });
-const confirmed = () => evidenceClaim({ claim: STATEMENT, contentQuote: STATEMENT, resolution: 'confirmed_by_you', claimId: 'claim-1' });
+const confirmed = () => evidenceClaim({ claim: STATEMENT, contentQuote: 'Everest water boils at 100 °C.', resolution: 'confirmed_by_you', claimId: 'claim-1' });
 const evidence = (teachingClaims: LearningClaimEvidenceDto[]): LearningLessonEvidenceDto => ({
   policy: 'lesson-evidence-v21', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash',
   claimCount: teachingClaims.length, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true, teachingClaims,
 });
 
 /** The evidence reads as settled once the claim action has run, as the backend's evidence follows each claim's state. */
-function serve(reason: Reason, overrides: Record<string, unknown> = {}) {
+function serve(reason: Reason, overrides: Record<string, unknown> = {}, reviewed = true) {
   let settled = false;
-  api.review.mockResolvedValue(ok(review([claimItem({ claimId: 'claim-1', state: { state: 'unverified', at: 2, reason }, verdictKind: null, availableActions: ['confirm', 'edit', 'attach_evidence'] })], { state: 'ready', revision: REVISION })));
+  api.review.mockResolvedValue(ok(review(reviewed ? [claimItem({ claimId: 'claim-1', location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null }, state: { state: 'unverified', at: 2, reason }, verdictKind: null, availableActions: ['confirm', 'edit', 'attach_evidence'] })] : [], { state: 'ready', revision: REVISION })));
   api.evidence.mockImplementation(async () => ok(evidence(settled ? [confirmed()] : [unverified(reason, overrides)])));
   api.resolve.mockImplementation(async () => { settled = true; return ok({ revision: REVISION + 1 }); });
 }
@@ -86,6 +88,7 @@ describe('Settling a published lesson’s unverified statements from the note', 
     for (const name of ['This is right', 'Edit', 'Check the sources']) expect(inNote.getByRole('button', { name })).toBeVisible();
   });
 
+  // Guard: nothing is offered today, so this cannot fail until the actions exist.
   it('offers no action on a statement from a report that names no claim', async () => {
     serve('unsupported', { claimId: null });
     show();
@@ -125,6 +128,7 @@ describe('Settling a published lesson’s unverified statements from the note', 
     await noteGone();
   });
 
+  // Guard: nothing is offered today, so this cannot fail until the actions exist.
   it('does not ask a statement that is not contradicted for a reason', async () => {
     serve('unchecked');
     show();
@@ -133,19 +137,27 @@ describe('Settling a published lesson’s unverified statements from the note', 
     expect(screen.queryByText('A source disagrees with this. Why is it right?')).not.toBeInTheDocument();
   });
 
-  it('opens the edit box holding the statement, and Save sends the user’s sentence', async () => {
+  it('offers neither "This is right" nor "Edit" on a statement whose claim the review does not hold', async () => {
+    serve('unsupported', {}, false);
+    show();
+    const inNote = await note();
+    expect(inNote.getByText(/Water boils at 100 °C on Everest\./)).toBeVisible();
+    for (const name of ['This is right', 'Edit']) expect(inNote.queryByRole('button', { name })).not.toBeInTheDocument();
+  });
+
+  it('opens the edit box holding the claim’s sentence from the review, and Save sends the user’s text', async () => {
     serve('unsupported');
     show();
     await userEvent.click((await note()).getByRole('button', { name: 'Edit' }));
     const box = screen.getByLabelText('Your version');
-    expect(box).toHaveValue(STATEMENT);
+    expect(box).toHaveValue(SENTENCE);
     await userEvent.clear(box);
     await userEvent.type(box, 'Water boils at about 70 °C on Everest.');
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(api.resolve).toHaveBeenCalledTimes(1));
     expect(api.resolve).toHaveBeenCalledWith(expect.objectContaining({
       claimId: 'claim-1', expectedRevision: REVISION,
-      action: { action: 'edit', before: STATEMENT, after: 'Water boils at about 70 °C on Everest.' },
+      action: { action: 'edit', before: SENTENCE, after: 'Water boils at about 70 °C on Everest.' },
     }));
     await noteGone();
   });
