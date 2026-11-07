@@ -38,6 +38,11 @@ pub enum AppError {
     /// No Learning model is set; the text says where to choose one
     LearningModelNotSet(String),
 
+    /// The bundled model server cannot run at all (binary missing or blocked,
+    /// a library missing, exiting at once); reinstalling or another model fixes
+    /// it, waiting does not. The text is what the learner reads.
+    ModelServerCannotStart(String),
+
     /// Resource not found
     NotFound(String),
 
@@ -254,6 +259,7 @@ impl AppError {
             AppError::Database(_) => "DATABASE_ERROR",
             AppError::InvalidConfig(_) => "INVALID_CONFIG",
             AppError::LearningModelNotSet(_) => "LEARNING_MODEL_NOT_SET",
+            AppError::ModelServerCannotStart(_) => "MODEL_SERVER_CANNOT_START",
             AppError::NotFound(_) => "NOT_FOUND",
             AppError::PermissionDenied(_) => "PERMISSION_DENIED",
             AppError::InvalidInput(_) => "INVALID_INPUT",
@@ -360,6 +366,7 @@ impl AppError {
             | AppError::PromptExceedsWindow { .. }
             | AppError::InvalidConfig(_)
             | AppError::LearningModelNotSet(_)
+            | AppError::ModelServerCannotStart(_)
             | AppError::PermissionDenied(_)
             | AppError::FileTooLarge { .. }
             | AppError::UnsupportedFileType { .. }
@@ -514,6 +521,7 @@ impl fmt::Display for AppError {
                 e
             ),
             AppError::LearningModelNotSet(e) => write!(f, "{}", e),
+            AppError::ModelServerCannotStart(e) => write!(f, "{}", e),
             AppError::NotFound(e) => write!(f, "Not found: {}", e),
             AppError::PermissionDenied(e) => write!(
                 f,

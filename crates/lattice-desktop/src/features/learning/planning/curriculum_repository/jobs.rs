@@ -522,7 +522,9 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
             .map_err(|e| AppError::Serialization(e.to_string()))?,
         result_id: job.result_ref,
         error: job.error_message,
-        error_code: None,
+        error_code: job
+            .cause_code
+            .and_then(|code| serde_json::from_value(serde_json::Value::String(code)).ok()),
         retry_of_job_id: job.retry_of_job_id,
         created_at: job.created_at,
         started_at: job.started_at,

@@ -435,12 +435,15 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         )
     ) as Arc<dyn lattice_core::application::ports::UnitOfWorkFactory>;
 
-    let download_saga = Arc::new(DownloadSaga::new(
-        Arc::clone(&event_bus),
-        Arc::clone(&model_file_repository),
-        Arc::clone(&uow_factory),
-        Arc::clone(&downloaded_model_repository),
-    ));
+    let download_saga = Arc::new(
+        DownloadSaga::new(
+            Arc::clone(&event_bus),
+            Arc::clone(&model_file_repository),
+            Arc::clone(&uow_factory),
+            Arc::clone(&downloaded_model_repository),
+        )
+        .with_settings(Arc::clone(container.settings_repository())),
+    );
     tracing::info!("DownloadSaga initialized");
 
     let saga_for_listener = Arc::clone(&download_saga);

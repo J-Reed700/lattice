@@ -29,7 +29,7 @@ use lattice_core::shared::error::{AppError, Result};
 fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
     match error {
         LLMError::SidecarBinaryUnusable(message) => {
-            Some(AppError::ServiceNotAvailable(message.clone()))
+            Some(crate::features::llm::engine::types::server_cannot_start(message))
         }
         _ => None,
     }

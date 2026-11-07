@@ -113,8 +113,13 @@ impl From<AppError> for ApiError {
             },
 
             AppError::LearningModelNotSet(ref details) => ApiError {
-                code: ErrorCode::InvalidConfig,
-                message: "Invalid configuration".to_string(),
+                code: ErrorCode::LearningModelNotSet,
+                message: "No Learning model is set".to_string(),
+                details: Some(details.clone()),
+            },
+            AppError::ModelServerCannotStart(ref details) => ApiError {
+                code: ErrorCode::ModelLoadError,
+                message: "The model server could not start".to_string(),
                 details: Some(details.clone()),
             },
 
@@ -138,7 +143,7 @@ impl From<AppError> for ApiError {
                 details: None,
             },
             AppError::PromptExceedsWindow { ref message, .. } => ApiError {
-                code: ErrorCode::InvalidInput,
+                code: ErrorCode::PromptExceedsWindow,
                 message: message.clone(),
                 details: None,
             },

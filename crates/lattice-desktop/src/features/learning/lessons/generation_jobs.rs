@@ -242,7 +242,7 @@ impl LessonGenerationWorker {
             ));
         }
         if program.sources.is_empty() {
-            return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. The MVP needs saved evidence to check its teaching.".into()));
+            return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. Lattice checks what it teaches against saved sources.".into()));
         }
         let workspace =
             crate::features::learning::source_library::LearningSourceLibraryRepository::new(

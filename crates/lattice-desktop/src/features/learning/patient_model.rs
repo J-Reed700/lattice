@@ -25,10 +25,14 @@ pub(in crate::features::learning) trait WaitObserver:
 }
 
 impl WaitObserver for OutlineProgress {
-    fn waiting(&self, seconds: u64, _cause: &AppError) {
+    fn waiting(&self, seconds: u64, cause: &AppError) {
+        self.model_wait(Some(seconds), Some(cause));
         self.detail(format!(
             "Waiting for the model server (retrying in {seconds}s)"
         ));
+    }
+    fn answered(&self) {
+        self.model_wait(None, None);
     }
     fn check_cancelled(&self) -> Result<()> {
         OutlineProgress::check_cancelled(self)
@@ -65,7 +69,10 @@ where
                 }
                 retries += 1;
             }
-            result => return result,
+            result => {
+                observer.answered();
+                return result;
+            }
         }
     }
 }

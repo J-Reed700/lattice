@@ -254,7 +254,11 @@ fn a_local_model_launches_with_its_own_saved_configuration_and_a_remote_one_with
 #[test]
 fn unusable_sidecar_is_not_reported_as_a_model_failure() {
     let mapped = unusable_sidecar(&LLMError::SidecarBinaryUnusable("broken".into()));
-    assert!(matches!(mapped, Some(AppError::ServiceNotAvailable(m)) if m == "broken"));
+    assert!(matches!(
+        mapped,
+        Some(AppError::ModelServerCannotStart(m))
+            if m == "The model server could not start: broken. Reinstall Lattice, or choose another model in Settings."
+    ));
     assert!(unusable_sidecar(&LLMError::GenerationFailed("bad gguf".into())).is_none());
     assert!(unusable_sidecar(&LLMError::Timeout).is_none());
 }

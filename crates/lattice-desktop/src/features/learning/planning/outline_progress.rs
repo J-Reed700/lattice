@@ -130,6 +130,25 @@ impl OutlineProgress {
         self.emit();
     }
 
+    /// Record that the run is waiting out `cause` for `seconds`, or, with
+    /// `None`, that the model server answered. Publishes only a change.
+    pub fn model_wait(&self, seconds: Option<u64>, cause: Option<&AppError>) {
+        let wait = seconds
+            .zip(cause)
+            .map(|(retry_in_seconds, cause)| ModelWaitDto {
+                retry_in_seconds,
+                error_code: ApiError::from(cause.clone()).code,
+            });
+        {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.waiting == wait {
+                return;
+            }
+            state.waiting = wait;
+        }
+        self.emit();
+    }
+
     pub fn model(&self, name: &str) {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).model = Some(name.into());
     }
