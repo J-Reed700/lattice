@@ -137,7 +137,8 @@ impl Rig {
             Arc::default(),
             Arc::default(),
         );
-        manager.register().await.unwrap();
+        let failures = manager.jobs.register_all(vec![manager.job_kind()]).await;
+        assert!(failures.is_empty(), "{failures:?}");
         manager
     }
 

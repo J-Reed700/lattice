@@ -76,7 +76,8 @@ async fn fixture() -> Fixture {
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
         sweep_gate,
     ));
-    service.register_job().await.unwrap();
+    let failures = service.jobs.register_all(vec![service.job_kind()]).await;
+    assert!(failures.is_empty(), "{failures:?}");
     Fixture {
         pool,
         dir,

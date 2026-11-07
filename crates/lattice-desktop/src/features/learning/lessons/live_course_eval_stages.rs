@@ -592,7 +592,8 @@ async fn lesson_stage(
                 Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
                 Arc::default(),
             );
-            courses.register().await?;
+            let failures = runtime.register_all(vec![courses.job_kind()]).await;
+            assert!(failures.is_empty(), "{failures:?}");
             let worker = small::worker(pool, run.model.clone(), run.web.clone(), Some(courses));
             small::run_job(runtime, worker, &id, &job_dir, &observe).await?
         }

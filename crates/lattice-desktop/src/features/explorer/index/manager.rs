@@ -43,7 +43,7 @@ use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
 use lattice_core::shared::{
     runtime::{
         background::BackgroundTasks,
-        jobs::{JobRecord, JobRuntime, JobStatus, NewJob},
+        jobs::{JobKindRegistration, JobRecord, JobRuntime, JobStatus, NewJob},
     },
     Result,
 };
@@ -189,16 +189,14 @@ impl FolderIndexManager {
         *self.folder_changes.lock() = Some(sink);
     }
 
-    /// Registers the build job kind. Builds the last process left running
-    /// resume, after their folder is checked to still exist.
-    pub async fn register(self: &Arc<Self>) -> Result<()> {
-        self.jobs
-            .register(
-                build::FOLDER_INDEX,
-                Arc::new(build::BuildJob::new(Arc::downgrade(self))),
-                build_job_config(),
-            )
-            .await
+    /// The build job kind. Registering it resumes the builds the last process
+    /// left running, after their folder is checked to still exist.
+    pub fn job_kind(self: &Arc<Self>) -> JobKindRegistration {
+        JobKindRegistration {
+            kind: build::FOLDER_INDEX.into(),
+            handler: Arc::new(build::BuildJob::new(Arc::downgrade(self))),
+            config: build_job_config(),
+        }
     }
 
     pub fn config(&self) -> &ManagerConfig {

@@ -5,7 +5,10 @@ use super::items::{BatchItem, BatchItems, ItemState};
 use async_trait::async_trait;
 use lattice_core::shared::{
     error::Result,
-    runtime::jobs::{JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, RecoveryPolicy},
+    runtime::jobs::{
+        JobContext, JobHandler, JobKindConfig, JobKindRegistration, JobOutcome, JobStatus,
+        RecoveryPolicy,
+    },
 };
 use std::sync::Arc;
 
@@ -144,30 +147,29 @@ impl<I: ItemImporter> JobHandler for BatchImportJob<I> {
     }
 }
 
-/// Registers both import kinds with the runtime, settling imports the last
-/// process left running.
-pub(super) async fn register(
-    jobs: &Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
+/// Both import kinds; registering them settles imports the last process left
+/// running.
+pub(super) fn job_kinds(
     items: &BatchItems,
     files: super::file_job::FileImporter,
     urls: super::url_job::UrlImporter,
-) -> Result<()> {
-    jobs.register(
-        super::imports::FILE_IMPORT,
-        Arc::new(BatchImportJob {
-            items: items.clone(),
-            importer: files,
-        }),
-        import_job_config(),
-    )
-    .await?;
-    jobs.register(
-        super::imports::URL_IMPORT,
-        Arc::new(BatchImportJob {
-            items: items.clone(),
-            importer: urls,
-        }),
-        import_job_config(),
-    )
-    .await
+) -> Vec<JobKindRegistration> {
+    vec![
+        JobKindRegistration {
+            kind: super::imports::FILE_IMPORT.into(),
+            handler: Arc::new(BatchImportJob {
+                items: items.clone(),
+                importer: files,
+            }),
+            config: import_job_config(),
+        },
+        JobKindRegistration {
+            kind: super::imports::URL_IMPORT.into(),
+            handler: Arc::new(BatchImportJob {
+                items: items.clone(),
+                importer: urls,
+            }),
+            config: import_job_config(),
+        },
+    ]
 }

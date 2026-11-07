@@ -150,7 +150,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let container = app.state::<Container>().inner().clone();
             // Registration settles snapshot jobs the last process left
             // running, then starts delivering saved work.
-            tauri::async_runtime::block_on(container.web_page_snapshots().register_job())?;
+            tauri::async_runtime::block_on(
+                container
+                    .jobs()
+                    .register_all(vec![container.web_page_snapshots().job_kind()]),
+            );
             // The finders the user configured (keys, SearXNG, contact,
             // switches) replace the keyless defaults before the first search.
             tauri::async_runtime::block_on(container.reload_source_finders());

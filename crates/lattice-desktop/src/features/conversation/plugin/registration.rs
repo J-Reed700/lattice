@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::features::conversation::{chat, synthesis};
+use lattice_core::shared::runtime::jobs::JobKindRegistration;
 use std::sync::Arc;
 use tauri::plugin::{Builder, TauriPlugin};
 
@@ -13,23 +14,21 @@ pub fn init() -> TauriPlugin<tauri::Wry> {
             let jobs = Arc::clone(container.jobs());
             // Registration settles research turns and syntheses the last
             // process left running, then resumes them from their checkpoints.
-            tauri::async_runtime::block_on(async {
-                jobs.register(
-                    chat::DEEP_RESEARCH,
-                    Arc::new(chat::DeepResearchJob::new(
+            tauri::async_runtime::block_on(jobs.register_all(vec![
+                JobKindRegistration {
+                    kind: chat::DEEP_RESEARCH.into(),
+                    handler: Arc::new(chat::DeepResearchJob::new(
                         container.share(),
                         chat::app_event_sink(app.clone()),
                     )),
-                    chat::research_job_config(),
-                )
-                .await?;
-                jobs.register(
-                    synthesis::JOURNAL_SYNTHESIS,
-                    Arc::new(synthesis::JournalSynthesisJob::new(container.share())),
-                    synthesis::synthesis_job_config(),
-                )
-                .await
-            })?;
+                    config: chat::research_job_config(),
+                },
+                JobKindRegistration {
+                    kind: synthesis::JOURNAL_SYNTHESIS.into(),
+                    handler: Arc::new(synthesis::JournalSynthesisJob::new(container.share())),
+                    config: synthesis::synthesis_job_config(),
+                },
+            ]));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
