@@ -137,6 +137,7 @@ describe('Settling a published lesson’s unverified statements from the note', 
     expect(screen.queryByText('A source disagrees with this. Why is it right?')).not.toBeInTheDocument();
   });
 
+  // Guard: nothing is offered today, so this cannot fail until the actions exist.
   it('offers neither "This is right" nor "Edit" on a statement whose claim the review does not hold', async () => {
     serve('unsupported', {}, false);
     show();

@@ -19,7 +19,8 @@ vi.mock('@/features/learning/lessons/review/ClaimReviewScreen', () => ({
 vi.mock('@/features/learning/practice/practical/PracticalWorkbenchPanel', () => ({ PracticalWorkbenchPanel: () => null }));
 vi.mock('@/features/learning/curriculum/PlanPanel', () => ({ PlanPanel: () => null }));
 vi.mock('@/features/learning/canvas/CanvasPanel', () => ({ default: () => null }));
-vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
+vi.mock('@/features/learning/tangents/StudyTangentSelection', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/features/learning/tangents/StudyTangentSelection')>(),
   StudyTangentSelection: ({ children }: { children: React.ReactNode }) => children,
   SectionTangentBar: () => null,
 }));
