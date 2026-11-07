@@ -82,6 +82,7 @@ describe('Lesson card with statements that are not verified', () => {
     [2, 'Ready · 2 statements not verified'],
   ])('says a ready lesson with %i unverified statement(s) is ready, with a Review button', async (count, status) => {
     api.review.mockResolvedValue({ ok: true, data: review([verifiedItem, ...Array.from({ length: count }, (_, index) => unverifiedItem(index + 1))], { state: 'ready' }) });
+    api.evidence.mockResolvedValue({ ok: true, data: evidence([evidenceClaim({}), ...Array.from({ length: count }, () => unverifiedClaim('unchecked'))]) });
     const onReview = vi.fn();
     show({ onReview });
     const row = screen.getByRole('article');

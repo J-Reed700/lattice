@@ -5054,7 +5054,7 @@ tried: ResearchSummaryDto }
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
  */
-export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
+export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number } | { state: "unverified"; at: number; reason: UnverifiedReasonDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
 /**
  * Whether a support counted toward the claim's bar.
  */
@@ -7384,7 +7384,11 @@ label?: string | null;
  * The parts a Sourced statement's cited passage was read as, which say
  * what a passage states and what is common knowledge beside it.
  */
-parts?: LearningClaimPartDto[] }
+parts?: LearningClaimPartDto[];
+/**
+ * Why a statement published unverified; none unless `not_verified`.
+ */
+unverifiedReason?: UnverifiedReasonDto | null }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -7432,7 +7436,7 @@ reasons: LearningTrustReasonDto[] }
  * by the user, or verified against a source since removed. A string union,
  * like the review panel's.
  */
-export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "source_removed"
+export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "source_removed" | "not_verified"
 /**
  * The subject a claim is about, with what a site-for-subject override can
  * be scoped to: the subject, its aliases and its broader classes.
@@ -10632,6 +10636,7 @@ resultsPerPage: number;
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
 export type UnitKindDto = "block" | "question" | "answer_key"
+export type UnverifiedReasonDto = "unchecked" | "unsupported" | "contradicted"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
