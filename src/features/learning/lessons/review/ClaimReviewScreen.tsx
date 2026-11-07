@@ -8,7 +8,7 @@ import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSou
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
-import { ALL_RESOLVED, tallyLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { ALL_RESOLVED, tallyLine, teachingNotesForYou, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
@@ -47,7 +47,7 @@ const ALL_KEYS: Array<[string, string]> = [
  * claim in focus, the honest tally, Resume when nothing is left, and the
  * keyboard throughout. Drops and pastes anywhere open Add a source.
  */
-export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevision, onBack }: {
+export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevision, onBack, focusClaimId = null }: {
   programId: string;
   lessonId: string;
   lessonTitle: string;
@@ -55,8 +55,10 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   courseRevision: number;
   /** Back to the course page's Lessons tab. */
   onBack: () => void;
+  /** The claim to put in focus when the review loads. */
+  focusClaimId?: string | null;
 }) {
-  const session = useClaimReviewSession(programId, lessonId);
+  const session = useClaimReviewSession(programId, lessonId, focusClaimId);
   const resume = useResumeLearningLessonReview(programId, lessonId);
   const plan = useLearningPlan(programId);
   const waitsForIndex = useEvidenceWaitsForIndex(programId);
@@ -74,6 +76,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
   const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
   const teachingWaiting = review?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
+  const notVerified = review?.state === 'ready' ? review.claims.filter((claim) => claim.state.state === 'unverified').length : 0;
 
   // After an action, focus moves to the statement of the claim now in focus.
   useEffect(() => {
@@ -146,6 +149,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
         {jobActive && <span className="font-medium text-text-primary">Checking your changes · </span>}
         {tallyLine(review.counts) || (teachingWaiting ? teachingNotesForYou(teachingWaiting) : 'Nothing to check yet')}
       </p>}
+      {notVerified > 0 && <p className="mt-1 text-sm text-text-secondary">{unverifiedReviewLine(notVerified)}</p>}
       {review?.state === 'needs_review' && waiting.length === 0 && !review.changedSinceStop && <LessonAuditLine programId={programId} lessonId={lessonId} />}
       {resume.error && <p role="alert" className="mt-1 text-xs text-danger-fg">{resume.error.message}</p>}
     </header>
@@ -185,7 +189,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       closest={session.closestSupport} onOpenSource={(support) => setReader({ source: support.source, passage: support.passage, quote: support.quote })}
       onOpenRelevant={(source) => setReader({ source, passage: null, quote: null })} sheet={sheetNode}
       back={narrow ? <Button type="button" size="icon" variant="ghost" aria-label="Back to the queue" onClick={() => setNarrowView('queue')}><ArrowLeft aria-hidden="true" /></Button> : undefined}
-      stickyActions={narrow} />;
+      stickyActions={narrow} published={review.state === 'ready'} />;
     if (review.state === 'needs_review' && (hold === 'audit' || hold === 'audit_stop')) return <AuditHold reason={auditStop} />;
     if (sheetNode) return sheetNode;
     return <FocusMessage title="Everything is resolved">
