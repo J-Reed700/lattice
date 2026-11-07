@@ -22,7 +22,7 @@ pub use placement::{
 };
 pub use recommender::{Candidate, Evidence, Label, MeasuredSuite, Recommendation, Recommender};
 pub use shape::{ModelShape, PerLayer, PinnedModel, MICRO_BATCH_TOKENS};
-pub use verdict::{fit, FitVerdict};
+pub use verdict::{fit, DeviceKind, FitDevice, FitKind, FitVerdict};
 
 #[cfg(test)]
 mod tests;

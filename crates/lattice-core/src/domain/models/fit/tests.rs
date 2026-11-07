@@ -303,11 +303,11 @@ fn recommend_alone(profile: &MachineProfile, catalog: &[Candidate]) -> Vec<Recom
 }
 
 fn needs(verdict: &FitVerdict) -> u64 {
-    match verdict {
-        FitVerdict::Fits { needs, .. }
-        | FitVerdict::Tight { needs, .. }
-        | FitVerdict::TooLarge { needs, .. } => *needs,
-    }
+    verdict.needs
+}
+
+fn is_processor(placement: &dyn Placement) -> bool {
+    placement.device().kind == DeviceKind::Processor
 }
 
 #[test]
@@ -316,34 +316,24 @@ fn rtx_4080_finds_the_27b_too_large_and_the_9b_fitting() {
     let big = curated("qwen3.8-27b-ud-q4_k_m");
     let small = curated("qwen3.5-9b-q4_k_m");
 
-    match judge(&big, placement.as_ref()) {
-        FitVerdict::TooLarge {
-            needs,
-            budget,
-            device,
-            total_bytes,
-        } => {
-            assert!(needs > budget);
-            assert_eq!(device, RTX_4080);
-            assert_eq!(total_bytes, 16 * GIB);
-            assert!(budget < total_bytes);
+    let too_large = judge(&big, placement.as_ref());
+    assert_eq!(too_large.kind, FitKind::TooLarge);
+    assert!(too_large.needs > too_large.budget);
+    assert_eq!(
+        too_large.device,
+        FitDevice {
+            name: RTX_4080.into(),
+            kind: DeviceKind::Dedicated,
+            total_bytes: 16 * GIB,
         }
-        other => panic!("27B should be too large for 16 GiB, got {other:?}"),
-    }
-    match judge(&small, placement.as_ref()) {
-        FitVerdict::Fits {
-            needs,
-            budget,
-            device,
-            total_bytes,
-        } => {
-            assert!(needs <= budget);
-            assert_eq!(device, RTX_4080);
-            assert_eq!(total_bytes, 16 * GIB);
-            assert!(budget < total_bytes);
-        }
-        other => panic!("9B should fit 16 GiB, got {other:?}"),
-    }
+    );
+    assert!(too_large.budget < too_large.device.total_bytes);
+
+    let fits = judge(&small, placement.as_ref());
+    assert_eq!(fits.kind, FitKind::Fits);
+    assert!(fits.needs <= fits.budget);
+    assert_eq!(fits.device, too_large.device);
+    assert!(fits.budget < fits.device.total_bytes);
 }
 
 #[test]
@@ -355,9 +345,11 @@ fn rtx_4080_ranks_a_whole_on_the_card_12b_above_the_9b() {
     let list = recommend(&rtx_4080(), &catalog);
 
     assert_eq!(ids(&list), ["gemma-12b", "qwen3.5-9b-q4_k_m"]);
-    assert!(list.iter().all(|r| !r.slow));
-    assert!(list.iter().all(|r| r.device == RTX_4080));
-    assert!(matches!(list[0].verdict, FitVerdict::Fits { .. }));
+    assert!(list
+        .iter()
+        .all(|r| r.verdict.device.kind == DeviceKind::Dedicated));
+    assert!(list.iter().all(|r| r.verdict.device.name == RTX_4080));
+    assert_eq!(list[0].verdict.kind, FitKind::Fits);
 }
 
 #[test]
@@ -368,8 +360,8 @@ fn a_dedicated_card_budget_is_its_total_less_the_fit_target_the_reserve_and_the_
         placement.budget_bytes(),
         16 * GIB - FIT_TARGET_BYTES - DISPLAY_RESERVE_BYTES - companions().bytes()
     );
-    assert_eq!(placement.device_name(), RTX_4080);
-    assert!(!placement.is_slow());
+    assert_eq!(placement.device().name, RTX_4080);
+    assert_eq!(placement.device().kind, DeviceKind::Dedicated);
 }
 
 #[test]
@@ -396,8 +388,8 @@ fn an_integrated_gpu_takes_the_companions_off_the_card() {
         16 * GIB - FIT_TARGET_BYTES - DISPLAY_RESERVE_BYTES
     );
     assert_eq!(beside.budget_bytes() - alone.budget_bytes(), c.bytes());
-    assert_eq!(beside.device_name(), RTX_4080);
-    assert!(!beside.is_slow());
+    assert_eq!(beside.device().name, RTX_4080);
+    assert_eq!(beside.device().kind, DeviceKind::Dedicated);
 }
 
 #[test]
@@ -413,7 +405,7 @@ fn a_model_that_needs_exactly_the_companions_share_fits_only_beside_an_integrate
     let alone = recommend(&rtx_4080(), std::slice::from_ref(&just_fits));
 
     assert_eq!(ids(&beside), ["just-fits"]);
-    assert!(matches!(beside[0].verdict, FitVerdict::Fits { .. }));
+    assert_eq!(beside[0].verdict.kind, FitKind::Fits);
     assert!(alone.is_empty());
 }
 
@@ -423,8 +415,14 @@ fn apple_silicon_uses_the_metal_working_set_size() {
     let placement = choose_placement(&apple_silicon(), &c);
 
     assert_eq!(placement.budget_bytes(), 12 * GIB - c.bytes());
-    assert_eq!(placement.device_name(), "Apple M2 Pro");
-    assert!(!placement.is_slow());
+    assert_eq!(
+        placement.device(),
+        FitDevice {
+            name: "Apple M2 Pro".into(),
+            kind: DeviceKind::Unified,
+            total_bytes: 12 * GIB,
+        }
+    );
 }
 
 #[test]
@@ -432,13 +430,15 @@ fn processor_only_is_marked_slow() {
     let profile = processor_only();
     let placement = choose_placement(&profile, &companions());
 
-    assert!(placement.is_slow());
+    assert!(is_processor(placement.as_ref()));
     assert!(placement.budget_bytes() > 0);
     assert!(placement.budget_bytes() < profile.system_ram_bytes);
 
     let list = recommend(&profile, &[curated("qwen3.5-9b-q4_k_m")]);
     assert_eq!(ids(&list), ["qwen3.5-9b-q4_k_m"]);
-    assert!(list.iter().all(|r| r.slow));
+    assert!(list
+        .iter()
+        .all(|r| r.verdict.device.kind == DeviceKind::Processor));
 }
 
 #[test]
@@ -454,8 +454,8 @@ fn an_integrated_gpu_alone_is_treated_as_the_processor() {
     );
     let placement = choose_placement(&profile, &companions());
 
-    assert!(placement.is_slow());
-    assert_eq!(placement.device_total_bytes(), 32 * GIB);
+    assert!(is_processor(placement.as_ref()));
+    assert_eq!(placement.device().total_bytes, 32 * GIB);
     assert_eq!(
         placement.budget_bytes(),
         choose_placement(&processor_only(), &companions()).budget_bytes()
@@ -579,11 +579,11 @@ fn tight_is_offered_only_when_nothing_fits() {
 
     let only_tight = recommend_alone(&profile, &[tight.clone(), too_large.clone()]);
     assert_eq!(ids(&only_tight), ["tight"]);
-    assert!(matches!(only_tight[0].verdict, FitVerdict::Tight { .. }));
+    assert_eq!(only_tight[0].verdict.kind, FitKind::Tight);
 
     let both = recommend_alone(&profile, &[tight, roomy, too_large]);
     assert_eq!(ids(&both), ["roomy"]);
-    assert!(matches!(both[0].verdict, FitVerdict::Fits { .. }));
+    assert_eq!(both[0].verdict.kind, FitKind::Fits);
 }
 
 #[test]

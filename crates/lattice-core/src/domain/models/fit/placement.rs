@@ -1,5 +1,6 @@
 use super::companions::Companions;
 use super::machine::{Accelerator, AcceleratorKind, MachineProfile};
+use super::verdict::{DeviceKind, FitDevice};
 
 /// What the desktop and other programs keep on a card.
 pub const DISPLAY_RESERVE_BYTES: u64 = 1 << 30;
@@ -12,12 +13,8 @@ const PROCESSOR_RAM_SHARE: f64 = 0.56;
 pub trait Placement: std::fmt::Debug {
     /// Bytes a chat model may need in full.
     fn budget_bytes(&self) -> u64;
-    /// The device the budget belongs to, for display.
-    fn device_name(&self) -> String;
-    /// The device's total memory, of which the budget is a share.
-    fn device_total_bytes(&self) -> u64;
-    /// Whether the model runs on the processor, which is slow.
-    fn is_slow(&self) -> bool;
+    /// The device the budget belongs to.
+    fn device(&self) -> FitDevice;
 }
 
 /// A dedicated card: its memory less the display reserve, less the companions when no integrated GPU
@@ -48,14 +45,12 @@ impl Placement for DedicatedGpu {
             .saturating_sub(DISPLAY_RESERVE_BYTES)
             .saturating_sub(self.companions_on_card_bytes)
     }
-    fn device_name(&self) -> String {
-        self.card.name.clone()
-    }
-    fn device_total_bytes(&self) -> u64 {
-        self.card.total_bytes
-    }
-    fn is_slow(&self) -> bool {
-        false
+    fn device(&self) -> FitDevice {
+        FitDevice {
+            name: self.card.name.clone(),
+            kind: DeviceKind::Dedicated,
+            total_bytes: self.card.total_bytes,
+        }
     }
 }
 
@@ -65,14 +60,12 @@ impl Placement for UnifiedMemory {
             .total_bytes
             .saturating_sub(self.companions_bytes)
     }
-    fn device_name(&self) -> String {
-        self.device.name.clone()
-    }
-    fn device_total_bytes(&self) -> u64 {
-        self.device.total_bytes
-    }
-    fn is_slow(&self) -> bool {
-        false
+    fn device(&self) -> FitDevice {
+        FitDevice {
+            name: self.device.name.clone(),
+            kind: DeviceKind::Unified,
+            total_bytes: self.device.total_bytes,
+        }
     }
 }
 
@@ -80,14 +73,12 @@ impl Placement for ProcessorOnly {
     fn budget_bytes(&self) -> u64 {
         (self.system_ram_bytes as f64 * PROCESSOR_RAM_SHARE) as u64
     }
-    fn device_name(&self) -> String {
-        "the processor".into()
-    }
-    fn device_total_bytes(&self) -> u64 {
-        self.system_ram_bytes
-    }
-    fn is_slow(&self) -> bool {
-        true
+    fn device(&self) -> FitDevice {
+        FitDevice {
+            name: "the processor".into(),
+            kind: DeviceKind::Processor,
+            total_bytes: self.system_ram_bytes,
+        }
     }
 }
 

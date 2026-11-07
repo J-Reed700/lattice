@@ -62,13 +62,11 @@ pub enum Label {
 pub struct Recommendation {
     pub id: String,
     pub name: String,
+    /// What it needs, the budget and the device it was judged against, which also says whether it
+    /// runs on the processor.
     pub verdict: FitVerdict,
-    pub device: String,
-    /// Marked when the model runs on the processor.
-    pub slow: bool,
     pub evidence: Evidence,
     pub labels: Vec<Label>,
-    pub reason: String,
 }
 
 /// Ranks the candidates that fit a machine.
