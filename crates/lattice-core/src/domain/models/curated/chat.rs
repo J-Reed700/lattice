@@ -421,7 +421,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "The smallest model: quick, but weak at multi-step questions.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 668_227_264,
@@ -450,7 +450,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "Light and quick, for simple questions and smaller machines.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 672_423_616,
@@ -486,7 +486,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "Quick everyday answers on smaller machines.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 990_372_672,
@@ -518,7 +518,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "A dependable all-rounder, grounded in your sources; the model Lattice tests with.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_166_080,
@@ -558,7 +558,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: true,
-        use_for: "",
+        use_for: "The all-rounder, with faster answers on Apple Silicon.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_165_984,
@@ -594,7 +594,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "A balanced choice: good writing and reasoning at a steady pace.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 175_115_840,
@@ -627,7 +627,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "The same all-rounder at higher precision.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_166_080,
@@ -660,7 +660,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "The same all-rounder at higher precision.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_166_080,
@@ -696,7 +696,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "A balanced choice: good writing and reasoning at a steady pace.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 175_115_840,
@@ -735,7 +735,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "For complex reasoning and multi-step work, like building and checking courses. Answers more slowly.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-bf16.gguf",
             projector_bytes: 931_145_952,
@@ -772,7 +772,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "For fast answers and high throughput, with strong quality for its speed.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 1_193_058_784,
@@ -809,7 +809,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "A balanced choice: good writing and reasoning at a steady pace.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 175_115_840,
@@ -848,7 +848,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "For complex reasoning and multi-step work, like building and checking courses. Answers more slowly.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 927_607_488,
@@ -884,7 +884,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "For fast answers and high throughput, with strong quality for its speed.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 1_193_058_784,
@@ -922,7 +922,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
-        use_for: "",
+        use_for: "For fast answers with strong quality for its speed.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 899_283_680,
