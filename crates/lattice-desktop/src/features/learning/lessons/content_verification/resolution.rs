@@ -3,7 +3,7 @@
 //! docs/design/2026-10-16-lesson-claim-review.md.
 
 use super::{ClaimVerdict, Finding};
-use lattice_core::domain::learning::claim_review::UnverifiedReason;
+use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState, UnverifiedReason};
 use serde::{Deserialize, Serialize};
 
 /// How a claim without a supporting passage was resolved by the user. Set on
@@ -17,6 +17,48 @@ pub(in crate::features::learning) enum Resolution {
     /// The machine could not settle it and the lesson publishes with it,
     /// shown to the learner as not verified.
     Unverified { reason: UnverifiedReason },
+}
+
+/// How a claim's state reads to the learner.
+pub(super) enum Standing {
+    /// The claim has ended. `Some` is what the learner is told of it; `None`
+    /// leaves it to the machine's reading of the finding.
+    Settled(Option<Resolution>),
+    /// The claim is open, waiting or reopened.
+    Unsettled,
+}
+
+/// The one mapping from a claim's state to the learner's resolution, used at
+/// publication and when the learner view is read. `claim` gives the state of
+/// a successor.
+pub(super) fn standing<'a>(
+    state: &ClaimState,
+    claim: &dyn Fn(&ClaimId) -> Option<&'a ClaimState>,
+) -> Standing {
+    match state {
+        ClaimState::Confirmed { at, note, .. } => Standing::Settled(Some(Resolution::Confirmed {
+            at: *at,
+            note: note.clone(),
+        })),
+        ClaimState::Unverified { reason, .. } => {
+            Standing::Settled(Some(Resolution::Unverified { reason: *reason }))
+        }
+        ClaimState::ResolvedByEvidence { .. }
+        | ClaimState::Consistent { .. }
+        | ClaimState::GeneralKnowledge { .. }
+        | ClaimState::Removed { .. }
+        | ClaimState::Edited {
+            successor: None, ..
+        } => Standing::Settled(None),
+        ClaimState::Edited {
+            successor: Some(successor),
+            ..
+        } => claim(successor).map_or(Standing::Settled(None), |state| standing(state, claim)),
+        ClaimState::Unchecked
+        | ClaimState::Open { .. }
+        | ClaimState::Queued { .. }
+        | ClaimState::Reopened { .. } => Standing::Unsettled,
+    }
 }
 
 impl Finding {

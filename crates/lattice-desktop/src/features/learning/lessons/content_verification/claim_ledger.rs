@@ -31,7 +31,7 @@ pub(super) use stops::UNREADABLE;
 pub(super) use successor::Rewrites;
 
 use super::provenance_gate::ProvenanceGate;
-use super::resolution::Resolution;
+use super::resolution::{standing, Resolution, Standing};
 use super::sections::Cuts;
 use super::support_gate::SupportGate;
 use super::*;
@@ -813,14 +813,12 @@ impl ClaimLedger {
             }),
             _ => None,
         };
-        let resolution = |id: &ClaimId| match self.entry(id).map(ClaimLedgerEntry::state) {
-            Some(ClaimState::Unverified { reason, .. }) => {
-                Some(Resolution::Unverified { reason: *reason })
-            }
-            _ => confirmed(id),
-        };
+        let state_of = |id: &ClaimId| self.entry(id).map(ClaimLedgerEntry::state);
         for (finding, id) in report.findings.iter_mut().zip(&self.findings) {
-            finding.resolution = resolution(id);
+            finding.resolution = match state_of(id).map(|state| standing(state, &state_of)) {
+                Some(Standing::Settled(resolution)) => resolution,
+                Some(Standing::Unsettled) | None => None,
+            };
         }
         let confirmed: Vec<String> = report
             .executions
