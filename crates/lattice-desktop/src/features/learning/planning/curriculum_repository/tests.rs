@@ -345,6 +345,49 @@ async fn selected_lesson_jobs_allow_placement_and_retry_failures_without_duplica
 }
 
 #[tokio::test]
+async fn a_job_an_update_ended_says_so_and_another_does_not() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let start = |lesson: &str| StartLearningGenerationJobRequestDto {
+        operation_id: op_id(),
+        program_id: program.summary.id.clone(),
+        expected_revision: program.summary.revision,
+        kind: LearningGenerationJobKind::LessonPreparation,
+        request_json: serde_json::json!({"lessonIds":[lesson]}).to_string(),
+        progress_total: 1,
+    };
+    let ended = repo
+        .start_lesson_job(&start(&program.modules[1].lessons[1].id))
+        .await?;
+    assert!(jobs(&pool).claim(&ended.id).await?.is_some());
+    jobs(&pool)
+        .fail(&ended.id, "generation_failed", "Synthetic failure")
+        .await?;
+    sqlx::query("UPDATE jobs SET status = 'cancelled', error_code = 'ended_by_update', error_message = NULL WHERE id = ?")
+        .bind(&ended.id)
+        .execute(&pool)
+        .await
+        .map_err(crate::features::learning::persistence::db)?;
+    let other = repo
+        .start_lesson_job(&start(&program.modules[0].lessons[0].id))
+        .await?;
+    assert!(jobs(&pool).claim(&other.id).await?.is_some());
+    jobs(&pool)
+        .fail(&other.id, "generation_failed", "Another synthetic failure")
+        .await?;
+
+    let listed = repo.jobs(&program.summary.id).await?;
+    let flag = |id: &str| {
+        let job = listed.iter().find(|job| job.id == id).unwrap();
+        serde_json::to_value(job).unwrap()["endedByUpdate"].clone()
+    };
+    assert_eq!(flag(&ended.id), serde_json::json!(true));
+    assert_eq!(flag(&other.id), serde_json::json!(false));
+    Ok(())
+}
+
+#[tokio::test]
 async fn deleting_a_program_removes_its_jobs_and_their_saved_work() -> Result<()> {
     let pool = pool().await?;
     let program = active_program(&pool).await?;
