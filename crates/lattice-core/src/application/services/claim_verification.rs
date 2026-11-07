@@ -64,7 +64,6 @@ impl CheckPolicy {
 pub const MIN_VERDICT_CONFIDENCE: f32 = 0.75;
 
 const MAX_QUOTE_CHARS: usize = 400;
-const MAX_REASON_CHARS: usize = 600;
 /// The tokens a durable check keeps for each claim's answer: the reason, the
 /// passage it cites and the verdict. Evidence fills what the window leaves
 /// past it, alone or in a batch.
@@ -642,7 +641,7 @@ pub fn parse_judge_explanation(
     verdict: ClaimVerdict,
 ) -> JudgeExplanation {
     let reason = labeled_value(text, &["Reason", "Explanation"])
-        .map(|reason| truncate_chars(&strip_wrapping_quotes(&reason), MAX_REASON_CHARS))
+        .map(|reason| strip_wrapping_quotes(&reason))
         .filter(|reason| !reason.is_empty());
     let quote = labeled_value(text, &["Source quote", "Quote", "Evidence"])
         .map(|quote| strip_wrapping_quotes(&quote))

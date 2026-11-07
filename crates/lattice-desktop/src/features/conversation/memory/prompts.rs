@@ -60,7 +60,7 @@ pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-11-04.12";
 pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-22.3";
 /// Stored in `validator_version`: the deterministic rules plus the review step
 /// that together decided what a commit was allowed to contain.
-pub const VALIDATOR_VERSION: &str = "memory-validator/7+memory-verifier/2026-11-04.12";
+pub const VALIDATOR_VERSION: &str = "memory-validator/8+memory-verifier/2026-11-04.12";
 
 /// Instructions for the extractor (§15, "Extractor must be told").
 ///
