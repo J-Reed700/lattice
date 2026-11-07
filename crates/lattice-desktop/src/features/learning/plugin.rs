@@ -199,9 +199,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let practical = super::practical_repository::LearningPracticalRepository::new(
                 container.db_pool().clone(),
             );
-            tauri::async_runtime::block_on(super::practical_runs::recover_at_startup(
-                &practical,
-            ))?;
+            tauri::async_runtime::block_on(super::practical_runs::recover_at_startup(&practical))?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
