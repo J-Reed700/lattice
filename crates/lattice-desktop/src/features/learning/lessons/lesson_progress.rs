@@ -331,7 +331,7 @@ pub(in crate::features::learning) async fn observed<T>(
 
 /// Runs `future` with fresh progress and returns every stage it showed.
 #[cfg(test)]
-pub(in crate::features::learning) async fn traced<T>(
+pub(in crate::features::learning) async fn staged<T>(
     future: impl std::future::Future<Output = T>,
 ) -> (T, Vec<String>) {
     let progress = Progress::default();

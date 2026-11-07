@@ -636,7 +636,7 @@ async fn a_refused_answer_asked_again_shows_the_learner_only_that_it_is_asking_a
 {
     let llm = Recorder::answering_first(32_000, &["{\"answer\":\"Blue.\"}"]);
     let (value, stages) =
-        crate::features::learning::lesson_progress::traced(checked(&llm, None)).await;
+        crate::features::learning::lesson_progress::staged(checked(&llm, None)).await;
     assert_eq!(value?, ANSWER);
 
     let asking = "The model's answer could not be used; asking once more.";
