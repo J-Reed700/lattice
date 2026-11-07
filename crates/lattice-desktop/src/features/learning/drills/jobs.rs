@@ -119,6 +119,24 @@ pub fn attempt_of(job: &JobRecord) -> Result<String> {
 
 #[async_trait]
 impl JobHandler for DrillGradingWorker {
+    /// The review will not be graded by this job: it is left "couldn't grade", as when the model cannot be reached,
+    /// and the learner may ask again.
+    async fn failed_by_runtime(&self, job: &JobRecord, _code: &str) {
+        let Ok(id) = attempt_of(job) else { return };
+        let message = job.error_message.as_deref().unwrap_or_default();
+        let recorded = async {
+            let mut connection = self
+                .pool
+                .acquire()
+                .await
+                .map_err(|e| AppError::Database(e.to_string()))?;
+            attempts::record_ungraded_in(&mut connection, &id, None, message).await
+        };
+        if let Err(error) = recorded.await {
+            tracing::warn!(attempt = id, %error, "Could not mark a review not graded");
+        }
+    }
+
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let id = attempt_of(context.job())?;
         let Some((attempt, stored)) = attempts::waiting(&self.pool, &id).await? else {

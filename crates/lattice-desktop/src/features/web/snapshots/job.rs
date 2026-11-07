@@ -14,7 +14,7 @@ use crate::features::web::traits::page_snapshot::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
-    Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, RecoveryPolicy,
+    Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy,
 };
 
 pub const KIND: &str = "web_page_snapshot";
@@ -42,6 +42,19 @@ pub(crate) fn progress_units(progress: &CaptureProgress) -> u32 {
     10 + ((84 * done) / progress.total as u64) as u32
 }
 
+/// The snapshot a job captures: its subject, else the one its request names.
+fn snapshot_id(job: &JobRecord) -> String {
+    job.subject_id
+        .clone()
+        .or_else(|| {
+            job.requested
+                .get("snapshotId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
 pub struct WebPageSnapshotJob {
     shared: Arc<Shared>,
 }
@@ -53,14 +66,18 @@ impl WebPageSnapshotJob {
 
     /// Marks the row failed, tells the window, and ends the job as failed.
     async fn fail(&self, id: &str, code: &str, message: &str) -> Result<JobOutcome> {
-        if let Err(error) = self.shared.repository.mark_failed(id, code, message).await {
-            tracing::warn!(%error, snapshot_id = id, "Could not mark a web snapshot failed");
-        }
-        self.shared.announce(id).await;
+        self.mark_failed(id, code, message).await;
         Ok(JobOutcome::Failed {
             code: code.to_string(),
             message: message.to_string(),
         })
+    }
+
+    async fn mark_failed(&self, id: &str, code: &str, message: &str) {
+        if let Err(error) = self.shared.repository.mark_failed(id, code, message).await {
+            tracing::warn!(%error, snapshot_id = id, "Could not mark a web snapshot failed");
+        }
+        self.shared.announce(id).await;
     }
 
     async fn commit(
@@ -113,19 +130,13 @@ impl WebPageSnapshotJob {
 
 #[async_trait]
 impl JobHandler for WebPageSnapshotJob {
+    async fn failed_by_runtime(&self, job: &JobRecord, code: &str) {
+        let message = job.error_message.as_deref().unwrap_or_default();
+        self.mark_failed(&snapshot_id(job), code, message).await;
+    }
+
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
-        let id = context
-            .subject_id()
-            .map(str::to_string)
-            .or_else(|| {
-                context
-                    .job()
-                    .requested
-                    .get("snapshotId")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-            })
-            .unwrap_or_default();
+        let id = snapshot_id(context.job());
         let Some(row) = self.shared.repository.get(&id).await? else {
             return Ok(JobOutcome::Completed {
                 result_ref: id,

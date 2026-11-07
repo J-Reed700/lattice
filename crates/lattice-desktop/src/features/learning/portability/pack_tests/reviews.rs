@@ -418,6 +418,101 @@ async fn a_replace_warns_about_unfinished_reviews_and_keeps_what_lives_here() ->
     Ok(())
 }
 
+/// This computer's bookkeeping of how a job's runs ended: not course content.
+const JOB_COUNTERS: [&str; 3] = ["saved_work", "recovery_mark", "unsaved_starts"];
+const REVIEW_JOBS: &str = "curriculum/reviews/jobs.json";
+
+async fn exported_pack(home: &SqlitePool, dir: &std::path::Path) -> Result<String> {
+    let (course, ..) = course(home).await?;
+    Ok(packs(home, dir)
+        .export(&move_request(&course))
+        .await?
+        .exports[0]
+        .destination_path
+        .clone())
+}
+
+#[tokio::test]
+async fn a_pack_carries_no_job_counters_and_still_imports() -> Result<()> {
+    let home = pool().await?;
+    let home_dir = tempfile::tempdir()?;
+    let path = exported_pack(&home, home_dir.path()).await?;
+    let decoded = decode_learning_pack(&std::fs::read(&path)?)?;
+    let table: serde_json::Value = serde_json::from_slice(&decoded.entries[REVIEW_JOBS])?;
+    let columns: Vec<&str> = table["columns"]
+        .as_array()
+        .expect("columns")
+        .iter()
+        .filter_map(|column| column.as_str())
+        .collect();
+    assert!(columns.contains(&"retry_count"), "{columns:?}");
+    for counter in JOB_COUNTERS {
+        assert!(!columns.contains(&counter), "{counter} in {columns:?}");
+        assert!(table["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .all(|row| row.get(counter).is_none()));
+    }
+
+    let fresh = pool().await?;
+    let fresh_dir = tempfile::tempdir()?;
+    import(
+        &packs(&fresh, fresh_dir.path()),
+        &path,
+        LearningPackConflictPolicy::MergeSafe,
+    )
+    .await?;
+    let imported: (i64, i64, i64) =
+        sqlx::query_as("SELECT saved_work,recovery_mark,unsaved_starts FROM jobs")
+            .fetch_one(&fresh)
+            .await?;
+    assert_eq!(imported, (0, 0, 0), "this computer starts the count itself");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pack_whose_job_table_has_only_the_portable_columns_imports() -> Result<()> {
+    let home = pool().await?;
+    let home_dir = tempfile::tempdir()?;
+    let path = exported_pack(&home, home_dir.path()).await?;
+    let decoded = decode_learning_pack(&std::fs::read(&path)?)?;
+    let bytes = repack(&decoded, |input| {
+        let entry = input
+            .entries
+            .iter_mut()
+            .find(|entry| entry.path == REVIEW_JOBS)
+            .expect("the review jobs entry");
+        let mut table: serde_json::Value = serde_json::from_slice(&entry.bytes).expect("JSON");
+        table["columns"]
+            .as_array_mut()
+            .expect("columns")
+            .retain(|column| !JOB_COUNTERS.contains(&column.as_str().unwrap_or_default()));
+        for row in table["rows"].as_array_mut().expect("rows") {
+            for counter in JOB_COUNTERS {
+                row.as_object_mut().expect("row").remove(counter);
+            }
+        }
+        entry.bytes = serde_json::to_vec(&table).expect("JSON");
+    })?;
+    let portable = home_dir.path().join("portable.lattice-learning");
+    std::fs::write(&portable, bytes)?;
+
+    let fresh = pool().await?;
+    let fresh_dir = tempfile::tempdir()?;
+    import(
+        &packs(&fresh, fresh_dir.path()),
+        portable.to_str().expect("UTF-8 path"),
+        LearningPackConflictPolicy::MergeSafe,
+    )
+    .await?;
+    let imported: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status='completed'")
+        .fetch_one(&fresh)
+        .await?;
+    assert_eq!(imported, 1);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_pack_whose_review_job_would_run_here_is_refused() -> Result<()> {
     let home = pool().await?;

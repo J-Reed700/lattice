@@ -22,6 +22,8 @@ mod first_tests;
 #[cfg(test)]
 mod status_tests;
 #[cfg(test)]
+mod stopped_tests;
+#[cfg(test)]
 pub(in crate::features::learning) mod tests;
 
 pub use manager::{CourseIndexStatusDto, CourseIndexes};

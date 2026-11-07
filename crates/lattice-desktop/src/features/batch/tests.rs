@@ -183,8 +183,7 @@ impl ImportHarness {
             Box::pin(async move { Ok(embedding) })
         });
         let pool = self.db.pool().clone();
-        super::worker::register(
-            &self.jobs,
+        let kinds = super::worker::job_kinds(
             &BatchItems::new(pool.clone()),
             FileImporter {
                 index_file: self.indexer.clone(),
@@ -198,8 +197,10 @@ impl ImportHarness {
                 )),
                 load_embedding: load,
             },
-        )
-        .await
+        );
+        let failures = self.jobs.register_all(kinds).await;
+        assert!(failures.is_empty(), "{failures:?}");
+        Ok(())
     }
 
     /// The app closes and opens again: the runtime stops at its workers'

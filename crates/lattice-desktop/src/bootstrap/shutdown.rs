@@ -7,6 +7,9 @@ use tokio_util::sync::CancellationToken;
 // Extended timeouts to handle SQLite busy conditions
 const DB_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long running jobs get to stop, leaving the rest of the total for
+/// suspending them, flushing the index and closing the database.
+const JOBS_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 /// The synchronous sweep shutdown runs before any async cleanup: it kills
 /// every sidecar process the app registered and returns how many, or `None`
 /// when no registry is managed.
@@ -63,8 +66,26 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
             }
             if let Some(container) = app_handle.try_state::<Container>() {
                 // Running jobs reach their cancellation points and are saved as
-                // pending or interrupted before the database closes.
-                container.jobs().drain().await;
+                // pending or interrupted before the database closes. One slow
+                // to stop is not waited for past the bound: what is still
+                // running is suspended instead, so the next launch does not
+                // count an orderly exit as a crash.
+                if tokio::time::timeout(JOBS_DRAIN_TIMEOUT, container.jobs().drain())
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        timeout_secs = JOBS_DRAIN_TIMEOUT.as_secs(),
+                        "Some jobs did not stop in time"
+                    );
+                }
+                match container.jobs().suspend_running().await {
+                    Ok(0) => {}
+                    Ok(count) => tracing::info!(count, "Suspended jobs still running at exit"),
+                    Err(error) => {
+                        tracing::error!(%error, "Could not suspend the jobs still running")
+                    }
+                }
             }
 
             if let Some(cancel) = app_handle.try_state::<CancellationToken>() {
