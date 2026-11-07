@@ -129,6 +129,9 @@ struct ScriptedReview {
     unverified: Vec<String>,
     /// Whether any statement can be marked not verified.
     marks: bool,
+    /// Claims only the user could settle: the round's decision until they are
+    /// marked.
+    awaiting: Option<usize>,
 }
 
 impl ScriptedReview {
@@ -143,6 +146,7 @@ impl ScriptedReview {
             standing: None,
             unverified: Vec::new(),
             marks: true,
+            awaiting: None,
         }
     }
 
@@ -317,6 +321,9 @@ impl Review for ScriptedReview {
                 request: None,
             }));
         }
+        if let Some(claims) = self.awaiting {
+            return Decision::NeedsReview(claims);
+        }
         let (mut repairs, mut waiting) = (Vec::new(), Vec::new());
         for statement in &self.statements {
             let Some((node, step)) = statement.node(policy) else {
@@ -357,9 +364,12 @@ impl Review for ScriptedReview {
         Ok(())
     }
 
-    async fn still_publishes(&mut self, _policy: &dyn AcceptancePolicy) -> Result<bool> {
+    async fn still_publishes(&mut self, policy: &dyn AcceptancePolicy) -> Result<bool> {
         self.log("still_publishes", Vec::new());
-        Ok(true)
+        Ok(self
+            .statements
+            .iter()
+            .all(|statement| statement.node(policy).is_none()))
     }
 
     async fn settle(&mut self) -> Result<Settled> {
@@ -380,8 +390,16 @@ impl Review for ScriptedReview {
         _policy: &dyn AcceptancePolicy,
         unsettled: Unsettled,
     ) -> Result<usize> {
+        self.log("publish_unverified", Vec::new());
         let claims = match unsettled {
             Unsettled::Waiting(claims) | Unsettled::Unreadable(claims) => claims,
+            Unsettled::AwaitingUser => {
+                let marked = usize::from(self.marks && self.awaiting.take().is_some());
+                if marked > 0 {
+                    self.unverified.push("awaiting".to_owned());
+                }
+                return Ok(marked);
+            }
             Unsettled::Ended => {
                 let marked = usize::from(self.marks && self.standing.take().is_some());
                 if marked > 0 {
@@ -389,7 +407,6 @@ impl Review for ScriptedReview {
                 }
                 return Ok(marked);
             }
-            Unsettled::AwaitingUser => Vec::new(),
         };
         if !self.marks {
             return Ok(0);
@@ -488,6 +505,22 @@ fn extend(
     }
 }
 
+/// The phases of the calls the round made after it marked statements not
+/// verified: the Publish branch, and no new round.
+fn after_the_mark(review: &ScriptedReview) -> Vec<&'static str> {
+    let marked = review
+        .calls
+        .iter()
+        .position(|call| call.phase == "publish_unverified")
+        .expect("the round marked statements");
+    review.calls[marked + 1..]
+        .iter()
+        .map(|call| call.phase)
+        .collect()
+}
+
+const THE_BRANCH: [&str; 5] = ["still_publishes", "settle", "excise", "audit", "finish"];
+
 #[tokio::test]
 async fn every_path_of_every_graph_ends_where_it_says_in_no_more_rounds_than_it_has_steps() {
     let policy = StandardPolicy::new();
@@ -568,9 +601,62 @@ async fn a_round_that_reached_the_web_and_moved_nothing_publishes_what_waits_not
     assert_eq!(ended, Ended::Published);
     assert_eq!(review.unverified, ["deferred"]);
     assert_eq!(review.statements[0].walked, Walked::Ended(End::Resolved));
-    // It was settled and published once, after the statement was marked.
+    // It was settled and published once, after the statement was marked, and
+    // no round began for the mark.
     let settled = review.calls.iter().filter(|call| call.phase == "settle");
     assert_eq!(settled.count(), 1, "{:?}", review.calls);
+    assert_eq!(after_the_mark(&review), THE_BRANCH, "{:?}", review.calls);
+    assert_eq!(review.rounds, 3);
+}
+
+#[tokio::test]
+async fn claims_only_the_user_could_settle_are_published_not_verified_in_the_same_pass() {
+    let policy = StandardPolicy::new();
+    let mut review = ScriptedReview::new(vec![]);
+    review.awaiting = Some(2);
+
+    let ended = run(&mut review, &policy).await.unwrap();
+
+    assert_eq!(ended, Ended::Published);
+    assert_eq!(review.unverified, ["awaiting"]);
+    assert_eq!(after_the_mark(&review), THE_BRANCH, "{:?}", review.calls);
+    assert_eq!(review.rounds, 1);
+}
+
+#[tokio::test]
+async fn an_unreadable_statement_marked_beside_one_with_machine_work_left_does_not_publish_until_that_is_done(
+) {
+    let policy = StandardPolicy::new();
+    let silent = Scripted::at("silent", (Class::Sourced, "s.read"), []).stuck();
+    let other = Scripted::at(
+        "other",
+        (Class::Sourced, "s.recite"),
+        [Outcome::Done, Outcome::Stands],
+    );
+    let mut review = ScriptedReview::new(vec![silent, other]);
+    review.unreadable = vec![ClaimId("silent".to_owned())];
+
+    let ended = run(&mut review, &policy).await.unwrap();
+
+    assert_eq!(ended, Ended::Published);
+    assert_eq!(review.unverified, ["silent"]);
+    assert_eq!(review.statements[1].walked, Walked::Ended(End::Resolved));
+    // The branch's own check refused the first time, so the round went again
+    // for the other statement, and the lesson was settled once, after it.
+    let phases: Vec<&str> = review.calls.iter().map(|call| call.phase).collect();
+    let first_check = phases.iter().position(|phase| *phase == "still_publishes");
+    let settled = phases.iter().position(|phase| *phase == "settle");
+    assert!(first_check < settled, "{phases:?}");
+    assert_eq!(phases.iter().filter(|phase| **phase == "settle").count(), 1);
+    assert!(
+        phases
+            .iter()
+            .filter(|phase| **phase == "still_publishes")
+            .count()
+            >= 2,
+        "{phases:?}"
+    );
+    assert!(review.rounds >= 2, "{phases:?}");
 }
 
 #[tokio::test]
@@ -624,6 +710,14 @@ async fn a_claim_the_machine_ended_whose_sentence_stands_is_published_not_verifi
 
     assert_eq!(run(&mut review, &policy).await.unwrap(), Ended::Published);
     assert_eq!(review.unverified, ["ended"]);
+    // The branch goes on to excise and publishes in the same pass.
+    assert_eq!(
+        after_the_mark(&review),
+        ["excise", "audit", "finish"],
+        "{:?}",
+        review.calls
+    );
+    assert_eq!(review.rounds, 1);
 
     let mut review = ScriptedReview::new(vec![]).unmarkable();
     review.standing = standing();

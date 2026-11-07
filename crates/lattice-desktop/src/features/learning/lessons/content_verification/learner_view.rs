@@ -453,11 +453,30 @@ mod tests {
     }
 
     #[test]
-    fn an_unsupported_claim_nobody_resolved_is_never_read_as_verified() {
-        let (lesson, mut report) = fixture();
-        report.findings[0].verdict = ClaimVerdict::Unsupported;
+    fn a_claim_no_passage_supports_and_nobody_resolved_reads_not_verified_never_verified_or_unavailable(
+    ) {
+        for (verdict, reason) in [
+            (ClaimVerdict::Unsupported, UnverifiedReasonDto::Unsupported),
+            (
+                ClaimVerdict::Contradicted,
+                UnverifiedReasonDto::Contradicted,
+            ),
+            (ClaimVerdict::Unverified, UnverifiedReasonDto::Unchecked),
+        ] {
+            let (lesson, mut report) = fixture();
+            report.findings[0].verdict = verdict;
 
-        assert!(report.learner_view(&lesson, &[]).is_err());
+            let view = report.learner_view(&lesson, &[]).unwrap_or_else(|error| {
+                panic!("{verdict:?} makes the lesson unavailable: {error}")
+            });
+
+            let claim = &view.teaching_claims[0];
+            assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);
+            assert_eq!(claim.unverified_reason, Some(reason), "{verdict:?}");
+            assert_eq!(view.claim_count, 1);
+            let wire = serde_json::to_value(claim).unwrap();
+            assert_eq!(wire["resolution"], "not_verified");
+        }
     }
 
     #[test]

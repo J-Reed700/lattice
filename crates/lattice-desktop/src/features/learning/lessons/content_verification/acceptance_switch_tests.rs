@@ -23,7 +23,7 @@ use lattice_core::domain::learning::acceptance::{
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
     ClaimLocation, ClaimState, EvidenceFingerprint, EvidenceSeen, LessonReviewState, ReopenCause,
-    RepairOutcome, UnitKind, VerdictKind,
+    RepairOutcome, UnitKind, UnverifiedReason, VerdictKind,
 };
 use std::collections::VecDeque;
 
@@ -1307,6 +1307,188 @@ async fn a_refused_cut_ends_removed_and_its_section_goes() -> Result<()> {
         }
     ));
     assert!(ledger.cuts.going.contains_key(&0));
+    Ok(())
+}
+
+/// A claim of section `unit` the ledger holds, standing on `quote` of
+/// `body`; sorted into `class` unless it is a code example's, which has none.
+async fn claim_in(
+    ledger: &mut claim_ledger::ClaimLedger,
+    name: &str,
+    unit: usize,
+    (quote, statement): (&str, &str),
+    body: &str,
+    class: Option<(Class, ClassifiedBy)>,
+) -> Result<ClaimId> {
+    let id = ClaimId(name.into());
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(unit, UnitKind::Block, "body", quote, body),
+        statement: statement.into(),
+    };
+    ledger.append(&id, extracted).await?;
+    if let Some((class, by)) = class {
+        ledger
+            .append(&id, ClaimEvent::Classified { class, by })
+            .await?;
+    }
+    Ok(id)
+}
+
+const CODE: &str = "print(1)\n";
+
+/// A failed code example on its last attempt, standing in section `unit`.
+async fn failed_example(
+    ledger: &mut claim_ledger::ClaimLedger,
+    unit: usize,
+    body: &str,
+) -> Result<ClaimId> {
+    let id = claim_in(ledger, "example", unit, (CODE, CODE), body, None).await?;
+    let failed = local_check(
+        CheckResult::Failed {
+            kind: VerdictKind::Unsupported,
+        },
+        "The example did not complete.",
+        vec![],
+    );
+    ledger.append(&id, ClaimEvent::Checked(failed)).await?;
+    let spent = ClaimEvent::RepairAttempted {
+        attempt: 1,
+        escalated: false,
+        before: CODE.into(),
+        after: None,
+        outcome: RepairOutcome::Rejected {
+            reason: "Unusable.".into(),
+        },
+        goal: None,
+    };
+    ledger.append(&id, spent).await?;
+    Ok(id)
+}
+
+const FENCED: &str =
+    "Intro text. Try the example.\n\n```python\nprint(1)\n```\n\nThat prints one. It ends here.";
+
+fn section_of(kind: &str, title: &str, body: &str) -> Value {
+    json!({"kind":kind,"title":title,"body":body,"rubric":[]})
+}
+
+#[tokio::test]
+async fn a_batch_with_an_example_beside_statements_publishes_the_statements_not_verified_when_only_their_cuts_would_stop_the_lesson(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let lesson = json!({"blocks":[
+        section_of("explanation", "First", SENTENCE),
+        section_of("worked_example", "Example", FENCED),
+    ],"questions":[]});
+    let mut ledger = open().await?;
+    // The first explanation is one sentence: its cut would take the section,
+    // and with it the lesson's first explanation.
+    let first = claim_in(
+        &mut ledger,
+        "first",
+        0,
+        (SENTENCE, SENTENCE),
+        SENTENCE,
+        Some(SOURCED),
+    )
+    .await?;
+    walk(&mut ledger, &first, Class::Sourced, &CUTTING).await?;
+    let example = failed_example(&mut ledger, 1, FENCED).await?;
+    ledger
+        .begin_repairs(&policy, &lesson, &[first.clone(), example.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson, "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [{"unit":0,"claimId":"first","sentence":SENTENCE,"evidence":[],"lastAttempt":true}],
+        "exampleClaims": [{"unit":1,"claimId":"example","lastAttempt":true}],
+    });
+
+    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+
+    // The statement keeps its sentence and its section, marked by its last
+    // reading; the example's own cut is made, and takes nothing the lesson
+    // needs.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], SENTENCE);
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert!(
+        matches!(
+            ledger.entry(&first).unwrap().state(),
+            ClaimState::Unverified {
+                reason: UnverifiedReason::Unsupported,
+                ..
+            }
+        ),
+        "{:?}",
+        ledger.entry(&first).unwrap().state()
+    );
+    let example_text = context["candidate"]["blocks"][1]["body"].as_str().unwrap();
+    assert!(!example_text.contains("```"), "{example_text}");
+    assert!(ledger.cuts.taken.contains_key(&1));
+    assert!(!matches!(
+        ledger.entry(&example).unwrap().state(),
+        ClaimState::Unverified { .. }
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_examples_own_cut_that_would_take_the_first_explanation_still_ends_the_batch_as_it_did(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let fence = format!("```python\n{CODE}```\n");
+    let rest = "Keep one. Keep two. Cut this one.";
+    let lesson = json!({"blocks":[
+        section_of("explanation", "First", &fence),
+        section_of("explanation", "Second", rest),
+    ],"questions":[]});
+    let mut ledger = open().await?;
+    let example = failed_example(&mut ledger, 0, &fence).await?;
+    let cut = claim_in(
+        &mut ledger,
+        "cut",
+        1,
+        ("Cut this one.", "Cut this one."),
+        rest,
+        Some(SOURCED),
+    )
+    .await?;
+    walk(&mut ledger, &cut, Class::Sourced, &CUTTING).await?;
+    ledger
+        .begin_repairs(&policy, &lesson, &[cut.clone(), example.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson, "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [{"unit":1,"claimId":"cut","sentence":"Cut this one.","evidence":[],"lastAttempt":true}],
+        "exampleClaims": [{"unit":0,"claimId":"example","lastAttempt":true}],
+    });
+
+    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+
+    // An example is never marked: its section goes with it, which is the
+    // first explanation, and the statement's cut is made as before.
+    assert!(ledger.cuts.going.contains_key(&0));
+    assert_eq!(
+        context["candidate"]["blocks"][1]["body"],
+        "Keep one. Keep two."
+    );
+    let entry = ledger.entry(&cut).unwrap();
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    assert!(matches!(
+        ledger.entry(&example).unwrap().state(),
+        ClaimState::Removed { .. }
+    ));
     Ok(())
 }
 
