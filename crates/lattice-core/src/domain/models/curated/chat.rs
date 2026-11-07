@@ -327,7 +327,7 @@ const QWEN35_4B_9B_KV: KvFootprint = KvFootprint {
     windowed_bytes: 0,
 };
 
-/// The chat catalog, smallest working set first.
+/// The chat catalog, smallest working set first (the 8K-window estimate, then the 32K one).
 ///
 /// Every entry is current-generation (Qwen 3.5 or later, Gemma 4), so the
 /// tool loop, citation and grounding prompts all meet a template that knows
@@ -524,6 +524,177 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
             windowed_bytes: 40 * 8 * 512 * 2 * (1024 + 512),
         },
         performance_tier: PerformanceTier::Balanced,
+        capabilities: GEMMA_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 175_115_840,
+            projector_sha256: "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e",
+            geometry: GEMMA4_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/Qwen3.5-9B-GGUF at commit 3885219b, 2026-11-07.
+    // KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (32 blocks, one in
+    // four full attention, 4 KV heads, 256-wide), the same as the Q4_K_M. Template: byte-identical to
+    // the Q4_K_M's, so thinking is off unless `enable_thinking: true`.
+    CuratedChatModel {
+        id: "qwen3.5-9b-q6_k",
+        name: "Qwen 3.5 9B (Q6_K)",
+        description: "The Qwen 3.5 9B at 6 bits: closer to full precision than the default Q4_K_M, for graphics cards with 12 GB or more. About 1.8 GB larger to download.",
+        repo: "unsloth/Qwen3.5-9B-GGUF",
+        file: "Qwen3.5-9B-Q6_K.gguf",
+        size_bytes: 7_458_301_152,
+        sha256: "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59",
+        quantization: "Q6_K",
+        context_length: 262_144,
+        kv: QWEN35_4B_9B_KV,
+        performance_tier: PerformanceTier::Balanced,
+        capabilities: QWEN_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 918_166_080,
+            projector_sha256: "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+            geometry: QWEN_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/Qwen3.5-9B-GGUF at commit 3885219b, 2026-11-07.
+    // KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (32 blocks, one in
+    // four full attention, 4 KV heads, 256-wide), the same as the Q4_K_M. Template: byte-identical to
+    // the Q4_K_M's, so thinking is off unless `enable_thinking: true`.
+    CuratedChatModel {
+        id: "qwen3.5-9b-q8_0",
+        name: "Qwen 3.5 9B (Q8_0)",
+        description: "The Qwen 3.5 9B at 8 bits, effectively full precision, for graphics cards with 12 GB or more. Twice the Q4_K_M's download.",
+        repo: "unsloth/Qwen3.5-9B-GGUF",
+        file: "Qwen3.5-9B-Q8_0.gguf",
+        size_bytes: 9_527_502_048,
+        sha256: "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4",
+        quantization: "Q8_0",
+        context_length: 262_144,
+        kv: QWEN35_4B_9B_KV,
+        performance_tier: PerformanceTier::Balanced,
+        capabilities: QWEN_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 918_166_080,
+            projector_sha256: "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+            geometry: QWEN_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/gemma-4-12b-it-GGUF at commit fc034cfff751,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py
+    // (48 blocks, 8 global with 1 KV head 512-wide, 40 sliding over 1024 tokens with 8 KV heads
+    // 256-wide), the same as the Q4_K_M. Template: byte-identical to the Q4_K_M's.
+    CuratedChatModel {
+        id: "gemma-4-12b-it-q6_k",
+        name: "Gemma 4 12B (Q6_K)",
+        description: "Google's Gemma 4 12B at 6 bits: nearly the unquantized model's quality on a 12 to 16 GB graphics card, with native tool calls.",
+        repo: "unsloth/gemma-4-12b-it-GGUF",
+        file: "gemma-4-12b-it-Q6_K.gguf",
+        size_bytes: 9_786_022_720,
+        sha256: "6f394336500bb5409bd68c31aa9d75097b5e6104f6cf30c82a09a7b64df41faf",
+        quantization: "Q6_K",
+        context_length: 262_144,
+        kv: KvFootprint {
+            per_token_bytes: 8 * 1024 * 2,
+            windowed_bytes: 40 * 8 * 512 * 2 * (1024 + 512),
+        },
+        performance_tier: PerformanceTier::Balanced,
+        capabilities: GEMMA_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 175_115_840,
+            projector_sha256: "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e",
+            geometry: GEMMA4_VISION,
+        }),
+    },
+    // ByteShape's repository, not unsloth's: unsloth's UD-IQ3_S is 12.0 GB and scores 0.956 of BF16.
+    // Size and SHA-256: the tree API of byteshape/Qwen3.8-27B-GGUF at commit 3fdfbd9b4a61,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (65
+    // blocks incl. 1 MTP, 17 full attention, 4 KV heads 256-wide), the same as the unsloth UD-Q4_K_M.
+    // The projector is the repository's mmproj-bf16.gguf (qwen3vl_merger, the same geometry as the
+    // unsloth F16). Template: thinking ON unless `enable_thinking: false`; `reasoning_effort` takes
+    // xhigh (default), medium or low and raises on `high`, unlike unsloth's.
+    CuratedChatModel {
+        id: "qwen3.8-27b-iq3_s",
+        name: "Qwen 3.8 27B (IQ3_S, 3-bit)",
+        description: "3-bit quantization of Qwen's newest dense model, ByteShape's IQ3_S, so a 16 GB graphics card can hold all of it. Keeps 0.987 of the full model's score in ByteShape's own test; a step below the 4-bit file in accuracy. Tight at long contexts.",
+        repo: "byteshape/Qwen3.8-27B-GGUF",
+        file: "Qwen3.8-27B-IQ3_S-3.23bpw.gguf",
+        size_bytes: 11_035_354_496,
+        sha256: "40171062abb191d5fb8a04b19efea377a16daebf1fd17d5e8b25808537aa782f",
+        quantization: "IQ3_S",
+        context_length: 262_144,
+        kv: KvFootprint {
+            per_token_bytes: 17 * 4 * 512 * 2,
+            windowed_bytes: 0,
+        },
+        performance_tier: PerformanceTier::Accurate,
+        capabilities: QWEN_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-bf16.gguf",
+            projector_bytes: 931_145_952,
+            projector_sha256: "e43a597863a21bfa48b0fbd4553a771ae4117e25bb172e66f1dbc3fc6d037131",
+            geometry: QWEN_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/gemma-4-26B-A4B-it-GGUF at commit c099eb48e663,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (30
+    // blocks, 5 global with 2 KV heads 512-wide, 25 sliding over 1024 tokens with 8 KV heads
+    // 256-wide), the same as the UD-Q4_K_M. Template: byte-identical to the 12B's.
+    CuratedChatModel {
+        id: "gemma-4-26b-a4b-it-ud-iq3_s",
+        name: "Gemma 4 26B A4B (UD-IQ3_S, 3-bit)",
+        description: "3-bit quantization of Google's mixture-of-experts Gemma 4, unsloth's UD-IQ3_S, so a 16 GB graphics card can hold all of it, answering at about 4B-model speed. A step below the 4-bit file in accuracy.",
+        repo: "unsloth/gemma-4-26B-A4B-it-GGUF",
+        file: "gemma-4-26B-A4B-it-UD-IQ3_S.gguf",
+        size_bytes: 11_289_671_136,
+        sha256: "878be93f9c238ea853b3fd1eb602637ce3cf1cddea56dc345d9a7bf2d6093e29",
+        quantization: "UD-IQ3_S",
+        context_length: 262_144,
+        kv: KvFootprint {
+            per_token_bytes: 5 * 2 * 1024 * 2,
+            windowed_bytes: 25 * 8 * 512 * 2 * (1024 + 512),
+        },
+        performance_tier: PerformanceTier::Accurate,
+        capabilities: GEMMA_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 1_193_058_784,
+            projector_sha256: "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f",
+            geometry: GEMMA4_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/gemma-4-12b-it-GGUF at commit fc034cfff751,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py
+    // (48 blocks, 8 global with 1 KV head 512-wide, 40 sliding over 1024 tokens with 8 KV heads
+    // 256-wide), the same as the Q4_K_M. Template: byte-identical to the Q4_K_M's.
+    CuratedChatModel {
+        id: "gemma-4-12b-it-q8_0",
+        name: "Gemma 4 12B (Q8_0)",
+        description: "Google's Gemma 4 12B at 8 bits, effectively full precision, for graphics cards with 16 GB. Native tool calls.",
+        repo: "unsloth/gemma-4-12b-it-GGUF",
+        file: "gemma-4-12b-it-Q8_0.gguf",
+        size_bytes: 12_669_647_680,
+        sha256: "f20e7ff1be28c283eeeb18fc895733791c56a5851d5cd3fe9691b7f7d12afa72",
+        quantization: "Q8_0",
+        context_length: 262_144,
+        kv: KvFootprint {
+            per_token_bytes: 8 * 1024 * 2,
+            windowed_bytes: 40 * 8 * 512 * 2 * (1024 + 512),
+        },
+        performance_tier: PerformanceTier::Accurate,
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,

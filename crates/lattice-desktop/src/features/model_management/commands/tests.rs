@@ -53,9 +53,9 @@ fn a_catalog_repository_row_becomes_the_catalog_entry() {
         .iter()
         .filter(|entry| entry.model.id.starts_with("qwen3.5-9b"))
         .collect();
-    // The plain 9B replaced its Hugging Face row; the MTP build matched the
-    // search too and was added.
-    assert_eq!(catalog.len(), 2);
+    // The plain 9B replaced its Hugging Face row; the MTP build and the Q6_K
+    // and Q8_0 files matched the search too and were added.
+    assert_eq!(catalog.len(), 4);
     let plain = catalog
         .iter()
         .find(|entry| entry.model.id == "qwen3.5-9b-q4_k_m")
