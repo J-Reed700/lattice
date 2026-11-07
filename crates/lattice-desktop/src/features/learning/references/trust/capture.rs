@@ -32,10 +32,10 @@ pub const PASTED_SIGNALS_VERSION: &str = "pasted-signals-v1";
 /// the saved text was read (links and shingles).
 pub const TEXT_ONLY_EXTRACTION: &str = "text-only-v1";
 
-/// The library's limit on the `publisher` column (the source library's
-/// capture validation). A longer declared name is not shown as the
-/// publisher; the signals keep it whole for the standing judgement, which
-/// flags oversized metadata.
+/// What the source library keeps of a publisher (it cuts a longer name to
+/// this at capture). A longer declared name is not shown as the publisher
+/// here; the signals keep it whole for the standing judgement, which flags
+/// oversized metadata.
 pub const PUBLISHER_MAX_CHARS: usize = 180;
 
 /// How many heading lines of a document its signals keep. A document names

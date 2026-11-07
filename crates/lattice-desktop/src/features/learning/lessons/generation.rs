@@ -23,26 +23,26 @@ mod lesson_rules;
 mod outline;
 mod recall;
 
+pub(in crate::features::learning) use lesson::MAX_CITATIONS;
 pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
 pub use lesson_rules::lesson_rule_notes;
-pub(in crate::features::learning) use lesson_rules::{lesson_rules, split_check, CHECK_REVEAL};
+pub(in crate::features::learning) use lesson_rules::{
+    lesson_rules, split_check, teaching_sentences, CHECK_REVEAL,
+};
 pub(in crate::features::learning) use outline::{decode_outline, draft_outline, outline_schema};
 pub use outline::{generate_outline, generate_outline_with_progress};
 pub(in crate::features::learning) use recall::recall_output_tokens;
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
 const MIN_TEXT: usize = 3;
-const MAX_BODY: usize = 5000;
-const MAX_QUESTION: usize = 1200;
-const MAX_OPTION: usize = 500;
-const MAX_EXPLANATION: usize = 1600;
 const MIN_QUOTE_CHARS: usize = 25;
+/// The longest span the code itself picks as a quotation; a model's has no ceiling.
 pub(in crate::features::learning) const MAX_QUOTE_CHARS: usize = 1200;
 pub(in crate::features::learning) const OUTLINE_OUTPUT_RESERVE: usize = 4000;
 pub(in crate::features::learning) const LESSON_OUTPUT_RESERVE: usize = 10000;
 
 /// Added to a draft brief when the material cites saved sources.
-const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt.";
+const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt. List each sentence that states a specific or attributes a statement to a source with the excerpt it comes from and the words that contain it.";
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
@@ -68,10 +68,7 @@ pub(in crate::features::learning) fn validate_excerpt_quote(
     let quote = quote.trim();
     let chars = quote.chars().count();
     let words = quote.split_whitespace().count();
-    if !(MIN_QUOTE_CHARS..=MAX_QUOTE_CHARS).contains(&chars)
-        || words < 5
-        || !normalize(excerpt).contains(&normalize(quote))
-    {
+    if chars < MIN_QUOTE_CHARS || words < 5 || !normalize(excerpt).contains(&normalize(quote)) {
         return Err(invalid("The generated quotation does not match a valid passage in the saved reference. No material was published."));
     }
     Ok(())
@@ -160,9 +157,19 @@ fn grounding_instructions(has_sources: bool) -> &'static str {
     }
 }
 
-fn validate_text(value: &str, max: usize) -> bool {
-    let value = value.trim();
-    value.chars().count() >= MIN_TEXT && value.chars().count() <= max
+/// What the writer is told of citing per sentence (claim classes design
+/// §3.4, §3.5): a specific stands only in a sentence it lists in its
+/// citations, with a quote that holds it.
+fn citation_instructions(has_sources: bool) -> &'static str {
+    if has_sources {
+        "Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) and an attribution to a source may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps and question explanations state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing."
+    } else {
+        "Every citations list is empty: no sources are supplied, so nothing is cited."
+    }
+}
+
+fn validate_text(value: &str) -> bool {
+    !value.trim().is_empty()
 }
 
 fn validate_outline_request(request: &GenerateLearningProgramRequestDto) -> Result<()> {

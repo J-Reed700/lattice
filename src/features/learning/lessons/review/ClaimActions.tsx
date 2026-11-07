@@ -102,8 +102,6 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
             More <ChevronDown aria-hidden="true" />
           </Button>
           {moreOpen && <div id={`${id}-more`} role="menu" aria-label="More actions" className="absolute left-0 top-full z-20 mt-1 w-56 rounded-xl border border-border bg-surface p-1.5 shadow-sheet">
-            {available.has('general_knowledge') && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMoreOpen(false); void run({ action: 'general_knowledge' }, 'general_knowledge'); }}
-              className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background disabled:opacity-50">General knowledge</button>}
             {available.has('research_with_hint') && <button type="button" role="menuitem" onClick={() => toggle('hint')}
               className="flex min-h-10 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background">Search with a hint</button>}
             {confirmed && available.has('unconfirm') && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMoreOpen(false); void run({ action: 'unconfirm' }, 'unconfirm'); }}

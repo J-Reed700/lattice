@@ -322,6 +322,19 @@ impl DeepResearchJob {
 
 #[async_trait]
 impl JobHandler for DeepResearchJob {
+    /// The turn will not run: its waiting command is answered with the
+    /// failure, and the question it saved is failed, as when its saved turn
+    /// cannot be read.
+    async fn failed_by_runtime(&self, job: &JobRecord, _code: &str) {
+        let message = job.error_message.clone().unwrap_or_default();
+        if let Some(request_id) = job.operation_id.strip_prefix(&operation_id("")) {
+            if let Some(waiter) = self.runtime.research_waiters().take(request_id) {
+                let _ = waiter.reply.send(Err(AppError::InternalError(message)));
+            }
+        }
+        fail_saved_question(self.runtime.as_ref(), self.runtime.jobs().store(), &job.id).await;
+    }
+
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let (request, saved) = match saved_turn(context.store(), context.job()).await {
             Ok(turn) => turn,

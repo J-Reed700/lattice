@@ -21,7 +21,8 @@ use lattice_core::domain::learning::drills::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
-    JobContext, JobOutcome, JobRuntime, JobStatus, JobStore, NewJob, RecoveryPolicy,
+    JobContext, JobHandler, JobOutcome, JobRecord, JobRuntime, JobStatus, JobStore, NewJob,
+    RecoveryPolicy,
 };
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -491,6 +492,87 @@ async fn wait_until_grading(store: &JobStore, job: &str) -> Result<()> {
     Err(AppError::InternalError(
         "The job never began grading.".into(),
     ))
+}
+
+/// Panics before grading; the runtime's word that it failed the job goes to the real worker.
+struct Panics(DrillGradingWorker);
+
+#[async_trait]
+impl JobHandler for Panics {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        panic!("the grading exploded");
+    }
+
+    async fn failed_by_runtime(&self, job: &JobRecord, code: &str) {
+        self.0.failed_by_runtime(job, code).await;
+    }
+}
+
+/// Waits until the review stands as "couldn't grade", as its learner would read it.
+async fn wait_until_ungraded(waiting: &Waiting) -> Result<()> {
+    for _ in 0..1_000 {
+        if waiting.attempt().await?.status == AttemptStatus::CouldntGrade {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    Err(AppError::InternalError(
+        "The review was left waiting for a grade.".into(),
+    ))
+}
+
+#[tokio::test]
+async fn a_panic_while_grading_leaves_the_review_marked_not_graded() -> Result<()> {
+    let waiting = Waiting::unclaimed(findings(), None).await?;
+    let runtime = JobRuntime::new(waiting.pool.clone());
+    runtime
+        .register(
+            DRILL_GRADING,
+            Arc::new(Panics(worker(&waiting.pool, Arc::new(none())))),
+            grading_job_config(),
+        )
+        .await?;
+    runtime.submitted(&waiting.job).await;
+    runtime.finished(&waiting.job).await;
+
+    assert_eq!(
+        waiting.store.get(&waiting.job).await?.status,
+        JobStatus::Failed
+    );
+    wait_until_ungraded(&waiting).await?;
+    assert!(waiting.attempt().await?.error.is_some());
+    runtime.close();
+    runtime.drain().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_grading_job_the_runtime_failed_for_stopping_the_app_leaves_the_review_marked_not_graded(
+) -> Result<()> {
+    let waiting = Waiting::unclaimed(findings(), None).await?;
+    Waiting::claim(&waiting.store, &waiting.job).await?;
+    waiting
+        .store
+        .recover(DRILL_GRADING, RecoveryPolicy::Requeue)
+        .await?;
+    Waiting::claim(&waiting.store, &waiting.job).await?;
+
+    let runtime = JobRuntime::new(waiting.pool.clone());
+    runtime
+        .register(
+            DRILL_GRADING,
+            Arc::new(worker(&waiting.pool, Arc::new(none()))),
+            grading_job_config(),
+        )
+        .await?;
+
+    let job = waiting.store.get(&waiting.job).await?;
+    assert_eq!(job.error_code.as_deref(), Some("stopped_the_app"));
+    wait_until_ungraded(&waiting).await?;
+    assert!(waiting.attempt().await?.error.is_some());
+    runtime.close();
+    runtime.drain().await;
+    Ok(())
 }
 
 fn stuck_worker(pool: &SqlitePool) -> DrillGradingWorker {

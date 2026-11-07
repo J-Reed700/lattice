@@ -1,5 +1,6 @@
 use super::recall::{parse_recall_drafts, recall_draft_schema};
 use super::*;
+use crate::features::learning::lessons::course_generation_tests::length_bounds;
 
 fn source() -> LearningSourceDto {
     LearningSourceDto {
@@ -378,4 +379,181 @@ async fn a_lesson_whose_prompt_leaves_no_room_for_evidence_is_refused_up_front()
             if message.starts_with("This course's goal and the lesson brief leave no room for evidence in Ornith-1.5-9B's 24000-token context window.")),
         "{error:?}"
     );
+}
+
+#[tokio::test]
+async fn a_lesson_outline_of_any_length_is_not_called_incomplete() {
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.goal = "Understand every part of the subject in depth. ".repeat(2_000);
+    let lesson = &mut program.modules[0].lessons[0];
+    lesson.title = "A lesson title that runs on and on. ".repeat(10);
+    lesson.objective = "An objective that runs on and on. ".repeat(50);
+    let lesson = program.modules[0].lessons[0].clone();
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
+
+    let error = super::lesson::prepare_lesson(&Window(24_000), &runtimes, &program, &lesson)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InvalidConfig(message)
+            if message.starts_with("This course's goal and the lesson brief leave no room for evidence")),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_verbatim_quote_longer_than_1200_characters_is_read_not_refused() {
+    let excerpt = "A process records each observation with a stable identifier. ".repeat(30);
+    let quote = excerpt.trim();
+    assert!(quote.chars().count() > 1200);
+    assert!(validate_excerpt_quote(quote, &excerpt).is_ok());
+    // A quote still needs its five words and must still be in the excerpt.
+    assert!(validate_excerpt_quote("Too short.", &excerpt).is_err());
+    assert!(validate_excerpt_quote(
+        "A process records each observation with a different identifier.",
+        &excerpt
+    )
+    .is_err());
+}
+
+fn outline_request() -> GenerateLearningProgramRequestDto {
+    GenerateLearningProgramRequestDto {
+        goal: "Record observations".into(),
+        prior_knowledge: String::new(),
+        minutes_per_session: 30,
+        document_ids: vec![],
+        source_urls: vec![],
+        course_depth: None,
+    }
+}
+
+/// The two-module outline fixture with the text at `pointer` set to `text`.
+fn decoded_with(pointer: &str, text: &str) -> Result<()> {
+    let raw = crate::features::learning::lessons::course_generation_tests::outline(2, 2).0;
+    let mut outline: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    *outline.pointer_mut(pointer).unwrap() = json!(text);
+    decode_outline(&outline.to_string(), &outline_request(), &[]).map(|_| ())
+}
+
+#[test]
+fn a_module_or_lesson_text_of_any_length_is_read_not_refused() {
+    for (pointer, text) in [
+        (
+            "/modules/0/title",
+            "A module title that runs on. ".repeat(10),
+        ),
+        (
+            "/modules/0/summary/text",
+            "A summary that runs on and on. ".repeat(70),
+        ),
+        (
+            "/modules/0/outcomes/0/text",
+            "An outcome that runs on and on. ".repeat(200),
+        ),
+        (
+            "/modules/0/lessons/0/title",
+            "A lesson title that runs on. ".repeat(10),
+        ),
+        (
+            "/modules/0/lessons/0/objective",
+            "An objective that runs on and on. ".repeat(50),
+        ),
+    ] {
+        let decoded = decoded_with(pointer, &text);
+        assert!(decoded.is_ok(), "{pointer}: {:?}", decoded.as_ref().err());
+    }
+}
+
+#[test]
+fn a_module_or_lesson_text_of_two_letters_is_read_not_refused() {
+    for (pointer, text) in [
+        ("/modules/0/title", "AI"),
+        ("/modules/0/summary/text", "Hi"),
+        ("/modules/0/outcomes/0/text", "OK"),
+        ("/modules/0/lessons/0/title", "Go"),
+        ("/modules/0/lessons/0/objective", "Do"),
+    ] {
+        let decoded = decoded_with(pointer, text);
+        assert!(decoded.is_ok(), "{pointer}: {:?}", decoded.as_ref().err());
+    }
+    assert!(decoded_with("/modules/0/title", "  ").is_err());
+}
+
+#[test]
+fn a_recall_question_answer_or_explanation_of_any_length_is_read_not_refused() {
+    let allowed = [source()];
+    let long = "A stable identifier links the observation to its record. ".repeat(60);
+    for field in ["question", "answer", "explanation"] {
+        let mut card = valid_recall_card("What links the observation?");
+        card[field] = json!(long);
+        let parsed = parse_recall_drafts(&recall_response(json!([card])), 1, &allowed);
+        assert!(parsed.is_ok(), "{field}: {:?}", parsed.as_ref().err());
+    }
+    let short = recall_card("What is six times seven?", "42", json!(["source-a"]));
+    let parsed = parse_recall_drafts(&recall_response(json!([short])), 1, &allowed);
+    assert!(parsed.is_ok(), "{:?}", parsed.as_ref().err());
+}
+
+#[tokio::test]
+async fn a_lesson_block_of_any_length_does_not_stop_recall_drafts() {
+    use crate::features::learning::dto::{
+        LearningBlockDto, LearningBlockKind, LearningPreparation, LearningProgramStatus,
+    };
+    use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
+    let mut program = crate::features::learning::tests::fixture();
+    program.summary.status = LearningProgramStatus::Active;
+    let source_id = program.sources[0].id.clone();
+    let lesson = &mut program.modules[0].lessons[0];
+    lesson.preparation = LearningPreparation::Ready;
+    lesson.blocks = vec![
+        LearningBlockDto {
+            kind: LearningBlockKind::Explanation,
+            title: "A title that runs on and on. ".repeat(10),
+            body: "A body that runs on and on without a figure in it. ".repeat(150),
+            source_ids: vec![source_id.clone()],
+            rubric: vec![],
+        },
+        LearningBlockDto {
+            kind: LearningBlockKind::Recap,
+            title: "Go".into(),
+            body: "Ok".into(),
+            source_ids: vec![source_id],
+            rubric: vec![],
+        },
+    ];
+    let lesson_id = lesson.id.clone();
+    let model = ScriptedModel {
+        outputs: Default::default(),
+        prompts: Default::default(),
+    };
+
+    let result = generate_recall_drafts(&model, &program, &lesson_id, 2).await;
+
+    assert!(
+        !matches!(&result, Err(AppError::InvalidInput(message))
+            if message.contains("invalid teaching block")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn the_outline_schema_bounds_no_text_but_a_blank() {
+    for sources in [0, 1] {
+        let bounds = length_bounds(&outline_schema(None, sources));
+        assert!(bounds.is_empty(), "{sources} sources: {bounds:?}");
+    }
+}
+
+#[test]
+fn the_recall_schema_bounds_no_text_but_the_quotes_floor() {
+    let allowed = HashSet::from(["source-a".to_owned()]);
+    let schema = recall_draft_schema(2, &allowed);
+    let floor = "/properties/cards/items/properties/quote/minLength";
+    assert_eq!(schema.pointer(floor), Some(&json!(MIN_QUOTE_CHARS)));
+    let bounds: Vec<_> = length_bounds(&schema)
+        .into_iter()
+        .filter(|bound| !bound.starts_with(floor))
+        .collect();
+    assert!(bounds.is_empty(), "{bounds:?}");
 }

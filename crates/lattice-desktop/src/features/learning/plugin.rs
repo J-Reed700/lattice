@@ -6,6 +6,7 @@ use super::{
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::ipc::ApiError;
+use lattice_core::shared::runtime::jobs::JobKindRegistration;
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime, State,
@@ -137,43 +138,48 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // practical commands and lesson verification share its guest slots.
             let runtimes = BuiltinRuntimes::new(bundled_python(app));
             app.manage(runtimes.clone());
-            // Registration settles lesson jobs the last process left running,
-            // then starts delivering saved work.
-            tauri::async_runtime::block_on(container.jobs().register(
-                super::curriculum_repository::LESSON_PREPARATION,
-                std::sync::Arc::new(generation_worker(&container, runtimes.clone())),
-                super::curriculum_repository::lesson_job_config(),
-            ))?;
-            // Quiz banks and grading resume or settle the same way.
+            // Registration settles the jobs the last process left running,
+            // then starts delivering saved work. A kind that fails to register
+            // is retried in the background and never fails setup.
             let (bank_worker, grading_worker) = quiz_workers(&container);
-            tauri::async_runtime::block_on(container.jobs().register(
-                super::quiz_bank_jobs::QUIZ_BANK,
-                std::sync::Arc::new(bank_worker),
-                super::quiz_bank_jobs::quiz_job_config(),
-            ))?;
-            tauri::async_runtime::block_on(container.jobs().register(
-                super::quiz_bank_jobs::QUIZ_GRADING,
-                std::sync::Arc::new(grading_worker),
-                super::quiz_bank_jobs::quiz_job_config(),
-            ))?;
-            // Drills are built one ahead per language, and a build resumes from its
-            // checkpoints. A submitted review is graded by a job that a stop leaves
-            // submitted.
-            tauri::async_runtime::block_on(container.jobs().register(
-                super::drills::jobs::DRILL_BUILD,
-                std::sync::Arc::new(drill_worker(&container, runtimes.clone())),
-                super::drills::jobs::drill_job_config(),
-            ))?;
-            tauri::async_runtime::block_on(container.jobs().register(
-                super::drills::jobs::DRILL_GRADING,
-                std::sync::Arc::new(drill_grading_worker(&container, runtimes)),
-                super::drills::jobs::grading_job_config(),
-            ))?;
-            // Course index builds the last process left running resume; the
-            // indexes of courses deleted meanwhile are removed, and courses
+            let mut kinds = vec![
+                JobKindRegistration {
+                    kind: super::curriculum_repository::LESSON_PREPARATION.into(),
+                    handler: std::sync::Arc::new(generation_worker(&container, runtimes.clone())),
+                    config: super::curriculum_repository::lesson_job_config(),
+                },
+                // Quiz banks and grading resume or settle the same way.
+                JobKindRegistration {
+                    kind: super::quiz_bank_jobs::QUIZ_BANK.into(),
+                    handler: std::sync::Arc::new(bank_worker),
+                    config: super::quiz_bank_jobs::quiz_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::quiz_bank_jobs::QUIZ_GRADING.into(),
+                    handler: std::sync::Arc::new(grading_worker),
+                    config: super::quiz_bank_jobs::quiz_job_config(),
+                },
+                // Drills are built one ahead per language, and a build resumes from its
+                // checkpoints. A submitted review is graded by a job that a stop leaves
+                // submitted.
+                JobKindRegistration {
+                    kind: super::drills::jobs::DRILL_BUILD.into(),
+                    handler: std::sync::Arc::new(drill_worker(&container, runtimes.clone())),
+                    config: super::drills::jobs::drill_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::drills::jobs::DRILL_GRADING.into(),
+                    handler: std::sync::Arc::new(drill_grading_worker(&container, runtimes)),
+                    config: super::drills::jobs::grading_job_config(),
+                },
+            ];
+            // Course index builds the last process left running resume.
+            let courses = container.course_indexes().cloned();
+            kinds.extend(courses.iter().map(|courses| courses.job_kind()));
+            tauri::async_runtime::block_on(container.jobs().register_all(kinds));
+            // The indexes of courses deleted meanwhile are removed, and courses
             // whose index is not current are queued.
-            if let Some(courses) = container.course_indexes().cloned() {
-                tauri::async_runtime::block_on(courses.register())?;
+            if let Some(courses) = courses {
                 let background = std::sync::Arc::clone(container.core.background());
                 // Spawned from inside the runtime, so the sweep runs on after
                 // setup returns.
@@ -193,9 +199,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let practical = super::practical_repository::LearningPracticalRepository::new(
                 container.db_pool().clone(),
             );
-            tauri::async_runtime::block_on(super::practical_runs::recover_running_runs(
-                &practical,
-            ))?;
+            tauri::async_runtime::block_on(super::practical_runs::recover_at_startup(&practical))?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

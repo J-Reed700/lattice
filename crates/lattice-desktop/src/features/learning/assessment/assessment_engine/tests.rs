@@ -53,6 +53,17 @@ fn form_selection_prefers_unseen_items_and_labels_required_repeats() -> Result<(
 }
 
 #[test]
+fn a_blueprint_is_valid_whatever_its_title_and_instructions_run_to() {
+    let mut long = blueprint();
+    long.title = "A title that names the whole lesson. ".repeat(10);
+    long.instructions = "Answer every question you can. ".repeat(200);
+    let checked = validate_blueprint(&long);
+    assert!(checked.is_ok(), "{:?}", checked.err());
+    long.title = "  ".into();
+    assert!(validate_blueprint(&long).is_err());
+}
+
+#[test]
 fn insufficient_blueprint_coverage_is_an_error_instead_of_synthetic_content() {
     assert!(build_assessment_form(
         &blueprint(),

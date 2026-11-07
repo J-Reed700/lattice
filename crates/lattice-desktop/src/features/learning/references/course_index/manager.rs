@@ -17,7 +17,7 @@ use crate::infrastructure::passage_index::{
 };
 use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
 use lattice_core::shared::runtime::background::BackgroundTasks;
-use lattice_core::shared::runtime::jobs::{JobRuntime, NewJob};
+use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, NewJob};
 use lattice_core::shared::{AppError, Result};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -37,7 +37,7 @@ pub struct CourseIndexes {
     pool: SqlitePool,
     embedders: Arc<dyn EmbedderSource>,
     searches: Arc<dyn HybridSearchFactory>,
-    jobs: Arc<JobRuntime>,
+    pub(super) jobs: Arc<JobRuntime>,
     /// Index directories open for readers and builds.
     live: LiveIndexes,
     /// How many readers hold each course.
@@ -74,16 +74,14 @@ impl CourseIndexes {
         })
     }
 
-    /// Registers the build job kind; builds the last process left running
-    /// resume.
-    pub async fn register(self: &Arc<Self>) -> Result<()> {
-        self.jobs
-            .register(
-                COURSE_INDEX,
-                Arc::new(CourseIndexJob::new(Arc::downgrade(self))),
-                build_job_config(),
-            )
-            .await
+    /// The build job kind; registering it resumes the builds the last process
+    /// left running.
+    pub fn job_kind(self: &Arc<Self>) -> JobKindRegistration {
+        JobKindRegistration {
+            kind: COURSE_INDEX.into(),
+            handler: Arc::new(CourseIndexJob::new(Arc::downgrade(self))),
+            config: build_job_config(),
+        }
     }
 
     fn repository(&self) -> LearningSourceLibraryRepository {
@@ -283,6 +281,15 @@ impl CourseIndexes {
     /// build under this name is forgotten too when the caller knows the index
     /// is still not current, so the build runs again.
     pub(super) async fn queue_stamp(&self, program: &str, stamp: &str, rerun: Rerun) -> Result<()> {
+        // A build that stopped the app waits, visible, for the learner's retry.
+        if self
+            .jobs
+            .store()
+            .last_run_stopped_the_app(COURSE_INDEX, program)
+            .await?
+        {
+            return Ok(());
+        }
         let operation_id = build_name(program, stamp);
         for old in self
             .jobs

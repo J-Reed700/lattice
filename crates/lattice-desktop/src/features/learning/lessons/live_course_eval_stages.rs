@@ -2,6 +2,7 @@
 //! outline as generated or continued, then each selected lesson's job.
 use super::*;
 use crate::features::learning::references::course_index::CourseIndexes;
+use lattice_core::domain::learning::claim_review::{Actor, ClaimLedgerEntry, ClaimState, Class};
 
 /// The §1.1 outline keys the program and its saved draft decide.
 pub(super) fn outline_metrics(
@@ -104,13 +105,21 @@ pub(super) fn lesson_metrics(
                         .any(|p| p["text"].as_str().is_some_and(|text| text.contains(quote)))
             })
             .count();
+        let class = |name: &str| findings.iter().filter(|f| f["class"]["class"] == name).count();
+        // A statement read part by part whose passage leaves a part that is
+        // common knowledge unsaid (claim classes design §3.3).
+        let bridged = findings
+            .iter()
+            .filter(|f| items(f, "parts").iter().any(|part| part["kind"] == "common"))
+            .count();
         json!({
             "total": findings.len(),
             "supported": verdict("supported"),
             "unsupported": verdict("unsupported"),
             "contradicted": verdict("contradicted"),
             "unverified": verdict("unverified"),
-            "general_knowledge": findings.iter().filter(|f| f["verdict"] == "unsupported" && !f["resolution"].is_null()).count(),
+            "by_class": {"sourced": class("sourced"), "reasoning": class("reasoning"), "common": class("common")},
+            "bridged": bridged,
             "quotes_unmatched": unmatched,
             "issues": items(report, "issues").len(),
         })
@@ -138,8 +147,32 @@ pub(super) fn lesson_metrics(
     })
 }
 
-/// Deferrals, repair and deepening rounds, and seconds per phase, from one
-/// selector's `phases.jsonl` lines.
+/// The statements the machine took out of a lesson, by the class they were
+/// checked as, from the claim ledger the job left.
+pub(super) fn removed_by_class(claims: &[ClaimLedgerEntry]) -> Value {
+    let removed = claims.iter().filter(|claim| {
+        matches!(
+            claim.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        )
+    });
+    let (mut sourced, mut reasoning, mut common, mut unclassed) = (0, 0, 0, 0);
+    for claim in removed {
+        match claim.class() {
+            Some(Class::Sourced) => sourced += 1,
+            Some(Class::Reasoning) => reasoning += 1,
+            Some(Class::Common) => common += 1,
+            Some(Class::Internal) | None => unclassed += 1,
+        }
+    }
+    json!({"sourced": sourced, "reasoning": reasoning, "common": common, "unclassed": unclassed})
+}
+
+/// Deferrals, repair rounds, whether the ceiling on the calls ever rose, and
+/// seconds per phase, from one selector's `phases.jsonl` lines.
 pub(super) fn phase_metrics(lines: &[Value], selector: &str) -> Value {
     let rows: Vec<&Value> = lines.iter().filter(|l| l["selector"] == selector).collect();
     let deferrals = rows
@@ -151,7 +184,8 @@ pub(super) fn phase_metrics(lines: &[Value], selector: &str) -> Value {
                 .filter(|r| r["status"] == "pending")
                 .count()
         });
-    let (mut repairs, mut pages) = (0, BTreeSet::new());
+    let mut repairs = 0;
+    let (mut ceiling, mut rose) = (None::<u64>, false);
     let mut seconds: BTreeMap<String, f64> = BTreeMap::new();
     let mut previous = &Value::Null;
     for (index, row) in rows.iter().enumerate() {
@@ -159,8 +193,9 @@ pub(super) fn phase_metrics(lines: &[Value], selector: &str) -> Value {
             repairs += 1;
         }
         previous = &row["phase"];
-        if let Some(page) = row["deeper_page"].as_u64() {
-            pages.insert(page);
+        if let Some(now) = row["ceiling"].as_u64() {
+            rose |= ceiling.is_some_and(|before| now > before);
+            ceiling = Some(now);
         }
         if let (true, Some(phase), Some(next)) = (
             row["status"] == "running",
@@ -171,7 +206,7 @@ pub(super) fn phase_metrics(lines: &[Value], selector: &str) -> Value {
             *seconds.entry(phase.to_owned()).or_default() += span as f64 / 1000.0;
         }
     }
-    json!({"deferrals": deferrals, "rounds": {"repair": repairs, "deepening": pages.len()}, "phase_seconds": seconds})
+    json!({"deferrals": deferrals, "rounds": {"repair": repairs}, "ceiling_rose_seen": rose, "phase_seconds": seconds})
 }
 
 /// Calls in `calls` and their tokens, from the `call-N.json` files the
@@ -525,7 +560,7 @@ async fn lesson_stage(
                 let activity = job.activity.as_ref();
                 let state = json!({
                     "status": job.status, "phase": activity.map(|a| a.phase), "message": job.progress_message,
-                    "deeper_page": activity.and_then(|a| a.deeper_evidence.as_ref()).map(|d| d.page),
+                    "ceiling": activity.and_then(|a| a.model_calls_ceiling),
                 });
                 let mut last = last
                     .lock()
@@ -551,15 +586,14 @@ async fn lesson_stage(
             let courses = CourseIndexes::new(
                 run.dir.join("course-index"),
                 pool.clone(),
-                Arc::new(super::super::page_recall::GivenModel(Some(
-                    run.embedder.clone(),
-                ))),
+                Arc::new(super::super::GivenModel(Some(run.embedder.clone()))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
                 Arc::clone(&runtime),
                 Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
                 Arc::default(),
             );
-            courses.register().await?;
+            let failures = runtime.register_all(vec![courses.job_kind()]).await;
+            assert!(failures.is_empty(), "{failures:?}");
             let worker = small::worker(pool, run.model.clone(), run.web.clone(), Some(courses));
             small::run_job(runtime, worker, &id, &job_dir, &observe).await?
         }
@@ -598,6 +632,14 @@ async fn lesson_stage(
     let report: Option<Value> = report.as_deref().map(serde_json::from_str).transpose()?;
     // The lesson's questions are bank items now; the quiz stage records them with their keys.
     let sources = library.verification_sources(program_id).await?;
+    let ledger = {
+        use lattice_core::application::ports::ClaimReviewStore;
+        crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository::new(
+            reopened.clone(),
+        )
+        .load(&lesson.id)
+        .await?
+    };
     reopened.close().await;
 
     use LearningGenerationJobStatus as Status;
@@ -628,6 +670,12 @@ async fn lesson_stage(
     metrics["error"] = json!(error);
     metrics["deferrals"] = phases["deferrals"].clone();
     metrics["rounds"] = phases["rounds"].clone();
+    metrics["removed_by_class"] = removed_by_class(&ledger.claims);
+    metrics["calls"] = json!({
+        "made": job.activity.as_ref().map(|a| a.model_calls),
+        "at_most": job.activity.as_ref().and_then(|a| a.model_calls_ceiling),
+        "ceiling_rose_seen": phases["ceiling_rose_seen"],
+    });
     metrics["cost"] = stage_cost(&run.dir, first_call..run.calls(), seconds)?;
     metrics["cost"]["phase_seconds"] = phases["phase_seconds"].clone();
     metrics["resumed"] = json!(step != LessonStep::Start);

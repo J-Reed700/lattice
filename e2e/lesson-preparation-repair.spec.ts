@@ -22,7 +22,7 @@ test('Completed checking gives way to visible repair progress: the status line n
       resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 3_600_000, startedAt: Date.now() - 3_600_000, finishedAt: null,
       activity: { phase: 'repair', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 120_000, lastCheckpointAt: Date.now() - 120_000,
         lessonTitle: lesson.title, modelName: 'Reference checker', modelRunning: true, responseCharacters: 0, modelAttempt: 1,
-        verificationPass: 43, checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, checksSentBack: 0, newReferences: null, modelChecksTotal: 115,
+        verificationPass: 43, checksCompleted: 170, checksTotal: 170, checksReused: 55, newReferences: null,
         recentSteps: [{ phase: 'evidence', startedAt: Date.now() - 900_000 }, { phase: 'repair', startedAt: Date.now() - 600_000 }],
       },
     }];
@@ -36,7 +36,7 @@ test('Completed checking gives way to visible repair progress: the status line n
   // The repair progress is reached through Details.
   await panel.getByRole('button', { name: 'Details' }).click();
   await expect(panel.getByText('Lesson not ready yet')).toBeVisible();
-  await expect(panel.getByText(/Checking finished; 21 claims needed attention/)).toBeVisible();
+  await expect(panel.getByText(/Checking finished\. The affected sections are being corrected/)).toBeVisible();
   await expect(panel.getByText(/Correcting affected section 4 of 9/)).toBeVisible();
   await expect(panel.getByRole('heading', { name: 'Repairing the draft' })).toBeVisible();
   await expect(panel.getByText('Waiting for model output')).toBeVisible();

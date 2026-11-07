@@ -43,6 +43,10 @@ const REASK: &str = "That answer could not be used:";
 /// full to carry that answer. Like [`ANSWER_STEP`] it names no format.
 const RESTATE: &str = "An earlier answer to this task could not be used, so avoid this:";
 
+/// What a learning call's window refusal says does not fit.
+pub(in crate::features::learning) const MATERIAL_DOES_NOT_FIT: &str =
+    "The requested learning material does not fit";
+
 /// Which knob in [`model_call`] decides whether a call reasons first.
 #[derive(Debug, Clone, Copy)]
 pub(in crate::features::learning) enum CallKind {
@@ -438,7 +442,7 @@ async fn answer<T>(
 /// the answer itself: it did not parse, or it broke a rule the caller checks.
 /// Anything else (transport, configuration, cancellation, the window, a
 /// budget) says nothing about the answer and is never asked again.
-fn refusal(error: &AppError) -> Option<&str> {
+pub(in crate::features::learning) fn refusal(error: &AppError) -> Option<&str> {
     match error {
         AppError::InvalidInput(reason)
         | AppError::InvalidData(reason)
@@ -535,7 +539,7 @@ async fn send(
     let unbounded = progress.is_some() || lesson_progress;
     request.output_fills_window = fills_window(progress, step);
     request.call.cache_key = lesson_progress::cache_key();
-    let _model_call = lesson_progress.then(lesson_progress::model_call);
+    let _model_call = lesson_progress.then(lesson_progress::request);
     let receive = |text: String| {
         if let Some(progress) = progress {
             progress.received(&text);
@@ -562,7 +566,7 @@ async fn send(
         llm,
         request,
         unbounded.then_some(&streaming),
-        model_call::TooLarge::Window("The requested learning material does not fit"),
+        model_call::TooLarge::Window(MATERIAL_DOES_NOT_FIT),
     )
     .await?;
     tracing::info!(

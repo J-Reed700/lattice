@@ -61,7 +61,7 @@ fn a_need_is_checked_against_what_a_search_allows() {
     assert_eq!(trimmed.subject, None);
     assert_eq!(trimmed.ecosystem.as_deref(), Some("pypi"));
 
-    assert_eq!(need("ab", NeedKind::Web).one(), None, "too short");
+    assert_eq!(need("   ", NeedKind::Web).one(), None, "a blank query");
     assert_eq!(
         need("an archived page", NeedKind::Archive).one(),
         None,
@@ -92,7 +92,7 @@ fn rewordings_and_dates_are_checked_like_the_query() {
     let refused = |need: PlannedNeed| need.one().is_none();
     let base = || need("upload limit", NeedKind::Web);
     assert!(refused(PlannedNeed {
-        alternatives: vec!["ok rewording".into(), "ab".into()],
+        alternatives: vec!["ok rewording".into(), "  ".into()],
         ..base()
     }));
     assert!(refused(PlannedNeed {
@@ -237,9 +237,9 @@ fn a_site_the_planner_set_is_the_scope_and_is_written_as_an_address() {
     };
     assert_eq!(not_an_address.searches(), None);
     assert_eq!(
-        need("site:react.dev ab", NeedKind::Web).searches(),
+        need("site:react.dev", NeedKind::Web).searches(),
         None,
-        "the terms left are too short to search"
+        "no terms are left to search once the site is lifted out"
     );
 }
 
@@ -263,8 +263,8 @@ fn every_planner_may_ask_for_rewordings_and_dates() {
     for schema in [need_schema(None), need_schema(Some(2))] {
         let properties = &schema["properties"];
         let rewording = &properties["alternatives"]["items"];
-        assert_eq!(rewording["minLength"], json!(3));
-        assert_eq!(rewording["maxLength"], json!(240));
+        assert_eq!(rewording["minLength"], json!(1));
+        assert!(rewording.get("maxLength").is_none());
         assert!(
             properties["alternatives"].get("maxItems").is_none(),
             "no fixed count of rewordings"
@@ -272,6 +272,50 @@ fn every_planner_may_ask_for_rewordings_and_dates() {
         assert_eq!(properties["after"]["format"], "date");
         assert_eq!(properties["asOf"]["format"], "date");
     }
+}
+
+#[test]
+fn a_planned_search_schema_bounds_no_text_but_a_blank_one() {
+    for (what, schema) in [
+        ("a course plan", need_schema(None)),
+        ("a lesson plan", need_schema(Some(2))),
+    ] {
+        let caps = crate::features::learning::content_caps_tests::text_caps(&schema);
+        assert!(caps.is_empty(), "{what}: {caps:?}");
+    }
+}
+
+#[test]
+fn a_search_is_refused_for_being_blank_never_for_its_length() {
+    let long = "how a planner words a search ".repeat(20);
+    assert!(long.chars().count() > 240);
+    for (what, query) in [
+        ("a query under three characters", "ab".to_owned()),
+        ("a query past 240 characters", long.clone()),
+    ] {
+        let planned = need(&query, NeedKind::Web).one();
+        assert!(planned.is_some(), "{what}");
+    }
+    let reworded = PlannedNeed {
+        alternatives: vec!["ab".into(), long.trim().into()],
+        ..need("upload limit", NeedKind::Web)
+    }
+    .one();
+    assert!(reworded.is_some(), "rewordings of any length");
+    assert_eq!(
+        need("   ", NeedKind::Web).one(),
+        None,
+        "a blank query says nothing"
+    );
+    let blank_rewording = PlannedNeed {
+        alternatives: vec!["  ".into()],
+        ..need("upload limit", NeedKind::Web)
+    };
+    assert_eq!(
+        blank_rewording.one(),
+        None,
+        "a blank rewording says nothing"
+    );
 }
 
 #[tokio::test]

@@ -119,8 +119,8 @@ const LESSON_SHAPE: [&str; 11] = [
 fn lesson_response() -> serde_json::Value {
     let teaching = "Start with a measurable question, identify the comparison, and define the outcome before collecting data. Explain the assumptions behind the design. Work through the decisions in order and examine how a confounding variable could change the conclusion. A concrete example should show both the result and the limitations of that result. ";
     json!({
-        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::features::learning::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {i}: produce a design, state your assumptions, and justify your decisions.") },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":""})).collect::<Vec<_>>()),
-        "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":""}))).collect::<Vec<_>>())
+        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::features::learning::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {}: produce a design, state your assumptions, and justify your decisions.", char::from(b'a' + u8::try_from(i).unwrap_or(0))) },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":"","citations":[]})).collect::<Vec<_>>()),
+        "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":"","citations":[]}))).collect::<Vec<_>>())
     })
 }
 
@@ -305,6 +305,34 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
 pub(in crate::features::learning) struct ScriptedModel {
     pub(in crate::features::learning) outputs: std::sync::Mutex<std::collections::VecDeque<String>>,
     pub(in crate::features::learning) prompts: std::sync::Mutex<Vec<String>>,
+}
+
+/// Where `schema` bounds a string's length above a blank: each `maxLength`
+/// and each `minLength` over one, as `path: bound`.
+pub(in crate::features::learning) fn length_bounds(schema: &serde_json::Value) -> Vec<String> {
+    fn walk(value: &serde_json::Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, inner) in fields {
+                    let at = format!("{path}/{key}");
+                    let above_one = inner.as_u64().is_some_and(|bound| bound > 1);
+                    if key == "maxLength" || (key == "minLength" && above_one) {
+                        found.push(format!("{at}: {inner}"));
+                    }
+                    walk(inner, &at, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (position, inner) in items.iter().enumerate() {
+                    walk(inner, &format!("{path}/{position}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", &mut found);
+    found
 }
 
 #[tokio::test]
@@ -529,6 +557,31 @@ impl ScriptedModel {
     }
 }
 
+/// [`ScriptedModel`] with a window of `.1` tokens.
+pub(in crate::features::learning) struct Windowed<'a>(
+    pub(in crate::features::learning) &'a ScriptedModel,
+    pub(in crate::features::learning) usize,
+);
+
+#[async_trait::async_trait]
+impl LLMPort for Windowed<'_> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.1
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
 /// Prefix of a scripted evidence-linking reply. How many batches a run makes
 /// and which items each holds depend on retrieval, so the reply is built from
 /// the prompt: the sentinel maps item paths to the passage text to choose and
@@ -570,6 +623,133 @@ fn link_reply(prompt: &str, sentinel: &str) -> String {
         })
         .collect();
     json!({"links":links}).to_string()
+}
+
+#[tokio::test]
+async fn a_question_may_cite_a_reference_verification_saved_for_the_program() -> Result<()> {
+    use crate::features::learning::content_verification::research::{
+        self, tests as research_tests,
+    };
+    const CLAIM: &str =
+        "Random assignment reduces confounding in comparisons between treatment groups.";
+    struct Researching {
+        inner: Model,
+    }
+    #[async_trait::async_trait]
+    impl LLMPort for Researching {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
+        }
+        fn model_name(&self) -> &str {
+            self.inner.model_name()
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            self.inner.count_tokens(text)
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.inner.max_context_tokens()
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl Researching {
+        async fn respond(&self, prompt: &str) -> Result<String> {
+            if prompt.starts_with("Judge which candidate passages substantively cover") {
+                return Ok(json!({"topics":[{"id":"t1","covering":["p1"]}]}).to_string());
+            }
+            if prompt.starts_with("Plan focused reference searches") {
+                return Ok(json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string());
+            }
+            if prompt.starts_with("Select trustworthy references") {
+                return Ok(research_tests::selection(&[0]));
+            }
+            if prompt.starts_with("Source passages:") {
+                let (passages, tail) = prompt
+                    .split_once("\n\nClaim: ")
+                    .ok_or_else(|| AppError::InvalidInput("claim check without a claim".into()))?;
+                if tail.split("\n\n").next() == Some(CLAIM) {
+                    return Ok(if passages.contains(CLAIM) {
+                        format!("supported\nReason: The complete capture directly states the claim.\nSource quote: {CLAIM}\nSource passage: passage-0")
+                    } else {
+                        "unsupported\nReason: The saved reference does not state the claim.\nSource quote: none".into()
+                    });
+                }
+            }
+            self.inner.respond(prompt).await
+        }
+    }
+
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let draft = service::generate(
+        &repo,
+        &drafts,
+        &outline(4, 3),
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let accepted = service::accept(
+        &repo,
+        &drafts,
+        AcceptLearningProgramRequestDto {
+            program_id: draft.summary.id.clone(),
+            expected_revision: draft.summary.revision,
+            title: "Experimental design".into(),
+        },
+    )
+    .await?;
+    crate::features::learning::content_verification::tests::install_source(
+        &pool,
+        &draft.summary.id,
+        REFERENCE,
+    )
+    .await?;
+    let mut program = repo.get(&draft.summary.id).await?;
+    program.sources = repo.verification_sources(&draft.summary.id).await?;
+    let lesson = &program.modules[0].lessons[0];
+    let mut candidate = lesson_response();
+    for field in ["blocks", "questions"] {
+        for item in candidate[field].as_array_mut().unwrap() {
+            item["sourceIndex"] = json!(0);
+            item["quote"] = json!("A randomized comparison isolates the intervention.");
+        }
+    }
+    candidate["questions"][0]["explanation"] = json!(CLAIM);
+    let llm = Researching {
+        inner: Model(candidate.to_string()),
+    };
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
+
+    let prepared = Box::pin(research::run(
+        pool.clone(),
+        accepted.summary.id.clone(),
+        accepted.summary.goal.clone(),
+        Some(research_tests::web(false)),
+        generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+    ))
+    .await?;
+
+    let saved = repo.verification_sources(&program.summary.id).await?;
+    let added = saved
+        .iter()
+        .find(|source| !program.sources.iter().any(|known| known.id == source.id))
+        .expect("verification's research saved a reference for the program");
+    assert!(
+        prepared.questions[0].source_ids.contains(&added.id),
+        "{:?}",
+        prepared.questions[0].source_ids
+    );
+    assert!(prepared.questions[0]
+        .source_ids
+        .contains(&program.sources[0].id));
+    Ok(())
 }
 
 #[tokio::test]
@@ -1172,6 +1352,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         source_id: id,
         origin: url.into(),
         captured,
+        found: false,
     };
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     // Linking keeps the author's exact citation (offered as a candidate) and
@@ -1697,6 +1878,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
                     source_id: id,
                     origin: url.clone(),
                     captured,
+                    found: false,
                 });
             }
             progress.model(client.model_name());

@@ -9,6 +9,7 @@ use crate::features::learning::{
     persistence::db,
     practical_dto::*,
 };
+use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
@@ -37,6 +38,17 @@ fn json<T: Serialize + ?Sized>(value: &T) -> Result<String> {
 }
 fn decode<T: DeserializeOwned>(value: &str) -> Result<T> {
     serde_json::from_str(value).map_err(|error| AppError::Serialization(error.to_string()))
+}
+
+/// What a learner may send as one turn of a simulation: the bound a chat
+/// message has.
+pub fn validate_learner_turn(content: &str) -> Result<()> {
+    if content.trim().is_empty() || content.chars().count() > MAX_CHAT_MESSAGE_CHARS {
+        return Err(invalid(format!(
+            "Simulation turns must contain 1–{MAX_CHAT_MESSAGE_CHARS} characters."
+        )));
+    }
+    Ok(())
 }
 
 fn engine_name(value: LearningContainerEngine) -> &'static str {

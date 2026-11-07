@@ -88,6 +88,10 @@ mod backend_boundary_tests;
 mod tests;
 
 #[cfg(test)]
+mod clean_slate_tests;
+#[cfg(test)]
 mod consistency_tests;
 #[cfg(test)]
 mod content_caps_tests;
+#[cfg(test)]
+mod found_by_search_tests;

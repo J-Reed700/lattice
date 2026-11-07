@@ -3,6 +3,7 @@ import { useRef, useState, type RefObject } from "react";
 import { LoaderCircle, Plus } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
 import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningBuiltinRuntimeCapability,
@@ -330,7 +331,7 @@ export function ActivityComposer({
                 value={companyContext}
                 onChange={(event) => setCompanyContext(event.target.value)}
                 placeholder="Paste the job description, tech stack, product domain, or specific areas you want the interviewer to probe…"
-                maxLength={16000}
+                maxLength={LEARNER_TEXT_MAX_CHARS}
                 rows={3}
                 className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-hidden focus:border-accent"
               />
@@ -404,7 +405,7 @@ export function ActivityComposer({
           <textarea
             value={brief}
             onChange={(event) => setBrief(event.target.value)}
-            maxLength={2000}
+            maxLength={LEARNER_TEXT_MAX_CHARS}
             rows={3}
             placeholder="What would you like to practice or demonstrate?"
             className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-hidden focus:border-accent"

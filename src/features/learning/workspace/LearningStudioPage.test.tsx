@@ -321,7 +321,7 @@ describe('Learning Studio program workflow', () => {
         phase: 'evidence', phaseStartedAt: Date.now() - 60_000, lastActivityAt: Date.now() - 1_000,
         lastCheckpointAt: null, lessonTitle: 'Reading field notes', modelName: 'Test model',
         modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,
-        checksCompleted: 0, checksTotal: 0, checksReused: 0, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null,
+        checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
         recentSteps: [],
       },
       progressTotal: 1, progressMessage: 'Checking saved evidence',

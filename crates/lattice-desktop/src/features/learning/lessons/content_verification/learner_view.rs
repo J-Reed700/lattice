@@ -1,16 +1,19 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
-use super::general_knowledge::Resolution;
 use super::provenance_gate::FindingTrust;
+use super::resolution::Resolution;
 use super::{ClaimVerdict, LessonVerificationReport};
 use crate::features::learning::{
     dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
     lesson_evidence::{
-        LearningClaimEvidenceDto, LearningClaimResolutionDto, LearningEvidencePassageDto,
-        LearningLessonEvidenceDto, SavedEvidenceVersion,
+        LearningClaimEvidenceDto, LearningClaimPartDto, LearningClaimPartKindDto,
+        LearningClaimResolutionDto, LearningEvidencePassageDto, LearningLessonEvidenceDto,
+        LearningStatementClassDto, SavedEvidenceVersion,
     },
     references::trust::dto_map,
 };
+use lattice_core::application::services::claim_verification::PartKind;
+use lattice_core::domain::learning::claim_review::Class;
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 
@@ -27,6 +30,26 @@ fn passage_trust(trust: &FindingTrust, source_version_id: &str) -> Option<Learni
 /// Whether the claim's support met the bar for its kind (§18.9).
 fn sufficiency(trust: &FindingTrust) -> LearningSufficiencyDto {
     dto_map::sufficiency(&trust.profile, &trust.decision, trust.available)
+}
+
+/// The class the learner is told of; a statement about the lesson itself, which
+/// the model sorted Internal and the veto passed, is told none.
+fn statement_class(class: Class) -> Option<LearningStatementClassDto> {
+    match class {
+        Class::Sourced => Some(LearningStatementClassDto::Sourced),
+        Class::Reasoning => Some(LearningStatementClassDto::Reasoning),
+        Class::Common => Some(LearningStatementClassDto::Common),
+        Class::Internal => None,
+    }
+}
+
+fn part_kind(kind: PartKind) -> LearningClaimPartKindDto {
+    match kind {
+        PartKind::Stated => LearningClaimPartKindDto::Stated,
+        PartKind::Common => LearningClaimPartKindDto::Common,
+        PartKind::SpecificMissing => LearningClaimPartKindDto::SpecificMissing,
+        PartKind::Contradicted => LearningClaimPartKindDto::Contradicted,
+    }
 }
 
 fn unavailable() -> AppError {
@@ -78,9 +101,15 @@ impl LessonVerificationReport {
                     .get(source.id.as_str())
                     .is_some_and(|version| version.content_sha256 == source.sha256)
             });
-        let teaching_claims = self
-            .findings
-            .iter()
+        // A statement the model sorted Internal ends as no claim: the learner reads it as lesson text alone.
+        let claims = || {
+            self.findings.iter().filter(|finding| {
+                finding
+                    .class
+                    .is_none_or(|classed| classed.class != Class::Internal)
+            })
+        };
+        let teaching_claims = claims()
             .filter(|finding| finding.unit < lesson.blocks.len())
             .map(|finding| {
                 let passages = finding
@@ -126,9 +155,6 @@ impl LessonVerificationReport {
                     Some(Resolution::Confirmed { note, .. }) => {
                         (LearningClaimResolutionDto::ConfirmedByYou, note.clone())
                     }
-                    Some(Resolution::GeneralKnowledge { .. }) => {
-                        (LearningClaimResolutionDto::GeneralKnowledge, None)
-                    }
                     None if source_removed => (LearningClaimResolutionDto::SourceRemoved, None),
                     None => (LearningClaimResolutionDto::Verified, None),
                 };
@@ -137,13 +163,6 @@ impl LessonVerificationReport {
                     content_quote: finding.quote.clone(),
                     claim: finding.statement.clone(),
                     verdict: match finding.verdict {
-                        _ if matches!(
-                            finding.resolution,
-                            Some(Resolution::GeneralKnowledge { .. })
-                        ) =>
-                        {
-                            "general_knowledge"
-                        }
                         ClaimVerdict::Supported => "supported",
                         ClaimVerdict::Contradicted => "contradicted",
                         ClaimVerdict::Unsupported => "unsupported",
@@ -156,6 +175,20 @@ impl LessonVerificationReport {
                     resolution,
                     note,
                     sufficiency: finding.trust.as_deref().map(sufficiency),
+                    class: finding
+                        .class
+                        .and_then(|classed| statement_class(classed.class)),
+                    label: finding.label.as_ref().and_then(dto_map::label_name),
+                    parts: finding
+                        .two_pass
+                        .parts
+                        .iter()
+                        .map(|part| LearningClaimPartDto {
+                            part: part.part.clone(),
+                            kind: part_kind(part.kind),
+                            source_version_id: part.source_id.clone(),
+                        })
+                        .collect(),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -166,20 +199,8 @@ impl LessonVerificationReport {
             retrieval_mode: self.retrieval_mode.clone(),
             embedding_model: self.embedding_model.clone(),
             content_sha256: self.content_sha256.clone(),
-            claim_count: self.findings.len(),
-            general_knowledge_count: self
-                .findings
-                .iter()
-                .filter(|finding| {
-                    matches!(
-                        finding.resolution,
-                        Some(Resolution::GeneralKnowledge { .. })
-                    )
-                })
-                .count(),
-            confirmed_count: self
-                .findings
-                .iter()
+            claim_count: claims().count(),
+            confirmed_count: claims()
                 .filter(|finding| matches!(finding.resolution, Some(Resolution::Confirmed { .. })))
                 .count(),
             executed_examples: self.executions.len(),
@@ -193,10 +214,14 @@ impl LessonVerificationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::learning::content_verification::{tests::attest, EvidencePassage};
+    use crate::features::learning::content_verification::{
+        tests::attest, CheckedPart, Classed, EvidencePassage,
+    };
     use crate::features::learning::dto::{
         LearningBlockDto, LearningBlockKind, PreparedLearningLesson,
     };
+    use lattice_core::domain::learning::claim_review::ClassifiedBy;
+    use lattice_core::domain::provenance::Label;
 
     fn fixture() -> (LearningLessonDto, LessonVerificationReport) {
         let mut lesson = crate::features::learning::tests::fixture()
@@ -229,6 +254,75 @@ mod tests {
         assert_eq!(view.teaching_claims[0].verdict, "supported");
         lesson.blocks[0].body = "Different lesson content.".into();
         assert!(report.learner_view(&lesson, &[]).is_err());
+    }
+
+    #[test]
+    fn a_statement_reaches_the_learner_with_its_class_its_label_and_the_parts_it_was_read_as() {
+        let (lesson, mut report) = fixture();
+        let plain = report.learner_view(&lesson, &[]).unwrap();
+        // A report from before statements were sorted says none of it.
+        assert_eq!(plain.teaching_claims[0].class, None);
+        assert_eq!(plain.teaching_claims[0].label, None);
+        assert!(plain.teaching_claims[0].parts.is_empty());
+
+        report.findings[0].class = Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Writer,
+        });
+        report.findings[0].label = Some(Label::Attributed);
+        report.findings[0].two_pass.parts = vec![
+            CheckedPart {
+                part: "Quillet is a lexer".into(),
+                kind: PartKind::Stated,
+                source_id: Some("version-1".into()),
+            },
+            CheckedPart {
+                part: "a lexer turns characters into tokens".into(),
+                kind: PartKind::Common,
+                source_id: None,
+            },
+        ];
+        let claim = &report.learner_view(&lesson, &[]).unwrap().teaching_claims[0];
+
+        assert_eq!(claim.class, Some(LearningStatementClassDto::Sourced));
+        assert_eq!(claim.label.as_deref(), Some("attributed"));
+        assert_eq!(claim.parts.len(), 2);
+        assert_eq!(claim.parts[0].kind, LearningClaimPartKindDto::Stated);
+        assert_eq!(
+            claim.parts[0].source_version_id.as_deref(),
+            Some("version-1")
+        );
+        assert_eq!(claim.parts[1].kind, LearningClaimPartKindDto::Common);
+        assert_eq!(claim.parts[1].source_version_id, None);
+
+        // The other classes.
+        for (class, expected) in [
+            (Class::Reasoning, LearningStatementClassDto::Reasoning),
+            (Class::Common, LearningStatementClassDto::Common),
+        ] {
+            report.findings[0].class = Some(Classed {
+                class,
+                by: ClassifiedBy::Model,
+            });
+            let view = report.learner_view(&lesson, &[]).unwrap();
+            assert_eq!(view.teaching_claims[0].class, Some(expected));
+        }
+    }
+
+    #[test]
+    fn a_statement_the_model_called_internal_is_not_shown_or_counted_as_a_checked_claim() {
+        let (lesson, mut report) = fixture();
+        report.findings.push(report.findings[0].clone());
+        report.findings[1].class = Some(Classed {
+            class: Class::Internal,
+            by: ClassifiedBy::Model,
+        });
+
+        let view = report.learner_view(&lesson, &[]).unwrap();
+
+        assert_eq!(view.teaching_claims.len(), 1);
+        assert_eq!(view.teaching_claims[0].class, None);
+        assert_eq!(view.claim_count, 1);
     }
 
     #[test]

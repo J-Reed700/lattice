@@ -27,7 +27,13 @@ describe('describeEvent', () => {
     expect(event({ kind: 'checked', check: check('local', { verdict: 'supported', supportingQuote: 'q' }, 'matches Livy') }))
       .toBe('Checker (herb-4b): supported · matches Livy');
     expect(event({ kind: 'checked', check: check('verifier', { verdict: 'supported_elsewhere', supportingQuote: 'q' }) }))
-      .toBe('Independent check (herb-4b): supported elsewhere, citation repaired');
+      .toBe('Independent check (herb-4b): supported by another source');
+    expect(event({ kind: 'checked', check: check('local', { verdict: 'consistent' }, 'no passage says otherwise') }))
+      .toBe('Checker (herb-4b): consistent with its sources · no passage says otherwise');
+    expect(event({ kind: 'checked', check: check('local', { verdict: 'known_common' }) }))
+      .toBe('Checker (herb-4b): common knowledge');
+    expect(event({ kind: 'checked', check: check('local', { verdict: 'not_false' }) }))
+      .toBe('Checker (herb-4b): not called false when asked alone');
   });
 
   it.each<[VerdictKindDto, string]>([
@@ -35,7 +41,6 @@ describe('describeEvent', () => {
     [{ kind: 'contradicted' }, 'a source says otherwise'],
     [{ kind: 'no_source' }, 'no saved source mentions it'],
     [{ kind: 'could_not_judge' }, 'could not check'],
-    [{ kind: 'general_knowledge_proposed' }, 'proposed as common knowledge'],
     [{ kind: 'disputed', verifier: { kind: 'contradicted' } }, 'disputed by an independent check · a source says otherwise'],
     [{ kind: 'insufficient_standing', bar: 'primary', have: [] } as VerdictKindDto, 'stated, but not by a source enough on its own'],
   ])('words a failed check (%j)', (kind, words) => {
@@ -59,7 +64,6 @@ describe('describeEvent', () => {
     expect(event({ kind: 'user_action', action: { action: 'unconfirm' }, note: null })).toBe('Acceptance withdrawn');
     expect(event({ kind: 'user_action', action: { action: 'edit', before: 'old', after: 'new' }, note: null })).toBe('Edited: “old” → “new”');
     expect(event({ kind: 'user_action', action: { action: 'remove' }, note: null })).toBe('Removed the sentence');
-    expect(event({ kind: 'user_action', action: { action: 'general_knowledge' }, note: null })).toBe('Accepted as common knowledge');
     expect(event({ kind: 'user_action', action: { action: 'research_with_hint', hint: 'Livy book 1' }, note: null })).toBe('Asked for a search: “Livy book 1”');
   });
 
@@ -76,6 +80,10 @@ describe('describeEvent', () => {
     expect(event({ kind: 'superseded', successor: 'c2' })).toBe('Replaced by a re-extracted claim');
     expect(event({ kind: 'superseded', successor: null })).toBe('Removed by an edit');
     expect(event({ kind: 'born_of_repair' })).toBe('Added while repairing another claim');
+    expect(event({ kind: 'classified', class: 'sourced', by: 'rule' })).toBe('Sorted as a statement that needs a source, by a rule');
+    expect(event({ kind: 'classified', class: 'common', by: 'model' })).toBe('Sorted as common knowledge, by the model');
+    expect(event({ kind: 'classified', class: 'sourced', by: 'writer' })).toBe('Sorted as a statement that needs a source, by the writer’s citation');
+    expect(event({ kind: 'classified', class: 'common', by: 'evidence' })).toBe('Sorted as common knowledge, by what the checks found');
     expect(event({ kind: 'reopened', cause: { cause: 'verifier_dispute' } })).toBe('Reopened: an independent check disagrees');
     expect(event({ kind: 'undone', eventOrdinal: 4 })).toBe('Undid step 4');
     expect(event({ kind: 'stopped', reason: { message: 'The model ran out of room' } })).toBe('Stopped: The model ran out of room');
@@ -94,7 +102,6 @@ describe('labels', () => {
   it('words every repair outcome and actor', () => {
     expect(repairOutcomeLabel({ outcome: 'rejected', reason: 'changed the meaning' })).toBe('Repair rejected: changed the meaning');
     expect(repairOutcomeLabel({ outcome: 'superseded_by_user' })).toBe('Your change superseded this repair');
-    expect(repairOutcomeLabel({ outcome: 'not_attempted', reason: 'no budget' } as never)).toBe('Not repaired: no budget');
     expect(actorLabel('machine')).toBe('Machine');
     expect(actorLabel('user')).toBe('You');
   });
@@ -121,10 +128,11 @@ describe('claimFilterOf', () => {
     [{ state: 'unchecked' }, 'repairing'],
     [{ state: 'open', machineAttemptsLeft: 1 }, 'repairing'],
     [{ state: 'resolved_by_evidence' }, 'machine'],
+    [{ state: 'consistent', at: 1 }, 'machine'],
     [{ state: 'removed', at: 1, by: 'machine' }, 'machine'],
     [{ state: 'removed', at: 1, by: 'user' }, 'changed'],
     [{ state: 'confirmed', at: 1 }, 'confirmed'],
-    [{ state: 'general_knowledge', at: 1, by: 'user' }, 'general'],
+    [{ state: 'general_knowledge', at: 1 }, 'machine'],
     [{ state: 'edited', at: 1, successor: null }, 'changed'],
     [{ state: 'reopened', cause: { cause: 'unconfirmed' }, previous: { state: 'confirmed', at: 1 } }, 'needs_you'],
   ])('files %j as %s', (state, filter) => {

@@ -69,17 +69,6 @@ pub trait SourceTrustStore: Send + Sync {
         judgement: &StoredJudgement<AuthorityAssessment>,
     ) -> Result<()>;
 
-    /// Every ownership judgement stored for a subject in a course under a
-    /// policy and model, whatever the origin: where the subject's owner is
-    /// believed to publish (claim sources design §7.3).
-    async fn authority_for_subject(
-        &self,
-        program_id: &str,
-        subject_key: &SubjectKey,
-        policy: &str,
-        model: &str,
-    ) -> Result<Vec<AuthorityAssessment>>;
-
     /// The profile for `key` (`input_sha256` is the claim's profile input
     /// hash, `claim_profile_key`).
     async fn claim_profile(

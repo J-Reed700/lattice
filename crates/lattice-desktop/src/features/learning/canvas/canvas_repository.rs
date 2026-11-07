@@ -9,7 +9,8 @@ use serde::Serialize;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 
-const MAX_SCENE_BYTES: usize = 5 * 1024 * 1024;
+/// The most a canvas scene may hold, saved or imported.
+pub(in crate::features::learning) const MAX_SCENE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_ELEMENTS: usize = 5_000;
 
 #[derive(Clone)]

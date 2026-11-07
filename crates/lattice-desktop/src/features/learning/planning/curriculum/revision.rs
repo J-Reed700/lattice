@@ -2,7 +2,7 @@
 //! plan, with completed and assessed lessons kept in place.
 
 use super::{
-    id, text, validate_curriculum, validate_lesson, LearningCurriculumChange,
+    id, not_blank, text, validate_curriculum, validate_lesson, LearningCurriculumChange,
     LearningCurriculumChangeKind, LearningCurriculumLesson, LearningCurriculumLessonState,
     LearningCurriculumModule, LearningCurriculumOperation, LearningCurriculumRevision,
     LearningCurriculumRevisionRequest, LearningCurriculumRevisionResult,
@@ -177,8 +177,8 @@ pub fn apply_curriculum_revision(
                 objective,
                 estimated_minutes,
             } => {
-                text(&title, "Lesson title", 160)?;
-                text(&objective, "Lesson objective", 1_200)?;
+                not_blank(&title, "Lesson title")?;
+                not_blank(&objective, "Lesson objective")?;
                 if !(1..=600).contains(&estimated_minutes) {
                     return Err(AppError::InvalidInput(
                         "Lesson time must be between 1 and 600 minutes.".into(),

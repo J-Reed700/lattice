@@ -139,3 +139,34 @@ fn module_tests_cover_prepared_lessons_and_say_so() {
     assert_eq!(test.coverage, Some((1, 2)));
     assert_eq!(test.passing_score, 0.75);
 }
+
+#[test]
+fn a_long_title_stays_whole_in_the_title_of_its_quiz() {
+    let long = "How an enzyme keeps its rate when a competitor binds the active site. ".repeat(4);
+    let long = long.trim().to_string();
+    let mut course = facts();
+    course.lessons[0].title = long.clone();
+    course.modules[0].title = long.clone();
+    course.program_title = long.clone();
+    let titled = |kind, id: Option<&str>| {
+        let scope = LearningQuizScopeDto {
+            kind,
+            id: id.map(str::to_owned),
+        };
+        blueprint_for(&scope, &course, &default_settings())
+            .unwrap()
+            .title
+    };
+    assert_eq!(
+        titled(LearningQuizScopeKind::Lesson, Some("l1")),
+        format!("Lesson quiz: {long}")
+    );
+    assert_eq!(
+        titled(LearningQuizScopeKind::Module, Some("m1")),
+        format!("Module test: {long}")
+    );
+    assert_eq!(
+        titled(LearningQuizScopeKind::Course, None),
+        format!("Course exam: {long}")
+    );
+}
