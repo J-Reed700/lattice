@@ -365,7 +365,7 @@ async fn an_answer_a_safety_filter_stopped_says_so() {
 async fn a_safety_filter_that_stops_two_empty_replies_says_so() {
     let model = Model::new([reply(NOTES), stopped(""), stopped("")]);
     let run = grounded(&model).await;
-    let error = run.outcome.err().expect("no answer").to_string();
+    let error = run.outcome.expect_err("no answer").to_string();
     assert!(error.contains("safety filter"), "{error}");
 }
 
