@@ -18,12 +18,15 @@ pub trait Placement: std::fmt::Debug {
     fn device(&self) -> FitDevice;
 }
 
-/// A dedicated card: its memory less llama.cpp's fit target and the display reserve, less the
-/// companions when no integrated GPU takes them.
+/// A dedicated card: its memory less llama.cpp's fit target, less the display reserve when the
+/// screen runs on the card, less the companions when no integrated GPU takes them.
 #[derive(Debug, Clone)]
 pub struct DedicatedGpu {
     pub card: Accelerator,
     pub companions_on_card_bytes: u64,
+    /// Whether the desktop runs on this card: true unless an integrated GPU is listed, which then
+    /// drives the screen.
+    pub display_on_card: bool,
 }
 
 /// Apple Silicon: the Metal device's working-set size, less the companions.
@@ -44,7 +47,11 @@ impl Placement for DedicatedGpu {
         self.card
             .total_bytes
             .saturating_sub(FIT_TARGET_BYTES)
-            .saturating_sub(DISPLAY_RESERVE_BYTES)
+            .saturating_sub(if self.display_on_card {
+                DISPLAY_RESERVE_BYTES
+            } else {
+                0
+            })
             .saturating_sub(self.companions_on_card_bytes)
     }
     fn device(&self) -> FitDevice {
@@ -98,6 +105,7 @@ pub fn choose_placement(profile: &MachineProfile, companions: &Companions) -> Bo
         let spare_integrated = largest(AcceleratorKind::Integrated).is_some();
         return Box::new(DedicatedGpu {
             card: card.clone(),
+            display_on_card: !spare_integrated,
             companions_on_card_bytes: if spare_integrated {
                 0
             } else {
