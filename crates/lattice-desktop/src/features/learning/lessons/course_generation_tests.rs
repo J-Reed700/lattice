@@ -2072,9 +2072,32 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
         .lock()
         .map_err(|_| AppError::InternalError("fixture lock".into()))?;
     assert!(!later.is_empty(), "review and verification made no calls");
+    let injected = [
+        "(SourceIndex:",
+        "Citations:",
+        "\"A randomized comparison isolates the intervention.\" (SourceIndex",
+        "\"A controlled experiment states its limitations.\" (SourceIndex",
+    ];
+    let leak = later.iter().find_map(|prompt| {
+        injected.iter().find_map(|needle| {
+            prompt.find(needle).map(|at| {
+                let mut from = at.saturating_sub(40);
+                while !prompt.is_char_boundary(from) {
+                    from -= 1;
+                }
+                let mut to = (at + 40).min(prompt.len());
+                while !prompt.is_char_boundary(to) {
+                    to += 1;
+                }
+                let head: String = prompt.chars().take(80).collect();
+                format!("{head:?} holds {:?}", &prompt[from..to])
+            })
+        })
+    });
     assert!(
-        later.iter().all(|prompt| !prompt.contains("SourceIndex")),
-        "a prompt after the draft still holds the citation apparatus"
+        leak.is_none(),
+        "a prompt after the draft still holds the citation apparatus: {}",
+        leak.unwrap_or_default()
     );
     Ok(())
 }
