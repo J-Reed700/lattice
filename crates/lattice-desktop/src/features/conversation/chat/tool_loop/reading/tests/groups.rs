@@ -36,6 +36,7 @@ async fn read_with(model: &Model, cancel: &CancellationToken) -> Result<Option<N
         model,
         &planned(&[1, 2, 3, 4, 5, 6, 7, 8]),
         &eight_passages(),
+        QUESTION,
         &TurnRecorder::silent("conversation", "request"),
         cancel,
         &TurnClock::new(Duration::from_secs(60), Duration::ZERO),
@@ -51,7 +52,7 @@ async fn room_needed(group: &[u32]) -> usize {
     let request = planned(&[1, 2, 3, 4, 5, 6, 7, 8]);
     let again = shown(&eight_passages(), group);
     let sent = CompletionRequest {
-        input: group_input(&request, &again, group),
+        input: group_input(&request, &again, group, QUESTION),
         tools: request.tools.clone(),
         ..Default::default()
     };
@@ -71,7 +72,7 @@ async fn four_at_a_time() -> usize {
 #[tokio::test]
 async fn every_passage_is_one_group_while_the_window_holds_them() {
     let request = planned(&[1, 2, 3, 4, 5, 6, 7, 8]);
-    let readings = plan_groups(&Model::new([]), &request, &eight_passages()).await;
+    let readings = plan_groups(&Model::new([]), &request, &eight_passages(), QUESTION).await;
     assert_eq!(readings.len(), 1);
     assert_eq!(readings[0].labels, [1, 2, 3, 4, 5, 6, 7, 8]);
     let message = readings[0].input[1].text();
@@ -170,6 +171,7 @@ async fn the_reservation_holds_every_group_together() {
         &model,
         &request,
         &eight_passages(),
+        QUESTION,
         &TurnRecorder::silent("conversation", "request"),
         &CancellationToken::new(),
         &TurnClock::new(Duration::from_secs(60), Duration::ZERO),
@@ -192,7 +194,7 @@ async fn a_group_the_window_cannot_hold_is_split_and_a_passage_it_cannot_hold_is
     let passages = passages();
     let counter = Model::new([]);
     let sent_with = |group: &[u32]| {
-        let input = group_input(&request, &shown(&passages, group), group);
+        let input = group_input(&request, &shown(&passages, group), group, QUESTION);
         CompletionRequest {
             input,
             tools: request.tools.clone(),
@@ -204,7 +206,7 @@ async fn a_group_the_window_cannot_hold_is_split_and_a_passage_it_cannot_hold_is
     let window =
         prompt_tokens(&counter, &pair).await + counter.count_tokens(&shown(&passages, &[1, 2]));
     let model = Model::with_context_tokens(window, []);
-    let readings = plan_groups(&model, &request, &passages).await;
+    let readings = plan_groups(&model, &request, &passages, QUESTION).await;
     let labels: Vec<_> = readings
         .iter()
         .map(|reading| reading.labels.clone())
@@ -217,7 +219,7 @@ async fn a_group_the_window_cannot_hold_is_split_and_a_passage_it_cannot_hold_is
 
     // A window that holds no passage shown again: each is read by its label.
     let model = Model::with_context_tokens(prompt_tokens(&counter, &request).await + 1, []);
-    let readings = plan_groups(&model, &request, &passages).await;
+    let readings = plan_groups(&model, &request, &passages, QUESTION).await;
     assert_eq!(readings.len(), 4);
     for reading in &readings {
         let message = reading.input[1].text();
