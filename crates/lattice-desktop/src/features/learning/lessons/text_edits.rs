@@ -252,13 +252,16 @@ fn field_value(
     Ok(edit.after)
 }
 
+type FieldValues = Vec<(String, Value)>;
+type Problems = Vec<(usize, String)>;
+
 /// One part's edits checked together: the new values of its fields, or every
 /// problem found, so that a part with any problem changes nothing.
 fn part_values(
     candidate: &Value,
     allowed: &[String],
     edits: Vec<(usize, Edit)>,
-) -> std::result::Result<Vec<(String, Value)>, Vec<(usize, String)>> {
+) -> std::result::Result<FieldValues, Problems> {
     let mut problems = Vec::new();
     let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
     for (index, edit) in edits {
