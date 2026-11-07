@@ -14,6 +14,7 @@ import { ArrowLeft } from 'lucide-react';
 import { useApi } from '@/contexts/ApiContext';
 import { DOWNLOADED_MODELS_QUERY_KEY, useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import { useShownFits } from '@/features/model/hooks/useModelFits';
 import { fitLabel, fitUsage } from '@/features/model/utils/fitText';
 import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '@/features/settings/hooks/useHuggingFaceTokenQuery';
@@ -121,8 +122,8 @@ function ModelDetailContent({
   const api = useApi();
   const { model: metadata } = model;
   const { data: hfTokenStatus } = useHuggingFaceTokenStatusQuery();
-  const fit = metadata.fit !== undefined ? metadata.fit : model.fit;
-  const fitSummary = fit === undefined ? null : fit ? `${fitLabel(fit)} · ${fitUsage(fit)}` : fitLabel(fit);
+  const [fit] = useShownFits([{ model: metadata, fit: metadata.fit !== undefined ? metadata.fit : model.fit }]);
+  const fitSummary = fit === undefined ? null : typeof fit === 'object' && fit ? `${fitLabel(fit)} · ${fitUsage(fit)}` : fitLabel(fit);
   const hasHfToken = hfTokenStatus?.isSet ?? false;
   const popularityDownloads = model.popularity_downloads ?? null;
   const popularityLikes = model.popularity_likes ?? null;

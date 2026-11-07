@@ -14,8 +14,9 @@ export function formatGib(bytes: number): string {
   return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(1);
 }
 
-/** The backend's verdict in words; `null` is a size not yet read. */
-export function fitLabel(fit: FitVerdictDto | null): string {
+/** The backend's verdict in words; `null` is a size being read, `'unknown'` one that could not be. */
+export function fitLabel(fit: FitVerdictDto | 'unknown' | null): string {
+  if (fit === 'unknown') return 'Size unknown';
   return fit ? FIT_LABEL[fit.kind] : 'Checking size';
 }
 

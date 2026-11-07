@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, ExternalLink } from 'lucide-react';
 
 import { settingsFieldClass } from '@/components/ui';
+import { useShownFits } from '@/features/model/hooks/useModelFits';
 import { useModelVariantsQuery } from '@/features/model/hooks/useModelVariantsQuery';
 import { fitLabel } from '@/features/model/utils/fitText';
 import { cn } from '@/lib/utils';
@@ -29,6 +30,7 @@ export function ModelVariantPicker({ model, selected, onSelect }: Props) {
     .sort((a, b) => sort === 'name'
       ? (a.default_filename ?? '').localeCompare(b.default_filename ?? '')
       : (a.size_gb || Infinity) - (b.size_gb || Infinity)), [variants.data, query, sort]);
+  const shownFits = useShownFits(files.map((file) => ({ model: file, fit: file.fit })));
   const selectFile = useCallback((file: ModelMetadata) => {
     // Keep a curated default's identity so an already installed default does
     // not become a second download merely by opening the version chooser.
@@ -74,9 +76,9 @@ export function ModelVariantPicker({ model, selected, onSelect }: Props) {
       </div>
       <p role="status" className="mb-2 text-xs text-text-muted">{files.length} of {variants.data?.length ?? 0} standalone versions</p>
       <div role="group" aria-label="Model files" className="max-h-80 space-y-2 overflow-y-auto pr-1">
-        {files.map(file => {
+        {files.map((file, index) => {
           const quantization = modelQuantization(file);
-          const fit = file.fit;
+          const fit = shownFits[index];
           const chosen = selected.default_filename === file.default_filename;
           return <button key={file.id} type="button" aria-pressed={chosen} onClick={() => selectFile(file)} className={cn('w-full rounded-md border p-3 text-left transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring', chosen ? 'border-accent bg-accent/5' : 'border-border-subtle hover:bg-surface-hover')}>
             <span className="flex flex-wrap items-center justify-between gap-2 text-sm font-medium text-text-primary">

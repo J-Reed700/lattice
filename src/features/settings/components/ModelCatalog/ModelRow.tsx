@@ -9,6 +9,7 @@
 import { Check, CircleCheck, Download, Loader2, TriangleAlert } from 'lucide-react';
 
 import { SeesImagesMark } from '@/features/model/components/SeesImagesMark';
+import type { ShownFit } from '@/features/model/hooks/useModelFits';
 import { fitLabel, fitUsage } from '@/features/model/utils/fitText';
 import { cn } from '@/lib/utils';
 import type { DownloadStatus } from '@/types/downloads';
@@ -22,6 +23,8 @@ import { SECONDARY_BUTTON_CLASS } from '../settingsStyles';
 
 interface ModelRowProps {
   model: ModelRecommendation;
+  /** What to show for the fit when the list has read it since the row arrived. */
+  fit?: ShownFit;
   onSelect: () => void;
   isDownloaded: boolean;
   activeDownload: DownloadStatus | null;
@@ -37,6 +40,7 @@ interface ModelRowProps {
 
 export function ModelRow({
   model,
+  fit = model.fit,
   onSelect,
   isDownloaded,
   activeDownload,
@@ -47,12 +51,12 @@ export function ModelRow({
   compact = false,
 }: ModelRowProps) {
   const { model: metadata } = model;
-  const fit = model.fit;
   const repoId = metadata.model_id ?? metadata.id;
   const blockReason = embeddingBlockReason(metadata);
   const isDownloadable =
     Boolean(metadata.model_id && metadata.default_filename) || Boolean(metadata.download_url);
-  const FitIcon = fit?.kind === 'fits' ? CircleCheck : TriangleAlert;
+  const verdict = fit && fit !== 'unknown' ? fit : null;
+  const FitIcon = verdict?.kind === 'fits' ? CircleCheck : TriangleAlert;
   const downloads = formatCompact(model.popularity_downloads);
   const compactMeta = [formatSize(metadata.size_gb), downloads ? `${downloads} downloads` : null].filter(Boolean).join(' · ');
 
@@ -130,10 +134,10 @@ export function ModelRow({
           {fit !== undefined ? (
               <span
                 className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium',
-                  fit?.kind === 'fits' ? 'bg-success-muted text-success-fg'
-                    : fit?.kind === 'too_large' ? 'bg-danger-muted text-danger-fg'
-                      : fit?.kind === 'tight' ? 'bg-warning-muted text-warning-fg' : 'bg-surface-raised text-text-secondary')}
-                title={fit ? fitUsage(fit) : undefined}
+                  verdict?.kind === 'fits' ? 'bg-success-muted text-success-fg'
+                    : verdict?.kind === 'too_large' ? 'bg-danger-muted text-danger-fg'
+                      : verdict?.kind === 'tight' ? 'bg-warning-muted text-warning-fg' : 'bg-surface-raised text-text-secondary')}
+                title={verdict ? fitUsage(verdict) : undefined}
               >
                 <FitIcon className="h-3 w-3" aria-hidden="true" />
                 {fitLabel(fit)}

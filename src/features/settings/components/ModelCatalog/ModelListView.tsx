@@ -14,13 +14,14 @@ import { Skeleton } from '@/components/Skeleton';
 import { useApi } from '@/contexts/ApiContext';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
+import { useShownFits } from '@/features/model/hooks/useModelFits';
 import { startModelDownload } from '@/features/settings/hooks/startModelDownload';
 import { useHuggingFaceTokenStatusQuery } from '@/features/settings/hooks/useHuggingFaceTokenQuery';
 import { useToastStore } from '@/stores/toastStore';
 import type { ModelRecommendation } from '@/types/modelCatalog';
 
 import { CATALOG_TEXT_BUTTON_CLASS } from './catalogUtils';
-import { ModelCatalogResults } from './ModelCatalogResults';
+import { ModelCatalogResults, shownModels } from './ModelCatalogResults';
 import { ModelRow } from './ModelRow';
 
 import type { CatalogResultsNavigation } from './ModelCatalogResults';
@@ -61,6 +62,10 @@ export function ModelListView({
   const addToast = useToastStore((state) => state.addToast);
   const queryClient = useQueryClient();
   const [startingIds, setStartingIds] = useState<ReadonlySet<string>>(new Set());
+
+  const onShow = useMemo(() => shownModels(models, overview, page), [models, overview, page]);
+  const shownFits = useShownFits(onShow.map(({ model, fit }) => ({ model, fit })));
+  const fitByRow = useMemo(() => new Map(onShow.map((row, index) => [row, shownFits[index]])), [onShow, shownFits]);
 
   const downloadedIds = useMemo(() => {
     const ids = new Set<string>();
@@ -144,6 +149,7 @@ export function ModelListView({
         <ModelRow
           key={model.model.id}
           model={model}
+          fit={fitByRow.get(model)}
           compact={overview}
           onSelect={() => onModelSelect(model)}
           isDownloaded={downloadedIds.has(model.model.id)}
