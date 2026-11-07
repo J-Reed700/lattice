@@ -738,4 +738,43 @@ impl JobRuntime {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
+
+    /// Registers each kind in turn, returning the kinds that could not be.
+    pub async fn register_all(
+        self: &Arc<Self>,
+        kinds: Vec<JobKindRegistration>,
+    ) -> Vec<RegistrationFailure> {
+        let mut failures = Vec::new();
+        for registration in kinds {
+            if let Err(error) = self
+                .register(
+                    &registration.kind,
+                    registration.handler,
+                    registration.config,
+                )
+                .await
+            {
+                failures.push(RegistrationFailure {
+                    kind: registration.kind,
+                    error,
+                });
+                break;
+            }
+        }
+        failures
+    }
+}
+
+/// One kind to register at startup.
+pub struct JobKindRegistration {
+    pub kind: String,
+    pub handler: Arc<dyn JobHandler>,
+    pub config: JobKindConfig,
+}
+
+/// A kind that could not be registered, and why.
+#[derive(Debug)]
+pub struct RegistrationFailure {
+    pub kind: String,
+    pub error: AppError,
 }

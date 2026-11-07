@@ -453,7 +453,7 @@ impl CloudLlm {
                 return Ok(response);
             }
             // Avoid echoing provider bodies which can contain submitted user text.
-            let error = status_error(&self.provider, self.provider_name(), status);
+            let error = status_error(&self.provider, self.provider_name(), status, "");
             if status == reqwest::StatusCode::BAD_REQUEST {
                 let reason = rejection_reason(response).await;
                 return Err(bad_request_error(
@@ -730,7 +730,12 @@ fn bad_request_error(
 /// A provider's refusal, typed by what waiting can change: a rejected key or
 /// an unknown model is a setting to fix, a rate limit or server error is an
 /// outage, and any other refusal would be refused again.
-fn status_error(provider: &LLMProvider, name: &str, status: reqwest::StatusCode) -> AppError {
+fn status_error(
+    provider: &LLMProvider,
+    name: &str,
+    status: reqwest::StatusCode,
+    _body: &str,
+) -> AppError {
     let shown = shown_name(provider, name);
     match status.as_u16() {
         401 => AppError::InvalidConfig(format!(
