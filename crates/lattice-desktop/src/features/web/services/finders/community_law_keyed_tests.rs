@@ -185,7 +185,8 @@ async fn marginalia_non_commercial_terms() {
     });
 
     Mock::given(method("GET"))
-        .and(path("/public/search/indie"))
+        .and(path("/search"))
+        .and(query_param("query", "indie"))
         .respond_with(ResponseTemplate::new(200).set_body_json(&body))
         .mount(&server)
         .await;
@@ -196,6 +197,135 @@ async fn marginalia_non_commercial_terms() {
         .await;
     assert_eq!(outcome.result, FinderResult::Answered);
     assert_eq!(outcome.leads[0].terms, Some(Terms::NonCommercial));
+}
+
+fn marginalia_fixture() -> serde_json::Value {
+    json!({
+        "results": [
+            {
+                "url": "https://indie.example/rust-ownership",
+                "title": "Ownership, explained slowly",
+                "description": "A walk through moves and borrows."
+            },
+            {
+                "url": "https://notes.example/borrow-checker",
+                "title": "Notes on the borrow checker",
+                "description": "  "
+            },
+            {
+                "url": "https://small.example/",
+                "title": "",
+                "description": "A small site."
+            }
+        ]
+    })
+}
+
+#[tokio::test]
+async fn marginalia_without_a_key_calls_the_current_api_as_public() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(query_param("query", "rust ownership"))
+        .and(header("API-Key", "public"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(marginalia_fixture()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let finder = Marginalia::with_api(test_http(), server.uri());
+    let outcome = finder
+        .find(
+            &make_need(NeedKind::Web, "rust ownership"),
+            1,
+            &test_budget(),
+        )
+        .await;
+
+    assert_eq!(outcome.result, FinderResult::Answered);
+    assert_eq!(outcome.leads.len(), 3);
+    assert_eq!(
+        outcome.leads[0].url.as_str(),
+        "https://indie.example/rust-ownership"
+    );
+    assert_eq!(
+        outcome.leads[0].title.as_deref(),
+        Some("Ownership, explained slowly")
+    );
+    assert_eq!(
+        outcome.leads[0].snippet.as_deref(),
+        Some("A walk through moves and borrows.")
+    );
+    assert_eq!(outcome.leads[1].snippet, None);
+    assert_eq!(outcome.leads[2].title, None);
+    assert!(outcome
+        .leads
+        .iter()
+        .all(|lead| lead.terms == Some(Terms::NonCommercial)));
+}
+
+#[tokio::test]
+async fn marginalia_with_a_key_sends_the_users_key_instead_of_public() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(header("API-Key", "my-key"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(marginalia_fixture()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let finder = Marginalia::with_api_key(test_http(), server.uri(), Some(" my-key ".to_string()));
+    let outcome = finder
+        .find(&make_need(NeedKind::Web, "indie"), 1, &test_budget())
+        .await;
+
+    assert_eq!(outcome.result, FinderResult::Answered);
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests[0].headers.get_all("api-key").iter().count(), 1);
+    assert!(!requests[0].url.as_str().contains("my-key"));
+}
+
+#[tokio::test]
+async fn marginalia_with_a_blank_key_falls_back_to_public() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .and(header("API-Key", "public"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(marginalia_fixture()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let finder = Marginalia::with_api_key(test_http(), server.uri(), Some("  ".to_string()));
+    let outcome = finder
+        .find(&make_need(NeedKind::Web, "indie"), 1, &test_budget())
+        .await;
+
+    assert_eq!(outcome.result, FinderResult::Answered);
+}
+
+#[tokio::test]
+async fn marginalia_public_key_limit_is_a_429_the_finder_reports() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search"))
+        .respond_with(ResponseTemplate::new(429).set_body_string("QPM Limit Exceeded"))
+        .mount(&server)
+        .await;
+
+    let finder = Marginalia::with_api(test_http(), server.uri());
+    let outcome = finder
+        .find(&make_need(NeedKind::Web, "indie"), 1, &test_budget())
+        .await;
+
+    assert_eq!(
+        outcome.result,
+        FinderResult::Failed(FailureCause::Status {
+            code: 429,
+            retry_after: None,
+        })
+    );
 }
 
 #[tokio::test]

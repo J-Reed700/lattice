@@ -50,6 +50,9 @@ const KEY_NAMES: Record<KeyServiceDto, string> = {
   semanticScholar: 'Semantic Scholar',
   apiDataGov: 'api.data.gov',
   stackExchange: 'Stack Exchange',
+  openAlex: 'OpenAlex',
+  marginalia: 'Marginalia',
+  crossrefPlus: 'Crossref Metadata Plus',
 };
 
 function keys(stored: KeyServiceDto[] = []): KeyStatusDto[] {
@@ -85,6 +88,23 @@ function status(storedKeys: KeyServiceDto[] = []): SourcesStatusDto {
         name: 'GitHub',
         reach: 'codeHost',
         needs: { kind: 'optionalKey', service: 'github' },
+      }),
+      finder({
+        id: 'openalex',
+        name: 'OpenAlex',
+        reach: 'scholarly',
+        needs: { kind: 'optionalKey', service: 'openAlex' },
+      }),
+      finder({
+        id: 'crossref',
+        name: 'Crossref',
+        reach: 'scholarly',
+        needs: { kind: 'optionalKey', service: 'crossrefPlus' },
+      }),
+      finder({
+        id: 'marginalia',
+        name: 'Marginalia',
+        needs: { kind: 'optionalKey', service: 'marginalia' },
       }),
       finder({ id: 'wayback_cdx', name: 'Internet Archive (CDX)', reach: 'archive' }),
     ],
@@ -138,6 +158,22 @@ describe('SourcesTab', () => {
     expect(screen.getByLabelText('Brave Search key')).toHaveValue('');
     expect(container.innerHTML).not.toContain(SECRET);
     await waitFor(() => expect(screen.getByTestId('status-brave')).toHaveTextContent('Ready'));
+  });
+
+  it('offers a key field for OpenAlex, Marginalia and Crossref Metadata Plus', async () => {
+    const user = userEvent.setup();
+    vi.mocked(VaultAPI.saveSourceKey).mockResolvedValue({ ok: true, data: status(['openAlex']) });
+    renderSourcesTab();
+
+    expect(await screen.findByLabelText('Marginalia key')).toBeInTheDocument();
+    expect(screen.getByLabelText('Crossref Metadata Plus key')).toBeInTheDocument();
+    expect(screen.getByText('OpenAlex works without it; a key raises its limits.')).toBeInTheDocument();
+    expect(screen.getByText('Marginalia works without it; a key raises its limits.')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('OpenAlex key'), SECRET);
+    const row = screen.getByLabelText('OpenAlex key').closest('div') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(VaultAPI.saveSourceKey).toHaveBeenCalledWith('openAlex', SECRET));
   });
 
   it('removes a saved key', async () => {

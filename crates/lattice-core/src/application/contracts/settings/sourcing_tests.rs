@@ -340,6 +340,9 @@ fn every_key_service_is_listed_with_its_wire_name() {
             "\"semanticScholar\"",
             "\"apiDataGov\"",
             "\"stackExchange\"",
+            "\"openAlex\"",
+            "\"marginalia\"",
+            "\"crossrefPlus\"",
         ]
     );
     for service in KeyService::ALL {
