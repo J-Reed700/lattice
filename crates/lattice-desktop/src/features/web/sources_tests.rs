@@ -289,6 +289,37 @@ async fn switches_instance_contact_and_archive_apply_on_reload() {
     assert_eq!(bing.state, HealthState::Unavailable(SkipReason::Disabled));
 }
 
+#[tokio::test]
+async fn a_url_contact_leaves_unpaywall_off_and_says_it_needs_an_email() {
+    let f = fixture(SettingsDto::default());
+    let mut updates = HashMap::new();
+    updates.insert(
+        "contact".to_string(),
+        serde_json::json!("https://example.org/about"),
+    );
+    f.settings
+        .update(
+            Some(lattice_core::application::contracts::settings::SettingsCategory::Sourcing),
+            updates,
+        )
+        .await
+        .unwrap();
+    reload(&f.web, &f.settings, &f.keyring).await;
+
+    let status = f.web.sources_status();
+    assert_eq!(gate_of(&status, "unpaywall"), Some(FinderGateDto::NoEmail));
+
+    let health = f.web.source_finding().health();
+    let unpaywall = health
+        .iter()
+        .find(|finder| finder.id == FinderId::new("unpaywall"))
+        .unwrap();
+    assert_eq!(
+        unpaywall.state,
+        HealthState::Unavailable(SkipReason::NoEmail)
+    );
+}
+
 #[derive(Clone, Default)]
 struct Captured(Arc<parking_lot::Mutex<Vec<u8>>>);
 

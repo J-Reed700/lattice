@@ -285,6 +285,47 @@ async fn unpaywall_doi_returns_publisher_landing_and_oa_copy() {
 }
 
 #[tokio::test]
+async fn unpaywall_sends_the_email_and_never_a_url_as_email() {
+    let doi = "10.1038/nature12373";
+    let body = json!({ "doi": doi, "title": "A map of the brain", "doi_url": format!("https://doi.org/{doi}") });
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+        .mount(&server)
+        .await;
+    let email = Unpaywall::with_api(http(Some("user@example.org")), server.uri());
+    assert_eq!(
+        email.find(&need(doi), 1, &budget()).await.result,
+        FinderResult::Answered
+    );
+    let requests = server.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let sent: Vec<_> = requests[0]
+        .url
+        .query_pairs()
+        .filter(|(name, _)| name == "email")
+        .map(|(_, value)| value.into_owned())
+        .collect();
+    assert_eq!(sent, vec!["user@example.org".to_string()]);
+
+    for contact in ["https://example.org/about", "https://user@host.example/x"] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&body))
+            .mount(&server)
+            .await;
+        let finder = Unpaywall::with_api(http(Some(contact)), server.uri());
+        let outcome = finder.find(&need(doi), 1, &budget()).await;
+        assert_eq!(outcome.result, FinderResult::Empty, "{contact}");
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "{contact}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn europe_pmc_search_returns_med_article_and_doi() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
