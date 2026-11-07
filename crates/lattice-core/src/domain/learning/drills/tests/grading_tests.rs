@@ -661,3 +661,119 @@ fn display_order_is_most_severe_first_and_ties_keep_their_positions() {
     ];
     assert_eq!(display_order(&key), vec![1, 3, 2, 0, 5, 4]);
 }
+
+#[test]
+fn display_order_puts_planted_issues_before_review_found_ones_whatever_their_severity() {
+    let key = vec![
+        review_found(Severity::Critical, 1, 1),
+        issue(Severity::Nit, 2, 2),
+        review_found(Severity::Major, 3, 3),
+        issue(Severity::Minor, 4, 4),
+        review_found(Severity::Critical, 5, 5),
+        issue(Severity::Minor, 6, 6),
+    ];
+    assert_eq!(display_order(&key), vec![3, 5, 1, 0, 4, 2]);
+}
+
+#[test]
+fn a_missed_review_found_issue_is_not_counted_against_the_review() {
+    let key = [
+        issue(Severity::Major, 5, 5),
+        review_found(Severity::Critical, 9, 9),
+    ];
+    let judged = assessment(vec![found(0), missed()], vec![matches(&[0])]);
+    let scored = score(&key, &[finding_at(5, 5)], &judged);
+    assert_eq!((scored.found, scored.half_found, scored.missed), (1, 0, 0));
+    assert_eq!(scored.weighted_recall, 1.0);
+    assert_eq!(scored.by_severity, vec![tally(Severity::Major, 1, 0, 1)]);
+}
+
+#[test]
+fn a_found_review_found_issue_leaves_recall_at_the_planted_value_and_is_a_valid_extra() {
+    let key = [
+        issue(Severity::Major, 5, 5),
+        review_found(Severity::Minor, 9, 9),
+    ];
+    let findings = [finding_at(9, 9)];
+    let judged = assessment(vec![missed(), found(0)], vec![matches(&[1])]);
+    let scored = score(&key, &findings, &judged);
+    assert_eq!((scored.found, scored.missed), (0, 1));
+    assert_eq!(scored.weighted_recall, 0.0);
+    assert_eq!(scored.valid_extras, 1);
+    assert_eq!(scored.precision, Some(1.0));
+}
+
+#[test]
+fn a_half_found_review_found_issue_does_not_lower_recall() {
+    let key = [
+        issue(Severity::Major, 5, 5),
+        review_found(Severity::Critical, 9, 9),
+    ];
+    let findings = [finding_at(5, 5), finding_at(9, 9)];
+    let judged = assessment(
+        vec![found(0), half_found(1)],
+        vec![matches(&[0]), matches(&[1])],
+    );
+    let scored = score(&key, &findings, &judged);
+    assert_eq!((scored.found, scored.half_found), (1, 0));
+    assert_eq!(scored.weighted_recall, 1.0);
+    assert_eq!(scored.valid_extras, 1);
+}
+
+#[test]
+fn a_finding_that_matches_a_planted_and_a_review_found_issue_is_not_a_valid_extra() {
+    let key = [
+        issue(Severity::Major, 5, 5),
+        review_found(Severity::Minor, 5, 5),
+    ];
+    let judged = assessment(vec![found(0), found(0)], vec![matches(&[0, 1])]);
+    let scored = score(&key, &[finding_at(5, 5)], &judged);
+    assert_eq!(scored.valid_extras, 0);
+    assert_eq!(scored.precision, Some(1.0));
+}
+
+#[test]
+fn a_key_with_no_planted_issue_is_fully_recalled_and_leads_with_nothing() {
+    let key = [review_found(Severity::Critical, 5, 5)];
+    let judged = assessment(vec![found(0)], vec![matches(&[0])]);
+    let scored = score(&key, &[finding_at(5, 5)], &judged);
+    assert_eq!(scored.weighted_recall, 1.0);
+    assert!(scored.by_severity.is_empty());
+    assert!(!scored.led_with_the_most_severe);
+}
+
+#[test]
+fn leading_is_judged_by_the_planted_top_even_when_a_higher_review_found_issue_is_missed() {
+    let key = [
+        issue(Severity::Minor, 1, 1),
+        review_found(Severity::Critical, 5, 5),
+    ];
+    let judged = assessment(
+        vec![found(0), missed()],
+        vec![matches(&[0]), false_positive()],
+    );
+    let findings = [finding_at(1, 1), finding_at(7, 7)];
+    assert!(score(&key, &findings, &judged).led_with_the_most_severe);
+}
+
+#[test]
+fn leading_with_a_review_found_issue_above_the_planted_top_leads() {
+    let key = [
+        issue(Severity::Minor, 1, 1),
+        review_found(Severity::Critical, 5, 5),
+    ];
+    let judged = assessment(vec![found(1), found(0)], vec![matches(&[1]), matches(&[0])]);
+    let findings = [finding_at(5, 5), finding_at(1, 1)];
+    assert!(score(&key, &findings, &judged).led_with_the_most_severe);
+}
+
+#[test]
+fn leading_with_a_review_found_issue_below_the_planted_top_does_not_lead() {
+    let key = [
+        issue(Severity::Critical, 1, 1),
+        review_found(Severity::Minor, 5, 5),
+    ];
+    let judged = assessment(vec![found(1), found(0)], vec![matches(&[1]), matches(&[0])]);
+    let findings = [finding_at(5, 5), finding_at(1, 1)];
+    assert!(!score(&key, &findings, &judged).led_with_the_most_severe);
+}

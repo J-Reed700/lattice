@@ -54,6 +54,15 @@ fn issue(severity: Severity, start: u32, end: u32) -> KeyIssue {
     }
 }
 
+/// A key issue a blind review raised, of `severity` on lines `start` to `end`.
+fn review_found(severity: Severity, start: u32, end: u32) -> KeyIssue {
+    KeyIssue {
+        id: format!("review-{start}"),
+        origin: Origin::FoundInReview,
+        ..issue(severity, start, end)
+    }
+}
+
 /// A finding on lines `start` to `end` of `main.py`.
 fn finding_at(start: u32, end: u32) -> Finding {
     Finding {

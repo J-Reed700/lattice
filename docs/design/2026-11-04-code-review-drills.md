@@ -135,8 +135,8 @@ interviewers ask about both, so drills mix families by default.
 against it (an objective grade, the fix must make the bug's test pass without breaking others); elsewhere a judge
 compares it with the key's fix.
 
-**The score** is reported as its parts, never one opaque number: severity-weighted recall, precision, whether the most
-severe issue came first (prioritisation is what interviewers listen for), fix quality, and time in interview mode.
+**The score** is reported as its parts, never one opaque number: severity-weighted recall of the planted issues,
+precision, whether the most severe issue came first (prioritisation is what interviewers listen for), fix quality, and time in interview mode.
 
 **The schedule.** Each pattern is a schedulable item per learner and language, on recall's FSRS (Ye et al., 2022):
 found first and fast → Easy; found → Good; half-found → Hard; missed → Again. The next drill's spec targets due
