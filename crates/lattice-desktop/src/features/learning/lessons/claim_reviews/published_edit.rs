@@ -164,8 +164,15 @@ pub(super) async fn apply(pool: &SqlitePool, edit: PublishedEdit<'_>) -> Result<
             successor: Some(successor.clone()),
             by: Actor::User,
         };
-        for event in [edited, superseded] {
-            append_in(&mut tx, lesson_id, entry.claim_id(), user.clone(), event).await?;
+        for (provenance, event) in [(&user, edited), (&machine, superseded)] {
+            append_in(
+                &mut tx,
+                lesson_id,
+                entry.claim_id(),
+                provenance.clone(),
+                event,
+            )
+            .await?;
         }
     }
 
