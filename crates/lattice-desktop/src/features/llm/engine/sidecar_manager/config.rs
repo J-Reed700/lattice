@@ -424,7 +424,7 @@ impl MemoryHint {
         format!(
             "At {window} tokens this model needs about {total} ({weights} weights + {cache} \
              context{state} + {compute} compute); {room}{held}.{fit} Lower its context length \
-             in Settings → Models.",
+             in Settings → Downloaded.",
             window = tokens(needed.window),
             total = gigabytes(needed.total()),
             weights = gigabytes(needed.weights),

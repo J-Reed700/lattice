@@ -34,7 +34,7 @@ pub fn default_chat_model(
     };
     DefaultChatModel(match settings.provider {
         LLMProvider::Local => local.ok_or_else(|| {
-            AppError::AiModelsNotInstalled("No chat model is selected in Settings → Models".into())
+            AppError::AiModelsNotInstalled("No chat model is selected in Settings → Downloaded".into())
         }),
         LLMProvider::Ollama => Ok(ModelRef::Ollama {
             model: settings.model.clone(),
@@ -62,7 +62,7 @@ pub fn default_chat_model(
             })
             .ok_or_else(|| {
                 AppError::AiModelsNotInstalled(
-                    "No chat model is selected in Settings → Models, and no llama.cpp or Ollama \
+                    "No chat model is selected in Settings → Downloaded, and no llama.cpp or Ollama \
                      server is configured in Settings → Chat"
                         .into(),
                 )
@@ -91,7 +91,7 @@ pub fn resolve(
 pub fn resolve_learning(settings: &LLMSettingsDto) -> Result<ResolvedModel> {
     let model = settings.learning_model.clone().ok_or_else(|| {
         AppError::InvalidConfig(
-            "No Learning model is set. Choose one in Settings → Models under Learning.".into(),
+            "No Learning model is set. Choose one in Settings → Downloaded.".into(),
         )
     })?;
     Ok(ResolvedModel {
@@ -109,7 +109,7 @@ pub fn resolve_verifier(
 ) -> Result<ResolvedModel> {
     let model = settings.verifier_model.clone().ok_or_else(|| {
         AppError::InvalidConfig(
-            "No Verifier model is set. Choose one in Settings → Models under Verifier.".into(),
+            "No Verifier model is set. Choose one in Settings → Downloaded.".into(),
         )
     })?;
     if let ModelRef::Cloud {

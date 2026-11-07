@@ -29,7 +29,7 @@ use lattice_core::domain::learning::claim_review::{LessonReview, LessonReviewSta
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result as CoreResult};
 
-/// The Verifier as Settings → Models configures it, with the app's web
+/// The Verifier as Settings → Downloaded configures it, with the app's web
 /// service for its tools: what a preparation job and "Audit this lesson
 /// now" audit with.
 struct ContainerVerifier(Container);
@@ -155,7 +155,7 @@ pub async fn set_learning_program_verifier_audit(
     if on {
         let Some(model) = container.verifier_model().await? else {
             return Err(AppError::InvalidConfig(
-                "No Verifier model is set. Choose one in Settings → Models under Verifier.".into(),
+                "No Verifier model is set. Choose one in Settings → Downloaded.".into(),
             )
             .into());
         };

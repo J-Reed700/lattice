@@ -194,7 +194,7 @@ export function modelRefForOption(
 }
 
 /**
- * The model a row in Settings → Models names. The synthetic Ollama row stands
+ * The model a row in Settings → Downloaded names. The synthetic Ollama row stands
  * for the connection, so it names the chat tag saved in Settings, and names
  * nothing until that tag is known.
  */

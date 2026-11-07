@@ -89,7 +89,7 @@ pub fn ensure_window(
         return Ok(());
     }
     Err(AppError::InvalidConfig(format!(
-        "{work} needs a context window of at least {needed} tokens. Your Learning model, {}, has a {window}-token window. Set its context length in Settings → Models to Auto or to {needed} or more, or choose a Learning model with a larger window",
+        "{work} needs a context window of at least {needed} tokens. Your Learning model, {}, has a {window}-token window. Set its context length in Settings → Downloaded to Auto or to {needed} or more, or choose a Learning model with a larger window",
         llm.model_name()
     )))
 }

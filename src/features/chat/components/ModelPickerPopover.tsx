@@ -183,7 +183,7 @@ export function ModelPickerPopover({
                   <span className="block truncate text-xs leading-snug text-[hsl(var(--text-muted))]">
                     {defaultOption
                       ? 'Follows the chat model set in Settings'
-                      : 'No chat model is selected in Settings → Models.'}
+                      : 'No chat model is selected in Settings → Downloaded.'}
                   </span>
                 </span>
                 {choice.kind === 'default' && <CheckMark />}

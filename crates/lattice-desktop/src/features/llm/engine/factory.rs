@@ -369,7 +369,7 @@ async fn create_local_llm_sidecar(
 fn no_trained_length(model_path: &Path) -> LLMError {
     LLMError::InvalidConfig(format!(
         "{} does not say in its header how long a context it was trained for. Set its \
-         context length in Settings → Models.",
+         context length in Settings → Downloaded.",
         model_path.display()
     ))
 }
