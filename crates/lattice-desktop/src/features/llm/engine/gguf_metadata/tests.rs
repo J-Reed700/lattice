@@ -258,7 +258,7 @@ fn an_embedding_header_names_its_pooling_and_precision() {
 
     assert_eq!(info.pooling_type, Some(3));
     assert_eq!(info.file_type, Some(1));
-    assert_eq!(info.embedding_length, Some(1024));
+    assert_eq!(info.shape.embedding_length, Some(1024));
 }
 
 #[test]
@@ -351,59 +351,10 @@ fn a_version_one_file_is_declined_rather_than_misparsed() {
     assert!(read_model_info(file.path()).is_none());
 }
 
-/// A plain model, every layer attending to the whole window: 32 blocks, 4
-/// KV heads, 256-wide keys and values. 128 KiB per token, and the same for
-/// every token however long the window, which is what makes a
-/// 262144-trained model of this shape impossible to run at 262144 on
-/// consumer hardware.
-#[test]
-fn a_grouped_query_cache_costs_what_its_dimensions_say() {
-    let info = GgufModelInfo {
-        block_count: Some(32),
-        head_count_kv: Some(4.into()),
-        key_length: Some(256),
-        value_length: Some(256),
-        ..Default::default()
-    };
-
-    assert_eq!(info.kv_cache_bytes(1), Some(128 * 1024));
-    assert_eq!(info.kv_cache_bytes(8192), Some(8192 * 128 * 1024));
-}
-
-/// Older headers state no key/value width, so the head dimension comes from
-/// the embedding split across the attention heads.
-#[test]
-fn a_header_without_key_widths_derives_them_from_the_embedding() {
-    let info = GgufModelInfo {
-        block_count: Some(32),
-        head_count: Some(32.into()),
-        head_count_kv: Some(32.into()),
-        embedding_length: Some(4096),
-        ..Default::default()
-    };
-
-    // 4096 / 32 = 128 per head, key and value: 32 * 32 * 256 * 2.
-    assert_eq!(info.kv_cache_bytes(1), Some(32 * 32 * 256 * 2));
-}
-
-/// Without the dimensions there is no honest answer, and a guess would size
-/// a cache that does not fit.
-#[test]
-fn an_incomplete_header_refuses_to_estimate() {
-    let info = GgufModelInfo {
-        block_count: Some(32),
-        ..Default::default()
-    };
-
-    assert_eq!(info.kv_cache_bytes(8192), None);
-}
-
 /// `bartowski/Meta-Llama-3.1-8B-Instruct-GGUF`
-/// `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf`, in the file's order: no key
-/// widths, so 4096 / 32 = 128 per head, and 32 * 8 * 256 * 2 = 128 KiB a
-/// token at any window.
+/// `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf`, in the file's order: no key widths.
 #[test]
-fn a_plain_model_costs_the_same_for_every_token_of_its_window() {
+fn a_plain_models_header_is_read_into_its_shape() {
     let info = GgufBuilder::new(3)
         .string("general.architecture", "llama")
         .string_array("general.tags", &["facebook", "meta"])
@@ -421,42 +372,27 @@ fn a_plain_model_costs_the_same_for_every_token_of_its_window() {
         .read();
 
     assert_eq!(info.trained_context_length, Some(131_072));
-    assert_eq!(info.kv_cache_bytes(1), Some(131_072));
-    for window in [4096, 8192, 32_768, 131_072] {
-        assert_eq!(
-            info.kv_cache_bytes(window),
-            Some(u64::from(window) * 131_072)
-        );
-    }
+    assert_eq!(info.shape.block_count, Some(32));
+    assert_eq!(info.shape.embedding_length, Some(4096));
+    assert_eq!(info.shape.head_count, Some(PerLayer::Uniform(32)));
+    assert_eq!(info.shape.head_count_kv, Some(PerLayer::Uniform(8)));
+    assert_eq!(info.shape.key_length, None);
+    assert_eq!(info.shape.feed_forward_length, Some(14_336));
 }
 
-/// Qwen 3.5 9B has the shape of the 128 KiB model above, but only layers
-/// 4, 8, ..., 32 attend to the whole window. The other 24 are Gated
-/// DeltaNet layers with a fixed recurrent state, so the cache is 8 * 4 *
-/// 512 * 2 = 32 KiB a token: a quarter of what counting every layer said.
 #[test]
-fn a_qwen_hybrid_is_charged_for_its_full_attention_layers_only() {
+fn a_qwen_hybrids_attention_interval_and_heads_are_read_into_its_shape() {
     let info = qwen35_9b_header().read();
 
-    assert_eq!(info.full_attention_interval, Some(4));
-    assert_eq!(info.head_count_kv, Some(PerLayer::Uniform(4)));
-    assert_eq!(info.kv_cache_bytes(1), Some(32 * 1024));
-    assert_eq!(info.kv_cache_bytes(32_768), Some(1 << 30));
-
-    let every_layer = GgufModelInfo {
-        full_attention_interval: None,
-        ..info.clone()
-    };
-    assert_eq!(
-        every_layer.kv_cache_bytes(32_768),
-        info.kv_cache_bytes(32_768).map(|bytes| bytes * 4)
-    );
+    assert_eq!(info.shape.full_attention_interval, Some(4));
+    assert_eq!(info.shape.head_count_kv, Some(PerLayer::Uniform(4)));
+    assert_eq!(info.shape.key_length, Some(256));
+    assert_eq!(info.shape.value_length, Some(256));
 }
 
-/// `unsloth/Qwen3.6-35B-A3B-GGUF` `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`: 40
-/// blocks, 2 KV heads, so 10 full-attention layers at 2 * 512 * 2 bytes.
+/// `unsloth/Qwen3.6-35B-A3B-GGUF` `Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf`.
 #[test]
-fn the_mixture_of_experts_hybrid_counts_one_layer_in_four() {
+fn the_mixture_of_experts_hybrids_header_is_read_into_its_shape() {
     let info = GgufBuilder::new(3)
         .string("general.architecture", "qwen35moe")
         .u32_value("qwen35moe.block_count", 40)
@@ -472,35 +408,9 @@ fn the_mixture_of_experts_hybrid_counts_one_layer_in_four() {
         .u32_value("qwen35moe.full_attention_interval", 4)
         .read();
 
-    assert_eq!(info.kv_cache_bytes(1), Some(10 * 2 * 512 * 2));
-    assert_eq!(info.kv_cache_bytes(32_768), Some(671_088_640));
-}
-
-/// A multi-token-prediction block sits past the trunk and attends to the
-/// whole window when the server drafts with it. The 9B MTP build (33 blocks)
-/// is charged 8 + 1 layers; Qwen 3.8 27B (65 blocks) 16 + 1.
-#[test]
-fn multi_token_prediction_blocks_are_charged_as_full_attention() {
-    let mtp_9b = GgufModelInfo {
-        block_count: Some(33),
-        nextn_predict_layers: Some(1),
-        ..qwen35_9b_header().read()
-    };
-    let qwen38_27b = GgufModelInfo {
-        architecture: Some("qwen35".into()),
-        block_count: Some(65),
-        nextn_predict_layers: Some(1),
-        head_count: Some(24.into()),
-        head_count_kv: Some(4.into()),
-        key_length: Some(256),
-        value_length: Some(256),
-        embedding_length: Some(5120),
-        full_attention_interval: Some(4),
-        ..Default::default()
-    };
-
-    assert_eq!(mtp_9b.kv_cache_bytes(1), Some(9 * 4 * 512 * 2));
-    assert_eq!(qwen38_27b.kv_cache_bytes(1), Some(17 * 4 * 512 * 2));
+    assert_eq!(info.shape.block_count, Some(40));
+    assert_eq!(info.shape.head_count_kv, Some(PerLayer::Uniform(2)));
+    assert_eq!(info.shape.full_attention_interval, Some(4));
 }
 
 /// The reader keeps going past Gemma 4's per-layer KV-head list, so the key
@@ -510,81 +420,15 @@ fn a_per_layer_list_is_read_and_the_keys_after_it_still_count() {
     let info = gemma4_12b_header().read();
 
     assert_eq!(
-        info.head_count_kv,
+        info.shape.head_count_kv,
         Some(PerLayer::Layers(gemma4_12b_kv_heads()))
     );
-    assert_eq!(info.key_length, Some(512));
-    assert_eq!(info.key_length_swa, Some(256));
-    assert_eq!(info.value_length_swa, Some(256));
-    assert_eq!(info.sliding_window, Some(1024));
-    assert_eq!(info.sliding_window_pattern, Some(gemma4_pattern(48)));
-    assert_eq!(info.shared_kv_layers, Some(0));
-}
-
-/// Gemma 4 12B: 8 global layers of 1 KV head at 512 + 512 (16 KiB a token
-/// between them) and 40 sliding layers of 8 heads at 256 + 256 (320 KiB a
-/// token). The sliding layers stop at 1024 tokens for each of the
-/// server's 4 slots plus a 512-token batch: 4608 cells.
-#[test]
-fn sliding_window_layers_stop_growing_at_their_window() {
-    let info = gemma4_12b_header().read();
-    let global = 8 * 1024 * 2;
-    let sliding = 40 * 8 * 512 * 2;
-
-    assert_eq!(info.kv_cache_bytes(1), Some(global + sliding));
-    assert_eq!(info.kv_cache_bytes(4096), Some((global + sliding) * 4096));
-    assert_eq!(
-        info.kv_cache_bytes(32_768),
-        Some(global * 32_768 + sliding * 4608)
-    );
-    assert_eq!(info.kv_cache_bytes(32_768), Some(2_046_820_352));
-}
-
-/// `unsloth/gemma-4-E4B-it-GGUF` `gemma-4-E4B-it-Q4_K_M.gguf`: the last 18
-/// of 42 layers read earlier layers' caches. Of the 24 that keep one, 4
-/// are global (2 heads at 512 + 512) and 20 slide over 512 tokens (2 heads
-/// at 256 + 256), capped at 4 * 512 + 512 = 2560 cells.
-#[test]
-fn layers_that_share_an_earlier_cache_cost_nothing() {
-    let info = GgufBuilder::new(3)
-        .string("general.architecture", "gemma4")
-        .u32_value("gemma4.block_count", 42)
-        .u32_value("gemma4.context_length", 131_072)
-        .u32_value("gemma4.embedding_length", 2560)
-        .u32_value("gemma4.attention.head_count", 8)
-        .u32_value("gemma4.attention.head_count_kv", 2)
-        .u32_value("gemma4.attention.key_length", 512)
-        .u32_value("gemma4.attention.value_length", 512)
-        .u32_value("gemma4.attention.sliding_window", 512)
-        .u32_value("gemma4.attention.shared_kv_layers", 18)
-        .u32_value("gemma4.embedding_length_per_layer_input", 256)
-        .bool_array(
-            "gemma4.attention.sliding_window_pattern",
-            &gemma4_pattern(42),
-        )
-        .u32_value("gemma4.attention.key_length_swa", 256)
-        .u32_value("gemma4.attention.value_length_swa", 256)
-        .read();
-    let global = 4 * 2 * 1024 * 2;
-    let sliding = 20 * 2 * 512 * 2;
-
-    assert_eq!(info.kv_cache_bytes(1), Some(global + sliding));
-    assert_eq!(
-        info.kv_cache_bytes(32_768),
-        Some(global * 32_768 + sliding * 2560)
-    );
-}
-
-/// A list that does not cover every layer cannot say what the missing
-/// layers cost.
-#[test]
-fn a_per_layer_list_shorter_than_the_model_refuses_to_estimate() {
-    let info = GgufModelInfo {
-        head_count_kv: Some(PerLayer::Layers(vec![8; 10])),
-        ..gemma4_12b_header().read()
-    };
-
-    assert_eq!(info.kv_cache_bytes(8192), None);
+    assert_eq!(info.shape.key_length, Some(512));
+    assert_eq!(info.shape.key_length_swa, Some(256));
+    assert_eq!(info.shape.value_length_swa, Some(256));
+    assert_eq!(info.shape.sliding_window, Some(1024));
+    assert_eq!(info.shape.sliding_window_pattern, Some(gemma4_pattern(48)));
+    assert_eq!(info.shape.shared_kv_layers, Some(0));
 }
 
 /// A sizing key written in a type it should not have is passed over, and
@@ -599,10 +443,10 @@ fn a_sizing_key_of_an_unexpected_type_is_passed_over() {
         .u32_value("llama.embedding_length", 4096)
         .read();
 
-    assert_eq!(info.head_count_kv, None);
-    assert_eq!(info.block_count, None);
-    assert_eq!(info.head_count, Some(PerLayer::Uniform(32)));
-    assert_eq!(info.embedding_length, Some(4096));
+    assert_eq!(info.shape.head_count_kv, None);
+    assert_eq!(info.shape.block_count, None);
+    assert_eq!(info.shape.head_count, Some(PerLayer::Uniform(32)));
+    assert_eq!(info.shape.embedding_length, Some(4096));
 }
 
 /// A vision tower's keys share the model's prefix but are not its layers.
@@ -614,7 +458,7 @@ fn a_nested_key_is_not_mistaken_for_the_language_model_s() {
         .u32_value("gemma4.vision.block_count", 27)
         .read();
 
-    assert_eq!(info.block_count, Some(48));
+    assert_eq!(info.shape.block_count, Some(48));
 }
 
 /// Synthetic fixtures only prove the parser agrees with itself. This reads a
@@ -626,51 +470,30 @@ fn a_real_gguf_on_this_machine_parses() {
     let info = read_model_info(Path::new(&path)).expect("a real GGUF must parse");
 
     println!("{info:#?}");
-    println!("kv bytes at 1: {:?}", info.kv_cache_bytes(1));
-    println!("kv bytes at 8192: {:?}", info.kv_cache_bytes(8192));
-    println!("kv bytes at 32768: {:?}", info.kv_cache_bytes(32_768));
+    println!("kv bytes at 1: {:?}", info.shape.kv_cache_bytes(1, false));
+    println!(
+        "kv bytes at 8192: {:?}",
+        info.shape.kv_cache_bytes(8192, false)
+    );
+    println!(
+        "kv bytes at 32768: {:?}",
+        info.shape.kv_cache_bytes(32_768, false)
+    );
 
     assert!(info.architecture.is_some());
     assert!(info.trained_context_length.is_some());
-    assert!(info.kv_cache_bytes(8192).is_some());
+    assert!(info.shape.kv_cache_bytes(8192, false).is_some());
 }
 
 #[test]
 fn the_header_gives_what_the_compute_buffer_and_recurrent_state_are_priced_from() {
     let info = qwen35_9b_header().read();
 
-    assert_eq!(info.feed_forward_length, Some(12_288));
-    assert_eq!(info.ssm_conv_kernel, Some(4));
-    assert_eq!(info.ssm_state_size, Some(128));
-    assert_eq!(info.ssm_group_count, Some(16));
-    assert_eq!(info.ssm_inner_size, Some(4096));
-}
-
-/// Qwen 3.5 9B: 24 of its 32 layers are linear attention. Each keeps, for each
-/// of the server's four slots, `3 * (4096 + 2 * 16 * 128)` convolution values
-/// and `128 * 4096` recurrent ones, in f32.
-#[test]
-fn a_qwen_hybrid_s_recurrent_state_is_fixed_per_linear_layer_and_slot() {
-    let info = qwen35_9b_header().read();
-
-    let per_layer_and_slot = (3 * (4096 + 2 * 16 * 128) + 128 * 4096) * 4;
-    assert_eq!(info.recurrent_state_bytes(), 24 * 4 * per_layer_and_slot);
-}
-
-#[test]
-fn a_model_without_linear_attention_keeps_no_recurrent_state() {
-    let hybrid = qwen35_9b_header().read();
-    let plain = GgufModelInfo {
-        full_attention_interval: None,
-        ..hybrid.clone()
-    };
-    let undescribed = GgufModelInfo {
-        ssm_inner_size: None,
-        ..hybrid
-    };
-
-    assert_eq!(plain.recurrent_state_bytes(), 0);
-    assert_eq!(undescribed.recurrent_state_bytes(), 0);
+    assert_eq!(info.shape.feed_forward_length, Some(12_288));
+    assert_eq!(info.shape.ssm_conv_kernel, Some(4));
+    assert_eq!(info.shape.ssm_state_size, Some(128));
+    assert_eq!(info.shape.ssm_group_count, Some(16));
+    assert_eq!(info.shape.ssm_inner_size, Some(4096));
 }
 
 /// Qwen3.5-9B keeps its 545.62 MiB `token_embd.weight` in `CPU_Mapped` and sends
@@ -729,43 +552,6 @@ fn a_tensor_list_cut_short_counts_nothing_off_the_file() {
     cut.set_len(length - 12).unwrap();
 
     assert_eq!(read_model_info(file.path()).unwrap().cpu_weight_bytes, 0);
-}
-
-/// llama-server reserves 120 + 48 MiB at 16,384 tokens and 168 + 96 at 65,536
-/// on Vulkan, for GPU and host: nothing like logits over 248,320 tokens.
-#[test]
-fn the_compute_buffer_is_a_micro_batch_of_a_layer_and_holds_no_logits() {
-    let info = qwen35_9b_header().read();
-
-    assert_eq!(
-        info.compute_buffer_bytes(16_384, 512),
-        512 * (16_384 * 6 + 12_288 * 2 * 4)
-    );
-    assert_eq!(
-        info.compute_buffer_bytes(65_536, 512),
-        512 * (65_536 * 6 + 12_288 * 2 * 4)
-    );
-}
-
-/// A pooled server takes each passage whole, so its micro-batch is its window.
-#[test]
-fn the_compute_buffer_grows_with_the_micro_batch() {
-    let info = GgufModelInfo {
-        feed_forward_length: Some(3_072),
-        ..Default::default()
-    };
-
-    assert_eq!(
-        info.compute_buffer_bytes(4_096, 4_096),
-        4_096 * (4_096 * 6 + 3_072 * 2 * 4)
-    );
-}
-
-#[test]
-fn a_header_without_a_feed_forward_width_still_prices_the_mask() {
-    let info = GgufModelInfo::default();
-
-    assert_eq!(info.compute_buffer_bytes(1_024, 512), 512 * 1_024 * 6);
 }
 
 /// Counts the reads that reach the file beneath a `BufReader`.

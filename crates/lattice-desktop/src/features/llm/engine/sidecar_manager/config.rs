@@ -1,7 +1,8 @@
 use super::*;
-use crate::features::llm::engine::gguf_metadata::{
-    read_model_info, GgufModelInfo, MICRO_BATCH_TOKENS,
-};
+use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
+pub(crate) use lattice_core::domain::models::fit::FIT_TARGET_BYTES;
+use lattice_core::domain::models::fit::{footprint, MICRO_BATCH_TOKENS};
+pub use lattice_core::domain::models::fit::{Footprint, ServerBuffers};
 
 /// A bundled llama-server build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,61 +140,11 @@ pub enum SpeculativeDecoding {
     MtpDraft { n_max: u32 },
 }
 
-/// What llama.cpp keeps free on each device when it fits a model by itself:
-/// `--fit-target`, 1,024 MiB in the pinned build. The memory hint holds the
-/// same back from a GPU's reported free memory and from available RAM.
-/// Metal's working set needs nothing held back: Apple sizes it to leave the
-/// system its share.
-pub(crate) const FIT_TARGET_BYTES: u64 = 1024 * 1024 * 1024;
-
 const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
 /// Threads a pooling server gets on the CPU beside models holding the GPU. A
 /// pool as wide as the machine stalls on the cores they are using.
 pub(super) const BESIDE_GPU_THREADS: u32 = 4;
-
-/// What sizes a server's buffers beside its window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ServerBuffers {
-    pub kv_cache_quantization: bool,
-    /// Tokens in a micro-batch (`-ub`).
-    pub micro_batch: u32,
-}
-
-impl ServerBuffers {
-    /// A chat server's, at llama.cpp's default micro-batch.
-    pub(crate) fn chat(kv_cache_quantization: bool) -> Self {
-        Self {
-            kv_cache_quantization,
-            micro_batch: MICRO_BATCH_TOKENS,
-        }
-    }
-}
-
-/// Memory a server of one model holds at one window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Footprint {
-    /// What the device holds of the GGUF, plus its catalog projector once that
-    /// is downloaded.
-    pub weights: u64,
-    /// The KV cache of the layers that keep one.
-    pub cache: u64,
-    /// A hybrid's recurrent state, which does not grow with the window.
-    pub state: u64,
-    /// Scratch for computing one micro-batch.
-    pub compute: u64,
-    /// The window, in tokens, it is priced at.
-    pub window: u32,
-}
-
-impl Footprint {
-    pub fn total(self) -> u64 {
-        self.weights
-            .saturating_add(self.cache)
-            .saturating_add(self.state)
-            .saturating_add(self.compute)
-    }
-}
 
 /// The weights a server of `model_path` holds: the GGUF, plus its catalog
 /// vision projector once that is downloaded. The projector is counted whether
@@ -213,19 +164,7 @@ pub(super) fn footprint_from(
     window: u32,
     buffers: ServerBuffers,
 ) -> Footprint {
-    Footprint {
-        weights: weights.saturating_sub(info.map_or(0, |info| info.cpu_weight_bytes)),
-        cache: info
-            .and_then(|info| {
-                info.kv_cache_bytes_with_quantization(window, buffers.kv_cache_quantization)
-            })
-            .unwrap_or(0),
-        state: info.map_or(0, GgufModelInfo::recurrent_state_bytes),
-        compute: info.map_or(0, |info| {
-            info.compute_buffer_bytes(window, buffers.micro_batch)
-        }),
-        window,
-    }
+    footprint(weights, info.map(|info| &info.shape), window, buffers)
 }
 
 /// What a server of `model_path` holds at a window of `context_size` tokens.
@@ -344,7 +283,8 @@ fn largest_window_within(
     buffers: ServerBuffers,
 ) -> Option<u32> {
     let trained = info.trained_context_length?;
-    info.kv_cache_bytes_with_quantization(trained, buffers.kv_cache_quantization)?;
+    info.shape
+        .kv_cache_bytes(trained, buffers.kv_cache_quantization)?;
     let fits =
         |window: u32| footprint_from(weights, Some(info), window, buffers).total() <= spare_bytes;
     if fits(trained) {

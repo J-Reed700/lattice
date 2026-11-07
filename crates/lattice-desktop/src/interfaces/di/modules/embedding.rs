@@ -54,7 +54,7 @@ pub(super) async fn read_header(gguf: &Path) -> Option<EmbeddingHeader> {
     Some(EmbeddingHeader {
         architecture: info.architecture,
         trained_tokens: info.trained_context_length,
-        dimension: info.embedding_length,
+        dimension: info.shape.embedding_length,
         pooling_type: info.pooling_type,
         file_type: info.file_type,
     })

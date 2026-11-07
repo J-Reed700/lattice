@@ -1106,3 +1106,102 @@ fn every_curated_chat_entry_says_what_it_is_for() {
         assert!(!model.use_for.trim().is_empty(), "{}", model.id);
     }
 }
+
+/// Moved from the runtime's `gguf_metadata` tests with the math they check.
+#[test]
+fn a_header_without_key_widths_derives_them_from_the_embedding() {
+    let shape = ModelShape {
+        block_count: Some(32),
+        head_count: Some(32.into()),
+        head_count_kv: Some(32.into()),
+        embedding_length: Some(4096),
+        ..Default::default()
+    };
+
+    assert_eq!(shape.kv_cache_bytes(1, false), Some(32 * 32 * 256 * 2));
+}
+
+#[test]
+fn an_incomplete_header_refuses_to_estimate() {
+    let shape = ModelShape {
+        block_count: Some(32),
+        ..Default::default()
+    };
+
+    assert_eq!(shape.kv_cache_bytes(8192, false), None);
+}
+
+#[test]
+fn a_per_layer_list_shorter_than_the_model_refuses_to_estimate() {
+    let shape = ModelShape {
+        head_count_kv: Some(PerLayer::Layers(vec![8; 10])),
+        ..gemma4_12b_shape()
+    };
+
+    assert_eq!(shape.kv_cache_bytes(8192, false), None);
+}
+
+#[test]
+fn a_header_without_a_feed_forward_width_still_prices_the_mask() {
+    assert_eq!(
+        ModelShape::default().compute_buffer_bytes(1_024, 512),
+        512 * 1_024 * 6
+    );
+}
+
+#[test]
+fn a_qwen_hybrid_is_charged_for_its_full_attention_layers_only() {
+    let shape = qwen35_9b_shape();
+
+    assert_eq!(shape.kv_cache_bytes(1, false), Some(32 * 1024));
+    assert_eq!(shape.kv_cache_bytes(32_768, false), Some(1 << 30));
+
+    let every_layer = ModelShape {
+        full_attention_interval: None,
+        ..shape.clone()
+    };
+    assert_eq!(
+        every_layer.kv_cache_bytes(32_768, false),
+        shape.kv_cache_bytes(32_768, false).map(|bytes| bytes * 4)
+    );
+}
+
+#[test]
+fn the_mixture_of_experts_hybrid_counts_one_layer_in_four() {
+    let shape = ModelShape {
+        block_count: Some(40),
+        embedding_length: Some(2048),
+        head_count: Some(16.into()),
+        head_count_kv: Some(2.into()),
+        key_length: Some(256),
+        value_length: Some(256),
+        full_attention_interval: Some(4),
+        ..Default::default()
+    };
+
+    assert_eq!(shape.kv_cache_bytes(1, false), Some(10 * 2 * 512 * 2));
+    assert_eq!(shape.kv_cache_bytes(32_768, false), Some(671_088_640));
+}
+
+#[test]
+fn multi_token_prediction_blocks_are_charged_as_full_attention() {
+    let mtp_9b = ModelShape {
+        block_count: Some(33),
+        nextn_predict_layers: Some(1),
+        ..qwen35_9b_shape()
+    };
+    let qwen38_27b = ModelShape {
+        block_count: Some(65),
+        nextn_predict_layers: Some(1),
+        head_count: Some(24.into()),
+        head_count_kv: Some(4.into()),
+        key_length: Some(256),
+        value_length: Some(256),
+        embedding_length: Some(5120),
+        full_attention_interval: Some(4),
+        ..Default::default()
+    };
+
+    assert_eq!(mtp_9b.kv_cache_bytes(1, false), Some(9 * 4 * 512 * 2));
+    assert_eq!(qwen38_27b.kv_cache_bytes(1, false), Some(17 * 4 * 512 * 2));
+}
