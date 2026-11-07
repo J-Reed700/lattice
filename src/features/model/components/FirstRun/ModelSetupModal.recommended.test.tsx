@@ -124,9 +124,9 @@ describe('ModelSetupModal recommended list', () => {
   it('says each card’s speed in words, not the backend’s code', async () => {
     renderModal();
     const radios = await cards();
-    expect(radios[0]).toHaveAccessibleName(/Medium/);
-    expect(radios[1]).toHaveAccessibleName(/Fast/);
-    expect(radios[2]).toHaveAccessibleName(/Slower/);
+    expect(radios[0]).toHaveAccessibleName(/\bMedium\b/);
+    expect(radios[1]).toHaveAccessibleName(/\bFast\b/);
+    expect(radios[2]).toHaveAccessibleName(/\bSlower\b/);
     for (const radio of radios) expect(radio).not.toHaveAccessibleName(/balanced|thorough|Speed: fast/);
   });
 
