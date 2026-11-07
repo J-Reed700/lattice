@@ -642,7 +642,7 @@ async fn a_subtopic_whose_first_round_reads_nothing_is_saved_by_a_later_round() 
         readable(&good),
     ])
     .serve("q1", "paper", 1, &[cut.clone(), gone.clone()])
-    .serve("q1", "community", 1, &[good.clone()]);
+    .serve("q1", "community", 1, std::slice::from_ref(&good));
     let plan = one_subtopic("Random assignment", "q1");
     let llm = model(vec![select_all(2), select_all(1)]);
     let found =
@@ -671,8 +671,8 @@ async fn a_subtopic_whose_first_selection_picks_nothing_is_selected_again_in_a_l
         "https://example.org/good".to_owned(),
     );
     let web = ResearchWeb::with_pages(vec![readable(&off), readable(&good)])
-        .serve("q1", "paper", 1, &[off.clone()])
-        .serve("q1", "community", 1, &[good.clone()]);
+        .serve("q1", "paper", 1, std::slice::from_ref(&off))
+        .serve("q1", "community", 1, std::slice::from_ref(&good));
     let plan = one_subtopic("Random assignment", "q1");
     let llm = model(vec![reject_all(1), select_all(1)]);
     let found =
@@ -688,7 +688,7 @@ async fn a_subtopic_whose_first_selection_picks_nothing_is_selected_again_in_a_l
 async fn a_subtopic_saved_in_its_first_round_sends_no_further_searches() -> Result<()> {
     let good = "https://example.org/good".to_owned();
     let web = ResearchWeb::with_pages(vec![readable(&good)])
-        .serve("q1", "paper", 1, &[good.clone()])
+        .serve("q1", "paper", 1, std::slice::from_ref(&good))
         .serve("q1", "community", 1, &url_list("late", 3));
     let plan = one_subtopic("Random assignment", "q1");
     let llm = model(vec![select_all(1)]);
@@ -778,7 +778,7 @@ async fn a_later_round_shows_the_selector_only_results_it_has_not_shown_before()
     let prompts = llm.prompts.lock().unwrap().clone();
     assert_eq!(prompts.len(), 2);
     assert_eq!(shown_urls(&prompts[0]), [first, second]);
-    assert_eq!(shown_urls(&prompts[1]), [good.clone()]);
+    assert_eq!(shown_urls(&prompts[1]), std::slice::from_ref(&good));
     assert_eq!(found.references.len(), 1);
     assert_eq!(found.references[0].origin, good);
     Ok(())
@@ -787,8 +787,12 @@ async fn a_later_round_shows_the_selector_only_results_it_has_not_shown_before()
 #[tokio::test]
 async fn only_a_subtopic_with_nothing_saved_gets_later_rounds() -> Result<()> {
     let good = "https://example.org/good".to_owned();
-    let web =
-        ResearchWeb::with_pages(vec![readable(&good)]).serve("q3", "paper", 1, &[good.clone()]);
+    let web = ResearchWeb::with_pages(vec![readable(&good)]).serve(
+        "q3",
+        "paper",
+        1,
+        std::slice::from_ref(&good),
+    );
     let plan = ReferencePlan {
         subtopics: vec![
             PlannedSubtopic {

@@ -96,11 +96,12 @@ impl Rounds {
                 }
                 Stage::Deeper => {
                     self.stage = Stage::OtherKinds;
-                    (0..self.planned)
-                        .filter(|&i| {
-                            let search = &self.searches[i];
-                            search.page() > 1 && !search.is_done()
-                        })
+                    self.searches
+                        .iter()
+                        .take(self.planned)
+                        .enumerate()
+                        .filter(|(_, search)| search.page() > 1 && !search.is_done())
+                        .map(|(i, _)| i)
                         .collect()
                 }
                 Stage::OtherKinds => {
@@ -143,9 +144,10 @@ impl Rounds {
                 break chosen;
             }
         };
-        for &i in &chosen {
-            let asked = ask(&self.searches[i]);
-            self.asked.push(asked);
+        for (i, search) in self.searches.iter().enumerate() {
+            if chosen.contains(&i) {
+                self.asked.push(ask(search));
+            }
         }
         Some(Round {
             searches: self
