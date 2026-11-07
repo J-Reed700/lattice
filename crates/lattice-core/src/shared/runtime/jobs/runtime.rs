@@ -763,29 +763,65 @@ impl JobRuntime {
         }
     }
 
-    /// Registers each kind in turn, returning the kinds that could not be.
+    /// Registers each kind, returning at once with the kinds that could not
+    /// be. Each of those keeps being tried in the background, on its own
+    /// backoff, until it registers, so its saved jobs run once the cause has
+    /// passed. Nothing here waits on a failed kind.
     pub async fn register_all(
         self: &Arc<Self>,
         kinds: Vec<JobKindRegistration>,
     ) -> Vec<RegistrationFailure> {
         let mut failures = Vec::new();
         for registration in kinds {
-            if let Err(error) = self
+            let Err(error) = self
                 .register(
                     &registration.kind,
-                    registration.handler,
+                    registration.handler.clone(),
                     registration.config,
                 )
                 .await
-            {
-                failures.push(RegistrationFailure {
-                    kind: registration.kind,
-                    error,
-                });
-                break;
-            }
+            else {
+                continue;
+            };
+            tracing::warn!(kind = %registration.kind, %error, "Could not register a job kind; retrying in the background");
+            self.retry_registration(&registration);
+            failures.push(RegistrationFailure {
+                kind: registration.kind,
+                error,
+            });
         }
         failures
+    }
+
+    fn retry_registration(self: &Arc<Self>, registration: &JobKindRegistration) {
+        let runtime = Arc::downgrade(self);
+        let cancel = self.tasks.token();
+        let kind = registration.kind.clone();
+        let handler = registration.handler.clone();
+        let config = registration.config;
+        let _ = self.tasks.spawn(async move {
+            let mut retries = 0u32;
+            loop {
+                let wait = tokio::time::sleep(config.backoff.delay(retries));
+                if until_cancelled(&cancel, wait).await.is_none() {
+                    return;
+                }
+                let Some(runtime) = Weak::upgrade(&runtime) else {
+                    return;
+                };
+                match runtime.register(&kind, handler.clone(), config).await {
+                    Ok(()) => {
+                        tracing::info!(%kind, retries, "Registered a job kind that had failed to");
+                        return;
+                    }
+                    Err(AppError::InvalidState(_)) if runtime.kind(&kind).is_some() => return,
+                    Err(error) => {
+                        tracing::warn!(%kind, %error, retries, "Could not register a job kind; retrying in the background");
+                        retries = retries.saturating_add(1);
+                    }
+                }
+            }
+        });
     }
 }
 
