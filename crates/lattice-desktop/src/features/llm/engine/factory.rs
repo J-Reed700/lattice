@@ -410,7 +410,7 @@ pub(crate) fn sidecar_config(
     config.mtp_capable =
         lattice_core::domain::models::curated::chat_model_uses_mtp_draft(model_path)
             || gguf_info
-                .and_then(|info| info.nextn_predict_layers)
+                .and_then(|info| info.shape.nextn_predict_layers)
                 .is_some_and(|layers| layers > 0);
     config.speculative_decoding = server.speculative_decoding;
 

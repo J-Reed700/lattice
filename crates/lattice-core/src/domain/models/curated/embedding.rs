@@ -1,6 +1,8 @@
 //! Curated embedding models, and which of them support Matryoshka truncation.
 
+use super::pins::{pinned_for, unpinned};
 use crate::domain::models::checkpoint::TOKENIZER_JSON;
+use crate::domain::models::fit::PinnedModel;
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
@@ -22,8 +24,6 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
         category: ModelCategory::Embedding,
         description: "Instruction-aware multilingual retrieval, the default on every machine. Runs in the bundled llama.cpp server (F16) and embeds up to 2048 tokens per passage.".into(),
         size_gb: 1.2,
-        minimum_ram_gb: 6.0,
-        recommended_ram_gb: 8.0,
         context_length: 2048,
         performance_tier: PerformanceTier::Balanced,
         supported_quantizations: vec!["F16".into()],
@@ -53,6 +53,15 @@ pub fn get_curated_embedding_models() -> Vec<ModelMetadata> {
         format: ModelFormat::Gguf,
     }]
 }
+
+/// The memory facts of the curated embedding GGUF's header and the bytes of it that stay in system
+/// RAM, as pinned in the catalog.
+pub fn curated_embedding_pinned() -> PinnedModel {
+    pinned_for(QWEN3_EMBEDDING_REPO, QWEN3_EMBEDDING_FILE).unwrap_or_else(unpinned)
+}
+
+const QWEN3_EMBEDDING_REPO: &str = "Qwen/Qwen3-Embedding-0.6B-GGUF";
+const QWEN3_EMBEDDING_FILE: &str = "Qwen3-Embedding-0.6B-f16.gguf";
 
 const QWEN3_EMBEDDING_GGUF_BYTES: u64 = 1_197_629_632;
 const QWEN3_EMBEDDING_TOKENIZER_BYTES: u64 = 11_423_705;

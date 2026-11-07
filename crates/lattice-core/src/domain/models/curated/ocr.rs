@@ -36,8 +36,6 @@ pub struct CuratedOcrModel {
     /// The instruction the model card prescribes for plain text recognition.
     pub prompt: &'static str,
     pub license: &'static str,
-    pub minimum_ram_gb: f64,
-    pub recommended_ram_gb: f64,
 }
 
 /// The OCR catalog, in order of preference when several are downloaded.
@@ -62,8 +60,6 @@ pub const CURATED_OCR_MODELS: &[CuratedOcrModel] = &[CuratedOcrModel {
     projector_sha256: "204d757d7610d9b3faab10d506d69e5b244e32bf765e2bab2d0167e65e0a058a",
     prompt: "OCR:",
     license: "Apache-2.0",
-    minimum_ram_gb: 4.0,
-    recommended_ram_gb: 8.0,
 }];
 
 impl CuratedOcrModel {
@@ -83,8 +79,6 @@ impl CuratedOcrModel {
             category: ModelCategory::OCR,
             description: self.description.into(),
             size_gb: total_size_bytes as f64 / 1_000_000_000.0,
-            minimum_ram_gb: self.minimum_ram_gb,
-            recommended_ram_gb: self.recommended_ram_gb,
             context_length: 4096,
             performance_tier: PerformanceTier::Fast,
             supported_quantizations: vec!["BF16".into()],

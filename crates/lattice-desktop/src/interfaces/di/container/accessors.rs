@@ -93,6 +93,35 @@ impl Container {
         self.core.data_dir().join("models")
     }
 
+    /// The probe that builds this computer's profile for the model recommender, reading the
+    /// device list the runtime already probed.
+    pub fn machine_profile_probe(
+        &self,
+    ) -> std::sync::Arc<dyn crate::features::model_management::recommend::MachineProfileProbe> {
+        std::sync::Arc::new(
+            crate::features::model_management::machine_probe::SidecarMachineProfileProbe::new(
+                std::sync::Arc::clone(&self.llm_runtime.devices),
+                self.app_handle.clone(),
+                self.models_path(),
+            ),
+        )
+    }
+
+    /// Reads and keeps the GGUF headers of Hugging Face files, so a catalog row's fit is judged from
+    /// the file itself.
+    pub fn gguf_header_source(
+        &self,
+    ) -> std::sync::Arc<crate::features::model_management::header_source::HuggingFaceHeaderSource>
+    {
+        let cache = dirs::cache_dir()
+            .map(|path| path.join("lattice"))
+            .unwrap_or_else(|| self.core.data_dir().join("cache"))
+            .join("gguf-headers");
+        std::sync::Arc::new(
+            crate::features::model_management::header_source::HuggingFaceHeaderSource::new(cache),
+        )
+    }
+
     /// The manager that fetches and inspects the models kept under
     /// [`Self::models_path`].
     pub fn model_manager(

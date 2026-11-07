@@ -123,7 +123,7 @@ pub(super) async fn live_facts(gguf: &Path) -> (EmbeddingModelFacts, InputPolicy
     let header = EmbeddingHeader {
         architecture: info.architecture,
         trained_tokens: info.trained_context_length,
-        dimension: info.embedding_length,
+        dimension: info.shape.embedding_length,
         pooling_type: info.pooling_type,
         file_type: info.file_type,
     };

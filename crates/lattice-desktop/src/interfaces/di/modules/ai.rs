@@ -10,8 +10,8 @@ use crate::features::conversation::use_cases::CreateConversationUseCase;
 // Application Use Cases - LLM
 use crate::features::llm::use_cases::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
-    GetAvailableModelsUseCase, GetBestModelUseCase, GetModelPathUseCase,
-    GetRecommendedModelsUseCase, GetSystemCapabilitiesUseCase, ListDownloadedModelsUseCase,
+    GetAvailableModelsUseCase, GetModelPathUseCase, GetSystemCapabilitiesUseCase,
+    ListDownloadedModelsUseCase,
 };
 
 // Application Use Cases - Tags
@@ -137,14 +137,6 @@ impl AIModule {
 
     pub fn get_available_models_use_case(&self) -> &Arc<GetAvailableModelsUseCase> {
         &self.llm.get_available_models_use_case
-    }
-
-    pub fn get_recommended_models_use_case(&self) -> &Arc<GetRecommendedModelsUseCase> {
-        &self.llm.get_recommended_models_use_case
-    }
-
-    pub fn get_best_model_use_case(&self) -> &Arc<GetBestModelUseCase> {
-        &self.llm.get_best_model_use_case
     }
 
     pub fn check_model_downloaded_use_case(&self) -> &Arc<CheckModelDownloadedUseCase> {

@@ -19,6 +19,16 @@ const SECTIONS = [
   { category: 'Transcription', title: 'Audio transcription', description: 'Turn recordings into searchable text.', icon: AudioLines },
 ] as const;
 
+/** The rows `ModelCatalogResults` puts on screen for this view and page. */
+export function shownModels(models: ModelRecommendation[], overview: boolean, page: number): ModelRecommendation[] {
+  if (overview) {
+    return SECTIONS.flatMap(({ category }) => models.filter(({ model }) => model.category === category).slice(0, PREVIEW_SIZE));
+  }
+  const currentPage = Math.min(page, Math.max(1, Math.ceil(models.length / CATALOG_PAGE_SIZE)));
+  const start = (currentPage - 1) * CATALOG_PAGE_SIZE;
+  return models.slice(start, start + CATALOG_PAGE_SIZE);
+}
+
 export interface CatalogResultsNavigation {
   overview: boolean;
   page: number;
