@@ -5,9 +5,9 @@ use chrono::Utc;
 use lattice_core::application::contracts::settings::SettingsCategory;
 use lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort;
 use lattice_core::application::ports::{SettingsRepositoryPort, UnitOfWorkFactory};
-use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::models::checkpoint::has_tokenizer;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use std::collections::HashMap;
@@ -114,7 +114,10 @@ impl DownloadSaga {
         };
         let updates = HashMap::from([("learningModel".to_string(), value)]);
         match settings.update(Some(SettingsCategory::Llm), updates).await {
-            Ok(_) => info!(model_id, "Saga: set the Learning model to the first chat model"),
+            Ok(_) => info!(
+                model_id,
+                "Saga: set the Learning model to the first chat model"
+            ),
             Err(e) => warn!(error = %e, "Saga: could not set the Learning model"),
         }
     }
