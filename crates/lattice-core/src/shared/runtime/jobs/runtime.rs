@@ -9,6 +9,7 @@ use crate::shared::{
     runtime::background::BackgroundTasks,
 };
 use async_trait::async_trait;
+use futures::FutureExt;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
@@ -28,6 +29,17 @@ const WAITING_TURN: &str = "Waiting for its turn";
 /// The error code of a job ended because its failure repeated with nothing
 /// saved in between.
 pub const REPEATED_FAILURE: &str = "repeated_failure";
+/// The error code of a job whose handler panicked.
+pub const INTERNAL_ERROR: &str = "internal_error";
+const INTERNAL_ERROR_MESSAGE: &str = "Lattice hit an internal error while working on this. Retry it; if it happens again, Settings → Logs has the details.";
+
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|text| (*text).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "a non-text panic payload".to_string())
+}
 
 type Observer = Arc<dyn Fn(&JobDto) + Send + Sync>;
 type Subjects = Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>;
@@ -495,7 +507,19 @@ impl JobRuntime {
             events: self.events.clone(),
             cancel: cancel.clone(),
         };
-        let outcome = kind.handler.run(&context).await;
+        let outcome = match std::panic::AssertUnwindSafe(kind.handler.run(&context))
+            .catch_unwind()
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(payload) => {
+                tracing::error!(job_id = id, kind = %context.job().kind, panic = %panic_text(payload.as_ref()), "A job handler panicked");
+                Ok(JobOutcome::Failed {
+                    code: INTERNAL_ERROR.into(),
+                    message: INTERNAL_ERROR_MESSAGE.into(),
+                })
+            }
+        };
         if outcome.is_ok() || cancel.is_cancelled() {
             lock(&self.deferred).remove(id);
         }
