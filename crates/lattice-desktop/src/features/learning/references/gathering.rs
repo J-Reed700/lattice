@@ -75,9 +75,13 @@ impl Rounds {
             title: title.trim().to_owned(),
             first_query: needs.first().map(|need| need.query.clone()),
             planned: searches.len(),
+            stage: if searches.is_empty() {
+                Stage::Done
+            } else {
+                Stage::Planned
+            },
             searches,
             asked: Vec::new(),
-            stage: Stage::Planned,
         }
     }
 
