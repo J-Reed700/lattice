@@ -108,6 +108,7 @@ fn a_contact_is_an_email_or_an_http_address() {
     for good in [
         "me@example.org",
         " me@example.org ",
+        "me@example.org\n",
         "https://example.org/about",
         "https://user@host.example/x",
     ] {
@@ -127,7 +128,6 @@ fn a_contact_is_an_email_or_an_http_address() {
         "me@.org",
         "me@@example.org",
         "me @example.org",
-        "me@example.org\n",
         "https://example.org/a b",
         "ftp://example.org",
     ] {
