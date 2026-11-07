@@ -11,8 +11,14 @@ import sqlite3
 import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
-# The app and the core crate; core holds the job store's SQL.
-SOURCE_ROOTS = ('crates/lattice-desktop/src', 'crates/lattice-core/src')
+# The app, the core crate (the job store's SQL) and the crates split out of the app.
+SOURCE_ROOTS = (
+    'crates/lattice-desktop/src',
+    'crates/lattice-core/src',
+    'crates/lattice-index/src',
+    'crates/lattice-learning/src',
+    'crates/lattice-store/src',
+)
 
 def prepare(connection, sql):
     try:
