@@ -16,7 +16,7 @@ export function apiFailure(code: ApiError['code'], message: string, details: str
   return { ok: false, error: message, details: { code, message, details } };
 }
 
-/** What `AppError::PromptExceedsWindow` says, as `rejection.rs` words it; its code is INVALID_INPUT and it has no details. */
+/** What `AppError::PromptExceedsWindow` says, as `rejection.rs` words it; its code is PROMPT_EXCEEDS_WINDOW and it has no details. */
 export const TOO_LARGE_TEXT = 'llama.cpp rejected this request: 400 exceed_context_size_error. The request was 9,120 tokens; the configured context window is 8,192. The server refused it as too large. The prompt\'s size was estimated, not counted, so the request may not fit the configured context window of 8192 after all: shorten the request.';
 
 export const NO_LEARNING_MODEL_TEXT = 'No Learning model is set. Choose one in Settings → Models under Learning.';
@@ -40,7 +40,7 @@ export const PLAIN_ERROR_CASES: PlainErrorCase[] = [
   },
   {
     name: 'no Learning model is set',
-    failure: apiFailure('INVALID_CONFIG', 'Invalid configuration', NO_LEARNING_MODEL_TEXT),
+    failure: apiFailure('LEARNING_MODEL_NOT_SET', 'No Learning model is set', NO_LEARNING_MODEL_TEXT),
     headline: 'Courses need a model to write them.',
     raw: NO_LEARNING_MODEL_TEXT,
   },
@@ -52,7 +52,7 @@ export const PLAIN_ERROR_CASES: PlainErrorCase[] = [
   },
   {
     name: 'the request is too large for the model',
-    failure: apiFailure('INVALID_INPUT', TOO_LARGE_TEXT, null),
+    failure: apiFailure('PROMPT_EXCEEDS_WINDOW', TOO_LARGE_TEXT, null),
     headline: 'That is too much for the model to read at once. Try a smaller course or a model with a larger context window.',
     raw: TOO_LARGE_TEXT,
   },
@@ -61,6 +61,12 @@ export const PLAIN_ERROR_CASES: PlainErrorCase[] = [
     failure: apiFailure('DATABASE_ERROR', 'Database error', 'disk I/O error'),
     headline: 'Lattice couldn\'t save your work. Try again.',
     raw: 'disk I/O error',
+  },
+  {
+    name: 'the bundled model server cannot start',
+    failure: apiFailure('MODEL_LOAD_ERROR', 'AI model not available', 'llama-server exited with code 1 before it was ready'),
+    headline: "The model server couldn't start. Reinstall Lattice, or choose another model in Settings.",
+    raw: 'llama-server exited with code 1 before it was ready',
   },
   {
     name: 'the error is unknown (no code at all)',

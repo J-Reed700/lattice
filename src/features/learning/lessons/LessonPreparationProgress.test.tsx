@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
@@ -30,7 +31,7 @@ function Harness({ onReview }: { onReview?: ReviewOpener }) {
 
 function show(onReview?: ReviewOpener) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const view = render(<QueryClientProvider client={client}><Harness onReview={onReview} /></QueryClientProvider>);
+  const view = render(<QueryClientProvider client={client}><MemoryRouter><Harness onReview={onReview} /></MemoryRouter></QueryClientProvider>);
   return { ...view, client };
 }
 

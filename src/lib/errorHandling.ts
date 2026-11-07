@@ -38,20 +38,22 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.FILE_WRITE_ERROR]: 'Failed to write file.',
 
   // Database Errors
-  [ErrorCode.DATABASE_ERROR]: 'Database operation failed. Please try again.',
+  [ErrorCode.DATABASE_ERROR]: "Lattice couldn't save your work. Try again.",
   [ErrorCode.DATABASE_CONNECTION_ERROR]: 'Failed to connect to database.',
   [ErrorCode.MIGRATION_ERROR]: 'Database migration failed.',
 
   // Network Errors
-  [ErrorCode.NETWORK_ERROR]: 'Network error. Please check your connection.',
+  [ErrorCode.NETWORK_ERROR]: "Lattice couldn't reach the model server.",
   [ErrorCode.TIMEOUT]: 'Operation timed out. Please try again.',
-  [ErrorCode.RATE_LIMIT_EXCEEDED]: 'Too many requests. Please try again later.',
+  [ErrorCode.RATE_LIMIT_EXCEEDED]: 'The model is getting too many requests. Wait a minute and try again.',
 
   // Service Errors
   [ErrorCode.SERVICE_NOT_AVAILABLE]: 'Required service is not available.',
   [ErrorCode.SERVICE_INITIALIZATION_ERROR]: 'Failed to initialize service.',
   [ErrorCode.MODEL_NOT_LOADED]: 'Model not loaded. Please download it first.',
-  [ErrorCode.MODEL_LOAD_ERROR]: 'Failed to load model. Please try again.',
+  [ErrorCode.MODEL_LOAD_ERROR]: "The model server couldn't start. Reinstall Lattice, or choose another model in Settings.",
+  [ErrorCode.PROMPT_EXCEEDS_WINDOW]: 'That is too much for the model to read at once. Try a smaller course or a model with a larger context window.',
+  [ErrorCode.LEARNING_MODEL_NOT_SET]: 'Courses need a model to write them.',
 
   // Processing Errors
   [ErrorCode.PROCESSING_ERROR]: 'Data processing failed.',
@@ -74,7 +76,7 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   // Generic Errors
   [ErrorCode.INTERNAL_ERROR]: 'Internal server error. Please try again.',
   [ErrorCode.NOT_IMPLEMENTED]: 'Feature not yet implemented.',
-  [ErrorCode.UNKNOWN]: 'An unexpected error occurred.',
+  [ErrorCode.UNKNOWN]: 'Something went wrong.',
 };
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(Object.values(ErrorCode));
@@ -161,6 +163,24 @@ export function describeFailure(failure: ApiFailure): string {
   return detail && !failure.error.includes(detail)
     ? `${failure.error}: ${detail}`
     : failure.error;
+}
+
+/** The error a failed call carries to a component, keeping its code and the backend's own text. */
+export function failureToError(failure: ApiFailure): Error {
+  return apiErrorToException(failure.details ?? { code: ErrorCode.UNKNOWN, message: failure.error });
+}
+
+/** The error a job recorded, with its code when the job store kept one. */
+export function jobErrorToError(job: { error: string | null; errorCode?: ErrorCode | null }): Error {
+  return apiErrorToException({ code: job.errorCode ?? ErrorCode.UNKNOWN, message: job.error ?? '' });
+}
+
+/** A learner's first sentence for an error, from its code alone, and the backend's own text for Details. */
+export function learnerError(error: unknown): { headline: string; raw: string } {
+  const carried = typeof error === 'object' && error !== null ? error as { code?: unknown; details?: unknown; message?: unknown } : {};
+  const details = typeof carried.details === 'string' ? carried.details.trim() : '';
+  const message = typeof carried.message === 'string' ? carried.message : String(error ?? '');
+  return { headline: USER_MESSAGES[errorCode(carried.code)], raw: details || message };
 }
 
 /**

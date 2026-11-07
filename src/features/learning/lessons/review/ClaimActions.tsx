@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 
 import { ChevronDown, LoaderCircle } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
 import { ClaimHistory } from '@/features/learning/lessons/review/ClaimHistory';
 import type { AnnouncedAction, FixAction } from '@/features/learning/lessons/review/claimReviewCopy';
@@ -37,7 +38,7 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
   sharing: number;
   suggested: FixAction;
   busy: boolean;
-  error: string | null;
+  error: Error | null;
   form: ActionForm | null;
   onFormChange: (form: ActionForm | null) => void;
   onAct: ClaimActionRunner;
@@ -151,7 +152,8 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
         <ClaimHistory history={item.history} />
       </div>}
 
-      {(formError || error) && <p role="alert" className="text-xs leading-5 text-danger-fg">{formError || error}</p>}
+      {formError && <p role="alert" className="text-xs leading-5 text-danger-fg">{formError}</p>}
+      {!formError && error && <PlainError error={error} className="text-xs leading-5 text-danger-fg" />}
     </div>
   );
 }

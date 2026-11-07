@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { Check, LoaderCircle } from 'lucide-react';
 
+import { OpenModelSettingsButton } from '@/components/OpenModelSettingsButton';
 import type { LearningOutlineProgressDto, OutlineStage } from '@/lib/bindings';
 
 const stages: Record<OutlineStage, { step: number; title: string; detail: string }> = {
@@ -43,6 +44,10 @@ export function OutlineGenerationProgress({ progress, cancelling, onCancel, onOp
       <div className="min-w-0 flex-1"><div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status"><LoaderCircle size={18} className="shrink-0 animate-spin text-accent" aria-hidden="true" />{stopping ? 'Cancelling generation…' : current.title}</div><p className="mt-2 text-sm leading-6 text-text-secondary">{stopping ? 'Stopping this request. Your inputs and completed draft corrections stay saved.' : current.detail}</p>{!stopping && progress?.detail && <p className="mt-1 text-xs text-text-muted" aria-label="Stage progress">{progress.detail}</p>}</div>
       <span className="text-xs tabular-nums text-text-muted" aria-live="off">Elapsed <span aria-label="Elapsed time">{duration(Math.max(elapsed, progress?.elapsedSeconds ?? 0))}</span></span>
     </div>
+    {progress?.waiting && !stopping && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warning/40 bg-warning-muted p-3 text-sm text-text-primary">
+      <div><p className="font-semibold">{"Can't reach the model server. Lattice keeps trying."}</p><p className="mt-1 text-xs text-text-secondary">Your work is kept. Retrying in {progress.waiting.retryInSeconds}s.</p></div>
+      <OpenModelSettingsButton />
+    </div>}
     <ol aria-label="Generation stages" className="mt-5 grid gap-3 text-xs sm:grid-cols-4">{['Read references', 'Write outline', 'Review and revise', 'Save outline'].map((label, index) => <li key={label} aria-current={index === current.step ? 'step' : undefined} className={`flex items-center gap-2 ${index === current.step ? 'font-semibold text-accent' : 'text-text-muted'}`}><span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current">{index < current.step ? <Check size={12} aria-label="Complete" /> : index + 1}</span>{label}</li>)}</ol>
     {modelStep && <div className="mt-4 rounded-lg bg-background/70 p-3 text-xs leading-5 text-text-secondary"><p>{progress!.responseCharacters > 0 ? `Response so far · ${progress!.responseCharacters.toLocaleString()} characters received in this step` : 'Waiting for the model’s response. It may still be processing the request.'}</p>{progress?.modelName && <p className="mt-1 wrap-break-word text-text-muted">Model: {progress.modelName}</p>}{(progress?.stageSeconds ?? 0) >= 90 && <p className="mt-2">This step is taking a while. You can keep waiting or cancel and try a faster model or a focused course.</p>}</div>}
     <p className="mt-4 text-xs leading-5 text-text-muted">{deepDive ? 'A deep dive plans 24–60 lessons, then reviews the whole syllabus. ' : 'Writing and reviewing use separate model calls. '}There is no overall time limit or per-step deadline. You can cancel; completed draft corrections stay saved.</p>

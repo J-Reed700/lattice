@@ -14,10 +14,10 @@ import type { LearningOutlineProgressDto, OutlineStage } from '@/lib/bindings';
  */
 
 const SENTENCE = 'Can\'t reach the model server. Lattice keeps trying.';
-const WAITING = 'Waiting for the model server (retrying in 12s)';
+const WAITING = { retryInSeconds: 12, errorCode: 'NETWORK_ERROR' } as const;
 
-const progress = (stage: OutlineStage, detail: string | null = null): LearningOutlineProgressDto => (
-  { stage, detail, elapsedSeconds: 40, stageSeconds: 40, responseCharacters: 0, modelName: 'Test model' }
+const progress = (stage: OutlineStage, waiting?: LearningOutlineProgressDto['waiting'], detail: string | null = null): LearningOutlineProgressDto => (
+  { stage, detail, waiting, elapsedSeconds: 40, stageSeconds: 40, responseCharacters: 0, modelName: 'Test model' }
 );
 
 function SettingsProbe() {
@@ -61,13 +61,19 @@ describe('outline progress while the model server is out of reach', () => {
   it('drops the notice when the server answers again', () => {
     const view = render(<Tree current={progress('drafting', WAITING)} onCancel={vi.fn()} />);
     expect(screen.getByText(SENTENCE)).toBeVisible();
-    view.rerender(<Tree current={progress('drafting', 'Linked 5 outline items; 8 of 23 decided')} onCancel={vi.fn()} />);
+    view.rerender(<Tree current={progress('drafting', undefined, 'Linked 5 outline items; 8 of 23 decided')} onCancel={vi.fn()} />);
+    expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open model settings' })).not.toBeInTheDocument();
+  });
+
+  it('does not read the detail text to decide the server is out of reach', () => {
+    render(<Tree current={progress('drafting', undefined, 'Waiting for the model server (retrying in 12s)')} onCancel={vi.fn()} />);
     expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open model settings' })).not.toBeInTheDocument();
   });
 
   it('reads as it does today when nothing is waiting', () => {
-    render(<Tree current={progress('loading_model', 'Loading Test model')} onCancel={vi.fn()} />);
+    render(<Tree current={progress('loading_model', undefined, 'Loading Test model')} onCancel={vi.fn()} />);
     expect(screen.getByRole('status')).toHaveTextContent('Getting the model ready');
     expect(screen.getByLabelText('Stage progress')).toHaveTextContent('Loading Test model');
     expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument();

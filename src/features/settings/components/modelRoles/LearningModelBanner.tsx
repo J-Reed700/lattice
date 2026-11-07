@@ -9,11 +9,10 @@
 
 import { TriangleAlert } from 'lucide-react';
 
-import { useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
-import { toast } from '@/stores/toastStore';
+import { useAdoptChatModel } from '@/features/settings/hooks/useAdoptChatModel';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import { modelRefLabel, resolveDefaultChatOption } from '@/utils/chatModelSelection';
+import { modelRefLabel } from '@/utils/chatModelSelection';
 
 import { useModelRoles } from './ModelRolesContext';
 
@@ -61,7 +60,7 @@ function openLearningChoices() {
 
 export function LearningModelBanner() {
   const { models, llmSettings, isLoading } = useModelRoles();
-  const { mutateAsync: updateSettings, isPending } = useUpdateSettingsMutation();
+  const { chatModel, adopt, isPending } = useAdoptChatModel(llmSettings, models);
 
   if (isLoading || !llmSettings) return null;
   const state = learningModelState(llmSettings, models);
@@ -81,18 +80,6 @@ export function LearningModelBanner() {
     );
   }
 
-  const chatModel = resolveDefaultChatOption(llmSettings, models);
-  const adoptChatModel = async () => {
-    if (!chatModel) return;
-    try {
-      await updateSettings({ category: 'llm', updates: { learningModel: chatModel.ref } });
-    } catch (error) {
-      toast.error('Failed to set learning role', {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
   return (
     <div role="status" className={ROW_CLASS}>
       <span className="flex min-w-0 items-center gap-2">
@@ -100,7 +87,7 @@ export function LearningModelBanner() {
         Learning: not set — lessons, outlines and study decks will not run until you choose one
       </span>
       {chatModel ? (
-        <button type="button" onClick={() => void adoptChatModel()} disabled={isPending} className={ACTION_CLASS}>
+        <button type="button" onClick={() => void adopt()} disabled={isPending} className={ACTION_CLASS}>
           Use {chatModel.label} (your chat model)
         </button>
       ) : (
