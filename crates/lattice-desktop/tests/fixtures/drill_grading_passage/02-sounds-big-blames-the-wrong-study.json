@@ -1,0 +1,123 @@
+{
+  "name": "02-sounds-big-blames-the-wrong-study",
+  "kind": "wrong_reason",
+  "why": "The first finding is on the median sentence and objects to what it makes a reader believe ('gets people to sleep far sooner'), but it blames the comparison the study made, which is not what is wrong: the figure was changed from 11 to 31, and the finding never says the figure is wrong. Right sentence, wrong cause: half found, and the older-adults sentence is never mentioned. The second finding is a remark about the sensors disturbing sleep, not an error of the explanation: false positive.",
+  "source": {
+    "versionId": "tallow-temperature-and-sleep-onset-v1",
+    "startByte": 18432,
+    "endByte": 19505,
+    "title": "Human Physiology 210, lecture notes: Temperature and sleep onset",
+    "text": "Core body temperature follows a circadian rhythm, falling by roughly 0.5 degrees Celsius over the two hours before habitual bedtime. In the Brannock sleep cohort, run by Imelda Quarrie at the Tallow Institute, 212 adults aged 20 to 35 wore ingestible temperature sensors for fourteen nights. Participants whose core temperature fell faster than 0.3 degrees per hour fell asleep a median of 11 minutes sooner than those whose temperature fell more slowly.\n\nQuarrie attributes the effect to heat loss through the hands and feet: when peripheral blood vessels dilate, warm blood is carried to the skin and heat leaves the body. She cautions that the cohort was recruited from university students and that the finding may not hold for older adults, whose temperature rhythm is flatter. A warm bath taken ninety minutes before bed produced the same faster fall in a follow-up of 40 participants, because the bath draws blood to the skin and speeds later heat loss. The cohort did not measure daytime caffeine intake, so the study cannot say whether caffeine altered the pattern."
+  },
+  "drill": {
+    "id": "tallow-temperature-and-sleep-onset",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Core temperature and sleep onset",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Core body temperature follows a circadian rhythm.\nIn the two hours before habitual bedtime it falls by about 0.5 degrees Celsius.\nThe Brannock sleep cohort, led by Imelda Quarrie at the Tallow Institute, followed 212 adults aged 20 to 35.\nEach wore an ingestible temperature sensor for fourteen nights.\nPeople whose temperature fell faster than 0.3 degrees per hour fell asleep a median of 31 minutes sooner than those whose temperature fell more slowly.\nQuarrie attributes the effect to heat loss through the hands and feet.\nWhen peripheral blood vessels dilate, warm blood is carried to the skin and heat leaves the body.\nShe cautions that the cohort was recruited from university students, but the finding holds equally for older adults, whose temperature rhythm is flatter.\nIn a follow-up of 40 participants, a warm bath taken ninety minutes before bed produced the same faster fall.\nThe bath works because it draws blood to the skin and speeds later heat loss.\nThe cohort did not measure daytime caffeine intake, so the study cannot say whether caffeine altered the pattern.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tallow-temperature-and-sleep-onset-median",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 5,
+          "end": 5
+        },
+        "consequence": "A reader believes a faster fall brings sleep almost three times as early as the cohort found.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "People whose temperature fell faster than 0.3 degrees per hour fell asleep a median of 31 minutes sooner than those whose temperature fell more slowly.",
+          "after": "People whose temperature fell faster than 0.3 degrees per hour fell asleep a median of 11 minutes sooner than those whose temperature fell more slowly."
+        },
+        "explanation": "The faster fallers fell asleep a median of 11 minutes sooner, not 31.",
+        "proof": {
+          "sourced": {
+            "quote": "fell asleep a median of 11 minutes sooner than those whose temperature fell more slowly",
+            "planted": "contradicted",
+            "reason": "The source says a median of 11 minutes sooner; the sentence says 31."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tallow-temperature-and-sleep-onset-older",
+        "pattern": "scope.overgeneralisation",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 8,
+          "end": 8
+        },
+        "consequence": "A reader takes a result from university students as established for older adults, against the author's caution.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "She cautions that the cohort was recruited from university students, but the finding holds equally for older adults, whose temperature rhythm is flatter.",
+          "after": "She cautions that the cohort was recruited from university students, so the finding may not hold for older adults, whose temperature rhythm is flatter."
+        },
+        "explanation": "Quarrie cautions that the finding may not hold for older adults, whose rhythm is flatter; it is not shown to hold equally.",
+        "proof": {
+          "sourced": {
+            "quote": "the finding may not hold for older adults, whose temperature rhythm is flatter",
+            "planted": "contradicted",
+            "reason": "The source says the finding may not hold for older adults; the sentence says it holds equally."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Core body temperature follows a circadian rhythm.\nIn the two hours before habitual bedtime it falls by about 0.5 degrees Celsius.\nThe Brannock sleep cohort, led by Imelda Quarrie at the Tallow Institute, followed 212 adults aged 20 to 35.\nEach wore an ingestible temperature sensor for fourteen nights.\nPeople whose temperature fell faster than 0.3 degrees per hour fell asleep a median of 11 minutes sooner than those whose temperature fell more slowly.\nQuarrie attributes the effect to heat loss through the hands and feet.\nWhen peripheral blood vessels dilate, warm blood is carried to the skin and heat leaves the body.\nShe cautions that the cohort was recruited from university students, so the finding may not hold for older adults, whose temperature rhythm is flatter.\nIn a follow-up of 40 participants, a warm bath taken ninety minutes before bed produced the same faster fall.\nThe bath works because it draws blood to the skin and speeds later heat loss.\nThe cohort did not measure daytime caffeine intake, so the study cannot say whether caffeine altered the pattern.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 5,
+        "end": 5
+      },
+      "text": "Reading this I would come away thinking that a quick fall in temperature gets people to sleep far sooner, which is much more than a study like this could show. I think the trouble is the comparison: the study set people who took a warm bath against people who did not, not fast fallers against slow ones.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 4,
+        "end": 4
+      },
+      "text": "Wearing a sensor for fourteen nights would disturb anyone's sleep, so the whole result is doubtful.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "half_found": {
+          "finding": 0
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

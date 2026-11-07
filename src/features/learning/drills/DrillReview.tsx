@@ -5,12 +5,12 @@ import { Button } from '@/components/ui/button';
 import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore';
 import type { CodeReviewSeverity } from '@/lib/bindings';
 
-import { CodePane } from './CodePane';
 import { DrillFailure } from './DrillFailure';
-import { languageLabel } from './drillOptions';
+import { kindOf, materialLabel } from './drillMaterial';
 import { describeSpan, lineCount, type DraftFinding } from './findings';
 import { FindingsList } from './FindingsList';
 import { InterviewClock } from './InterviewClock';
+import { MaterialPane } from './MaterialPane';
 import { ReviewComposer } from './ReviewComposer';
 
 import type { CodeReviewDrill } from './useCodeReviewDrill';
@@ -35,6 +35,8 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
 
   if (!session) return null;
   const { files } = session.drill;
+  const kind = kindOf(session.drill);
+  const passage = kind === 'passage';
   const active = files.find((file) => file.path === activePath) ?? files[0];
   const editing = review.findings.find((finding) => finding.id === editingId) ?? null;
   const spanOfPicked = picked
@@ -103,7 +105,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
         {back}
         <div className="min-w-0">
           <h1 className="truncate font-serif text-lg text-text-primary">{session.drill.title}</h1>
-          <p className="text-xs text-text-muted">{languageLabel(session.drill.language)} · {mode}</p>
+          <p className="text-xs text-text-muted">{materialLabel(session.drill)} · {mode}</p>
         </div>
         {session.limitMs !== null && (
           <div className="ml-auto">
@@ -114,7 +116,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
         <div className="h-[32rem] min-h-0 lg:h-full">
-          <CodePane
+          <MaterialPane
             drill={session.drill}
             activePath={active.path}
             onActivePath={setActivePath}
@@ -131,7 +133,8 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
         <div className="flex min-h-0 flex-col gap-4 lg:overflow-y-auto lg:pr-1">
           <ReviewComposer
             key={editing?.id ?? 'new'}
-            selection={spanOfPicked ? describeSpan(spanOfPicked) : null}
+            material={kind}
+            selection={spanOfPicked ? describeSpan(spanOfPicked, kind) : null}
             onClearSelection={() => setPicked(null)}
             editing={editing}
             onSave={save}
@@ -140,6 +143,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
 
           <FindingsList
             findings={review.findings}
+            material={kind}
             editingId={editingId}
             onShow={show}
             onEdit={edit}
@@ -150,15 +154,19 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
           <section aria-labelledby="drill-fix-title" className="rounded-2xl border border-border bg-surface p-4">
             <h3 id="drill-fix-title" className="text-sm font-medium text-text-primary">Your fix</h3>
             <p className="mt-1 text-xs leading-5 text-text-secondary">
-              Optional. Edit your own copy of the files; only the files you change are handed in.
+              {passage
+                ? 'Optional. Rewrite what you think is wrong in your own copy of the explanation, one sentence to a line.'
+                : 'Optional. Edit your own copy of the files; only the files you change are handed in.'}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button type="button" variant="outline" aria-expanded={writingFix} onClick={() => setWritingFix((open) => !open)}>
-                {writingFix ? 'Back to the code' : 'Write a fix (optional)'}
+                {writingFix ? (passage ? 'Back to the explanation' : 'Back to the code') : 'Write a fix (optional)'}
               </Button>
               {changed > 0 && (
                 <>
-                  <span className="text-xs text-text-secondary">{changed === 1 ? '1 file changed' : `${changed} files changed`}</span>
+                  <span className="text-xs text-text-secondary">
+                    {passage ? 'Explanation changed' : changed === 1 ? '1 file changed' : `${changed} files changed`}
+                  </span>
                   <Button type="button" variant="ghost" size="sm" onClick={review.discardFix}>Discard my changes</Button>
                 </>
               )}

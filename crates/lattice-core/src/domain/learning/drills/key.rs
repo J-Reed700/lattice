@@ -3,8 +3,10 @@
 //!
 //! Design: docs/design/2026-11-04-code-review-drills.md §2, step 7.
 
-use super::catalogue::pattern;
-use super::drill::{Drill, DrillFile, Edit, KeyIssue, LineSpan, Origin};
+use super::catalogue::{pattern, Family, Pattern};
+use super::drill::{
+    Drill, DrillFile, Edit, KeyIssue, LineSpan, Material, Origin, Proof, Severity, SourceVerdict,
+};
 use super::edits::{apply, replace, EditFault};
 
 /// Why a key is refused. Issues are named by position in the key.
@@ -22,8 +24,13 @@ pub enum KeyFault {
     DuplicateIssueId { id: String },
     /// The issue's pattern is not in the catalogue.
     UnknownPattern { issue: usize },
-    /// The issue's pattern does not apply to the drill's language.
-    PatternNotForLanguage { issue: usize },
+    /// The issue's pattern does not apply to the drill's material: a code
+    /// pattern in a passage drill, a passage pattern in a code drill, or a
+    /// pattern of another language.
+    PatternNotForMaterial { issue: usize },
+    /// The issue's severity is below `floor`, the least its pattern and proof
+    /// allow.
+    SeverityBelowFloor { issue: usize, floor: Severity },
     /// The issue's fix does not apply alone to the drill's files. The fault's
     /// positions are those of a list of that one fix.
     FixDoesNotApply { issue: usize, fault: EditFault },
@@ -47,7 +54,8 @@ pub enum KeyFault {
 ///   lists not having the same paths in the same order;
 /// - two issues with one id;
 /// - an issue whose pattern is not in the catalogue, or does not apply to the
-///   drill's language;
+///   drill's material;
+/// - an issue whose severity is below the floor its pattern and proof set;
 /// - an issue whose fix does not apply alone to the drill's files;
 /// - an issue whose span is not exactly the lines its fix's `before` occupies
 ///   in the drill, which is the span `apply` gives the edit that replaces
@@ -71,7 +79,8 @@ pub fn check_key(clean: &[DrillFile], drill: &Drill) -> Result<(), KeyFault> {
     }
     check_paths(clean, &drill.files)?;
     check_ids(&drill.key)?;
-    check_patterns(&drill.language, &drill.key)?;
+    check_patterns(&drill.material, &drill.key)?;
+    check_severities(&drill.key)?;
     check_fixes(&drill.files, &drill.key)?;
     check_spans(&drill.files, &drill.key)?;
     check_restore(clean, drill)
@@ -121,17 +130,48 @@ fn check_ids(key: &[KeyIssue]) -> Result<(), KeyFault> {
     Ok(())
 }
 
-fn check_patterns(language: &str, key: &[KeyIssue]) -> Result<(), KeyFault> {
+fn check_patterns(material: &Material, key: &[KeyIssue]) -> Result<(), KeyFault> {
     for (position, issue) in key.iter().enumerate() {
         match pattern(&issue.pattern) {
             None => return Err(KeyFault::UnknownPattern { issue: position }),
-            Some(known) if !known.applies_to(language) => {
-                return Err(KeyFault::PatternNotForLanguage { issue: position });
+            Some(known) if !known.applies_to(material) => {
+                return Err(KeyFault::PatternNotForMaterial { issue: position });
             }
             Some(_) => {}
         }
     }
     Ok(())
+}
+
+fn check_severities(key: &[KeyIssue]) -> Result<(), KeyFault> {
+    for (position, issue) in key.iter().enumerate() {
+        let floor = pattern(&issue.pattern).and_then(|known| severity_floor(known, &issue.proof));
+        if let Some(floor) = floor.filter(|&floor| issue.severity < floor) {
+            return Err(KeyFault::SeverityBelowFloor {
+                issue: position,
+                floor,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// The least severity an issue of `pattern` proven by `proof` may have. A
+/// sentence the source contradicts on a figure, an entity, a date, a
+/// definition or the direction of a relation (the fidelity and definition
+/// families and the reversed relation) is at least major; any other issue
+/// proven against a source is at least minor. `None`: the rule sets no floor,
+/// as for code and for a judged contradiction within the explanation.
+pub fn severity_floor(pattern: &Pattern, proof: &Proof) -> Option<Severity> {
+    let Proof::Sourced { planted, .. } = proof else {
+        return None;
+    };
+    let changes_what_is_said = matches!(pattern.family, Family::Fidelity | Family::Definition)
+        || pattern.id == "reasoning.reversed_relation";
+    Some(match planted {
+        SourceVerdict::Contradicted if changes_what_is_said => Severity::Major,
+        SourceVerdict::Contradicted | SourceVerdict::Unsupported => Severity::Minor,
+    })
 }
 
 fn check_fixes(files: &[DrillFile], key: &[KeyIssue]) -> Result<(), KeyFault> {

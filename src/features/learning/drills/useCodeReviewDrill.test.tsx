@@ -10,14 +10,14 @@ import { useCodeReviewDrill } from './useCodeReviewDrill';
 
 const api = vi.hoisted(() => ({
   codeReviewLanguages: vi.fn(),
-  startCodeReviewDrill: vi.fn(),
+  startReviewDrill: vi.fn(),
   submitCodeReview: vi.fn(),
   codeReviewResult: vi.fn(),
   regradeCodeReview: vi.fn(),
 }));
 vi.mock('./api', () => ({ drillsApi: api }));
 
-const DRILL = { title: 'A rate limiter', language: 'python', files: [{ path: 'limiter.py', text: 'allow = True\n' }] };
+const DRILL = { title: 'A rate limiter', material: { kind: 'code', language: 'python' } as const, files: [{ path: 'limiter.py', text: 'allow = True\n' }] };
 
 const started: StartedCodeReviewDto = { status: 'started', attemptId: 'attempt-1', mode: 'practice', startedAt: 1, drill: DRILL };
 const building: StartedCodeReviewDto = { status: 'building', jobId: 'job-9' };
@@ -119,43 +119,43 @@ describe('waiting for a grade', () => {
 
 describe('waiting for a build', () => {
   it('asks for the drill again every thirty seconds, in case a report was missed, and opens it when it is ready', async () => {
-    api.startCodeReviewDrill.mockResolvedValueOnce(building).mockResolvedValueOnce(building).mockResolvedValueOnce(started);
+    api.startReviewDrill.mockResolvedValueOnce(building).mockResolvedValueOnce(building).mockResolvedValueOnce(started);
     const { result } = render('/studio?drills=open');
     act(() => result.current.start());
     await elapse(0);
     expect(result.current.stage).toBe('starting');
     expect(result.current.building?.jobId).toBe('job-9');
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
     await elapse(29_999);
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
     await elapse(1);
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
     expect(result.current.stage).toBe('starting');
 
     await elapse(30_000);
     expect(result.current.stage).toBe('reviewing');
     expect(result.current.session?.attemptId).toBe('attempt-1');
     await elapse(120_000);
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(3);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(3);
   });
 
   it('does not ask again once the learner stops waiting, nor after a failure', async () => {
-    api.startCodeReviewDrill.mockResolvedValueOnce(building);
+    api.startReviewDrill.mockResolvedValueOnce(building);
     const { result } = render('/studio?drills=open');
     act(() => result.current.start());
     await elapse(0);
     act(() => result.current.stopWaiting());
     expect(result.current.stage).toBe('choose');
     await elapse(120_000);
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
-    api.startCodeReviewDrill.mockRejectedValueOnce(new Error('No model is loaded.'));
+    api.startReviewDrill.mockRejectedValueOnce(new Error('No model is loaded.'));
     act(() => result.current.start());
     await elapse(0);
     expect(result.current.failure).toEqual({ message: 'No model is loaded.', retry: 'start' });
     await elapse(120_000);
-    expect(api.startCodeReviewDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
   });
 
   it('refuses to start an interview whose time limit is not a number of minutes', async () => {
@@ -164,6 +164,6 @@ describe('waiting for a build', () => {
     act(() => result.current.start());
     await elapse(0);
     expect(result.current.stage).toBe('choose');
-    expect(api.startCodeReviewDrill).not.toHaveBeenCalled();
+    expect(api.startReviewDrill).not.toHaveBeenCalled();
   });
 });

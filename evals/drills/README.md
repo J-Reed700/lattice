@@ -22,6 +22,11 @@ Grading, one report per run:
 LATTICE_DRILL_GRADING_OUT=run-1.json cargo test -p lattice-desktop --lib live_grading_eval -- --ignored --nocapture --test-threads=1
 ```
 
+The same eval runs over the cases on passages (27 reviews of explanations of an invented source, labelled to the judge's
+rules for a passage; the bar of section 7 of `docs/design/2026-11-05-spot-the-errors-drills.md`) when
+`LATTICE_DRILL_GRADING_SET=drill_grading_passage` is set. It reads `tests/fixtures/drill_grading_passage` instead, and
+its report is compared only with another run of that set.
+
 Build, one JSON and one Markdown file per drill, and a summary:
 
 ```sh

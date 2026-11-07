@@ -1,0 +1,143 @@
+{
+  "name": "25-retrieval-swapped-groups-and-remarks",
+  "kind": "false_positive",
+  "why": "Three findings are not errors: that the testing effect should be mentioned (something left out), that the study should be judged harder for giving no feedback (a remark), and that three rereads is wrong (the sentence is faithful: false against the source). The terse third names the swap of the groups and the right figures: found. The country sentence is missed.",
+  "source": {
+    "versionId": "dunmere-retrieval-practice-v1",
+    "startByte": 51380,
+    "endByte": 52327,
+    "title": "Learning Science 150, reader: The Dunmere schools study",
+    "text": "Retrieval practice means testing yourself on material rather than rereading it. In the Dunmere schools study, led by psychologist Calloway Idris, 310 pupils aged 11 to 12 studied a passage on volcanoes. One group reread the passage three times; the other read it once and then took two low-stakes quizzes on it. A week later, the quiz group recalled 64 percent of the key facts and the rereading group 41 percent. Idris stresses that on a test given five minutes after study the rereading group did slightly better, so the benefit appears only after a delay.\n\nThe quizzes gave no feedback, and Idris thinks that adding feedback would probably raise the quiz group's scores further, although this was not tested. The pupils all came from schools in one district, and teachers, not researchers, marked the tests. Idris cautions that the study shows retrieval practice helps recall of facts, and does not show that it helps pupils solve new problems."
+  },
+  "drill": {
+    "id": "dunmere-retrieval-practice",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Retrieval practice in the Dunmere schools",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Retrieval practice means testing yourself on material rather than rereading it.\nThe Dunmere schools study was led by the psychologist Calloway Idris.\nIt involved 310 pupils aged 11 to 12 who studied a passage on volcanoes.\nOne group reread the passage three times.\nThe other group read it once and then took two low-stakes quizzes on it.\nA week later the rereading group recalled 64 percent of the key facts and the quiz group 41 percent.\nOn a test given five minutes after study the rereading group did slightly better.\nSo, Idris stresses, the benefit appears only after a delay.\nThe quizzes gave no feedback.\nIdris thinks that adding feedback would probably raise the quiz group's scores further, although this was not tested.\nThe pupils came from schools across the whole country, and teachers rather than researchers marked the tests.\nIdris cautions that the study shows retrieval practice helps recall of facts.\nIt does not show that retrieval practice helps pupils solve new problems.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "dunmere-retrieval-practice-groups",
+        "pattern": "fidelity.swapped_entities",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 6,
+          "end": 6
+        },
+        "consequence": "A reader concludes that rereading beat quizzing after a week, the opposite of the finding.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "A week later the rereading group recalled 64 percent of the key facts and the quiz group 41 percent.",
+          "after": "A week later the quiz group recalled 64 percent of the key facts and the rereading group 41 percent."
+        },
+        "explanation": "After a week the quiz group recalled 64 percent and the rereading group 41.",
+        "proof": {
+          "sourced": {
+            "quote": "the quiz group recalled 64 percent of the key facts and the rereading group 41 percent",
+            "planted": "contradicted",
+            "reason": "The source gives 64 percent to the quiz group; the sentence gives it to the rereading group."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "dunmere-retrieval-practice-country",
+        "pattern": "scope.shifted_population",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 11,
+          "end": 11
+        },
+        "consequence": "A reader thinks the sample represents the country, when every pupil came from one district.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The pupils came from schools across the whole country, and teachers rather than researchers marked the tests.",
+          "after": "All the pupils came from schools in one district, and teachers rather than researchers marked the tests."
+        },
+        "explanation": "All the pupils came from schools in one district.",
+        "proof": {
+          "sourced": {
+            "quote": "The pupils all came from schools in one district",
+            "planted": "contradicted",
+            "reason": "The source says all the pupils came from one district; the sentence says the whole country."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Retrieval practice means testing yourself on material rather than rereading it.\nThe Dunmere schools study was led by the psychologist Calloway Idris.\nIt involved 310 pupils aged 11 to 12 who studied a passage on volcanoes.\nOne group reread the passage three times.\nThe other group read it once and then took two low-stakes quizzes on it.\nA week later the quiz group recalled 64 percent of the key facts and the rereading group 41 percent.\nOn a test given five minutes after study the rereading group did slightly better.\nSo, Idris stresses, the benefit appears only after a delay.\nThe quizzes gave no feedback.\nIdris thinks that adding feedback would probably raise the quiz group's scores further, although this was not tested.\nAll the pupils came from schools in one district, and teachers rather than researchers marked the tests.\nIdris cautions that the study shows retrieval practice helps recall of facts.\nIt does not show that retrieval practice helps pupils solve new problems.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 1,
+        "end": 1
+      },
+      "text": "The explanation should mention that retrieval practice is also known as the testing effect.",
+      "severity": "nit"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "The explanation should be harder on the study for giving no feedback.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 6,
+        "end": 6
+      },
+      "text": "The groups are swapped. After a week it was the quiz group that remembered 64 percent and the rereading group 41.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 4,
+        "end": 4
+      },
+      "text": "Three rereads is too many, I think the number is wrong.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 2
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      "false_positive",
+      "false_positive",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

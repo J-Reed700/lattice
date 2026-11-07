@@ -9,13 +9,13 @@ use crate::features::learning::drills::build::{ModelCall, RunRecord};
 use crate::features::learning::drills::runner::RunOutcome;
 use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::tests::pool;
-use lattice_core::domain::learning::drills::DrillFile;
+use lattice_core::domain::learning::drills::{DrillFile, Material};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 
 fn go_spec() -> DrillSpec {
     DrillSpec {
-        language: "go".into(),
+        material: Material::code("go"),
         domain: Some("rate limiting".into()),
         lines: 30,
         patterns: vec![OPERATOR.into(), LITERALS.into()],

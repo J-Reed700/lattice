@@ -9,7 +9,7 @@ use super::support::{
 use crate::features::learning::drills::build::{Mutation, Planted, Trail, Verification};
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    apply, check_key, Drill, Edit, LineSpan, Origin, Proof, Severity,
+    apply, check_key, Drill, Edit, LineSpan, Material, Origin, Proof, Severity,
 };
 use lattice_core::shared::error::Result;
 
@@ -61,7 +61,7 @@ async fn every_mutation_proven_gives_the_files_the_spans_and_the_planted_key() -
     assert_eq!(key[1].pattern, LITERALS);
     let drill = Drill {
         id: "d".into(),
-        language: "python".into(),
+        material: Material::code("python"),
         title: "A limiter".into(),
         files: proved.files.clone(),
         key,

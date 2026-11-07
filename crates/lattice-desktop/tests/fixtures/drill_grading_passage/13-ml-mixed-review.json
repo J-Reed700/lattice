@@ -1,0 +1,195 @@
+{
+  "name": "13-ml-mixed-review",
+  "kind": "mixed",
+  "why": "The long comment on sentence 11 buries its cause in the middle ('adding dropout on top of Quillon gave no further reduction ... both act on the same source of overfitting'): found. 'The threshold should be 128, not 32.' is terse and correct: found. 'I'm not sure the reason given for the cost is right.' names no cause: half found. Weight decay and dropout are not run together in sentence 1, and who built a dataset is something the explanation leaves out: two false positives.",
+  "source": {
+    "versionId": "quillon-regularisation-v1",
+    "startByte": 33900,
+    "endByte": 34912,
+    "title": "Machine Learning 340, reading: Quillon regularisation",
+    "text": "Weight decay shrinks every weight toward zero at each update, while dropout randomly silences units during training. Okafor and Linde (2022) proposed Quillon regularisation, which penalises the variance of a layer's activations across a batch rather than the size of its weights. On a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs, Quillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points. The authors report that the gain was largest when the batch size was at least 128, because with small batches the variance estimate is too noisy to be useful.\n\nQuillon adds about 6 percent to training time, since the variance is computed at every layer. They did not test it on language models, and they note that the penalty may interfere with layer normalisation, which already rescales activations. Combining Quillon with dropout gave no further reduction in the gap; the authors suggest the two methods act on the same source of overfitting."
+  },
+  "drill": {
+    "id": "quillon-regularisation",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Quillon regularisation",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Weight decay shrinks every weight toward zero at each update, whereas dropout randomly silences units during training.\nOkafor and Linde (2022) proposed Quillon regularisation.\nQuillon penalises the variance of a layer's activations across a batch rather than the size of its weights.\nThey tested it on a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs.\nQuillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points.\nThe gain was largest when the batch size was at least 32.\nWith small batches the variance estimate is too noisy to be useful.\nQuillon adds about 6 percent to training time, since it needs a second forward pass.\nThe authors did not test it on language models.\nThey note that the penalty may interfere with layer normalisation, which already rescales activations.\nCombining Quillon with dropout reduced the gap further, which the authors take to suggest that the two methods act on different sources of overfitting.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "quillon-regularisation-b32",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 6,
+          "end": 6
+        },
+        "consequence": "A reader would run Quillon at batch sizes where the variance estimate is too noisy to help.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The gain was largest when the batch size was at least 32.",
+          "after": "The gain was largest when the batch size was at least 128."
+        },
+        "explanation": "The gain was largest with batch sizes of at least 128.",
+        "proof": {
+          "sourced": {
+            "quote": "the gain was largest when the batch size was at least 128",
+            "planted": "contradicted",
+            "reason": "The source gives a batch size of at least 128; the sentence gives 32."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "quillon-regularisation-time",
+        "pattern": "reasoning.unsupported_mechanism",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 8,
+          "end": 8
+        },
+        "consequence": "A reader believes the cost comes from an extra forward pass and expects it to vanish with a cheaper pass.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Quillon adds about 6 percent to training time, since it needs a second forward pass.",
+          "after": "Quillon adds about 6 percent to training time, since the variance is computed at every layer."
+        },
+        "explanation": "The authors say the cost comes from computing the variance at every layer; no second pass is mentioned.",
+        "proof": {
+          "sourced": {
+            "quote": "Quillon adds about 6 percent to training time, since the variance is computed at every layer",
+            "planted": "unsupported",
+            "reason": "The source gives the cost of computing the variance at every layer as the reason; a second forward pass is not in it."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "quillon-regularisation-combo",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 11,
+          "end": 11
+        },
+        "consequence": "A reader expects the two methods to stack, when the authors found no further gain from combining them.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Combining Quillon with dropout reduced the gap further, which the authors take to suggest that the two methods act on different sources of overfitting.",
+          "after": "Combining Quillon with dropout gave no further reduction in the gap, which the authors take to suggest that the two methods act on the same source of overfitting."
+        },
+        "explanation": "Combining Quillon with dropout gave no further reduction, which the authors read as both acting on the same source of overfitting.",
+        "proof": {
+          "sourced": {
+            "quote": "Combining Quillon with dropout gave no further reduction in the gap; the authors suggest the two methods act on the same source of overfitting",
+            "planted": "contradicted",
+            "reason": "The source reports no further reduction and one shared source of overfitting; the sentence reports a further reduction and different sources."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Weight decay shrinks every weight toward zero at each update, whereas dropout randomly silences units during training.\nOkafor and Linde (2022) proposed Quillon regularisation.\nQuillon penalises the variance of a layer's activations across a batch rather than the size of its weights.\nThey tested it on a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs.\nQuillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points.\nThe gain was largest when the batch size was at least 128.\nWith small batches the variance estimate is too noisy to be useful.\nQuillon adds about 6 percent to training time, since the variance is computed at every layer.\nThe authors did not test it on language models.\nThey note that the penalty may interfere with layer normalisation, which already rescales activations.\nCombining Quillon with dropout gave no further reduction in the gap, which the authors take to suggest that the two methods act on the same source of overfitting.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 11,
+        "end": 11
+      },
+      "text": "I went back and forth on the end of this note. The sentences about batch sizes read fine and most of the numbers add up, but the last one bothers me, because the authors reported that adding dropout on top of Quillon gave no further reduction in the gap, and from that they argued that both act on the same source of overfitting, whereas this line has the gap shrinking further and two different sources.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 6,
+        "end": 6
+      },
+      "text": "The threshold should be 128, not 32.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 8,
+        "end": 8
+      },
+      "text": "I'm not sure the reason given for the cost is right.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 1,
+        "end": 1
+      },
+      "text": "The first sentence runs weight decay and dropout together as if they were one method.",
+      "severity": "minor"
+    },
+    {
+      "span": null,
+      "text": "The explanation does not say who built the Wexcombe dataset.",
+      "severity": "nit"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      {
+        "half_found": {
+          "finding": 2
+        }
+      },
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            2
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      "false_positive",
+      "false_positive"
+    ]
+  }
+}

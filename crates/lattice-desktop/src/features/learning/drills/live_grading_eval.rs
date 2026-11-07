@@ -1,5 +1,6 @@
 //! How far the judge agrees with a careful human (docs/design/2026-11-04-code-review-drills.md §6). Runs
-//! `JudgeGrader` on the configured model over every case in `tests/fixtures/drill_grading` and reports its agreement
+//! `JudgeGrader` on the configured model over every case in `tests/fixtures/drill_grading` (or, with
+//! `LATTICE_DRILL_GRADING_SET=drill_grading_passage`, the passage cases of the 2026-11-05 design, §7) and reports its agreement
 //! with the labels per issue (found, half found, missed) and per finding outcome, every disagreement shown whole.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
     check_key, overlapping, validate, Assessment, Drill, DrillFile, Finding, FindingOutcome,
-    IssueOutcome,
+    IssueOutcome, Material, Proof,
 };
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
@@ -18,6 +19,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::JudgeGrader;
+use crate::features::learning::drills::build::SourcePassage;
 use crate::features::learning::drills::grader::{Review, ReviewGrader};
 use crate::features::llm::cloud::CloudLlm;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
@@ -34,6 +36,9 @@ struct Case {
     why: String,
     drill: Drill,
     clean: Vec<DrillFile>,
+    /// The passage an explanation was written from; none for code.
+    #[serde(default)]
+    source: Option<SourcePassage>,
     review: Vec<Finding>,
     labels: Labels,
 }
@@ -46,9 +51,18 @@ struct Labels {
     findings: Vec<FindingOutcome>,
 }
 
-/// Every case under `tests/fixtures/drill_grading`, by file name, each with the name of its file.
-fn cases() -> Result<Vec<(String, Case)>> {
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/drill_grading");
+/// The set of cases on code, and the one `LATTICE_DRILL_GRADING_SET` names for the live eval.
+const CODE_SET: &str = "drill_grading";
+
+fn grading_set() -> String {
+    std::env::var("LATTICE_DRILL_GRADING_SET").unwrap_or_else(|_| CODE_SET.to_owned())
+}
+
+/// Every case under `tests/fixtures/<set>`, by file name, each with the name of its file.
+fn cases(set: &str) -> Result<Vec<(String, Case)>> {
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(set);
     let mut paths = Vec::new();
     for entry in std::fs::read_dir(&directory)? {
         let path = entry?.path();
@@ -295,10 +309,11 @@ async fn live_grading_eval() -> Result<()> {
     let llm = model().await?;
     let grader = JudgeGrader::new(llm.as_ref());
     let mut graded = Vec::new();
-    for (_, case) in cases()? {
+    for (_, case) in cases(&grading_set())? {
         let review = Review {
             drill: &case.drill,
             clean: &case.clean,
+            source: case.source.as_ref(),
             findings: &case.review,
         };
         let started = Instant::now();
@@ -348,7 +363,7 @@ async fn live_grading_eval() -> Result<()> {
 }
 
 fn case_of_kind(kind: &str) -> Result<Case> {
-    cases()?
+    cases(CODE_SET)?
         .into_iter()
         .map(|(_, case)| case)
         .find(|case| case.kind == kind)
@@ -451,12 +466,10 @@ fn the_report_counts_agreement_by_outcome_and_shows_each_disagreement_whole() ->
     Ok(())
 }
 
-#[test]
-fn every_labelled_case_holds_together() -> Result<()> {
-    let cases = cases()?;
-    assert!(cases.len() >= 40, "the forty cases are written");
+/// The checks every set of cases passes: names, a reason, a key that fits the files, labels that agree with each other.
+fn check_cases_hold_together(cases: &[(String, Case)]) {
     let mut names = BTreeSet::new();
-    for (stem, case) in &cases {
+    for (stem, case) in cases {
         assert_eq!(&case.name, stem, "a case is named for its file");
         assert!(
             names.insert(case.name.clone()),
@@ -493,6 +506,72 @@ fn every_labelled_case_holds_together() -> Result<()> {
                 "{stem}: a finding is on lines the drill does not have: {lines:?}"
             );
         }
+    }
+}
+
+#[test]
+fn every_labelled_case_holds_together() -> Result<()> {
+    let cases = cases(CODE_SET)?;
+    assert!(cases.len() >= 40, "the forty cases are written");
+    check_cases_hold_together(&cases);
+    Ok(())
+}
+
+#[test]
+fn every_labelled_passage_case_holds_together() -> Result<()> {
+    let cases = cases("drill_grading_passage")?;
+    assert!(cases.len() >= 24, "the passage cases are written");
+    check_cases_hold_together(&cases);
+    for (stem, case) in &cases {
+        assert_eq!(
+            case.drill.material,
+            Material::Passage,
+            "{stem}: a passage drill"
+        );
+        let Some(source) = &case.source else {
+            panic!("{stem}: a passage case has its source");
+        };
+        assert_eq!(
+            source.end_byte - source.start_byte,
+            source.text.len(),
+            "{stem}: the source's bytes are the length of its text"
+        );
+        for issue in &case.drill.key {
+            let Proof::Sourced { quote, .. } = &issue.proof else {
+                panic!(
+                    "{}: {stem}: a passage issue is proven by the source",
+                    issue.id
+                );
+            };
+            assert!(
+                source.text.contains(quote.as_str()),
+                "{}: {stem}: the quote is not in the source",
+                issue.id
+            );
+        }
+    }
+    for kind in [
+        "find",
+        "wrong_reason",
+        "exposing_line",
+        "vague",
+        "valid_extra",
+        "false_positive",
+        "two_issues",
+        "duplicate",
+        "no_span",
+        "false_claim_on_issue_lines",
+    ] {
+        let count = cases.iter().filter(|(_, case)| case.kind == kind).count();
+        assert!(count >= 2, "there are fewer than two cases of kind {kind}");
+    }
+    let mixed = cases
+        .iter()
+        .filter(|(_, case)| case.kind == "mixed")
+        .count();
+    assert!(mixed >= 4, "there are fewer than four mixed cases");
+    for (stem, case) in &cases {
+        assert!(shows_its_kind(case), "{stem} is not a {} case", case.kind);
     }
     Ok(())
 }
@@ -532,7 +611,7 @@ fn shows_its_kind(case: &Case) -> bool {
 
 #[test]
 fn the_cases_cover_what_the_design_asks_for_and_each_shows_its_kind() -> Result<()> {
-    let cases = cases()?;
+    let cases = cases(CODE_SET)?;
     let kinds: BTreeSet<&str> = cases.iter().map(|(_, case)| case.kind.as_str()).collect();
     for kind in [
         "find",

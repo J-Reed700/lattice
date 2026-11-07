@@ -1,39 +1,83 @@
-//! What one drill is built for: the language, the area of code, the size and the patterns to plant.
+//! What one drill is built for: the material, the area of code or the topic of a passage, the size and the patterns to
+//! plant.
 
-use lattice_core::domain::learning::drills::{pattern, Pattern, LANGUAGES};
+use lattice_core::domain::learning::drills::{pattern, Material, Pattern, LANGUAGES};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
-/// A request for one drill.
+/// A request for one drill. A spec stored with a `language` and no `material` is read as code in that language.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", try_from = "StoredSpec")]
 pub struct DrillSpec {
-    /// A catalogue language id.
-    pub language: String,
-    /// What the code is about. `None`: the bank picks one.
+    /// What is reviewed.
+    pub material: Material,
+    /// What the code is about, or the topic a passage is about. `None`: the bank picks a domain for code, and a
+    /// passage may be about anything in the course's sources.
     pub domain: Option<String>,
-    /// The size the learner chose, a target for the prompt.
+    /// The size the learner chose, a target for the prompt: lines of code, or sentences of an explanation.
     pub lines: u32,
     /// The target pattern ids, from `drills::targets`.
     pub patterns: Vec<String>,
-    /// The course whose topic gave the domain, when one did.
+    /// For code, the course whose topic gave the domain, when one did; for a passage, the course whose sources it is
+    /// taken from.
     pub program_id: Option<String>,
 }
 
+/// A spec as stored: new ones hold a `material`, the ones from before passages hold the language of their code.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredSpec {
+    material: Option<Material>,
+    language: Option<String>,
+    domain: Option<String>,
+    lines: u32,
+    patterns: Vec<String>,
+    program_id: Option<String>,
+}
+
+impl TryFrom<StoredSpec> for DrillSpec {
+    type Error = String;
+
+    fn try_from(stored: StoredSpec) -> std::result::Result<Self, String> {
+        let material = match (stored.material, stored.language) {
+            (Some(material), _) => material,
+            (None, Some(language)) => Material::Code { language },
+            (None, None) => return Err("a spec has neither a material nor a language".to_owned()),
+        };
+        Ok(Self {
+            material,
+            domain: stored.domain,
+            lines: stored.lines,
+            patterns: stored.patterns,
+            program_id: stored.program_id,
+        })
+    }
+}
+
 impl DrillSpec {
-    /// Whether the spec names a language drills are written in, a size, a domain that says something when it is
-    /// given, and at least one pattern, each in the catalogue, applying to the language and listed once.
+    /// Whether the spec names code in a language drills are written in, or a passage of a named course; a size; a
+    /// domain that says something when it is given; and at least one pattern, each in the catalogue, applying to the
+    /// material and listed once.
     pub fn validate(&self) -> Result<()> {
-        if !LANGUAGES.contains(&self.language.as_str()) {
-            return Err(AppError::InvalidInput(format!(
-                "{} is not a language drills are written in.",
-                self.language
-            )));
+        match &self.material {
+            Material::Code { language } if !LANGUAGES.contains(&language.as_str()) => {
+                return Err(AppError::InvalidInput(format!(
+                    "{language} is not a language drills are written in."
+                )));
+            }
+            Material::Code { .. } => {}
+            Material::Passage if self.course().is_none() => {
+                return Err(AppError::InvalidInput(
+                    "A drill on a passage names the course whose sources it is taken from.".into(),
+                ));
+            }
+            Material::Passage => {}
         }
         if self.lines == 0 {
-            return Err(AppError::InvalidInput(
-                "A drill needs at least one line of code.".into(),
-            ));
+            return Err(AppError::InvalidInput(match self.material {
+                Material::Code { .. } => "A drill needs at least one line of code.".into(),
+                Material::Passage => "A drill needs at least one sentence to review.".into(),
+            }));
         }
         if self
             .domain
@@ -52,6 +96,13 @@ impl DrillSpec {
         self.targets().map(drop)
     }
 
+    /// The course a passage is taken from: the spec's course, when it names one that says something.
+    pub fn course(&self) -> Option<&str> {
+        self.program_id
+            .as_deref()
+            .filter(|program_id| !program_id.trim().is_empty())
+    }
+
     /// The patterns to plant, in the spec's order.
     pub fn targets(&self) -> Result<Vec<&'static Pattern>> {
         let mut found: Vec<&'static Pattern> = Vec::with_capacity(self.patterns.len());
@@ -61,10 +112,10 @@ impl DrillSpec {
                     "{id} is not a pattern of the catalogue."
                 )));
             };
-            if !known.applies_to(&self.language) {
+            if !known.applies_to(&self.material) {
                 return Err(AppError::InvalidInput(format!(
                     "{id} does not apply to {}.",
-                    self.language
+                    self.material.language().unwrap_or("a passage")
                 )));
             }
             if found.iter().any(|earlier| earlier.id == known.id) {

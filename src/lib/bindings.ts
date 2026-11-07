@@ -1337,12 +1337,13 @@ async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<
 }
 },
 /**
- * Starts a drill of `language`: an attempt on a ready one, or, when none is ready, the build that will make one.
- * `lines` and `patterns_count` size that build. The drill comes back as the learner may see it, never with its key.
+ * Starts a drill on `material`, code in a language or a passage of a course: an attempt on a ready one, or, when none
+ * is ready, the build that will make one. `lines` (lines of code, or sentences) and `patterns_count` size that build.
+ * The drill comes back as the learner may see it, never with its key or its source.
  */
-async startCodeReviewDrill(language: string, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
+async startReviewDrill(material: ReviewMaterialDto, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_code_review_drill", { language, mode, lines, patternsCount }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_review_drill", { material, mode, lines, patternsCount }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1387,6 +1388,17 @@ async regradeCodeReview(attemptId: string) : Promise<Result<CodeReviewResultDto,
  */
 async codeReviewLanguages() : Promise<string[]> {
     return await TAURI_INVOKE("plugin:learning|code_review_languages");
+},
+/**
+ * The courses a drill on a passage can draw on: those with at least one source.
+ */
+async reviewDrillCourses() : Promise<Result<ReviewDrillCourseDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_drill_courses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Download a model by ID
@@ -5155,7 +5167,7 @@ export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; cl
 /**
  * The drill as the learner may see it.
  */
-export type CodeReviewDrillDto = { title: string; language: string; files: CodeReviewFileDto[] }
+export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[] }
 /**
  * One file of a drill, as the learner reads it or leaves it.
  */
@@ -5165,6 +5177,14 @@ export type CodeReviewFileDto = { path: string; text: string }
  * learner gave it, when they gave one.
  */
 export type CodeReviewFindingDto = { span: CodeReviewSpanDto | null; text: string; severity: CodeReviewSeverity | null }
+/**
+ * What a drill is made of, as the learner may see it.
+ */
+export type CodeReviewMaterialDto = { kind: "code"; language: string } |
+/**
+ * An explanation of a passage; the passage itself is in the reveal only.
+ */
+{ kind: "passage"; sourceTitle: string }
 /**
  * An attempt: where it stands, the learner's own review and, once it is graded, the reveal.
  */
@@ -5216,7 +5236,11 @@ fix: IssueFix[] | null;
 /**
  * The code before any issue was planted, to read beside the drill's.
  */
-cleanFiles: CodeReviewFileDto[] }
+cleanFiles: CodeReviewFileDto[];
+/**
+ * The source passage an explanation was written from; none for code.
+ */
+source: RevealedSourceDto | null }
 /**
  * How a review fared, as its parts.
  */
@@ -5764,7 +5788,11 @@ export type DecidedBy =
 /**
  * A judge, shown the code, the learner's code and the issue.
  */
-"judge"
+"judge" |
+/**
+ * The source passage of an explanation, checked against what the learner wrote.
+ */
+"source"
 /**
  * Response from deleting a batch job.
  */
@@ -9383,7 +9411,11 @@ span: CodeReviewSpanDto; consequence: string;
 /**
  * How to say it in an interview.
  */
-explanation: string; fix: FixDiffDto; outcome: IssueResultKind;
+explanation: string; fix: FixDiffDto;
+/**
+ * The words of the source passage that settle the issue, when a source proved it.
+ */
+sourceQuote: string | null; outcome: IssueResultKind;
 /**
  * The position of the finding that earned the credit, when one did.
  */
@@ -9396,7 +9428,23 @@ reason: string;
  * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
  */
 alsoValid: boolean }
+/**
+ * The source passage of a drill on a passage, as the reveal shows it.
+ */
+export type RevealedSourceDto = { title: string; text: string;
+/**
+ * The version of the source the passage is the exact text of.
+ */
+versionId: string }
+/**
+ * A course a drill on a passage can draw on.
+ */
+export type ReviewDrillCourseDto = { programId: string; title: string }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
+/**
+ * What a learner asks to review: code in a language, or a passage from one of their courses.
+ */
+export type ReviewMaterialDto = { kind: "code"; language: string } | { kind: "passage"; programId: string; topic: string | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
  * A selected option records a quiz answer; otherwise the rating records recall.
