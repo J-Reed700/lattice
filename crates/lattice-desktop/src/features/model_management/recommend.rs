@@ -1,9 +1,14 @@
 //! Wires the model-fit authority to this machine: the recommended chat models and the fit of any
 //! catalog row.
 
-use crate::interfaces::dto::{FitVerdictDto, RecommendationDto};
+use crate::interfaces::dto::{
+    EvidenceDto, FitVerdictDto, RecommendationDto, RecommendationLabelDto,
+};
 use async_trait::async_trait;
-use lattice_core::domain::models::fit::{MachineProfile, ModelShape};
+use lattice_core::domain::models::curated::curated_chat_models;
+use lattice_core::domain::models::fit::{
+    Candidate, Companions, Evidence, Label, MachineProfile, ModelShape, Recommender, SpeedClass,
+};
 use lattice_core::domain::models::selection::ModelMetadata;
 
 /// Builds the profile of this computer. A probe that cannot reach the backend answers with a
@@ -43,10 +48,51 @@ pub trait GgufHeaderSource: Send + Sync {
 /// catalog and the default companions, priced with the user's KV cache setting
 /// (`kv_cache_quantization`), mapped to the wire types.
 pub async fn recommend_chat_models(
-    _probe: &dyn MachineProfileProbe,
-    _kv_cache_quantization: bool,
+    probe: &dyn MachineProfileProbe,
+    kv_cache_quantization: bool,
 ) -> Vec<RecommendationDto> {
-    todo!("stage 2")
+    let profile = probe.profile().await;
+    let catalog: Vec<Candidate> = curated_chat_models()
+        .iter()
+        .map(Candidate::from_curated)
+        .collect();
+    Recommender::new(Companions::default_pair(), kv_cache_quantization)
+        .recommend(&profile, &catalog)
+        .into_iter()
+        .filter_map(|recommendation| {
+            let model = curated_chat_models()
+                .iter()
+                .find(|model| model.id == recommendation.id)?;
+            Some(RecommendationDto {
+                model_id: recommendation.id,
+                name: recommendation.name,
+                description: model.description.to_owned(),
+                use_for: model.use_for.to_owned(),
+                download_bytes: model.size_bytes,
+                verdict: FitVerdictDto::from(&recommendation.verdict),
+                labels: recommendation.labels.into_iter().map(label).collect(),
+                evidence: evidence(recommendation.evidence),
+                speed: SpeedClass::from_active_parameters(model.active_parameters_b).into(),
+            })
+        })
+        .collect()
+}
+
+fn label(label: Label) -> RecommendationLabelDto {
+    match label {
+        Label::Best => RecommendationLabelDto::Best,
+        Label::Fastest => RecommendationLabelDto::Fastest,
+        Label::SmallestDownload => RecommendationLabelDto::SmallestDownload,
+    }
+}
+
+fn evidence(evidence: Evidence) -> EvidenceDto {
+    match evidence {
+        Evidence::Measured { suites } => EvidenceDto::Measured {
+            suites: suites.iter().map(|suite| suite.name.to_owned()).collect(),
+        },
+        Evidence::Untested => EvidenceDto::Untested,
+    }
 }
 
 /// The verdict for one catalog row. A curated row is judged from its own footprint; any other chat

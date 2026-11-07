@@ -87,6 +87,20 @@ impl Container {
         self.core.data_dir().join("models")
     }
 
+    /// The probe that builds this computer's profile for the model recommender, reading the
+    /// device list the runtime already probed.
+    pub fn machine_profile_probe(
+        &self,
+    ) -> std::sync::Arc<dyn crate::features::model_management::recommend::MachineProfileProbe> {
+        std::sync::Arc::new(
+            crate::features::model_management::machine_probe::SidecarMachineProfileProbe::new(
+                std::sync::Arc::clone(&self.llm_runtime.devices),
+                self.app_handle.clone(),
+                self.models_path(),
+            ),
+        )
+    }
+
     /// The manager that fetches and inspects the models kept under
     /// [`Self::models_path`].
     pub fn model_manager(

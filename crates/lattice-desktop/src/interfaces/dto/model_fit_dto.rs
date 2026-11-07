@@ -1,6 +1,6 @@
 //! Model-fit DTOs: the recommender's verdicts and recommended list as the frontend reads them.
 
-use lattice_core::domain::models::fit::{FitVerdict, MachineProfile};
+use lattice_core::domain::models::fit::{DeviceKind, FitKind, FitVerdict, SpeedClass};
 use serde::{Deserialize, Serialize};
 
 /// How well a model fits a device.
@@ -12,14 +12,34 @@ pub enum FitKindDto {
     TooLarge,
 }
 
-/// What kind of device a model was judged against.
+impl From<FitKind> for FitKindDto {
+    fn from(kind: FitKind) -> Self {
+        match kind {
+            FitKind::Fits => Self::Fits,
+            FitKind::Tight => Self::Tight,
+            FitKind::TooLarge => Self::TooLarge,
+        }
+    }
+}
+
+/// What kind of device a model was judged against. An integrated GPU alone is the processor, so no
+/// verdict is judged against one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DeviceKindDto {
     Dedicated,
-    Integrated,
     Unified,
     Processor,
+}
+
+impl From<DeviceKind> for DeviceKindDto {
+    fn from(kind: DeviceKind) -> Self {
+        match kind {
+            DeviceKind::Dedicated => Self::Dedicated,
+            DeviceKind::Unified => Self::Unified,
+            DeviceKind::Processor => Self::Processor,
+        }
+    }
 }
 
 /// The device a verdict was judged against.
@@ -41,11 +61,18 @@ pub struct FitVerdictDto {
     pub device: FitDeviceDto,
 }
 
-impl FitVerdictDto {
-    /// Maps a core verdict; the device's kind is read from `profile`, and a device the profile
-    /// does not list as an accelerator (the processor, or an integrated GPU alone) is `Processor`.
-    pub fn from_verdict(_verdict: &FitVerdict, _profile: &MachineProfile) -> Self {
-        todo!("stage 2")
+impl From<&FitVerdict> for FitVerdictDto {
+    fn from(verdict: &FitVerdict) -> Self {
+        Self {
+            kind: verdict.kind.into(),
+            needs_bytes: verdict.needs,
+            budget_bytes: verdict.budget,
+            device: FitDeviceDto {
+                name: verdict.device.name.clone(),
+                kind: verdict.device.kind.into(),
+                total_bytes: verdict.device.total_bytes,
+            },
+        }
     }
 }
 
@@ -74,10 +101,13 @@ pub enum SpeedClassDto {
     Thorough,
 }
 
-impl SpeedClassDto {
-    /// Up to 5 billion active parameters is fast, up to 14 balanced, above that thorough.
-    pub fn from_active_parameters(_active_parameters_b: f32) -> Self {
-        todo!("stage 2")
+impl From<SpeedClass> for SpeedClassDto {
+    fn from(speed: SpeedClass) -> Self {
+        match speed {
+            SpeedClass::Fast => Self::Fast,
+            SpeedClass::Balanced => Self::Balanced,
+            SpeedClass::Thorough => Self::Thorough,
+        }
     }
 }
 
@@ -95,5 +125,4 @@ pub struct RecommendationDto {
     pub labels: Vec<RecommendationLabelDto>,
     pub evidence: EvidenceDto,
     pub speed: SpeedClassDto,
-    pub reason: String,
 }

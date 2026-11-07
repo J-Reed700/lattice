@@ -7,8 +7,8 @@ use crate::interfaces::dto::{
 use lattice_core::domain::models::curated::{curated_chat_models, get_curated_llm_models};
 use lattice_core::domain::models::fit::{
     choose_placement, fit, footprint, Accelerator, AcceleratorKind, Backend, Candidate, Companions,
-    Evidence, FitVerdict, Label, ModelShape, Recommendation, Recommender, ServerBuffers,
-    COMFORTABLE_WINDOW_TOKENS, MINIMUM_WINDOW_TOKENS,
+    DeviceKind, Evidence, FitDevice, FitKind, FitVerdict, Label, ModelShape, Recommendation,
+    Recommender, ServerBuffers, SpeedClass, COMFORTABLE_WINDOW_TOKENS, MINIMUM_WINDOW_TOKENS,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -89,14 +89,12 @@ async fn the_recommended_list_is_the_core_recommenders_in_its_order() {
         assert!(!dto.use_for.is_empty(), "{}", rec.id);
         assert_eq!(dto.use_for, model.use_for);
         assert_eq!(dto.download_bytes, model.size_bytes);
-        assert_eq!(
-            dto.verdict,
-            FitVerdictDto::from_verdict(&rec.verdict, &profile)
-        );
-        assert_eq!(dto.reason, rec.reason);
+        assert_eq!(dto.verdict, FitVerdictDto::from(&rec.verdict));
         assert_eq!(
             dto.speed,
-            SpeedClassDto::from_active_parameters(model.active_parameters_b)
+            SpeedClassDto::from(SpeedClass::from_active_parameters(
+                model.active_parameters_b
+            ))
         );
         let labels: Vec<RecommendationLabelDto> = rec
             .labels
@@ -220,17 +218,20 @@ async fn apple_silicon_is_reported_as_unified_memory() {
 }
 
 #[test]
-fn a_verdict_maps_its_kind_numbers_and_the_device_kind_from_the_profile() {
-    let profile = rtx_4080();
-    let verdict = FitVerdict::Tight {
+fn a_verdict_maps_its_kind_numbers_and_device() {
+    let verdict = FitVerdict {
+        kind: FitKind::Tight,
         needs: 14_000_000_000,
         budget: 15_000_000_000,
-        device: RTX_4080.into(),
-        total_bytes: 16 * GIB,
+        device: FitDevice {
+            name: RTX_4080.into(),
+            kind: DeviceKind::Dedicated,
+            total_bytes: 16 * GIB,
+        },
     };
 
     assert_eq!(
-        FitVerdictDto::from_verdict(&verdict, &profile),
+        FitVerdictDto::from(&verdict),
         FitVerdictDto {
             kind: FitKindDto::Tight,
             needs_bytes: 14_000_000_000,
@@ -243,39 +244,37 @@ fn a_verdict_maps_its_kind_numbers_and_the_device_kind_from_the_profile() {
         }
     );
 
-    let too_large = FitVerdict::TooLarge {
-        needs: 20_000_000_000,
-        budget: 15_000_000_000,
-        device: "the processor".into(),
-        total_bytes: 32 * GIB,
-    };
-    let dto = FitVerdictDto::from_verdict(&too_large, &processor_only());
-    assert_eq!(dto.kind, FitKindDto::TooLarge);
-    assert_eq!(dto.device.kind, DeviceKindDto::Processor);
+    for (kind, want) in [
+        (DeviceKind::Unified, DeviceKindDto::Unified),
+        (DeviceKind::Processor, DeviceKindDto::Processor),
+    ] {
+        let dto = FitVerdictDto::from(&FitVerdict {
+            kind: FitKind::TooLarge,
+            device: FitDevice {
+                kind,
+                ..verdict.device.clone()
+            },
+            ..verdict.clone()
+        });
+        assert_eq!(dto.kind, FitKindDto::TooLarge);
+        assert_eq!(dto.device.kind, want);
+    }
 }
 
 #[test]
-fn speed_follows_the_active_parameters() {
-    assert_eq!(
-        SpeedClassDto::from_active_parameters(1.9),
-        SpeedClassDto::Fast
-    );
-    assert_eq!(
-        SpeedClassDto::from_active_parameters(3.8),
-        SpeedClassDto::Fast
-    );
-    assert_eq!(
-        SpeedClassDto::from_active_parameters(9.0),
-        SpeedClassDto::Balanced
-    );
-    assert_eq!(
-        SpeedClassDto::from_active_parameters(11.9),
-        SpeedClassDto::Balanced
-    );
-    assert_eq!(
-        SpeedClassDto::from_active_parameters(27.3),
-        SpeedClassDto::Thorough
-    );
+fn speed_follows_the_cores_classes() {
+    for (active, want) in [
+        (1.9, SpeedClassDto::Fast),
+        (3.8, SpeedClassDto::Fast),
+        (9.0, SpeedClassDto::Balanced),
+        (11.9, SpeedClassDto::Balanced),
+        (27.3, SpeedClassDto::Thorough),
+    ] {
+        assert_eq!(
+            SpeedClassDto::from(SpeedClass::from_active_parameters(active)),
+            want
+        );
+    }
 }
 
 struct StubHeaders {
@@ -373,15 +372,12 @@ async fn a_curated_row_is_judged_from_its_own_pinned_facts_without_reading_a_hea
         .unwrap();
     let pinned = Candidate::from_curated(model);
     let placement = choose_placement(&profile, &Companions::default_pair());
-    let want = FitVerdictDto::from_verdict(
-        &fit(
-            pinned.gpu_weight_bytes,
-            pinned.shape.as_ref(),
-            ServerBuffers::chat(false),
-            placement.as_ref(),
-        ),
-        &profile,
-    );
+    let want = FitVerdictDto::from(&fit(
+        pinned.gpu_weight_bytes,
+        pinned.shape.as_ref(),
+        ServerBuffers::chat(false),
+        placement.as_ref(),
+    ));
 
     let got = row_fit(&curated_row(NINE_B), &profile, &headers, false).await;
 

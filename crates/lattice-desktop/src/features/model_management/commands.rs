@@ -116,9 +116,24 @@ pub async fn get_compatible_models(
 #[tauri::command]
 #[specta::specta]
 pub async fn recommend_chat_models(
-    _container: State<'_, Container>,
+    container: State<'_, Container>,
 ) -> Result<Vec<RecommendationDto>> {
-    todo!("stage 2")
+    let settings = container.get_settings_use_case().execute().await?;
+    let probe = container.machine_profile_probe();
+    Ok(super::recommend::recommend_chat_models(
+        probe.as_ref(),
+        chat_kv_cache_quantization(&settings.llm),
+    )
+    .await)
+}
+
+/// Whether the user's saved launch settings for the chat model quantize its KV cache.
+fn chat_kv_cache_quantization(
+    llm: &lattice_core::application::contracts::settings::LLMSettingsDto,
+) -> bool {
+    llm.local_model_configs
+        .get(&llm.model)
+        .is_some_and(|config| config.kv_cache_quantization)
 }
 
 /// Get all the catalog's models across all categories.
