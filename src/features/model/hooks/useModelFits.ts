@@ -1,8 +1,7 @@
-import { useEffect } from 'react';
-
-import { useQueries, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useQueries } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
+import type { ApiClient } from '@/lib/api';
 import type { FitVerdictDto, ModelFileRefDto } from '@/lib/bindings';
 import type { ModelMetadata } from '@/types/modelCatalog';
 
@@ -10,7 +9,52 @@ import type { ModelMetadata } from '@/types/modelCatalog';
 export type ShownFit = FitVerdictDto | 'unknown' | null | undefined;
 
 const fitKey = (ref: ModelFileRefDto) => ['model', 'fit', ref.repo, ref.file, ref.revision ?? null] as const;
-const inFlight = new WeakMap<QueryClient, Set<string>>();
+
+interface Pending {
+  ref: ModelFileRefDto;
+  waiters: Array<{ resolve: (fit: FitVerdictDto | null) => void; reject: (error: Error) => void }>;
+}
+
+/**
+ * Collects every load made in one tick and sends them as one request. Each
+ * load resolves with its own answer, `null` included, or all of them reject
+ * when the call fails, so a failure is an error to retry, never an answer.
+ */
+class FitLoader {
+  private pending = new Map<string, Pending>();
+
+  constructor(private readonly api: ApiClient) {}
+
+  load(ref: ModelFileRefDto): Promise<FitVerdictDto | null> {
+    return new Promise((resolve, reject) => {
+      const id = JSON.stringify(fitKey(ref));
+      const entry = this.pending.get(id) ?? { ref, waiters: [] };
+      entry.waiters.push({ resolve, reject });
+      if (this.pending.size === 0) setTimeout(() => void this.flush(), 0);
+      this.pending.set(id, entry);
+    });
+  }
+
+  private async flush(): Promise<void> {
+    const batch = [...this.pending.values()];
+    this.pending.clear();
+    try {
+      const result = await this.api.readModelFits(batch.map((entry) => entry.ref));
+      if (!result.ok) throw new Error(result.error);
+      batch.forEach((entry, index) => entry.waiters.forEach((waiter) => waiter.resolve(result.data[index] ?? null)));
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      batch.forEach((entry) => entry.waiters.forEach((waiter) => waiter.reject(failure)));
+    }
+  }
+}
+
+const loaders = new WeakMap<ApiClient, FitLoader>();
+function loaderFor(api: ApiClient): FitLoader {
+  let loader = loaders.get(api);
+  if (!loader) loaders.set(api, loader = new FitLoader(api));
+  return loader;
+}
 
 /** The file a verdict is read for, or null when the model names no file. */
 export function modelFileRef(model: Pick<ModelMetadata, 'model_id' | 'default_filename'>): ModelFileRefDto | null {
@@ -19,44 +63,20 @@ export function modelFileRef(model: Pick<ModelMetadata, 'model_id' | 'default_fi
 
 /**
  * Answers for the files asked, in order: a verdict, `null` when the header
- * could not be read, `undefined` while unanswered. Files already answered or
- * in flight anywhere in the app are not asked for again; the rest go in one
- * request.
+ * could not be read, `undefined` while unanswered or after a failed request.
+ * Each file is one query, so the cache is shared and a file is asked for once;
+ * a failed request is retried and asked again on a later mount.
  */
 export function useModelFits(refs: ModelFileRefDto[]): Array<FitVerdictDto | null | undefined> {
-  const api = useApi();
-  const queryClient = useQueryClient();
+  const loader = loaderFor(useApi());
   const results = useQueries({
     queries: refs.map((ref) => ({
       queryKey: fitKey(ref),
-      queryFn: (): Promise<FitVerdictDto | null> => Promise.reject(new Error('A size is read in a batch, not alone.')),
-      enabled: false,
+      queryFn: () => loader.load(ref),
+      staleTime: Infinity,
       gcTime: Infinity,
     })),
   });
-  const signature = JSON.stringify(refs.map(fitKey));
-
-  useEffect(() => {
-    let flying = inFlight.get(queryClient);
-    if (!flying) inFlight.set(queryClient, flying = new Set());
-    const asked = refs.filter((ref) => {
-      const id = JSON.stringify(fitKey(ref));
-      return queryClient.getQueryData(fitKey(ref)) === undefined && !flying.has(id);
-    });
-    if (asked.length === 0) return;
-    const ids = asked.map((ref) => JSON.stringify(fitKey(ref)));
-    ids.forEach((id) => flying.add(id));
-    void api.readModelFits(asked)
-      .then((result) => (result.ok ? result.data : []))
-      .catch(() => [] as Array<FitVerdictDto | null>)
-      .then((answers) => {
-        asked.forEach((ref, index) => queryClient.setQueryData(fitKey(ref), answers[index] ?? null));
-        ids.forEach((id) => flying.delete(id));
-      });
-    // `signature` stands for `refs`, which is a new array every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, queryClient, signature]);
-
   return results.map((result) => result.data);
 }
 
