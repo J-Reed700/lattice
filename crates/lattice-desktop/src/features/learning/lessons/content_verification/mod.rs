@@ -92,6 +92,7 @@ pub(in crate::features::learning) use repair::{confine, Protected};
 mod repair_loop;
 mod repair_work;
 mod report;
+pub(in crate::features::learning) use report::WrittenOver;
 pub(in crate::features::learning) mod research;
 mod review_pass;
 mod round;
