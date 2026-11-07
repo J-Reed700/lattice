@@ -516,6 +516,10 @@ impl Review for PreparationReview<'_, '_> {
         self.ledger.decide(policy, stopped)
     }
 
+    fn hinted_waiting(&self) -> Vec<claim_ledger::Waiting> {
+        self.ledger.hinted_waiting()
+    }
+
     fn again(&mut self, waiting: &[claim_ledger::Waiting]) {
         crate::features::learning::lesson_progress::phase(
             crate::features::learning::lesson_progress::Phase::Evidence,

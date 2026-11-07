@@ -816,10 +816,27 @@ impl ClaimLedger {
         let state_of = |id: &ClaimId| self.entry(id).map(ClaimLedgerEntry::state);
         for (finding, id) in report.findings.iter_mut().zip(&self.findings) {
             finding.claim_id = Some(id.0.clone());
-            finding.resolution = match state_of(id).map(|state| standing(state, &state_of)) {
+            let own = match state_of(id).map(|state| standing(state, &state_of)) {
                 Some(Standing::Resolved(resolution)) => Some(resolution),
                 _ => None,
             };
+            // A claim the machine ended whose sentence stands, published not
+            // verified, is no finding of the pass: the finding on its sentence
+            // carries its resolution.
+            finding.resolution = own.or_else(|| {
+                self.entries
+                    .iter()
+                    .filter(|entry| !self.findings.contains(entry.claim_id()))
+                    .find_map(|entry| match entry.state() {
+                        ClaimState::Unverified { reason, .. }
+                            if entry.location().unit_index == finding.unit
+                                && entry.location().quote == finding.quote =>
+                        {
+                            Some(Resolution::Unverified { reason: *reason })
+                        }
+                        _ => None,
+                    })
+            });
         }
         let confirmed: Vec<String> = report
             .executions

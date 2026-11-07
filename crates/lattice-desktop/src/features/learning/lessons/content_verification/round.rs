@@ -128,6 +128,10 @@ pub(super) trait Review: Send {
     /// What the lesson does next (acceptance design §2.10), `stopped` being
     /// the statements this run stopped on.
     fn decide(&self, policy: &dyn AcceptancePolicy, stopped: &[ClaimId]) -> Decision;
+    /// The statements whose user's hint no research round has run with yet.
+    fn hinted_waiting(&self) -> Vec<Waiting> {
+        Vec::new()
+    }
     /// The round goes again for the statements that wait.
     fn again(&mut self, waiting: &[Waiting]);
     /// Repairs `targets`: the rewrites by section and the cuts, one repair.
@@ -271,6 +275,14 @@ pub(super) async fn run<F>(
                 }
             }
             Decision::NeedsReview(claims) => {
+                // An outage passes: a hint the round could not search stays
+                // pending for the next run, as a machine statement's does.
+                let waiting = review.hinted_waiting();
+                if unreached && !waiting.is_empty() {
+                    return review
+                        .finish(Verdict::NoProgress { waiting, unreached })
+                        .await;
+                }
                 if review
                     .publish_unverified(policy, Unsettled::AwaitingUser)
                     .await?
