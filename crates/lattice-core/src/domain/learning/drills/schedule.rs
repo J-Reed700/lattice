@@ -36,23 +36,91 @@ pub struct IssueRating {
     pub rating: PatternRating,
 }
 
+/// Each key issue that gives a rating under an assessment, with the rating, in the key's order. An issue the
+/// assessment has no outcome for counts as missed, as `score` counts it. A missed issue found in review gives no
+/// rating, because it was never proven; one that was found or half found is rated like a planted issue.
+fn rated<'a>(
+    key: &'a [KeyIssue],
+    assessment: &'a Assessment,
+) -> impl Iterator<Item = (&'a KeyIssue, PatternRating)> + 'a {
+    key.iter().enumerate().filter_map(move |(position, issue)| {
+        let outcome = assessment
+            .issues
+            .get(position)
+            .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome);
+        if issue.origin == Origin::FoundInReview && outcome == IssueOutcome::Missed {
+            return None;
+        }
+        Some((issue, rating(&outcome)))
+    })
+}
+
 /// The rating of each key issue's pattern under an assessment, in the key's order. An issue the assessment has no
 /// outcome for counts as missed, as `score` counts it. A missed issue found in review gives no rating, because it was
 /// never proven; one that was found or half found is rated like a planted issue.
 pub fn ratings(key: &[KeyIssue], assessment: &Assessment) -> Vec<IssueRating> {
-    key.iter()
-        .enumerate()
-        .filter_map(|(position, issue)| {
-            let outcome = assessment
-                .issues
-                .get(position)
-                .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome);
-            if issue.origin == Origin::FoundInReview && outcome == IssueOutcome::Missed {
-                return None;
-            }
+    rated(key, assessment)
+        .map(|(issue, rating)| IssueRating {
+            pattern: issue.pattern.clone(),
+            rating,
+        })
+        .collect()
+}
+
+/// The floor of the mean of `ratings`, counting Again as 0, Hard as 1, Good as 2 and Easy as 3; `None` for none.
+fn mean(ratings: impl Iterator<Item = PatternRating>) -> Option<PatternRating> {
+    let (sum, count) = ratings.fold((0_usize, 0_usize), |(sum, count), rating| {
+        let points = match rating {
+            PatternRating::Again => 0,
+            PatternRating::Hard => 1,
+            PatternRating::Good => 2,
+            PatternRating::Easy => 3,
+        };
+        (sum + points, count + 1)
+    });
+    Some(match sum.checked_div(count)? {
+        0 => PatternRating::Again,
+        1 => PatternRating::Hard,
+        2 => PatternRating::Good,
+        _ => PatternRating::Easy,
+    })
+}
+
+/// The rating a review gives the lesson its drill was built from: the mean of the ratings of the issues tied to it.
+/// Every rated issue of a passage is tied to it; of code, those with a lesson link. `None` when none is tied.
+pub fn lesson_rating(
+    material: &Material,
+    key: &[KeyIssue],
+    assessment: &Assessment,
+) -> Option<PatternRating> {
+    mean(
+        rated(key, assessment)
+            .filter(|(issue, _)| matches!(material, Material::Passage) || issue.lesson.is_some())
+            .map(|(_, rating)| rating),
+    )
+}
+
+/// One rating per pattern, for the schedule, which takes one review per pattern per attempt: the mean of that
+/// pattern's ratings, patterns in the order they first appear.
+pub fn per_pattern(ratings: &[IssueRating]) -> Vec<IssueRating> {
+    let mut patterns: Vec<&str> = Vec::new();
+    for entry in ratings {
+        if !patterns.contains(&entry.pattern.as_str()) {
+            patterns.push(&entry.pattern);
+        }
+    }
+    patterns
+        .into_iter()
+        .filter_map(|pattern| {
+            let rating = mean(
+                ratings
+                    .iter()
+                    .filter(|rated| rated.pattern == pattern)
+                    .map(|rated| rated.rating),
+            )?;
             Some(IssueRating {
-                pattern: issue.pattern.clone(),
-                rating: rating(&outcome),
+                pattern: pattern.to_owned(),
+                rating,
             })
         })
         .collect()
@@ -79,6 +147,8 @@ enum Standing {
     New,
     /// Practised and not yet due.
     Rested,
+    /// A drill that plants it is out and not yet graded.
+    Pending,
 }
 
 struct Candidate {
@@ -94,7 +164,7 @@ struct Candidate {
 ///
 /// Only patterns that apply to `material` are chosen. They are ranked patterns
 /// due (`due_at <= now`), earliest first; then patterns never practised, in the
-/// catalogue's order; then the rest, soonest due first. From that ranking each
+/// catalogue's order; then the rest, soonest due first, and last the patterns a drill that is out plants. From that ranking each
 /// pick is the first pattern whose family has not been picked yet, so a drill
 /// interleaves families; when every family left has been picked, the families
 /// start over and the pick is the first of what is left. A pattern with no
@@ -109,11 +179,10 @@ pub fn targets(
     let mut candidates: Vec<Candidate> = patterns_for(material)
         .enumerate()
         .map(|(order, pattern)| {
-            let due_at = states
-                .iter()
-                .find(|state| state.pattern == pattern.id)
-                .and_then(|state| state.due_at);
+            let state = states.iter().find(|state| state.pattern == pattern.id);
+            let due_at = state.and_then(|state| state.due_at);
             let standing = match due_at {
+                _ if state.is_some_and(|state| state.pending) => Standing::Pending,
                 None => Standing::New,
                 Some(at) if at <= now => Standing::Due,
                 Some(_) => Standing::Rested,
@@ -145,19 +214,4 @@ pub fn targets(
         chosen.push(picked.pattern);
     }
     chosen
-}
-
-/// The rating a review gives the lesson its drill was built from: the mean of the ratings of the issues tied to it.
-pub fn lesson_rating(
-    _material: &Material,
-    _key: &[KeyIssue],
-    _assessment: &Assessment,
-) -> Option<PatternRating> {
-    None
-}
-
-/// One rating per pattern, for the schedule, which takes one review per pattern per attempt: the mean of that
-/// pattern's ratings, patterns in the order they first appear.
-pub fn per_pattern(ratings: &[IssueRating]) -> Vec<IssueRating> {
-    ratings.to_vec()
 }

@@ -17,9 +17,28 @@ pub struct LessonStanding {
 }
 
 /// The ids of `lessons`, given in course order, in the order the next drill prefers them (design §5).
-pub fn next_lessons(lessons: &[LessonStanding], _now: i64) -> Vec<&str> {
-    lessons
+pub fn next_lessons(lessons: &[LessonStanding], now: i64) -> Vec<&str> {
+    let mut ranked: Vec<(u8, i64, usize, &str)> = lessons
         .iter()
-        .map(|lesson| lesson.lesson_id.as_str())
-        .collect()
+        .enumerate()
+        .filter(|(_, lesson)| lesson.fits)
+        .map(|(index, lesson)| {
+            let (rank, time) = match (lesson.pending, lesson.due_at) {
+                (true, _) => (3, 0),
+                (false, Some(at)) if at <= now => (0, at),
+                (false, Some(at)) => (2, at),
+                (false, None) => (
+                    1,
+                    if lesson.current {
+                        0
+                    } else {
+                        i64::from(!lesson.completed) + 1
+                    },
+                ),
+            };
+            (rank, time, index, lesson.lesson_id.as_str())
+        })
+        .collect();
+    ranked.sort_by_key(|&(rank, time, index, _)| (rank, time, index));
+    ranked.into_iter().map(|(_, _, _, id)| id).collect()
 }

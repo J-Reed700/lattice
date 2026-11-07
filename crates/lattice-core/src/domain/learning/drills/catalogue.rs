@@ -162,8 +162,77 @@ pub const LANGUAGES: [&str; 15] = [
 ];
 
 /// The language of `LANGUAGES` most of the fenced code in `texts` is written in, ties to the one listed first; `None` when no fence names one.
-pub fn language_of_code(_texts: &[&str]) -> Option<&'static str> {
-    None
+pub fn language_of_code(texts: &[&str]) -> Option<&'static str> {
+    let mut counts: Vec<(&'static str, usize)> = LANGUAGES.iter().map(|&name| (name, 0)).collect();
+    for text in texts {
+        let mut open: Option<char> = None;
+        for line in text.lines() {
+            let fence = line.trim_start_matches(' ');
+            if line.len() - fence.len() > 3 {
+                continue;
+            }
+            let Some(mark) = fence
+                .chars()
+                .next()
+                .filter(|&mark| mark == '`' || mark == '~')
+            else {
+                continue;
+            };
+            let info = fence.trim_start_matches(mark);
+            if fence.len() - info.len() < 3 {
+                continue;
+            }
+            if open == Some(mark) {
+                open = None;
+                continue;
+            }
+            if open.is_some() {
+                continue;
+            }
+            open = Some(mark);
+            let word = info
+                .trim_start()
+                .split(|c: char| c.is_whitespace() || c == '{')
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches('.')
+                .to_lowercase();
+            if let Some(language) = language_named(&word) {
+                if let Some((_, count)) = counts.iter_mut().find(|(name, _)| *name == language) {
+                    *count += 1;
+                }
+            }
+        }
+    }
+    let mut best: Option<(&'static str, usize)> = None;
+    for &(name, count) in &counts {
+        if count > best.map_or(0, |(_, most)| most) {
+            best = Some((name, count));
+        }
+    }
+    best.map(|(name, _)| name)
+}
+
+/// The language of `LANGUAGES` a fence's first word names, in lower case.
+fn language_named(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "python" | "py" | "python3" | "py3" => "python",
+        "javascript" | "js" | "jsx" | "mjs" | "cjs" | "node" => "javascript",
+        "typescript" | "ts" | "tsx" => "typescript",
+        "rust" | "rs" => "rust",
+        "go" | "golang" => "go",
+        "java" => "java",
+        "csharp" | "cs" | "c#" => "csharp",
+        "cpp" | "c++" | "cc" | "cxx" | "hpp" => "cpp",
+        "c" | "h" => "c",
+        "kotlin" | "kt" | "kts" => "kotlin",
+        "swift" => "swift",
+        "ruby" | "rb" => "ruby",
+        "php" => "php",
+        "sql" | "postgresql" | "postgres" | "mysql" | "sqlite" | "plsql" => "sql",
+        "shell" | "sh" | "bash" | "zsh" | "console" => "shell",
+        _ => return None,
+    })
 }
 
 /// The pattern with this id.
