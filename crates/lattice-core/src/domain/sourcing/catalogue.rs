@@ -17,6 +17,7 @@ pub const FINDER_IDS: &[&str] = &[
     "marginalia",
     // Encyclopedia and owner sites
     "wikipedia",
+    "wikibooks",
     "wikidata",
     "site_discovery",
     // Code host and registries
