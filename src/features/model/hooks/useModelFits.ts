@@ -58,7 +58,7 @@ function loaderFor(api: ApiClient): FitLoader {
 
 /** The file a verdict is read for, or null when the model names no file. */
 export function modelFileRef(model: Pick<ModelMetadata, 'model_id' | 'default_filename'>): ModelFileRefDto | null {
-  return model.model_id && model.default_filename ? { repo: model.model_id, file: model.default_filename } : null;
+  return model.model_id && model.default_filename ? { repo: model.model_id, file: model.default_filename, revision: null } : null;
 }
 
 /**

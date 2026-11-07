@@ -18,8 +18,8 @@ const verdict: FitVerdictDto = {
   device: { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated', totalBytes: 16 * GB },
 };
 const refs: ModelFileRefDto[] = [
-  { repo: 'pub/alpha-GGUF', file: 'alpha-Q4_K_M.gguf' },
-  { repo: 'pub/beta-GGUF', file: 'beta-Q4_K_M.gguf' },
+  { repo: 'pub/alpha-GGUF', file: 'alpha-Q4_K_M.gguf', revision: null },
+  { repo: 'pub/beta-GGUF', file: 'beta-Q4_K_M.gguf', revision: null },
 ];
 
 function setup(readModelFits: ReturnType<typeof vi.fn>) {

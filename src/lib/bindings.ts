@@ -8560,7 +8560,7 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
-export type ModelFileRefDto = { repo: string; file: string; revision?: string | null }
+export type ModelFileRefDto = { repo: string; file: string; revision: string | null }
 export type ModelInfo = {
 /**
  * The loaded model's vector-space identity; empty when none is loaded.
