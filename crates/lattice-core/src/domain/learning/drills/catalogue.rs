@@ -161,7 +161,9 @@ pub const LANGUAGES: [&str; 15] = [
     "shell",
 ];
 
-/// The language of `LANGUAGES` most of the fenced code in `texts` is written in, ties to the one listed first; `None` when no fence names one.
+/// The language of `LANGUAGES` most of the fenced code in `texts` is written in, ties going to the one listed first;
+/// `None` when no fence names one. A fence opens on a line of three or more backticks or tildes indented at most three
+/// spaces, its info string's first word names the language, and the next fence of the same mark closes it.
 pub fn language_of_code(texts: &[&str]) -> Option<&'static str> {
     let mut counts: Vec<(&'static str, usize)> = LANGUAGES.iter().map(|&name| (name, 0)).collect();
     for text in texts {

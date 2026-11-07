@@ -133,7 +133,7 @@ pub struct PatternDue {
     pub pattern: String,
     /// `None`: never practised.
     pub due_at: Option<i64>,
-    /// A drill that plants it is out and not yet graded.
+    /// A drill that plants it is ready to be taken, or out and not yet graded.
     #[serde(default)]
     pub pending: bool,
 }
@@ -147,7 +147,7 @@ enum Standing {
     New,
     /// Practised and not yet due.
     Rested,
-    /// A drill that plants it is out and not yet graded.
+    /// A drill that plants it is ready to be taken, or out and not yet graded.
     Pending,
 }
 
@@ -164,12 +164,14 @@ struct Candidate {
 ///
 /// Only patterns that apply to `material` are chosen. They are ranked patterns
 /// due (`due_at <= now`), earliest first; then patterns never practised, in the
-/// catalogue's order; then the rest, soonest due first, and last the patterns a drill that is out plants. From that ranking each
+/// catalogue's order; then the rest, soonest due first. From that ranking each
 /// pick is the first pattern whose family has not been picked yet, so a drill
 /// interleaves families; when every family left has been picked, the families
-/// start over and the pick is the first of what is left. A pattern with no
-/// entry in `states` is never practised, and a pattern listed twice takes its
-/// first entry. The same inputs give the same patterns in the same order.
+/// start over and the pick is the first of what is left. Patterns a drill that
+/// is out plants are picked the same way, but only once every other pattern
+/// is. A pattern with no entry in `states` is never practised, and a pattern
+/// listed twice takes its first entry. The same inputs give the same patterns
+/// in the same order.
 pub fn targets(
     material: &Material,
     states: &[PatternDue],
@@ -196,22 +198,27 @@ pub fn targets(
         })
         .collect();
     candidates.sort_by_key(|candidate| (candidate.standing, candidate.due_at, candidate.order));
+    let (fresh, pending): (Vec<Candidate>, Vec<Candidate>) = candidates
+        .into_iter()
+        .partition(|candidate| candidate.standing != Standing::Pending);
     let mut chosen = Vec::new();
     let mut picked_families: Vec<Family> = Vec::new();
-    while chosen.len() < count && !candidates.is_empty() {
-        let next = candidates
-            .iter()
-            .position(|candidate| !picked_families.contains(&candidate.pattern.family));
-        let at = match next {
-            Some(at) => at,
-            None => {
-                picked_families.clear();
-                0
-            }
-        };
-        let picked = candidates.remove(at);
-        picked_families.push(picked.pattern.family);
-        chosen.push(picked.pattern);
+    for mut candidates in [fresh, pending] {
+        while chosen.len() < count && !candidates.is_empty() {
+            let next = candidates
+                .iter()
+                .position(|candidate| !picked_families.contains(&candidate.pattern.family));
+            let at = match next {
+                Some(at) => at,
+                None => {
+                    picked_families.clear();
+                    0
+                }
+            };
+            let picked = candidates.remove(at);
+            picked_families.push(picked.pattern.family);
+            chosen.push(picked.pattern);
+        }
     }
     chosen
 }

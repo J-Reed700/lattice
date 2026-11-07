@@ -16,7 +16,9 @@ pub struct LessonStanding {
     pub fits: bool,
 }
 
-/// The ids of `lessons`, given in course order, in the order the next drill prefers them (design §5).
+/// The ids of `lessons`, given in course order, in the order the next drill prefers them: lessons due, earliest first;
+/// then those never rated, the current lesson first, then completed lessons, then the rest; then those not yet due,
+/// soonest first; and last those pending. A lesson that does not fit is left out, and ties keep the course's order.
 pub fn next_lessons(lessons: &[LessonStanding], now: i64) -> Vec<&str> {
     let mut ranked: Vec<(u8, i64, usize, &str)> = lessons
         .iter()

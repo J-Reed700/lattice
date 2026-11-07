@@ -158,7 +158,8 @@ pub struct KeyIssue {
     pub explanation: String,
     pub proof: Proof,
     pub origin: Origin,
-    /// What the issue breaks of its drill's lesson: `None` for an issue of the catalogue alone, and in keys stored before drills were built from lessons.
+    /// What the issue breaks of its drill's lesson: `None` for an issue of the catalogue alone, and in keys stored
+    /// before drills were built from lessons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lesson: Option<LessonLink>,
 }
