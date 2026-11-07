@@ -82,8 +82,6 @@ const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
 
 const recommendation = (overrides: Partial<ModelMetadata> = {}, extra: Partial<ModelRecommendation> = {}): ModelRecommendation => ({
   model: metadata(overrides),
-  compatibility: null,
-  ranking_score: 90,
   popularity_downloads: 12_000,
   popularity_likes: 310,
   ...extra,

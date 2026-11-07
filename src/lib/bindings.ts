@@ -5369,66 +5369,6 @@ error: string | null;
  */
 degraded: string | null }
 export type CompareTableDto = { columns: string[]; rows: CompareRowDto[]; modelName: string; generatedAt: string }
-/**
- * Compatibility level DTO for frontend.
- */
-export type CompatibilityLevelDto =
-/**
- * Model will NOT run
- */
-"Incompatible" |
-/**
- * Model may run poorly
- */
-"Poor" |
-/**
- * Model will run acceptably
- */
-"Good" |
-/**
- * Model will run well
- */
-"Excellent"
-/**
- * Compatibility score DTO for frontend.
- */
-export type CompatibilityScoreDto = {
-/**
- * Overall compatibility level
- */
-compatibility_level: CompatibilityLevelDto;
-/**
- * Overall score (0-100)
- */
-overall_score: number;
-/**
- * RAM score (0-100)
- */
-ram_score: number;
-/**
- * GPU score (0-100)
- */
-gpu_score: number;
-/**
- * Disk score (0-100)
- */
-disk_score: number;
-/**
- * Estimated tokens/second (LLMs only)
- */
-estimated_tokens_per_second: number | null;
-/**
- * Estimated loading time in seconds
- */
-estimated_loading_time_seconds: number;
-/**
- * Recommendations
- */
-recommendations: string[];
-/**
- * Blockers
- */
-blockers: string[] }
 export type CompleteLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto[];
 /**
@@ -8738,14 +8678,6 @@ export type ModelRecommendationDto = {
  * Model metadata
  */
 model: ModelMetadataDto;
-/**
- * Compatibility analysis
- */
-compatibility: CompatibilityScoreDto;
-/**
- * Ranking score (0-100)
- */
-ranking_score: number;
 /**
  * Popularity metric from upstream provider (downloads)
  */

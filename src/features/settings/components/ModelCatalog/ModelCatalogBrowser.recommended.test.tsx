@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ModelCatalogBrowser } from './ModelCatalogBrowser';
@@ -54,7 +54,7 @@ const model = (id: string, overrides: Record<string, unknown> = {}) => ({
 });
 
 const rec = (id: string, extra: Record<string, unknown> = {}) => ({
-  model: model(id), ranking_score: 50, popularity_downloads: 100, popularity_likes: 10, ...extra,
+  model: model(id), popularity_downloads: 100, popularity_likes: 10, ...extra,
 });
 
 const noFilters = { category: null, max_size_gb: null, min_downloads: null, required_capabilities: [], embedding_dimensions: null };
@@ -78,9 +78,9 @@ describe('ModelCatalogBrowser recommended for this computer', () => {
       // Roomy on purpose: the old frontend rule would call every 8 GB model a fit.
       systemCapabilities: { total_ram_gb: 64, gpu_acceleration: 'None', gpu_type: 'None', vram_gb: null, available_disk_gb: 500 },
       compatibleModels: [
-        rec('basil', { ranking_score: 60, popularity_downloads: 10 }),
-        rec('anise', { ranking_score: 40, popularity_downloads: 1000 }),
-        rec('cumin', { ranking_score: 80, popularity_downloads: null }),
+        rec('basil', { popularity_downloads: 10 }),
+        rec('anise', { popularity_downloads: 1000 }),
+        rec('cumin', { popularity_downloads: null }),
       ],
       searchResults: [],
       compatibleModelsLoading: false,
@@ -117,24 +117,16 @@ describe('ModelCatalogBrowser recommended for this computer', () => {
     expect(section.compareDocumentPosition(screen.getByTestId('ModelListView')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('sorts Recommended in the recommender’s order, the rest after', async () => {
+  it('sorts Recommended in the order the backend returned the models, whatever their popularity', async () => {
     h.catalog.sortBy = 'recommended';
-    h.api.recommendChatModels.mockResolvedValue({
-      ok: true,
-      data: [recommendation('anise', 'Anise 4B'), recommendation('basil', 'Basil 9B')],
-    });
+    h.catalog.compatibleModels = [
+      rec('cumin', { popularity_downloads: null }),
+      rec('basil', { popularity_downloads: 10 }),
+      rec('anise', { popularity_downloads: 1000 }),
+    ];
     renderBrowser();
-    await waitFor(() => expect(listed()).toEqual(['anise', 'basil', 'cumin']));
-  });
-
-  it('follows the recommender when it reverses its order', async () => {
-    h.catalog.sortBy = 'recommended';
-    h.api.recommendChatModels.mockResolvedValue({
-      ok: true,
-      data: [recommendation('basil', 'Basil 9B'), recommendation('anise', 'Anise 4B')],
-    });
-    renderBrowser();
-    await waitFor(() => expect(listed()).toEqual(['basil', 'anise', 'cumin']));
+    await screen.findByRole('region', { name: 'Recommended for this computer' });
+    expect(listed()).toEqual(['cumin', 'basil', 'anise']);
   });
 
   it('filters by fit on the backend verdict, not on a figure the frontend computes', async () => {

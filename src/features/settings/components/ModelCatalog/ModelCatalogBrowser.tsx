@@ -69,9 +69,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
 
   // Determine which models to display
   const displayedModels = useMemo(() => {
-    const recommendedOrder = new Map((recommendations ?? []).map((entry, index) => [entry.modelId, index]));
     const sortModels = <T extends {
-      ranking_score: number;
       popularity_downloads?: number | null;
       popularity_likes?: number | null;
       model: { id: string; size_gb: number; name: string };
@@ -102,21 +100,12 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
           if (downloadsB !== downloadsA) return downloadsB - downloadsA;
         }
 
-        if (sortBy === 'recommended') {
-          const rankA = recommendedOrder.get(a.model.id) ?? Infinity;
-          const rankB = recommendedOrder.get(b.model.id) ?? Infinity;
-          if (rankA !== rankB) return rankA - rankB;
-          // Blend ranking score with popularity so obscure models don't dominate
-          const scoreA = a.ranking_score + Math.log10(Math.max(a.popularity_downloads ?? 1, 1)) * 5;
-          const scoreB = b.ranking_score + Math.log10(Math.max(b.popularity_downloads ?? 1, 1)) * 5;
-          if (scoreB !== scoreA) return scoreB - scoreA;
-        }
+        // The backend's order is the recommendation; ties keep it too.
+        if (sortBy === 'recommended') return 0;
 
-        // Stable fallback: downloads then ranking
         const downloadsA = a.popularity_downloads ?? 0;
         const downloadsB = b.popularity_downloads ?? 0;
-        if (downloadsB !== downloadsA) return downloadsB - downloadsA;
-        return b.ranking_score - a.ranking_score;
+        return downloadsB - downloadsA;
       });
 
     const applyFilters = <T extends {
@@ -173,18 +162,6 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     if (searchQuery.trim()) {
       const mapped = searchResults.map((result) => ({
         model: result.model,
-        compatibility: {
-          compatibility_level: 'Good' as const,
-          overall_score: result.relevance_score,
-          ram_score: 0,
-          gpu_score: 0,
-          disk_score: 0,
-          estimated_tokens_per_second: null,
-          estimated_loading_time_seconds: 0,
-          recommendations: [],
-          blockers: [],
-        },
-        ranking_score: result.relevance_score,
         popularity_downloads: result.popularity_downloads ?? null,
         popularity_likes: result.popularity_likes ?? null,
         fit: result.fit,
@@ -193,7 +170,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
     }
 
     return sortModels(applyFilters(compatibleModels));
-  }, [compatibleModels, searchResults, searchQuery, filters, sortBy, recommendations]);
+  }, [compatibleModels, searchResults, searchQuery, filters, sortBy]);
 
   const quantizations = useMemo(() => [...new Set((isSearching ? searchResults : compatibleModels)
     .map(({ model }) => modelQuantization(model)).filter((value): value is string => Boolean(value)))], [isSearching, searchResults, compatibleModels]);

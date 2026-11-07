@@ -32,18 +32,6 @@ const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
 
 const row = (fit: unknown, overrides: Partial<ModelMetadata> = {}) => ({
   model: metadata(overrides),
-  compatibility: {
-    compatibility_level: 'Excellent',
-    overall_score: 94,
-    ram_score: 98,
-    gpu_score: 92,
-    disk_score: 99,
-    estimated_tokens_per_second: 34.5,
-    estimated_loading_time_seconds: 4.2,
-    recommendations: [],
-    blockers: [],
-  },
-  ranking_score: 92,
   popularity_downloads: 12_000,
   popularity_likes: 310,
   fit,

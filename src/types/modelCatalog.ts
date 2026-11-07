@@ -11,7 +11,6 @@ import type { FitVerdictDto } from '@/lib/bindings';
 import type {
   ModelCategory,
   PerformanceTier,
-  CompatibilityLevel,
   ModelSource,
 } from './modelCatalogPrimitives';
 
@@ -21,7 +20,6 @@ export type {
   GpuType,
   GpuAcceleration,
   CpuArchitecture,
-  CompatibilityLevel,
   ModelSource,
   ModelSortBy,
 } from './modelCatalogPrimitives';
@@ -110,44 +108,11 @@ export type EmbeddingCompatibility =
   | { kind: 'unknown' };
 
 /**
- * Detailed compatibility analysis between a model and system.
- *
- * Provides overall compatibility level, detailed factor scores,
- * performance estimates, and recommendations.
- */
-export interface CompatibilityScore {
-  /** Overall compatibility level */
-  compatibility_level: CompatibilityLevel;
-  /** Overall compatibility score (0-100) */
-  overall_score: number;
-  /** RAM compatibility score (0-100) */
-  ram_score: number;
-  /** GPU compatibility score (0-100) */
-  gpu_score: number;
-  /** Disk space compatibility score (0-100) */
-  disk_score: number;
-  /** Estimated tokens per second (for LLMs) */
-  estimated_tokens_per_second: number | null;
-  /** Estimated model loading time in seconds */
-  estimated_loading_time_seconds: number;
-  /** Human-readable recommendations */
-  recommendations: string[];
-  /** Blockers preventing model from running */
-  blockers: string[];
-}
-
-/**
- * Model recommendation with compatibility analysis.
- *
- * Combines model metadata with compatibility score and ranking.
+ * A catalog model in the order the backend returned it.
  */
 export interface ModelRecommendation {
   /** Model metadata */
   model: ModelMetadata;
-  /** Compatibility analysis */
-  compatibility: CompatibilityScore;
-  /** Ranking score (0-100) combining compatibility and model quality */
-  ranking_score: number;
   /** Upstream popularity metric (download count), when available */
   popularity_downloads?: number | null;
   /** Upstream popularity metric (like count), when available */

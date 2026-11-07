@@ -28,8 +28,6 @@ const row = (id: string, fit: unknown, repo = `pub/${id}-GGUF`) => ({
     capabilities: ['chat'], supported_quantizations: ['Q4_K_M'], model_id: repo, default_filename: `${id}-Q4_K_M.gguf`,
     requires_auth: false, files: [], license: 'MIT', embedding_dimensions: null, embedding_compatibility: null,
   },
-  compatibility: null,
-  ranking_score: 50,
   popularity_downloads: 10,
   popularity_likes: 1,
   fit,

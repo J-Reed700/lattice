@@ -1309,8 +1309,7 @@ test('catalog offers category previews, bounded pages, and honest search results
             default_filename: `${id}.gguf`, files: [], total_size_bytes: 1000000000,
             embedding_dimensions: category === 'Embedding' ? 384 : null, embedding_compatibility: null,
           },
-          compatibility: { compatibility_level: 'Good', overall_score: 80, ram_score: 90, gpu_score: 80, disk_score: 90, estimated_tokens_per_second: null, estimated_loading_time_seconds: 3, recommendations: [], blockers: [] },
-          ranking_score: 80 - index, popularity_downloads: 100000 - index * 1000 - variant, popularity_likes: 100,
+          popularity_downloads: 100000 - index * 1000 - variant, popularity_likes: 100,
         } satisfies Fixture<CommandResult<'get_all_recommended_models'>[number]>;
       })
     ));
