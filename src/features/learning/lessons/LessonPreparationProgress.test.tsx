@@ -65,12 +65,13 @@ describe('Durable lesson preparation progress', () => {
     view.unmount(); view.client.clear();
   });
 
-  it('explains the live verification pass, saved progress, research transitions and reopening', async () => {
+  it('explains the live checks, the plan, saved progress, research transitions and reopening', async () => {
     let current: LearningGenerationJob = { ...job, activity: {
       phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 120_000,
       lastCheckpointAt: Date.now() - 180_000, lessonTitle: 'Understanding observations', modelName: 'Test model',
       modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 2,
-      checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, checksSentBack: 0, newReferences: null, modelChecksTotal: 134, deeperEvidence: null, claims: null,
+      checksCompleted: 77, checksTotal: 164, checksReused: 30, newReferences: null, claims: null,
+      statements: { sourced: 90, reasoning: 54, common: 20 }, modelCalls: 112, modelCallsCeiling: 278,
       recentSteps: [{ phase: 'coverage', startedAt: Date.now() - 700_000 }, { phase: 'evidence', startedAt: Date.now() - 600_000 }],
     } };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
@@ -83,7 +84,9 @@ describe('Durable lesson preparation progress', () => {
     expect(screen.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
     expect(screen.getByText('77 / 164 checked')).toBeVisible();
     expect(screen.getByText('87')).toBeVisible();
-    expect(screen.getByText('74')).toBeVisible();
+    expect(screen.getByText('164 statements: 90 to check against their sources, 54 to check for consistency, 20 common knowledge')).toBeVisible();
+    expect(screen.getByText('112 calls so far, at most 278')).toBeVisible();
+    expect(screen.queryByText(/sent back|need attention|needed attention|Pass \d/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Checkpoint saved at/)).toBeVisible();
     expect(screen.getByText(/No new output or completed step/)).toBeVisible();
     expect(screen.getByText('Waiting for model output')).toBeVisible();
@@ -98,7 +101,7 @@ describe('Durable lesson preparation progress', () => {
     current = { ...current, progressMessage: 'Saving additional references', activity: { ...current.activity!, phase: 'research', modelRunning: false } };
     await view.client.invalidateQueries();
     expect(await screen.findByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
-    expect(screen.getByText(/Last verification pass/)).toBeVisible();
+    expect(screen.getByText('Last claim checks')).toBeVisible();
     expect(screen.queryByText('Waiting for model output')).not.toBeInTheDocument();
     view.unmount(); view.client.clear();
     const reopened = show();
@@ -126,65 +129,38 @@ describe('Durable lesson preparation progress', () => {
     unmount(); client.clear();
   });
 
-  it('waits for the complete reuse count and distinguishes 3 new checks from 170 lesson claims', async () => {
-    let current: LearningGenerationJob = { ...job, activity: {
-      phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
-      lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: false,
-      responseCharacters: 0, modelAttempt: 0, verificationPass: 41, checksCompleted: 3,
-      checksTotal: 170, checksReused: 3, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null, recentSteps: [],
-    } };
+  it('says nothing of the plan before the statements are sorted, then shows it with the calls made beside the most there can be', async () => {
+    const sorting = {
+      phase: 'evidence' as const, phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
+      lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: true,
+      responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted: 0,
+      checksTotal: 73, checksReused: 0, newReferences: null, claims: null, recentSteps: [],
+    };
+    let current: LearningGenerationJob = { ...job, activity: { ...sorting, modelCalls: 2 } };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
     const view = show();
     await screen.findByRole('status');
     await openDetails();
-    expect(await screen.findByText(/Looking for saved checks to reuse/)).toBeVisible();
-    expect(screen.getByText('Calculating…')).toBeVisible();
-    expect(screen.queryByText('167')).not.toBeInTheDocument();
-    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
-    current = { ...current, activity: { ...current.activity!, checksCompleted: 167, checksReused: 167, modelChecksTotal: 3, deeperEvidence: null, modelRunning: true } };
+    expect(await screen.findByText('2 calls so far')).toBeVisible();
+    expect(screen.queryByText(/statements:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/at most/)).not.toBeInTheDocument();
+    current = { ...current, activity: { ...sorting, statements: { sourced: 36, reasoning: 29, common: 8 }, modelCalls: 40, modelCallsCeiling: 278, checksCompleted: 12 } };
     await view.client.invalidateQueries();
-    expect(await screen.findByText('167 saved checks reused. 3 of 3 model checks remaining in this pass.')).toBeVisible();
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '167');
-    expect(screen.queryByText('Calculating…')).not.toBeInTheDocument();
-    current = { ...current, activity: { ...current.activity!, checksCompleted: 170, checksUnresolved: 1, modelRunning: false, phase: 'research' } };
+    expect(await screen.findByText('73 statements: 36 to check against their sources, 29 to check for consistency, 8 common knowledge')).toBeVisible();
+    expect(screen.getByText('40 calls so far, at most 278')).toBeVisible();
+    expect(screen.getByText('12 / 73 checked')).toBeVisible();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuetext', expect.stringContaining('40 calls so far, at most 278'));
+    current = { ...current, activity: { ...current.activity!, modelCalls: 90, modelCallsCeiling: 251, checksCompleted: 40 } };
+    await view.client.invalidateQueries();
+    expect(await screen.findByText('90 calls so far, at most 251')).toBeVisible();
+    expect(screen.queryByText(/40 calls so far/)).not.toBeInTheDocument();
+    current = { ...current, activity: { ...current.activity!, checksCompleted: 73, phase: 'research', modelRunning: false } };
     await view.client.invalidateQueries();
     expect(await screen.findByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
-    expect(screen.getByText('170 / 170 checked')).toBeVisible();
-    expect(screen.getByText(/Checking finished; 1 claim needed attention in the last pass/)).toBeVisible();
-    expect(screen.queryByText(/Each pass fixes or hands over at least one claim/)).not.toBeInTheDocument();
+    expect(screen.getByText('73 / 73 checked')).toBeVisible();
+    expect(screen.getByText(/Checking finished\. Additional evidence is being researched/)).toBeVisible();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     expect(screen.queryByText('Still to check')).not.toBeInTheDocument();
-    view.unmount(); view.client.clear();
-  });
-
-  it('counts each claim once while unsupported claims are checked against deeper evidence pages', async () => {
-    let current: LearningGenerationJob = { ...job, progressMessage: 'Checking 21 unsupported claims against their next page of evidence (page 3)', activity: {
-      phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
-      lessonTitle: 'Async/Await Under the Hood', modelName: 'Test model', modelRunning: true,
-      responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted: 115,
-      checksTotal: 115, checksReused: 115, checksUnresolved: 21, checksSentBack: 0, newReferences: null, modelChecksTotal: 0,
-      deeperEvidence: { page: 3, claims: 21, checked: 8 }, claims: null, recentSteps: [],
-    } };
-    const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
-    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
-    const view = show();
-    const bar = await screen.findByRole('progressbar', { name: 'Unsupported claims checked against evidence page 3' });
-    expect(bar).toHaveAttribute('aria-valuenow', '8');
-    expect(bar).toHaveAttribute('aria-valuemax', '21');
-    await openDetails();
-    expect(screen.getByText('115 / 115 checked')).toBeVisible();
-    expect(screen.getByText(/Every claim has had its first check\. Checking 21 unsupported claims against evidence page 3; 13 left\./)).toBeVisible();
-    expect([count('Found in a source'), count('Need attention'), count('Left on evidence page 3')]).toEqual(['94', '21', '13']);
-    expect(screen.queryByText('Still to check')).not.toBeInTheDocument();
-    current = { ...current, activity: { ...current.activity!, checksUnresolved: 20, deeperEvidence: { page: 3, claims: 21, checked: 9 } } };
-    await view.client.invalidateQueries();
-    await waitFor(() => expect(count('Left on evidence page 3')).toBe('12'));
-    expect([count('Found in a source'), count('Need attention')]).toEqual(['95', '20']);
-    current = { ...current, activity: { ...current.activity!, deeperEvidence: null } };
-    await view.client.invalidateQueries();
-    expect(await screen.findByText(/Checking finished\. Preparing the next step\./)).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Claim checks this pass' })).toHaveAttribute('aria-valuenow', '115');
-    expect([count('Found in a source'), count('Need attention'), count('Still to check')]).toEqual(['95', '20', '0']);
     view.unmount(); view.client.clear();
   });
 
@@ -197,7 +173,7 @@ describe('Durable lesson preparation progress', () => {
         phase: 'repair', phaseStartedAt: now - 600_000, lastActivityAt: now - 120_000,
         lastCheckpointAt: now - 120_000, lessonTitle: 'Understanding observations', modelName: 'Test model',
         modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 43,
-        checksCompleted: 170, checksTotal: 170, checksReused: 55, checksUnresolved: 21, checksSentBack: 0, newReferences: null, modelChecksTotal: 115, deeperEvidence: null, claims: null, recentSteps: [],
+        checksCompleted: 170, checksTotal: 170, checksReused: 55, newReferences: null, claims: null, recentSteps: [],
       },
     };
     const client = new QueryClient();
@@ -207,7 +183,7 @@ describe('Durable lesson preparation progress', () => {
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Details' }));
     expect(screen.getByText('Lesson not ready yet')).toBeVisible();
-    expect(screen.getByText(/Checking finished; 21 claims needed attention in the last pass/)).toBeVisible();
+    expect(screen.getByText(/Checking finished\. The affected sections are being corrected before another review/)).toBeVisible();
     expect(screen.getByText(/Correcting affected section 4 of 9/)).toBeVisible();
     expect(screen.getByText('Last reported progress · 2m 0s ago')).toBeVisible();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
@@ -234,7 +210,7 @@ describe('Durable lesson preparation progress', () => {
         phase: 'evidence', phaseStartedAt: Date.now() - 60_000, lastActivityAt: Date.now(),
         lastCheckpointAt: Date.now(), lessonTitle: 'Understanding observations', modelName: 'Previous main model',
         modelRunning: true, responseCharacters: 420, modelAttempt: 1, verificationPass: 2,
-        checksCompleted: 77, checksTotal: 164, checksReused: 30, checksUnresolved: 3, checksSentBack: 0, newReferences: null, modelChecksTotal: 134, deeperEvidence: null, claims: null, recentSteps: [],
+        checksCompleted: 77, checksTotal: 164, checksReused: 30, newReferences: null, claims: null, recentSteps: [],
       },
     };
     api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
@@ -329,8 +305,8 @@ describe('Durable lesson preparation progress', () => {
       phase: 'repair', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: true,
       responseCharacters: 0, modelAttempt: 1, verificationPass: 3, checksCompleted: 115,
-      checksTotal: 115, checksReused: 0, checksUnresolved: 7, checksSentBack: 0, newReferences: null, modelChecksTotal: 115, deeperEvidence: null,
-      claims: { unchecked: 0, searching: 0, sentBack: 0, repairing: 2, waiting: 5, verified: 108, resolvedByYou: 0 }, recentSteps: [],
+      checksTotal: 115, checksReused: 0, newReferences: null,
+      claims: { unchecked: 0, searching: 0, repairing: 2, waiting: 5, verified: 108, resolvedByYou: 0 }, recentSteps: [],
     } }] } });
     const { client, unmount } = show();
     await screen.findByRole('status');
@@ -340,39 +316,18 @@ describe('Durable lesson preparation progress', () => {
     unmount(); client.clear();
   });
 
-  it('keeps a claim found in a source in that count when the source check sends it back', async () => {
-    let current: LearningGenerationJob = { ...job, activity: {
-      phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
-      lessonTitle: 'Tool use', modelName: 'Test model', modelRunning: true,
-      responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted: 105,
-      checksTotal: 105, checksReused: 0, checksUnresolved: 64, checksSentBack: 0, newReferences: null, modelChecksTotal: 105,
-      deeperEvidence: null, claims: null, recentSteps: [],
-    } };
-    const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
-    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
-    const view = show();
-    await screen.findByRole('status');
-    await openDetails();
-    expect(count('Found in a source')).toBe('41');
-    current = { ...current, activity: { ...current.activity!, checksSentBack: 21 } };
-    await view.client.invalidateQueries();
-    await waitFor(() => expect(count('Of those, sent back for stronger sources')).toBe('21'));
-    expect(count('Found in a source')).toBe('41');
-    view.unmount(); view.client.clear();
-  });
-
-  it('names claims the source check sent back apart from those needing attention, and a re-check against new references', async () => {
+  it('names a re-check against new references, and keeps the research step to the checks that finished', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, activity: {
       phase: 'evidence', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Tool use', modelName: 'Test model', modelRunning: true,
       responseCharacters: 0, modelAttempt: 1, verificationPass: 14, checksCompleted: 8,
-      checksTotal: 89, checksReused: 8, checksUnresolved: 0, checksSentBack: 0, newReferences: 72, modelChecksTotal: 81,
-      deeperEvidence: null, claims: { unchecked: 0, searching: 9, sentBack: 72, repairing: 0, waiting: 3, verified: 5, resolvedByYou: 0 }, recentSteps: [],
+      checksTotal: 89, checksReused: 8, newReferences: 72,
+      claims: { unchecked: 0, searching: 81, repairing: 0, waiting: 3, verified: 5, resolvedByYou: 0 }, recentSteps: [],
     } }] } });
     const { client, unmount } = show();
     await screen.findByRole('status');
     await openDetails();
-    expect(screen.getByText('Re-checking 81 claims against 72 new references · Pass 14')).toBeVisible();
+    expect(screen.getByText('Re-checking 89 claims against 72 new references')).toBeVisible();
     expect(screen.getByText('Still to re-check')).toBeVisible();
     expect(screen.getByText('3 claims need you · 5 verified · 81 being checked')).toBeVisible();
     expect(screen.queryByText(/being repaired/)).not.toBeInTheDocument();
@@ -381,16 +336,14 @@ describe('Durable lesson preparation progress', () => {
       phase: 'research', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Tool use', modelName: 'Test model', modelRunning: false,
       responseCharacters: 0, modelAttempt: 1, verificationPass: 14, checksCompleted: 89,
-      checksTotal: 89, checksReused: 8, checksUnresolved: 9, checksSentBack: 72, newReferences: null, modelChecksTotal: 81,
-      deeperEvidence: null, claims: null, recentSteps: [],
+      checksTotal: 89, checksReused: 8, newReferences: null, claims: null, recentSteps: [],
     } }] } });
     const view = show();
-    const count = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
     await screen.findByRole('status');
     await openDetails();
-    await screen.findByText('Of those, sent back for stronger sources');
-    expect([count('Found in a source'), count('Needed attention in this pass'), count('Of those, sent back for stronger sources')]).toEqual(['80', '9', '72']);
-    expect(screen.getByText(/9 claims needed attention and 72 were sent back for stronger sources in the last pass/)).toBeVisible();
+    expect(await screen.findByText('89 / 89 checked')).toBeVisible();
+    expect(screen.getByText('Saved checks reused')).toBeVisible();
+    expect(screen.queryByText(/sent back/i)).not.toBeInTheDocument();
     view.unmount(); view.client.clear();
   });
 

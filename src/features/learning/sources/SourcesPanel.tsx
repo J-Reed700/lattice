@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { progressLine, recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
+import { SourceCleanup } from '@/features/learning/sources/SourceCleanup';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
 import { SourceTrustSection } from '@/features/learning/sources/trust/SourceTrustSection';
 import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
@@ -305,6 +306,8 @@ export function SourcesPanel({ programId, active = true, onOpenReview }: {
       <span>{recheckLine(recheck)}</span>
       {onOpenReview && <button type="button" onClick={onOpenReview} className="font-medium text-accent underline underline-offset-2">Open the review</button>}
     </p>}
+
+    <SourceCleanup programId={programId} notSources={workspace.data?.notSources ?? []} unusedResearch={workspace.data?.unusedResearch ?? []} />
 
     {(operationMessage || reloadRequired) && <div role="alert" className="mb-4 rounded-xl border border-rose-500/20 bg-rose-500/5 p-4 text-sm text-rose-800"><p>{reloadRequired ? 'This source changed elsewhere. Reload the latest version before trying again.' : operationMessage}</p><div className="mt-3 flex flex-wrap gap-2">{retryOperation && !reloadRequired && <button type="button" onClick={() => void replay()} className="rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">Retry same operation</button>}{reloadRequired && <button type="button" onClick={() => { clearRetry(); void workspace.refetch(); }} className="rounded-full border border-rose-700/30 px-4 py-2 text-xs font-semibold">Reload sources</button>}</div></div>}
 

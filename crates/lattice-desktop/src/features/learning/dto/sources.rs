@@ -62,6 +62,11 @@ pub struct LearningSourceLibraryItemDto {
     pub kind: LearningSourceKind,
     /// Who added the source: the Sources chip (claim review §5.4).
     pub added_by: crate::features::learning::lessons::claim_reviews::dto::SourceAddedByDto,
+    /// Whether the course's outline research found the page, as against a
+    /// document or address the user chose; a pack from before the mark has
+    /// none. The screens do not show it.
+    #[specta(skip)]
+    pub found_by_search: Option<bool>,
     pub origin: String,
     pub requested_url: Option<String>,
     pub freshness_policy: LearningSourcePolicy,
@@ -79,11 +84,33 @@ pub struct LearningSourceLibraryItemDto {
     pub updated_at: i64,
 }
 
+/// A saved page the admission gate refused, or a source research added that
+/// no lesson cites now, listed for the user to remove (claim classes design
+/// 3.6). Nothing is removed without them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningRemovableSourceDto {
+    pub source_id: String,
+    /// The source's revision, which a removal names.
+    pub revision: i64,
+    pub title: String,
+    pub url: Option<String>,
+    /// Why the gate refused the page; none for a source research added.
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningSourceWorkspaceDto {
     pub program_id: String,
     pub sources: Vec<LearningSourceLibraryItemDto>,
+    /// Saved pages the admission gate refused, for the user to remove.
+    #[serde(default)]
+    pub not_sources: Vec<LearningRemovableSourceDto>,
+    /// Sources research added that no lesson cites now, for the user to
+    /// remove.
+    #[serde(default)]
+    pub unused_research: Vec<LearningRemovableSourceDto>,
     /// What checking the course's waiting claims against a source just
     /// added found; null when no re-check ran.
     pub recheck: Option<WaitingClaimsRecheckDto>,

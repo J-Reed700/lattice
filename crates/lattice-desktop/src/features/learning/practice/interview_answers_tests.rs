@@ -698,6 +698,131 @@ async fn guide_is_bound_to_exact_question_and_quotes_revalidated_for_feedback() 
     Ok(())
 }
 
+#[test]
+fn a_long_standard_is_read_not_refused() {
+    let read =
+        |value: Value| serde_json::from_value::<AnswerStandard>(value).expect("valid fixture");
+    let wordy = "It names the condition and the reason it holds. ".repeat(20);
+    let essay = "It names the condition and the reason it holds. ".repeat(100);
+    for (pointer, text) in [
+        ("/referenceAnswer", &essay),
+        ("/keyPoints/1/point", &wordy),
+        ("/acceptableAlternatives/0", &wordy),
+        ("/commonMistakes/0", &wordy),
+        ("/evidenceGaps/0", &wordy),
+        ("/scoringCriteria/0/criterion", &wordy),
+        ("/scoringCriteria/0/fullCredit", &wordy),
+        ("/scoringCriteria/0/partialCredit", &wordy),
+    ] {
+        let mut value = standard();
+        value["evidenceGaps"] = json!(["No captured specification supports this."]);
+        *value.pointer_mut(pointer).expect(pointer) = json!(text);
+        let checked = check_standard(&read(value), &[source()]);
+        assert!(checked.is_ok(), "{pointer}: {:?}", checked.err());
+    }
+}
+
+#[test]
+fn the_author_and_review_schemas_hold_no_text_length_cap() -> Result<()> {
+    use crate::features::learning::practice::practice_tests::text_length_rules;
+    for ids in [vec!["e1".to_string()], Vec::new()] {
+        let rules = text_length_rules(&standard_schema(&ids));
+        assert!(rules.is_empty(), "{rules:?}");
+    }
+    let answer: AnswerStandard =
+        serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
+    let rules = text_length_rules(&interview_answer_review::schema(&answer));
+    assert!(rules.is_empty(), "{rules:?}");
+    Ok(())
+}
+
+#[test]
+fn an_inline_label_is_the_only_thing_the_author_is_told_to_fix() -> Result<()> {
+    let llm = model(vec![]);
+    let source = source();
+    let passages = json!([{"sourceId":source.source_id,"versionId":source.version.id,"passages":[source.full_text]}]);
+    let bank = EvidenceBank::from_passages(&llm, std::slice::from_ref(&source), &passages, 2_000)?;
+    let mut authored = standard();
+    authored["keyPoints"][0]["citations"] = json!(["e1"]);
+    authored["referenceAnswer"] = json!(format!(
+        "Preserve the intended effect [e1]. {}",
+        "It holds under the stated retry conditions. ".repeat(100)
+    ));
+    let error = bank
+        .read_standard(&authored.to_string())
+        .expect_err("an inline label is refused");
+    let message = error.to_string();
+    assert!(message.contains("[e1]"), "{message}");
+    assert!(!message.contains("shorten"), "{message}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_independent_solution_is_read_not_refused() -> Result<()> {
+    use crate::features::learning::practice::practice_tests::Reply;
+    let outline = "The retry preserves the intended effect. ".repeat(250);
+    let llm = Reply::new(outline.clone());
+    let solved = interview_answer_review::independent_solution(
+        &llm,
+        &json!({"id": "question"}),
+        &[],
+        json!([]),
+    )
+    .await?;
+    assert_eq!(solved.trim(), outline.trim());
+    Ok(())
+}
+
+#[test]
+fn a_review_finding_is_read_at_any_length() -> Result<()> {
+    let mut answer: AnswerStandard =
+        serde_json::from_value(standard()).map_err(|error| invalid(error.to_string()))?;
+    let reference = "Preserve the intended effect across retries. ".repeat(20);
+    answer.reference_answer = reference.clone();
+    let wordy = "The scoring would reject a valid retry. ".repeat(20);
+    let issue = |demonstration: &str, quote: &str, problem: &str| {
+        json!({"issues":[{
+            "demonstration":demonstration,"path":"/referenceAnswer","quote":quote,"problem":problem
+        }]})
+        .to_string()
+    };
+    let first = "Preserve the intended effect";
+    let valid = "A valid retry would be rejected.";
+    for (what, raw) in [
+        ("a short finding", issue(valid, first, "Explain it.")),
+        ("demonstration", issue(&wordy, first, "Explain it.")),
+        ("quote", issue(valid, &reference, "Explain it.")),
+        ("problem", issue(valid, first, &wordy)),
+    ] {
+        let review = interview_answer_review::read(&raw, &answer);
+        assert!(review.is_ok(), "{what}: {:?}", review.err());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_closing_debrief_is_read_not_refused() -> Result<()> {
+    use super::super::practical_generation::{generate_simulation_turn, SimulationActivityContext};
+    let author = model(vec![standard(), accepted_review()]);
+    let guides = generate_answer_guides(&author, &plan(), &[source()]).await?;
+    let context = SimulationActivityContext {
+        title: "Retry interview".into(),
+        brief: "Test safe retry reasoning.".into(),
+        rubric: vec![],
+        interview_plan: Some(plan()),
+        interview_answers: Some(guides),
+    };
+    let approach =
+        "Preserve the intended effect, then verify the lost-response retry. ".repeat(200);
+    let coach = model(vec![
+        json!({"referenceApproach":approach,"nextPracticeStep":"Test concurrent duplicates.","scorecard":[],"evaluatedQuestionIds":["q1"],"citationIds":["e1"]}),
+    ]);
+    let feedback =
+        generate_simulation_turn(&coach, &context, &session(), &[source()], true).await?;
+    assert!(feedback.content.contains(approach.trim()));
+    Ok(())
+}
+
 fn session() -> crate::features::learning::practical_dto::LearningSimulationSessionDto {
     use crate::features::learning::practical_dto::*;
     LearningSimulationSessionDto {

@@ -61,9 +61,9 @@ fn interview_plan_validates_round_coverage_identity_and_real_content() -> Result
     let mut blank_role = valid.clone();
     blank_role["learnerRole"] = json!("  ");
     malformed.push(blank_role);
-    let mut too_large = valid.clone();
-    too_large["companySummary"] = json!("x".repeat(4_001));
-    malformed.push(too_large);
+    let mut blank_summary = valid.clone();
+    blank_summary["companySummary"] = json!("  ");
+    malformed.push(blank_summary);
     let mut unfinished = valid.clone();
     unfinished["questions"][3]["question"] = json!("Investigate why the");
     malformed.push(unfinished);
@@ -148,60 +148,92 @@ async fn unfinished_interview_question_gets_corrected_before_guides_are_authored
 }
 
 #[test]
-fn interview_schema_keeps_local_constrained_output_enabled() {
-    fn check(value: &Value) {
-        match value {
-            Value::Object(fields) => {
-                if let Some(maximum) = fields.get("maxLength").and_then(Value::as_u64) {
-                    assert!(
-                        maximum <= 2_000,
-                        "Oversized maxLength disables the local grammar"
-                    );
-                }
-                for child in fields.values() {
-                    check(child);
-                }
-            }
-            Value::Array(items) => {
-                for child in items {
-                    check(child);
-                }
-            }
-            _ => {}
-        }
+fn a_complete_code_question_is_read_at_any_length() {
+    let mut plan = plan_json(LearningInterviewRoundKind::FullLoop);
+    for lines in [30, 300] {
+        let task = format!(
+            "Investigate this supplied trace:\n```text\n{}\n```\nWhat evidence would you collect next?",
+            "operation committed, acknowledgement lost\n".repeat(lines)
+        );
+        plan["questions"][3]["question"] = json!(task);
+        assert!(checked_interview_plan(
+            &plan.to_string(),
+            &LearningInterviewTargetDto::default(),
+            &[]
+        )
+        .is_ok());
     }
-    check(&interview_plan_schema(LearningInterviewRoundKind::FullLoop));
+}
+
+#[test]
+fn a_long_interview_plan_is_read_not_refused() {
+    let target = LearningInterviewTargetDto::default();
+    let valid = plan_json(LearningInterviewRoundKind::FullLoop);
+    let question = format!(
+        "{}?",
+        "Walk through the failure and say what you would check next ".repeat(100)
+    );
+    for (pointer, text) in [
+        (
+            "/companySummary",
+            "The company runs a regional logistics platform. ".repeat(100),
+        ),
+        ("/companyName", "A".repeat(200)),
+        ("/targetRole", "R".repeat(200)),
+        ("/questions/3/question", question),
+        (
+            "/questions/3/companyRationale",
+            "It ties the question to the role's stated constraints. ".repeat(25),
+        ),
+        (
+            "/questions/3/followUpProbes/0",
+            "Explain the tradeoff you accepted and why. ".repeat(15),
+        ),
+        (
+            "/questions/3/evaluationSignals/0",
+            "Names the condition and checks the outcome. ".repeat(15),
+        ),
+    ] {
+        let mut plan = valid.clone();
+        *plan.pointer_mut(pointer).expect(pointer) = json!(text);
+        let checked = checked_interview_plan(&plan.to_string(), &target, &[]);
+        assert!(checked.is_ok(), "{pointer}: {:?}", checked.err());
+    }
+    let padded = format!("{valid}{}", " ".repeat(80_001));
+    let checked = checked_interview_plan(&padded, &target, &[]);
     assert!(
-        interview_plan_schema(LearningInterviewRoundKind::FullLoop)["properties"]["questions"]
-            ["items"]["properties"]["question"]
-            .get("maxLength")
-            .is_none(),
-        "A question must be allowed to finish before the app checks its length"
+        checked.is_ok(),
+        "whitespace around the reply: {:?}",
+        checked.err()
     );
 }
 
 #[test]
-fn complete_code_question_can_exceed_the_old_grammar_limit_but_remains_bounded() -> Result<()> {
-    let mut plan = plan_json(LearningInterviewRoundKind::FullLoop);
-    let task = format!(
-        "Investigate this supplied trace:\n```text\n{}\n```\nWhat evidence would you collect next?",
-        "operation committed, acknowledgement lost\n".repeat(30)
+fn the_interview_plan_schema_holds_no_text_length_cap() {
+    use crate::features::learning::practice::practice_tests::text_length_rules;
+    for round in [
+        LearningInterviewRoundKind::FullLoop,
+        LearningInterviewRoundKind::Behavioral,
+    ] {
+        let rules = text_length_rules(&interview_plan_schema(round));
+        assert!(rules.is_empty(), "{rules:?}");
+    }
+}
+
+#[test]
+fn a_long_company_and_role_keep_the_interview_title_whole() -> Result<()> {
+    let mut plan = checked_interview_plan(
+        &plan_json(LearningInterviewRoundKind::FullLoop).to_string(),
+        &LearningInterviewTargetDto::default(),
+        &[],
+    )?;
+    plan.company_name = "C".repeat(150);
+    plan.target_role = "R".repeat(150);
+    let activity = public_interview_activity(&plan, &[]);
+    assert_eq!(
+        activity.title,
+        format!("{} · {} interview", plan.company_name, plan.target_role)
     );
-    assert!((1_001..=2_000).contains(&task.chars().count()));
-    plan["questions"][3]["question"] = json!(task);
-    assert!(checked_interview_plan(
-        &plan.to_string(),
-        &LearningInterviewTargetDto::default(),
-        &[]
-    )
-    .is_ok());
-    plan["questions"][3]["question"] = json!(format!("{}?", "x".repeat(2_000)));
-    assert!(checked_interview_plan(
-        &plan.to_string(),
-        &LearningInterviewTargetDto::default(),
-        &[]
-    )
-    .is_err());
     Ok(())
 }
 
@@ -861,5 +893,108 @@ async fn a_transcript_longer_than_the_window_keeps_its_newest_turns() -> Result<
     );
     assert!(!sent.contains("Turn 0 weighs"), "the oldest is not");
     assert!(sent.contains("earlier turns not shown"));
+    Ok(())
+}
+
+fn simulation_of(
+    turns: Vec<(
+        crate::features::learning::practical_dto::LearningSimulationSpeaker,
+        String,
+    )>,
+) -> crate::features::learning::practical_dto::LearningSimulationSessionDto {
+    use crate::features::learning::practical_dto::*;
+    LearningSimulationSessionDto {
+        id: uuid::Uuid::new_v4().to_string(),
+        program_id: uuid::Uuid::new_v4().to_string(),
+        activity_id: uuid::Uuid::new_v4().to_string(),
+        activity_revision: 0,
+        practice_session_id: None,
+        learner_role: "Candidate".into(),
+        counterpart_role: "Interviewer".into(),
+        status: LearningSimulationStatus::Active,
+        revision: 1,
+        turns: turns
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, (speaker, content))| LearningSimulationTurnDto {
+                id: uuid::Uuid::new_v4().to_string(),
+                ordinal: ordinal as i64,
+                speaker,
+                content,
+                citations: vec![],
+                model_name: None,
+                created_at: 0,
+            })
+            .collect(),
+        created_at: 0,
+        updated_at: 0,
+        submitted_at: None,
+    }
+}
+
+#[tokio::test]
+async fn a_learner_turn_larger_than_the_room_is_refused_not_left_out() -> Result<()> {
+    use super::super::{generate_simulation_turn, SimulationActivityContext};
+    use crate::features::learning::practical_dto::LearningSimulationSpeaker::{
+        Counterpart, Learner,
+    };
+    use lattice_core::shared::error::AppError;
+    let context = SimulationActivityContext {
+        title: "Interview".into(),
+        brief: "Practice reasoning".into(),
+        rubric: vec![],
+        interview_plan: None,
+        interview_answers: None,
+    };
+    let pasted = "word ".repeat(20_000);
+    let llm = InterviewLlm {
+        window: Some(8_192),
+        ..Default::default()
+    };
+    let session = simulation_of(vec![
+        (Counterpart, "Which tradeoff matters most?".into()),
+        (Learner, pasted.clone()),
+    ]);
+    let error = generate_simulation_turn(&llm, &context, &session, &[], false)
+        .await
+        .expect_err("the learner's newest turn does not fit the window");
+    assert!(
+        matches!(&error, AppError::InvalidConfig(message) if message.contains("-token context window")),
+        "{error}"
+    );
+    let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
+    assert!(requests.is_empty(), "nothing was sent without the turn");
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_older_turn_larger_than_the_room_is_still_left_out() -> Result<()> {
+    use super::super::{generate_simulation_turn, SimulationActivityContext};
+    use crate::features::learning::practical_dto::LearningSimulationSpeaker::{
+        Counterpart, Learner,
+    };
+    let context = SimulationActivityContext {
+        title: "Interview".into(),
+        brief: "Practice reasoning".into(),
+        rubric: vec![],
+        interview_plan: None,
+        interview_answers: None,
+    };
+    let pasted = "word ".repeat(20_000);
+    let llm = InterviewLlm {
+        window: Some(8_192),
+        ..Default::default()
+    };
+    let session = simulation_of(vec![
+        (Learner, pasted.clone()),
+        (Counterpart, "Which tradeoff matters most?".into()),
+        (Learner, "I would weigh latency against durability.".into()),
+    ]);
+    generate_simulation_turn(&llm, &context, &session, &[], false).await?;
+    let requests = llm.requests.lock().map_err(|_| invalid("lock poisoned"))?;
+    let sent = requests.last().cloned().unwrap_or_default();
+    assert!(sent.contains("I would weigh latency against durability."));
+    assert!(!sent.contains(pasted.trim()));
+    assert!(sent.contains("1 earlier turns not shown"));
     Ok(())
 }

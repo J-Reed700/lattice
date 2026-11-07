@@ -14,6 +14,8 @@ import type {
   ClaimLocationDto,
   ClaimReviewItemDto,
   ClaimSupportDto,
+  ClassDto,
+  ClassifiedByDto,
   LearningGenerationJob,
   LearningSourceKind,
   LessonClaimReviewDto,
@@ -29,16 +31,17 @@ import type {
 export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
 
 /** Where a claim stands for the user: theirs to act on, the machine's, or settled. */
-export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'general' | 'changed' {
+export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'changed' {
   const state = item.state;
   switch (state.state) {
     case 'queued': return 'needs_you';
     case 'unchecked':
     case 'open': return 'repairing';
-    case 'resolved_by_evidence': return 'machine';
+    case 'resolved_by_evidence':
+    case 'consistent':
+    case 'general_knowledge': return 'machine';
     case 'removed': return state.by === 'machine' ? 'machine' : 'changed';
     case 'confirmed': return 'confirmed';
-    case 'general_knowledge': return 'general';
     case 'edited': return 'changed';
     case 'reopened': return 'needs_you';
   }
@@ -56,6 +59,41 @@ export function unitLabel(location: ClaimLocationDto): string {
     case 'question': return `Question${title ? ` · ${title}` : ''}`;
     case 'answer_key': return `Question${title ? ` · ${title}` : ''} · answer key`;
   }
+}
+
+// ── What the machine took out (design 3.12) ─────────────────────────────────
+
+/** The machine took the statement's sentence out of the lesson. */
+export const isTakenOut = (item: ClaimReviewItemDto) => item.state.state === 'removed' && item.state.by === 'machine';
+
+/** Why a statement went, in words: the check that failed it, else the sentence or section it stood in. */
+export function removalReason(item: ClaimReviewItemDto): string {
+  if (item.verdictKind) {
+    const why = verdictWords(item.verdictKind);
+    return item.reason ? `${why} · ${item.reason}` : why;
+  }
+  return 'Taken out with the sentence or section it stood in';
+}
+
+/** A sentence taken out of the lesson and every statement that stood on it. */
+export type TakenOutSentence = {
+  key: string;
+  sentence: string;
+  statements: Array<{ claimId: string; statement: string; why: string }>;
+};
+
+/** The machine's removals, a sentence several statements stood on listed once, naming each of them. */
+export function takenOutSentences(claims: ClaimReviewItemDto[]): TakenOutSentence[] {
+  const sentences = new Map<string, TakenOutSentence>();
+  for (const claim of claims.filter(isTakenOut)) {
+    const { unitIndex, field } = claim.location;
+    const { sentence, statement } = claim.presentation;
+    const key = `${unitIndex}:${field}:${sentence}`;
+    const entry = sentences.get(key) ?? { key, sentence, statements: [] };
+    entry.statements.push({ claimId: claim.claimId, statement, why: removalReason(claim) });
+    sentences.set(key, entry);
+  }
+  return [...sentences.values()];
 }
 
 // ── The queue's groups (§3.2) ───────────────────────────────────────────────
@@ -263,6 +301,16 @@ const REOPEN_CAUSES: Record<ReopenCauseDto['cause'], string> = {
   trust_changed: 'Reopened: how far a source is trusted changed',
 };
 
+const CLASSES: Record<ClassDto, string> = {
+  sourced: 'a statement that needs a source',
+  reasoning: 'the lesson’s own reasoning',
+  common: 'common knowledge',
+  internal: 'a remark about the lesson itself',
+};
+const CLASSIFIERS: Record<ClassifiedByDto, string> = {
+  writer: 'by the writer’s citation', rule: 'by a rule', model: 'by the model', evidence: 'by what the checks found',
+};
+
 /** A verdict in words, for the history and the checks. */
 function verdictWords(kind: VerdictKindDto): string {
   switch (kind.kind) {
@@ -270,7 +318,6 @@ function verdictWords(kind: VerdictKindDto): string {
     case 'contradicted': return 'A source says otherwise';
     case 'no_source': return 'No saved source mentions it';
     case 'could_not_judge': return 'Could not check';
-    case 'general_knowledge_proposed': return 'Proposed as common knowledge';
     case 'disputed': return `Disputed by an independent check · ${verdictWords(kind.verifier).toLowerCase()}`;
     case 'insufficient_standing': return 'Stated, but not by a source enough on its own';
   }
@@ -282,7 +329,6 @@ export function repairOutcomeLabel(outcome: RepairOutcomeDto): string {
     case 'removed': return 'The repair removed the sentence';
     case 'rejected': return `Repair rejected: ${outcome.reason}`;
     case 'superseded_by_user': return 'Your change superseded this repair';
-    case 'not_attempted': return `Not repaired: ${outcome.reason}`;
   }
 }
 
@@ -296,18 +342,20 @@ function describeUserAction(action: UserActionDto, note: string | null): string 
     case 'unconfirm': return `Acceptance withdrawn${quoted}`;
     case 'edit': return `Edited: “${action.before}” → “${action.after}”`;
     case 'remove': return 'Removed the sentence';
-    case 'general_knowledge': return 'Accepted as common knowledge';
     case 'research_with_hint': return `Asked for a search: “${action.hint}”`;
   }
 }
 
 /** A check's verdict in words. A claim the course supports elsewhere than
- *  its section's citation stands, and its citation was moved to the passage
- *  found. */
+ *  its section's citation stands; moving the citation is a separate step with
+ *  its own event, so the check does not claim it. */
 function checkVerdict(result: CheckResultDto): string {
   switch (result.verdict) {
     case 'supported': return 'Supported';
-    case 'supported_elsewhere': return 'Supported elsewhere, citation repaired';
+    case 'supported_elsewhere': return 'Supported by another source';
+    case 'consistent': return 'Consistent with its sources';
+    case 'known_common': return 'Common knowledge';
+    case 'not_false': return 'Not called false when asked alone';
     case 'failed': return verdictWords(result.kind);
   }
 }
@@ -336,6 +384,7 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     }
     case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
     case 'born_of_repair': return 'Added while repairing another claim';
+    case 'classified': return `Sorted as ${CLASSES[payload.class]}, ${CLASSIFIERS[payload.by]}`;
     case 'reopened': return REOPEN_CAUSES[payload.cause.cause];
     case 'undone': return `Undid step ${payload.eventOrdinal}`;
     case 'standing_assessed': {
@@ -359,7 +408,7 @@ function side(check: CheckerVerdictDto): CheckerSide {
     model: check.checker.model,
     verdict: checkVerdict(result),
     reason: check.reason,
-    supportingQuote: result.verdict === 'failed' ? null : result.supportingQuote,
+    supportingQuote: result.verdict === 'supported' || result.verdict === 'supported_elsewhere' ? result.supportingQuote : null,
     quotedSource: check.quotedSource,
     passages: check.passages,
   };

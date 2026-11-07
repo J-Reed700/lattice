@@ -1,5 +1,5 @@
 //! Review findings refer to the proposed answer, never to neighboring source text.
-use super::{bounded, invalid, AnswerEvidence, AnswerStandard};
+use super::{invalid, present, AnswerEvidence, AnswerStandard};
 use crate::features::learning::{
     dto::LearningSourceVersionDto,
     lessons::structured_call::{self, CallKind, ReasonFirst},
@@ -48,7 +48,7 @@ pub(super) async fn independent_solution(
     independent.call.reasoning_effort = Some("low".into());
     independent.call.sampling = Some(SamplingOverride::deterministic());
     structured_call::complete_checked_request(llm, independent, None, None, |raw| {
-        bounded(raw, "Independent interview solution", 8_000)?;
+        present(raw, "Independent interview solution")?;
         Ok(raw.to_owned())
     })
     .await
@@ -249,10 +249,10 @@ pub(super) fn schema(standard: &AnswerStandard) -> Value {
             "issues":{"type":"array","maxItems":4,"items":{
                 "type":"object","additionalProperties":false,"required":["demonstration","path","quote","problem"],
                 "properties":{
-                    "demonstration":{"type":"string","minLength":1,"maxLength":500},
+                    "demonstration":{"type":"string","minLength":1},
                     "path":{"type":"string","enum":paths},
-                    "quote":{"type":"string","minLength":1,"maxLength":280},
-                    "problem":{"type":"string","minLength":1,"maxLength":700}
+                    "quote":{"type":"string","minLength":1},
+                    "problem":{"type":"string","minLength":1}
                 }
             }}
         }
@@ -267,10 +267,10 @@ pub(super) fn read(raw: &str, standard: &AnswerStandard) -> Result<Review> {
     }
     let proposed = serde_json::to_value(standard).map_err(|error| invalid(error.to_string()))?;
     for issue in &review.issues {
-        bounded(&issue.demonstration, "Answer review demonstration", 500)?;
-        bounded(&issue.path, "Answer review field path", 160)?;
-        bounded(&issue.quote, "Answer review quote", 280)?;
-        bounded(&issue.problem, "Answer review problem", 700)?;
+        present(&issue.demonstration, "Answer review demonstration")?;
+        present(&issue.path, "Answer review field path")?;
+        present(&issue.quote, "Answer review quote")?;
+        present(&issue.problem, "Answer review problem")?;
         // A quotation from source data or metadata cannot establish that the
         // proposed answer made that claim. Only author-written prose is eligible.
         let parts: Vec<_> = issue.path.split('/').collect();

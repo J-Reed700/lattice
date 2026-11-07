@@ -216,7 +216,7 @@ impl LearningPracticalRepository {
         {
             return Err(invalid("Practical aid descriptions must be bounded."));
         }
-        if generator_model.trim().is_empty() || generator_model.chars().count() > 240 {
+        if generator_model.trim().is_empty() {
             return Err(invalid(
                 "Practical generation must record a model identity.",
             ));

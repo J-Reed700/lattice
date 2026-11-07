@@ -13,7 +13,7 @@ pub(in crate::features::learning) enum FindingKind {
     Teaching,
     /// An independent solution disagreed with a question's answer key.
     AnswerKey,
-    /// A deterministic rule: the schema, a section's length or rubric, or
+    /// A deterministic rule: the schema, a section's body or rubric, or
     /// the lesson's shape.
     Structure,
     /// A source quotation that matches no saved reference.
@@ -112,7 +112,7 @@ impl ReviewFinding {
 }
 
 /// A finding's identity across passes and reviews.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub(in crate::features::learning) struct FindingKey {
     pub kind: FindingKind,
     pub site: FindingSite,

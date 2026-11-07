@@ -1,5 +1,6 @@
 //! References capabilities owned by Learning Studio.
 
+pub(crate) mod admission;
 pub mod course_index;
 pub(crate) mod source_identity;
 pub mod source_library;

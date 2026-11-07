@@ -46,17 +46,17 @@ fn grade_schema(ids: &[String], criteria: &[String], with_note: bool) -> Value {
     };
     let criterion = json!({"type":"object","additionalProperties":false,"required":["criterionId","yourWords","whatWasMissing","fullCreditIncludes","sourceQuote","verdict","points"],"properties":{
         "criterionId":criterion_id,
-        "yourWords":{"type":"array","maxItems":4,"items":{"type":"string","maxLength":400}},
-        "whatWasMissing":{"type":"string","maxLength":1200},
-        "fullCreditIncludes":{"type":"string","maxLength":800},
-        "sourceQuote":{"type":"string","maxLength":700},
+        "yourWords":{"type":"array","maxItems":4,"items":{"type":"string"}},
+        "whatWasMissing":{"type":"string"},
+        "fullCreditIncludes":{"type":"string"},
+        "sourceQuote":{"type":"string"},
         "verdict":{"enum":["met","partly_met","missed"]},
         "points":{"type":"number","minimum":0}
     }});
     let mut item = json!({"type":"object","additionalProperties":false,"required":["itemId","criteria","summary"],"properties":{
         "itemId":{"enum":ids},
         "criteria":{"type":"array","minItems":1,"maxItems":12,"items":criterion},
-        "summary":{"type":"string","maxLength":1200}
+        "summary":{"type":"string"}
     }});
     if with_note {
         add_note_field(&mut item);
@@ -67,11 +67,11 @@ fn grade_schema(ids: &[String], criteria: &[String], with_note: bool) -> Value {
 fn judge_schema(ids: &[String], with_note: bool) -> Value {
     let mut item = json!({"type":"object","additionalProperties":false,"required":["itemId","yourWords","whatWasMissing","fullCreditIncludes","verdict","summary"],"properties":{
         "itemId":{"enum":ids},
-        "yourWords":{"type":"array","maxItems":3,"items":{"type":"string","maxLength":300}},
-        "whatWasMissing":{"type":"string","maxLength":800},
-        "fullCreditIncludes":{"type":"string","maxLength":500},
+        "yourWords":{"type":"array","maxItems":3,"items":{"type":"string"}},
+        "whatWasMissing":{"type":"string"},
+        "fullCreditIncludes":{"type":"string"},
         "verdict":{"enum":["equivalent","not_equivalent"]},
-        "summary":{"type":"string","maxLength":600}
+        "summary":{"type":"string"}
     }});
     if with_note {
         add_note_field(&mut item);
@@ -83,7 +83,7 @@ fn add_note_field(item: &mut Value) {
     if let Some(props) = item.get_mut("properties").and_then(Value::as_object_mut) {
         props.insert(
             "responseToNote".into(),
-            json!({"type":"string","minLength":1,"maxLength":800}),
+            json!({"type":"string","minLength":1}),
         );
     }
     if let Some(required) = item.get_mut("required").and_then(Value::as_array_mut) {

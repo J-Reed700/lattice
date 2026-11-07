@@ -4,13 +4,11 @@
 //! both checkers' verdicts on the card; without consent nothing is sent and
 //! the lesson waits with the reason, and Resume needs no claim change.
 
-use super::claim_ledger_tests::{prepare, waiting};
+use super::claim_ledger_tests::prepare;
 use super::claim_review_flow_tests::{Supporting, Waiting};
 use super::*;
 use crate::features::learning::curriculum_repository::ProgramVerifierAudit;
-use crate::features::learning::lessons::claim_reviews::dto::{
-    CheckResultDto, CheckerRoleDto, ClaimActionRequestDto,
-};
+use crate::features::learning::lessons::claim_reviews::dto::{CheckResultDto, CheckerRoleDto};
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::verifier_audit::lesson::{self, VerifierAccess};
 use crate::features::learning::lessons::verifier_audit::tools::VerifierWeb;
@@ -31,20 +29,20 @@ const NO_PASSAGE: &str = "No passage states this.";
 /// A Verifier that gives every claim `verdict`: `supported` quotes the first
 /// sentence of the claim's first passage (could not verify without one),
 /// anything else quotes nothing. Counts its requests.
-struct AuditingModel {
+pub(super) struct AuditingModel {
     verdict: &'static str,
     calls: AtomicUsize,
 }
 
 impl AuditingModel {
-    fn new(verdict: &'static str) -> Arc<Self> {
+    pub(super) fn new(verdict: &'static str) -> Arc<Self> {
         Arc::new(Self {
             verdict,
             calls: AtomicUsize::new(0),
         })
     }
 
-    fn calls(&self) -> usize {
+    pub(super) fn calls(&self) -> usize {
         self.calls.load(Ordering::Relaxed)
     }
 
@@ -127,13 +125,13 @@ impl LLMPort for AuditingModel {
 }
 
 /// The Verifier as Settings would hold it, without web tools.
-struct FakeVerifier {
+pub(super) struct FakeVerifier {
     model: ModelRef,
     llm: Arc<AuditingModel>,
 }
 
 impl FakeVerifier {
-    fn local(llm: &Arc<AuditingModel>) -> Arc<dyn VerifierAccess> {
+    pub(super) fn local(llm: &Arc<AuditingModel>) -> Arc<dyn VerifierAccess> {
         Arc::new(Self {
             model: ModelRef::Local {
                 model_id: "verifier-9b".into(),
@@ -142,7 +140,7 @@ impl FakeVerifier {
         })
     }
 
-    fn cloud(llm: &Arc<AuditingModel>) -> Arc<dyn VerifierAccess> {
+    pub(super) fn cloud(llm: &Arc<AuditingModel>) -> Arc<dyn VerifierAccess> {
         Arc::new(Self {
             model: ModelRef::Cloud {
                 provider: CloudProvider::Anthropic,
@@ -174,7 +172,7 @@ impl VerifierAccess for FakeVerifier {
     }
 }
 
-async fn opt_in(course: &Waiting, on: bool) -> Result<()> {
+pub(super) async fn opt_in(course: &Waiting, on: bool) -> Result<()> {
     course
         .jobs
         .set_verifier_audit(
@@ -185,59 +183,6 @@ async fn opt_in(course: &Waiting, on: bool) -> Result<()> {
             },
         )
         .await
-}
-
-/// Confirms the claim waiting for the user and resumes: the continued job.
-async fn confirm_and_resume(course: &Waiting) -> Result<String> {
-    let ledger = ClaimReviewRepository::new(course.pool.clone())
-        .load(&course.lesson_id)
-        .await?;
-    let claim = waiting(&ledger.claims)[0].claim_id().0.clone();
-    course
-        .service()
-        .resolve(
-            &course.lesson_id,
-            &claim,
-            ClaimActionRequestDto::Confirm {
-                note: None,
-                source_version_ids: Vec::new(),
-            },
-            ledger.revision.0,
-        )
-        .await?;
-    Ok(course.resume().await?.id)
-}
-
-/// Claims the attempt as the runtime would and runs its pass under
-/// `verifier` up to publication. True when the lesson is held for review.
-async fn held_by_pass(
-    course: &Waiting,
-    model: &Supporting,
-    job_id: &str,
-    verifier: Arc<dyn VerifierAccess>,
-) -> Result<bool> {
-    assert!(JobStore::new(course.pool.clone())
-        .claim(job_id)
-        .await?
-        .is_some());
-    let references = course.references().await?;
-    let prepared = lesson::scope(
-        Some(verifier),
-        prepare(
-            &course.jobs,
-            job_id,
-            &course.lesson_id,
-            model,
-            None,
-            &references,
-        ),
-    )
-    .await;
-    let held = held_for_review(&course.pool, &course.lesson_id, job_id)
-        .await?
-        .is_some();
-    assert_eq!(prepared.is_err(), held, "{:?}", prepared.as_ref().err());
-    Ok(held)
 }
 
 /// Completes a held attempt as the worker does (§6.1).
@@ -269,40 +214,45 @@ fn verifier_checks(ledger: &lattice_core::domain::learning::claim_review::Ledger
 }
 
 #[tokio::test]
-async fn the_audit_runs_once_every_claim_is_resolved_then_the_lesson_publishes() -> Result<()> {
+async fn the_audit_runs_once_every_claim_is_resolved_and_an_agreeing_verifier_lets_the_lesson_publish(
+) -> Result<()> {
     let model = Supporting::new();
     let verifier = AuditingModel::new("supported");
-    // Opted in from the start: the pass that leaves a claim for the user
-    // never reaches the audit.
     let course = Waiting::course().await?;
     opt_in(&course, true).await?;
-    lesson::scope(Some(FakeVerifier::local(&verifier)), course.hold(&model)).await?;
-    assert_eq!(verifier.calls(), 0, "a claim still waits for the user");
-    let job_id = confirm_and_resume(&course).await?;
-    lesson::scope(
+    let references = course.references().await?;
+
+    let (_, report) = lesson::scope(
         Some(FakeVerifier::local(&verifier)),
-        course.run_and_publish(&model, &job_id),
+        prepare(
+            &course.jobs,
+            &course.job_id,
+            &course.lesson_id,
+            &model,
+            Some(candidate(GOOD).to_string()),
+            &references,
+        ),
     )
     .await?;
+
     assert!(verifier.calls() > 0, "the resolved lesson is audited");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
     let ledger = ClaimReviewRepository::new(course.pool.clone())
         .load(&course.lesson_id)
         .await?;
     assert!(verifier_checks(&ledger) > 0);
-    course.assert_published(&job_id).await
+    assert!(
+        held_for_review(&course.pool, &course.lesson_id, &course.job_id)
+            .await?
+            .is_none()
+    );
+    Ok(())
 }
 
 #[tokio::test]
 async fn a_dispute_holds_the_lesson_with_both_checkers_on_the_card() -> Result<()> {
-    let model = Supporting::new();
-    let course = Waiting::new(&model).await?;
-    opt_in(&course, true).await?;
-    let job_id = confirm_and_resume(&course).await?;
-    let verifier = AuditingModel::new("unsupported");
-
-    let held = held_by_pass(&course, &model, &job_id, FakeVerifier::local(&verifier)).await?;
-    assert!(held, "a disputed lesson does not publish");
-    assert!(verifier.calls() > 0);
+    // The Verifier, opted into, disputes the claim the local checker verified.
+    let course = Waiting::new(&Supporting::new()).await?;
     let ledger = ClaimReviewRepository::new(course.pool.clone())
         .load(&course.lesson_id)
         .await?;
@@ -345,14 +295,32 @@ async fn a_dispute_holds_the_lesson_with_both_checkers_on_the_card() -> Result<(
 #[tokio::test]
 async fn without_consent_nothing_is_sent_and_resume_needs_no_claim_change() -> Result<()> {
     let model = Supporting::new();
-    let course = Waiting::new(&model).await?;
+    let course = Waiting::course().await?;
     // On, but sending lesson text to the cloud provider was never confirmed.
     opt_in(&course, true).await?;
-    let job_id = confirm_and_resume(&course).await?;
     let verifier = AuditingModel::new("supported");
+    let references = course.references().await?;
 
-    let held = held_by_pass(&course, &model, &job_id, FakeVerifier::cloud(&verifier)).await?;
-    assert!(held, "the audit is on and cannot run");
+    let prepared = lesson::scope(
+        Some(FakeVerifier::cloud(&verifier)),
+        prepare(
+            &course.jobs,
+            &course.job_id,
+            &course.lesson_id,
+            &model,
+            Some(candidate(GOOD).to_string()),
+            &references,
+        ),
+    )
+    .await;
+    let held = held_for_review(&course.pool, &course.lesson_id, &course.job_id)
+        .await?
+        .is_some();
+    assert!(
+        prepared.is_err() && held,
+        "the audit is on and cannot run: {:?}",
+        prepared.as_ref().err()
+    );
     assert_eq!(verifier.calls(), 0, "no consent, no call");
     let review = ClaimReviewRepository::new(course.pool.clone())
         .load(&course.lesson_id)
@@ -366,7 +334,7 @@ async fn without_consent_nothing_is_sent_and_resume_needs_no_claim_change() -> R
     );
 
     // The fix is the course's switch, not a claim: Resume is not refused.
-    complete_held(&course, &job_id).await?;
+    complete_held(&course, &course.job_id).await?;
     opt_in(&course, false).await?;
     let next = course.resume().await?;
     lesson::scope(

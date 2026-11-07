@@ -306,12 +306,12 @@ pub(in crate::features::learning) fn verified_assertions(
 }
 
 fn review_schema(open_ids: &[String], allowed: &[String]) -> Value {
-    let new_findings = json!({"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["path","kind","claim","reason"],"properties":{"path":{"enum":allowed},"kind":{"enum":["factual","plan"]},"claim":{"type":"string","maxLength":1200},"reason":{"type":"string","minLength":10,"maxLength":1200}}}});
+    let new_findings = json!({"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["path","kind","claim","reason"],"properties":{"path":{"enum":allowed},"kind":{"enum":["factual","plan"]},"claim":{"type":"string"},"reason":{"type":"string","minLength":1}}}});
     if open_ids.is_empty() {
         return json!({"type":"object","additionalProperties":false,"required":["newFindings"],"properties":{"newFindings":new_findings}});
     }
     json!({"type":"object","additionalProperties":false,"required":["verdicts","newFindings"],"properties":{
-        "verdicts":{"type":"array","minItems":open_ids.len(),"maxItems":open_ids.len(),"items":{"type":"object","additionalProperties":false,"required":["id","status","reason"],"properties":{"id":{"enum":open_ids},"status":{"enum":["resolved","unresolved"]},"reason":{"type":"string","minLength":10,"maxLength":600}}}},
+        "verdicts":{"type":"array","minItems":open_ids.len(),"maxItems":open_ids.len(),"items":{"type":"object","additionalProperties":false,"required":["id","status","reason"],"properties":{"id":{"enum":open_ids},"status":{"enum":["resolved","unresolved"]},"reason":{"type":"string","minLength":1}}}},
         "newFindings":new_findings
     }})
 }
@@ -587,5 +587,26 @@ mod placement_tests {
             quoted_phrases("The module's outcome uses `index seeks` and Postgres' plans."),
             vec!["index seeks".to_owned()]
         );
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+
+    #[test]
+    fn the_review_bounds_no_text_but_a_blank_one() {
+        let open = vec!["finding-1".to_owned(), "finding-2".to_owned()];
+        let allowed = vec!["/modules/0/summary".to_owned()];
+        for (what, schema) in [
+            ("a first review", review_schema(&[], &allowed)),
+            (
+                "a review with open findings",
+                review_schema(&open, &allowed),
+            ),
+        ] {
+            let caps = crate::features::learning::content_caps_tests::text_caps(&schema);
+            assert!(caps.is_empty(), "{what}: {caps:?}");
+        }
     }
 }

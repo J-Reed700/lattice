@@ -35,7 +35,7 @@ def schema(arm, ids):
     fields = {
         "id": {"type": "string", "enum": ids},
         "useForGap": {"type": "boolean", "description": DESCRIPTION},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 600},
+        "reason": {"type": "string", "minLength": 1},
     }
     order = ["id", "useForGap", "reason"] if arm == "decision_first" else ["id", "reason", "useForGap"]
     decision = {
