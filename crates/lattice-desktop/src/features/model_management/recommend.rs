@@ -52,12 +52,15 @@ pub trait GgufHeaderSource: Send + Sync {
 /// settings in `configs` give it (the chat default when it has none), mapped to the wire types.
 pub async fn recommend_chat_models(
     probe: &dyn MachineProfileProbe,
-    _configs: &BTreeMap<String, LocalModelConfigDto>,
+    configs: &BTreeMap<String, LocalModelConfigDto>,
 ) -> Vec<RecommendationDto> {
     let profile = probe.profile().await;
     let catalog: Vec<Candidate> = curated_chat_models()
         .iter()
-        .map(Candidate::from_curated)
+        .map(|model| Candidate {
+            buffers: ServerBuffers::chat(quantizes_kv_cache(configs, model.id)),
+            ..Candidate::from_curated(model)
+        })
         .collect();
     Recommender::new(Companions::default_pair())
         .recommend(&profile, &catalog)
@@ -105,7 +108,7 @@ pub async fn row_fit(
     model: &ModelMetadata,
     profile: &MachineProfile,
     headers: &dyn GgufHeaderSource,
-    _configs: &BTreeMap<String, LocalModelConfigDto>,
+    configs: &BTreeMap<String, LocalModelConfigDto>,
 ) -> Option<FitVerdictDto> {
     if model.category != ModelCategory::LLM {
         return None;
@@ -116,9 +119,17 @@ pub async fn row_fit(
         None,
         profile,
         headers,
-        false,
+        quantizes_kv_cache(configs, &model.id),
     )
     .await
+}
+
+/// Whether the saved launch settings of `model_id` quantize its KV cache: each model is launched
+/// with its own, and a model with none is launched without.
+fn quantizes_kv_cache(configs: &BTreeMap<String, LocalModelConfigDto>, model_id: &str) -> bool {
+    configs
+        .get(model_id)
+        .is_some_and(|config| config.kv_cache_quantization)
 }
 
 /// The verdict for the GGUF `file` of `repo` at `revision`: a curated file from its pinned facts,
