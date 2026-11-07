@@ -22,6 +22,7 @@ pub use trust::{
     source_kind, CountedSupportDto, SourceKindDto, StandingAssessedDto, TrustCauseDto,
 };
 
+use crate::features::learning::lesson_evidence::UnverifiedReasonDto;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimActionKind, ClaimCounts, ClaimState, Class, ClassifiedBy, LessonReviewState,
     ReopenCause, RepairOutcome, RequestFacts, SourceAddedBy, StopReason, UnitKind, VerdictKind,
@@ -219,6 +220,10 @@ pub enum ClaimStateDto {
     GeneralKnowledge {
         at: i64,
     },
+    Unverified {
+        at: i64,
+        reason: UnverifiedReasonDto,
+    },
     Reopened {
         cause: ReopenCauseDto,
         previous: Box<ClaimStateDto>,
@@ -248,6 +253,10 @@ impl From<&ClaimState> for ClaimStateDto {
                 successor: successor.as_ref().map(|id| id.0.clone()),
             },
             ClaimState::GeneralKnowledge { at } => Self::GeneralKnowledge { at: *at },
+            ClaimState::Unverified { at, reason } => Self::Unverified {
+                at: *at,
+                reason: (*reason).into(),
+            },
             ClaimState::Reopened { cause, previous } => Self::Reopened {
                 cause: cause.into(),
                 previous: Box::new(previous.as_ref().into()),
