@@ -465,6 +465,7 @@ async fn evidence_the_user_brought_settles_a_statement_whose_section_cites_nothi
             trust: None,
             label: None,
             class: None,
+            claim_id: None,
             two_pass: Default::default(),
         },
     )]);
@@ -584,6 +585,7 @@ async fn a_claim_the_user_resolved_with_evidence_of_their_own_stands_without_a_c
             trust: None,
             label: None,
             class: None,
+            claim_id: None,
             two_pass: Default::default(),
         },
     )]);

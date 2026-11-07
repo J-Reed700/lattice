@@ -372,6 +372,7 @@ fn found_in(
         trust: None,
         label: None,
         class: None,
+        claim_id: None,
         two_pass: TwoPass {
             supported_by: Some(SupportedElsewhere {
                 source_id: source.id.clone(),

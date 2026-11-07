@@ -65,7 +65,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   onPrepare: (lesson: LearningLessonDto) => void; preparePending: boolean; prepareError?: string;
   onComplete: (lesson: LearningLessonDto) => void; completePending: boolean; completeError?: string;
   /** Opens a lesson's claim review screen (UI design §2.3). */
-  onReview?: (programId: string, lessonId: string) => void;
+  onReview?: (programId: string, lessonId: string, claimId?: string) => void;
 }) {
   const [moduleId, setModuleId] = useState(() => program.modules.find((m) => m.lessons.some((l) => l.id === program.summary.currentLessonId))?.id ?? program.modules[0]?.id ?? '');
   const [lessonId, setLessonId] = useState(program.summary.currentLessonId ?? program.modules[0]?.lessons[0]?.id ?? '');
@@ -267,7 +267,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const shownTitle = (program.summary.status === 'draft' ? title : program.summary.title).trim();
   const showGoal = Boolean(goal) && goal !== shownTitle && !shownTitle.startsWith(goal.slice(0, 80));
   const lessonTitles = Object.fromEntries(allLessons.map(({ lesson }) => [lesson.id, lesson.title]));
-  const openReview = onReview ? (programId: string, reviewLessonId: string) => void afterNotebookSave(() => onReview(programId, reviewLessonId)) : undefined;
+  const openReview = onReview ? (programId: string, reviewLessonId: string, claimId?: string) => void afterNotebookSave(() => onReview(programId, reviewLessonId, claimId)) : undefined;
   // After a new source re-checked the waiting claims: the one held lesson's review, else the Lessons tab with its Review buttons.
   const openHeldReview = () => {
     const held = [...new Set(currentPreparationJobs(preparationPlan.data?.jobs ?? []).flatMap(heldLessonIds))];

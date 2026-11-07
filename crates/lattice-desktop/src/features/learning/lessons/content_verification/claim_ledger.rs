@@ -31,7 +31,7 @@ pub(super) use stops::UNREADABLE;
 pub(super) use successor::Rewrites;
 
 use super::provenance_gate::ProvenanceGate;
-use super::resolution::Resolution;
+use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
 use super::sections::Cuts;
 use super::support_gate::SupportGate;
 use super::*;
@@ -813,29 +813,25 @@ impl ClaimLedger {
             }),
             _ => None,
         };
-        let resolution = |id: &ClaimId| match self.entry(id).map(ClaimLedgerEntry::state) {
-            Some(ClaimState::Unverified { reason, .. }) => {
-                Some(Resolution::Unverified { reason: *reason })
-            }
-            _ => confirmed(id),
-        };
+        let state_of = |id: &ClaimId| self.entry(id).map(ClaimLedgerEntry::state);
         for (finding, id) in report.findings.iter_mut().zip(&self.findings) {
-            // A claim the machine ended whose sentence stands, published not
-            // verified, is no finding of the pass: the finding on its sentence
-            // carries its resolution.
-            finding.resolution = resolution(id).or_else(|| {
-                self.entries
-                    .iter()
-                    .filter(|entry| !self.findings.contains(entry.claim_id()))
-                    .find_map(|entry| match entry.state() {
-                        ClaimState::Unverified { reason, .. }
-                            if entry.location().unit_index == finding.unit
-                                && entry.location().quote == finding.quote =>
-                        {
-                            Some(Resolution::Unverified { reason: *reason })
-                        }
-                        _ => None,
-                    })
+            finding.claim_id = Some(id.0.clone());
+            let own = match state_of(id).map(|state| standing(state, &state_of)) {
+                Some(Standing::Resolved(resolution)) => Some(resolution),
+                _ => None,
+            };
+            finding.resolution = own.or_else(|| {
+                ended_mark(
+                    self.entries.iter().map(|entry| Placed {
+                        id: &entry.claim_id().0,
+                        unit: entry.location().unit_index,
+                        quote: &entry.location().quote,
+                        state: entry.state(),
+                    }),
+                    &|id| self.findings.iter().any(|claim| claim.0 == id),
+                    finding.unit,
+                    &finding.quote,
+                )
             });
         }
         let confirmed: Vec<String> = report

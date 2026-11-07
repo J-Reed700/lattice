@@ -47,7 +47,7 @@ const ALL_KEYS: Array<[string, string]> = [
  * claim in focus, the honest tally, Resume when nothing is left, and the
  * keyboard throughout. Drops and pastes anywhere open Add a source.
  */
-export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevision, onBack }: {
+export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevision, onBack, focusClaimId = null }: {
   programId: string;
   lessonId: string;
   lessonTitle: string;
@@ -55,8 +55,10 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   courseRevision: number;
   /** Back to the course page's Lessons tab. */
   onBack: () => void;
+  /** The claim to put in focus when the review loads. */
+  focusClaimId?: string | null;
 }) {
-  const session = useClaimReviewSession(programId, lessonId);
+  const session = useClaimReviewSession(programId, lessonId, focusClaimId);
   const resume = useResumeLearningLessonReview(programId, lessonId);
   const plan = useLearningPlan(programId);
   const waitsForIndex = useEvidenceWaitsForIndex(programId);
@@ -187,7 +189,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       closest={session.closestSupport} onOpenSource={(support) => setReader({ source: support.source, passage: support.passage, quote: support.quote })}
       onOpenRelevant={(source) => setReader({ source, passage: null, quote: null })} sheet={sheetNode}
       back={narrow ? <Button type="button" size="icon" variant="ghost" aria-label="Back to the queue" onClick={() => setNarrowView('queue')}><ArrowLeft aria-hidden="true" /></Button> : undefined}
-      stickyActions={narrow} />;
+      stickyActions={narrow} published={review.state === 'ready'} />;
     if (review.state === 'needs_review' && (hold === 'audit' || hold === 'audit_stop')) return <AuditHold reason={auditStop} />;
     if (sheetNode) return sheetNode;
     return <FocusMessage title="Everything is resolved">

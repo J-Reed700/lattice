@@ -1,6 +1,8 @@
 //! Persistence adapter for the learner-safe evidence projection.
 use crate::features::learning::{
-    content_verification::LessonVerificationReport, dto::LearningLessonDto,
+    content_verification::{ClaimStates, LessonVerificationReport},
+    dto::LearningLessonDto,
+    lessons::claim_reviews::repository::load_in,
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -21,6 +23,7 @@ pub(super) struct EvidenceSnapshot {
     pub lesson: LearningLessonDto,
     pub report: Option<LessonVerificationReport>,
     pub versions: Vec<SavedEvidenceVersion>,
+    pub claims: ClaimStates,
 }
 
 pub(super) async fn read(
@@ -53,10 +56,12 @@ pub(super) async fn read(
     } else {
         Vec::new()
     };
+    let claims = ClaimStates::of(&load_in(&mut tx, lesson_id).await?);
     tx.commit().await?;
     Ok(EvidenceSnapshot {
         lesson,
         report,
         versions,
+        claims,
     })
 }

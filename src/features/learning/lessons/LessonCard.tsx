@@ -13,13 +13,13 @@ import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromM
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
 import { LessonEvidencePanel, LessonSectionEvidence, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
-import { UnverifiedStatements, unverifiedStatements } from '@/features/learning/lessons/UnverifiedStatements';
 import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { claimsCount, claimsNeedYou, statementsNotVerified, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { isTeachingWaiting } from '@/features/learning/lessons/review/TeachingFindings';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
+import { UnverifiedStatements, unverifiedStatements } from '@/features/learning/lessons/UnverifiedStatements';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { SourceLine } from '@/features/learning/sources/SourceLine';
@@ -56,7 +56,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   onSelect: () => void | Promise<boolean>;
   onPractice: () => void;
   /** Opens the lesson's claim review screen; the course page never shows claims itself. */
-  onReview?: (programId: string, lessonId: string) => void;
+  onReview?: (programId: string, lessonId: string, claimId?: string) => void;
   /** The lesson quiz callout, shown after the last section and before "Mark lesson complete". */
   quizCallout?: ReactNode;
 }) {
@@ -192,7 +192,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                     : heldRecap ? <p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p>
                     : <div className="studio-lesson-prose">{prose(block.body)}</div>}
                   {block.kind === 'reflection' && recallFirst && <LessonFromMemory lessonId={lesson.id} compared={compared} onCompare={compare} />}
-                  <UnverifiedStatements statements={unverifiedStatements(evidenceReport.data, index)} />
+                  <UnverifiedStatements programId={program.summary.id} lessonId={lesson.id} statements={unverifiedStatements(evidenceReport.data, index)} onReview={onReview} />
                   {showCitations && <LessonSectionEvidence report={evidenceReport} sectionIndex={index} />}
                   {showCitations && evidenceReport.isSuccess && !evidenceReport.data && <SourceLine ids={block.sourceIds} sources={program.sources} />}
                   {block.kind === 'guided_practice' && selected && program.summary.status === 'active' && <div id={`guided-${lesson.id}`}><PracticeWorkbenchPanel key={lesson.id} program={program} lesson={lesson} taskKind="guided" embedded onContinue={onPractice} /></div>}

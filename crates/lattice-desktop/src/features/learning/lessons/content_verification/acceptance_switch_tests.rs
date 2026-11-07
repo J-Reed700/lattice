@@ -231,6 +231,7 @@ fn elsewhere(statement: &str, source: &str, at: std::ops::Range<usize>) -> Findi
         trust: None,
         label: None,
         class: None,
+        claim_id: None,
         two_pass: TwoPass {
             supported_by: Some(SupportedElsewhere {
                 source_id: source.into(),

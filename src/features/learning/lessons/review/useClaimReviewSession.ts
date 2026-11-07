@@ -44,7 +44,7 @@ function closestOf(item: ClaimReviewItemDto | undefined, versionId: string, repo
  * in focus, the forms and sheet open on it, what the last action announced
  * and how to undo it. Resolving moves to the next claim in queue order.
  */
-export function useClaimReviewSession(programId: string, lessonId: string) {
+export function useClaimReviewSession(programId: string, lessonId: string, focusClaimId: string | null = null) {
   const client = useQueryClient();
   const query = useLessonClaimReview(programId, lessonId);
   const resolve = useResolveLearningClaim(programId, lessonId);
@@ -53,7 +53,7 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
   const claims = useMemo(() => review?.claims ?? [], [review]);
 
   const [mode, setMode] = useState<GroupMode | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(focusClaimId);
   const [teachingActive, setTeachingActive] = useState(false);
   const [removedActive, setRemovedActive] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set());

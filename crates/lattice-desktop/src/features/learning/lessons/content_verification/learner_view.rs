@@ -1,8 +1,8 @@
 //! The private report owns its public projection. No assessment text is copied
 //! into a learner DTO; malformed data is unavailable, never a checked claim.
 use super::provenance_gate::FindingTrust;
-use super::resolution::Resolution;
-use super::{ClaimVerdict, LessonVerificationReport};
+use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
+use super::{ClaimVerdict, Finding, LessonVerificationReport};
 use crate::features::learning::{
     dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
     lesson_evidence::{
@@ -13,9 +13,41 @@ use crate::features::learning::{
     references::trust::dto_map,
 };
 use lattice_core::application::services::claim_verification::PartKind;
-use lattice_core::domain::learning::claim_review::{Class, UnverifiedReason};
+use lattice_core::domain::learning::claim_review::{ClaimState, Class, Ledger, UnverifiedReason};
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
+
+/// A lesson's claims as its ledger holds them now, by claim id.
+#[derive(Default)]
+pub(in crate::features::learning) struct ClaimStates {
+    states: HashMap<String, ClaimState>,
+    /// Each claim's id, unit and quote.
+    places: Vec<(String, usize, String)>,
+}
+
+impl ClaimStates {
+    pub(in crate::features::learning) fn of(ledger: &Ledger) -> Self {
+        Self {
+            states: ledger
+                .claims
+                .iter()
+                .map(|entry| (entry.claim_id().0.clone(), entry.state().clone()))
+                .collect(),
+            places: ledger
+                .claims
+                .iter()
+                .map(|entry| {
+                    let location = entry.location();
+                    (
+                        entry.claim_id().0.clone(),
+                        location.unit_index,
+                        location.quote.clone(),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
 
 /// The level of `source_version_id` for the claim's subject, when it
 /// supports the claim.
@@ -61,6 +93,7 @@ impl LessonVerificationReport {
         &self,
         lesson: &LearningLessonDto,
         versions: &[SavedEvidenceVersion],
+        states: &ClaimStates,
     ) -> Result<LearningLessonEvidenceDto> {
         if self.lesson_id != lesson.id
             || self.policy.is_empty()
@@ -109,12 +142,60 @@ impl LessonVerificationReport {
                     .is_none_or(|classed| classed.class != Class::Internal)
             })
         };
+        // What the learner is told of a finding follows its claim as the
+        // ledger holds it now; a finding whose claim the ledger does not know
+        // keeps the resolution it was published with.
+        // The second is whether the ledger says the machine verified it.
+        let finding_claims: HashSet<&str> = self
+            .findings
+            .iter()
+            .filter_map(|finding| finding.claim_id.as_deref())
+            .collect();
+        let resolved = |finding: &Finding| {
+            let Some(state) = finding
+                .claim_id
+                .as_ref()
+                .and_then(|id| states.states.get(id))
+            else {
+                return (finding.resolution.clone(), false);
+            };
+            let (own, verified) = match standing(state, &|id| states.states.get(&id.0)) {
+                Standing::Resolved(resolution) => (Some(resolution), false),
+                Standing::Verified => (None, true),
+                Standing::Unsettled => (
+                    Some(Resolution::Unverified {
+                        reason: UnverifiedReason::Unchecked,
+                    }),
+                    false,
+                ),
+                Standing::Gone => (finding.resolution.clone(), false),
+            };
+            match own {
+                Some(own) => (Some(own), verified),
+                None => match ended_mark(
+                    states.places.iter().filter_map(|(id, unit, quote)| {
+                        Some(Placed {
+                            id,
+                            unit: *unit,
+                            quote,
+                            state: states.states.get(id)?,
+                        })
+                    }),
+                    &|id| finding_claims.contains(id),
+                    finding.unit,
+                    &finding.quote,
+                ) {
+                    Some(mark) => (Some(mark), false),
+                    None => (None, verified),
+                },
+            }
+        };
         // A sentence that carries a claim published not verified reads not
         // verified, whatever another claim on it found.
         let unverified: HashMap<(usize, &str), UnverifiedReason> = claims()
-            .filter_map(|finding| match &finding.resolution {
+            .filter_map(|finding| match resolved(finding).0 {
                 Some(Resolution::Unverified { reason }) => {
-                    Some(((finding.unit, finding.quote.as_str()), *reason))
+                    Some(((finding.unit, finding.quote.as_str()), reason))
                 }
                 _ => None,
             })
@@ -161,7 +242,8 @@ impl LessonVerificationReport {
                         .get(passage.source_id.as_str())
                         .is_some_and(|version| version.deleted_at.is_some())
                 });
-                let (resolution, note, unverified_reason) = match &finding.resolution {
+                let (stood, verified) = resolved(finding);
+                let (resolution, note, unverified_reason) = match &stood {
                     Some(Resolution::Confirmed { note, .. }) => (
                         LearningClaimResolutionDto::ConfirmedByYou,
                         note.clone(),
@@ -172,7 +254,7 @@ impl LessonVerificationReport {
                         None,
                         Some((*reason).into()),
                     ),
-                    None if finding.verdict != ClaimVerdict::Supported => (
+                    None if finding.verdict != ClaimVerdict::Supported && !verified => (
                         LearningClaimResolutionDto::NotVerified,
                         None,
                         Some(match finding.verdict {
@@ -212,6 +294,7 @@ impl LessonVerificationReport {
                     resolution,
                     note,
                     unverified_reason,
+                    claim_id: finding.claim_id.clone(),
                     sufficiency: finding.trust.as_deref().map(sufficiency),
                     class: finding
                         .class
@@ -239,7 +322,7 @@ impl LessonVerificationReport {
             content_sha256: self.content_sha256.clone(),
             claim_count: claims().count(),
             confirmed_count: claims()
-                .filter(|finding| matches!(finding.resolution, Some(Resolution::Confirmed { .. })))
+                .filter(|finding| matches!(resolved(finding).0, Some(Resolution::Confirmed { .. })))
                 .count(),
             executed_examples: self.executions.len(),
             unexecuted_languages: self.unexecuted_languages.clone(),
@@ -287,17 +370,23 @@ mod tests {
     #[test]
     fn projection_preserves_the_typed_claim_and_rejects_a_changed_anchor() {
         let (mut lesson, report) = fixture();
-        let view = report.learner_view(&lesson, &[]).unwrap();
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
         assert_eq!(view.teaching_claims[0].content_quote, lesson.blocks[0].body);
         assert_eq!(view.teaching_claims[0].verdict, "supported");
         lesson.blocks[0].body = "Different lesson content.".into();
-        assert!(report.learner_view(&lesson, &[]).is_err());
+        assert!(report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .is_err());
     }
 
     #[test]
     fn a_statement_reaches_the_learner_with_its_class_its_label_and_the_parts_it_was_read_as() {
         let (lesson, mut report) = fixture();
-        let plain = report.learner_view(&lesson, &[]).unwrap();
+        let plain = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
         // A report from before statements were sorted says none of it.
         assert_eq!(plain.teaching_claims[0].class, None);
         assert_eq!(plain.teaching_claims[0].label, None);
@@ -320,7 +409,10 @@ mod tests {
                 source_id: None,
             },
         ];
-        let claim = &report.learner_view(&lesson, &[]).unwrap().teaching_claims[0];
+        let claim = &report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap()
+            .teaching_claims[0];
 
         assert_eq!(claim.class, Some(LearningStatementClassDto::Sourced));
         assert_eq!(claim.label.as_deref(), Some("attributed"));
@@ -342,7 +434,9 @@ mod tests {
                 class,
                 by: ClassifiedBy::Model,
             });
-            let view = report.learner_view(&lesson, &[]).unwrap();
+            let view = report
+                .learner_view(&lesson, &[], &ClaimStates::default())
+                .unwrap();
             assert_eq!(view.teaching_claims[0].class, Some(expected));
         }
     }
@@ -356,7 +450,9 @@ mod tests {
             by: ClassifiedBy::Model,
         });
 
-        let view = report.learner_view(&lesson, &[]).unwrap();
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
 
         assert_eq!(view.teaching_claims.len(), 1);
         assert_eq!(view.teaching_claims[0].class, None);
@@ -373,7 +469,9 @@ mod tests {
         report.findings[0].verdict = ClaimVerdict::Unsupported;
         report.findings[0].resolution = not_verified(UnverifiedReason::Unsupported);
 
-        let view = report.learner_view(&lesson, &[]).unwrap();
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
 
         let claim = &view.teaching_claims[0];
         assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);
@@ -412,7 +510,9 @@ mod tests {
     fn a_verified_claim_carries_no_reason_on_the_wire() {
         let (lesson, report) = fixture();
 
-        let view = report.learner_view(&lesson, &[]).unwrap();
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
 
         let wire = serde_json::to_value(&view.teaching_claims[0]).unwrap();
         assert_eq!(wire["resolution"], "verified");
@@ -426,7 +526,9 @@ mod tests {
         report.findings[1].verdict = ClaimVerdict::Contradicted;
         report.findings[1].resolution = not_verified(UnverifiedReason::Contradicted);
 
-        let view = report.learner_view(&lesson, &[]).unwrap();
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
 
         for claim in &view.teaching_claims {
             assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);
@@ -449,7 +551,9 @@ mod tests {
         report.findings[1].verdict = ClaimVerdict::Unsupported;
         report.findings[1].resolution = not_verified(UnverifiedReason::Unsupported);
 
-        let view = report.learner_view(&lesson, &[]).unwrap();
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
 
         assert_eq!(
             view.teaching_claims[0].resolution,
@@ -475,9 +579,11 @@ mod tests {
             let (lesson, mut report) = fixture();
             report.findings[0].verdict = verdict;
 
-            let view = report.learner_view(&lesson, &[]).unwrap_or_else(|error| {
-                panic!("{verdict:?} makes the lesson unavailable: {error}")
-            });
+            let view = report
+                .learner_view(&lesson, &[], &ClaimStates::default())
+                .unwrap_or_else(|error| {
+                    panic!("{verdict:?} makes the lesson unavailable: {error}")
+                });
 
             let claim = &view.teaching_claims[0];
             assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);
@@ -499,9 +605,13 @@ mod tests {
             retrieval_kind: "lexical".into(),
             score: 1.0,
         });
-        assert!(report.learner_view(&lesson, &[]).is_err());
+        assert!(report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .is_err());
         report.findings[0].evidence[0].retrieval_kind = "execution".into();
-        let view = report.learner_view(&lesson, &[]).unwrap();
+        let view = report
+            .learner_view(&lesson, &[], &ClaimStates::default())
+            .unwrap();
         assert_eq!(
             view.teaching_claims[0].passages[0].title,
             "Executed example"

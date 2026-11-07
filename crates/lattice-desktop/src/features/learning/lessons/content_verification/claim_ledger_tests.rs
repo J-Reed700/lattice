@@ -64,7 +64,7 @@ pub(super) fn section(statement: &str) -> String {
     format!("{statement}{}", PRACTICE.repeat(5))
 }
 
-fn lesson(statements: &[&str]) -> Value {
+pub(super) fn lesson(statements: &[&str]) -> Value {
     let blocks: Vec<_> = statements
         .iter()
         .enumerate()
@@ -1158,6 +1158,7 @@ pub(super) fn passage_finding(
         supporting_quote: supported.then(|| source.to_owned()),
         resolution: None,
         trust: None,
+        claim_id: None,
         two_pass: Default::default(),
         label: None,
         class: None,
@@ -2167,24 +2168,24 @@ async fn a_code_examples_ended_claim_blocks_nothing() -> Result<()> {
 /// A course whose lesson is prepared against a source its library holds, so
 /// what a preparation returns can be published and read back as a learner
 /// reads it.
-struct Course {
-    pool: sqlx::SqlitePool,
+pub(super) struct Course {
+    pub(super) pool: sqlx::SqlitePool,
     repo: crate::features::learning::curriculum_repository::LearningCurriculumRepository,
     job: String,
-    lesson_id: String,
-    program_id: String,
+    pub(super) lesson_id: String,
+    pub(super) program_id: String,
     sources: Vec<LearningSourceDto>,
 }
 
 /// A published lesson as the learner reads it.
-struct Shown {
+pub(super) struct Shown {
     draft: Value,
     view: LearningLessonEvidenceDto,
     claims: Vec<Value>,
 }
 
 impl Course {
-    async fn new() -> Result<Self> {
+    pub(super) async fn new() -> Result<Self> {
         let pool = crate::features::learning::tests::pool().await?;
         let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
         let program_id = repo.job(&job).await?.program_id;
@@ -2202,7 +2203,7 @@ impl Course {
         })
     }
 
-    async fn prepare(
+    pub(super) async fn prepare(
         &self,
         model: &dyn LLMPort,
         draft: &Value,
@@ -2220,7 +2221,10 @@ impl Course {
 
     /// Publishes what a preparation returned as the worker does, and reads
     /// the lesson back.
-    async fn publish(&self, prepared: (String, LessonVerificationReport)) -> Result<Shown> {
+    pub(super) async fn publish(
+        &self,
+        prepared: (String, LessonVerificationReport),
+    ) -> Result<Shown> {
         let (raw, report) = prepared;
         assert!(report.issues.is_empty(), "{:?}", report.issues);
         let draft: Value = serde_json::from_str(&raw)?;
@@ -2610,4 +2614,13 @@ async fn a_lesson_whose_cuts_would_take_every_question_of_a_kind_it_asks_is_publ
     assert_eq!(questions[0]["explanation"], json!(figure(0)));
     assert_eq!(questions[1]["explanation"], json!(GOOD));
     Ok(())
+}
+
+/// A model whose judge never answers readably, so every statement is
+/// published not verified as not checked.
+pub(super) fn unreadable() -> Figures {
+    Figures {
+        unusable_asks: usize::MAX,
+        ..Figures::new()
+    }
 }
