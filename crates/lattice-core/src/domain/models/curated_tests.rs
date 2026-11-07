@@ -191,6 +191,70 @@ fn entries_are_unique_and_three_bit_files_are_marked() {
     }
 }
 
+/// The recommender orders by `rank` and reads the parameter counts, so every
+/// entry carries them: ranks are unique and run 1 to the catalog's size,
+/// a mixture-of-experts model names its active parameters, and a quantization
+/// below 4 bits belongs only to a model of 20B parameters or more.
+#[test]
+fn every_entry_has_a_unique_rank_and_parameter_counts() {
+    let mut ranks: Vec<u8> = CURATED_CHAT_MODELS.iter().map(|m| m.rank).collect();
+    ranks.sort_unstable();
+    let expected: Vec<u8> = (1..=CURATED_CHAT_MODELS.len() as u8).collect();
+    assert_eq!(ranks, expected, "ranks are unique and without gaps");
+    for model in CURATED_CHAT_MODELS {
+        assert!(model.parameters_b > 0.0, "{}", model.id);
+        if let Some(active) = model.active_parameters_b {
+            assert!(
+                active > 0.0 && active < model.parameters_b,
+                "{}: active parameters are fewer than the total",
+                model.id
+            );
+        }
+        let mixture_of_experts = model.id.contains("-a3b-") || model.id.contains("-a4b-");
+        assert!(
+            !mixture_of_experts || model.active_parameters_b.is_some(),
+            "{} names its active parameters",
+            model.id
+        );
+        if model.quantization.contains("IQ3") {
+            assert!(
+                model.parameters_b >= 20.0,
+                "{}: a small model is never offered below 4 bits",
+                model.id
+            );
+        }
+    }
+}
+
+/// The order the survey's public results support, spelled out so a change to
+/// one entry's rank is a visible change here.
+#[test]
+fn the_capability_order_is_the_documented_one() {
+    let mut by_rank: Vec<_> = CURATED_CHAT_MODELS.iter().collect();
+    by_rank.sort_by_key(|model| std::cmp::Reverse(model.rank));
+    let ids: Vec<&str> = by_rank.iter().map(|model| model.id).collect();
+    assert_eq!(
+        ids,
+        [
+            "qwen3.8-27b-ud-q4_k_m",
+            "qwen3.8-27b-iq3_s",
+            "gemma-4-26b-a4b-it-ud-q4_k_m",
+            "qwen3.6-35b-a3b-ud-q4_k_xl",
+            "gemma-4-12b-it-q8_0",
+            "gemma-4-12b-it-q6_k",
+            "gemma-4-12b-it-q4_k_m",
+            "gemma-4-26b-a4b-it-ud-iq3_s",
+            "qwen3.5-9b-q8_0",
+            "qwen3.5-9b-q6_k",
+            "qwen3.5-9b-q4_k_m",
+            "qwen3.5-9b-mtp-q4_k_m",
+            "gemma-4-e4b-it-q4_k_m",
+            "qwen3.5-4b-q4_k_m",
+            "qwen3.5-2b-q4_k_m",
+        ]
+    );
+}
+
 /// Pre-Qwen-3.5 families were removed, not hidden.
 #[test]
 fn chat_catalog_is_current_generation_only() {
