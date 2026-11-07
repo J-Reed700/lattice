@@ -401,7 +401,7 @@ pub async fn prepare_lesson_with_references<'a>(
     // Research before writing saves references the lesson may cite and its
     // verification checks against.
     let references = expanded.as_ref().unwrap_or(references);
-    let owned_ids = validate_source_snapshot_ids(&references.sources)?;
+    validate_source_snapshot_ids(&references.sources)?;
     // Approval is deliberately never cached here.
     let draft_input = serde_json::to_string(&json!({
         "policy":"lesson-draft", "prompt":prompt, "schema":lesson_schema(sources.len()),
@@ -483,7 +483,7 @@ pub async fn prepare_lesson_with_references<'a>(
     // Verification may number a course source the writer was not given, to
     // cite the passage that supports a claim (course evidence index §5.1).
     let mut numbered = sources.clone();
-    let (raw, report) =
+    let (raw, report, owned) =
         crate::features::learning::content_verification::verify_and_repair_with_references(
             llm,
             runtimes,
@@ -518,6 +518,7 @@ pub async fn prepare_lesson_with_references<'a>(
         &lesson_schema(sources.len()),
         &raw,
     )?;
+    let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
     findings.extend(citations);
     // What the coverage audit found the inventory leaves out waits for the

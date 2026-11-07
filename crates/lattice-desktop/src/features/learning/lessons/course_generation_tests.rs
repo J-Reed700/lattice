@@ -626,6 +626,133 @@ fn link_reply(prompt: &str, sentinel: &str) -> String {
 }
 
 #[tokio::test]
+async fn a_question_may_cite_a_reference_verification_saved_for_the_program() -> Result<()> {
+    use crate::features::learning::content_verification::research::{
+        self, tests as research_tests,
+    };
+    const CLAIM: &str =
+        "Random assignment reduces confounding in comparisons between treatment groups.";
+    struct Researching {
+        inner: Model,
+    }
+    #[async_trait::async_trait]
+    impl LLMPort for Researching {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
+        }
+        fn model_name(&self) -> &str {
+            self.inner.model_name()
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            self.inner.count_tokens(text)
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.inner.max_context_tokens()
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl Researching {
+        async fn respond(&self, prompt: &str) -> Result<String> {
+            if prompt.starts_with("Judge which candidate passages substantively cover") {
+                return Ok(json!({"topics":[{"id":"t1","covering":["p1"]}]}).to_string());
+            }
+            if prompt.starts_with("Plan focused reference searches") {
+                return Ok(json!({"needs":[{"gap":0,"query":"random assignment confounding official guidance","kind":"web"}]}).to_string());
+            }
+            if prompt.starts_with("Select trustworthy references") {
+                return Ok(research_tests::selection(&[0]));
+            }
+            if prompt.starts_with("Source passages:") {
+                let (passages, tail) = prompt
+                    .split_once("\n\nClaim: ")
+                    .ok_or_else(|| AppError::InvalidInput("claim check without a claim".into()))?;
+                if tail.split("\n\n").next() == Some(CLAIM) {
+                    return Ok(if passages.contains(CLAIM) {
+                        format!("supported\nReason: The complete capture directly states the claim.\nSource quote: {CLAIM}\nSource passage: passage-0")
+                    } else {
+                        "unsupported\nReason: The saved reference does not state the claim.\nSource quote: none".into()
+                    });
+                }
+            }
+            self.inner.respond(prompt).await
+        }
+    }
+
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let draft = service::generate(
+        &repo,
+        &drafts,
+        &outline(4, 3),
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let accepted = service::accept(
+        &repo,
+        &drafts,
+        AcceptLearningProgramRequestDto {
+            program_id: draft.summary.id.clone(),
+            expected_revision: draft.summary.revision,
+            title: "Experimental design".into(),
+        },
+    )
+    .await?;
+    crate::features::learning::content_verification::tests::install_source(
+        &pool,
+        &draft.summary.id,
+        REFERENCE,
+    )
+    .await?;
+    let mut program = repo.get(&draft.summary.id).await?;
+    program.sources = repo.verification_sources(&draft.summary.id).await?;
+    let lesson = &program.modules[0].lessons[0];
+    let mut candidate = lesson_response();
+    for field in ["blocks", "questions"] {
+        for item in candidate[field].as_array_mut().unwrap() {
+            item["sourceIndex"] = json!(0);
+            item["quote"] = json!("A randomized comparison isolates the intervention.");
+        }
+    }
+    candidate["questions"][0]["explanation"] = json!(CLAIM);
+    let llm = Researching {
+        inner: Model(candidate.to_string()),
+    };
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
+
+    let prepared = Box::pin(research::run(
+        pool.clone(),
+        accepted.summary.id.clone(),
+        accepted.summary.goal.clone(),
+        Some(research_tests::web(false)),
+        generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+    ))
+    .await?;
+
+    let saved = repo.verification_sources(&program.summary.id).await?;
+    let added = saved
+        .iter()
+        .find(|source| !program.sources.iter().any(|known| known.id == source.id))
+        .expect("verification's research saved a reference for the program");
+    assert!(
+        prepared.questions[0].source_ids.contains(&added.id),
+        "{:?}",
+        prepared.questions[0].source_ids
+    );
+    assert!(prepared.questions[0]
+        .source_ids
+        .contains(&program.sources[0].id));
+    Ok(())
+}
+
+#[tokio::test]
 async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> Result<()> {
     let issue = json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."]}).to_string();
     let repaired = json!({"wrong":false}).to_string();
