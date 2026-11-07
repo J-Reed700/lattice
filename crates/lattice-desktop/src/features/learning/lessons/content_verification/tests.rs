@@ -1412,9 +1412,11 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
     let report = verify(&offline, &candidate(GOOD), &[source()]).await?;
     assert_eq!(report.findings[0].verdict, ClaimVerdict::Unverified);
     // A claim the checker could not answer for is no failure of the claim:
-    // it is asked again once, and the lesson stops when the answer still
-    // cannot be read (claim classes design §3.2).
-    let error = verify_and_repair(
+    // it is asked again once, and when the answer still cannot be read the
+    // lesson publishes with the statement not verified, never taken for
+    // verified (claim classes design §3.2; publish-unverified design, the
+    // `checker_unreadable` case, reason `unchecked`).
+    let (published, report) = verify_and_repair(
         &offline,
         "{}",
         &json!({}),
@@ -1423,9 +1425,20 @@ async fn missing_evidence_failed_judge_and_incomplete_coverage_never_approve() -
         3000,
     )
     .await
-    .err()
-    .unwrap();
-    assert!(error.to_string().contains("could not be read"), "{error}");
+    .expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    assert!(published.contains(GOOD), "the sentence stands: {published}");
+    assert_ne!(report.findings[0].verdict, ClaimVerdict::Supported);
+    assert!(
+        matches!(
+            &report.findings[0].resolution,
+            Some(resolution::Resolution::Unverified {
+                reason: lattice_core::domain::learning::claim_review::UnverifiedReason::Unchecked
+            })
+        ),
+        "{:?}",
+        report.findings[0].resolution
+    );
     assert!(!*offline.repaired.lock().unwrap());
     let incomplete = Model {
         incomplete_coverage: true,
