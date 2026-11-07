@@ -1302,7 +1302,7 @@ test('catalog offers category previews, bounded pages, and honest search results
           model: {
             id, name: variants > 1 ? `${name} · ${quantization}` : name, category,
             description: 'A model available in the catalog.', size_gb: 1 + index + variant / 10,
-            minimum_ram_gb: 4, recommended_ram_gb: 8, context_length: 32768,
+            context_length: 32768,
             performance_tier: 'Balanced', supported_quantizations: category === 'LLM' ? [quantization] : [],
             capabilities: ['chat'], download_url: `https://huggingface.co/catalog/${id}`,
             license: 'Apache-2.0', requires_auth: false, model_id: `catalog/${id}`,
@@ -1328,7 +1328,7 @@ test('catalog offers category previews, bounded pages, and honest search results
         const base = models.find(({ model }) => model.model_id === (args as { repoId: string }).repoId)!.model;
         return ['Q4_K_M', 'Q5_K_M', 'Q8_0', 'BF16'].map((quant, index) => ({
           ...base, id: `${base.id}-${quant}`, default_filename: `model-${quant}.gguf`,
-          supported_quantizations: [quant], size_gb: 4 + index * 3, minimum_ram_gb: (4 + index * 3) * 1.5,
+          supported_quantizations: [quant], size_gb: 4 + index * 3,
         }));
       },
       download_model: (args) => {

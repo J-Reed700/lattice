@@ -29,7 +29,7 @@ vi.mock('./SystemCapabilitiesCard', () => ({ SystemCapabilitiesCard: stub('Syste
 vi.mock('./CatalogManagementSection', () => ({ CatalogManagementSection: stub('CatalogManagementSection') }));
 
 const model = (id: string, overrides: Record<string, unknown> = {}) => ({
-  id, name: id, category: 'LLM', size_gb: 4, minimum_ram_gb: 8, capabilities: ['chat'], performance_tier: 'Balanced',
+  id, name: id, category: 'LLM', size_gb: 4, capabilities: ['chat'], performance_tier: 'Balanced',
   embedding_dimensions: null, default_filename: `${id}-Q4_K_M.gguf`, supported_quantizations: [], ...overrides,
 });
 

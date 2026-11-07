@@ -44,7 +44,7 @@ beforeEach(() => {
     data: [{
       modelId: 'herb-4b', name: 'Herb 4B', description: 'A small general model.', downloadBytes: 2.5 * GB,
       verdict: { kind: 'fits', needsBytes: 4 * GB, budgetBytes: 8 * GB, device: { name: 'Test GPU', kind: 'dedicated' } },
-      labels: ['best'], evidence: { kind: 'untested' }, speed: 'balanced', reason: 'Fits.',
+      labels: ['best'], evidence: { kind: 'untested' }, speed: 'balanced',
     }],
   });
   mocks.api.downloadDefaultEmbeddingModel.mockReset().mockResolvedValue({ ok: true, data: 'embed-job' });

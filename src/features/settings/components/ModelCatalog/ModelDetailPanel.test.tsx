@@ -64,8 +64,6 @@ const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
   category: 'LLM',
   description: 'A storytelling model.',
   size_gb: 4.4,
-  minimum_ram_gb: 8,
-  recommended_ram_gb: 16,
   context_length: 32768,
   performance_tier: 'Balanced',
   supported_quantizations: ['Q4_K_M'],
@@ -181,7 +179,7 @@ describe('ModelDetailPanel', () => {
   it('says what it cannot estimate', async () => {
     h.capabilities = null;
     renderPanel(recommendation(
-      { size_gb: 0, minimum_ram_gb: 0, recommended_ram_gb: 0, format: 'safetensors', capabilities: [], model_id: null, default_filename: null, download_url: null, supported_quantizations: [] } as never,
+      { size_gb: 0, format: 'safetensors', capabilities: [], model_id: null, default_filename: null, download_url: null, supported_quantizations: [] } as never,
       { popularity_downloads: null, popularity_likes: null } as never,
     ));
     expect(screen.getByText('Not enough size or hardware information to estimate fit.')).toBeInTheDocument();

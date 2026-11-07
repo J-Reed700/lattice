@@ -16,12 +16,12 @@ vi.mock('@/features/model/api/client', () => ({ modelApi: { getModelVariants: vi
 const base: ModelMetadata = {
   id: 'q4', name: 'Example 8B', model_id: 'publisher/example', category: 'LLM', description: '',
   default_filename: 'model-Q4_K_M.gguf', supported_quantizations: ['Q4_K_M', 'Q8_0'],
-  size_gb: 4, total_size_bytes: 4_000_000_000, minimum_ram_gb: 6, recommended_ram_gb: 8,
+  size_gb: 4, total_size_bytes: 4_000_000_000,
   context_length: 8192, performance_tier: 'Balanced', capabilities: ['chat'],
   license: 'MIT', requires_auth: false, download_url: null, files: [],
   embedding_dimensions: null, embedding_compatibility: null,
 };
-const q8 = { ...base, id: 'q8', default_filename: 'model-Q8_0.gguf', supported_quantizations: ['Q8_0'], size_gb: 8, minimum_ram_gb: 12 };
+const q8 = { ...base, id: 'q8', default_filename: 'model-Q8_0.gguf', supported_quantizations: ['Q8_0'], size_gb: 8 };
 function setup() {
   const onSelect = vi.fn();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -112,7 +112,7 @@ describe('published model versions', () => {
   });
 
   it('keeps unreported sizes unknown and never fabricates a fit', async () => {
-    vi.mocked(modelApi.getModelVariants).mockResolvedValue({ ok: true, data: [{ ...base, size_gb: 0, minimum_ram_gb: 0 }] });
+    vi.mocked(modelApi.getModelVariants).mockResolvedValue({ ok: true, data: [{ ...base, size_gb: 0 }] });
     setup();
     expect(await screen.findByText('Size unavailable')).toBeInTheDocument();
     expect(screen.queryByText('Memory estimate unavailable')).not.toBeInTheDocument();

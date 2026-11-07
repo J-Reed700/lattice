@@ -34,7 +34,6 @@ const recommendation = (overrides: Record<string, unknown> = {}) => ({
   labels: ['best'],
   evidence: { kind: 'measured', suites: ['course eval'] },
   speed: 'balanced',
-  reason: 'Fits the card with room for a long context.',
   ...overrides,
 });
 

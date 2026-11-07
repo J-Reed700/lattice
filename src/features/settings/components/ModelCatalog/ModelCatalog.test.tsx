@@ -16,8 +16,6 @@ const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
   category: 'LLM',
   description: 'A general-purpose instruction model.',
   size_gb: 4.4,
-  minimum_ram_gb: 8,
-  recommended_ram_gb: 16,
   context_length: 32768,
   performance_tier: 'Balanced',
   supported_quantizations: ['Q4_K_M'],

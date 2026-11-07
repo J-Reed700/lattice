@@ -47,10 +47,6 @@ export interface ModelMetadata {
   description: string;
   /** Model size in gigabytes (on disk) */
   size_gb: number;
-  /** Minimum RAM required to load model */
-  minimum_ram_gb: number;
-  /** Recommended RAM for good performance */
-  recommended_ram_gb: number;
   /** Maximum context length in tokens */
   context_length: number;
   /** Performance characteristic */

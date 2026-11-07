@@ -14,8 +14,6 @@ const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
   category: 'LLM',
   description: 'A general-purpose model.',
   size_gb: 5.7,
-  minimum_ram_gb: 8,
-  recommended_ram_gb: 16,
   context_length: 32768,
   performance_tier: 'Balanced',
   supported_quantizations: ['Q4_K_M'],
@@ -79,14 +77,9 @@ describe('ModelRow fit label', () => {
   });
 
   it('shows no memory estimate beside the verdict, so the screen has one memory figure', () => {
-    render(<ModelRow model={row(verdict('fits'), { minimum_ram_gb: 8 })} {...rowProps} />);
+    render(<ModelRow model={row(verdict('fits'))} {...rowProps} />);
     expect(screen.queryByText(/Est\. memory/)).not.toBeInTheDocument();
     expect(screen.queryByText('Memory estimate unavailable')).not.toBeInTheDocument();
   });
 
-  it('shows the backend’s verdict whatever the catalog’s own memory estimate says', () => {
-    render(<ModelRow model={row(verdict('too_large'), { minimum_ram_gb: 1 })} {...rowProps} />);
-    expect(screen.getByText('Too large for this computer')).toBeInTheDocument();
-    expect(screen.queryByText('Fits')).not.toBeInTheDocument();
-  });
 });

@@ -24,7 +24,7 @@ const tight = { kind: 'tight' as const, needsBytes: 15 * GB, budgetBytes: 15 * G
 
 const row = (id: string, fit: unknown, repo = `pub/${id}-GGUF`) => ({
   model: {
-    id, name: `Model ${id}`, category: 'LLM', description: '', size_gb: 4, minimum_ram_gb: 8, recommended_ram_gb: 16,
+    id, name: `Model ${id}`, category: 'LLM', description: '', size_gb: 4,
     capabilities: ['chat'], supported_quantizations: ['Q4_K_M'], model_id: repo, default_filename: `${id}-Q4_K_M.gguf`,
     requires_auth: false, files: [], license: 'MIT', embedding_dimensions: null, embedding_compatibility: null,
   },

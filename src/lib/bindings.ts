@@ -5810,7 +5810,7 @@ export type DeleteConversationResponseDto = {
 status: string }
 export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
-export type DeviceKindDto = "dedicated" | "integrated" | "unified" | "processor"
+export type DeviceKindDto = "dedicated" | "unified" | "processor"
 /**
  * What a diff does with one line.
  */
@@ -8651,14 +8651,6 @@ description: string;
  */
 size_gb: number;
 /**
- * Minimum RAM in GB
- */
-minimum_ram_gb: number;
-/**
- * Recommended RAM in GB
- */
-recommended_ram_gb: number;
-/**
  * Context length in tokens
  */
 context_length: number;
@@ -8999,7 +8991,7 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
-export type RecommendationDto = { modelId: string; name: string; description: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto; reason: string }
+export type RecommendationDto = { modelId: string; name: string; description: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
 export type RecommendationLabelDto = "best" | "fastest" | "smallest_download"
 export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**
