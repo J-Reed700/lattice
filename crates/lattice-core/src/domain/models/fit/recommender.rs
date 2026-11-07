@@ -1,5 +1,6 @@
 use super::companions::Companions;
 use super::machine::MachineProfile;
+use super::shape::ModelShape;
 use super::verdict::FitVerdict;
 use crate::domain::models::curated::CuratedChatModel;
 
