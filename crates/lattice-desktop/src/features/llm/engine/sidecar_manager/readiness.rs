@@ -204,7 +204,7 @@ pub(super) fn refused_combination(output: &[String]) -> Option<AttemptError> {
         .then(|| AttemptError {
             kind: AttemptFailure::Refused,
             message: "This llama-server cannot draft and see at once. Turn off either Vision \
-                      or Speculative decoding for this model in Settings → Models."
+                      or Speculative decoding for this model in Settings → Downloaded."
                 .to_string(),
         })
 }

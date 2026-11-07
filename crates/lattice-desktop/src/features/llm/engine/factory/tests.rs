@@ -155,3 +155,14 @@ async fn test_create_llm_with_invalid_path() {
     .await;
     assert!(result.is_err());
 }
+
+#[test]
+fn a_model_with_no_trained_length_names_the_tab_that_sets_its_context_length() {
+    let LLMError::InvalidConfig(message) = no_trained_length(Path::new("models/x.gguf")) else {
+        panic!("a missing window is a configuration refusal");
+    };
+    assert_eq!(
+        message,
+        "models/x.gguf does not say in its header how long a context it was trained for. Set its context length in Settings → Downloaded."
+    );
+}

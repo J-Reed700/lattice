@@ -135,7 +135,7 @@ describe('SourcesTab', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Sources' })).toBeInTheDocument();
     expect(await screen.findByText('Your query is sent to brave.com under your key.')).toBeInTheDocument();
-    expect(screen.getByTestId('status-brave')).toHaveTextContent('Needs a Brave Search key');
+    expect(screen.getByTestId('status-brave')).toHaveTextContent('Needs your Brave Search key');
     expect(screen.getByTestId('status-searxng')).toHaveTextContent('Needs your SearXNG address');
     expect(screen.getByTestId('status-duckduckgo')).toHaveTextContent('Ready');
     expect(screen.getByRole('heading', { name: 'Code hosts' })).toBeInTheDocument();
@@ -188,7 +188,7 @@ describe('SourcesTab', () => {
 
     await waitFor(() => expect(VaultAPI.removeSourceKey).toHaveBeenCalledWith('brave'));
     await waitFor(() => expect(within(row).queryByText('Key saved')).not.toBeInTheDocument());
-    expect(screen.getByTestId('status-brave')).toHaveTextContent('Needs a Brave Search key');
+    expect(screen.getByTestId('status-brave')).toHaveTextContent('Needs your Brave Search key');
   });
 
   it('turns a finder off through the sourcing settings', async () => {

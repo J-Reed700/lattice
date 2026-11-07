@@ -106,7 +106,7 @@ fn recipe(kind: NeedKind, owner_known: bool) -> [WaveRecipe; 3] {
     use Engines::{Keyless, OptIn};
     use StepScope::{AsAsked, Owner};
     match kind {
-        // Wave 1 DDG + Bing, wave 2 the opt-in engines (their own roles),
+        // Wave 1 DDG, wave 2 the opt-in engines (their own roles),
         // wave 3 the keyless engines again with the caller's rewordings.
         // Paid engines that can run go ahead of all of them.
         NeedKind::Web => [NO_ENGINES, NO_ENGINES, wave(Keyless(AsAsked), true)],

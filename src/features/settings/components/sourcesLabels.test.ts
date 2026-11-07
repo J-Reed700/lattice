@@ -21,8 +21,9 @@ describe('sourcesLabels', () => {
   describe('statusLine', () => {
     it.each([
       [{ gate: 'disabled' }, 'Off'],
-      [{ gate: 'noKey', needs: { kind: 'requiredKey', service: 'brave' } }, 'Needs a Brave Search key'],
-      [{ gate: 'noKey', needs: { kind: 'requiredKey', service: 'tavily' } }, 'Needs a tavily key'],
+      [{ gate: 'noKey', needs: { kind: 'requiredKey', service: 'brave' } }, 'Needs your Brave Search key'],
+      [{ gate: 'noKey', needs: { kind: 'requiredKey', service: 'tavily' } }, 'Needs your tavily key'],
+      [{ gate: 'noKey', needs: { kind: 'requiredKey', service: 'openalex' } }, 'Needs your openalex key'],
       [{ gate: 'noKey' }, 'Needs a key'],
       [{ gate: 'noInstance' }, 'Needs your SearXNG address'],
       [{ gate: 'noContact' }, 'Needs a contact'],

@@ -119,7 +119,7 @@ async fn material_the_window_cannot_hold_names_the_learning_model_and_the_fix() 
     assert_eq!(
         message,
         "The requested learning material does not fit in recorder's 4096-token context \
-         window. Raise your Learning model's context length in Settings → Models, or choose \
+         window. Raise your Learning model's context length in Settings → Downloaded, or choose \
          a Learning model with a larger window"
     );
     assert!(llm.sent.lock().map(|sent| sent.is_empty()).unwrap_or(false));

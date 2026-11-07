@@ -307,7 +307,11 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
         .course_indexes()
         .cloned()
         .ok_or("the container has no course indexes")?;
-    courses.register().await?;
+    let failures = container
+        .jobs()
+        .register_all(vec![courses.job_kind()])
+        .await;
+    assert!(failures.is_empty(), "{failures:?}");
 
     let bench = Bench {
         container: &container,

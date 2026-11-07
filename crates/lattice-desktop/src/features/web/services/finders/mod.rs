@@ -4,7 +4,6 @@
 //! what a failure means for the finder's breaker.
 
 pub(crate) mod arxiv;
-pub(crate) mod bing_html;
 pub(crate) mod brave;
 pub(crate) mod crates_io;
 pub(crate) mod crossref;
@@ -23,6 +22,7 @@ pub(crate) mod ietf_datatracker;
 pub(crate) mod legislation_uk;
 pub(crate) mod marginalia;
 pub(crate) mod maven_pom;
+pub(crate) mod mediawiki;
 pub(crate) mod npm;
 pub(crate) mod nuget;
 pub(crate) mod openalex;
@@ -38,6 +38,7 @@ pub(crate) mod tavily;
 pub(crate) mod unpaywall;
 pub(crate) mod w3c;
 pub(crate) mod whatwg_index;
+pub(crate) mod wikibooks;
 pub(crate) mod wikidata;
 pub(crate) mod wikipedia;
 
@@ -232,10 +233,6 @@ pub(crate) fn registry(
             duckduckgo::RESULTS_PER_PAGE,
         ),
         entry(
-            bing_html::BingHtml::new(http.clone()),
-            bing_html::RESULTS_PER_PAGE,
-        ),
-        entry(
             brave::Brave::new(http.clone(), key(KeyService::Brave)),
             brave::RESULTS_PER_PAGE,
         ),
@@ -266,6 +263,10 @@ pub(crate) fn registry(
         entry(
             wikipedia::Wikipedia::new(http.clone()),
             wikipedia::RESULTS_PER_PAGE,
+        ),
+        entry(
+            wikibooks::Wikibooks::new(http.clone()),
+            wikibooks::RESULTS_PER_PAGE,
         ),
         entry(
             wikidata::Wikidata::new(http.clone()),
@@ -444,3 +445,5 @@ mod software_registries_b_tests;
 mod standards_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wikibooks_tests;

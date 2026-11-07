@@ -291,7 +291,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                         tracing::debug!(%error, "Could not publish a folder index update");
                     }
                 }));
-                tauri::async_runtime::block_on(manager.register())?;
+                tauri::async_runtime::block_on(
+                    container.jobs().register_all(vec![manager.job_kind()]),
+                );
             }
             Ok(())
         })

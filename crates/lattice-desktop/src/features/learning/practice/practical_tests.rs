@@ -819,6 +819,25 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
 }
 
 #[tokio::test]
+async fn a_database_error_while_settling_runs_at_startup_does_not_fail_setup() -> Result<()> {
+    let (pool, ..) = fixture().await?;
+    let repository = LearningPracticalRepository::new(pool.clone());
+    sqlx::query("ALTER TABLE learning_practical_runs RENAME TO learning_practical_runs_away")
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(
+        crate::features::learning::practical_runs::recover_running_runs(&repository)
+            .await
+            .is_err(),
+        "the database error is real"
+    );
+    let setup = crate::features::learning::practical_runs::recover_at_startup(&repository).await;
+    assert!(setup.is_ok(), "{setup:?}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() -> Result<()> {
     let (pool, program_id, lesson_id, _) = fixture().await?;
     let repository = LearningPracticalRepository::new(pool.clone());

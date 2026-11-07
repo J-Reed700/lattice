@@ -112,7 +112,7 @@ export function useChatSwitchActions({
       defaultOption
         ? `This chat now uses the app default (${defaultOption.triggerLabel})`
         : 'This chat now uses the app default',
-      defaultOption ? undefined : { message: 'No chat model is selected in Settings → Models.' }
+      defaultOption ? undefined : { message: 'No chat model is selected in Settings → Downloaded.' }
     );
   }, [activeConversationId, currentChoice.kind, downloadedModels, catalogs, saveChoice, settings?.llm]);
 

@@ -49,7 +49,7 @@ export function VerifierAuditSwitch({ programId }: { programId: string }) {
           <p id={helpId} className="mt-2 max-w-2xl text-xs leading-5 text-text-secondary">
             {data.destination
               ? `Before a lesson becomes ready, its full text, its claims and the exact cited passages are sent to ${data.destination} for a second check. A disputed claim waits for your review; the audit never edits the lesson.`
-              : 'No Verifier model is set. Choose one in Settings → Models under Verifier.'}
+              : 'No Verifier model is set. Choose one in Settings → Downloaded.'}
           </p>
         </div>
         <button type="button" role="switch" aria-checked={data.on} aria-describedby={helpId} disabled={set.isPending || (!data.on && !data.destination)} onClick={toggle}

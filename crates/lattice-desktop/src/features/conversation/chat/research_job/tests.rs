@@ -1028,6 +1028,122 @@ async fn a_research_job_whose_saved_turn_cannot_be_read_fails_with_its_question(
     jobs.drain().await;
 }
 
+/// Panics before the turn runs; the runtime's word that it failed the job
+/// goes to the real job.
+struct Panics(DeepResearchJob);
+
+#[async_trait]
+impl JobHandler for Panics {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        panic!("the turn exploded");
+    }
+
+    async fn failed_by_runtime(&self, job: &JobRecord, code: &str) {
+        self.0.failed_by_runtime(job, code).await;
+    }
+}
+
+/// Waits until the first attempt's question stands as `failed` on the thread.
+async fn question_failed(runtime: &FakeRuntime, attempt: &FirstAttempt) {
+    tokio::time::timeout(WAIT, async {
+        while question_status(runtime, attempt).await != "failed" {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the question was left pending");
+}
+
+/// A turn whose job panics fails, and the command waiting on it is answered
+/// with that failure rather than left waiting for the session.
+#[tokio::test]
+async fn a_research_turn_whose_job_panics_answers_its_waiting_command() {
+    let jobs = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(Panics(DeepResearchJob::new(runtime.share(), silent()))),
+        job_config(),
+    )
+    .await
+    .unwrap();
+
+    let answered = tokio::time::timeout(
+        WAIT,
+        run(&runtime, research("panicking-conversation"), silent()),
+    )
+    .await
+    .expect("the command is left waiting");
+
+    let error = answered.expect_err("a failed turn has no answer");
+    assert!(!cancellation::is_cancellation(&error), "{error:?}");
+    jobs.close();
+    jobs.drain().await;
+}
+
+#[tokio::test]
+async fn a_research_turn_whose_job_panics_fails_its_saved_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(Panics(DeepResearchJob::new(runtime.share(), silent()))),
+        job_config(),
+    )
+    .await
+    .unwrap();
+    let job = finished(&jobs, &job_id).await;
+
+    assert_eq!(job.status, JobStatus::Failed);
+    question_failed(&runtime, &attempt).await;
+    jobs.close();
+    jobs.drain().await;
+}
+
+#[tokio::test]
+async fn a_research_turn_the_runtime_failed_for_stopping_the_app_fails_its_saved_question() {
+    let pool = pool().await;
+    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let runtime = FakeRuntime {
+        jobs: Some(jobs.clone()),
+        ..FakeRuntime::default()
+    };
+    let attempt = first_attempt(&runtime).await;
+    let job_id = closed_after_one_round(&pool, &attempt).await;
+    // The app was closed from under it once already, and is again.
+    let store = jobs.store();
+    store.claim(&job_id).await.unwrap().unwrap();
+    store
+        .recover(DEEP_RESEARCH, RecoveryPolicy::Requeue)
+        .await
+        .unwrap();
+    store.claim(&job_id).await.unwrap().unwrap();
+
+    jobs.register(
+        DEEP_RESEARCH,
+        Arc::new(DeepResearchJob::new(runtime.share(), silent())),
+        job_config(),
+    )
+    .await
+    .unwrap();
+
+    let job = store.get(&job_id).await.unwrap();
+    assert_eq!(job.error_code.as_deref(), Some("stopped_the_app"));
+    question_failed(&runtime, &attempt).await;
+    jobs.close();
+    jobs.drain().await;
+}
+
 /// A stop that reaches a research job before it started cancels it, and the
 /// question it saved is left retryable.
 #[tokio::test]

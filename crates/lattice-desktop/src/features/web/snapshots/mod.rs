@@ -36,7 +36,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::http::normalize_web_source_url;
 use lattice_core::shared::runtime::background::BackgroundTasks;
-use lattice_core::shared::runtime::jobs::{JobRuntime, NewJob};
+use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};
 use store::SnapshotStore;
 
@@ -226,16 +226,14 @@ impl WebPageSnapshotService {
         self.shared.capture.attach_browser(browser);
     }
 
-    /// Registers the `web_page_snapshot` job kind, which settles the jobs the
+    /// The `web_page_snapshot` job kind; registering it settles the jobs the
     /// last process left running and starts delivering saved work.
-    pub async fn register_job(&self) -> Result<()> {
-        self.jobs
-            .register(
-                job::KIND,
-                Arc::new(job::WebPageSnapshotJob::new(Arc::clone(&self.shared))),
-                job::job_config(),
-            )
-            .await
+    pub fn job_kind(&self) -> JobKindRegistration {
+        JobKindRegistration {
+            kind: job::KIND.into(),
+            handler: Arc::new(job::WebPageSnapshotJob::new(Arc::clone(&self.shared))),
+            config: job::job_config(),
+        }
     }
 
     /// The row for this page in this conversation, created and queued when

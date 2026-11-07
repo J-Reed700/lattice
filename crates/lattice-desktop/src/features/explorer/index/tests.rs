@@ -137,7 +137,8 @@ impl Rig {
             Arc::default(),
             Arc::default(),
         );
-        manager.register().await.unwrap();
+        let failures = manager.jobs.register_all(vec![manager.job_kind()]).await;
+        assert!(failures.is_empty(), "{failures:?}");
         manager
     }
 
@@ -1461,6 +1462,155 @@ mod builds {
         open_settled(&manager, &root).await;
         finished(&manager, &root).await;
         assert_eq!(builds_of(&manager, &root).await.len(), 1);
+        manager.close().await;
+    }
+
+    /// A job database holding a build of `root` that the runtime failed for
+    /// stopping the app, and that build's id.
+    async fn stopped_build(root: &Path) -> (SqlitePool, String) {
+        let pool = jobs_database().await;
+        let id = stopped_build_on(&pool, root).await;
+        (pool, id)
+    }
+
+    /// Fails a build of `root` for stopping the app, in `pool`'s jobs, with
+    /// no runtime registered to run it. Returns its id.
+    async fn stopped_build_on(pool: &SqlitePool, root: &Path) -> String {
+        use lattice_core::shared::runtime::jobs::{JobStore, NewJob, RecoveryPolicy};
+        let store = JobStore::new(pool.clone());
+        let id = store
+            .submit(&NewJob {
+                kind: FOLDER_INDEX.into(),
+                subject_id: Some(text(root)),
+                operation_id: "stopped".into(),
+                payload_hash: text(root),
+                requested: json!({
+                    "root": text(root),
+                    "indexRoot": text(root),
+                    "wipePrefix": false,
+                }),
+                progress_total: 100,
+                message: "Queued".into(),
+            })
+            .await
+            .unwrap()
+            .id;
+        for _ in 0..2 {
+            store.claim(&id).await.unwrap().unwrap();
+            store
+                .recover(FOLDER_INDEX, RecoveryPolicy::Requeue)
+                .await
+                .unwrap();
+        }
+        let stopped = store.get(&id).await.unwrap();
+        assert_eq!(stopped.status, JobStatus::Failed);
+        assert_eq!(stopped.error_code.as_deref(), Some("stopped_the_app"));
+        id
+    }
+
+    /// With no build running, a folder stays "scanning": opening it is
+    /// not waited on to settle.
+    async fn open_only(manager: &FolderIndexManager, root: &Path) {
+        manager.open(&text(root)).await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_explicit_rebuild_of_a_sub_folder_runs_its_parents_build_that_stopped_the_app() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let parent = rig.project(
+            "repo",
+            &[
+                ("README.md", "# Repo\n\nThe retry story starts here.\n"),
+                (
+                    "crates/net/src/retry.rs",
+                    "pub fn retry_with_backoff() {}\n",
+                ),
+            ],
+        );
+        let pool = jobs_database().await;
+        let before = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool.clone())
+            .await;
+        open_settled(&before, &parent).await;
+        before.close().await;
+        before.jobs.close();
+        before.jobs.drain().await;
+        let id = stopped_build_on(&pool, &parent).await;
+
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .await;
+        let child = parent.join("crates/net");
+        open_only(&manager, &child).await;
+        let reopened = builds_of(&manager, &parent).await;
+        assert_eq!(
+            reopened[0].id, id,
+            "a plain open of the sub-folder queues nothing"
+        );
+
+        manager.rebuild(&text(&child)).await.unwrap();
+        let done = finished(&manager, &parent).await;
+        assert_ne!(done.id, id, "Rebuild submits a new build");
+        assert_eq!(done.status, JobStatus::Completed);
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_explicit_rebuild_runs_a_build_that_stopped_the_app_and_a_reopen_does_not() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
+        let (pool, id) = stopped_build(&root).await;
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .await;
+        open_only(&manager, &root).await;
+        manager.close().await;
+        open_only(&manager, &root).await;
+        let reopened = builds_of(&manager, &root).await;
+        assert_eq!(
+            reopened
+                .iter()
+                .map(|job| job.id.as_str())
+                .collect::<Vec<_>>(),
+            [id.as_str()],
+            "a reopen queues nothing"
+        );
+
+        manager.rebuild(&text(&root)).await.unwrap();
+        let done = finished(&manager, &root).await;
+        assert_ne!(done.id, id, "Rebuild submits a new build");
+        assert_eq!(done.status, JobStatus::Completed);
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_that_stopped_the_app_stays_failed_until_the_learner_retries_it() {
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
+        let (pool, id) = stopped_build(&root).await;
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .await;
+        open_only(&manager, &root).await;
+        manager.close().await;
+        open_only(&manager, &root).await;
+
+        let after = builds_of(&manager, &root).await;
+        assert_eq!(
+            after.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+            [id.as_str()],
+            "opening the folder keeps the failure and queues nothing"
+        );
+        assert_eq!(after[0].status, JobStatus::Failed);
+        assert_eq!(after[0].error_code.as_deref(), Some("stopped_the_app"));
+
+        let retried = manager.jobs.retry(&id, "learner-retry").await.unwrap();
+        let done = finished(&manager, &root).await;
+        assert_eq!(done.id, retried.id);
+        assert_eq!(done.status, JobStatus::Completed);
         manager.close().await;
     }
 

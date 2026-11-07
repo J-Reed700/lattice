@@ -420,7 +420,7 @@ impl ChatModels for FakeRuntime {
         let default =
             DefaultChatModel(self.llm.as_ref().map(|_| default_model()).ok_or_else(|| {
                 AppError::AiModelsNotInstalled(
-                    "No chat model is selected in Settings → Models".into(),
+                    "No chat model is selected in Settings → Downloaded".into(),
                 )
             }));
         self.pinned(resolve(request_override, &choice, &default)?)

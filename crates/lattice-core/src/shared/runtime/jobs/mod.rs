@@ -12,7 +12,9 @@ mod repository;
 mod runtime;
 
 pub use repository::JobStore;
-pub use runtime::{JobContext, JobHandler, JobRuntime, REPEATED_FAILURE};
+pub use runtime::{
+    JobContext, JobHandler, JobKindRegistration, JobRuntime, RegistrationFailure, REPEATED_FAILURE,
+};
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -336,5 +338,9 @@ impl From<&JobRecord> for JobDto {
 
 #[cfg(test)]
 mod continue_tests;
+#[cfg(test)]
+mod crash_guard_tests;
+#[cfg(test)]
+mod never_stuck_tests;
 #[cfg(test)]
 mod tests;

@@ -171,7 +171,7 @@ fn sourcing_round_trips_through_the_settings_file_and_defaults_when_absent() {
     settings
         .sourcing
         .finders
-        .insert("bing_html".to_string(), FinderSettingDto { enabled: false });
+        .insert("brave".to_string(), FinderSettingDto { enabled: false });
 
     let json = serde_json::to_value(&settings).unwrap();
     assert_eq!(json["sourcing"]["searxngUrl"], "https://search.example.org");

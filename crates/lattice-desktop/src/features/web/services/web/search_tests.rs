@@ -10,8 +10,8 @@ use lattice_core::application::ports::{SourceFinder, WebServiceTrait};
 use lattice_core::domain::sourcing::FailureCause;
 
 use super::super::WebService;
-use crate::features::web::mocks::web::ScriptedFinder;
-use crate::features::web::services::finders::{bing_html, duckduckgo, FinderEntry};
+use crate::features::web::mocks::web::{second_web_engine, ScriptedFinder};
+use crate::features::web::services::finders::{duckduckgo, FinderEntry};
 use crate::features::web::services::sourcing::SourcingService;
 
 fn web_service(finders: &[(&Arc<ScriptedFinder>, usize)]) -> WebService {
@@ -43,7 +43,7 @@ fn input(query: &str, max_results: usize, page: usize) -> WebSearchInput {
         max_results,
         page,
         offset: 0,
-        providers: vec!["duckduckgo".to_string(), "bing".to_string()],
+        providers: Vec::new(),
         include_wikipedia: false,
         depth: 1,
         branch_queries: 1,
@@ -60,8 +60,8 @@ async fn web_search_returns_every_finders_outcome() {
         duckduckgo::DESCRIPTOR,
         FailureCause::Challenge,
     ));
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 10));
-    let service = web_service(&[(&ddg, 10), (&bing, 10)]);
+    let second = Arc::new(ScriptedFinder::answering(second_web_engine(), 10));
+    let service = web_service(&[(&ddg, 10), (&second, 10)]);
 
     let output = service
         .search_web(&input("rust async", 5, 1))
@@ -79,7 +79,7 @@ async fn web_search_returns_every_finders_outcome() {
                 cause: Some("bot challenge".into()),
             },
             FinderOutcomeDto {
-                finder: "bing_html".into(),
+                finder: "second_engine".into(),
                 result: "answered".into(),
                 leads: 10,
                 elapsed_ms: 0,
@@ -87,7 +87,7 @@ async fn web_search_returns_every_finders_outcome() {
             },
         ]
     );
-    assert_eq!(output.providers_used, ["bing_html"]);
+    assert_eq!(output.providers_used, ["second_engine"]);
     assert_eq!(output.results.len(), 5);
     let json = serde_json::to_value(&output).unwrap();
     assert_eq!(json["outcomes"][0]["result"], "failed");
@@ -98,7 +98,7 @@ async fn web_search_returns_every_finders_outcome() {
         .await
         .unwrap();
     // DuckDuckGo's window fits the search's budget, so it is held behind
-    // Bing and settles after it: find its outcome by name, not position.
+    // the second engine and settles after it: find its outcome by name, not position.
     assert_eq!(ddg.calls().len(), 1);
     let skipped = again
         .outcomes
@@ -120,21 +120,21 @@ async fn web_search_returns_every_finders_outcome() {
 #[tokio::test]
 async fn page_two_of_a_twelve_result_search_makes_no_provider_request_when_the_pool_holds_it() {
     let ddg = Arc::new(ScriptedFinder::answering(duckduckgo::DESCRIPTOR, 15));
-    let bing = Arc::new(ScriptedFinder::answering(bing_html::DESCRIPTOR, 15));
-    let service = web_service(&[(&ddg, 15), (&bing, 15)]);
+    let other = Arc::new(ScriptedFinder::answering(second_web_engine(), 15));
+    let service = web_service(&[(&ddg, 15), (&other, 15)]);
 
     let first = service
         .search_web(&input("rust async", 12, 1))
         .await
         .unwrap();
-    assert_eq!((ddg.calls().len(), bing.calls().len()), (1, 1));
+    assert_eq!((ddg.calls().len(), other.calls().len()), (1, 1));
     let second = service
         .search_web(&input("rust async", 12, 2))
         .await
         .unwrap();
 
     assert_eq!(
-        (ddg.calls().len(), bing.calls().len()),
+        (ddg.calls().len(), other.calls().len()),
         (1, 1),
         "page 2 is a slice of the pool"
     );
@@ -170,10 +170,13 @@ fn only_named_engines_pin_a_search() {
     };
     assert_eq!(super::web_need(&typed, "attention", 5).1, None);
 
-    let pinned = input("rust async", 5, 1);
+    let pinned = WebSearchInput {
+        providers: vec!["duckduckgo".to_string()],
+        ..plain.clone()
+    };
     assert_eq!(
         super::web_need(&pinned, "rust async", 5).1,
-        Some(vec![duckduckgo::ID, bing_html::ID])
+        Some(vec![duckduckgo::ID])
     );
 }
 
