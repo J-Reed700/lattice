@@ -8,7 +8,7 @@
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance, HumanBinding, Ledger,
-    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction, VerdictKind,
+    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
@@ -117,8 +117,7 @@ impl ClaimReviewService {
         self.drafts.continue_review_job(&request).await
     }
 
-    /// Applies the user's `action` to `claim_id` (to every general-knowledge
-    /// proposal for `AcceptAllGeneralKnowledge`) and returns the review's new
+    /// Applies the user's `action` to `claim_id` and returns the review's new
     /// revision. Refused, writing nothing, when `expected_revision` is stale
     /// or the claim's state does not allow the action.
     pub async fn resolve(
@@ -137,9 +136,6 @@ impl ClaimReviewService {
             return Err(AppError::InvalidState(
                 "This claim changed; reload and act again.".into(),
             ));
-        }
-        if matches!(action, ClaimActionRequestDto::AcceptAllGeneralKnowledge) {
-            return self.accept_all_general_knowledge(&ledger, &review).await;
         }
         let entry = ledger
             .claims
@@ -182,15 +178,15 @@ impl ClaimReviewService {
         Ok(revision.0)
     }
 
-    /// Whether claim activity, a different checker, or an outdated standing
-    /// assessment gives verification new work since the lesson stopped.
+    /// Whether claim activity or a different checker gives verification new
+    /// work since the lesson stopped.
     pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
         let ledger = self.store.load(lesson_id).await?;
         self.changed_in(&ledger).await
     }
 
-    /// `changed_since_stop` over a loaded ledger. Settings and verification
-    /// upgrades count even when the user has not acted on a claim card.
+    /// `changed_since_stop` over a loaded ledger. A different checker counts
+    /// even when the user has not acted on a claim card.
     pub(super) async fn changed_in(&self, ledger: &Ledger) -> Result<bool> {
         let Some(review) = &ledger.review else {
             return Ok(false);
@@ -213,44 +209,7 @@ impl ClaimReviewService {
             .review_written_at(&ledger.lesson_id)
             .await?
             .unwrap_or(i64::MAX);
-        if changed_since(ledger, stopped_at) {
-            return Ok(true);
-        }
-        self.stale_standing(ledger).await
-    }
-
-    async fn accept_all_general_knowledge(
-        &self,
-        ledger: &Ledger,
-        review: &LessonReview,
-    ) -> Result<i64> {
-        let mut revision = ledger.revision;
-        let proposals: Vec<&ClaimLedgerEntry> = ledger
-            .claims
-            .iter()
-            .filter(|entry| entry.state().verdict() == Some(&VerdictKind::GeneralKnowledgeProposed))
-            .collect();
-        if proposals.is_empty() {
-            return Err(AppError::InvalidInput(
-                "No claim of this lesson is proposed as general knowledge.".into(),
-            ));
-        }
-        for entry in proposals {
-            revision = self
-                .store
-                .append(
-                    &ledger.lesson_id,
-                    entry.claim_id(),
-                    provenance(review),
-                    ClaimEvent::UserAction {
-                        action: UserAction::GeneralKnowledge,
-                        note: None,
-                    },
-                    revision,
-                )
-                .await?;
-        }
-        Ok(revision.0)
+        Ok(changed_since(ledger, stopped_at))
     }
 
     async fn resolution(
@@ -333,9 +292,6 @@ impl ClaimReviewService {
                 }
                 user(UserAction::Remove, None, Some(LabelSource::UserRemove))
             }
-            ClaimActionRequestDto::GeneralKnowledge => {
-                user(UserAction::GeneralKnowledge, None, None)
-            }
             ClaimActionRequestDto::ResearchWithHint { hint } => {
                 let hint = hint.trim().to_owned();
                 if hint.is_empty() {
@@ -344,9 +300,6 @@ impl ClaimReviewService {
                 user(UserAction::ResearchWithHint { hint }, None, None)
             }
             ClaimActionRequestDto::Undo => self.undo(review, lesson_id, entry).await,
-            ClaimActionRequestDto::AcceptAllGeneralKnowledge => Err(AppError::InternalError(
-                "Accepting every proposal is a lesson action".into(),
-            )),
         }
     }
 

@@ -71,7 +71,7 @@ describe('Learning Studio Plan editor', () => {
     const running = plan().jobs[0];
     const attempt = (id: string, status: string, retryOfJobId: string | null, createdAt: number, error: string | null) => ({
       ...running, id, status, retryOfJobId, createdAt, finishedAt: createdAt + 1000, error,
-      activity: { phase: 'evidence', phaseStartedAt: 0, lastActivityAt: 0, lastCheckpointAt: null, lessonTitle: null, modelName: null, modelRunning: false, responseCharacters: 0, modelAttempt: 0, verificationPass: 2, checksCompleted: 0, checksTotal: 0, checksReused: 0, checksUnresolved: 0, checksSentBack: 0, newReferences: null, modelChecksTotal: null, deeperEvidence: null, claims: null, recentSteps: [] },
+      activity: { phase: 'evidence', phaseStartedAt: 0, lastActivityAt: 0, lastCheckpointAt: null, lessonTitle: null, modelName: null, modelRunning: false, responseCharacters: 0, modelAttempt: 0, verificationPass: 2, checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null, recentSteps: [] },
     });
     mocks.getPlan.mockResolvedValue(ok(plan({ jobs: [
       attempt('job-a', 'failed', null, 1_790_000_000_000, 'The model rejected the request.'),

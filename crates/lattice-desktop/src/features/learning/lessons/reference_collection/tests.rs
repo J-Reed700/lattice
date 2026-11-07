@@ -219,6 +219,7 @@ async fn collection_fixture(
                     "test fixture",
                 ),
             },
+            found: false,
         })
         .collect();
     let repo = LearningRepository::new(pool.clone());

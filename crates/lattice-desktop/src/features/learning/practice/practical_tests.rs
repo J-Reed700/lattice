@@ -1304,3 +1304,459 @@ async fn interview_research_rejects_redirects_outside_structured_site_scope() ->
     );
     Ok(())
 }
+
+use crate::features::learning::practice::practice_tests::{
+    passage_source, text_length_rules, Reply,
+};
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+
+/// Answers a request for evaluator files with `checks` and any other with
+/// `activity`.
+struct Authors {
+    activity: String,
+    checks: String,
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for Authors {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let evaluator = request
+            .json_schema
+            .as_ref()
+            .is_some_and(|schema| schema.pointer("/properties/checkFiles").is_some());
+        Ok(CompletionResponse::from_text(if evaluator {
+            self.checks.clone()
+        } else {
+            self.activity.clone()
+        }))
+    }
+    fn model_name(&self) -> &str {
+        "authors"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.split_whitespace().count()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn activity_reply(
+    title: &str,
+    brief: &str,
+    rubric: (&str, &str),
+    starter_files: serde_json::Value,
+) -> String {
+    serde_json::json!({
+        "title": title, "brief": brief, "sourceVersionIds": [],
+        "rubric": [
+            {"title": rubric.0, "description": rubric.1, "maxPoints": 3},
+            {"title": "Verification", "description": "Checks the result against the stated constraints.", "maxPoints": 3}
+        ],
+        "starterFiles": starter_files, "referenceFiles": []
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn a_long_practical_activity_is_read_not_refused() -> Result<()> {
+    use crate::features::learning::practical_generation::generate_activity;
+    let program = crate::features::learning::tests::fixture();
+    let lesson = &program.modules[0].lessons[0];
+    let brief = "Write up the result and why it holds.";
+    let tradeoffs = ("Reasoning", "Explains the relevant tradeoffs.");
+    let none = serde_json::json!([]);
+    let long_title = "T".repeat(200);
+    let long_brief = "Write up the result and why it holds. ".repeat(350);
+    let long_name = "R".repeat(150);
+    let long_description = "Explains the tradeoffs and checks them. ".repeat(30);
+    let big_file = serde_json::json!([{"path": "work/notes.txt", "content": "x".repeat(100_000)}]);
+    for (what, reply) in [
+        (
+            "a short activity",
+            activity_reply("Investigate", brief, tradeoffs, none.clone()),
+        ),
+        (
+            "title",
+            activity_reply(&long_title, brief, tradeoffs, none.clone()),
+        ),
+        (
+            "brief",
+            activity_reply("Investigate", &long_brief, tradeoffs, none.clone()),
+        ),
+        (
+            "rubric title",
+            activity_reply(
+                "Investigate",
+                brief,
+                (long_name.as_str(), "Explains the relevant tradeoffs."),
+                none.clone(),
+            ),
+        ),
+        (
+            "rubric description",
+            activity_reply(
+                "Investigate",
+                brief,
+                ("Reasoning", long_description.as_str()),
+                none.clone(),
+            ),
+        ),
+        (
+            "a large starter file",
+            activity_reply("Investigate", brief, tradeoffs, big_file),
+        ),
+    ] {
+        let llm = Authors {
+            activity: reply,
+            checks: String::new(),
+        };
+        let made = generate_activity(
+            &llm,
+            LearningPracticalActivityKind::Custom,
+            "Practice the idea",
+            lesson,
+            &[],
+            None,
+            None,
+            &[],
+        )
+        .await;
+        assert!(made.is_ok(), "{what}: {:?}", made.err());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_large_evaluator_reply_is_read_not_refused() -> Result<()> {
+    use crate::features::learning::practical_generation::{
+        generate_activity, PracticalRuntimeContext,
+    };
+    let program = crate::features::learning::tests::fixture();
+    let lesson = &program.modules[0].lessons[0];
+    let runtime = PracticalRuntimeContext {
+        name: "Python".into(),
+        command: vec!["python".into(), "checks/evaluate.py".into()],
+        contract: "Exit zero when every check passes.".into(),
+        learner_contract: "Edit work/answer.py.".into(),
+        evaluator_paths: vec!["checks/evaluate.py".into()],
+    };
+    let starter =
+        serde_json::json!([{"path": "work/answer.py", "content": "# Write your answer here.\n"}]);
+    let activity = activity_reply(
+        "Investigate",
+        "Write up the result.",
+        ("Reasoning", "Explains the relevant tradeoffs."),
+        starter,
+    );
+    let checks = serde_json::json!({"checkFiles": [{
+        "path": "checks/evaluate.py", "content": "# a check\n".repeat(10_000)
+    }]})
+    .to_string();
+    let llm = Authors { activity, checks };
+    let made = generate_activity(
+        &llm,
+        LearningPracticalActivityKind::CodeLab,
+        "Practice the idea",
+        lesson,
+        &[],
+        Some(&runtime),
+        None,
+        &[],
+    )
+    .await;
+    assert!(made.is_ok(), "{:?}", made.err());
+    Ok(())
+}
+
+fn simulation_session(learner: &str) -> LearningSimulationSessionDto {
+    LearningSimulationSessionDto {
+        id: id(),
+        program_id: id(),
+        activity_id: id(),
+        activity_revision: 0,
+        practice_session_id: None,
+        learner_role: "Engineer".into(),
+        counterpart_role: "Reviewer".into(),
+        status: LearningSimulationStatus::Active,
+        revision: 0,
+        turns: vec![LearningSimulationTurnDto {
+            id: id(),
+            ordinal: 0,
+            speaker: LearningSimulationSpeaker::Learner,
+            content: learner.into(),
+            citations: vec![],
+            model_name: None,
+            created_at: 0,
+        }],
+        created_at: 0,
+        updated_at: 0,
+        submitted_at: None,
+    }
+}
+
+#[tokio::test]
+async fn a_long_simulation_turn_is_read_not_refused() -> Result<()> {
+    use crate::features::learning::practical_generation::{
+        generate_simulation_turn, SimulationActivityContext,
+    };
+    let context = SimulationActivityContext {
+        title: "Design review".into(),
+        brief: "Role-play a review of the design.".into(),
+        rubric: vec![],
+        interview_plan: None,
+        interview_answers: None,
+    };
+    let session = simulation_session("I would isolate the variable first.");
+    let passage = "The passage states one condition after another. ".repeat(20);
+    let sources = [passage_source(&passage)];
+    let cited = serde_json::json!(
+        [{"sourceId": "logical-source", "versionId": "version-1", "quote": passage}]
+    );
+    let turn = |content: &str, citations: serde_json::Value| {
+        serde_json::json!({"content": content, "citations": citations}).to_string()
+    };
+    let short = "Which observation would help?";
+    let long = "Which observation would distinguish the two explanations? ".repeat(120);
+    let padded = format!(
+        "{}{}",
+        turn(short, serde_json::json!([])),
+        " ".repeat(80_001)
+    );
+    for (what, reply) in [
+        ("a short turn", turn(short, serde_json::json!([]))),
+        ("turn", turn(&long, serde_json::json!([]))),
+        ("citation quote", turn(short, cited)),
+        ("whitespace around the reply", padded),
+    ] {
+        let llm = Reply::new(reply);
+        let made = generate_simulation_turn(&llm, &context, &session, &sources, false).await;
+        assert!(made.is_ok(), "{what}: {:?}", made.err());
+    }
+    let llm = Reply::new(turn(short, serde_json::json!([])));
+    generate_simulation_turn(&llm, &context, &session, &sources, false).await?;
+    let schemas = llm.schemas.lock().expect("schemas").clone();
+    assert!(!schemas.is_empty());
+    for schema in &schemas {
+        let rules = text_length_rules(schema);
+        assert!(rules.is_empty(), "{rules:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_model_name_is_recorded_with_the_activity() -> Result<()> {
+    let (pool, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(pool.clone());
+    let request = GenerateLearningPracticalActivityRequestDto {
+        operation_id: id(),
+        activity_id: id(),
+        program_id: program_id.clone(),
+        lesson_id,
+        expected_program_revision: programs.get(&program_id).await?.summary.revision,
+        kind: LearningPracticalActivityKind::Custom,
+        learner_brief: "Practice applying the idea.".into(),
+        practice_mode: LearningPracticeMode::Practice,
+        allowed_aids: vec![],
+        runtime_profile_id: None,
+        builtin_runtime: None,
+        interview_target: None,
+    };
+    let saved = repository
+        .save_generated_activity(
+            &request,
+            &generated(),
+            &"model-".repeat(60),
+            "long-model-name",
+        )
+        .await;
+    assert!(saved.is_ok(), "{:?}", saved.err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_simulation_reply_is_saved_whole() -> Result<()> {
+    let (pool, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(pool.clone());
+    let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
+    let session_id = id();
+    repository
+        .start_simulation(
+            &StartLearningSimulationRequestDto {
+                operation_id: id(),
+                session_id: session_id.clone(),
+                program_id: program_id.clone(),
+                activity_id,
+                expected_activity_revision: 0,
+                practice_session_id: None,
+                learner_role: "Engineer".into(),
+                counterpart_role: "Reviewer".into(),
+            },
+            "start-payload",
+        )
+        .await?;
+    let turn = SendLearningSimulationTurnRequestDto {
+        operation_id: id(),
+        program_id,
+        session_id,
+        expected_revision: 0,
+        content: "I would isolate the variable first.".into(),
+    };
+    let reply = SimulationTurnWrite {
+        content: "Which observation would distinguish the two explanations? ".repeat(120),
+        citations: vec![],
+        model_name: "fixture-model".into(),
+    };
+    let advanced = repository
+        .append_simulation_turn(&turn, &reply, "turn-payload")
+        .await?;
+    assert_eq!(advanced.turns[1].content, reply.content.trim());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_learners_long_interview_turn_is_held_to_the_chat_limit() -> Result<()> {
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let (pool, program_id, lesson_id, _) = fixture().await?;
+    let programs = LearningRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(pool.clone());
+    let (_, activity_id) = activity(&repository, &programs, &program_id, &lesson_id).await?;
+    let session_id = id();
+    repository
+        .start_simulation(
+            &StartLearningSimulationRequestDto {
+                operation_id: id(),
+                session_id: session_id.clone(),
+                program_id: program_id.clone(),
+                activity_id,
+                expected_activity_revision: 0,
+                practice_session_id: None,
+                learner_role: "Engineer".into(),
+                counterpart_role: "Reviewer".into(),
+            },
+            "start-payload",
+        )
+        .await?;
+    let reply = SimulationTurnWrite {
+        content: "Which observation would help?".into(),
+        citations: vec![],
+        model_name: "fixture-model".into(),
+    };
+    let turn = |expected_revision: i64, content: String| SendLearningSimulationTurnRequestDto {
+        operation_id: id(),
+        program_id: program_id.clone(),
+        session_id: session_id.clone(),
+        expected_revision,
+        content,
+    };
+    let pasted_code = "def step(x):\n    return x + 1\n".repeat(1_000);
+    assert!(pasted_code.chars().count() > 8_000);
+    let pasted = repository
+        .append_simulation_turn(&turn(0, pasted_code), &reply, "pasted")
+        .await;
+    assert!(pasted.is_ok(), "pasted code: {:?}", pasted.err());
+    let at_the_limit = repository
+        .append_simulation_turn(
+            &turn(1, "x".repeat(MAX_CHAT_MESSAGE_CHARS)),
+            &reply,
+            "at-the-limit",
+        )
+        .await;
+    assert!(
+        at_the_limit.is_ok(),
+        "at the limit: {:?}",
+        at_the_limit.err()
+    );
+    let over = repository
+        .append_simulation_turn(
+            &turn(2, "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1)),
+            &reply,
+            "over",
+        )
+        .await;
+    assert!(over.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_learners_long_practical_request_is_held_to_the_chat_limit() -> Result<()> {
+    use crate::features::learning::practical_generation::generate_activity;
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let program = crate::features::learning::tests::fixture();
+    let lesson = &program.modules[0].lessons[0];
+    let authored = activity_reply(
+        "Investigate",
+        "Write up the result.",
+        ("Reasoning", "Explains the relevant tradeoffs."),
+        serde_json::json!([]),
+    );
+    for (what, brief, accepted) in [
+        (
+            "pasted code",
+            "def step(x):\n    return x + 1\n".repeat(1_000),
+            true,
+        ),
+        ("the chat limit", "x".repeat(MAX_CHAT_MESSAGE_CHARS), true),
+        (
+            "past the chat limit",
+            "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1),
+            false,
+        ),
+        ("a blank request", "  ".to_string(), false),
+    ] {
+        let llm = Authors {
+            activity: authored.clone(),
+            checks: String::new(),
+        };
+        let made = generate_activity(
+            &llm,
+            LearningPracticalActivityKind::Custom,
+            &brief,
+            lesson,
+            &[],
+            None,
+            None,
+            &[],
+        )
+        .await;
+        assert_eq!(made.is_ok(), accepted, "{what}: {:?}", made.err());
+    }
+    Ok(())
+}
+
+/// The commands take a `State<Container>`, which no test here builds, so the
+/// boundary's own numbers are read from its source.
+#[test]
+fn the_command_boundary_carries_no_cap_of_its_own_on_a_learners_text() -> Result<()> {
+    let source = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/features/learning/plugin/practical.rs"
+    ))?;
+    for cap in ["4_000", "4000", "8_000", "8000"] {
+        assert!(
+            !source.contains(cap),
+            "plugin/practical.rs still holds a learner's text to {cap}, not the chat limit"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_boundary_and_the_checks_behind_it_share_one_limit() {
+    use crate::features::learning::practical_generation::validate_request;
+    use crate::features::learning::practical_repository::validate_learner_turn;
+    use crate::infrastructure::security::input_validator::MAX_CHAT_MESSAGE_CHARS;
+    let at_the_limit = "x".repeat(MAX_CHAT_MESSAGE_CHARS);
+    let over = "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1);
+    assert!(validate_request(&at_the_limit).is_ok());
+    assert!(validate_request(&over).is_err());
+    assert!(validate_request("  ").is_err());
+    assert!(validate_learner_turn(&at_the_limit).is_ok());
+    assert!(validate_learner_turn(&over).is_err());
+    assert!(validate_learner_turn("  ").is_err());
+}

@@ -8,5 +8,6 @@
 //! exact edits, the grading of a learner's findings against that key, and the
 //! schedule of the patterns the defects are instances of.
 
+pub mod acceptance;
 pub mod claim_review;
 pub mod drills;

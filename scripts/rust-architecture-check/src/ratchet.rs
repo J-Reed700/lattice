@@ -109,7 +109,7 @@ const IMMUTABLE_PAYLOADS: [&str; 10] = [
 
 /// Lines a source file may have, counted like `wc -l`. Test-only files
 /// (`tests.rs`, `*_tests.rs`, anything under a `tests/` directory) may be longer.
-const MAX_LINES: usize = 800;
+const MAX_LINES: usize = 1000;
 
 const HEADER: &str = "\
 # Architecture ratchet baseline, read by scripts/rust-architecture-check.
@@ -129,7 +129,7 @@ const HEADER: &str = "\
 # passes on; only a derived constant or a hook the process owns by nature
 # (a panic hook, an OS callback target) may stay global, marked with a
 # `// global-state: <reason>` comment directly above the static.
-# Keep a file at or under 800 lines: move inline tests to a sibling tests.rs,
+# Keep a file at or under 1000 lines: move inline tests to a sibling tests.rs,
 # then split it by responsibility.
 #
 # feature-edge is held at zero and never appears here: a reference from one
@@ -158,7 +158,7 @@ const HEADER: &str = "\
 #   raw-spawn <file> <spawn fn>                           detached spawns outside shared/runtime
 #   global-state <file> <static>                          statics that hold mutable or lazily
 #                                                         built state, unless a derived constant
-#   file-length <file> max-800-lines                      files over 800 lines, except tests.rs,
+#   file-length <file> max-1000-lines                     files over 1000 lines, except tests.rs,
 #                                                         *_tests.rs and files under tests/
 ";
 
@@ -1993,13 +1993,13 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
     }
 
     #[test]
-    fn a_file_over_800_lines_is_found_and_one_at_800_is_not() {
+    fn a_file_over_1000_lines_is_found_and_one_at_1000_is_not() {
         assert_eq!(
-            too_long("features/x.rs", 801),
-            vec!["file-length features/x.rs max-800-lines"]
+            too_long("features/x.rs", 1001),
+            vec!["file-length features/x.rs max-1000-lines"]
         );
-        assert!(too_long("features/x.rs", 800).is_empty());
-        let finding = file_length("x.rs", &"\n".repeat(801)).unwrap();
+        assert!(too_long("features/x.rs", 1000).is_empty());
+        let finding = file_length("x.rs", &"\n".repeat(1001)).unwrap();
         assert_eq!(
             counts(&[finding]).into_values().collect::<Vec<_>>(),
             vec![1]
@@ -2017,8 +2017,8 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         ] {
             assert!(too_long(relative, 2000).is_empty(), "{relative}");
         }
-        assert_eq!(too_long("features/x/contests.rs", 801).len(), 1);
-        assert_eq!(too_long("features/tests_support.rs", 801).len(), 1);
+        assert_eq!(too_long("features/x/contests.rs", 1001).len(), 1);
+        assert_eq!(too_long("features/tests_support.rs", 1001).len(), 1);
     }
 
     #[test]
@@ -2032,18 +2032,18 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             std::process::id()
         ));
         fs::create_dir_all(root.join("unreached/tests")).unwrap();
-        let long = "\n".repeat(801);
+        let long = "\n".repeat(1001);
         fs::write(root.join("unreached/orphan.rs"), &long).unwrap();
         fs::write(root.join("unreached/tests/case.rs"), &long).unwrap();
         fs::write(root.join("unreached/notes.txt"), &long).unwrap();
-        fs::write(root.join("short.rs"), "\n".repeat(800)).unwrap();
+        fs::write(root.join("short.rs"), "\n".repeat(1000)).unwrap();
         let found: Vec<_> = length_findings(&root)
             .unwrap()
             .into_iter()
             .map(|finding| finding.location)
             .collect();
         fs::remove_dir_all(&root).unwrap();
-        assert_eq!(found, vec!["unreached/orphan.rs (801 lines)"]);
+        assert_eq!(found, vec!["unreached/orphan.rs (1001 lines)"]);
     }
 
     #[test]

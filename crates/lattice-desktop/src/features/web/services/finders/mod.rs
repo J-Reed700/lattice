@@ -23,6 +23,7 @@ pub(crate) mod ietf_datatracker;
 pub(crate) mod legislation_uk;
 pub(crate) mod marginalia;
 pub(crate) mod maven_pom;
+pub(crate) mod mediawiki;
 pub(crate) mod npm;
 pub(crate) mod nuget;
 pub(crate) mod openalex;
@@ -38,6 +39,7 @@ pub(crate) mod tavily;
 pub(crate) mod unpaywall;
 pub(crate) mod w3c;
 pub(crate) mod whatwg_index;
+pub(crate) mod wikibooks;
 pub(crate) mod wikidata;
 pub(crate) mod wikipedia;
 
@@ -230,6 +232,10 @@ pub(crate) fn registry(
             wikipedia::RESULTS_PER_PAGE,
         ),
         entry(
+            wikibooks::Wikibooks::new(http.clone()),
+            wikibooks::RESULTS_PER_PAGE,
+        ),
+        entry(
             wikidata::Wikidata::new(http.clone()),
             wikidata::RESULTS_PER_PAGE,
         ),
@@ -406,3 +412,5 @@ mod software_registries_b_tests;
 mod standards_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wikibooks_tests;

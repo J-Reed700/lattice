@@ -194,12 +194,19 @@ pub(super) fn model(outputs: Vec<Value>) -> ScriptedModel {
 pub(super) fn plan_output(subtopics: &[(&str, &[&str])]) -> Value {
     json!({"subtopics":subtopics.iter().map(|(title, queries)| json!({"title":title,"needs":queries.iter().map(|query| json!({"query":query,"kind":"official_docs"})).collect::<Vec<_>>()})).collect::<Vec<_>>()})
 }
-/// A planned search for papers.
-fn paper(query: &str) -> crate::features::learning::references::web_research::PlannedNeed {
+/// A planned search for `kind` of source.
+fn planned(
+    query: &str,
+    kind: lattice_core::domain::sourcing::NeedKind,
+) -> crate::features::learning::references::web_research::PlannedNeed {
     crate::features::learning::references::web_research::PlannedNeed {
-        kind: lattice_core::domain::sourcing::NeedKind::Paper,
+        kind,
         ..crate::features::learning::references::web_research::PlannedNeed::web(query.into())
     }
+}
+/// A planned search for papers.
+fn paper(query: &str) -> crate::features::learning::references::web_research::PlannedNeed {
+    planned(query, lattice_core::domain::sourcing::NeedKind::Paper)
 }
 pub(super) fn select_all(count: usize) -> Value {
     json!({"decisions":(0..count).map(|i| json!({"id":format!("result-{i}"),"useForGap":true,"reason":"A primary reference for this subtopic."})).collect::<Vec<_>>()})
@@ -265,6 +272,7 @@ pub(super) fn references(
                     "test fixture",
                 ),
             },
+            found: false,
         })
         .collect()
 }
@@ -389,7 +397,9 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     ])
     .route("q1", &[0, 1, 2, 4])
     .route("q2", &[1, 0])
-    .route("q3", &[3, 4]);
+    .route("q3", &[3, 4])
+    .route("Random assignment", &[0])
+    .route("Uncertainty", &[3]);
     let plan = ReferencePlan {
         subtopics: vec![
             PlannedSubtopic {
@@ -413,17 +423,32 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     let found =
         outline_references::gather(&llm, &web, &plan, &existing, &OutlineProgress::default())
             .await?;
-    assert_eq!(web.queries.lock().unwrap().as_slice(), ["q1", "q2", "q3"]);
+    assert_eq!(
+        web.queries.lock().unwrap().as_slice(),
+        [
+            "q1",
+            "q2",
+            "q1",
+            "Random assignment",
+            "q3",
+            "q3",
+            "Uncertainty"
+        ]
+    );
     assert_eq!(
         web.kinds.lock().unwrap().as_slice(),
         [
             Some("paper".to_owned()),
             Some("paper".to_owned()),
-            Some("paper".to_owned())
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned()),
+            Some("paper".to_owned()),
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned())
         ],
-        "each search goes out with the kind its plan gave it"
+        "each planned search goes out with the kind its plan gave it, then the web and encyclopedia searches"
     );
-    assert_eq!(found.searches, 3);
+    assert_eq!(found.searches, 7);
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
     let selection = payload(&llm.prompts.lock().unwrap()[0]);
     assert_eq!(selection["topic"], "Random assignment");
@@ -446,6 +471,68 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     let fetches = web.fetches.lock().unwrap();
     assert_eq!(fetches.len(), 4);
     assert!(!fetches.iter().any(|u| u == "https://example.org/overview"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_subtopic_planned_only_as_papers_is_also_searched_on_the_web_and_in_an_encyclopedia(
+) -> Result<()> {
+    let web = ResearchWeb::new(&[ADDITIONAL]);
+    let plan = ReferencePlan {
+        subtopics: vec![PlannedSubtopic {
+            title: "Random assignment".into(),
+            needs: vec![paper("q1"), paper("q2")],
+        }],
+    };
+    let llm = model(vec![select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(
+        web.queries.lock().unwrap().as_slice(),
+        ["q1", "q2", "q1", "Random assignment"],
+        "the planned searches, then the first query on the web, then the title"
+    );
+    assert_eq!(
+        web.kinds.lock().unwrap().as_slice(),
+        [
+            Some("paper".to_owned()),
+            Some("paper".to_owned()),
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned())
+        ]
+    );
+    assert_eq!(found.searches, 4);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_subtopic_whose_needs_already_include_web_and_encyclopedia_is_searched_as_planned(
+) -> Result<()> {
+    use lattice_core::domain::sourcing::NeedKind;
+    let web = ResearchWeb::new(&[ADDITIONAL]);
+    let plan = ReferencePlan {
+        subtopics: vec![PlannedSubtopic {
+            title: "Random assignment".into(),
+            needs: vec![
+                paper("q1"),
+                planned("q2", NeedKind::Web),
+                planned("q3", NeedKind::Encyclopedia),
+            ],
+        }],
+    };
+    let llm = model(vec![select_all(1)]);
+    let found =
+        outline_references::gather(&llm, &web, &plan, &[], &OutlineProgress::default()).await?;
+    assert_eq!(web.queries.lock().unwrap().as_slice(), ["q1", "q2", "q3"]);
+    assert_eq!(
+        web.kinds.lock().unwrap().as_slice(),
+        [
+            Some("paper".to_owned()),
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned())
+        ]
+    );
+    assert_eq!(found.searches, 3);
     Ok(())
 }
 
@@ -558,7 +645,7 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     assert_eq!(review.issues[0].kind, LearningOutlineIssueKind::References);
     assert_eq!(review.issues[0].path, "");
     assert!(review.note.contains("no references could be gathered"));
-    assert_eq!(offline.queries.lock().unwrap().len(), 1);
+    assert_eq!(offline.queries.lock().unwrap().len(), 3);
     assert_eq!(llm.prompts.lock().unwrap().len(), 3);
     assert!(saved.sources.is_empty());
     let drafts = DraftRunRegistry::new();
@@ -597,7 +684,11 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     assert_eq!(repaired.sources.len(), 1);
     assert_eq!(
         online.queries.lock().unwrap().as_slice(),
-        ["random assignment confounding"]
+        [
+            "random assignment confounding",
+            "random assignment confounding",
+            "Random assignment"
+        ]
     );
     assert_eq!(llm.prompts.lock().unwrap().len(), 1);
     service::accept(
@@ -754,5 +845,107 @@ async fn a_course_plan_keeps_rewordings_and_dates_and_refuses_an_unreadable_date
     assert!(outline_references::plan(&llm, &request, &[], &progress)
         .await
         .is_err());
+    Ok(())
+}
+
+/// A subtopic's title is the planner's own words; only a blank one is refused.
+#[tokio::test]
+async fn a_long_subtopic_title_from_the_planner_is_read_not_refused() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let title = "A randomized comparison isolates a treatment effect. "
+        .repeat(4)
+        .trim()
+        .to_owned();
+    let llm = model(vec![plan_output(&[(
+        title.as_str(),
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let plan = outline_references::plan(&llm, &request, &[], &OutlineProgress::default()).await?;
+    assert_eq!(plan.subtopic_titles(), vec![title]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let recording = crate::features::learning::content_caps_tests::Recording::new(&llm);
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let schemas = recording.schemas_naming("subtopics");
+    assert!(!schemas.is_empty(), "the plan's schema was sent");
+    for schema in &schemas {
+        let caps = crate::features::learning::content_caps_tests::text_caps(schema);
+        assert!(caps.is_empty(), "{caps:?}");
+    }
+    Ok(())
+}
+
+/// A course made from a document the user chose and a page the outline's own
+/// research found, both short.
+async fn a_choice_and_a_find() -> Result<(sqlx::SqlitePool, String)> {
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let web = ResearchWeb::new(&[ADDITIONAL]);
+    let llm = model(vec![
+        plan_output(&[("Random assignment", &["random assignment confounding"])]),
+        select_all(1),
+        candidate(),
+        no_links(),
+        clean(),
+    ]);
+    let program = generate_online(&repo, &llm, &web, vec![original_source()]).await?;
+    Ok((pool, program.summary.id))
+}
+
+#[tokio::test]
+async fn a_short_source_the_user_chose_for_the_course_is_not_swept() -> Result<()> {
+    let (pool, program_id) = a_choice_and_a_find().await?;
+
+    let refused = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+        pool.clone(),
+    )
+    .sweep_admission(&program_id)
+    .await?;
+
+    let titles: Vec<&str> = refused.iter().map(|page| page.title.as_str()).collect();
+    assert!(!titles.contains(&"Brief reference overview"), "{refused:?}");
+    let held = LearningRepository::new(pool)
+        .verification_sources(&program_id)
+        .await?;
+    assert!(held
+        .iter()
+        .any(|source| source.title == "Brief reference overview"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_short_page_the_outline_research_found_is_still_swept() -> Result<()> {
+    let (pool, program_id) = a_choice_and_a_find().await?;
+
+    let refused = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
+        pool.clone(),
+    )
+    .sweep_admission(&program_id)
+    .await?;
+
+    let found: Vec<_> = refused
+        .iter()
+        .filter(|page| page.title == "Research reference")
+        .collect();
+    assert_eq!(found.len(), 1, "{refused:?}");
+    assert!(
+        found[0].reason.starts_with("too short"),
+        "{}",
+        found[0].reason
+    );
+    let held = LearningRepository::new(pool)
+        .verification_sources(&program_id)
+        .await?;
+    assert!(held
+        .iter()
+        .all(|source| source.title != "Research reference"));
     Ok(())
 }

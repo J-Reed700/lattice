@@ -119,8 +119,8 @@ const LESSON_SHAPE: [&str; 11] = [
 fn lesson_response() -> serde_json::Value {
     let teaching = "Start with a measurable question, identify the comparison, and define the outcome before collecting data. Explain the assumptions behind the design. Work through the decisions in order and examine how a confounding variable could change the conclusion. A concrete example should show both the result and the limitations of that result. ";
     json!({
-        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::features::learning::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {i}: produce a design, state your assumptions, and justify your decisions.") },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":""})).collect::<Vec<_>>()),
-        "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":""}))).collect::<Vec<_>>())
+        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::features::learning::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {}: produce a design, state your assumptions, and justify your decisions.", char::from(b'a' + u8::try_from(i).unwrap_or(0))) },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":"","citations":[]})).collect::<Vec<_>>()),
+        "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":"","citations":[]}))).collect::<Vec<_>>())
     })
 }
 
@@ -305,6 +305,34 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
 pub(in crate::features::learning) struct ScriptedModel {
     pub(in crate::features::learning) outputs: std::sync::Mutex<std::collections::VecDeque<String>>,
     pub(in crate::features::learning) prompts: std::sync::Mutex<Vec<String>>,
+}
+
+/// Where `schema` bounds a string's length above a blank: each `maxLength`
+/// and each `minLength` over one, as `path: bound`.
+pub(in crate::features::learning) fn length_bounds(schema: &serde_json::Value) -> Vec<String> {
+    fn walk(value: &serde_json::Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                for (key, inner) in fields {
+                    let at = format!("{path}/{key}");
+                    let above_one = inner.as_u64().is_some_and(|bound| bound > 1);
+                    if key == "maxLength" || (key == "minLength" && above_one) {
+                        found.push(format!("{at}: {inner}"));
+                    }
+                    walk(inner, &at, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (position, inner) in items.iter().enumerate() {
+                    walk(inner, &format!("{path}/{position}"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    walk(schema, "", &mut found);
+    found
 }
 
 #[tokio::test]
@@ -1172,6 +1200,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         source_id: id,
         origin: url.into(),
         captured,
+        found: false,
     };
     let repo = LearningRepository::new(crate::features::learning::tests::pool().await?);
     // Linking keeps the author's exact citation (offered as a candidate) and
@@ -1697,6 +1726,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
                     source_id: id,
                     origin: url.clone(),
                     captured,
+                    found: false,
                 });
             }
             progress.model(client.model_name());

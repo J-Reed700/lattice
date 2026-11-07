@@ -2,9 +2,10 @@
 //! the transitions the ledger applies once it has validated the event.
 
 use super::{
-    Check, CheckBasis, CheckResult, Checker, ClaimState, GateVerdict, ReopenCause, TrustAssessment,
-    TrustCause, VerdictKind, MACHINE_ATTEMPTS,
+    Actor, Check, CheckBasis, CheckResult, Checker, ClaimState, Class, ClassifiedBy, GateVerdict,
+    ReopenCause, TrustAssessment, TrustCause, VerdictKind,
 };
+use crate::domain::learning::acceptance::{End, Outcome, Step, Then};
 
 /// The replayed position after an event: the state, plus what the rules
 /// need to remember about how the claim got there.
@@ -14,16 +15,36 @@ pub(super) struct Cursor {
     pub(super) basis: Option<CheckBasis>,
     /// A rewrite awaits the check that decides it.
     pub(super) repair_pending: bool,
-    /// Research ran under the current fingerprint.
+    /// The machine repaired the claim's citation and no local check has read
+    /// the new one yet (course evidence index §5.1).
+    pub(super) citation_pending: bool,
+    /// Research ran: once per claim for its life, whatever evidence a later
+    /// check brings (claim classes design §3.6).
     pub(super) researched: bool,
     /// The latest failing verdict from either checker; cleared by Supported.
     pub(super) latest_failure: Option<VerdictKind>,
     /// What the provenance gate weighed for the latest local check, when
     /// the gate decided it; cleared by every other local check.
     pub(super) trust: Option<TrustAssessment>,
-    /// A claim born of a repair starts with its parent's remaining attempts
-    /// instead of a full budget (claim sources design §9.1).
-    pub(super) inherited_budget: Option<u8>,
+    /// The machine attempts the claim has left for its life, in whatever
+    /// state it is: they only fall, so a claim verified and then failing
+    /// again resumes from what it had left. A claim born of a repair starts
+    /// with its parent's remaining ones (claim sources design §9.1; claim
+    /// classes design §3.2).
+    pub(super) attempts_left: u8,
+    /// The statement's class and the strongest authority that decided it.
+    pub(super) class: Option<(Class, ClassifiedBy)>,
+    /// The latest decision of the acceptance policy: its version and where it
+    /// sent the statement. A claim that has one is read from it, and the
+    /// rules below that decide machine transitions leave it alone.
+    pub(super) decided: Option<(String, Then)>,
+    /// The source version and quote of the latest supported local check, which
+    /// a decision to resolve the claim names.
+    pub(super) last_support: Option<(String, String)>,
+    /// The user asked for a search with a hint and no local check that gave an
+    /// answer has read what it found: that check answers the hint (acceptance
+    /// design §2.10, a user's hint).
+    pub(super) hinted: bool,
 }
 
 pub(super) fn queued(kind: VerdictKind, reason: String) -> ClaimState {
@@ -47,12 +68,13 @@ pub(super) fn hand_to_user(state: &mut ClaimState) {
     }
 }
 
-/// A first failure, or a failure on new evidence: the machine gets its full
-/// budget for the kinds a rewrite or research can address, or, for a claim
-/// born of a repair, what its parent had left. A repairable claim with no
-/// attempts left waits for the user.
-fn first_failure(kind: VerdictKind, reason: String, inherited: Option<u8>) -> ClaimState {
-    let budget = inherited.unwrap_or(MACHINE_ATTEMPTS);
+/// A failure of a claim that is not Open: the machine has the attempts the
+/// claim has left, for every kind a rewrite or research can address. A
+/// dispute and a checker that gave no answer (only a user's evidence meets
+/// one) go to the user. A repairable claim with none left
+/// waits for the user.
+fn first_failure(cursor: &Cursor, kind: VerdictKind, reason: String) -> ClaimState {
+    let budget = cursor.attempts_left;
     match kind {
         kind if budget == 0 && budgeted(&kind) => queued(kind, reason),
         VerdictKind::Unsupported
@@ -63,9 +85,7 @@ fn first_failure(kind: VerdictKind, reason: String, inherited: Option<u8>) -> Cl
             reason,
             machine_attempts_left: budget,
         },
-        VerdictKind::CouldNotJudge
-        | VerdictKind::GeneralKnowledgeProposed
-        | VerdictKind::Disputed { .. } => queued(kind, reason),
+        VerdictKind::CouldNotJudge | VerdictKind::Disputed { .. } => queued(kind, reason),
     }
 }
 
@@ -78,9 +98,11 @@ pub(super) fn budgeted(kind: &VerdictKind) -> bool {
     kind.is_repairable() || matches!(kind, VerdictKind::InsufficientStanding { .. })
 }
 
-/// One machine attempt used up on the same evidence; none left queues it.
-pub(super) fn charge(kind: VerdictKind, reason: String, attempts_left: u8) -> ClaimState {
-    match attempts_left.saturating_sub(1) {
+/// One machine attempt used up: the claim's count falls, and none left
+/// queues it.
+pub(super) fn charge(cursor: &mut Cursor, kind: VerdictKind, reason: String) -> ClaimState {
+    cursor.attempts_left = cursor.attempts_left.saturating_sub(1);
+    match cursor.attempts_left {
         0 => queued(kind, reason),
         left => ClaimState::Open {
             kind,
@@ -91,37 +113,20 @@ pub(super) fn charge(kind: VerdictKind, reason: String, attempts_left: u8) -> Cl
 }
 
 /// §3 `after_machine_failure`, applied to a failing check of an Open claim:
-/// new evidence restores the budget; the check that decides a repair uses an
-/// attempt; a kind the machine cannot repair, or no source after research,
-/// goes to the user. `new_evidence` is false for the check that decides a
-/// rewrite even when the rewritten sentence retrieved other passages: what
-/// the machine's own rewrite brings is not new information, or a claim the
-/// machine keeps rewriting would never reach the user (§4 "Bounded").
+/// the check that decides a repair uses an attempt; a kind the user answers
+/// goes to the user. New evidence may change the verdict; it never restores
+/// the budget (claim classes design §3.2), so a claim's attempts only ever
+/// fall.
 fn after_machine_failure(
-    cursor: &Cursor,
+    cursor: &mut Cursor,
     kind: VerdictKind,
     reason: String,
-    new_evidence: bool,
     charged: bool,
 ) -> ClaimState {
-    let ClaimState::Open {
-        machine_attempts_left,
-        ..
-    } = cursor.state
-    else {
-        return first_failure(kind, reason, cursor.inherited_budget);
-    };
-    if new_evidence {
-        return first_failure(kind, reason, cursor.inherited_budget);
-    }
+    let machine_attempts_left = cursor.attempts_left;
     match kind {
-        kind if budgeted(&kind) && charged => charge(kind, reason, machine_attempts_left),
+        kind if budgeted(&kind) && charged => charge(cursor, kind, reason),
         kind if budgeted(&kind) && machine_attempts_left > 0 => ClaimState::Open {
-            kind,
-            reason,
-            machine_attempts_left,
-        },
-        VerdictKind::NoSource if !cursor.researched => ClaimState::Open {
             kind,
             reason,
             machine_attempts_left,
@@ -133,15 +138,48 @@ fn after_machine_failure(
 /// A check's effect. A claim waiting for the user stays the user's: a
 /// recheck on new information may verify it or update its reason, never hand
 /// it back to an automatic repair (§4, §5.1). `attached`: the check answers
-/// evidence the user attached, so an Open claim becomes the user's too.
-pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
-    let previous_failure = std::mem::replace(
-        &mut cursor.latest_failure,
-        match &check.result {
-            CheckResult::Failed { kind } => Some(kind.clone()),
-            CheckResult::Supported { .. } | CheckResult::SupportedElsewhere { .. } => None,
-        },
-    );
+/// evidence the user attached, so an Open claim becomes the user's too. `at`
+/// is when the check was recorded, which a pass that rests on no passage
+/// carries into its state.
+pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool, at: i64) {
+    let local = !attached && matches!(check.checker, Checker::Local { .. });
+    // The first local check that gave an answer after the user's hint is the
+    // claim's own: the hint asked for it, and an unjudged check does not use
+    // the hint up.
+    let answers_hint = local && cursor.hinted && !check.result.is_unjudged();
+    if answers_hint {
+        cursor.hinted = false;
+    }
+    // A decided claim's state is its decision's: a local check that is not the
+    // user's evidence or the answer to their hint is what was observed, never
+    // what follows.
+    let observation = cursor.decided.is_some() && local && !answers_hint;
+    // A local checker that gave no answer taught nothing about the claim:
+    // no attempt is charged and a rewrite keeps waiting for its check. A
+    // claim that passed on text since changed has no check now.
+    if local && check.result.is_unjudged() {
+        if !observation
+            && matches!(
+                cursor.state,
+                ClaimState::ResolvedByEvidence { .. }
+                    | ClaimState::Consistent { .. }
+                    | ClaimState::GeneralKnowledge { .. }
+            )
+        {
+            cursor.state = ClaimState::Unchecked;
+            cursor.basis = None;
+            cursor.trust = None;
+        }
+        return;
+    }
+    cursor.latest_failure = match &check.result {
+        CheckResult::Failed { kind } => Some(kind.clone()),
+        CheckResult::Supported { .. }
+        | CheckResult::SupportedElsewhere { .. }
+        | CheckResult::Consistent
+        | CheckResult::KnownCommon
+        | CheckResult::NotFalse => None,
+    };
     let model = match &check.checker {
         Checker::Verifier { .. } => {
             apply_verifier(&mut cursor.state, &check.result, &check.reason);
@@ -152,15 +190,7 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
     // The gate's assessment, if it decided this check, follows it.
     cursor.trust = None;
     let charged = std::mem::take(&mut cursor.repair_pending);
-    let new_evidence = !charged
-        && cursor
-            .basis
-            .as_ref()
-            .is_none_or(|basis| basis.fingerprint != check.fingerprint)
-        && !support_unchanged(previous_failure.as_ref(), &check.result);
-    if new_evidence {
-        cursor.researched = false;
-    }
+    cursor.citation_pending = false;
     cursor.basis = Some(CheckBasis {
         fingerprint: check.fingerprint.clone(),
         checker_model: model,
@@ -171,7 +201,10 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
             .map(|seen| seen.source_version_id.clone())
             .collect(),
     });
-    if cursor.state.is_settled() {
+    if let Some((source_version_id, supporting_quote)) = check.result.support() {
+        cursor.last_support = Some((source_version_id.to_owned(), supporting_quote.to_owned()));
+    }
+    if observation || cursor.state.is_settled() {
         return;
     }
     cursor.state = match &check.result {
@@ -187,62 +220,18 @@ pub(super) fn apply_check(cursor: &mut Cursor, check: &Check, attached: bool) {
             source_version_id: source_version_id.clone(),
             supporting_quote: supporting_quote.clone(),
         },
+        CheckResult::Consistent | CheckResult::NotFalse => ClaimState::Consistent { at },
+        CheckResult::KnownCommon => ClaimState::GeneralKnowledge { at },
         CheckResult::Failed { kind } => {
             let (kind, reason) = (kind.clone(), check.reason.clone());
-            match &cursor.state {
+            match std::mem::replace(&mut cursor.state, ClaimState::Unchecked) {
                 ClaimState::Open { .. } if attached => queued(kind, reason),
-                ClaimState::Open { .. } => {
-                    after_machine_failure(cursor, kind, reason, new_evidence, charged)
-                }
+                ClaimState::Open { .. } => after_machine_failure(cursor, kind, reason, charged),
                 ClaimState::Queued { .. } | ClaimState::Reopened { .. } => queued(kind, reason),
-                _ => first_failure(kind, reason, cursor.inherited_budget),
+                _ => first_failure(cursor, kind, reason),
             }
         }
     };
-}
-
-/// Whether a failing check on other evidence leaves the claim's support
-/// where it was (source provenance §6.2, §8): its supports still fail the
-/// same bar, and none it gained comes from an origin cluster it lacked or
-/// stands above the best it had. Such evidence cannot make the claim
-/// sufficient, so it is not new information: it restores no budget and
-/// earns no further research round, and the claim goes on to its repairs
-/// and then the user, as a citation hop that adds no new cluster ends its
-/// chain. Without this, every research round that saved anything at all
-/// would restart every scrutinised claim it touched.
-fn support_unchanged(previous: Option<&VerdictKind>, result: &CheckResult) -> bool {
-    let (
-        Some(VerdictKind::InsufficientStanding {
-            bar: bar_before,
-            have: before,
-        }),
-        CheckResult::Failed {
-            kind: VerdictKind::InsufficientStanding { bar, have: after },
-        },
-    ) = (previous, result)
-    else {
-        return false;
-    };
-    let had = |version: &str| {
-        before
-            .iter()
-            .any(|support| support.source_version_id == version)
-    };
-    let best_before = before.iter().filter_map(|support| support.counted).max();
-    bar == bar_before
-        && !after.iter().any(|gained| {
-            let Some(level) = gained.counted else {
-                return false;
-            };
-            // Cluster ids name a cluster's smallest member, so a cluster is
-            // new when none of its members was a support before.
-            let new_cluster = !after
-                .iter()
-                .filter(|member| member.origin_cluster == gained.origin_cluster)
-                .any(|member| had(&member.source_version_id));
-            !had(&gained.source_version_id)
-                && (new_cluster || best_before.is_none_or(|best| level > best))
-        })
 }
 
 /// §14.5: the Verifier only audits. It never resolves a claim; a dispute
@@ -333,4 +322,65 @@ pub(super) fn redecided(
         }
         (state, _) => state,
     };
+}
+
+/// Why a decision has no state to give a claim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Undecidable {
+    /// Resolved by evidence, with no supported local check to name.
+    NoSupport,
+}
+
+/// The state a decision sends a claim to; `None` leaves it where it is. At a
+/// node that is a remedy the claim is Open, with the rewrites still reachable
+/// from it; at a reading, a recite or an uncite it waits for the machine's next
+/// step; at an end it is that end's state (acceptance design §2.9).
+pub(super) fn stepped(
+    cursor: &Cursor,
+    outcome: Outcome,
+    then: &Then,
+    reason: &str,
+    rewrite_ahead: bool,
+    at: i64,
+) -> Result<Option<ClaimState>, Undecidable> {
+    Ok(match then {
+        Then::Stop => None,
+        Then::Node { step, .. } => Some(match step {
+            Step::Research | Step::Rewrite(_) | Step::Cut => ClaimState::Open {
+                kind: failure_kind(outcome, &cursor.state),
+                reason: reason.to_owned(),
+                machine_attempts_left: u8::from(rewrite_ahead),
+            },
+            Step::Read(_) | Step::Recite | Step::Uncite => ClaimState::Unchecked,
+        }),
+        Then::End(End::Resolved) => {
+            let (source_version_id, supporting_quote) =
+                cursor.last_support.clone().ok_or(Undecidable::NoSupport)?;
+            Some(ClaimState::ResolvedByEvidence {
+                source_version_id,
+                supporting_quote,
+            })
+        }
+        // A statement that is not a claim has passed the falsity veto: the
+        // machine's pass, as a Reasoning statement's is.
+        Then::End(End::Consistent | End::NotAClaim) => Some(ClaimState::Consistent { at }),
+        Then::End(End::GeneralKnowledge) => Some(ClaimState::GeneralKnowledge { at }),
+        Then::End(End::Removed { .. }) => Some(ClaimState::Removed {
+            at,
+            by: Actor::Machine,
+        }),
+    })
+}
+
+/// What failed a statement, from what the step found: a remedy's outcome keeps
+/// the failure the claim was Open with.
+fn failure_kind(outcome: Outcome, held: &ClaimState) -> VerdictKind {
+    match (outcome, held) {
+        (Outcome::Refuted, _) => VerdictKind::Contradicted,
+        (Outcome::Unproven | Outcome::NeedsSource | Outcome::AllCommon, _) => {
+            VerdictKind::Unsupported
+        }
+        (_, ClaimState::Open { kind, .. }) => kind.clone(),
+        _ => VerdictKind::Unsupported,
+    }
 }

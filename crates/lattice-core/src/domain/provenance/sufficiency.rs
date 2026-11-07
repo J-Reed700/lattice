@@ -396,6 +396,24 @@ fn count<'a>(
     }
 }
 
+/// The label a claim of this kind takes when its support is below Primary
+/// (§6.1), whether or not that support met the bar: how the claim is worded
+/// or shown to the learner.
+pub fn label_below_primary(profile: &ClaimProfile) -> Option<Label> {
+    match profile.kind {
+        ClaimKind::Specification | ClaimKind::VersionBound => Some(Label::Secondary),
+        ClaimKind::Measurement => Some(profile.measurement_origin.clone().map_or(
+            Label::Secondary,
+            |origin| Label::ReportedBy {
+                attributing_to: origin,
+            },
+        )),
+        ClaimKind::Practice => Some(Label::Practice),
+        ClaimKind::Opinion => Some(Label::Attributed),
+        ClaimKind::Definition | ClaimKind::Historical | ClaimKind::General => None,
+    }
+}
+
 /// One support at or above the effective bar.
 fn alone(
     profile: &ClaimProfile,
@@ -441,18 +459,7 @@ fn alone(
             .any(|reason| reason.code == ReasonCode::Mirror)
             .then_some(Label::Mirror)
     } else {
-        match profile.kind {
-            ClaimKind::Specification | ClaimKind::VersionBound => Some(Label::Secondary),
-            ClaimKind::Measurement => Some(profile.measurement_origin.clone().map_or(
-                Label::Secondary,
-                |origin| Label::ReportedBy {
-                    attributing_to: origin,
-                },
-            )),
-            ClaimKind::Practice => Some(Label::Practice),
-            ClaimKind::Opinion => Some(Label::Attributed),
-            ClaimKind::Definition | ClaimKind::Historical | ClaimKind::General => None,
-        }
+        label_below_primary(profile)
     };
     reasons.push(Reason::new(
         ReasonCode::MetAlone,

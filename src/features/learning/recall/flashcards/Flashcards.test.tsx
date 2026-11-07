@@ -5,6 +5,7 @@ import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
+import { EditFlashcard } from '@/features/learning/recall/flashcards/EditFlashcard';
 import { FlashcardDeckView } from '@/features/learning/recall/flashcards/FlashcardDeckView';
 import { FlashcardSession } from '@/features/learning/recall/flashcards/FlashcardSession';
 import { FlashcardsSection } from '@/features/learning/recall/flashcards/FlashcardsSection';
@@ -33,6 +34,12 @@ function show(ui: React.ReactNode) {
 }
 describe('Flashcards', () => {
   beforeEach(() => { vi.resetAllMocks(); });
+  it('does not cap the question, answer or explanation of a card being edited', () => {
+    show(<EditFlashcard card={card} onClose={() => undefined} />);
+    expect(screen.getByLabelText('Question')).not.toHaveAttribute('maxlength');
+    expect(screen.getByLabelText('Correct answer')).not.toHaveAttribute('maxlength');
+    expect(screen.getByLabelText('Explanation')).not.toHaveAttribute('maxlength');
+  });
   it('keeps a revealed flashcard in place on save failure and retries the same review', async () => {
     const user = userEvent.setup();
     mocks.review

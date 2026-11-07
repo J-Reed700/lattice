@@ -149,6 +149,12 @@ committed unless the user chooses to.
 
 ## Page recall: where does the cited passage reach the judge?
 
+> Removed with the walk it measured. `live_page_recall_eval` is gone from the
+> code: the claim-classes design (`docs/design/2026-11-01-lesson-claim-classes.md`
+> §3.7) deletes the relevance walk, so there are no pages past the first to
+> measure. What follows and `results/README.md` stay as the record of what the
+> walk measured.
+
 `live_page_recall_eval` (in
 `crates/lattice-desktop/src/features/learning/lessons/live_page_recall_eval.rs`)
 measures the two-pass claim pages of
@@ -283,8 +289,29 @@ Inputs for why the lesson checker left the "Function Calling & Tool
 Schemas" lesson's claims waiting while the course held the official docs
 that state them. Two evals read them. `live_claim_pairs_eval` now also
 takes a pair whose evidence is a page of `passages`, each `{label, text}`,
-labelled as the lesson check labels it. `live_page_recall_eval` takes a
-recall set through `LATTICE_PAGE_RECALL_TARGETS` in place of the stored
-reports: claims with the passages that should be found. How the inputs were
-built, the commands and what each result would mean are in
+labelled as the lesson check labels it. `live_page_recall_eval` (removed,
+see above) took a recall set through `LATTICE_PAGE_RECALL_TARGETS` in
+place of the stored reports: claims with the passages that should be
+found. How the inputs were built, the commands and what each result would
+mean are in
 [`claim-corroboration-db8397ff/README.md`](claim-corroboration-db8397ff/README.md).
+
+## Claims by class: the replay and the acceptance run
+
+[`2026-11-01-CLAIM-CLASSES.md`](2026-11-01-CLAIM-CLASSES.md) records the replay of one real lesson's saved claims
+through the class-based pipeline of
+[`../../docs/design/2026-11-01-lesson-claim-classes.md`](../../docs/design/2026-11-01-lesson-claim-classes.md) on the
+local 27B. The script is `claim-classes/replay_classes.py`; its prompts are the prompts of record, which the code pins
+by digest, and its 17 planted statements (every planted false is rejected, every planted true passes) are in
+`claim-classes/results/2026-11-01-planted.jsonl`. The lesson's own inputs stay out of the repo. The model is read from
+the server and written on every row.
+
+The real lesson is scored after the app's own job has prepared it, on a copy of the database, with
+`python scripts/score_lesson_acceptance.py PATH/TO/lattice.db [--lesson f36400bc]`. The database is opened read-only. The
+report gives the lesson's end state by class (every statement in a state its class allows, none rule-Internal, at most 73),
+the calls made beside the most the job ended at, whether that most ever went up, each term of the call count of the
+design's section 3.11 and the bound they give, the pages the admission gate refused and the admitted pages under 400
+words (the floors are provisional until these are read by eye), any sentence citing a refused page, the planted
+statement "Microsoft's grounding feature returns bounding box coordinates in millimetres." if it is in the lesson, the
+Common statements sent to a source check, and the model each record names. It prints no statement or page text, and
+exits 1 when a hard check fails. `scripts/test_score_lesson_acceptance.py` runs it on a small synthetic database.

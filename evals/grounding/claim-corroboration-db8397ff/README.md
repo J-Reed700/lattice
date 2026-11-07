@@ -86,6 +86,11 @@ read only these) and `in_research_scope` (whether any target is among them).
 
 ## Running them
 
+`live_page_recall_eval` was removed with the relevance walk it measured
+(`docs/design/2026-11-01-lesson-claim-classes.md` §3.7), and `recall.jsonl`
+has no reader now. Its commands and the recall rows under Results stay as
+the record of how those numbers were made; `live_claim_pairs_eval` still runs.
+
 Build once in the worktree (the private target dir is set in
 `.cargo/config.toml`), then from `crates/lattice-desktop`:
 

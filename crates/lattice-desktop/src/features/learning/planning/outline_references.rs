@@ -136,7 +136,7 @@ pub(in crate::features::learning) async fn plan(
     });
     let schema = json!({"type":"object","additionalProperties":false,"required":["subtopics"],"properties":{
         "subtopics":{"type":"array","minItems":1,"maxItems":max_modules,"items":{"type":"object","additionalProperties":false,"required":["title","needs"],"properties":{
-            "title":{"type":"string","minLength":1,"maxLength":120},
+            "title":{"type":"string","minLength":1},
             "needs":{"type":"array","items":web_research::need_schema(None)}
         }}}
     }});
@@ -152,7 +152,7 @@ pub(in crate::features::learning) async fn plan(
         let mut subtopics = Vec::with_capacity(raw.subtopics.len());
         for subtopic in raw.subtopics {
             let title = subtopic.title.trim();
-            if title.is_empty() || title.chars().count() > 120 {
+            if title.is_empty() {
                 return Err(malformed());
             }
             let mut needs: Vec<PlannedNeed> = Vec::new();
@@ -278,12 +278,14 @@ pub(in crate::features::learning) async fn gather_for(
                 [json!({"claim":subtopic.title,"missingEvidence":reason})],
             ),
         };
-        let hint = subtopic
-            .needs
-            .iter()
-            .map(|need| need.query.as_str())
-            .collect::<Vec<_>>()
-            .join(" | ");
+        let needs = web_research::with_breadth(&subtopic.needs, &subtopic.title);
+        let mut queries: Vec<&str> = Vec::new();
+        for need in &needs {
+            if !queries.contains(&need.query.as_str()) {
+                queries.push(&need.query);
+            }
+        }
+        let hint = queries.join(" | ");
         // One selection reads every need's results together, so each
         // search fills an equal share of its room.
         let cost = selection_cost(llm, &gaps);
@@ -291,10 +293,10 @@ pub(in crate::features::learning) async fn gather_for(
             tokens: selection_room(llm, topic, &hint, &gaps),
             cost: &cost,
         }
-        .share(subtopic.needs.len());
+        .share(needs.len());
         let mut merged: Vec<web_research::Candidate> = Vec::new();
         let mut seen = HashSet::new();
-        for need in &subtopic.needs {
+        for need in &needs {
             progress.check_cancelled()?;
             progress.detail(format!(
                 "{}: searching for {}",
@@ -383,6 +385,7 @@ pub(in crate::features::learning) async fn gather_for(
                 source_id: id,
                 origin: result.url,
                 captured,
+                found: true,
             });
         }
     }

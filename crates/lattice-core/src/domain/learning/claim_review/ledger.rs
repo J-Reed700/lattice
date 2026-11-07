@@ -4,14 +4,17 @@
 //! loads is a log the rules allowed. State is never written, only replayed:
 //! undo restores the state as it stood before the undone event (§5.1).
 
+mod decisions;
+
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use super::replay::{apply_check, charge, hand_to_user, queued, redecided, reopened, Cursor};
+use super::replay::{apply_check, charge, hand_to_user, redecided, reopened, Cursor};
 use super::{
-    Actor, AttachOutcome, ClaimEvent, ClaimId, ClaimLocation, ClaimState, EvidenceFingerprint,
-    ReopenCause, RepairOutcome, TrustAssessment, UserAction, VerdictKind, MACHINE_ATTEMPTS,
+    Actor, AttachOutcome, Checker, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class,
+    ClassifiedBy, EvidenceFingerprint, ReopenCause, RepairOutcome, TrustAssessment, UserAction,
+    VerdictKind, MACHINE_ATTEMPTS,
 };
 use crate::shared::error::AppError;
 
@@ -45,15 +48,12 @@ pub struct CheckBasis {
 }
 
 /// The per-claim actions of the review card (§5.1), in the card's order.
-/// "Accept all general-knowledge proposals" is a lesson action made of one
-/// `GeneralKnowledge` per claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimActionKind {
     Confirm,
     Edit,
     Remove,
-    GeneralKnowledge,
     AttachEvidence,
     ResearchWithHint,
     Unconfirm,
@@ -93,6 +93,16 @@ pub enum LedgerError {
         attempt: u8,
         escalated: bool,
     },
+    #[error(
+        "claim {claim}: a decision under policy {recorded} cannot continue one made under {held}"
+    )]
+    PolicyChanged {
+        claim: String,
+        held: String,
+        recorded: String,
+    },
+    #[error("claim {claim}: resolved by evidence, but no local check supported it")]
+    ResolvedWithoutSupport { claim: String },
 }
 
 impl From<LedgerError> for AppError {
@@ -157,10 +167,15 @@ impl ClaimLedgerEntry {
             state: ClaimState::Unchecked,
             basis: None,
             repair_pending: false,
+            citation_pending: false,
             researched: false,
             latest_failure: None,
             trust: None,
-            inherited_budget: None,
+            attempts_left: MACHINE_ATTEMPTS,
+            class: None,
+            decided: None,
+            last_support: None,
+            hinted: false,
         };
         let mut entry = Self {
             claim_id,
@@ -218,10 +233,28 @@ impl ClaimLedgerEntry {
         self.cursor().basis.as_ref()
     }
 
+    /// The machine repaired the claim's citation and no local check has read
+    /// the new one yet.
+    pub fn citation_awaits_check(&self) -> bool {
+        self.cursor().citation_pending
+    }
+
     /// The latest failing verdict from either checker, kept after the claim
     /// closes so a card can say what the user confirmed over.
     pub fn latest_failure(&self) -> Option<&VerdictKind> {
         self.cursor().latest_failure.as_ref()
+    }
+
+    /// The statement's class as the strongest authority that decided it gave
+    /// it; `None` until a `Classified` event.
+    pub fn class(&self) -> Option<Class> {
+        self.cursor().class.map(|(class, _)| class)
+    }
+
+    /// The statement's class and the authority that decided it; `None` until
+    /// a `Classified` event.
+    pub fn classified(&self) -> Option<(Class, ClassifiedBy)> {
+        self.cursor().class
     }
 
     /// What the provenance gate weighed for the claim's latest local check,
@@ -295,8 +328,25 @@ impl ClaimLedgerEntry {
         ) && !self.may_research()
     }
 
-    /// The next repair is the escalated one (`repeatedDefects`): it is the
-    /// claim's last attempt on this evidence.
+    /// How many local checks in a row, back from the latest, gave no answer
+    /// (claim classes design §3.2). One means the claim is checked once more;
+    /// two means the checker cannot answer for it.
+    pub fn unjudged(&self) -> usize {
+        self.events
+            .iter()
+            .rev()
+            .filter_map(|record| match &record.event {
+                ClaimEvent::Checked(check) if matches!(check.checker, Checker::Local { .. }) => {
+                    Some(check.result.is_unjudged())
+                }
+                _ => None,
+            })
+            .take_while(|unjudged| *unjudged)
+            .count()
+    }
+
+    /// The next repair is the escalated one, the machine's last on the claim:
+    /// it takes the claim's sentence out.
     pub fn next_repair_escalates(&self) -> bool {
         matches!(
             self.state(),
@@ -307,16 +357,16 @@ impl ClaimLedgerEntry {
         )
     }
 
-    /// Research runs once per claim and fingerprint, for the kinds new
-    /// passages can answer (§4): a claim below the bar too, which research
-    /// may find a stronger source for though no rewrite fixes it.
+    /// Research runs once per claim for its life, for the kinds new passages
+    /// can answer (§4): a claim below the bar too, which research may find a
+    /// stronger source for though no rewrite fixes it. Evidence a round
+    /// saved does not earn another (claim classes design §3.6).
     pub fn may_research(&self) -> bool {
         let cursor = self.cursor();
         matches!(
             &cursor.state,
             ClaimState::Open { kind, .. }
-                if kind.is_repairable()
-                    || matches!(kind, VerdictKind::NoSource | VerdictKind::InsufficientStanding { .. })
+                if kind.is_repairable() || matches!(kind, VerdictKind::InsufficientStanding { .. })
         ) && !cursor.researched
             && !cursor.repair_pending
     }
@@ -354,7 +404,6 @@ impl ClaimLedgerEntry {
             ClaimActionKind::Confirm,
             ClaimActionKind::Edit,
             ClaimActionKind::Remove,
-            ClaimActionKind::GeneralKnowledge,
             ClaimActionKind::AttachEvidence,
             ClaimActionKind::ResearchWithHint,
             ClaimActionKind::Unconfirm,
@@ -374,16 +423,6 @@ impl ClaimLedgerEntry {
             ClaimActionKind::Edit | ClaimActionKind::Remove => !matches!(
                 state,
                 ClaimState::Removed { .. } | ClaimState::Edited { .. }
-            ),
-            ClaimActionKind::GeneralKnowledge => matches!(
-                state,
-                ClaimState::Open {
-                    kind: VerdictKind::Unsupported | VerdictKind::GeneralKnowledgeProposed,
-                    ..
-                } | ClaimState::Queued {
-                    kind: VerdictKind::Unsupported | VerdictKind::GeneralKnowledgeProposed,
-                    ..
-                }
             ),
             ClaimActionKind::AttachEvidence => {
                 is_open(state) || matches!(state, ClaimState::Confirmed { .. })
@@ -460,29 +499,24 @@ impl ClaimLedgerEntry {
                     return Err(self.refuse(&record.event));
                 }
             }
-            ClaimEvent::Checked(check) => apply_check(&mut next, check, false),
-            ClaimEvent::Researched { passages_found, .. } => {
-                next.researched = true;
-                if let ClaimState::Open {
-                    kind: VerdictKind::NoSource,
-                    reason,
-                    ..
-                } = &next.state
-                {
-                    if *passages_found == 0 {
-                        next.state = queued(VerdictKind::NoSource, reason.clone());
-                    }
-                }
-            }
+            ClaimEvent::Checked(check) => apply_check(&mut next, check, false, at),
+            ClaimEvent::Researched { .. } => next.researched = true,
             ClaimEvent::RepairAttempted {
                 attempt,
                 escalated,
                 outcome,
                 ..
             } => self.apply_repair(&mut next, *attempt, *escalated, outcome, at, &record.event)?,
-            ClaimEvent::Executed { .. }
-            | ClaimEvent::CitationRepaired { .. }
-            | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::CitationRepaired { .. } | ClaimEvent::CitationDropped { .. } => {
+                next.citation_pending = true
+            }
+            ClaimEvent::Stepped { .. } => self.apply_step(&mut next, &record.event, at)?,
+            ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::Classified { class, by } => {
+                if class.prevails(*by, next.class) {
+                    next.class = Some((*class, *by));
+                }
+            }
             ClaimEvent::StandingAssessed {
                 trust,
                 reason,
@@ -501,7 +535,7 @@ impl ClaimLedgerEntry {
                     return Err(self.refuse(&record.event));
                 }
                 match result {
-                    AttachOutcome::Checked(check) => apply_check(&mut next, check, true),
+                    AttachOutcome::Checked(check) => apply_check(&mut next, check, true, at),
                     AttachOutcome::NoPassage => hand_to_user(&mut next.state),
                 }
             }
@@ -518,6 +552,12 @@ impl ClaimLedgerEntry {
                         successor: successor.clone(),
                         by: *editor,
                     },
+                    // The machine's change left nothing that answers for the
+                    // claim: its sentence went with another claim's cut.
+                    _ if successor.is_none() && *by == Actor::Machine => ClaimState::Removed {
+                        at,
+                        by: Actor::Machine,
+                    },
                     _ => ClaimState::Edited {
                         at,
                         successor: successor.clone(),
@@ -529,7 +569,7 @@ impl ClaimLedgerEntry {
                 if !matches!(next.state, ClaimState::Unchecked) {
                     return Err(self.refuse(&record.event));
                 }
-                next.inherited_budget = Some(*attempts_left);
+                next.attempts_left = next.attempts_left.min(*attempts_left);
             }
             ClaimEvent::Reopened { cause } => {
                 if !matches!(
@@ -574,6 +614,33 @@ impl ClaimLedgerEntry {
         if *outcome == RepairOutcome::SupersededByUser {
             return Ok(());
         }
+        // The policy decides what a repair of a decided claim leads to: the
+        // event is what happened, and its attempts are not counted here.
+        if next.decided.is_some() {
+            return if next.state.is_settled() || next.state.awaits_user() {
+                Err(self.refuse(event))
+            } else {
+                Ok(())
+            };
+        }
+        // A sentence rewritten for a claim that shares it is the attempt of
+        // the claims that passed on it too: they are checked again on the new
+        // text, with no more attempts than the claim whose repair it was
+        // (claim classes design §3.2).
+        if *outcome == RepairOutcome::Rewritten
+            && matches!(
+                next.state,
+                ClaimState::ResolvedByEvidence { .. }
+                    | ClaimState::Consistent { .. }
+                    | ClaimState::GeneralKnowledge { .. }
+            )
+        {
+            next.attempts_left = next
+                .attempts_left
+                .min(MACHINE_ATTEMPTS.saturating_sub(attempt));
+            next.repair_pending = true;
+            return Ok(());
+        }
         let ClaimState::Open {
             kind,
             reason,
@@ -582,16 +649,13 @@ impl ClaimLedgerEntry {
         else {
             return Err(self.refuse(event));
         };
+        let (kind, reason, machine_attempts_left) =
+            (kind.clone(), reason.clone(), *machine_attempts_left);
         if !self.repair_recordable() {
             return Err(self.refuse(event));
         }
-        // A repair not attempted ran no model, so nothing escalated.
-        let expected_escalation = match outcome {
-            RepairOutcome::NotAttempted { .. } => false,
-            _ => *machine_attempts_left == 1,
-        };
-        if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(*machine_attempts_left)
-            || escalated != expected_escalation
+        if attempt != (MACHINE_ATTEMPTS + 1).saturating_sub(machine_attempts_left)
+            || escalated != (machine_attempts_left == 1)
         {
             return Err(LedgerError::RepairMismatch {
                 claim: self.claim_id.0.clone(),
@@ -607,12 +671,7 @@ impl ClaimLedgerEntry {
                     by: Actor::Machine,
                 }
             }
-            RepairOutcome::Rejected { .. } => {
-                next.state = charge(kind.clone(), reason.clone(), *machine_attempts_left)
-            }
-            RepairOutcome::NotAttempted { .. } => {
-                next.state = super::replay::queued(kind.clone(), reason.clone())
-            }
+            RepairOutcome::Rejected { .. } => next.state = charge(next, kind, reason),
             RepairOutcome::SupersededByUser => {}
         }
         Ok(())
@@ -631,7 +690,6 @@ impl ClaimLedgerEntry {
             UserAction::Unconfirm => ClaimActionKind::Unconfirm,
             UserAction::Edit { .. } => ClaimActionKind::Edit,
             UserAction::Remove => ClaimActionKind::Remove,
-            UserAction::GeneralKnowledge => ClaimActionKind::GeneralKnowledge,
             UserAction::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
         };
         if !self.allows(kind) {
@@ -646,8 +704,10 @@ impl ClaimLedgerEntry {
                 claim: self.claim_id.0.clone(),
             });
         }
-        // The user's action supersedes any rewrite waiting for its check.
+        // The user's action supersedes any rewrite waiting for its check, and
+        // any hint but its own is no longer asking for a reading.
         next.repair_pending = false;
+        next.hinted = matches!(action, UserAction::ResearchWithHint { .. });
         match action {
             UserAction::Confirm { bound } => {
                 next.state = ClaimState::Confirmed {
@@ -668,12 +728,6 @@ impl ClaimLedgerEntry {
             }
             UserAction::Remove => {
                 next.state = ClaimState::Removed {
-                    at,
-                    by: Actor::User,
-                }
-            }
-            UserAction::GeneralKnowledge => {
-                next.state = ClaimState::GeneralKnowledge {
                     at,
                     by: Actor::User,
                 }
@@ -713,6 +767,7 @@ fn state_name(state: &ClaimState) -> &'static str {
         ClaimState::Open { .. } => "open",
         ClaimState::Queued { .. } => "queued",
         ClaimState::ResolvedByEvidence { .. } => "resolved by evidence",
+        ClaimState::Consistent { .. } => "consistent",
         ClaimState::Confirmed { .. } => "confirmed",
         ClaimState::Removed { .. } => "removed",
         ClaimState::Edited { .. } => "edited",

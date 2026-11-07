@@ -43,11 +43,11 @@ LESSON = {
 }
 REPORT = {"findings": [
     {"unit": 0, "quote": "A plan is a tree.", "statement": "A query plan is a tree of nodes.", "verdict": "supported",
-     "resolution": None},
+     "class": {"class": "sourced", "by": "writer"}},
     {"unit": 0, "quote": "x", "statement": "Postgres caches every plan forever.", "verdict": "unsupported",
-     "resolution": {"kind": "general_knowledge"}},
+     "class": {"class": "common", "by": "model"}},
     {"unit": 3, "quote": "y", "statement": "A sequential scan reads every row.", "verdict": "supported",
-     "resolution": None},
+     "class": {"class": "reasoning", "by": "model"}},
 ]}
 METRICS = {
     "outline": {"review": {"status": "passed", "issues": 0, "repair_passes": 0},
@@ -55,7 +55,8 @@ METRICS = {
     "lessons": {
         "m1.l1": {"outcome": "ready", "citations": {"source_ids": 2, "unresolved": 0},
                   "claims": {"total": 3, "supported": 2, "unsupported": 1, "contradicted": 0, "unverified": 0,
-                             "general_knowledge": 1, "quotes_unmatched": 0},
+                             "by_class": {"sourced": 1, "reasoning": 1, "common": 1}, "bridged": 0,
+                             "quotes_unmatched": 0},
                   "cost": {"seconds": 7200, "calls": 3}},
         "m1.l2": {"outcome": "failed", "error": "evidence ran out", "cost": {"seconds": 3600, "calls": 1}},
     },
@@ -261,7 +262,7 @@ class Pipeline(unittest.TestCase):
         self.assertTrue(items["pg/outline/O3"]["turns"][0]["ask"].startswith("Goal: Tune Postgres queries\n"))
         claims = self.items("claims.items.json")
         self.assertEqual(sorted(claims), ["pg/m1.l1/claim/0-1", "pg/m1.l1/claim/0-2", "pg/m1.l1/claim/3-1"])
-        self.assertTrue(claims["pg/m1.l1/claim/0-2"]["general_knowledge"])
+        self.assertEqual(claims["pg/m1.l1/claim/0-2"]["statement_class"], "common")
         answers = {row["query_id"]: row for row in load_jsonl(self.out / "claims.jsonl")}
         self.assertEqual(answers["pg/m1.l1/claim/3-1"]["turns"][0]["answer"], "A sequential scan reads every row.")
 
@@ -370,7 +371,7 @@ class Pipeline(unittest.TestCase):
         self.assertEqual(summary["lessons_ready"]["failures"],
                          [{"slot": "pg/m1.l2", "outcome": "failed", "error": "evidence ran out"}])
         self.assertEqual((summary["grounding"]["supported"], summary["grounding"]["total"],
-                          summary["grounding"]["general_knowledge"]), (2, 3, 1))
+                          summary["grounding"]["common"]), (2, 3, 1))
         self.assertEqual(summary["cost"]["lesson_minutes"], {"median": 90.0, "max": 120.0})
         self.assertEqual(summary["criteria"]["L3"], {"passed": 0, "graded": 1, "total": 2, "too_long": 0})
         page = (self.out / "summary.md").read_text(encoding="utf-8")
