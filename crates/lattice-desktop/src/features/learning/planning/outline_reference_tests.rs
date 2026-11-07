@@ -397,7 +397,9 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     ])
     .route("q1", &[0, 1, 2, 4])
     .route("q2", &[1, 0])
-    .route("q3", &[3, 4]);
+    .route("q3", &[3, 4])
+    .route("Random assignment", &[0])
+    .route("Uncertainty", &[3]);
     let plan = ReferencePlan {
         subtopics: vec![
             PlannedSubtopic {
@@ -421,17 +423,32 @@ async fn gather_runs_one_selection_per_subtopic_and_dedupes_by_url_and_content()
     let found =
         outline_references::gather(&llm, &web, &plan, &existing, &OutlineProgress::default())
             .await?;
-    assert_eq!(web.queries.lock().unwrap().as_slice(), ["q1", "q2", "q3"]);
+    assert_eq!(
+        web.queries.lock().unwrap().as_slice(),
+        [
+            "q1",
+            "q2",
+            "q1",
+            "Random assignment",
+            "q3",
+            "q3",
+            "Uncertainty"
+        ]
+    );
     assert_eq!(
         web.kinds.lock().unwrap().as_slice(),
         [
             Some("paper".to_owned()),
             Some("paper".to_owned()),
-            Some("paper".to_owned())
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned()),
+            Some("paper".to_owned()),
+            Some("web".to_owned()),
+            Some("encyclopedia".to_owned())
         ],
-        "each search goes out with the kind its plan gave it"
+        "each planned search goes out with the kind its plan gave it, then the web and encyclopedia searches"
     );
-    assert_eq!(found.searches, 3);
+    assert_eq!(found.searches, 7);
     assert_eq!(llm.prompts.lock().unwrap().len(), 2);
     let selection = payload(&llm.prompts.lock().unwrap()[0]);
     assert_eq!(selection["topic"], "Random assignment");
@@ -628,7 +645,7 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     assert_eq!(review.issues[0].kind, LearningOutlineIssueKind::References);
     assert_eq!(review.issues[0].path, "");
     assert!(review.note.contains("no references could be gathered"));
-    assert_eq!(offline.queries.lock().unwrap().len(), 1);
+    assert_eq!(offline.queries.lock().unwrap().len(), 3);
     assert_eq!(llm.prompts.lock().unwrap().len(), 3);
     assert!(saved.sources.is_empty());
     let drafts = DraftRunRegistry::new();
@@ -667,7 +684,11 @@ async fn zero_gathered_pages_is_a_references_finding_that_repair_resolves_by_gat
     assert_eq!(repaired.sources.len(), 1);
     assert_eq!(
         online.queries.lock().unwrap().as_slice(),
-        ["random assignment confounding"]
+        [
+            "random assignment confounding",
+            "random assignment confounding",
+            "Random assignment"
+        ]
     );
     assert_eq!(llm.prompts.lock().unwrap().len(), 1);
     service::accept(

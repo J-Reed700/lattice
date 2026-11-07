@@ -127,7 +127,8 @@ async fn snapshot_passages_reach_text_past_the_former_prefixes() -> Result<()> {
 }
 
 #[tokio::test]
-async fn web_search_pages_while_new_results_appear() -> Result<()> {
+async fn a_need_search_pages_while_new_results_appear_and_search_need_reads_one_page() -> Result<()>
+{
     use lattice_core::application::contracts::web::WebSearchResult;
     let web = crate::features::web::mocks::MockWebService::new();
     web.set_search_results(
@@ -143,12 +144,14 @@ async fn web_search_pages_while_new_results_appear() -> Result<()> {
     );
     let need =
         crate::features::learning::references::web_research::PlannedNeed::web("query".into());
-    let results = crate::features::learning::references::web_research::search_need(
-        &web,
-        &need,
-        crate::features::learning::references::web_research::Room::for_all(),
-    )
-    .await?;
+    use crate::features::learning::references::web_research::{search_need, NeedSearch, Room};
+    let first = search_need(&web, &need, Room::for_all()).await?;
+    assert_eq!(first.len(), 12, "one page");
+    let mut search = NeedSearch::new(&need);
+    let mut results = Vec::new();
+    while !search.is_done() {
+        results.extend(search.next_page(&web, Room::for_all()).await?);
+    }
     assert_eq!(results.len(), 30, "not the former 12");
     Ok(())
 }

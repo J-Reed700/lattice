@@ -278,12 +278,14 @@ pub(in crate::features::learning) async fn gather_for(
                 [json!({"claim":subtopic.title,"missingEvidence":reason})],
             ),
         };
-        let hint = subtopic
-            .needs
-            .iter()
-            .map(|need| need.query.as_str())
-            .collect::<Vec<_>>()
-            .join(" | ");
+        let needs = web_research::with_breadth(&subtopic.needs, &subtopic.title);
+        let mut queries: Vec<&str> = Vec::new();
+        for need in &needs {
+            if !queries.contains(&need.query.as_str()) {
+                queries.push(&need.query);
+            }
+        }
+        let hint = queries.join(" | ");
         // One selection reads every need's results together, so each
         // search fills an equal share of its room.
         let cost = selection_cost(llm, &gaps);
@@ -291,10 +293,10 @@ pub(in crate::features::learning) async fn gather_for(
             tokens: selection_room(llm, topic, &hint, &gaps),
             cost: &cost,
         }
-        .share(subtopic.needs.len());
+        .share(needs.len());
         let mut merged: Vec<web_research::Candidate> = Vec::new();
         let mut seen = HashSet::new();
-        for need in &subtopic.needs {
+        for need in &needs {
             progress.check_cancelled()?;
             progress.detail(format!(
                 "{}: searching for {}",
