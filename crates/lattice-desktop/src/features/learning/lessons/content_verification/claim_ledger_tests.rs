@@ -498,8 +498,7 @@ async fn a_lesson_stopped_on_checks_made_under_other_rules_completes_its_job_as_
         &[source()],
     )
     .await
-    .err()
-    .expect("a fault stops the lesson")
+    .expect_err("a fault stops the lesson")
     .to_string();
     assert!(error.contains("earlier checking rules"), "{error}");
     let review = ClaimReviewRepository::new(pool.clone())
