@@ -512,6 +512,27 @@ impl ClaimLedgerEntry {
             }
             ClaimEvent::Stepped { .. } => self.apply_step(&mut next, &record.event, at)?,
             ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::PublishedUnverified { reason } => {
+                if !matches!(
+                    next.state,
+                    ClaimState::Unchecked
+                        | ClaimState::Open { .. }
+                        | ClaimState::Queued { .. }
+                        | ClaimState::Reopened { .. }
+                        | ClaimState::Unverified { .. }
+                        | ClaimState::Removed {
+                            by: Actor::Machine,
+                            ..
+                        }
+                ) {
+                    return Err(self.refuse(&record.event));
+                }
+                next.repair_pending = false;
+                next.state = ClaimState::Unverified {
+                    at,
+                    reason: *reason,
+                };
+            }
             ClaimEvent::Classified { class, by } => {
                 if class.prevails(*by, next.class) {
                     next.class = Some((*class, *by));
@@ -577,6 +598,7 @@ impl ClaimLedgerEntry {
                     ClaimState::ResolvedByEvidence { .. }
                         | ClaimState::Confirmed { .. }
                         | ClaimState::GeneralKnowledge { .. }
+                        | ClaimState::Unverified { .. }
                 ) {
                     return Err(self.refuse(&record.event));
                 }
@@ -738,9 +760,13 @@ impl ClaimLedgerEntry {
     }
 }
 
-/// Open, Queued or Reopened: a claim the user may resolve.
+/// Open, Queued, Reopened or published not verified: a claim the user may
+/// resolve.
 fn is_open(state: &ClaimState) -> bool {
-    matches!(state, ClaimState::Open { .. }) || state.awaits_user()
+    matches!(
+        state,
+        ClaimState::Open { .. } | ClaimState::Unverified { .. }
+    ) || state.awaits_user()
 }
 
 /// The sentence is gone: nothing to extract, check or supersede.
@@ -773,5 +799,6 @@ fn state_name(state: &ClaimState) -> &'static str {
         ClaimState::Edited { .. } => "edited",
         ClaimState::GeneralKnowledge { .. } => "general knowledge",
         ClaimState::Reopened { .. } => "reopened",
+        ClaimState::Unverified { .. } => "not verified",
     }
 }

@@ -11,6 +11,37 @@ use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimLedgerEntry, ClaimState, LessonReviewState, StopReason,
 };
 
+/// The code of the stop for statements whose checker answers could not be read.
+pub(in crate::features::learning::lessons::content_verification) const UNREADABLE: &str =
+    "checker_unreadable";
+
+/// The claims the machine ended whose sentences `candidate` still holds. A
+/// code example's claim ends with its run, and the claims of a section that
+/// goes end with it.
+pub(super) fn standing_ended<'a>(
+    entries: &'a [ClaimLedgerEntry],
+    cuts: &super::super::sections::Cuts,
+    candidate: &Value,
+) -> Vec<&'a ClaimLedgerEntry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            let at = entry.location();
+            matches!(
+                entry.state(),
+                ClaimState::Removed {
+                    by: Actor::Machine,
+                    ..
+                }
+            ) && !is_example(entry)
+                && !cuts.going.contains_key(&at.unit_index)
+                && !at.quote.trim().is_empty()
+                && field_text(candidate, at.unit_index, &at.field)
+                    .is_some_and(|text| text.contains(&at.quote))
+        })
+        .collect()
+}
+
 /// What a statement waits for at a node of `step`, in words.
 fn describe(step: Step) -> &'static str {
     match step {
@@ -95,24 +126,7 @@ impl ClaimLedger {
         &self,
         candidate: &Value,
     ) -> Option<(StopReason, usize)> {
-        let standing: Vec<&ClaimLedgerEntry> = self
-            .entries
-            .iter()
-            .filter(|entry| {
-                let at = entry.location();
-                matches!(
-                    entry.state(),
-                    ClaimState::Removed {
-                        by: Actor::Machine,
-                        ..
-                    }
-                ) && !is_example(entry)
-                    && !self.cuts.going.contains_key(&at.unit_index)
-                    && !at.quote.trim().is_empty()
-                    && field_text(candidate, at.unit_index, &at.field)
-                        .is_some_and(|text| text.contains(&at.quote))
-            })
-            .collect();
+        let standing = standing_ended(&self.entries, &self.cuts, candidate);
         let first = standing.first()?;
         let more = match standing.len() {
             1 => String::new(),
@@ -148,7 +162,7 @@ impl ClaimLedger {
     /// checks can use, asked twice.
     pub(super) fn unreadable(&self, claims: usize) -> StopReason {
         self.stop_reason(
-            "checker_unreadable",
+            UNREADABLE,
             format!(
                 "The checking model's answers could not be read for {claims} statement{}: {} gave no answer the checks can use, asked twice.",
                 if claims == 1 { "" } else { "s" },
