@@ -4,6 +4,7 @@
 use super::build::STEPS;
 use super::jobs::{spec_of, DRILL_BUILD};
 use super::repository::{self, DrillStatus, StoredDrill};
+use super::schedules;
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, hash, now};
 use lattice_core::domain::learning::drills::{targets, Material};
@@ -194,8 +195,8 @@ pub struct Taken {
 /// at once, in the same transaction: with the taken drill's size and number of patterns, and targets from
 /// `drills::targets`. `None` when no drill of the language is ready, and nothing is queued.
 ///
-/// The learner's pattern states arrive with the pattern schedule (step 5). Until then none are passed, so every
-/// pattern counts as never practised and each build targets the same patterns.
+/// The patterns come from the pattern schedule: those due first, then those never practised. The taken drill's own
+/// patterns, and those of drills ready or waiting for their grade, are held back until every other is planted.
 pub async fn take(pool: &SqlitePool, language: &str) -> Result<Option<Taken>> {
     take_from(pool, Shelf::Language(language)).await
 }
@@ -240,8 +241,15 @@ pub(in crate::features::learning) async fn take_topic_in(
     drill.taken_at = Some(at);
     let count = drill.spec.patterns.len().max(1);
     let material = drill.drill.material.clone();
+    let mut taking: Vec<String> = Vec::new();
+    for issue in &drill.drill.key {
+        if !taking.contains(&issue.pattern) {
+            taking.push(issue.pattern.clone());
+        }
+    }
+    let states = schedules::pattern_states_in(connection, &material, &taking).await?;
     let next = DrillSpec {
-        patterns: targets(&material, &[], at, count)
+        patterns: targets(&material, &states, at, count)
             .iter()
             .map(|pattern| pattern.id.to_owned())
             .collect(),

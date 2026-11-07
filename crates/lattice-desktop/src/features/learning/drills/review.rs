@@ -9,6 +9,7 @@ use super::dto::{
     ReviewMaterialDto, StartedCodeReviewDto,
 };
 use super::reveal::{learner_drill, result_of};
+use super::schedules;
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, now};
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
@@ -53,7 +54,11 @@ pub async fn start(
             Some(program_id.clone()),
         ),
     };
-    let patterns: Vec<String> = targets(&material, &[], now(), count)
+    let states = {
+        let mut connection = pool.acquire().await.map_err(db)?;
+        schedules::pattern_states_in(&mut connection, &material, &[]).await?
+    };
+    let patterns: Vec<String> = targets(&material, &states, now(), count)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();

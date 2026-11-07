@@ -10,9 +10,10 @@ use super::jobs::GRADING_STEPS;
 use super::material::DrillMaterial;
 use super::proof::Tools;
 use super::repository::StoredDrill;
-use crate::features::learning::persistence::db;
+use super::schedules;
+use crate::features::learning::persistence::{db, now};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::learning::drills::{ratings, score, validate};
+use lattice_core::domain::learning::drills::{lesson_rating, ratings, score, validate};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -122,6 +123,16 @@ impl<'a> AttemptGrading<'a> {
         };
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let recorded = attempts::record_graded_in(&mut transaction, &attempt.id, &graded).await?;
+        if recorded {
+            schedules::record_in(
+                &mut transaction,
+                stored,
+                &rated,
+                lesson_rating(&stored.drill.material, key, &assessment),
+                now(),
+            )
+            .await?;
+        }
         finish(
             transaction,
             context,

@@ -88,7 +88,17 @@ pub(in crate::features::learning) async fn insert_in(
             .map_err(db)?,
         None => None,
     };
-    let lesson_id: Option<String> = None;
+    let lesson_id: Option<String> = match (&program_id, &new.spec.lesson_id) {
+        (Some(program_id), Some(lesson_id)) => {
+            sqlx::query_scalar("SELECT id FROM learning_lessons WHERE id=? AND program_id=?")
+                .bind(lesson_id)
+                .bind(program_id)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(db)?
+        }
+        _ => None,
+    };
     let source = match (&new.drill.material, new.source) {
         (Material::Code { .. }, None) => None,
         (Material::Passage, Some(source)) => Some(encode(source)?),
