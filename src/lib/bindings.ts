@@ -7388,7 +7388,12 @@ parts?: LearningClaimPartDto[];
 /**
  * Why a statement published unverified; none unless `not_verified`.
  */
-unverifiedReason?: UnverifiedReasonDto | null }
+unverifiedReason?: UnverifiedReasonDto | null;
+/**
+ * The claim this statement is, for settling it in the review; none on
+ * a report saved before claims were named.
+ */
+claimId?: string | null }
 /**
  * One part of a statement as the part-wise check read it.
  */
