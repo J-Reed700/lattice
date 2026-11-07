@@ -5,7 +5,9 @@ use crate::interfaces::dto::{
     DeviceKindDto, EvidenceDto, FitDeviceDto, FitKindDto, RecommendationLabelDto, SpeedClassDto,
 };
 use lattice_core::application::contracts::settings::LocalModelConfigDto;
-use lattice_core::domain::models::curated::{curated_chat_models, get_curated_llm_models};
+use lattice_core::domain::models::curated::{
+    curated_chat_models, get_curated_llm_models, CuratedChatModel,
+};
 use lattice_core::domain::models::fit::{
     choose_placement, fit, footprint, Accelerator, AcceleratorKind, Backend, Candidate, Companions,
     DeviceKind, Evidence, FitDevice, FitKind, FitVerdict, Label, ModelShape, Recommendation,
@@ -64,7 +66,12 @@ fn expected(profile: &MachineProfile) -> Vec<Recommendation> {
 }
 
 async fn recommend(profile: &MachineProfile) -> Vec<RecommendationDto> {
-    recommend_chat_models(&FixedMachineProfile(profile.clone()), &BTreeMap::new()).await
+    recommend_chat_models(
+        &FixedMachineProfile(profile.clone()),
+        &BTreeMap::new(),
+        &NO_PROJECTORS,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -381,7 +388,14 @@ async fn a_curated_row_is_judged_from_its_own_pinned_facts_without_reading_a_hea
         placement.as_ref(),
     ));
 
-    let got = row_fit(&curated_row(NINE_B), &profile, &headers, &BTreeMap::new()).await;
+    let got = row_fit(
+        &curated_row(NINE_B),
+        &profile,
+        &headers,
+        &BTreeMap::new(),
+        &NO_PROJECTORS,
+    )
+    .await;
 
     assert_eq!(got, Some(want));
     assert_eq!(headers.calls.load(Ordering::SeqCst), 0);
@@ -404,18 +418,42 @@ async fn a_rows_verdict_follows_its_own_models_kv_setting() {
     let configs = quantizing(NINE_B);
     let other = "gemma-4-12b-it-q4_k_m";
 
-    let plain = row_fit(&curated_row(NINE_B), &profile, &headers, &BTreeMap::new())
-        .await
-        .unwrap();
-    let quantized = row_fit(&curated_row(NINE_B), &profile, &headers, &configs)
-        .await
-        .unwrap();
-    let other_plain = row_fit(&curated_row(other), &profile, &headers, &BTreeMap::new())
-        .await
-        .unwrap();
-    let other_with_configs = row_fit(&curated_row(other), &profile, &headers, &configs)
-        .await
-        .unwrap();
+    let plain = row_fit(
+        &curated_row(NINE_B),
+        &profile,
+        &headers,
+        &BTreeMap::new(),
+        &NO_PROJECTORS,
+    )
+    .await
+    .unwrap();
+    let quantized = row_fit(
+        &curated_row(NINE_B),
+        &profile,
+        &headers,
+        &configs,
+        &NO_PROJECTORS,
+    )
+    .await
+    .unwrap();
+    let other_plain = row_fit(
+        &curated_row(other),
+        &profile,
+        &headers,
+        &BTreeMap::new(),
+        &NO_PROJECTORS,
+    )
+    .await
+    .unwrap();
+    let other_with_configs = row_fit(
+        &curated_row(other),
+        &profile,
+        &headers,
+        &configs,
+        &NO_PROJECTORS,
+    )
+    .await
+    .unwrap();
 
     assert!(quantized.needs_bytes < plain.needs_bytes);
     assert_eq!(other_with_configs, other_plain);
@@ -442,8 +480,12 @@ async fn the_list_judges_each_model_at_its_own_saved_setting() {
         .total()
     };
 
-    let list =
-        recommend_chat_models(&FixedMachineProfile(profile), &quantizing(quantized_id)).await;
+    let list = recommend_chat_models(
+        &FixedMachineProfile(profile),
+        &quantizing(quantized_id),
+        &NO_PROJECTORS,
+    )
+    .await;
 
     let needs_of = |id: &str| {
         list.iter()
@@ -468,6 +510,7 @@ async fn a_curated_row_and_the_recommended_list_give_one_verdict() {
         &profile,
         &StubHeaders::new(None),
         &BTreeMap::new(),
+        &NO_PROJECTORS,
     )
     .await;
 
@@ -483,6 +526,7 @@ async fn a_hugging_face_row_has_no_verdict_until_its_header_is_read() {
         &rtx_4080(),
         &headers,
         &BTreeMap::new(),
+        &NO_PROJECTORS,
     )
     .await;
 
@@ -503,9 +547,15 @@ async fn a_hugging_face_row_has_an_exact_verdict_once_its_header_is_read() {
     let headers = StubHeaders::new(Some(file_facts.clone()));
     let placement = choose_placement(&profile, &Companions::default_pair());
 
-    let got = row_fit(&hugging_face_row(5.0), &profile, &headers, &BTreeMap::new())
-        .await
-        .unwrap();
+    let got = row_fit(
+        &hugging_face_row(5.0),
+        &profile,
+        &headers,
+        &BTreeMap::new(),
+        &NO_PROJECTORS,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(got.kind, FitKindDto::Fits);
     assert_eq!(
@@ -523,13 +573,68 @@ async fn the_size_guess_does_not_feed_a_hugging_face_verdict() {
     let file_facts = facts(60_000_000_000);
     let headers = StubHeaders::new(Some(file_facts.clone()));
 
-    let got = row_fit(&hugging_face_row(1.0), &profile, &headers, &BTreeMap::new())
-        .await
-        .unwrap();
+    let got = row_fit(
+        &hugging_face_row(1.0),
+        &profile,
+        &headers,
+        &BTreeMap::new(),
+        &NO_PROJECTORS,
+    )
+    .await
+    .unwrap();
 
     assert_eq!(got.kind, FitKindDto::TooLarge);
     assert_eq!(
         got.needs_bytes,
         price(&file_facts, MINIMUM_WINDOW_TOKENS, false)
     );
+}
+
+/// Projectors on disk, by catalog model id.
+struct Projectors(Vec<(&'static str, u64)>);
+
+impl DownloadedProjectors for Projectors {
+    fn bytes(&self, model: &CuratedChatModel) -> u64 {
+        self.0
+            .iter()
+            .find(|(id, _)| *id == model.id)
+            .map_or(0, |(_, bytes)| *bytes)
+    }
+}
+
+const NO_PROJECTORS: Projectors = Projectors(Vec::new());
+
+#[tokio::test]
+async fn a_downloaded_projector_is_priced_beside_its_models_weights_as_the_runtime_prices_it() {
+    let profile = rtx_4080();
+    let projector = curated_chat_models()
+        .iter()
+        .find(|m| m.id == NINE_B)
+        .and_then(|m| m.vision)
+        .unwrap()
+        .projector_bytes;
+    let downloaded = Projectors(vec![(NINE_B, projector)]);
+    let probe = FixedMachineProfile(profile.clone());
+    let needs = |list: &[RecommendationDto]| {
+        list.iter()
+            .find(|r| r.model_id == NINE_B)
+            .unwrap()
+            .verdict
+            .needs_bytes
+    };
+
+    let without = recommend_chat_models(&probe, &BTreeMap::new(), &NO_PROJECTORS).await;
+    let with = recommend_chat_models(&probe, &BTreeMap::new(), &downloaded).await;
+    let row = row_fit(
+        &curated_row(NINE_B),
+        &profile,
+        &StubHeaders::new(None),
+        &BTreeMap::new(),
+        &downloaded,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(needs(&with) - needs(&without), projector);
+    assert_eq!(row.needs_bytes, needs(&with));
 }
