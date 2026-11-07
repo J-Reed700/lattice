@@ -591,9 +591,9 @@ impl LLMPort for DenseModel {
         if exact >= window {
             self.refused
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            return Err(crate::features::llm::scheduler::rejection::window_refusal(
+            return Err(lattice_core::application::ports::llm_port::window_refusal(
                 self.model_name(),
-                crate::features::llm::scheduler::rejection::RequestSize {
+                lattice_core::application::ports::llm_port::RequestSize {
                     prompt_tokens: exact,
                     counted_exactly: true,
                     ..Default::default()
@@ -695,9 +695,9 @@ impl LLMPort for CountingDenseModel {
         let window = self.max_context_tokens();
         if counted >= window {
             self.refused.fetch_add(1, Ordering::SeqCst);
-            return Err(crate::features::llm::scheduler::rejection::window_refusal(
+            return Err(lattice_core::application::ports::llm_port::window_refusal(
                 self.model_name(),
-                crate::features::llm::scheduler::rejection::RequestSize {
+                lattice_core::application::ports::llm_port::RequestSize {
                     prompt_tokens: counted,
                     counted_exactly: true,
                     ..Default::default()

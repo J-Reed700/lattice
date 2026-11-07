@@ -43,7 +43,7 @@ impl AnswerSize {
 /// one more answer would, answer tokens per claim × (prompt tokens/s ÷ output
 /// tokens/s), from the backend's measured pace and this job's mean answer.
 /// `None` while either is unknown.
-pub(crate) fn page_budget(
+pub fn page_budget(
     pace: Option<Pace>,
     answer_tokens_per_claim: Option<f64>,
 ) -> Option<usize> {

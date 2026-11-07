@@ -19,6 +19,8 @@ mod reveal;
 pub mod review;
 pub(crate) mod runner;
 pub mod spec;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 #[cfg(test)]
 mod tests;

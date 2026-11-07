@@ -1,7 +1,7 @@
 //! The order a topic's search widens in.
 use super::gathering::Rounds;
 use super::web_research::{PlannedNeed, Room};
-use crate::features::web::mocks::MockWebService;
+use lattice_core::application::ports::MockWebService;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::domain::sourcing::NeedKind;
 use lattice_core::shared::error::Result;

@@ -1,12 +1,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 use super::*;
-use crate::{
-    repository::LearningRepository, source_library::CapturedLearningSource,
-    sources::InitialReference, tests,
-};
-use lattice_core::application::ports::{LibraryChunk, LibraryPassagesPort};
-use sqlx::SqlitePool;
-use std::collections::{HashMap, HashSet};
+use crate::tests;
+pub(crate) use super::test_support::FakeLibrary;
+use super::test_support::collection_fixture;
+use std::collections::HashSet;
 
 #[test]
 fn verification_windows_restore_conditions_without_changing_source_bytes() -> Result<()> {
@@ -92,192 +89,6 @@ fn merging_context_keeps_both_partly_overlapping_hits() -> Result<()> {
     Ok(())
 }
 
-/// A library holding fixed documents. Search returns the scoped documents'
-/// chunks containing a query word, in document order, and records each scope.
-#[derive(Default)]
-pub(crate) struct FakeLibrary {
-    documents: HashMap<String, Vec<LibraryChunk>>,
-    importing: HashSet<String>,
-    scopes: std::sync::Mutex<Vec<HashSet<String>>>,
-}
-
-impl FakeLibrary {
-    pub(crate) fn with_document(
-        mut self,
-        id: &str,
-        chunks: &[&str],
-    ) -> Self {
-        let chunks = chunks
-            .iter()
-            .enumerate()
-            .map(|(index, text)| LibraryChunk {
-                id: format!("{id}#{index}"),
-                text: (*text).into(),
-            })
-            .collect();
-        self.documents.insert(id.into(), chunks);
-        self
-    }
-}
-
-#[async_trait::async_trait]
-impl LibraryPassagesPort for FakeLibrary {
-    fn model_identity(&self) -> String {
-        "fixture-library-model".into()
-    }
-    async fn document_text(
-        &self,
-        document_id: &str,
-    ) -> Result<Option<lattice_core::application::ports::LibraryDocumentText>> {
-        if self.importing.contains(document_id) {
-            return Err(invalid("The document is not fully indexed."));
-        }
-        Ok(self.documents.get(document_id).map(|chunks| {
-            lattice_core::application::ports::LibraryDocumentText {
-                title: format!("{document_id}.md"),
-                file_path: format!("/library/{document_id}"),
-                mime_type: "text/markdown".into(),
-                chunks: chunks.clone(),
-            }
-        }))
-    }
-    async fn search(
-        &self,
-        query: &str,
-        document_ids: &HashSet<String>,
-        limit: usize,
-    ) -> Result<Vec<lattice_core::application::ports::LibraryPassageHit>> {
-        self.scopes.lock().unwrap().push(document_ids.clone());
-        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-        let mut scoped: Vec<_> = document_ids.iter().collect();
-        scoped.sort();
-        let mut hits = Vec::new();
-        for document_id in scoped {
-            for chunk in self.documents.get(document_id).into_iter().flatten() {
-                let text = chunk.text.to_lowercase();
-                if words.iter().any(|word| text.contains(word.as_str())) {
-                    hits.push(lattice_core::application::ports::LibraryPassageHit {
-                        document_id: document_id.clone(),
-                        chunk_id: chunk.id.clone(),
-                        score: 1.0,
-                    });
-                }
-            }
-        }
-        hits.truncate(limit);
-        Ok(hits)
-    }
-}
-
-const OWNERSHIP: [&str; 2] = [
-    "# Ownership\nBorrowing gives access without transferring ownership. 🦀",
-    "Lifetimes describe how long a reference stays valid.",
-];
-const PLANTS: [&str; 1] = ["# Plant cells\nPhotosynthesis takes place in chloroplasts."];
-
-/// A program with a document snapshot, a web snapshot and a second document
-/// snapshot, captured the way the app captures them.
-async fn collection_fixture(
-    pool: &SqlitePool,
-    documents: [&str; 2],
-) -> Result<(String, Vec<LearningSourceDto>)> {
-    let mut program = tests::fixture();
-    let texts = [
-        OWNERSHIP.join("\n\n"),
-        "# Pastry\nKeep butter cold when making a flaky pie crust.".to_string(),
-        PLANTS.join("\n\n"),
-    ];
-    program.sources = texts
-        .iter()
-        .enumerate()
-        .map(|(i, text)| LearningSourceDto {
-            id: uuid::Uuid::new_v4().to_string(),
-            title: format!("Reference {i}"),
-            url: (i == 1).then(|| "https://example.org/pastry".into()),
-            excerpt: text.chars().take(2400).collect(),
-            acquired_at: 1,
-        })
-        .collect();
-    let origins = [documents[0], "https://example.org/pastry", documents[1]];
-    let references: Vec<_> = program
-        .sources
-        .iter()
-        .zip(&texts)
-        .zip(origins)
-        .map(|((s, text), origin)| InitialReference {
-            source_id: s.id.clone(),
-            origin: origin.into(),
-            captured: CapturedLearningSource {
-                title: s.title.clone(),
-                publisher: None,
-                requested_url: s.url.clone(),
-                resolved_url: s.url.clone(),
-                text: text.clone(),
-                truncated: false,
-                extraction_version: "fixture_full_text".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
-            },
-            found: false,
-        })
-        .collect();
-    let repo = LearningRepository::new(pool.clone());
-    repo.create_with_references(&program, &references).await?;
-    let sources = repo.verification_sources(&program.summary.id).await?;
-    Ok((program.summary.id, sources))
-}
-
-fn source_of<'s>(
-    sources: &'s [LearningSourceDto],
-    hit: &ReferencePassage,
-) -> &'s LearningSourceDto {
-    sources.iter().find(|s| s.id == hit.source_id).unwrap()
-}
-
-#[tokio::test]
-async fn document_and_web_snapshots_rank_through_the_course_index() -> Result<()> {
-    use crate::references::course_index::{tests::indexes, IndexMode};
-    use lattice_index::passage_index::testing::{FakeEmbedder, FixedEmbedders};
-    let pool = tests::pool().await?;
-    let (id, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
-    // Another course's references live in another index and never rank here.
-    let (other, _) = collection_fixture(&pool, ["doc-elsewhere", "doc-elsewhere-2"]).await?;
-    let temp = tempfile::tempdir().unwrap();
-    let courses = indexes(
-        &pool,
-        temp.path(),
-        FixedEmbedders::new(Some(FakeEmbedder::new("fixture-model"))),
-    );
-    courses.ensure_current_quietly(&other).await?;
-    let course = courses
-        .search(&id, tokio_util::sync::CancellationToken::new())
-        .await?;
-    let collection = ReferenceCollection::current(Some(&course), &sources).await?;
-    assert_eq!(collection.mode(), IndexMode::Hybrid);
-    assert_eq!(
-        collection.embedding_model().as_deref(),
-        Some("fixture-model")
-    );
-    for (query, expected) in [
-        ("borrowing", "Borrowing gives access"),
-        ("photosynthesis", "chloroplasts"),
-        ("pastry crust", "Keep butter cold"),
-    ] {
-        let hits = collection.retrieve(query, 2).await?;
-        assert!(hits[0].text.contains(expected), "{query}: {hits:?}");
-        assert_eq!(hits[0].retrieval_kind, "hybrid", "{query}");
-        assert!(hits
-            .iter()
-            .all(|hit| sources.iter().any(|s| s.id == hit.source_id)));
-        assert_eq!(
-            &source_of(&sources, &hits[0]).excerpt[hits[0].start_byte..hits[0].end_byte],
-            hits[0].text
-        );
-    }
-    Ok(())
-}
-
 #[tokio::test]
 async fn without_a_course_index_every_snapshot_is_ranked_by_its_words() -> Result<()> {
     let pool = tests::pool().await?;
@@ -320,27 +131,6 @@ async fn a_ranking_keeps_to_its_scope_and_records_its_branches() -> Result<()> {
         )
         .await?
         .is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-#[ignore = "Downloads the public Rust Book through the production safe web reader"]
-async fn live_rust_book_is_captured_beyond_chat_limit() -> Result<()> {
-    use lattice_core::application::ports::WebServiceTrait;
-    let dir = tempfile::tempdir().unwrap();
-    let web = crate::features::web::services::web::WebService::new(dir.path())?;
-    let page = web
-        .fetch_reference_content("https://doc.rust-lang.org/book/print.html")
-        .await?;
-    assert!(!page.content_truncated);
-    assert!(page.content.chars().count() > 50_000);
-    assert!(page.content.contains("Appendix G"));
-    println!(
-        "Captured {} characters; truncation={}; final URL={}",
-        page.content.chars().count(),
-        page.content_truncated,
-        page.url
-    );
     Ok(())
 }
 

@@ -17,15 +17,6 @@ mod manager;
 mod search;
 mod sync;
 
-#[cfg(test)]
-mod first_tests;
-#[cfg(test)]
-mod status_tests;
-#[cfg(test)]
-mod stopped_tests;
-#[cfg(test)]
-pub(crate) mod tests;
-
 pub use manager::{CourseIndexStatusDto, CourseIndexes};
 pub use search::{CourseSearch, IndexView};
 pub(crate) use sync::write_version;

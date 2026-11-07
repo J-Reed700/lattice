@@ -26,15 +26,21 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
+mod grammar;
 mod multimodal;
 mod pace;
 mod requests;
 mod tools;
+mod window;
 
+pub use grammar::GRAMMAR_REPETITION_LIMIT;
+#[cfg(any(test, feature = "test-support"))]
+pub use grammar::largest_repetition_bound;
 pub use multimodal::{ContentPart, ImagePart};
 pub use pace::{Pace, ServedTiming};
 pub use requests::RequestLoad;
 pub use tools::{invalid_tool_arguments, invalid_tool_call_problem, tool_specs};
+pub use window::{window_refusal, RequestSize};
 
 /// Lazily resolves an optional model without exposing the application's container.
 pub type OptionalLlmLoader = std::sync::Arc<

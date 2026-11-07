@@ -101,7 +101,5 @@ mod content_caps_tests;
 #[cfg(test)]
 mod found_by_search_tests;
 
-#[cfg(test)]
-pub(crate) mod test_support {
-    pub mod query_counts;
-}
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;

@@ -23,6 +23,10 @@ use interview_evidence::{EvidenceBank, MAX_EVIDENCE_CHOICES};
 #[path = "interview_answer_review.rs"]
 mod interview_answer_review;
 
+#[cfg(any(test, feature = "test-support"))]
+#[path = "interview_answers_test_support.rs"]
+pub mod test_support;
+
 pub const INTERVIEW_ANSWERS_FILE_PATH: &str = "interview/answer-guides.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

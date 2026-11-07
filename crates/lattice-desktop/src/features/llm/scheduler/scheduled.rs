@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::rejection::{window_refusal, RequestSize};
+use lattice_core::application::ports::llm_port::{window_refusal, RequestSize};
 use super::{
     cancelled_error, AdmissionRequest, InferenceScheduler, PaceEstimator, Permit, ServerTokenizer,
     TokenEstimator,

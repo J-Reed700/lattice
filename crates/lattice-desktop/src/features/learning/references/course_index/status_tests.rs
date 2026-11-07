@@ -5,8 +5,8 @@
 
 use super::tests::{builds, course, indexes, pages};
 use super::*;
-use crate::tests;
-use lattice_index::passage_index::testing::{FakeEmbedder, FixedEmbedders};
+use crate::features::learning::tests;
+use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
 use lattice_core::shared::Result;
 use std::sync::Arc;
@@ -231,7 +231,7 @@ async fn an_unreadable_index_or_a_bad_id_is_unavailable_with_its_reason() -> Res
     let dir = courses.dir_of(&program)?;
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        dir.join(lattice_index::passage_index::store::DB_FILE),
+        dir.join(crate::infrastructure::passage_index::store::DB_FILE),
         "not a database",
     )
     .unwrap();

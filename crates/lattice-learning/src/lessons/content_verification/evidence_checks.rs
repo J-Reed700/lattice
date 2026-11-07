@@ -24,7 +24,8 @@ pub(super) use outcome::{alone, page_finding};
 pub(crate) use outcome::{
     same_passage, CheckedPart, Pass, SupportedElsewhere, SupportingPassage, TwoPass,
 };
-pub(crate) use page_budget::{page_budget, AnswerSize};
+pub use page_budget::page_budget;
+pub(crate) use page_budget::AnswerSize;
 use requests::finish;
 pub(super) use requests::{group, labelled_passages, pack};
 pub(crate) use walk::Reach;

@@ -4,21 +4,21 @@
 //! version, and a course searched without any model.
 
 use super::*;
-use crate::dto::{AcceptLearningProgramRequestDto, LearningSourceDto};
-use crate::portability_dto::{
+use crate::features::learning::dto::{AcceptLearningProgramRequestDto, LearningSourceDto};
+use crate::features::learning::portability_dto::{
     DeleteLearningSourceRequestDto, ReimportLearningSourceRequestDto,
 };
-use crate::reference_collection::ReferenceCollection;
-use crate::repository::LearningRepository;
-use crate::source_library::{
+use crate::features::learning::reference_collection::ReferenceCollection;
+use crate::features::learning::repository::LearningRepository;
+use crate::features::learning::source_library::{
     CapturedLearningSource, LearningSourceLibraryRepository,
 };
-use crate::sources::InitialReference;
-use crate::tests;
+use crate::features::learning::sources::InitialReference;
+use crate::features::learning::tests;
 use crate::features::search::trait_def::HybridSearchUseCaseFactory;
-use lattice_index::passage_index::testing::{FakeEmbedder, FixedEmbedders};
-use lattice_index::passage_index::vectors::vectors_path;
-use lattice_index::passage_index::PassageStore;
+use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
+use crate::infrastructure::passage_index::vectors::vectors_path;
+use crate::infrastructure::passage_index::PassageStore;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use lattice_core::shared::Result;
@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Every course's index under `base`, embedding with whatever `embedders`
 /// holds, searched through the library's own orchestrator.
-pub(crate) fn indexes(
+pub(in crate::features::learning) fn indexes(
     pool: &SqlitePool,
     base: &Path,
     embedders: Arc<FixedEmbedders>,
@@ -75,7 +75,7 @@ pub(super) async fn course(pool: &SqlitePool, texts: &[String]) -> Result<(Strin
                 text: source.excerpt.clone(),
                 truncated: false,
                 extraction_version: "fixture_full_text".into(),
-                signals: crate::references::trust::capture::not_extracted(
+                signals: crate::features::learning::references::trust::capture::not_extracted(
                     "test fixture",
                 ),
             },
@@ -167,7 +167,7 @@ async fn a_build_cut_short_resumes_where_it_stopped() -> Result<()> {
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
     // One passage per page, so the first batch finishes whole pages.
-    let total = lattice_index::passage_index::build::BATCH_SIZE + 4;
+    let total = crate::infrastructure::passage_index::build::BATCH_SIZE + 4;
     let (program, _) = course(&pool, &pages(total)).await?;
 
     let cut = CancellationToken::new();
@@ -175,7 +175,7 @@ async fn a_build_cut_short_resumes_where_it_stopped() -> Result<()> {
     let mode = courses
         .ensure_current(&program, &cut, &mut sync::Silent)
         .await?;
-    let batch = lattice_index::passage_index::build::BATCH_SIZE as u32;
+    let batch = crate::infrastructure::passage_index::build::BATCH_SIZE as u32;
     assert_eq!(
         mode,
         IndexMode::Partial {
@@ -205,7 +205,7 @@ async fn a_failing_model_leaves_the_rest_to_words_and_the_next_run_finishes() ->
         temp.path(),
         FixedEmbedders::new(Some(Arc::clone(&model))),
     );
-    let total = lattice_index::passage_index::build::BATCH_SIZE + 4;
+    let total = crate::infrastructure::passage_index::build::BATCH_SIZE + 4;
     let (program, _) = course(&pool, &pages(total)).await?;
 
     model.fail_after.store(1, Ordering::SeqCst);

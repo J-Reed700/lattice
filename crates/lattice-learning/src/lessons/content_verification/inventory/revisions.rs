@@ -240,17 +240,15 @@ pub(in crate::lessons::content_verification) async fn update(
     Ok(Some(updated))
 }
 
-#[cfg(test)]
-pub(crate) async fn live_revision_fixture(
+#[cfg(any(test, feature = "test-support"))]
+pub async fn live_revision_fixture(
     llm: &dyn LLMPort,
     basis: Value,
     candidate: Value,
 ) -> Result<Value> {
     let before: Basis = serde_json::from_value(basis)?;
-    let pool = crate::tests::pool().await?;
-    let (repo, job, lesson) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool)
-            .await?;
+    let pool = crate::test_support::pool().await?;
+    let (repo, job, lesson) = crate::content_verification::test_support::setup(&pool).await?;
     crate::lesson_drafts::run(&repo, &job, &lesson, async {
         let index = before.inventory.index;
         let original = before.inventory.clone();

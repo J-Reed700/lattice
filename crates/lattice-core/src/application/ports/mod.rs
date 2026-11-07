@@ -39,6 +39,8 @@ pub mod loaded_embedding_model;
 pub mod mention_repository_port;
 pub mod metrics_port;
 pub mod mock_embedding_port;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock_web_service;
 pub mod model_catalog;
 pub mod model_file_inspector;
 pub mod model_storage;
@@ -67,6 +69,8 @@ pub mod vector_search_port;
 pub mod web_service;
 pub mod workspace_notes;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use mock_web_service::MockWebService;
 pub use activity::{
     ActivityItem, ActivityProgress, ActivityResource, ActivitySource, ActivityState, ActivityTarget,
 };

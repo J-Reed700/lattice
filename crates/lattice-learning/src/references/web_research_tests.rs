@@ -19,7 +19,7 @@ use super::web_research::{
     PlannedNeed, Room,
 };
 use crate::lessons::course_generation_tests::ScriptedModel;
-use crate::features::web::mocks::MockWebService;
+use lattice_core::application::ports::MockWebService;
 
 fn scripted(outputs: Vec<String>) -> ScriptedModel {
     ScriptedModel {
