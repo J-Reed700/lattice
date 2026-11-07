@@ -11,7 +11,7 @@ pub const DISPLAY_RESERVE_BYTES: u64 = 1 << 30;
 const PROCESSOR_RAM_SHARE: f64 = 0.56;
 
 /// Where a chat model will live, and how much memory it may use there.
-pub trait Placement: std::fmt::Debug {
+pub trait Placement: std::fmt::Debug + Send + Sync {
     /// Bytes a chat model may need in full.
     fn budget_bytes(&self) -> u64;
     /// The device the budget belongs to.

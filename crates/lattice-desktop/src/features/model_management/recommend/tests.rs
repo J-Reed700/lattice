@@ -467,7 +467,7 @@ async fn a_curated_row_and_the_recommended_list_give_one_verdict() {
         &curated_row(NINE_B),
         &profile,
         &StubHeaders::new(None),
-        false,
+        &BTreeMap::new(),
     )
     .await;
 
