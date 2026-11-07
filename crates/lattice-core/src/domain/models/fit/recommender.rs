@@ -84,6 +84,9 @@ pub struct Candidate {
     /// The header's memory facts; `None` when they are unread, which prices the model at its
     /// weights alone.
     pub shape: Option<ModelShape>,
+    /// The buffers the runtime would launch this model's server with: its own saved KV cache
+    /// setting, else the chat default.
+    pub buffers: ServerBuffers,
     /// The catalog's capability order, highest first.
     pub rank: u8,
     pub evidence: Evidence,
@@ -110,6 +113,7 @@ impl Candidate {
                 .saturating_sub(pinned.cpu_weight_bytes)
                 .saturating_add(projector_bytes),
             shape: Some(pinned.shape),
+            buffers: ServerBuffers::chat(false),
             rank: model.rank,
             evidence: if model.id == MEASURED_CHAT_MODEL_ID {
                 Evidence::Measured {
@@ -168,16 +172,11 @@ pub struct Recommendation {
 #[derive(Debug, Clone)]
 pub struct Recommender {
     pub companions: Companions,
-    /// Whether the KV cache is quantized, as the runtime launches chat servers.
-    pub kv_cache_quantization: bool,
 }
 
 impl Recommender {
-    pub fn new(companions: Companions, kv_cache_quantization: bool) -> Recommender {
-        Recommender {
-            companions,
-            kv_cache_quantization,
-        }
+    pub fn new(companions: Companions) -> Recommender {
+        Recommender { companions }
     }
 
     /// The models to offer on `profile`, best first.
@@ -187,7 +186,7 @@ impl Recommender {
         catalog: &[Candidate],
     ) -> Vec<Recommendation> {
         let placement = choose_placement(profile, &self.companions);
-        let buffers = ServerBuffers::chat(self.kv_cache_quantization);
+        let buffers = ServerBuffers::chat(false);
         let on_processor = placement.device().kind == DeviceKind::Processor;
         let judged: Vec<(&Candidate, FitVerdict)> = catalog
             .iter()

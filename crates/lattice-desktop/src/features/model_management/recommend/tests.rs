@@ -4,12 +4,14 @@ use super::*;
 use crate::interfaces::dto::{
     DeviceKindDto, EvidenceDto, FitDeviceDto, FitKindDto, RecommendationLabelDto, SpeedClassDto,
 };
+use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::domain::models::curated::{curated_chat_models, get_curated_llm_models};
 use lattice_core::domain::models::fit::{
     choose_placement, fit, footprint, Accelerator, AcceleratorKind, Backend, Candidate, Companions,
     DeviceKind, Evidence, FitDevice, FitKind, FitVerdict, Label, ModelShape, Recommendation,
     Recommender, ServerBuffers, SpeedClass, COMFORTABLE_WINDOW_TOKENS, MINIMUM_WINDOW_TOKENS,
 };
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -58,11 +60,11 @@ fn expected(profile: &MachineProfile) -> Vec<Recommendation> {
         .iter()
         .map(Candidate::from_curated)
         .collect();
-    Recommender::new(Companions::default_pair(), false).recommend(profile, &catalog)
+    Recommender::new(Companions::default_pair()).recommend(profile, &catalog)
 }
 
 async fn recommend(profile: &MachineProfile) -> Vec<RecommendationDto> {
-    recommend_chat_models(&FixedMachineProfile(profile.clone()), false).await
+    recommend_chat_models(&FixedMachineProfile(profile.clone()), &BTreeMap::new()).await
 }
 
 #[tokio::test]
@@ -379,25 +381,80 @@ async fn a_curated_row_is_judged_from_its_own_pinned_facts_without_reading_a_hea
         placement.as_ref(),
     ));
 
-    let got = row_fit(&curated_row(NINE_B), &profile, &headers, false).await;
+    let got = row_fit(&curated_row(NINE_B), &profile, &headers, &BTreeMap::new()).await;
 
     assert_eq!(got, Some(want));
     assert_eq!(headers.calls.load(Ordering::SeqCst), 0);
 }
 
+fn quantizing(model_id: &str) -> BTreeMap<String, LocalModelConfigDto> {
+    BTreeMap::from([(
+        model_id.to_string(),
+        LocalModelConfigDto {
+            kv_cache_quantization: true,
+            ..Default::default()
+        },
+    )])
+}
+
 #[tokio::test]
-async fn a_rows_verdict_follows_the_kv_cache_setting() {
+async fn a_rows_verdict_follows_its_own_models_kv_setting() {
     let profile = rtx_4080();
     let headers = StubHeaders::new(None);
+    let configs = quantizing(NINE_B);
+    let other = "gemma-4-12b-it-q4_k_m";
 
-    let plain = row_fit(&curated_row(NINE_B), &profile, &headers, false)
+    let plain = row_fit(&curated_row(NINE_B), &profile, &headers, &BTreeMap::new())
         .await
         .unwrap();
-    let quantized = row_fit(&curated_row(NINE_B), &profile, &headers, true)
+    let quantized = row_fit(&curated_row(NINE_B), &profile, &headers, &configs)
+        .await
+        .unwrap();
+    let other_plain = row_fit(&curated_row(other), &profile, &headers, &BTreeMap::new())
+        .await
+        .unwrap();
+    let other_with_configs = row_fit(&curated_row(other), &profile, &headers, &configs)
         .await
         .unwrap();
 
     assert!(quantized.needs_bytes < plain.needs_bytes);
+    assert_eq!(other_with_configs, other_plain);
+}
+
+#[tokio::test]
+async fn the_list_judges_each_model_at_its_own_saved_setting() {
+    let profile = machine(vec![accelerator(
+        RTX_4080,
+        24 * GIB,
+        AcceleratorKind::Dedicated,
+        Backend::Cuda,
+    )]);
+    let (quantized_id, plain_id) = (NINE_B, "gemma-4-12b-it-q4_k_m");
+    let price = |id: &str, quantized: bool| {
+        let model = curated_chat_models().iter().find(|m| m.id == id).unwrap();
+        let candidate = Candidate::from_curated(model);
+        footprint(
+            candidate.gpu_weight_bytes,
+            candidate.shape.as_ref(),
+            COMFORTABLE_WINDOW_TOKENS,
+            ServerBuffers::chat(quantized),
+        )
+        .total()
+    };
+
+    let list =
+        recommend_chat_models(&FixedMachineProfile(profile), &quantizing(quantized_id)).await;
+
+    let needs_of = |id: &str| {
+        list.iter()
+            .find(|r| r.model_id == id)
+            .unwrap()
+            .verdict
+            .needs_bytes
+    };
+    assert_eq!(needs_of(quantized_id), price(quantized_id, true));
+    assert_eq!(needs_of(plain_id), price(plain_id, false));
+    assert!(price(quantized_id, true) < price(quantized_id, false));
 }
 
 #[tokio::test]
@@ -421,7 +478,13 @@ async fn a_curated_row_and_the_recommended_list_give_one_verdict() {
 async fn a_hugging_face_row_has_no_verdict_until_its_header_is_read() {
     let headers = StubHeaders::new(None);
 
-    let got = row_fit(&hugging_face_row(5.0), &rtx_4080(), &headers, false).await;
+    let got = row_fit(
+        &hugging_face_row(5.0),
+        &rtx_4080(),
+        &headers,
+        &BTreeMap::new(),
+    )
+    .await;
 
     assert_eq!(got, None);
     assert_eq!(
@@ -440,7 +503,7 @@ async fn a_hugging_face_row_has_an_exact_verdict_once_its_header_is_read() {
     let headers = StubHeaders::new(Some(file_facts.clone()));
     let placement = choose_placement(&profile, &Companions::default_pair());
 
-    let got = row_fit(&hugging_face_row(5.0), &profile, &headers, false)
+    let got = row_fit(&hugging_face_row(5.0), &profile, &headers, &BTreeMap::new())
         .await
         .unwrap();
 
@@ -460,7 +523,7 @@ async fn the_size_guess_does_not_feed_a_hugging_face_verdict() {
     let file_facts = facts(60_000_000_000);
     let headers = StubHeaders::new(Some(file_facts.clone()));
 
-    let got = row_fit(&hugging_face_row(1.0), &profile, &headers, false)
+    let got = row_fit(&hugging_face_row(1.0), &profile, &headers, &BTreeMap::new())
         .await
         .unwrap();
 

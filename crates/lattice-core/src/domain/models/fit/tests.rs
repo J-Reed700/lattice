@@ -232,6 +232,7 @@ fn candidate(
         download_bytes: gpu_weight_bytes,
         gpu_weight_bytes,
         shape,
+        buffers: ServerBuffers::chat(false),
         rank,
         evidence: Evidence::Untested,
     }
@@ -295,11 +296,11 @@ fn ids(recommendations: &[Recommendation]) -> Vec<&str> {
 }
 
 fn recommend(profile: &MachineProfile, catalog: &[Candidate]) -> Vec<Recommendation> {
-    Recommender::new(companions(), false).recommend(profile, catalog)
+    Recommender::new(companions()).recommend(profile, catalog)
 }
 
 fn recommend_alone(profile: &MachineProfile, catalog: &[Candidate]) -> Vec<Recommendation> {
-    Recommender::new(Companions::none(), false).recommend(profile, catalog)
+    Recommender::new(Companions::none()).recommend(profile, catalog)
 }
 
 fn needs(verdict: &FitVerdict) -> u64 {
@@ -764,27 +765,29 @@ fn the_recommender_judges_a_hybrid_by_the_runtimes_footprint() {
 }
 
 #[test]
-fn the_kv_cache_setting_changes_what_a_model_needs() {
-    for model in [gemma_12b(50), qwen_9b_local(50)] {
-        let price = |quantized: bool| {
-            footprint(
-                model.gpu_weight_bytes,
-                model.shape.as_ref(),
-                COMFORTABLE_WINDOW_TOKENS,
-                ServerBuffers::chat(quantized),
-            )
-            .total()
-        };
+fn each_candidate_is_judged_at_the_buffers_it_would_be_launched_with() {
+    let plain = gemma_12b(50);
+    let quantized = Candidate {
+        id: "gemma-12b-quantized".into(),
+        buffers: ServerBuffers::chat(true),
+        ..gemma_12b(60)
+    };
+    let price = |candidate: &Candidate| {
+        footprint(
+            candidate.gpu_weight_bytes,
+            candidate.shape.as_ref(),
+            COMFORTABLE_WINDOW_TOKENS,
+            candidate.buffers,
+        )
+        .total()
+    };
 
-        let plain = Recommender::new(companions(), false)
-            .recommend(&rtx_4080(), std::slice::from_ref(&model));
-        let quantized = Recommender::new(companions(), true)
-            .recommend(&rtx_4080(), std::slice::from_ref(&model));
+    let list = recommend(&card_machine(24 * GIB), &[plain.clone(), quantized.clone()]);
 
-        assert_eq!(needs(&plain[0].verdict), price(false), "{}", model.id);
-        assert_eq!(needs(&quantized[0].verdict), price(true), "{}", model.id);
-        assert!(price(true) < price(false), "{}", model.id);
-    }
+    let needs_of = |id: &str| needs(&list.iter().find(|r| r.id == id).unwrap().verdict);
+    assert_eq!(needs_of("gemma-12b"), price(&plain));
+    assert_eq!(needs_of("gemma-12b-quantized"), price(&quantized));
+    assert!(price(&quantized) < price(&plain));
 }
 
 #[test]
@@ -930,8 +933,15 @@ fn prints_the_recommended_lists_for_reference_machines() {
                 "== {label}, KV cache quantization {}",
                 if quantized { "on" } else { "off" }
             );
-            let list = Recommender::new(Companions::default_pair(), quantized)
-                .recommend(&profile, &catalog);
+            let candidates: Vec<Candidate> = catalog
+                .iter()
+                .map(|candidate| Candidate {
+                    buffers: ServerBuffers::chat(quantized),
+                    ..candidate.clone()
+                })
+                .collect();
+            let list =
+                Recommender::new(Companions::default_pair()).recommend(&profile, &candidates);
             for (position, rec) in list.iter().enumerate() {
                 println!(
                     "{:>2}. {} {:?} needs {} GiB of {} GiB budget, labels {:?}",
@@ -1010,9 +1020,13 @@ fn a_card_beside_an_integrated_gpu_holds_no_desktop_so_only_the_fit_target_comes
 fn the_9b_is_tight_on_an_8_gib_laptop_card_with_an_f16_cache_and_fits_with_a_quantized_one() {
     let nine = curated("qwen3.5-9b-q4_k_m");
     let on_laptop = |quantized: bool| {
-        Recommender::new(Companions::default_pair(), quantized).recommend(
+        let candidate = Candidate {
+            buffers: ServerBuffers::chat(quantized),
+            ..nine.clone()
+        };
+        Recommender::new(Companions::default_pair()).recommend(
             &laptop_card_beside_an_integrated_gpu(),
-            std::slice::from_ref(&nine),
+            std::slice::from_ref(&candidate),
         )
     };
 
@@ -1090,8 +1104,7 @@ fn a_32_gib_processor_only_machine_is_not_given_a_thorough_model_as_best() {
         .max_by_key(|c| c.rank)
         .unwrap();
 
-    let list =
-        Recommender::new(Companions::default_pair(), false).recommend(&processor_only(), &catalog);
+    let list = Recommender::new(Companions::default_pair()).recommend(&processor_only(), &catalog);
 
     let by_id = |id: &str| catalog.iter().find(|c| c.id == id).unwrap();
     assert!(list

@@ -5,12 +5,14 @@ use crate::interfaces::dto::{
     EvidenceDto, FitVerdictDto, RecommendationDto, RecommendationLabelDto,
 };
 use async_trait::async_trait;
+use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::domain::models::curated::curated_chat_models;
 use lattice_core::domain::models::fit::{
     choose_placement, fit, Candidate, Companions, Evidence, Label, MachineProfile, ModelShape,
     Recommender, ServerBuffers, SpeedClass,
 };
 use lattice_core::domain::models::selection::{ModelCategory, ModelMetadata};
+use std::collections::BTreeMap;
 
 /// Builds the profile of this computer. A probe that cannot reach the backend answers with a
 /// processor-only profile rather than failing.
@@ -46,18 +48,18 @@ pub trait GgufHeaderSource: Send + Sync {
 }
 
 /// The recommended chat models for this machine, best first: the core recommender over the curated
-/// catalog and the default companions, priced with the user's KV cache setting
-/// (`kv_cache_quantization`), mapped to the wire types.
+/// catalog and the default companions, each model judged at the buffers its own saved launch
+/// settings in `configs` give it (the chat default when it has none), mapped to the wire types.
 pub async fn recommend_chat_models(
     probe: &dyn MachineProfileProbe,
-    kv_cache_quantization: bool,
+    _configs: &BTreeMap<String, LocalModelConfigDto>,
 ) -> Vec<RecommendationDto> {
     let profile = probe.profile().await;
     let catalog: Vec<Candidate> = curated_chat_models()
         .iter()
         .map(Candidate::from_curated)
         .collect();
-    Recommender::new(Companions::default_pair(), kv_cache_quantization)
+    Recommender::new(Companions::default_pair())
         .recommend(&profile, &catalog)
         .into_iter()
         .filter_map(|recommendation| {
@@ -103,7 +105,7 @@ pub async fn row_fit(
     model: &ModelMetadata,
     profile: &MachineProfile,
     headers: &dyn GgufHeaderSource,
-    kv_cache_quantization: bool,
+    _configs: &BTreeMap<String, LocalModelConfigDto>,
 ) -> Option<FitVerdictDto> {
     if model.category != ModelCategory::LLM {
         return None;
@@ -114,7 +116,7 @@ pub async fn row_fit(
         None,
         profile,
         headers,
-        kv_cache_quantization,
+        false,
     )
     .await
 }

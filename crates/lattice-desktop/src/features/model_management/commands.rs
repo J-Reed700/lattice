@@ -130,20 +130,10 @@ pub async fn recommend_chat_models(
 ) -> Result<Vec<RecommendationDto>> {
     let settings = container.get_settings_use_case().execute().await?;
     let probe = container.machine_profile_probe();
-    Ok(super::recommend::recommend_chat_models(
-        probe.as_ref(),
-        chat_kv_cache_quantization(&settings.llm),
+    Ok(
+        super::recommend::recommend_chat_models(probe.as_ref(), &settings.llm.local_model_configs)
+            .await,
     )
-    .await)
-}
-
-/// Whether the user's saved launch settings for the chat model quantize its KV cache.
-fn chat_kv_cache_quantization(
-    llm: &lattice_core::application::contracts::settings::LLMSettingsDto,
-) -> bool {
-    llm.local_model_configs
-        .get(&llm.model)
-        .is_some_and(|config| config.kv_cache_quantization)
 }
 
 /// Get all the catalog's models across all categories.
@@ -177,8 +167,6 @@ pub async fn read_model_fits(
 ) -> Result<Vec<Option<FitVerdictDto>>> {
     use futures::stream::{self, StreamExt};
 
-    let settings = container.get_settings_use_case().execute().await?;
-    let quantized = chat_kv_cache_quantization(&settings.llm);
     let profile = container.machine_profile_probe().profile().await;
     let source = container.gguf_header_source();
     let (profile, source) = (&profile, source.as_ref());
@@ -193,7 +181,7 @@ pub async fn read_model_fits(
                 file.revision.as_deref(),
                 profile,
                 source,
-                quantized,
+                false,
             )
             .await
         })
@@ -209,7 +197,10 @@ const FIT_READS_AT_ONCE: usize = 4;
 /// headers already read.
 struct FitContext {
     profile: lattice_core::domain::models::fit::MachineProfile,
-    kv_cache_quantization: bool,
+    configs: std::collections::BTreeMap<
+        String,
+        lattice_core::application::contracts::settings::LocalModelConfigDto,
+    >,
     headers: super::header_source::CachedHeadersOnly,
 }
 
@@ -218,19 +209,13 @@ impl FitContext {
         let settings = container.get_settings_use_case().execute().await?;
         Ok(Self {
             profile: container.machine_profile_probe().profile().await,
-            kv_cache_quantization: chat_kv_cache_quantization(&settings.llm),
+            configs: settings.llm.local_model_configs,
             headers: super::header_source::CachedHeadersOnly(container.gguf_header_source()),
         })
     }
 
     async fn fit(&self, model: &ModelMetadata) -> Option<FitVerdictDto> {
-        super::recommend::row_fit(
-            model,
-            &self.profile,
-            &self.headers,
-            self.kv_cache_quantization,
-        )
-        .await
+        super::recommend::row_fit(model, &self.profile, &self.headers, &self.configs).await
     }
 
     async fn rows(&self, models: Vec<DownloadableHfModel>) -> Vec<ModelRecommendationDto> {
@@ -246,7 +231,7 @@ impl FitContext {
     async fn recommended_order(&self) -> Vec<String> {
         let probe =
             crate::features::model_management::recommend::FixedMachineProfile(self.profile.clone());
-        super::recommend::recommend_chat_models(&probe, self.kv_cache_quantization)
+        super::recommend::recommend_chat_models(&probe, &self.configs)
             .await
             .into_iter()
             .map(|recommendation| recommendation.model_id)

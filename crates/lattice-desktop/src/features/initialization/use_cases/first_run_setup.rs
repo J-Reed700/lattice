@@ -3,6 +3,7 @@ use lattice_core::domain::models::embedding_defaults::default_embedding_model;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -89,7 +90,7 @@ impl CheckFirstRunStatusUseCase {
     /// The model the recommender puts first for this computer, with a fresh install's KV cache
     /// setting; none when nothing fits.
     async fn chat_recommendation(&self) -> Option<RecommendedModel> {
-        let top = recommend_chat_models(self.probe.as_ref(), false)
+        let top = recommend_chat_models(self.probe.as_ref(), &BTreeMap::new())
             .await
             .into_iter()
             .next();
@@ -327,7 +328,7 @@ mod tests {
             .iter()
             .map(Candidate::from_curated)
             .collect();
-        Recommender::new(Companions::default_pair(), false)
+        Recommender::new(Companions::default_pair())
             .recommend(profile, &catalog)
             .remove(0)
             .id
