@@ -18,7 +18,7 @@ pub const NO_PROVENANCE_READER: &str = "this fetcher does not extract provenance
 /// - `MockWebService`: canned results for testing
 #[async_trait]
 pub trait WebServiceTrait: Send + Sync {
-    /// Search the web using configured public providers (DuckDuckGo/Bing/Wikipedia)
+    /// Search the web using configured public providers (DuckDuckGo/Wikipedia)
     ///
     /// # Errors
     /// Returns error if search fails or timeout occurs

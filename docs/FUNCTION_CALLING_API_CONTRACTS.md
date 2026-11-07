@@ -182,7 +182,7 @@ turn allows it (see [Which tools a turn gets](#which-tools-a-turn-gets)).
 | `max_results` | integer | 5 | 1-50 per page |
 | `page` | integer | 1 | >= 1 |
 | `offset` | integer | 0 | >= 0 |
-| `providers` | (`duckduckgo` \| `bing` \| `wikipedia`)[] | DuckDuckGo then Bing | |
+| `providers` | (`duckduckgo` \| `wikipedia`)[] | DuckDuckGo | A call that still names `bing` is accepted; the name is dropped |
 | `include_wikipedia` | boolean | false | |
 | `depth` | integer | 1 | 1-4 (recursive deep research) |
 | `branch_queries` | integer | 2 | 1-4 follow-up branches per depth step |

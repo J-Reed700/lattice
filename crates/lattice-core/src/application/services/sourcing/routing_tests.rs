@@ -86,7 +86,6 @@ fn registry() -> Vec<FinderDescriptor> {
     use crate::domain::sourcing::Reach::*;
     vec![
         finder("duckduckgo", WEB_FIRST, OpenWeb, Auth::None, true),
-        finder("bing_html", WEB_FIRST, OpenWeb, Auth::None, true),
         paid(finder(
             "brave",
             WEB_SECOND,
@@ -324,19 +323,16 @@ fn each_kind_gets_its_waves() {
             "web: keyless engines, then opt-in engines; no rewordings, no third wave",
             need(K::Web),
             false,
-            vec![
-                w(&["duckduckgo", "bing_html"], &[], false),
-                w(&[], &OPT_IN_SKIPS, false),
-            ],
+            vec![w(&["duckduckgo"], &[], false), w(&[], &OPT_IN_SKIPS, false)],
         ),
         (
             "web with rewordings and Wikipedia asked for",
             web_reworded,
             false,
             vec![
-                w(&["duckduckgo", "bing_html", "wikipedia"], &[], false),
+                w(&["duckduckgo", "wikipedia"], &[], false),
                 w(&[], &OPT_IN_SKIPS, false),
-                w(&["duckduckgo", "bing_html"], &[], true),
+                w(&["duckduckgo"], &[], true),
             ],
         ),
         (
@@ -344,16 +340,8 @@ fn each_kind_gets_its_waves() {
             with_subject(need(K::OfficialDocs), ".NET", Vec::new()),
             true,
             vec![
-                w(
-                    &[
-                        "site_discovery@owner",
-                        "duckduckgo@owner",
-                        "bing_html@owner",
-                    ],
-                    &[],
-                    false,
-                ),
-                w(&["duckduckgo", "bing_html"], &[], true),
+                w(&["site_discovery@owner", "duckduckgo@owner"], &[], false),
+                w(&["duckduckgo"], &[], true),
                 w(&[], &OPT_IN_SKIPS, true),
             ],
         ),
@@ -361,10 +349,7 @@ fn each_kind_gets_its_waves() {
             "official docs with nothing to own it: routed like the web",
             need(K::OfficialDocs),
             false,
-            vec![
-                w(&["duckduckgo", "bing_html"], &[], false),
-                w(&[], &OPT_IN_SKIPS, false),
-            ],
+            vec![w(&["duckduckgo"], &[], false), w(&[], &OPT_IN_SKIPS, false)],
         ),
         (
             "package with a known ecosystem: that registry exactly, plus GitHub",
@@ -373,7 +358,7 @@ fn each_kind_gets_its_waves() {
             vec![
                 w(&["github", "crates_io"], &[], false),
                 w(&["site_discovery@owner"], &[], false),
-                w(&["duckduckgo@owner", "bing_html@owner"], &[], false),
+                w(&["duckduckgo@owner"], &[], false),
             ],
         ),
         (
@@ -383,7 +368,7 @@ fn each_kind_gets_its_waves() {
             vec![
                 w(&["github", "crates_io", "npm"], &[], false),
                 w(&["site_discovery@owner"], &[], false),
-                w(&["duckduckgo@owner", "bing_html@owner"], &[], false),
+                w(&["duckduckgo@owner"], &[], false),
             ],
         ),
         (
@@ -393,7 +378,7 @@ fn each_kind_gets_its_waves() {
             vec![
                 w(&["github", "crates_io", "npm"], &[], false),
                 w(&["site_discovery@owner"], &[], false),
-                w(&["duckduckgo@owner", "bing_html@owner"], &[], false),
+                w(&["duckduckgo@owner"], &[], false),
             ],
         ),
         (
@@ -404,7 +389,7 @@ fn each_kind_gets_its_waves() {
                 w(&["openalex", "crossref"], &[], false),
                 w(&["semantic_scholar", "arxiv"], &[], false),
                 w(
-                    &["duckduckgo", "bing_html"],
+                    &["duckduckgo"],
                     &["exa:no_key", "unpaywall:no_contact"],
                     false,
                 ),
@@ -416,8 +401,8 @@ fn each_kind_gets_its_waves() {
             false,
             vec![
                 w(&["rfc_index", "w3c"], &[], false),
-                w(&["duckduckgo@owner", "bing_html@owner"], &[], false),
-                w(&["duckduckgo", "bing_html"], &[], false),
+                w(&["duckduckgo@owner"], &[], false),
+                w(&["duckduckgo"], &[], false),
             ],
         ),
         (
@@ -427,7 +412,7 @@ fn each_kind_gets_its_waves() {
             vec![
                 w(&["federal_register"], &[], false),
                 w(&[], &["govinfo:no_key"], false),
-                w(&["duckduckgo", "bing_html"], &[], false),
+                w(&["duckduckgo"], &[], false),
             ],
         ),
         (
@@ -437,7 +422,7 @@ fn each_kind_gets_its_waves() {
             vec![
                 w(&["stack_exchange", "hn_algolia"], &[], false),
                 w(&["discourse_json"], &[], false),
-                w(&["duckduckgo", "bing_html"], &[], false),
+                w(&["duckduckgo"], &[], false),
             ],
         ),
         (
@@ -499,15 +484,7 @@ fn a_scope_without_a_subject_still_goes_owner_first() {
     );
     assert_eq!(
         summarise(&plan)[0],
-        w(
-            &[
-                "site_discovery@owner",
-                "duckduckgo@owner",
-                "bing_html@owner"
-            ],
-            &[],
-            false
-        )
+        w(&["site_discovery@owner", "duckduckgo@owner"], &[], false)
     );
 }
 
@@ -527,13 +504,13 @@ fn keys_contacts_instances_and_switches_gate_finders() {
         summarise(&setup.plan(&need(K::Web))),
         vec![
             w(&["brave", "exa"], &["tavily:disabled"], false),
-            w(&["duckduckgo", "bing_html"], &[], false),
+            w(&["duckduckgo"], &[], false),
             w(&["searxng"], &[], false),
         ]
     );
     assert_eq!(
         summarise(&setup.plan(&need(K::Paper)))[3],
-        w(&["unpaywall", "duckduckgo", "bing_html"], &[], false)
+        w(&["unpaywall", "duckduckgo"], &[], false)
     );
 }
 
@@ -552,9 +529,9 @@ fn a_paid_engine_that_can_run_leads_and_the_free_engines_follow() {
             reworded,
             vec![
                 paid_wave("brave"),
-                w(&["duckduckgo", "bing_html"], &[], false),
+                w(&["duckduckgo"], &[], false),
                 w(&[], &["searxng:no_instance"], false),
-                w(&["duckduckgo", "bing_html"], &[], true),
+                w(&["duckduckgo"], &[], true),
             ],
         ),
         (
@@ -562,16 +539,8 @@ fn a_paid_engine_that_can_run_leads_and_the_free_engines_follow() {
             docs,
             vec![
                 paid_wave("brave@owner"),
-                w(
-                    &[
-                        "site_discovery@owner",
-                        "duckduckgo@owner",
-                        "bing_html@owner",
-                    ],
-                    &[],
-                    false,
-                ),
-                w(&["duckduckgo", "bing_html"], &[], true),
+                w(&["site_discovery@owner", "duckduckgo@owner"], &[], false),
+                w(&["duckduckgo"], &[], true),
                 w(&[], &["searxng:no_instance"], true),
             ],
         ),
@@ -582,11 +551,7 @@ fn a_paid_engine_that_can_run_leads_and_the_free_engines_follow() {
                 w(&["openalex", "crossref"], &[], false),
                 w(&["semantic_scholar", "arxiv"], &[], false),
                 paid_wave("brave"),
-                w(
-                    &["duckduckgo", "bing_html"],
-                    &["unpaywall:no_contact"],
-                    false,
-                ),
+                w(&["duckduckgo"], &["unpaywall:no_contact"], false),
             ],
         ),
         (
@@ -612,7 +577,7 @@ fn a_paid_engine_that_cannot_run_now_leaves_the_free_engines_first() {
     assert_eq!(
         summarise(&setup.plan(&need(K::Web))),
         vec![
-            w(&["duckduckgo", "bing_html"], &[], false),
+            w(&["duckduckgo"], &[], false),
             w(
                 &[],
                 &[
@@ -666,12 +631,12 @@ fn an_open_breaker_is_skipped_once_and_the_wave_still_runs() {
     );
     let mut reworded = need(K::Web);
     reworded.alternatives = vec!["other words".into()];
+    reworded.also = vec![K::Encyclopedia];
     assert_eq!(
         summarise(&setup.plan(&reworded)),
         vec![
-            w(&["bing_html"], &["duckduckgo:circuit_open"], false),
+            w(&["wikipedia"], &["duckduckgo:circuit_open"], false),
             w(&[], &OPT_IN_SKIPS, false),
-            w(&["bing_html"], &[], true),
         ]
     );
 }
@@ -680,7 +645,7 @@ fn an_open_breaker_is_skipped_once_and_the_wave_still_runs() {
 fn owner_scoped_engine_calls_need_a_native_site_filter() {
     let mut registry = registry();
     for descriptor in &mut registry {
-        if descriptor.id.as_str() == "bing_html" {
+        if descriptor.id.as_str() == "duckduckgo" {
             descriptor.supports_scope = false;
         }
     }
@@ -693,6 +658,6 @@ fn owner_scoped_engine_calls_need_a_native_site_filter() {
     let docs = with_subject(need(K::OfficialDocs), ".NET", Vec::new());
     assert_eq!(
         summarise(&plan(&docs, &registry, &gate))[0],
-        w(&["site_discovery@owner", "duckduckgo@owner"], &[], false)
+        w(&["site_discovery@owner"], &[], false)
     );
 }

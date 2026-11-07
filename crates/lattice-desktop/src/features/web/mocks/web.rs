@@ -278,6 +278,17 @@ pub struct ScriptedFinder {
     calls: std::sync::Mutex<Vec<(String, usize)>>,
 }
 
+/// A second keyless web engine beside DuckDuckGo, so a wave has another
+/// finder to fall back on when one is refused.
+#[cfg(test)]
+pub fn second_web_engine() -> lattice_core::domain::sourcing::FinderDescriptor {
+    lattice_core::domain::sourcing::FinderDescriptor {
+        id: lattice_core::domain::sourcing::FinderId::from_static("second_engine"),
+        name: "Second engine",
+        ..crate::features::web::services::finders::duckduckgo::DESCRIPTOR
+    }
+}
+
 #[cfg(test)]
 impl ScriptedFinder {
     /// Answers `per_page` leads on every page.

@@ -4,7 +4,6 @@
 
 use std::collections::HashSet;
 
-use base64::prelude::{Engine as _, BASE64_URL_SAFE_NO_PAD};
 use lattice_core::domain::sourcing::canonical::{self, CanonicalKey};
 use lattice_core::domain::sourcing::{FinderId, Lead};
 use scraper::{ElementRef, Html, Selector};
@@ -34,13 +33,12 @@ impl SerpHit {
 const MIN_FALLBACK_TITLE_CHARS: usize = 6;
 
 /// True when the page is an engine's bot challenge rather than results:
-/// DuckDuckGo's "anomaly" modal or Bing's automated-query refusal. Such a
-/// page is never retried in-process (retrying a challenge is what gets an
-/// address blocked); the finder reports `Challenge` and its breaker decides.
+/// DuckDuckGo's "anomaly" modal. Such a page is never retried in-process
+/// (retrying a challenge is what gets an address blocked); the finder reports
+/// `Challenge` and its breaker decides.
 pub(crate) fn is_challenge_page(html: &str) -> bool {
     let lower = html.to_ascii_lowercase();
-    (lower.contains("anomaly-modal") && lower.contains("bots use duckduckgo"))
-        || (lower.contains("403 - forbidden") && lower.contains("automated queries"))
+    lower.contains("anomaly-modal") && lower.contains("bots use duckduckgo")
 }
 
 /// Normalizes an extracted search-result href into the URL of the page it
@@ -63,9 +61,6 @@ fn absolutize_search_url(trimmed: &str) -> Option<String> {
     if let Some(rest) = trimmed.strip_prefix("//") {
         return Some(format!("https://{}", rest));
     }
-    if trimmed.starts_with("/ck/a?") {
-        return Some(format!("https://www.bing.com{}", trimmed));
-    }
     if trimmed.starts_with("/l/?") {
         return Some(format!("https://duckduckgo.com{}", trimmed));
     }
@@ -80,9 +75,8 @@ fn absolutize_search_url(trimmed: &str) -> Option<String> {
 }
 
 /// The destination behind a search engine's click-tracking redirect, or
-/// `None` for an ordinary URL. DuckDuckGo carries it in `uddg` as plain text
-/// and Bing in `u` as base64url behind a two-character prefix, so no request
-/// is spent on the wrapper.
+/// `None` for an ordinary URL. DuckDuckGo carries it in `uddg` as plain text,
+/// so no request is spent on the wrapper.
 fn unwrap_redirect_url(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
     let host = parsed.host_str()?;
@@ -95,26 +89,11 @@ fn unwrap_redirect_url(url: &str) -> Option<String> {
             .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
     }
 
-    if host.ends_with("bing.com") && parsed.path() == "/ck/a" {
-        let raw = parsed
-            .query_pairs()
-            .find(|(key, _)| key == "u")
-            .map(|(_, value)| value.into_owned())?;
-        // The payload is base64url with the padding stripped and a short
-        // marker in front ("a1" today). Decode what follows the marker and
-        // accept it only if it really is a URL.
-        let encoded = raw.get(2..)?;
-        let decoded = BASE64_URL_SAFE_NO_PAD.decode(encoded).ok()?;
-        let decoded = String::from_utf8(decoded).ok()?;
-        return Some(decoded)
-            .filter(|value| value.starts_with("http://") || value.starts_with("https://"));
-    }
-
     None
 }
 
 /// Whether an anchor found by the any-link fallback can be a result: not the
-/// engine's own navigation, but a Bing click-through is (it wraps a result).
+/// engine's own navigation.
 fn is_result_candidate(url: &Url) -> bool {
     if !matches!(url.scheme(), "http" | "https") {
         return false;
@@ -125,9 +104,6 @@ fn is_result_candidate(url: &Url) -> bool {
     let host = host.to_ascii_lowercase();
     if host.contains("duckduckgo.com") {
         return false;
-    }
-    if host.contains("bing.com") {
-        return url.path().starts_with("/ck/a");
     }
     true
 }
@@ -146,16 +122,12 @@ fn collapsed_text(element: ElementRef<'_>) -> String {
 /// links anywhere, then any outbound link that looks like a result.
 pub(crate) fn parse_results(html: &str, max_results: usize) -> Vec<SerpHit> {
     let document = Html::parse_document(html);
-    let container_selector =
-        Selector::parse(".result, .results_links, article, .b_algo, li.b_algo").ok();
+    let container_selector = Selector::parse(".result, .results_links, article").ok();
     let link_selector = Selector::parse(
-        "a.result__a, .result__title a, a.result-link, a[data-testid='result-title-a'], .b_algo h2 a",
+        "a.result__a, .result__title a, a.result-link, a[data-testid='result-title-a']",
     )
     .ok();
-    let snippet_selector = Selector::parse(
-        ".result__snippet, .result-snippet, .result__body, .b_caption p, .b_snippet",
-    )
-    .ok();
+    let snippet_selector = Selector::parse(".result__snippet, .result-snippet, .result__body").ok();
 
     let mut found = Collector {
         hits: Vec::new(),

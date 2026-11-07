@@ -29,7 +29,7 @@ pub(super) fn result_count_line(count: usize) -> String {
 
 /// One line naming what every search provider did, when any of them did
 /// not simply answer: "duckduckgo: skipped, paused until 14:02:00 UTC (bot
-/// challenge) · bing_html: 10". `None` when every provider answered, so an
+/// challenge) · brave: 10". `None` when every provider answered, so an
 /// ordinary search records nothing extra.
 pub(super) fn outcome_line(outcomes: &[FinderOutcomeDto]) -> Option<String> {
     if outcomes.iter().all(|outcome| outcome.result == "answered") {
@@ -268,7 +268,7 @@ mod tests {
             .all(|s| s.kind == TurnStepKind::WebSearch && s.state == TurnStepState::Done));
     }
 
-    /// DuckDuckGo was paused and Bing answered: the record says both, in
+    /// DuckDuckGo was paused and Brave answered: the record says both, in
     /// one line under the search, and an all-answered search adds nothing.
     #[test]
     fn a_provider_that_did_not_answer_is_named_under_the_search() {
@@ -284,7 +284,7 @@ mod tests {
                 cause: Some("paused until 14:02:00 UTC (bot challenge)".into()),
             },
             FinderOutcomeDto {
-                finder: "bing_html".into(),
+                finder: "brave".into(),
                 result: "answered".into(),
                 leads: 10,
                 elapsed_ms: 812,
@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(steps.len(), 2);
         assert_eq!(
             steps[1].detail.as_deref(),
-            Some("duckduckgo: skipped, paused until 14:02:00 UTC (bot challenge) · bing_html: 10")
+            Some("duckduckgo: skipped, paused until 14:02:00 UTC (bot challenge) · brave: 10")
         );
 
         output.outcomes.remove(0);

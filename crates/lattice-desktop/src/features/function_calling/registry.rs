@@ -287,7 +287,7 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
 
     registry.register(ToolDefinition::new(
         "web_search",
-        "Search the web with pagination and provider enrichment when information isn't in the lattice. Supports DuckDuckGo, Bing, and optional Wikipedia blending.",
+        "Search the web with pagination and provider enrichment when information isn't in the lattice. Supports DuckDuckGo and optional Wikipedia blending.",
         json!({
             "type": "object",
             "properties": {
@@ -332,7 +332,7 @@ pub fn init_function_registry() -> Result<FunctionRegistry> {
                     "description": "Preferred provider order",
                     "items": {
                         "type": "string",
-                        "enum": ["duckduckgo", "bing", "wikipedia"]
+                        "enum": ["duckduckgo", "wikipedia"]
                     }
                 },
                 "include_wikipedia": {
