@@ -572,6 +572,9 @@ mod coverage_gaps_tests;
 #[path = "claim_ledger_tests.rs"]
 mod claim_ledger_tests;
 
+#[path = "settle_published_tests.rs"]
+mod settle_published_tests;
+
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
 
