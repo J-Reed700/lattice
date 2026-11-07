@@ -121,9 +121,10 @@ graded), so no review log is needed. SQLite's `BEGIN IMMEDIATE` serialises concu
   can still be picked. Without that record the lesson would stay "never drilled" and come first again every time.
 - **Pending.** The next build is queued the moment a drill is taken, before it is graded. Without a pending state the
   next drill would repeat the same lesson and the same new patterns. A lesson or pattern is pending in three cases:
-  a drill of it is submitted and waiting for its grade, it is ready on the shelf, or it belongs to the drill being
-  taken as the next build is queued. An open attempt the learner walked away from is not pending, so its lesson
-  comes back.
+  a drill of it is submitted and waiting for its grade, it is ready on a shelf (any shelf of the course, for a lesson;
+  any shelf of the material, for a pattern), or it belongs to the drill being taken as the next build is queued. An
+  open attempt the learner walked away from is not pending, so its lesson comes back. A ready drill from before this
+  change is never served again, so it holds nothing back.
 - **The order** (pure functions in core, deterministic):
 
   | Rank | Lessons (`next_lesson`) | Patterns (`targets`, families interleaved as today) |
@@ -133,7 +134,8 @@ graded), so no review log is needed. SQLite's `BEGIN IMMEDIATE` serialises concu
   | 3 | rested, soonest due first | rested, soonest due first |
   | 4 | pending | pending |
 
-  Pending is ranked last rather than left out, so a one-lesson course still gets drills. A lesson recorded as not
+  Pending is ranked last rather than left out, so a one-lesson course still gets drills. A pending pattern is planted
+  only once every other pattern is, even when its family has not been picked in the round. A lesson recorded as not
   fitting the material is left out.
 
 FSRS never schedules a lesson sooner than a day. For a course studied in a day, that means each lesson is drilled once
@@ -155,19 +157,22 @@ al., 2008).
 
 One migration:
 - `learning_drills.lesson_id TEXT REFERENCES learning_lessons(id) ON DELETE SET NULL`, with an index for the shelf:
-  `(program_id, material, language, status, created_at)`. The domain-use index goes with `DOMAINS`.
+  `(program_id, material, language, status, created_at)`. It replaces the bank's older indexes by language, by course
+  and by program. The domain-use index goes with `DOMAINS`, and an index on `lesson_id` serves deleting a lesson.
 - `learning_drill_pattern_schedules(material, pattern_id, …)`: the `CardSchedule` fields, keyed by
-  `(material, pattern_id)`.
-- `learning_drill_lesson_schedules(program_id, lesson_id, …)`: the same fields, keyed by `(program_id, lesson_id)`,
-  both cascading with the course and the lesson.
+  `(material, pattern_id)`. A row exists once a review has rated the pattern.
+- `learning_drill_lesson_schedules(program_id, lesson_id, …)`: the same fields, keyed by `(program_id, lesson_id)`.
+  The pair references the lesson within its course, so a lesson of another course cannot be recorded, and the row
+  cascades with the course and the lesson.
 - `learning_drill_lesson_fits(program_id, lesson_id, material, fits, basis, decided_at)` records whether a lesson can
   be drilled in code or passages.
   - It is written when a drill of the lesson is stored: code fits when it kept a lesson issue, and a passage always
     fits.
   - It is also written when a passage pick or a code brief finds no evidence for the lesson.
-  - `basis` hashes the evidence the decision rested on: the lesson's blocks when it is prepared, otherwise the course's
-    active source versions. A record whose basis no longer matches is ignored. So preparing the lesson or adding a
-    source asks the question again, and no retrieval runs to find that out.
+  - `basis` hashes the evidence the decision rested on: the lesson's blocks when it is prepared, and the course's
+    active source versions, which a prepared lesson's passages come from too. A record whose basis no longer matches
+    is ignored. So preparing the lesson or changing a source asks the question again, and no retrieval runs to find
+    that out.
 
 `DrillSpec` gets `lesson_id` and `lesson_issues` (the most lesson issues to plant: ⌈n/2⌉ for code, 0 for a passage).
 `patterns` becomes the ranked catalogue targets, n of them. `validate()` requires a course and a lesson for every new
