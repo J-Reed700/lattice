@@ -54,10 +54,20 @@ impl Footprint {
 /// What a server holds at `window` tokens: `gpu_weight_bytes`, and what its header, `shape`, says
 /// the rest costs. Whatever the header cannot say counts as nothing.
 pub fn footprint(
-    _gpu_weight_bytes: u64,
-    _shape: Option<&ModelShape>,
-    _window: u32,
-    _buffers: ServerBuffers,
+    gpu_weight_bytes: u64,
+    shape: Option<&ModelShape>,
+    window: u32,
+    buffers: ServerBuffers,
 ) -> Footprint {
-    todo!("stage 2")
+    Footprint {
+        weights: gpu_weight_bytes,
+        cache: shape
+            .and_then(|shape| shape.kv_cache_bytes(window, buffers.kv_cache_quantization))
+            .unwrap_or(0),
+        state: shape.map_or(0, ModelShape::recurrent_state_bytes),
+        compute: shape.map_or(0, |shape| {
+            shape.compute_buffer_bytes(window, buffers.micro_batch)
+        }),
+        window,
+    }
 }
