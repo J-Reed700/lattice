@@ -1,33 +1,31 @@
-//! Reads a GGUF file's header from Hugging Face by HTTP range request with the runtime's reader, and
-//! keeps what it read on disk by repository, file and revision so a file is read once.
+//! Reads a GGUF file's header from Hugging Face with the runtime's reader over a lazy HTTP range
+//! reader, and keeps what it read on disk by repository, file and revision so a file is read once.
 
+use super::huggingface_adapter::{HuggingFaceAdapter, HUB_USER_AGENT};
 use super::recommend::{GgufFacts, GgufHeaderSource};
-use crate::features::llm::engine::gguf_metadata::{read_model_info_from, GgufModelInfo};
+use crate::features::llm::engine::gguf_metadata::read_model_info_from;
 use async_trait::async_trait;
-use lattice_core::shared::http::reqwest_client_builder;
 use reqwest::Client;
+use std::collections::BTreeMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use tokio::runtime::Handle;
 
-/// The first range asked for; a header that does not parse in it is asked for again, twice as long.
+/// The first block asked for; each block after it is twice the last.
 pub(crate) const FIRST_BLOCK_BYTES: u64 = 16 << 20;
 
 /// The most of a file a header read may ask for: a header read previews a file the user has not
 /// chosen to download. Four times the largest header among the curated files, which is
 /// `gemma-4-E4B-it-Q4_K_M.gguf` at 15,826,723 bytes (read with `scripts/catalog/gguf_pins.py`,
 /// 2026-11-07).
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) const MAX_HEADER_BYTES: u64 = 4 * 15_826_723;
-
-/// The Hub client's own request limit (see `HuggingFaceAdapter`).
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct HuggingFaceHeaderSource {
     client: Client,
     cache_dir: PathBuf,
     base_url: String,
-    #[allow(dead_code)]
     limit_bytes: u64,
 }
 
@@ -38,12 +36,8 @@ impl HuggingFaceHeaderSource {
 
     /// A source that reads from `base_url` and asks for no more than `limit_bytes` of a file.
     pub fn with_limit(cache_dir: PathBuf, base_url: impl Into<String>, limit_bytes: u64) -> Self {
-        let client = reqwest_client_builder()
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| Client::new());
         Self {
-            client,
+            client: HuggingFaceAdapter::new().client().clone(),
             cache_dir,
             base_url: base_url.into(),
             limit_bytes,
@@ -98,44 +92,142 @@ impl HuggingFaceHeaderSource {
         )
     }
 
-    async fn range(&self, url: &str, length: u64) -> Option<(Vec<u8>, u64)> {
-        let response = self
-            .client
-            .get(url)
-            .header("User-Agent", "RecallDesktop/1.0")
-            .header("Range", format!("bytes=0-{}", length - 1))
-            .send()
-            .await
-            .ok()?
-            .error_for_status()
-            .ok()?;
-        let total = response
-            .headers()
-            .get(reqwest::header::CONTENT_RANGE)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.rsplit('/').next())
-            .and_then(|total| total.parse::<u64>().ok())
-            .or_else(|| response.content_length())?;
-        let bytes = response.bytes().await.ok()?;
-        Some((bytes.to_vec(), total))
-    }
-
     async fn read(&self, repo: &str, file: &str, revision: Option<&str>) -> Option<GgufFacts> {
         let url = self.url(repo, file, revision);
-        let mut length = FIRST_BLOCK_BYTES;
-        let mut previous: Option<GgufModelInfo> = None;
-        loop {
-            let (bytes, total) = self.range(&url, length).await?;
-            let info = read_model_info_from(std::io::Cursor::new(bytes), total)?;
-            if previous.as_ref() == Some(&info) || length >= total {
-                return Some(GgufFacts {
-                    gpu_weight_bytes: total.saturating_sub(info.cpu_weight_bytes),
-                    shape: info.shape,
-                });
-            }
-            previous = Some(info);
-            length = length.saturating_mul(2);
+        let last = FIRST_BLOCK_BYTES.min(self.limit_bytes).saturating_sub(1);
+        let (first, total) = fetch_range(&self.client, &url, 0, last).await?;
+        let stopped = Arc::new(AtomicBool::new(false));
+        let reader = RangeReader {
+            handle: Handle::current(),
+            client: self.client.clone(),
+            url,
+            total,
+            limit: self.limit_bytes,
+            position: 0,
+            blocks: BTreeMap::from([(0, first)]),
+            next_block_bytes: FIRST_BLOCK_BYTES.saturating_mul(2),
+            stopped: Arc::clone(&stopped),
+        };
+        let info = tokio::task::spawn_blocking(move || read_model_info_from(reader, total))
+            .await
+            .ok()??;
+        if stopped.load(Ordering::Relaxed) {
+            return None;
         }
+        Some(GgufFacts {
+            gpu_weight_bytes: total.saturating_sub(info.cpu_weight_bytes),
+            shape: info.shape,
+        })
+    }
+}
+
+/// Bytes `from..=last` of the file at `url`, and the file's total length from `Content-Range`.
+async fn fetch_range(client: &Client, url: &str, from: u64, last: u64) -> Option<(Vec<u8>, u64)> {
+    let response = client
+        .get(url)
+        .header("User-Agent", HUB_USER_AGENT)
+        .header("Range", format!("bytes={from}-{last}"))
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?;
+    let total = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.rsplit('/').next())
+        .and_then(|total| total.parse::<u64>().ok())
+        .or_else(|| response.content_length())?;
+    let bytes = response.bytes().await.ok()?;
+    Some((bytes.to_vec(), total))
+}
+
+/// A `Read + Seek` over a remote file that fetches a block only when the parser reaches it, each
+/// block twice the last, and never reads at or past `limit`. Meant to run on a blocking thread:
+/// it waits for each request on `handle`.
+struct RangeReader {
+    handle: Handle,
+    client: Client,
+    url: String,
+    total: u64,
+    limit: u64,
+    position: u64,
+    /// The blocks fetched so far, by their first byte.
+    blocks: BTreeMap<u64, Vec<u8>>,
+    next_block_bytes: u64,
+    /// Set when the read ended because of the limit or a failed request, not the file's end.
+    stopped: Arc<AtomicBool>,
+}
+
+impl RangeReader {
+    fn fetch(&mut self, from: u64) -> std::io::Result<()> {
+        let last = from
+            .saturating_add(self.next_block_bytes)
+            .saturating_sub(1)
+            .min(self.total.saturating_sub(1))
+            .min(self.limit.saturating_sub(1));
+        let fetched = self
+            .handle
+            .block_on(fetch_range(&self.client, &self.url, from, last));
+        match fetched {
+            Some((bytes, _)) if !bytes.is_empty() => {
+                self.blocks.clear();
+                self.blocks.insert(from, bytes);
+                self.next_block_bytes = self.next_block_bytes.saturating_mul(2);
+                Ok(())
+            }
+            _ => {
+                self.stopped.store(true, Ordering::Relaxed);
+                Err(std::io::Error::other("a header block could not be read"))
+            }
+        }
+    }
+}
+
+impl Read for RangeReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if buf.is_empty() || self.position >= self.total {
+            return Ok(0);
+        }
+        if self.position >= self.limit {
+            self.stopped.store(true, Ordering::Relaxed);
+            return Ok(0);
+        }
+        let held = |blocks: &BTreeMap<u64, Vec<u8>>, position: u64| {
+            blocks
+                .range(..=position)
+                .next_back()
+                .filter(|(start, bytes)| position < **start + bytes.len() as u64)
+                .map(|(start, _)| *start)
+        };
+        let start = match held(&self.blocks, self.position) {
+            Some(start) => start,
+            None => {
+                self.fetch(self.position)?;
+                self.position
+            }
+        };
+        let bytes = &self.blocks[&start];
+        let offset = (self.position - start) as usize;
+        let count = buf.len().min(bytes.len() - offset);
+        buf[..count].copy_from_slice(&bytes[offset..offset + count]);
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl Seek for RangeReader {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        let target = match to {
+            SeekFrom::Start(offset) => Some(offset),
+            SeekFrom::Current(delta) => self.position.checked_add_signed(delta),
+            SeekFrom::End(delta) => self.total.checked_add_signed(delta),
+        };
+        self.position = target.ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "seek before the start")
+        })?;
+        Ok(self.position)
     }
 }
 
