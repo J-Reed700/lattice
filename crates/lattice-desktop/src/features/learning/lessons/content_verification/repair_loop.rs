@@ -24,7 +24,7 @@ pub(in crate::features::learning) async fn verify_and_repair(
     output_tokens: usize,
 ) -> Result<(String, LessonVerificationReport)> {
     let references = ReferenceCollection::lexical(sources)?;
-    verify_and_repair_with_references(
+    let (raw, report, _) = verify_and_repair_with_references(
         llm,
         &BuiltinRuntimes::for_tests(),
         prompt,
@@ -33,7 +33,8 @@ pub(in crate::features::learning) async fn verify_and_repair(
         &references,
         (output_tokens, &mut sources.to_vec()),
     )
-    .await
+    .await?;
+    Ok((raw, report))
 }
 
 /// The checkpoint holding the sources this lesson's verification numbered to
@@ -77,6 +78,10 @@ async fn renumber(
 /// `numbered` is the lesson's numbered sources, what its `sourceIndex`es
 /// name; the lesson is parsed against it and `writer_schema`'s indices are
 /// widened to it.
+///
+/// Gives, with the lesson and its report, the ids of the program's references
+/// as they stand once verification is done: those of the collection research
+/// grew when it saved any, else of `references`.
 pub(in crate::features::learning) async fn verify_and_repair_with_references(
     llm: &dyn LLMPort,
     runtimes: &BuiltinRuntimes,
@@ -85,7 +90,7 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
     raw: String,
     references: &ReferenceCollection<'_>,
     (output_tokens, numbered): (usize, &mut Vec<LearningSourceDto>),
-) -> Result<(String, LessonVerificationReport)> {
+) -> Result<(String, LessonVerificationReport, HashSet<String>)> {
     let policy = StandardPolicy::new();
     let readers = Readers::standard();
     let writers = numbered.len();
@@ -114,7 +119,14 @@ pub(in crate::features::learning) async fn verify_and_repair_with_references(
         pass: None,
         report: None,
     };
-    round::run(&mut review, &policy).await
+    let (raw, report) = round::run(&mut review, &policy).await?;
+    let held = review.expanded.as_ref().unwrap_or(review.references);
+    let owned = held
+        .sources
+        .iter()
+        .map(|source| source.id.clone())
+        .collect();
+    Ok((raw, report, owned))
 }
 
 /// The preparation job's review of a lesson (acceptance design §2.7): the
