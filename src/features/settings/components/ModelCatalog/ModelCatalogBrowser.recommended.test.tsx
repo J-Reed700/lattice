@@ -33,7 +33,7 @@ vi.mock('./SystemCapabilitiesCard', () => ({ SystemCapabilitiesCard: stub('Syste
 vi.mock('./CatalogManagementSection', () => ({ CatalogManagementSection: stub('CatalogManagementSection') }));
 
 const GB = 1_073_741_824;
-const RTX = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated' };
+const RTX = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated', totalBytes: 16 * GB };
 
 const verdict = (kind: 'fits' | 'tight' | 'too_large') => ({ kind, needsBytes: 11.2 * GB, budgetBytes: 15 * GB, device: RTX });
 

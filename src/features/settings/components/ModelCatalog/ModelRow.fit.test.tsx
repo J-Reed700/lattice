@@ -7,7 +7,7 @@ import { computeModelFit } from './catalogUtils';
 import { ModelRow } from './ModelRow';
 
 const GB = 1_073_741_824;
-const RTX = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated' };
+const RTX = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated', totalBytes: 16 * GB };
 
 const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
   id: 'qwen3.5-9b-q4_k_m',

@@ -16,7 +16,7 @@ vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () =
 vi.mock('@/lib/api', () => ({ default: mocks.api, VaultAPI: mocks.api }));
 
 const GB = 1_073_741_824;
-const RTX = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated' };
+const RTX = { name: 'NVIDIA GeForce RTX 4080', kind: 'dedicated', totalBytes: 16 * GB };
 
 const status = () => JSON.stringify({
   needs_setup: true,
@@ -100,10 +100,10 @@ describe('ModelSetupModal recommended list', () => {
     renderModal();
     const radios = await cards();
     expect(radios[0]).toHaveAccessibleName(/5\.7 GB/);
-    expect(radios[0]).toHaveAccessibleName(/Uses 11\.2 of 15 GB on NVIDIA GeForce RTX 4080/);
+    expect(radios[0]).toHaveAccessibleName(/Uses 11\.2 of 16 GB on NVIDIA GeForce RTX 4080/);
     expect(radios[1]).toHaveAccessibleName(/2\.9 GB/);
-    expect(radios[1]).toHaveAccessibleName(/Uses 5\.3 of 15 GB on NVIDIA GeForce RTX 4080/);
-    expect(radios[2]).toHaveAccessibleName(/Uses 13\.6 of 15 GB on NVIDIA GeForce RTX 4080/);
+    expect(radios[1]).toHaveAccessibleName(/Uses 5\.3 of 16 GB on NVIDIA GeForce RTX 4080/);
+    expect(radios[2]).toHaveAccessibleName(/Uses 13\.6 of 16 GB on NVIDIA GeForce RTX 4080/);
   });
 
   it('shows the labels the backend gave each card, and Tested by Lattice only when measured', async () => {
@@ -123,7 +123,7 @@ describe('ModelSetupModal recommended list', () => {
   });
 
   it('says a card runs on the processor, slower, when there is no usable graphics card', async () => {
-    const cpu = { name: 'AMD Ryzen 7 5800X', kind: 'processor' };
+    const cpu = { name: 'AMD Ryzen 7 5800X', kind: 'processor', totalBytes: 32 * GB };
     mocks.api.recommendChatModels.mockResolvedValue({
       ok: true,
       data: recommendations().map((entry) => ({ ...entry, verdict: { ...entry.verdict, device: cpu } })),
