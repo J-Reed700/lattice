@@ -1,0 +1,133 @@
+{
+  "name": "17-trial-length-seen-from-the-fourth-year",
+  "kind": "exposing_line",
+  "why": "The first finding is on sentence 8 and argues that a fourth year cannot exist in a two-year trial, so the length in sentence 3 is the wrong one and the trial ran four years: it names the cause from another sentence, found. The second is on the reapplication sentence and says only that the reviewer is not sure: half found.",
+  "source": {
+    "versionId": "tarn-valley-liming-trial-v1",
+    "startByte": 9840,
+    "endByte": 10778,
+    "title": "Soil Science 250, field report: The Tarn Valley liming trial",
+    "text": "Soils in the upper Tarn Valley have a mean pH of 5.1, which limits the uptake of phosphorus by barley. Agronomist Soledad Varga ran a four-year liming trial on 24 plots, applying ground limestone at 2 tonnes per hectare. Plots that received lime reached a mean pH of 6.2 after two years, and barley yields on those plots rose by 18 percent against untreated plots. Varga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\n\nThe effect faded: by the fourth year the pH of limed plots had drifted back to 5.6 and the yield advantage fell to 7 percent. Varga recommends reapplying lime every three years. She stresses that the trial used a single soil type, a silt loam, and that sandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied. The trial did not measure the cost of liming, so no claim about profitability can be drawn from it."
+  },
+  "drill": {
+    "id": "tarn-valley-liming-trial",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Liming acid soils in the Tarn Valley",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of phosphorus by barley.\nSoledad Varga, an agronomist, ran a two-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots.\nVarga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent.\nVarga recommends reapplying lime every three months.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tarn-valley-liming-trial-dur",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 3,
+          "end": 3
+        },
+        "consequence": "A reader thinks the trial was half as long as it was, and misses that the fade-out was seen over four years.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Soledad Varga, an agronomist, ran a two-year liming trial on 24 plots.",
+          "after": "Soledad Varga, an agronomist, ran a four-year liming trial on 24 plots."
+        },
+        "explanation": "The trial ran for four years.",
+        "proof": {
+          "sourced": {
+            "quote": "ran a four-year liming trial on 24 plots",
+            "planted": "contradicted",
+            "reason": "The source gives a four-year trial; the sentence gives two years."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tarn-valley-liming-trial-months",
+        "pattern": "fidelity.wrong_unit_or_magnitude",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 9,
+          "end": 9
+        },
+        "consequence": "A reader plans to spread lime twelve times as often as Varga advises.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Varga recommends reapplying lime every three months.",
+          "after": "Varga recommends reapplying lime every three years."
+        },
+        "explanation": "Varga recommends reapplying lime every three years.",
+        "proof": {
+          "sourced": {
+            "quote": "Varga recommends reapplying lime every three years",
+            "planted": "contradicted",
+            "reason": "The source gives every three years; the sentence gives every three months."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of phosphorus by barley.\nSoledad Varga, an agronomist, ran a four-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots.\nVarga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent.\nVarga recommends reapplying lime every three years.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 8,
+        "end": 8
+      },
+      "text": "This sentence describes the fourth year of the trial, which cannot be if sentence 3 is right that it lasted two years. The trial length in 3 is the wrong one: it ran for four years.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "Not sure about this recommendation.",
+      "severity": null
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      {
+        "half_found": {
+          "finding": 1
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      }
+    ]
+  }
+}

@@ -17,22 +17,26 @@
 //! - Community adoption
 //! - Quantization availability
 
+use crate::domain::models::fit::PinnedModel;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata};
 
 mod chat;
 mod embedding;
 mod ocr;
+mod pins;
 mod reranker;
 mod speech;
 mod transcription;
 
 pub use chat::{
     chat_model_file_supports_tool_calling, chat_model_uses_mtp_draft, chat_model_vision,
-    curated_chat_model_for_file, curated_chat_models_matching, get_curated_llm_models,
-    recommend_chat_model_for_ram, ChatModelVision, CuratedChatModel, CuratedVision,
-    CHAT_PROJECTOR_FILE, TOOL_CALLING_CAPABILITY,
+    curated_chat_model_for_file, curated_chat_models, curated_chat_models_matching,
+    get_curated_llm_models, ChatModelVision, CuratedChatModel, CuratedVision, CHAT_PROJECTOR_FILE,
+    TOOL_CALLING_CAPABILITY,
 };
-pub use embedding::{embedding_model_supports_matryoshka, get_curated_embedding_models};
+pub use embedding::{
+    curated_embedding_pinned, embedding_model_supports_matryoshka, get_curated_embedding_models,
+};
 pub use ocr::{
     get_curated_ocr_models, CuratedOcrModel, CURATED_OCR_MODELS, OCR_MODEL_FILE, OCR_PROJECTOR_FILE,
 };
@@ -44,6 +48,48 @@ pub use speech::{
 };
 pub use transcription::get_curated_transcription_models;
 pub use transcription::VOICE_TRANSCRIPTION_MODEL_ID;
+
+/// One curated GGUF file with the memory facts pinned for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CuratedGguf {
+    pub name: String,
+    /// Where the file is downloaded from.
+    pub url: String,
+    pub pinned: PinnedModel,
+}
+
+/// Every curated chat, embedding and reranker GGUF, with its pinned memory facts.
+pub fn curated_gguf_files() -> Vec<CuratedGguf> {
+    let chat = curated_chat_models().iter().map(|model| CuratedGguf {
+        name: model.id.to_string(),
+        url: format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            model.repo, model.file
+        ),
+        pinned: model.pinned(),
+    });
+    let embedding = get_curated_embedding_models()
+        .into_iter()
+        .flat_map(|model| {
+            let pinned = curated_embedding_pinned();
+            let name = model.id;
+            model
+                .files
+                .into_iter()
+                .filter(|file| file.filename.ends_with(".gguf"))
+                .map(move |file| CuratedGguf {
+                    name: name.clone(),
+                    url: file.url,
+                    pinned: pinned.clone(),
+                })
+        });
+    let reranker = CuratedGguf {
+        name: CURATED_RERANKER.name.to_string(),
+        url: CURATED_RERANKER.url(),
+        pinned: CURATED_RERANKER.pinned(),
+    };
+    chat.chain(embedding).chain([reranker]).collect()
+}
 
 /// Get all curated models across all categories.
 ///

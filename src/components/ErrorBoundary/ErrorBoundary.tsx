@@ -29,6 +29,8 @@ export interface ErrorFallbackProps {
   error: Error;
   errorInfo?: ErrorInfo;
   resetError: () => void;
+  /** Resetting has stopped working; only reloading the app recovers. */
+  exhausted?: boolean;
 }
 
 interface ErrorBoundaryState {
@@ -158,14 +160,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   render(): ReactNode {
-    const { hasError, error, errorInfo } = this.state;
+    const { hasError, error, errorInfo, errorCount } = this.state;
+    const exhausted = errorCount > 5;
     const { children, fallback: FallbackComponent, renderFallback, isolate } = this.props;
 
     if (hasError) {
       const fallbackError = error ?? new Error('Unknown error');
 
       if (renderFallback) {
-        return renderFallback({ error: fallbackError, errorInfo: errorInfo ?? undefined, resetError: this.reset });
+        return renderFallback({ error: fallbackError, errorInfo: errorInfo ?? undefined, resetError: this.reset, exhausted });
       }
 
       // Use custom fallback if provided
@@ -175,6 +178,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             error={fallbackError}
             errorInfo={errorInfo || undefined}
             resetError={this.reset}
+            exhausted={exhausted}
           />
         );
       }
@@ -195,6 +199,14 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             >
               Retry
             </button>
+            {exhausted && (
+              <button
+                onClick={() => window.location.reload()}
+                className="ml-2 px-3 py-1 text-sm font-medium text-[hsl(var(--danger-fg))] hover:opacity-90 rounded transition-opacity duration-fast"
+              >
+                Reload
+              </button>
+            )}
           </div>
         );
       }

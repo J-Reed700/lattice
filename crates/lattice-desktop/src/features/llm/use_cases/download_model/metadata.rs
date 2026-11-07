@@ -105,8 +105,6 @@ impl DownloadModelUseCase {
                     category: lattice_core::domain::models::selection::ModelCategory::LLM,
                     description: format!("Hugging Face model: {}", repo_id),
                     size_gb: 0.0,
-                    minimum_ram_gb: 4.0,
-                    recommended_ram_gb: 8.0,
                     context_length: 4096,
                     performance_tier:
                         lattice_core::domain::models::selection::PerformanceTier::Balanced,

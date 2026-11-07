@@ -81,6 +81,9 @@ export function Passage({
 
 /** How the claim was settled, in words (§5.6): confirmed never reads as verified. */
 function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
+  if (claim.resolution === 'not_verified') {
+    return <span className="rounded-full border border-amber-600/40 px-2 py-1 text-[10px] font-medium text-text-primary">Not verified</span>;
+  }
   if (claim.resolution === 'confirmed_by_you') {
     return <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] font-medium text-text-secondary">Confirmed by you</span>;
   }
@@ -107,9 +110,10 @@ function passedAs(claim: LearningClaimEvidenceDto, checked: 'reasoning' | 'commo
 
 /** "12 claims verified against sources · 4 consistent with their sources · 6 common knowledge · 3 confirmed by you" (§5.6). */
 export function evidenceSummary(report: LearningLessonEvidenceDto): string {
+  const notVerified = unverifiedCount(report);
   const consistent = report.teachingClaims.filter((claim) => passedAs(claim, 'reasoning')).length;
   const common = report.teachingClaims.filter((claim) => passedAs(claim, 'common')).length;
-  const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common);
+  const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common - notVerified);
   const byLevel = verifiedByLevel(report.teachingClaims.filter((claim) => !passedAs(claim, 'reasoning') && !passedAs(claim, 'common')));
   const against = byLevel.length ? byLevel : verified > 0 || consistent + common === 0 ? [`${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`] : [];
   return [
@@ -117,7 +121,12 @@ export function evidenceSummary(report: LearningLessonEvidenceDto): string {
     consistent > 0 ? `${consistent} consistent with their sources` : null,
     common > 0 ? `${common} common knowledge, not checked against a source` : null,
     report.confirmedCount > 0 ? `${report.confirmedCount} confirmed by you` : null,
+    notVerified > 0 ? `${notVerified} not verified` : null,
   ].filter(Boolean).join(' · ');
+}
+
+export function unverifiedCount(report: LearningLessonEvidenceDto | null | undefined): number {
+  return report?.teachingClaims.filter((claim) => claim.resolution === 'not_verified').length ?? 0;
 }
 
 export function sourceRemovedCount(report: LearningLessonEvidenceDto | null | undefined): number {
@@ -280,7 +289,8 @@ export function LessonSectionEvidence({
   const confirmed = claims.filter((claim) => claim.resolution === 'confirmed_by_you').length;
   const consistent = claims.filter((claim) => passedAs(claim, 'reasoning')).length;
   const common = claims.filter((claim) => passedAs(claim, 'common')).length;
-  const checked = claims.length - confirmed - consistent - common;
+  const unverified = claims.filter((claim) => claim.resolution === 'not_verified').length;
+  const checked = claims.length - confirmed - consistent - common - unverified;
 
   const handleOpenPassage = (passage: LearningEvidencePassageDto, number: number) => {
     setPreviewTarget(fromLearningEvidencePassage(passage, number - 1));
@@ -299,7 +309,8 @@ export function LessonSectionEvidence({
           Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
           {consistent > 0 && ` · ${consistent} consistent with their sources`}
           {common > 0 && ` · ${common} common knowledge`}
-          {confirmed > 0 && ` · ${confirmed} confirmed by you`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
+          {confirmed > 0 && ` · ${confirmed} confirmed by you`}
+          {unverified > 0 && ` · ${unverified} not verified`} · {sectionPassages.size} {sectionPassages.size === 1 ? 'passage' : 'passages'}
           <span className="ml-auto flex gap-1" aria-label="Citations in this section">
             {[...sectionPassages].map((key) => <span key={key} className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">{passageNumbers.get(key)}</span>)}
           </span>

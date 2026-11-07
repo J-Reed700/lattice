@@ -1,0 +1,189 @@
+{
+  "name": "24-alloy-mixed-review",
+  "kind": "mixed",
+  "why": "The first finding is on the salt-spray sentence and names the lost caveat in full ('a dry-conditions figure ... sentence 10 says all conditions'): found from another sentence. '22 percent more expensive, not 12.' is terse and correct: found. 'Not sure the yield strength comparison is right.' names no cause: half found. That 180 megapascals sounds low is a remark about the alloy: false positive.",
+  "source": {
+    "versionId": "tervane-9-fatigue-v1",
+    "startByte": 2760,
+    "endByte": 3758,
+    "title": "Materials Engineering 330, data sheet commentary: Tervane-9",
+    "text": "Tervane-9 is an aluminium-scandium alloy developed at the Mirabel Materials Laboratory for aircraft fuselage panels. Its fatigue limit, the stress below which a part can be cycled indefinitely without cracking, is 180 megapascals, about 30 percent higher than the standard 2xxx alloy it replaces. Engineer Lucan Adeyemi attributes this to fine scandium-bearing particles that block the movement of dislocations. The alloy is, however, 22 percent more expensive per kilogram, and it must be welded under argon because scandium oxidises quickly in air.\n\nAdeyemi's team found that panels cycled in salt spray at 85 percent humidity lost a third of their fatigue life, so the limit of 180 megapascals applies to dry conditions only. Tests ran for 10 million cycles at a frequency of 25 hertz. Adeyemi notes that fatigue limit is distinct from yield strength, the stress at which permanent deformation begins; Tervane-9's yield strength, 410 megapascals, is only 5 percent above that of the older alloy."
+  },
+  "drill": {
+    "id": "tervane-9-fatigue",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Tervane-9 and its fatigue limit",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Tervane-9 is an aluminium-scandium alloy developed at the Mirabel Materials Laboratory.\nIt was designed for aircraft fuselage panels.\nIts fatigue limit is 180 megapascals.\nThe fatigue limit is the stress below which a part can be cycled indefinitely without cracking.\nThat is about 30 percent higher than the standard 2xxx alloy Tervane-9 replaces.\nLucan Adeyemi attributes this to fine scandium-bearing particles that block the movement of dislocations.\nThe alloy is 12 percent more expensive per kilogram.\nIt must be welded under argon because scandium oxidises quickly in air.\nPanels cycled in salt spray at 85 percent humidity lost a third of their fatigue life.\nThe limit of 180 megapascals therefore applies in all conditions.\nThe tests ran for 10 million cycles at a frequency of 25 hertz.\nAdeyemi notes that fatigue limit is distinct from yield strength, the stress at which permanent deformation begins.\nThe yield strength of Tervane-9 is 410 megapascals, 30 percent above that of the older alloy.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tervane-9-fatigue-cost",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 7,
+          "end": 7
+        },
+        "consequence": "A reader underestimates the price premium and so the trade against the fatigue gain.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The alloy is 12 percent more expensive per kilogram.",
+          "after": "The alloy is 22 percent more expensive per kilogram."
+        },
+        "explanation": "The alloy is 22 percent more expensive per kilogram, not 12.",
+        "proof": {
+          "sourced": {
+            "quote": "22 percent more expensive per kilogram",
+            "planted": "contradicted",
+            "reason": "The source gives 22 percent; the sentence gives 12."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tervane-9-fatigue-dry",
+        "pattern": "scope.overgeneralisation",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 10,
+          "end": 10
+        },
+        "consequence": "A reader would design for the dry-condition limit in salt spray, where panels lost a third of their fatigue life.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The limit of 180 megapascals therefore applies in all conditions.",
+          "after": "The limit of 180 megapascals therefore applies to dry conditions only."
+        },
+        "explanation": "The limit applies to dry conditions only; salt spray cut fatigue life by a third.",
+        "proof": {
+          "sourced": {
+            "quote": "the limit of 180 megapascals applies to dry conditions only",
+            "planted": "contradicted",
+            "reason": "The source restricts the limit to dry conditions; the sentence extends it to all, against the salt-spray result before it."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tervane-9-fatigue-yld",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 13,
+          "end": 13
+        },
+        "consequence": "A reader thinks the alloy gains as much in yield strength as in fatigue limit, when its yield gain is small.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The yield strength of Tervane-9 is 410 megapascals, 30 percent above that of the older alloy.",
+          "after": "The yield strength of Tervane-9 is 410 megapascals, only 5 percent above that of the older alloy."
+        },
+        "explanation": "The yield strength is only 5 percent above the older alloy's.",
+        "proof": {
+          "sourced": {
+            "quote": "Tervane-9's yield strength, 410 megapascals, is only 5 percent above that of the older alloy",
+            "planted": "contradicted",
+            "reason": "The source says only 5 percent above; the sentence says 30 percent."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Tervane-9 is an aluminium-scandium alloy developed at the Mirabel Materials Laboratory.\nIt was designed for aircraft fuselage panels.\nIts fatigue limit is 180 megapascals.\nThe fatigue limit is the stress below which a part can be cycled indefinitely without cracking.\nThat is about 30 percent higher than the standard 2xxx alloy Tervane-9 replaces.\nLucan Adeyemi attributes this to fine scandium-bearing particles that block the movement of dislocations.\nThe alloy is 22 percent more expensive per kilogram.\nIt must be welded under argon because scandium oxidises quickly in air.\nPanels cycled in salt spray at 85 percent humidity lost a third of their fatigue life.\nThe limit of 180 megapascals therefore applies to dry conditions only.\nThe tests ran for 10 million cycles at a frequency of 25 hertz.\nAdeyemi notes that fatigue limit is distinct from yield strength, the stress at which permanent deformation begins.\nThe yield strength of Tervane-9 is 410 megapascals, only 5 percent above that of the older alloy.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "Salt spray cost a third of the fatigue life, which is why the 180 figure is a dry-conditions figure. Sentence 10 says it applies in all conditions, which throws that away.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 7,
+        "end": 7
+      },
+      "text": "It is 22 percent more expensive, not 12.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 13,
+        "end": 13
+      },
+      "text": "Not sure the yield strength comparison is right.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 3,
+        "end": 3
+      },
+      "text": "180 megapascals sounds low for an aircraft alloy.",
+      "severity": "nit"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      {
+        "half_found": {
+          "finding": 2
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            2
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

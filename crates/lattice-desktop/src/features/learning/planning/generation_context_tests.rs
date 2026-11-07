@@ -251,10 +251,17 @@ async fn changed_prior_teaching_invalidates_a_job_even_without_a_ui_revision_wri
     let jobs = LearningCurriculumRepository::new(pool.clone());
     let job = enqueue(&jobs, &program, &target).await?;
     assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    // The earlier lesson's teaching is replaced, as a lesson prepared again
+    // replaces its blocks.
+    sqlx::query("DELETE FROM learning_blocks WHERE lesson_id=?")
+        .bind(&earlier)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
     sqlx::query(
-        "UPDATE learning_blocks SET body='Different prerequisite teaching' WHERE lesson_id=?",
+        "INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,0,'recap','Earlier teaching','Different prerequisite teaching','[]')",
     )
-    .bind(earlier)
+    .bind(&earlier)
     .execute(&pool)
     .await
     .map_err(db)?;
@@ -267,5 +274,29 @@ async fn changed_prior_teaching_invalidates_a_job_even_without_a_ui_revision_wri
         )
         .await
         .is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_learners_edit_of_a_ready_lessons_text_is_not_a_course_change() -> Result<()> {
+    let (pool, program, earlier, target) = setup().await?;
+    let jobs = LearningCurriculumRepository::new(pool.clone());
+    let job = enqueue(&jobs, &program, &target).await?;
+    assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
+    sqlx::query(
+        "UPDATE learning_blocks SET body='A sentence the learner wrote.' WHERE lesson_id=?",
+    )
+    .bind(&earlier)
+    .execute(&pool)
+    .await
+    .map_err(db)?;
+    assert!(jobs.job_content_is_current(&job.id).await?);
+    // A change to anything but the body still counts.
+    sqlx::query("UPDATE learning_blocks SET title='Another title' WHERE lesson_id=?")
+        .bind(&earlier)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(!jobs.job_content_is_current(&job.id).await?);
     Ok(())
 }

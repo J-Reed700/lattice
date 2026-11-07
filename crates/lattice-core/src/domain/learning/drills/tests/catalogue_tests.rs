@@ -198,7 +198,7 @@ fn applying(id: &str) -> HashSet<&'static str> {
     LANGUAGES
         .iter()
         .copied()
-        .filter(|language| found.applies_to(language))
+        .filter(|language| found.applies_to(&Material::code(*language)))
         .collect()
 }
 
@@ -349,6 +349,11 @@ fn each_family_leads_with_what_comes_up_most_in_review_interviews() {
             "design.long_function",
             "readability.misleading_name",
             "testing.untested_branch",
+            "fidelity.misquoted_figure",
+            "scope.overgeneralisation",
+            "reasoning.correlation_as_cause",
+            "definition.wrong_definition",
+            "consistency.self_contradiction",
         ]
     );
 }
@@ -362,9 +367,9 @@ fn missing_await_cites_where_it_is_named() {
 #[test]
 fn every_language_has_a_pattern_in_every_family() {
     for language in LANGUAGES {
-        for family in Family::ALL {
+        for family in Family::CODE {
             assert!(
-                patterns_for(language).any(|pattern| pattern.family == family),
+                patterns_for(&Material::code(language)).any(|pattern| pattern.family == family),
                 "{language} has no {family:?} pattern"
             );
         }
@@ -383,11 +388,15 @@ fn a_pattern_is_found_by_its_id() {
 
 #[test]
 fn a_language_gets_the_patterns_that_apply_to_it_in_the_catalogues_order() {
-    let python: Vec<&str> = patterns_for("python").map(|pattern| pattern.id).collect();
+    let python: Vec<&str> = patterns_for(&Material::code("python"))
+        .map(|pattern| pattern.id)
+        .collect();
     assert!(python.contains(&"correctness.mutable_default_argument"));
     assert!(!python.contains(&"errors.unwrap_on_fallible"));
     assert!(python.contains(&"security.sql_injection"));
-    let rust: Vec<&str> = patterns_for("rust").map(|pattern| pattern.id).collect();
+    let rust: Vec<&str> = patterns_for(&Material::code("rust"))
+        .map(|pattern| pattern.id)
+        .collect();
     assert!(rust.contains(&"errors.unwrap_on_fallible"));
     assert!(!rust.contains(&"correctness.mutable_default_argument"));
     let positions: Vec<usize> = python
@@ -399,7 +408,7 @@ fn a_language_gets_the_patterns_that_apply_to_it_in_the_catalogues_order() {
 
 #[test]
 fn a_language_the_catalogue_does_not_know_gets_only_the_patterns_for_any() {
-    let unknown: Vec<&Pattern> = patterns_for("cobol").collect();
+    let unknown: Vec<&Pattern> = patterns_for(&Material::code("cobol")).collect();
     assert!(!unknown.is_empty());
     assert!(unknown
         .iter()
@@ -425,4 +434,185 @@ fn a_pattern_is_written_with_its_languages_and_family_in_snake_case() {
     assert_eq!(written["languages"]["only"][0], "rust");
     let any = pattern("errors.swallowed_exception").unwrap();
     assert_eq!(serde_json::to_value(any).unwrap()["languages"], "any");
+}
+
+fn passage_ids() -> Vec<&'static str> {
+    patterns_for(&Material::Passage)
+        .map(|pattern| pattern.id)
+        .collect()
+}
+
+#[test]
+fn a_passage_gets_only_the_passage_families() {
+    let chosen: Vec<&Pattern> = patterns_for(&Material::Passage).collect();
+    assert!(!chosen.is_empty());
+    assert!(chosen
+        .iter()
+        .all(|pattern| Family::PASSAGE.contains(&pattern.family)));
+    for family in Family::PASSAGE {
+        assert!(chosen.iter().any(|pattern| pattern.family == family));
+    }
+}
+
+#[test]
+fn code_gets_none_of_the_passage_patterns() {
+    for language in LANGUAGES.iter().copied().chain(["cobol"]) {
+        assert!(
+            patterns_for(&Material::code(language))
+                .all(|pattern| Family::CODE.contains(&pattern.family)),
+            "{language}"
+        );
+    }
+}
+
+#[test]
+fn the_code_and_passage_families_are_all_of_them_and_do_not_share() {
+    let joined: Vec<Family> = Family::CODE.into_iter().chain(Family::PASSAGE).collect();
+    assert_eq!(joined, Family::ALL.to_vec());
+}
+
+#[test]
+fn a_passage_has_the_designs_patterns() {
+    let ids = passage_ids();
+    for id in [
+        "fidelity.misquoted_figure",
+        "fidelity.wrong_unit_or_magnitude",
+        "fidelity.swapped_entities",
+        "fidelity.wrong_attribution",
+        "fidelity.wrong_date_or_order",
+        "scope.overgeneralisation",
+        "scope.dropped_qualifier",
+        "scope.shifted_population",
+        "reasoning.correlation_as_cause",
+        "reasoning.reversed_relation",
+        "reasoning.unsupported_mechanism",
+        "reasoning.non_sequitur",
+        "definition.wrong_definition",
+        "definition.conflated_terms",
+        "consistency.self_contradiction",
+    ] {
+        assert!(ids.contains(&id), "{id}");
+    }
+    assert_eq!(ids.len(), 15);
+}
+
+#[test]
+fn passage_patterns_apply_only_to_a_passage() {
+    for id in passage_ids() {
+        let found = pattern(id).unwrap();
+        assert_eq!(found.languages, Languages::Passage, "{id}");
+        assert!(found.applies_to(&Material::Passage), "{id}");
+        for language in LANGUAGES {
+            assert!(!found.applies_to(&Material::code(language)), "{id}");
+        }
+    }
+    assert!(!Languages::Passage.includes("python"));
+}
+
+#[test]
+fn code_patterns_do_not_apply_to_a_passage() {
+    for found in CATALOGUE
+        .iter()
+        .filter(|pattern| Family::CODE.contains(&pattern.family))
+    {
+        assert!(!found.applies_to(&Material::Passage), "{}", found.id);
+    }
+}
+
+#[test]
+fn a_passage_pattern_is_written_with_its_languages_as_passage() {
+    let found = pattern("scope.dropped_qualifier").unwrap();
+    assert_eq!(serde_json::to_value(found).unwrap()["languages"], "passage");
+}
+
+/// The patterns python got before the catalogue had passage patterns, in order.
+const PYTHON_BEFORE_PASSAGES: &[&str] = &[
+    "correctness.null_dereference",
+    "correctness.off_by_one",
+    "correctness.boundary_and_empty_input",
+    "correctness.wrong_operator",
+    "correctness.mutated_argument",
+    "correctness.mutable_default_argument",
+    "correctness.reference_equality",
+    "correctness.stale_state",
+    "correctness.float_for_exact_values",
+    "correctness.modified_while_iterating",
+    "correctness.loop_variable_capture",
+    "correctness.naive_datetime",
+    "errors.swallowed_exception",
+    "errors.error_as_success",
+    "errors.overly_broad_catch",
+    "errors.partial_update_without_rollback",
+    "errors.lost_context",
+    "errors.retry_without_backoff",
+    "errors.retry_not_idempotent",
+    "concurrency.check_then_act",
+    "concurrency.unsynchronised_shared_state",
+    "concurrency.lock_ordering",
+    "concurrency.missing_await",
+    "concurrency.blocking_in_async",
+    "concurrency.lock_held_across_slow_call",
+    "resources.leaked_handle",
+    "resources.unbounded_growth",
+    "resources.missing_timeout",
+    "resources.unbounded_result_set",
+    "security.sql_injection",
+    "security.missing_authorisation",
+    "security.hardcoded_secret",
+    "security.xss",
+    "security.command_injection",
+    "security.path_traversal",
+    "security.sensitive_data_in_logs",
+    "security.weak_cryptography",
+    "security.ssrf",
+    "security.unsafe_deserialisation",
+    "security.missing_csrf_protection",
+    "security.weak_randomness",
+    "security.mass_assignment",
+    "security.open_redirect",
+    "security.missing_certificate_validation",
+    "security.timing_unsafe_comparison",
+    "security.code_injection",
+    "performance.n_plus_one_queries",
+    "performance.quadratic_loop",
+    "performance.repeated_work_in_loop",
+    "performance.string_building_in_loop",
+    "performance.sequential_awaits",
+    "performance.needless_allocation",
+    "performance.catastrophic_regex",
+    "design.long_function",
+    "design.large_class",
+    "design.hardwired_dependency",
+    "design.global_mutable_state",
+    "design.long_parameter_list",
+    "design.repeated_switches",
+    "design.primitive_obsession",
+    "design.feature_envy",
+    "design.flag_argument",
+    "design.leaky_abstraction",
+    "design.data_clumps",
+    "design.temporal_coupling",
+    "design.message_chains",
+    "design.speculative_generality",
+    "readability.misleading_name",
+    "readability.duplicated_logic",
+    "readability.magic_number",
+    "readability.deep_nesting",
+    "readability.complex_conditional",
+    "readability.dead_code",
+    "readability.misleading_comment",
+    "readability.loop_instead_of_pipeline",
+    "testing.untested_branch",
+    "testing.assertion_free_test",
+    "testing.coupled_to_implementation",
+    "testing.nondeterministic_test",
+    "testing.shared_state_between_tests",
+];
+
+#[test]
+fn python_gets_the_patterns_it_got_before_the_passage_ones() {
+    let python: Vec<&str> = patterns_for(&Material::code("python"))
+        .map(|pattern| pattern.id)
+        .collect();
+    assert_eq!(python, PYTHON_BEFORE_PASSAGES);
 }

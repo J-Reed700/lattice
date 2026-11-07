@@ -34,6 +34,11 @@ describe('FixResults', () => {
     expect(container.querySelector('details')).toBeNull();
   });
 
+  it('says when the source passage decided an issue', () => {
+    show([fixed({ status: 'not_run', why: 'x' }, { decidedBy: 'source' })]);
+    expect(screen.getByText('Decided by the source passage')).toBeInTheDocument();
+  });
+
   it('says what a passing suite ran with', () => {
     show([fixed({ status: 'passed', ranBeside: [0] })]);
     expect(

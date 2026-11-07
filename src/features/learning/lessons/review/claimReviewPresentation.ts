@@ -34,7 +34,8 @@ export const NEEDS_REVIEW_RESULT_PREFIX = 'needs_review:';
 export function claimFilterOf(item: ClaimReviewItemDto): 'needs_you' | 'repairing' | 'machine' | 'confirmed' | 'changed' {
   const state = item.state;
   switch (state.state) {
-    case 'queued': return 'needs_you';
+    case 'queued':
+    case 'unverified': return 'needs_you';
     case 'unchecked':
     case 'open': return 'repairing';
     case 'resolved_by_evidence':

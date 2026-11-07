@@ -8,6 +8,7 @@ import {
 } from '@/features/files/hooks/useIndexingStatusQuery';
 import { GHOST_BUTTON_CLASS } from '@/features/settings/components/settingsStyles';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
+import { INDEXING_SETTINGS_PATH } from '@/lib/settingsLinks';
 import { cn } from '@/lib/utils';
 import type { IndexingSnapshot } from '@/types/api/indexing';
 
@@ -72,15 +73,8 @@ export function IndexingStatusPopover({ snapshot, open, onClose }: IndexingStatu
   const failureLine = formatFailureLine(snapshot);
 
   const showAll = () => {
-    // Navigate first: `Settings` installs the `settings:navigate-tab` listener
-    // on mount, so dispatching before it exists sends the event nowhere.
-    navigate('/settings');
+    navigate(INDEXING_SETTINGS_PATH);
     onClose();
-    window.setTimeout(() => {
-      window.dispatchEvent(
-        new CustomEvent('settings:navigate-tab', { detail: { tab: 'indexing' } }),
-      );
-    }, 0);
   };
 
   return (

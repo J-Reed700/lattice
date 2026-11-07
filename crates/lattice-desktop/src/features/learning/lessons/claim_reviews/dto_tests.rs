@@ -491,3 +491,30 @@ fn a_statement_the_machine_removed_shows_its_own_sentence_and_names_no_section()
     assert_eq!(card.context_after, "");
     assert_eq!(card.place, "");
 }
+
+#[test]
+fn a_claim_published_not_verified_is_a_state_with_its_reason_and_has_no_history_entry() {
+    use lattice_core::domain::learning::claim_review::UnverifiedReason;
+    let state = ClaimState::Unverified {
+        at: 7,
+        reason: UnverifiedReason::Contradicted,
+    };
+    assert_eq!(
+        serde_json::to_value(ClaimStateDto::from(&state)).unwrap(),
+        serde_json::json!({"state":"unverified","at":7,"reason":"contradicted"})
+    );
+    let marked = RecordedEvent {
+        ordinal: 1,
+        provenance: EventProvenance {
+            actor: Actor::Machine,
+            at: 7,
+            job_id: None,
+            app_version: "1.0.0".into(),
+            checker_model: None,
+        },
+        event: ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::Unchecked,
+        },
+    };
+    assert!(ClaimEventDto::of(&marked).is_none());
+}

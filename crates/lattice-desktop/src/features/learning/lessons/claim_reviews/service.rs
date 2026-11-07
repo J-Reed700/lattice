@@ -7,21 +7,23 @@
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance, HumanBinding, Ledger,
-    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
+    Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance,
+    HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 use sqlx::SqlitePool;
 
+use super::actions::{in_section_body, refusal, ONLY_SECTION};
 use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
+use super::published_edit::{self, PublishedEdit};
 use super::repository::ClaimReviewRepository;
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 use crate::features::learning::content_verification::located_quote;
 use crate::features::learning::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
-use crate::features::learning::persistence::now;
+use crate::features::learning::persistence::{db, now};
 use crate::features::learning::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::features::learning::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
@@ -142,17 +144,47 @@ impl ClaimReviewService {
             .iter()
             .find(|entry| entry.claim_id().0 == claim_id)
             .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
+        let published = review.state == LessonReviewState::Ready;
+        if published {
+            if let Some(refusal) = refusal(entry, action_kind(&action)) {
+                return Err(refusal);
+            }
+        }
         let resolution = self.resolution(&review, lesson_id, entry, action).await?;
-        let revision = self
-            .store
-            .append(
-                lesson_id,
-                entry.claim_id(),
-                provenance(&review),
-                resolution.event,
-                ledger.revision,
-            )
-            .await?;
+        let rewrite = match &resolution.event {
+            ClaimEvent::UserAction {
+                action: UserAction::Edit { before, after },
+                ..
+            } if published => Some((before.clone(), after.clone())),
+            _ => None,
+        };
+        let revision = match rewrite {
+            Some((before, after)) => {
+                published_edit::apply(
+                    &self.pool,
+                    PublishedEdit {
+                        lesson_id,
+                        claim_id: entry.claim_id(),
+                        before: &before,
+                        after: &after,
+                        expected_revision: ledger.revision,
+                        user: provenance(&review),
+                    },
+                )
+                .await?
+            }
+            None => {
+                self.store
+                    .append(
+                        lesson_id,
+                        entry.claim_id(),
+                        provenance(&review),
+                        resolution.event,
+                        ledger.revision,
+                    )
+                    .await?
+            }
+        };
         if let Some(label) = resolution.label {
             let shown = self.store.shown_passages(lesson_id).await?;
             let passages = shown.get(entry.claim_id()).cloned().unwrap_or_default();
@@ -391,9 +423,18 @@ impl ClaimReviewService {
         entry: &ClaimLedgerEntry,
     ) -> Result<String> {
         if review.state == LessonReviewState::Ready {
-            return Err(AppError::InvalidState(
-                "This lesson is published. Prepare it again to change its text.".into(),
-            ));
+            if !in_section_body(entry) {
+                return Err(AppError::InvalidInput(ONLY_SECTION.into()));
+            }
+            return sqlx::query_scalar(
+                "SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?",
+            )
+            .bind(lesson_id)
+            .bind(i64::try_from(entry.location().unit_index).unwrap_or(i64::MAX))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| AppError::NotFound("The claim's section is not in the lesson.".into()));
         }
         let draft = self
             .drafts
@@ -413,6 +454,17 @@ impl ClaimReviewService {
             &location.field,
         )
         .ok_or_else(|| AppError::NotFound("The claim's section is not in the draft.".into()))
+    }
+}
+
+fn action_kind(action: &ClaimActionRequestDto) -> ClaimActionKind {
+    match action {
+        ClaimActionRequestDto::Confirm { .. } => ClaimActionKind::Confirm,
+        ClaimActionRequestDto::Unconfirm => ClaimActionKind::Unconfirm,
+        ClaimActionRequestDto::Edit { .. } => ClaimActionKind::Edit,
+        ClaimActionRequestDto::Remove => ClaimActionKind::Remove,
+        ClaimActionRequestDto::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
+        ClaimActionRequestDto::Undo => ClaimActionKind::Undo,
     }
 }
 

@@ -1,0 +1,169 @@
+{
+  "name": "03-physiology-mixed-review",
+  "kind": "mixed",
+  "why": "'Constrict should be dilate.' is terse but names the cause: found. 'I'm not happy with the figure in this sentence.' is on the five-degree sentence and names no cause: half found. The melatonin addition is missed. Forty participants being too few is a remark about the study, and the explanation reports the forty faithfully: false positive.",
+  "source": {
+    "versionId": "tallow-temperature-and-sleep-onset-v1",
+    "startByte": 18432,
+    "endByte": 19505,
+    "title": "Human Physiology 210, lecture notes: Temperature and sleep onset",
+    "text": "Core body temperature follows a circadian rhythm, falling by roughly 0.5 degrees Celsius over the two hours before habitual bedtime. In the Brannock sleep cohort, run by Imelda Quarrie at the Tallow Institute, 212 adults aged 20 to 35 wore ingestible temperature sensors for fourteen nights. Participants whose core temperature fell faster than 0.3 degrees per hour fell asleep a median of 11 minutes sooner than those whose temperature fell more slowly.\n\nQuarrie attributes the effect to heat loss through the hands and feet: when peripheral blood vessels dilate, warm blood is carried to the skin and heat leaves the body. She cautions that the cohort was recruited from university students and that the finding may not hold for older adults, whose temperature rhythm is flatter. A warm bath taken ninety minutes before bed produced the same faster fall in a follow-up of 40 participants, because the bath draws blood to the skin and speeds later heat loss. The cohort did not measure daytime caffeine intake, so the study cannot say whether caffeine altered the pattern."
+  },
+  "drill": {
+    "id": "tallow-temperature-and-sleep-onset",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Core temperature and sleep onset",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Core body temperature follows a circadian rhythm.\nIn the two hours before habitual bedtime it falls by about 5 degrees Celsius.\nThe Brannock sleep cohort, led by Imelda Quarrie at the Tallow Institute, followed 212 adults aged 20 to 35.\nEach wore an ingestible temperature sensor for fourteen nights.\nPeople whose temperature fell faster than 0.3 degrees per hour fell asleep a median of 11 minutes sooner than those whose temperature fell more slowly.\nQuarrie attributes the effect to heat loss through the hands and feet.\nWhen peripheral blood vessels constrict, warm blood is carried to the skin and heat leaves the body.\nShe cautions that the cohort was recruited from university students, so the finding may not hold for older adults, whose temperature rhythm is flatter.\nIn a follow-up of 40 participants, a warm bath taken ninety minutes before bed produced the same faster fall.\nThe bath works because it draws blood to the skin and speeds later heat loss, and it also raises the release of melatonin.\nThe cohort did not measure daytime caffeine intake, so the study cannot say whether caffeine altered the pattern.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tallow-temperature-and-sleep-onset-magn",
+        "pattern": "fidelity.wrong_unit_or_magnitude",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 2,
+          "end": 2
+        },
+        "consequence": "A reader takes away a nightly fall ten times the real one, a change the size of a fever rather than a circadian dip.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "In the two hours before habitual bedtime it falls by about 5 degrees Celsius.",
+          "after": "In the two hours before habitual bedtime it falls by about 0.5 degrees Celsius."
+        },
+        "explanation": "The fall in core temperature before bedtime is about half a degree Celsius, not five.",
+        "proof": {
+          "sourced": {
+            "quote": "falling by roughly 0.5 degrees Celsius over the two hours before habitual bedtime",
+            "planted": "contradicted",
+            "reason": "The source gives roughly 0.5 degrees Celsius over those two hours; 5 degrees is ten times that."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tallow-temperature-and-sleep-onset-vessel",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 7,
+          "end": 7
+        },
+        "consequence": "A reader learns that tightening vessels releases heat, the reverse of the mechanism, and cannot see why warm hands and feet go with a falling core temperature.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "When peripheral blood vessels constrict, warm blood is carried to the skin and heat leaves the body.",
+          "after": "When peripheral blood vessels dilate, warm blood is carried to the skin and heat leaves the body."
+        },
+        "explanation": "Heat leaves when the peripheral vessels dilate, not when they constrict.",
+        "proof": {
+          "sourced": {
+            "quote": "when peripheral blood vessels dilate, warm blood is carried to the skin and heat leaves the body",
+            "planted": "contradicted",
+            "reason": "The source says heat leaves when the vessels dilate; the sentence says constrict."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tallow-temperature-and-sleep-onset-melatonin",
+        "pattern": "reasoning.unsupported_mechanism",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 10,
+          "end": 10
+        },
+        "consequence": "A reader believes baths act partly through melatonin, which the study never examined.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The bath works because it draws blood to the skin and speeds later heat loss, and it also raises the release of melatonin.",
+          "after": "The bath works because it draws blood to the skin and speeds later heat loss."
+        },
+        "explanation": "The source explains the bath's effect by blood drawn to the skin and faster later heat loss; it says nothing of melatonin.",
+        "proof": {
+          "sourced": {
+            "quote": "because the bath draws blood to the skin and speeds later heat loss",
+            "planted": "unsupported",
+            "reason": "The source gives only the heat-loss mechanism for the bath; melatonin is not mentioned."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Core body temperature follows a circadian rhythm.\nIn the two hours before habitual bedtime it falls by about 0.5 degrees Celsius.\nThe Brannock sleep cohort, led by Imelda Quarrie at the Tallow Institute, followed 212 adults aged 20 to 35.\nEach wore an ingestible temperature sensor for fourteen nights.\nPeople whose temperature fell faster than 0.3 degrees per hour fell asleep a median of 11 minutes sooner than those whose temperature fell more slowly.\nQuarrie attributes the effect to heat loss through the hands and feet.\nWhen peripheral blood vessels dilate, warm blood is carried to the skin and heat leaves the body.\nShe cautions that the cohort was recruited from university students, so the finding may not hold for older adults, whose temperature rhythm is flatter.\nIn a follow-up of 40 participants, a warm bath taken ninety minutes before bed produced the same faster fall.\nThe bath works because it draws blood to the skin and speeds later heat loss.\nThe cohort did not measure daytime caffeine intake, so the study cannot say whether caffeine altered the pattern.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 7,
+        "end": 7
+      },
+      "text": "Constrict should be dilate.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 2,
+        "end": 2
+      },
+      "text": "I'm not happy with the figure in this sentence.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "Forty people is too small a follow-up to say anything about baths.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "half_found": {
+          "finding": 1
+        }
+      },
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

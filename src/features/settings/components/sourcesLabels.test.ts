@@ -26,6 +26,7 @@ describe('sourcesLabels', () => {
       [{ gate: 'noKey' }, 'Needs a key'],
       [{ gate: 'noInstance' }, 'Needs your SearXNG address'],
       [{ gate: 'noContact' }, 'Needs a contact'],
+      [{ gate: 'noEmail' }, 'Needs an email address as your contact'],
     ])('says why a finder is off: %j', (overrides, text) => {
       expect(statusLine(finder(overrides), keys)).toEqual({ text, tone: 'muted' });
     });

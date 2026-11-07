@@ -268,6 +268,19 @@ fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
         .collect()
 }
 
+/// Why `lesson`, with the sections `cuts` takes out and those left with too
+/// little, could not be published, when it could not.
+pub(super) fn unpublishable(lesson: &Value, cuts: &Cuts) -> Option<String> {
+    let mut cuts = cuts.clone();
+    cuts.keep_current(lesson);
+    for unit in too_little(lesson, &cuts) {
+        if let Some(label) = unit_label(lesson, unit) {
+            cuts.go(unit, label);
+        }
+    }
+    thin(lesson, &cuts.units())
+}
+
 /// Why a lesson that loses the sections that go cannot be published, when it
 /// cannot: more than a third of its sections, its first explanation, all its
 /// questions or every question of a kind it asks, without which it cannot be

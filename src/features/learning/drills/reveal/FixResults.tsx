@@ -1,6 +1,7 @@
 import { useId } from 'react';
 
 import { Badge } from '@/components/ui/badge';
+import type { ReviewKind } from '@/features/learning/drills/drillOptions';
 import { DECIDED_BY, FIX_OUTCOME } from '@/features/learning/drills/reveal/revealCopy';
 import {
   issuesNamed,
@@ -71,7 +72,11 @@ function FixRow({ fix, ranked }: { fix: IssueFix; ranked: readonly RankedIssue[]
 }
 
 /** What came of the learner's own fix: the hidden suite's verdict, then each issue's result. */
-export function FixResults({ fixes, ranked }: { fixes: readonly IssueFix[]; ranked: readonly RankedIssue[] }) {
+export function FixResults({ fixes, ranked, material = 'code' }: {
+  fixes: readonly IssueFix[];
+  ranked: readonly RankedIssue[];
+  material?: ReviewKind;
+}) {
   const headingId = useId();
   const rows = [...fixes].sort((a, b) => numberOf(a.issue, ranked) - numberOf(b.issue, ranked));
   if (rows.length === 0) return null;
@@ -81,7 +86,7 @@ export function FixResults({ fixes, ranked }: { fixes: readonly IssueFix[]; rank
   return (
     <section aria-labelledby={headingId} className="space-y-3">
       <h2 id={headingId} className={sectionHeading}>Your fix</h2>
-      <SuiteVerdictBox summary={{ ...summary, output }} />
+      {material === 'code' && <SuiteVerdictBox summary={{ ...summary, output }} />}
       <ul className="space-y-3">
         {rows.map((fix) => (
           <li key={fix.issue}>

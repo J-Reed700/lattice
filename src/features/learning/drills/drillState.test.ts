@@ -9,7 +9,7 @@ import { EMPTY_DRAFT } from './reviewDraft';
 
 const drill = {
   title: 'A rate limiter',
-  language: 'python',
+  material: { kind: 'code', language: 'python' } as const,
   files: [
     { path: 'a.py', text: 'a = 1\n' },
     { path: 'b.py', text: 'b = 1\n' },

@@ -202,7 +202,7 @@ describe('ClaimActions', () => {
   });
 
   it('shows the error the action returned', () => {
-    setup(unsupportedItem(1), null, { error: 'The review changed; reload it.' });
+    setup(unsupportedItem(1), null, { error: new Error('The review changed; reload it.') });
     expect(screen.getByRole('alert')).toHaveTextContent('The review changed; reload it.');
   });
 });

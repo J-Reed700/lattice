@@ -1,5 +1,6 @@
-//! The two drill jobs. `learning.drill_build` builds one drill from clean code, planting and proving its defects, and
-//! stores it in the bank (docs/design/2026-11-04-code-review-drills.md section 2). `learning.drill_grading` grades one
+//! The two drill jobs. `learning.drill_build` builds one drill from clean code or a clean explanation of a passage,
+//! planting and proving its defects, and stores it in the bank (docs/design/2026-11-04-code-review-drills.md section 2,
+//! docs/design/2026-11-05-spot-the-errors-drills.md section 4). `learning.drill_grading` grades one
 //! submitted attempt against the drill's key, running or judging the learner's fix (section 4).
 
 use super::attempt_grading::{give_up, AttemptGrading};
@@ -7,6 +8,7 @@ use super::attempts;
 use super::build::DrillBuild;
 use super::grader::ReviewGrader;
 use super::grading::JudgeGrader;
+use super::material::{material_for, ClaimSourceCheck};
 use super::runner::runner_for;
 use super::spec::DrillSpec;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
@@ -25,7 +27,7 @@ pub const DRILL_GRADING: &str = "learning.drill_grading";
 /// The steps of a grading job, for its progress: the review, the fix and the save.
 pub const GRADING_STEPS: u32 = 3;
 
-/// One build per language at a time; a running build resumes from its checkpoints after a restart, and a
+/// One build per shelf of the bank at a time; a running build resumes from its checkpoints after a restart, and a
 /// disconnected model defers it rather than failing it.
 pub fn drill_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
@@ -69,17 +71,23 @@ impl JobHandler for DrillBuildWorker {
         };
         let pin = pin?;
         let llm = pin.llm.as_ref();
-        let runner = runner_for(&spec.language, &self.runtimes);
+        let runner = spec
+            .material
+            .language()
+            .and_then(|language| runner_for(language, &self.runtimes));
+        let check = ClaimSourceCheck::new(llm);
+        let material = material_for(&spec.material, runner.as_deref(), &check);
         let grader = (self.grader)(llm);
-        DrillBuild::new(
+        let outcome = DrillBuild::new(
             llm,
-            runner.as_deref(),
+            material,
             grader.as_ref(),
             &self.pool,
             context.cancellation().clone(),
         )
         .run(context, &spec)
-        .await
+        .await;
+        outcome
     }
 }
 
@@ -145,16 +153,23 @@ impl JobHandler for DrillGradingWorker {
             Err(error) => return give_up(&self.pool, context, &id, None, &error).await,
         };
         let llm = pin.llm.as_ref();
-        let runner = runner_for(&stored.drill.language, &self.runtimes);
+        let runner = stored
+            .drill
+            .material
+            .language()
+            .and_then(|language| runner_for(language, &self.runtimes));
+        let check = ClaimSourceCheck::new(llm);
+        let material = material_for(&stored.drill.material, runner.as_deref(), &check);
         let grader = (self.grader)(llm);
-        AttemptGrading::new(
+        let outcome = AttemptGrading::new(
             llm,
-            runner.as_deref(),
+            material,
             grader.as_ref(),
             &self.pool,
             context.cancellation().clone(),
         )
         .run(context, &attempt, &stored)
-        .await
+        .await;
+        outcome
     }
 }

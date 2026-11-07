@@ -24,6 +24,12 @@ describe('describing lines', () => {
     expect(describeSpan({ path: 'api.py', start: 12, end: 14 })).toBe('Lines 12–14 of api.py');
   });
 
+  it('says one sentence or a run of them for a passage, with no file', () => {
+    expect(describeSpan({ path: 'explanation.md', start: 3, end: 3 }, 'passage')).toBe('Sentence 3');
+    expect(describeSpan({ path: 'explanation.md', start: 3, end: 4 }, 'passage')).toBe('Sentences 3–4');
+    expect(describeSpan({ path: 'explanation.md', start: 3, end: 4 }, 'code')).toBe('Lines 3–4 of explanation.md');
+  });
+
   it('counts the lines a comment may name as the backend does', () => {
     expect(lineCount('')).toBe(0);
     expect(lineCount('a')).toBe(1);

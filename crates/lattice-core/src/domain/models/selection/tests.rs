@@ -1,4 +1,4 @@
-//! Tests for compatibility scoring, recommendations and download URL safety.
+//! Tests for system capability helpers and download URL safety.
 
 #![cfg(test)]
 
@@ -24,8 +24,6 @@ fn create_test_model() -> ModelMetadata {
         category: ModelCategory::LLM,
         description: "Compact model".into(),
         size_gb: 1.8,
-        minimum_ram_gb: 4.0,
-        recommended_ram_gb: 8.0,
         context_length: 4096,
         performance_tier: PerformanceTier::Fast,
         supported_quantizations: vec!["Q4_K_M".into()],
@@ -44,100 +42,6 @@ fn create_test_model() -> ModelMetadata {
 }
 
 #[test]
-fn test_excellent_compatibility() {
-    let scorer = CompatibilityScorer::new();
-    let capabilities = create_test_capabilities();
-    let model = create_test_model();
-
-    let score = scorer.score_compatibility(&model, &capabilities).unwrap();
-
-    assert_eq!(score.compatibility_level, CompatibilityLevel::Excellent);
-    assert!(score.overall_score >= 85.0);
-    assert!(score.is_compatible());
-    assert!(score.is_recommended());
-    assert!(score.blockers.is_empty());
-}
-
-#[test]
-fn test_insufficient_ram() {
-    let scorer = CompatibilityScorer::new();
-    let mut capabilities = create_test_capabilities();
-    capabilities.total_ram_gb = 2.0; // Below minimum
-
-    let model = create_test_model();
-
-    let score = scorer.score_compatibility(&model, &capabilities).unwrap();
-
-    assert_eq!(score.compatibility_level, CompatibilityLevel::Incompatible);
-    assert!(!score.is_compatible());
-    assert!(!score.blockers.is_empty());
-}
-
-#[test]
-fn test_insufficient_disk() {
-    let scorer = CompatibilityScorer::new();
-    let mut capabilities = create_test_capabilities();
-    capabilities.available_disk_gb = 1.0; // Below model size
-
-    let model = create_test_model();
-
-    let score = scorer.score_compatibility(&model, &capabilities).unwrap();
-
-    assert_eq!(score.compatibility_level, CompatibilityLevel::Incompatible);
-    assert!(!score.is_compatible());
-    assert!(!score.blockers.is_empty());
-}
-
-#[test]
-fn test_cpu_only_reduces_score() {
-    let scorer = CompatibilityScorer::new();
-    let mut capabilities = create_test_capabilities();
-    capabilities.gpu_acceleration = GpuAcceleration::None;
-    capabilities.gpu_type = GpuType::None;
-
-    let model = create_test_model();
-
-    let cpu_score = scorer.score_compatibility(&model, &capabilities).unwrap();
-
-    let gpu_capabilities = create_test_capabilities();
-    let gpu_score = scorer
-        .score_compatibility(&model, &gpu_capabilities)
-        .unwrap();
-
-    assert!(cpu_score.is_compatible());
-    assert_eq!(cpu_score.gpu_score, 50.0);
-    // CPU-only should have lower score than with GPU
-    assert!(cpu_score.overall_score < gpu_score.overall_score);
-}
-
-#[test]
-fn test_model_recommendation_ranking() {
-    let scorer = CompatibilityScorer::new();
-    let capabilities = create_test_capabilities();
-
-    let mut model1 = create_test_model();
-    model1.id = "model1".into();
-    model1.performance_tier = PerformanceTier::Fast;
-
-    let mut model2 = create_test_model();
-    model2.id = "model2".into();
-    model2.performance_tier = PerformanceTier::Accurate;
-
-    let score1 = scorer.score_compatibility(&model1, &capabilities).unwrap();
-    let score2 = scorer.score_compatibility(&model2, &capabilities).unwrap();
-
-    let mut recommendations = vec![
-        ModelRecommendation::new(model1, score1),
-        ModelRecommendation::new(model2, score2),
-    ];
-
-    ModelRecommendation::sort_by_ranking(&mut recommendations);
-
-    // Fast tier gets bonus, should rank higher
-    assert_eq!(recommendations[0].model.id, "model1");
-}
-
-#[test]
 fn test_system_capabilities_helpers() {
     let capabilities = create_test_capabilities();
 
@@ -150,14 +54,11 @@ fn test_system_capabilities_helpers() {
 }
 
 #[test]
-fn test_model_metadata_helpers() {
+fn test_model_fits_on_disk() {
     let model = create_test_model();
 
-    assert!(model.fits_in_ram(8.0));
-    assert!(!model.fits_in_ram(2.0));
     assert!(model.fits_on_disk(50.0));
-    assert!(model.has_recommended_ram(8.0));
-    assert!(!model.has_recommended_ram(6.0));
+    assert!(!model.fits_on_disk(1.0));
 }
 
 #[test]

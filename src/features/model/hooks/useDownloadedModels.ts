@@ -5,6 +5,7 @@ import { type UnlistenFn } from '@tauri-apps/api/event';
 
 import { useApi } from '@/contexts/ApiContext';
 import { LOADED_MODELS_QUERY_KEY } from '@/features/model/hooks/useLoadedModels';
+import { SETTINGS_QUERY_KEY } from '@/features/settings/hooks/useSettingsQuery';
 import { VaultAPI, type ApiClient } from '@/lib/api';
 import { toast } from '@/stores/toastStore';
 import type { ApiResult } from '@/types';
@@ -163,6 +164,7 @@ export function reportWarmupFailure(
 
 export const useDownloadedModelsListener = () => {
   const api = useApi();
+  const queryClient = useQueryClient();
   const { fetchDownloadedModels } = useDownloadedModels();
 
   useEffect(() => {
@@ -178,6 +180,7 @@ export const useDownloadedModelsListener = () => {
             const { modelName } = event.payload;
             try {
               const updated = await fetchDownloadedModels();
+              await queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
               toast.success(`${modelName} ready`);
               const completed = updated.find((model) => model.model_name === modelName);
               // Warm-up answers with an ApiResult and never rejects, so the
@@ -212,5 +215,5 @@ export const useDownloadedModelsListener = () => {
       isMounted = false;
       unlistenFn?.();
     };
-  }, [api, fetchDownloadedModels]);
+  }, [api, fetchDownloadedModels, queryClient]);
 };

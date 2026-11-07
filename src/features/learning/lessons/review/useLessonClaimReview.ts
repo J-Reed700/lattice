@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { learningClaimReviewKey, learningLessonEvidencePrefix, learningPlanKey } from '@/features/learning/api/learningQueryKeys';
+import { learningClaimReviewKey, learningLessonEvidencePrefix, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import type {
   ClaimActionRequestDto,
@@ -10,10 +10,11 @@ import type {
   ResolveLearningClaimResultDto,
   SnapshotNoteDto,
 } from '@/lib/bindings';
+import { failureToError } from '@/lib/errorHandling';
 import type { ApiResult } from '@/types';
 
 function unwrap<T>(result: ApiResult<T>): T {
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw failureToError(result);
   return result.data;
 }
 
@@ -34,6 +35,7 @@ async function refreshAfterAction(client: QueryClient, programId: string, lesson
   await Promise.all([
     client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
     client.invalidateQueries({ queryKey: learningLessonEvidencePrefix(programId) }),
+    client.invalidateQueries({ queryKey: learningProgramKey(programId) }),
   ]);
 }
 

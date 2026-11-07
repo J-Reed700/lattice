@@ -1,0 +1,1 @@
+A change for a pattern of the testing family edits a test file named in the request, and the test file keeps passing on the original code.

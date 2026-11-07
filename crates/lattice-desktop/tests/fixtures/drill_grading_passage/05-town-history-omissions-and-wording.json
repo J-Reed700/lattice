@@ -1,0 +1,143 @@
+{
+  "name": "05-town-history-omissions-and-wording",
+  "kind": "false_positive",
+  "why": "Three findings are not errors: that the explanation does not say how large or who led the guild (a thing it leaves out), a rewording of 'about 9,000 barrels' into words (a preference), and a view that Penhallow's reply is weak (the sentence reports it faithfully). The fourth names the salt tax unit in full ('pence, not shillings'): found. The railway date is missed.",
+  "source": {
+    "versionId": "verrenmouth-harbour-and-salt-tax-v1",
+    "startByte": 70211,
+    "endByte": 71207,
+    "title": "Local History 120, reader: Verrenmouth and the salt tax",
+    "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary. The town's charter of 1412 gave its guild of fishers the sole right to land herring, and by 1550 the harbour handled about 9,000 barrels a year. In 1603 the Crown imposed a salt tax of two pence a pound, which the historian Odalys Penhallow argues was the main reason that the fishers moved their curing sheds upriver to Marlow Reach by 1620. Her argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1615.\n\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth, but Penhallow notes that the silting surveys date from 1640, after the move. The town council responded to the exodus in 1622 by offering a seven-year rent waiver to any cooper who settled within the walls. Only eleven coopers accepted the offer. The population fell from roughly 3,400 in 1600 to 2,100 in 1650, and did not recover until the railway reached the town in 1851."
+  },
+  "drill": {
+    "id": "verrenmouth-harbour-and-salt-tax",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Verrenmouth: the harbour and the salt tax",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary.\nIts charter of 1412 gave the guild of fishers the sole right to land herring.\nBy 1550 the harbour handled about 9,000 barrels a year.\nIn 1603 the Crown imposed a salt tax of two shillings a pound.\nThe historian Odalys Penhallow argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620.\nHer argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1615.\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth.\nPenhallow notes that the silting surveys date from 1640, after the move.\nIn 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only eleven coopers accepted.\nThe population fell from roughly 3,400 in 1600 to 2,100 in 1650.\nIt did not recover until the railway reached the town in 1815.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "verrenmouth-harbour-and-salt-tax-tax",
+        "pattern": "fidelity.wrong_unit_or_magnitude",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 4,
+          "end": 4
+        },
+        "consequence": "A reader takes the salt tax to be twelve times heavier than it was, which inflates its power to drive the fishers away.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "In 1603 the Crown imposed a salt tax of two shillings a pound.",
+          "after": "In 1603 the Crown imposed a salt tax of two pence a pound."
+        },
+        "explanation": "The tax was two pence a pound, not two shillings.",
+        "proof": {
+          "sourced": {
+            "quote": "a salt tax of two pence a pound",
+            "planted": "contradicted",
+            "reason": "The source gives two pence a pound; the sentence gives two shillings, twelve times as much."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "verrenmouth-harbour-and-salt-tax-rail",
+        "pattern": "fidelity.wrong_date_or_order",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 11,
+          "end": 11
+        },
+        "consequence": "A reader dates the town's recovery thirty-six years too early.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "It did not recover until the railway reached the town in 1815.",
+          "after": "It did not recover until the railway reached the town in 1851."
+        },
+        "explanation": "The railway reached the town in 1851.",
+        "proof": {
+          "sourced": {
+            "quote": "did not recover until the railway reached the town in 1851",
+            "planted": "contradicted",
+            "reason": "The source gives 1851 for the railway; the sentence gives 1815."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary.\nIts charter of 1412 gave the guild of fishers the sole right to land herring.\nBy 1550 the harbour handled about 9,000 barrels a year.\nIn 1603 the Crown imposed a salt tax of two pence a pound.\nThe historian Odalys Penhallow argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620.\nHer argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1615.\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth.\nPenhallow notes that the silting surveys date from 1640, after the move.\nIn 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only eleven coopers accepted.\nThe population fell from roughly 3,400 in 1600 to 2,100 in 1650.\nIt did not recover until the railway reached the town in 1851.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 2,
+        "end": 2
+      },
+      "text": "The explanation never says how many members the guild had or who led it.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 3,
+        "end": 3
+      },
+      "text": "'About 9,000 barrels' reads clumsily. I would write 'roughly nine thousand barrels' instead.",
+      "severity": "nit"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 8,
+        "end": 8
+      },
+      "text": "Penhallow's reply is weak, because survey dates tell you nothing about when the silting began.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 4,
+        "end": 4
+      },
+      "text": "Two shillings a pound would be a ruinous tax on salt. A tax in 1603 would have been counted in pence, not shillings.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 3
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      "false_positive",
+      "false_positive",
+      "false_positive",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

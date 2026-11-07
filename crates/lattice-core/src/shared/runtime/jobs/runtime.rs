@@ -48,6 +48,14 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// The wire code of `error`, through the one mapping the renderer's errors use.
+fn cause_code(error: &AppError) -> Option<String> {
+    let code = crate::shared::ipc::ApiError::from(error.clone()).code;
+    serde_json::to_value(code)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+}
+
 async fn until_cancelled<T>(
     cancel: &CancellationToken,
     work: impl Future<Output = T>,
@@ -635,14 +643,18 @@ impl JobRuntime {
         let backoff = kind.config.backoff;
         let job = self.settle(id, backoff, || self.store().get(id)).await?;
         let failure = kind.handler.failure(&job, error);
+        let cause = cause_code(error);
         let repeated = matches!(failure, JobFailure::Defer(_))
             && self.repeats_without_progress(&job, error, backoff).await?;
         match failure {
             JobFailure::Fail { code, message } => {
                 lock(&self.deferred).remove(id);
                 tracing::warn!(job_id = id, %error, "Job failed; saved work requires attention");
-                self.settle(id, backoff, || self.store().fail(id, &code, &message))
-                    .await
+                self.settle(id, backoff, || {
+                    self.store()
+                        .fail_because(id, &code, &message, cause.as_deref())
+                })
+                .await
             }
             JobFailure::Defer(_) if repeated => {
                 lock(&self.deferred).remove(id);
@@ -657,7 +669,8 @@ impl JobRuntime {
                      in between, so another attempt would fail again."
                 );
                 self.settle(id, backoff, || {
-                    self.store().fail(id, REPEATED_FAILURE, &message)
+                    self.store()
+                        .fail_because(id, REPEATED_FAILURE, &message, cause.as_deref())
                 })
                 .await
             }
@@ -671,8 +684,11 @@ impl JobRuntime {
                     ),
                     ..deferral
                 };
-                self.settle(id, backoff, || self.store().defer(id, &deferral, backoff))
-                    .await
+                self.settle(id, backoff, || {
+                    self.store()
+                        .defer_because(id, &deferral, backoff, cause.as_deref())
+                })
+                .await
             }
         }
         .map(drop)

@@ -342,3 +342,100 @@ fn model_location_returns_local_file_for_gguf() {
         }
     );
 }
+
+/// A one-file chat GGUF download completing on a fresh database, with
+/// `already_chosen` as the Learning model the user had set before it.
+/// Returns the settings after the saga handled the completion.
+async fn complete_chat_download(
+    already_chosen: Option<lattice_core::domain::models::model_ref::ModelRef>,
+    dir: &std::path::Path,
+) -> lattice_core::application::contracts::settings::SettingsDto {
+    use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
+    use crate::infrastructure::events::event_bus::EventBus;
+    use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
+    use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
+    use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
+    use lattice_core::application::contracts::settings::SettingsDto;
+    use lattice_core::application::ports::{MockSettingsRepository, SettingsRepositoryPort};
+    use std::sync::Arc;
+
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect(":memory:")
+        .await
+        .expect("create in-memory pool");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("run migrations");
+    sqlx::query(
+        "INSERT INTO models (id, model_name, model_id, base_path, model_type, architecture, status)
+             VALUES ('row-1', 'test-chat-model', 'test-chat-model', ?1, 'chat', 'GGUF', 'downloading')",
+    )
+    .bind(dir.to_string_lossy().into_owned())
+    .execute(&pool)
+    .await
+    .expect("insert model row");
+    let path = dir.join("chat-q4.gguf");
+    std::fs::write(&path, b"weights").expect("write model file");
+    sqlx::query(
+        "INSERT INTO model_files
+                 (id, model_id, file_name, file_path, relative_path, size_bytes, download_url, status)
+             VALUES ('file-chat', 'test-chat-model', 'chat-q4.gguf', ?1, 'chat-q4.gguf', 7,
+                     'https://example.com', 'downloading')",
+    )
+    .bind(path.to_string_lossy().into_owned())
+    .execute(&pool)
+    .await
+    .expect("insert model file row");
+
+    let mut initial = SettingsDto::default();
+    initial.llm.learning_model = already_chosen;
+    let settings = Arc::new(MockSettingsRepository::with_settings(initial));
+    let saga = DownloadSaga::new(
+        Arc::new(EventBus::new()),
+        Arc::new(SqliteModelFileRepository::new(pool.clone())),
+        Arc::new(SqliteUnitOfWorkFactory::new(pool.clone())),
+        Arc::new(DownloadedModelRepository::new(pool.clone())),
+    )
+    .with_settings(settings.clone());
+
+    saga.handle_file_completed(FileDownloadCompletedEvent {
+        model_id: "test-chat-model".to_string(),
+        file_id: "file-chat".to_string(),
+        file_name: "chat-q4.gguf".to_string(),
+        file_size: 7,
+        timestamp: Utc::now(),
+    })
+    .await
+    .expect("handle final file completion");
+
+    settings.get_all().await.expect("read settings")
+}
+
+#[tokio::test]
+async fn a_first_chat_download_also_becomes_the_learning_model() {
+    use lattice_core::domain::models::model_ref::ModelRef;
+    let dir = tempfile::tempdir().expect("create model directory");
+    let settings = complete_chat_download(None, dir.path()).await;
+
+    assert_eq!(
+        settings.llm.learning_model,
+        Some(ModelRef::Local {
+            model_id: "test-chat-model".into()
+        }),
+        "a fresh install is not left without a Learning model"
+    );
+}
+
+#[tokio::test]
+async fn a_chat_download_keeps_the_learning_model_the_user_chose() {
+    use lattice_core::domain::models::model_ref::ModelRef;
+    let dir = tempfile::tempdir().expect("create model directory");
+    let chosen = ModelRef::Local {
+        model_id: "qwen3.5-27b".into(),
+    };
+    let settings = complete_chat_download(Some(chosen.clone()), dir.path()).await;
+
+    assert_eq!(settings.llm.learning_model, Some(chosen));
+}

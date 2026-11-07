@@ -79,6 +79,8 @@ pub struct JobRecord {
     pub staged_result: Option<serde_json::Value>,
     pub result_ref: Option<String>,
     pub error_code: Option<String>,
+    /// The wire code of the error behind a failure or a deferral.
+    pub cause_code: Option<String>,
     pub error_message: Option<String>,
     pub retry_of_job_id: Option<String>,
     pub retry_count: u32,

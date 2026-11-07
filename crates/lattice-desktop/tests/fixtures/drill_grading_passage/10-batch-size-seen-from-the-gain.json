@@ -1,0 +1,123 @@
+{
+  "name": "10-batch-size-seen-from-the-gain",
+  "kind": "exposing_line",
+  "why": "The first finding is on sentence 6 and argues from the gain to the noise: if large batches gave the biggest gain, they cannot be the noisy ones, so sentence 7 is backwards. It names the reversal in full from another sentence: found. The 1.3-point figure is missed. The second finding says weight decay and dropout are one technique, but the explanation and the source keep them apart: false positive.",
+  "source": {
+    "versionId": "quillon-regularisation-v1",
+    "startByte": 33900,
+    "endByte": 34912,
+    "title": "Machine Learning 340, reading: Quillon regularisation",
+    "text": "Weight decay shrinks every weight toward zero at each update, while dropout randomly silences units during training. Okafor and Linde (2022) proposed Quillon regularisation, which penalises the variance of a layer's activations across a batch rather than the size of its weights. On a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs, Quillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points. The authors report that the gain was largest when the batch size was at least 128, because with small batches the variance estimate is too noisy to be useful.\n\nQuillon adds about 6 percent to training time, since the variance is computed at every layer. They did not test it on language models, and they note that the penalty may interfere with layer normalisation, which already rescales activations. Combining Quillon with dropout gave no further reduction in the gap; the authors suggest the two methods act on the same source of overfitting."
+  },
+  "drill": {
+    "id": "quillon-regularisation",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Quillon regularisation",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Weight decay shrinks every weight toward zero at each update, whereas dropout randomly silences units during training.\nOkafor and Linde (2022) proposed Quillon regularisation.\nQuillon penalises the variance of a layer's activations across a batch rather than the size of its weights.\nThey tested it on a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs.\nQuillon cut the gap between training and validation accuracy from 9.1 points to 1.3 points.\nThe gain was largest when the batch size was at least 128.\nWith large batches the variance estimate is too noisy to be useful.\nQuillon adds about 6 percent to training time, since the variance is computed at every layer.\nThe authors did not test it on language models.\nThey note that the penalty may interfere with layer normalisation, which already rescales activations.\nCombining Quillon with dropout gave no further reduction in the gap, which the authors take to suggest that the two methods act on the same source of overfitting.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "quillon-regularisation-gap",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 5,
+          "end": 5
+        },
+        "consequence": "A reader believes Quillon almost closed the gap, when it roughly halved it.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Quillon cut the gap between training and validation accuracy from 9.1 points to 1.3 points.",
+          "after": "Quillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points."
+        },
+        "explanation": "The gap fell from 9.1 points to 4.3, not to 1.3.",
+        "proof": {
+          "sourced": {
+            "quote": "cut the gap between training and validation accuracy from 9.1 points to 4.3 points",
+            "planted": "contradicted",
+            "reason": "The source gives 4.3 points after Quillon; the sentence gives 1.3."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "quillon-regularisation-batch",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 7,
+          "end": 7
+        },
+        "consequence": "A reader thinks large batches defeat Quillon and small ones suit it, the opposite of the reason the authors give.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "With large batches the variance estimate is too noisy to be useful.",
+          "after": "With small batches the variance estimate is too noisy to be useful."
+        },
+        "explanation": "It is small batches that make the variance estimate too noisy.",
+        "proof": {
+          "sourced": {
+            "quote": "with small batches the variance estimate is too noisy to be useful",
+            "planted": "contradicted",
+            "reason": "The source says small batches make the estimate too noisy; the sentence says large ones."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Weight decay shrinks every weight toward zero at each update, whereas dropout randomly silences units during training.\nOkafor and Linde (2022) proposed Quillon regularisation.\nQuillon penalises the variance of a layer's activations across a batch rather than the size of its weights.\nThey tested it on a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs.\nQuillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points.\nThe gain was largest when the batch size was at least 128.\nWith small batches the variance estimate is too noisy to be useful.\nQuillon adds about 6 percent to training time, since the variance is computed at every layer.\nThe authors did not test it on language models.\nThey note that the penalty may interfere with layer normalisation, which already rescales activations.\nCombining Quillon with dropout gave no further reduction in the gap, which the authors take to suggest that the two methods act on the same source of overfitting.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 6,
+        "end": 6
+      },
+      "text": "Sentence 6 says the gain was largest with big batches, and that only makes sense if small batches are the noisy ones. Sentence 7 says large batches give the noisy estimate, so 7 has it backwards.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 1,
+        "end": 1
+      },
+      "text": "Weight decay and dropout are the same technique under two names.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      "missed",
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

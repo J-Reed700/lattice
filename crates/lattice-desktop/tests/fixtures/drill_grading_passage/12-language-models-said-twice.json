@@ -1,0 +1,129 @@
+{
+  "name": "12-language-models-said-twice",
+  "kind": "duplicate",
+  "why": "The first finding says the authors never tested language models and that the claim of similar gains is invented: found. The second only repeats the point and still matches the issue, so it is not a false positive, but the earlier one names it better and is credited. The reversed result of combining with dropout is missed.",
+  "source": {
+    "versionId": "quillon-regularisation-v1",
+    "startByte": 33900,
+    "endByte": 34912,
+    "title": "Machine Learning 340, reading: Quillon regularisation",
+    "text": "Weight decay shrinks every weight toward zero at each update, while dropout randomly silences units during training. Okafor and Linde (2022) proposed Quillon regularisation, which penalises the variance of a layer's activations across a batch rather than the size of its weights. On a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs, Quillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points. The authors report that the gain was largest when the batch size was at least 128, because with small batches the variance estimate is too noisy to be useful.\n\nQuillon adds about 6 percent to training time, since the variance is computed at every layer. They did not test it on language models, and they note that the penalty may interfere with layer normalisation, which already rescales activations. Combining Quillon with dropout gave no further reduction in the gap; the authors suggest the two methods act on the same source of overfitting."
+  },
+  "drill": {
+    "id": "quillon-regularisation",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Quillon regularisation",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Weight decay shrinks every weight toward zero at each update, whereas dropout randomly silences units during training.\nOkafor and Linde (2022) proposed Quillon regularisation.\nQuillon penalises the variance of a layer's activations across a batch rather than the size of its weights.\nThey tested it on a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs.\nQuillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points.\nThe gain was largest when the batch size was at least 128.\nWith small batches the variance estimate is too noisy to be useful.\nQuillon adds about 6 percent to training time, since the variance is computed at every layer.\nThe authors also tested it on language models, with similar gains.\nThey note that the penalty may interfere with layer normalisation, which already rescales activations.\nCombining Quillon with dropout reduced the gap further, which the authors take to suggest that the two methods act on different sources of overfitting.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "quillon-regularisation-lang",
+        "pattern": "scope.shifted_population",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 9,
+          "end": 9
+        },
+        "consequence": "A reader believes Quillon is shown to work on language models, a setting the authors did not test.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The authors also tested it on language models, with similar gains.",
+          "after": "The authors did not test it on language models."
+        },
+        "explanation": "The authors did not test Quillon on language models.",
+        "proof": {
+          "sourced": {
+            "quote": "They did not test it on language models",
+            "planted": "contradicted",
+            "reason": "The source says they did not test it on language models; the sentence says they did, with similar gains."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "quillon-regularisation-combo",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 11,
+          "end": 11
+        },
+        "consequence": "A reader expects the two methods to stack, when the authors found no further gain from combining them.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Combining Quillon with dropout reduced the gap further, which the authors take to suggest that the two methods act on different sources of overfitting.",
+          "after": "Combining Quillon with dropout gave no further reduction in the gap, which the authors take to suggest that the two methods act on the same source of overfitting."
+        },
+        "explanation": "Combining Quillon with dropout gave no further reduction, which the authors read as both acting on the same source of overfitting.",
+        "proof": {
+          "sourced": {
+            "quote": "Combining Quillon with dropout gave no further reduction in the gap; the authors suggest the two methods act on the same source of overfitting",
+            "planted": "contradicted",
+            "reason": "The source reports no further reduction and one shared source of overfitting; the sentence reports a further reduction and different sources."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Weight decay shrinks every weight toward zero at each update, whereas dropout randomly silences units during training.\nOkafor and Linde (2022) proposed Quillon regularisation.\nQuillon penalises the variance of a layer's activations across a batch rather than the size of its weights.\nThey tested it on a 12-layer image classifier trained on the Wexcombe dataset of 48,000 labelled photographs.\nQuillon cut the gap between training and validation accuracy from 9.1 points to 4.3 points.\nThe gain was largest when the batch size was at least 128.\nWith small batches the variance estimate is too noisy to be useful.\nQuillon adds about 6 percent to training time, since the variance is computed at every layer.\nThe authors did not test it on language models.\nThey note that the penalty may interfere with layer normalisation, which already rescales activations.\nCombining Quillon with dropout gave no further reduction in the gap, which the authors take to suggest that the two methods act on the same source of overfitting.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "The authors did not run this on language models. Their experiments were on one image classifier, so claiming they tried language models and saw similar gains is invented.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 9,
+        "end": 9
+      },
+      "text": "Same point again, this isn't in the study.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      }
+    ]
+  }
+}
