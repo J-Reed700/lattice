@@ -39,7 +39,7 @@ struct Finding {
     reason: String,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Deserialize, PartialEq, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 enum Verdict {
     Actionable,
@@ -71,35 +71,59 @@ fn invalid_finding(index: usize, detail: &str) -> AppError {
     ))
 }
 
+/// A decision that kept the protocol: its verdict and the finding it
+/// establishes, if any.
+type Kept = (Verdict, Option<ReviewFinding>);
+
 /// The findings `raw` establishes. A decision that breaks the protocol fails
 /// the answer, so it is asked for again; on the `last` answer such a decision
-/// leaves its finding not established instead, as the factual gate still runs.
+/// gives way to one an earlier answer reached on the same verdict within the
+/// protocol (`kept`), or else leaves its finding not established, as the
+/// factual gate still runs.
 fn accepted(
     raw: &str,
     issues: &[ReviewFinding],
     evidence: &HashMap<String, EvidenceKind>,
     last: bool,
+    kept: &mut HashMap<usize, Kept>,
 ) -> Result<Vec<ReviewFinding>> {
     let decisions: HashMap<String, Finding> = generation::parse_json(raw)?;
     if decisions.len() != issues.len() && !last {
         return Err(invalid());
     }
     let mut actionable = Vec::new();
+    let mut broken = None;
     for (index, issue) in issues.iter().enumerate() {
-        let decided = decisions
-            .get(&format!("issue-{index}"))
-            .ok_or_else(invalid)
-            .and_then(|finding| decided(index, issue, finding, evidence));
+        let finding = decisions.get(&format!("issue-{index}"));
+        let decided = finding.ok_or_else(invalid).and_then(|finding| {
+            decided(index, issue, finding, evidence)
+                .map(|established| (finding.verdict, established))
+        });
         match decided {
-            Ok(Some(finding)) => actionable.push(finding),
-            Ok(None) => {}
-            Err(error) if last => {
-                tracing::warn!(index, %error, "A review decision broke the protocol twice; its finding is not established");
+            Ok((verdict, established)) => {
+                actionable.extend(established.clone());
+                kept.insert(index, (verdict, established));
             }
-            Err(error) => return Err(error),
+            Err(error) if last => {
+                let earlier = kept.get(&index).filter(|(verdict, _)| {
+                    finding.is_some_and(|finding| finding.verdict == *verdict)
+                });
+                match earlier {
+                    Some((_, established)) => {
+                        tracing::info!(index, %error, "A review decision broke the protocol when asked again; the first answer's on the same verdict stands");
+                        actionable.extend(established.clone());
+                    }
+                    None => {
+                        tracing::warn!(index, %error, "A review decision broke the protocol twice; its finding is not established");
+                    }
+                }
+            }
+            Err(error) => {
+                broken.get_or_insert(error);
+            }
         }
     }
-    Ok(actionable)
+    broken.map_or(Ok(actionable), Err)
 }
 
 /// `issue` with its site when `finding` establishes it, `None` when it does
@@ -329,8 +353,10 @@ pub(in crate::features::learning) async fn check(
         |request| {
             let evidence = built.lock().unwrap_or_else(PoisonError::into_inner).clone();
             async move {
-                // The answer asked for again is the last.
+                // The answer asked for again is the last; `kept` holds the
+                // decisions before it that kept the protocol.
                 let answers = AtomicUsize::new(0);
+                let kept = Mutex::new(HashMap::new());
                 complete_checked_request(
                     llm,
                     request,
@@ -342,7 +368,8 @@ pub(in crate::features::learning) async fn check(
                     }),
                     |raw| {
                         let last = answers.fetch_add(1, Ordering::Relaxed) > 0;
-                        accepted(raw, issues, &evidence, last)
+                        let mut kept = kept.lock().unwrap_or_else(PoisonError::into_inner);
+                        accepted(raw, issues, &evidence, last, &mut kept)
                     },
                 )
                 .await
@@ -375,7 +402,7 @@ mod tests {
         issues: &[ReviewFinding],
         evidence: &HashMap<String, EvidenceKind>,
     ) -> Result<Vec<ReviewFinding>> {
-        accepted(raw, issues, evidence, false)
+        accepted(raw, issues, evidence, false, &mut HashMap::new())
     }
 
     fn placed(findings: Vec<ReviewFinding>) -> Vec<(String, Option<FindingSite>)> {
