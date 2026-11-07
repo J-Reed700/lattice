@@ -135,16 +135,15 @@ pub async fn save_learning_card_draft(
     request: SaveLearningCardDraftRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningMemoryDto, ApiError> {
-    for (value, name, max) in [
-        (&request.question, "Question", 2000),
-        (&request.answer, "Answer", 1000),
-        (&request.explanation, "Explanation", 3000),
+    for (value, name) in [
+        (&request.question, "Question"),
+        (&request.answer, "Answer"),
+        (&request.explanation, "Explanation"),
     ] {
-        let n = value.trim().chars().count();
-        if n == 0 || n > max {
+        if value.trim().is_empty() {
             return Err(ApiError::from(
                 lattice_core::shared::error::AppError::InvalidInput(format!(
-                    "{name} must contain 1–{max} characters."
+                    "{name} must not be empty."
                 )),
             ));
         }

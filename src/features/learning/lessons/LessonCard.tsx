@@ -12,8 +12,10 @@ import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
 import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
-import { LessonEvidencePanel, LessonSectionEvidence } from '@/features/learning/lessons/LessonEvidencePanel';
-import { claimsCount, claimsNeedYou, preparingLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { LessonEvidencePanel, LessonSectionEvidence, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
+import { UnverifiedStatements, unverifiedStatements } from '@/features/learning/lessons/UnverifiedStatements';
+import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
+import { claimsCount, claimsNeedYou, statementsNotVerified, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { isTeachingWaiting } from '@/features/learning/lessons/review/TeachingFindings';
@@ -81,7 +83,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     program.summary.id,
     lesson.id,
     program.summary.revision,
-    showCitations && expanded && lesson.preparation === 'ready',
+    lesson.preparation === 'ready',
   );
   const objectiveCitation = findOutlineCitation(
     outlineEvidence,
@@ -106,6 +108,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   const reviewState = review.data?.state ?? (holdingJob ? 'needs_review' : null);
   const waiting = review.data?.claims.filter(isWaitingForYou).length ?? null;
   const teachingWaiting = review.data?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
+  const notVerified = unverifiedCount(evidenceReport.data);
   const needsReview = reviewState === 'needs_review' || reviewState === 'stopped';
   // Never "0 claims": a lesson with none waiting is held by the audit or ready to resume.
   const hold = review.data && waiting != null ? reviewHold(review.data, waiting) : 'claims';
@@ -117,10 +120,10 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   // The first that applies, as §4.4 orders them.
   const statusLabel = reviewState === 'stopped' ? 'Stopped with a cause to fix'
     : needsReview ? holdLabel[hold]
-    : lesson.preparation === 'ready' ? teachingWaiting > 0 ? `Ready · ${teachingNotesForYou(teachingWaiting)}` : 'Ready'
-    : preparingThis ? preparingLine(activeJob?.activity?.claims)
+    : lesson.preparation === 'ready' ? ['Ready', teachingWaiting > 0 ? teachingNotesForYou(teachingWaiting) : null, notVerified > 0 ? statementsNotVerified(notVerified) : null].filter(Boolean).join(' · ')
+    : preparingThis ? preparingLine(activeJob?.activity)
     : 'Outline';
-  const reviewable = Boolean(onReview) && (needsReview || teachingWaiting > 0);
+  const reviewable = Boolean(onReview) && (needsReview || teachingWaiting > 0 || notVerified > 0);
   const openReview = () => onReview?.(program.summary.id, lesson.id);
 
   const hasMargin = lesson.preparation === 'ready' && contextVisible;
@@ -189,6 +192,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                     : heldRecap ? <p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p>
                     : <div className="studio-lesson-prose">{prose(block.body)}</div>}
                   {block.kind === 'reflection' && recallFirst && <LessonFromMemory lessonId={lesson.id} compared={compared} onCompare={compare} />}
+                  <UnverifiedStatements statements={unverifiedStatements(evidenceReport.data, index)} />
                   {showCitations && <LessonSectionEvidence report={evidenceReport} sectionIndex={index} />}
                   {showCitations && evidenceReport.isSuccess && !evidenceReport.data && <SourceLine ids={block.sourceIds} sources={program.sources} />}
                   {block.kind === 'guided_practice' && selected && program.summary.status === 'active' && <div id={`guided-${lesson.id}`}><PracticeWorkbenchPanel key={lesson.id} program={program} lesson={lesson} taskKind="guided" embedded onContinue={onPractice} /></div>}

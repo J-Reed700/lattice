@@ -19,12 +19,21 @@ mod claim_pairs;
 mod course_e2e;
 #[path = "live_course_eval.rs"]
 mod course_eval;
-#[path = "live_page_recall_eval.rs"]
-mod page_recall;
 #[path = "live_small_lesson.rs"]
 mod small;
 #[path = "live_web_trace.rs"]
 mod web_trace;
+
+/// The embedding model a live run was given, loaded once, or none. The course
+/// indexes of a live run read it through this.
+struct GivenModel(Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>>);
+
+#[async_trait::async_trait]
+impl crate::infrastructure::passage_index::EmbedderSource for GivenModel {
+    async fn embedder(&self) -> Option<Arc<dyn lattice_core::application::ports::EmbeddingPort>> {
+        self.0.clone()
+    }
+}
 
 /// The configured model as the app reaches it, every answer
 /// recorded under `directory`.
@@ -1026,7 +1035,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             crate::features::learning::references::course_index::CourseIndexes::new(
                 indexes.into(),
                 pool.clone(),
-                Arc::new(page_recall::GivenModel(Some(Arc::new(model)))),
+                Arc::new(GivenModel(Some(Arc::new(model)))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
                 lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone()),
                 Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),

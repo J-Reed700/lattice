@@ -71,7 +71,7 @@ pub(in crate::features::learning) async fn judge_for_publication(
 }
 
 /// [`judge_for_publication`], the judge reading the passages it is shown in
-/// `reading` order (positions in the page; a pass B page's
+/// `reading` order (positions in the page; a page of the course's
 /// `reading_order`). The positions it returns are the page's, whatever order
 /// it read.
 pub(in crate::features::learning) async fn judge_in_order(
@@ -140,7 +140,9 @@ pub(in crate::features::learning) async fn judge_in_order(
             return Judged::unanswered(unchecked(TOO_LONG), Vec::new());
         }
         let refusal = {
-            let _model_call = crate::features::learning::lesson_progress::model_call();
+            let _model_call = crate::features::learning::lesson_progress::model_call(
+                crate::features::learning::lesson_progress::Term::Reading,
+            );
             match checker.check_passages_or_size_refusal(claim, &texts).await {
                 Ok(answered) => {
                     return Judged {

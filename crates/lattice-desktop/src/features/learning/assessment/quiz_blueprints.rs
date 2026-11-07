@@ -123,11 +123,8 @@ fn minutes_for(format: LearningItemFormat) -> u32 {
     }
 }
 
-fn bounded_title(prefix: &str, title: &str) -> String {
+fn scope_title(prefix: &str, title: &str) -> String {
     format!("{prefix}: {}", title.trim())
-        .chars()
-        .take(160)
-        .collect()
 }
 
 /// The blueprint a scope should have now, or None when it has nothing to ask
@@ -255,7 +252,7 @@ pub fn blueprint_for(
             }
             (
                 LearningAssessmentPurpose::Checkpoint,
-                bounded_title("Lesson quiz", &lesson.title),
+                scope_title("Lesson quiz", &lesson.title),
                 settings.quiz_pass,
                 vec![lesson],
             )
@@ -304,7 +301,7 @@ pub fn blueprint_for(
             }
             (
                 LearningAssessmentPurpose::ModuleTest,
-                bounded_title("Module test", &module.title),
+                scope_title("Module test", &module.title),
                 settings.test_pass,
                 lessons,
             )
@@ -340,7 +337,7 @@ pub fn blueprint_for(
             }
             (
                 LearningAssessmentPurpose::Cumulative,
-                bounded_title("Course exam", &facts.program_title),
+                scope_title("Course exam", &facts.program_title),
                 settings.exam_pass,
                 lessons,
             )

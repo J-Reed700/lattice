@@ -20,9 +20,9 @@ export function EditFlashcard({ card, onClose }: { card: StudyCardDto; onClose: 
         event.preventDefault();
         if (!update.isPending) update.mutate({ cardId: card.id, question, answer, explanation }, { onSuccess: onClose });
       }}>
-        <div><label htmlFor="edit-study-question" className="mb-2 block text-sm">Question</label><textarea id="edit-study-question" className={`${settingsFieldClass} min-h-24 w-full`} required maxLength={2000} value={question} onChange={e => setQuestion(e.target.value)} /></div>
-        <div><label htmlFor="edit-study-answer" className="mb-2 block text-sm">Correct answer</label><textarea id="edit-study-answer" className={`${settingsFieldClass} min-h-20 w-full`} required maxLength={1000} value={answer} onChange={e => setAnswer(e.target.value)} /></div>
-        <div><label htmlFor="edit-study-explanation" className="mb-2 block text-sm">Explanation</label><textarea id="edit-study-explanation" className={`${settingsFieldClass} min-h-32 w-full`} required maxLength={3000} value={explanation} onChange={e => setExplanation(e.target.value)} /></div>
+        <div><label htmlFor="edit-study-question" className="mb-2 block text-sm">Question</label><textarea id="edit-study-question" className={`${settingsFieldClass} min-h-24 w-full`} required value={question} onChange={e => setQuestion(e.target.value)} /></div>
+        <div><label htmlFor="edit-study-answer" className="mb-2 block text-sm">Correct answer</label><textarea id="edit-study-answer" className={`${settingsFieldClass} min-h-20 w-full`} required value={answer} onChange={e => setAnswer(e.target.value)} /></div>
+        <div><label htmlFor="edit-study-explanation" className="mb-2 block text-sm">Explanation</label><textarea id="edit-study-explanation" className={`${settingsFieldClass} min-h-32 w-full`} required value={explanation} onChange={e => setExplanation(e.target.value)} /></div>
         {update.isError && <p role="alert" className="text-sm text-danger-fg">{update.error.message}</p>}
         <div className="flex justify-end gap-2"><Button type="button" variant="ghost" disabled={update.isPending} onClick={onClose}>Cancel</Button><Button type="submit" disabled={update.isPending || !question.trim() || !answer.trim() || !explanation.trim()}>{update.isPending ? 'Saving…' : 'Save card'}</Button></div>
       </form>

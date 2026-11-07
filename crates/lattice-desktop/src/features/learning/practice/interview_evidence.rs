@@ -215,14 +215,10 @@ impl EvidenceBank {
             }
         }
         if !inline_tokens.is_empty() {
-            let mut msg = format!(
+            return Err(invalid(format!(
                 "Evidence choice IDs belong only in keyPoints citations arrays. Remove inline {} labels from referenceAnswer, commonMistakes, scoringCriteria and all prose.",
                 inline_tokens.join(", ")
-            );
-            if standard.reference_answer.trim().chars().count() > 4_000 {
-                msg.push_str(" Also shorten referenceAnswer to under 3500 characters (maximum 4000 characters).");
-            }
-            return Err(invalid(msg));
+            )));
         }
         Ok(standard)
     }

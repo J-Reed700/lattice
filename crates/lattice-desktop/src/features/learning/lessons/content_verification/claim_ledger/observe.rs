@@ -1,171 +1,26 @@
-//! Observing a pass: which claim each finding and failed example is, what is
-//! new about it, and what research found for it (§3, §4 `ledger.observe`).
+//! What a reading or a research round leaves in the ledger: the check a
+//! reading observed, what research found for a claim (§3, §4).
 
 use super::super::provenance_gate::gate_reason;
 use super::super::support_gate::{Sufficiency, Support};
 use super::super::*;
-use super::{is_gone, successor, ClaimLedger, RepairRecord};
+use super::ClaimLedger;
 use crate::features::learning::lessons::claim_reviews::repository::ShownPassage;
-use lattice_core::domain::learning::claim_review::{
-    identities, new_information, reopen_cause, text_sha256, Actor, Check, CheckResult, Checker,
-    ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceFingerprint,
-    EvidenceSeen, ExtractedClaim, Observation, RepairOutcome, SourceChange, TrustAssessment,
-    UnitKind, VerdictKind,
+use lattice_core::application::services::claim_verification::{
+    CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
-use lattice_core::shared::text::{claim_sentence, sentences};
-
-/// A claim of one pass: as extracted, its check, the passages its card
-/// shows, and what the provenance gate weighed for the check, when it did.
-type Found = (
-    ExtractedClaim,
-    Check,
-    Vec<ShownPassage>,
-    Option<TrustAssessment>,
-);
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Reading, Step};
+use lattice_core::domain::learning::claim_review::{
+    text_sha256, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
+    EvidenceFingerprint, EvidenceSeen, SourceChange, TrustAssessment, VerdictKind,
+};
 
 /// The ledger's record of the gate's weighing, after the check it decided.
-fn assessed(trust: TrustAssessment) -> ClaimEvent {
+pub(super) fn assessed(trust: TrustAssessment) -> ClaimEvent {
     ClaimEvent::StandingAssessed {
         reason: gate_reason(&trust),
         trust: Box::new(trust),
         cause: None,
-    }
-}
-
-/// The statement a code example's claim makes (§2.1: an example that cannot
-/// run is a claim like any other).
-fn example_statement(observation_id: &str) -> String {
-    format!("The code example {observation_id} runs to completion with the output it shows.")
-}
-
-/// The text of a lesson field: `body`, `rubric/2/description`, `options/1`.
-pub(in crate::features::learning) fn field_text(
-    candidate: &Value,
-    unit: usize,
-    field: &str,
-) -> Option<String> {
-    let blocks = candidate.get("blocks")?.as_array()?.len();
-    let pointer = if unit < blocks {
-        format!("/blocks/{unit}/{field}")
-    } else {
-        format!("/questions/{}/{field}", unit - blocks)
-    };
-    candidate.pointer(&pointer)?.as_str().map(str::to_owned)
-}
-
-/// The fields of a unit a claim can come from, in the order searched.
-fn unit_fields(item: &Value, block: bool) -> Vec<String> {
-    let mut fields: Vec<String> = Vec::new();
-    let names: &[&str] = if block {
-        &["body", "title", "rubric"]
-    } else {
-        &["prompt", "options", "explanation"]
-    };
-    for name in names {
-        match item.get(*name) {
-            Some(Value::String(_)) => fields.push((*name).to_owned()),
-            Some(Value::Array(items)) => {
-                for (index, entry) in items.iter().enumerate() {
-                    match entry {
-                        Value::String(_) => fields.push(format!("{name}/{index}")),
-                        Value::Object(object) => fields.extend(
-                            object
-                                .iter()
-                                .filter(|(_, value)| value.is_string())
-                                .map(|(key, _)| format!("{name}/{index}/{key}")),
-                        ),
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    fields
-}
-
-/// Each unit of a lesson in the report's order (sections, then questions)
-/// as `(title, text)`: a section's title or a question's prompt, and every
-/// other field a claim can come from, joined. What the Verifier reads.
-pub(in crate::features::learning) fn unit_texts(candidate: &Value) -> Vec<(String, String)> {
-    let mut units = Vec::new();
-    for (list, title_field, block) in [("blocks", "title", true), ("questions", "prompt", false)] {
-        let items = candidate.get(list).and_then(Value::as_array);
-        for item in items.into_iter().flatten() {
-            let title = item
-                .get(title_field)
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned();
-            let text = unit_fields(item, block)
-                .iter()
-                .filter(|field| field.as_str() != title_field)
-                .filter_map(|field| item.pointer(&format!("/{field}")).and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            units.push((title, text));
-        }
-    }
-    units
-}
-
-/// Where `quote` is in unit `unit`: the first field holding it. With the
-/// claim's `statement`, the location narrows to the one sentence of the
-/// quote that the statement restates (claim sources design §18.3), its span
-/// the sentence's own place; a statement the locator cannot place, and a
-/// code example (`None`, its quote is the code), keep the quote.
-pub(in crate::features::learning) fn locate(
-    candidate: &Value,
-    unit: usize,
-    quote: &str,
-    statement: Option<&str>,
-) -> ClaimLocation {
-    let blocks = candidate
-        .get("blocks")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    let block = unit < blocks;
-    let item = if block {
-        candidate.pointer(&format!("/blocks/{unit}"))
-    } else {
-        candidate.pointer(&format!("/questions/{}", unit - blocks))
-    };
-    let fields = item
-        .map(|item| unit_fields(item, block))
-        .unwrap_or_default();
-    let found = fields.iter().find_map(|field| {
-        field_text(candidate, unit, field)
-            .filter(|text| text.contains(quote))
-            .map(|text| (field.clone(), text))
-    });
-    let (field, text) = found.unwrap_or_else(|| {
-        let field = if block { "body" } else { "prompt" };
-        (
-            field.to_owned(),
-            field_text(candidate, unit, field).unwrap_or_default(),
-        )
-    });
-    let kind = match (block, field.as_str()) {
-        (true, _) => UnitKind::Block,
-        (false, "explanation") => UnitKind::AnswerKey,
-        (false, _) => UnitKind::Question,
-    };
-    let sentence = statement.and_then(|statement| {
-        let within = text
-            .find(quote)
-            .map_or((0, text.len()), |at| (at, at + quote.len()));
-        let (start, end) = claim_sentence(&text, within, statement)?;
-        Some((text.get(start..end)?.to_owned(), (start, end)))
-    });
-    match sentence {
-        Some((sentence, span)) => ClaimLocation {
-            unit_index: unit,
-            unit_kind: kind,
-            field,
-            quote: sentence,
-            span: Some(span),
-        },
-        None => ClaimLocation::locate(unit, kind, field, quote, &text),
     }
 }
 
@@ -178,7 +33,7 @@ fn seen(passage: &EvidencePassage) -> EvidenceSeen {
     }
 }
 
-fn shown(passage: &EvidencePassage) -> ShownPassage {
+pub(super) fn shown(passage: &EvidencePassage) -> ShownPassage {
     ShownPassage {
         source_version_id: passage.source_id.clone(),
         start_byte: passage.start_byte,
@@ -188,96 +43,125 @@ fn shown(passage: &EvidencePassage) -> ShownPassage {
     }
 }
 
+/// The claims a research round looks for evidence for.
+pub(in crate::features::learning::lessons::content_verification) struct Targets {
+    /// The claims, in the pass's order.
+    pub(in crate::features::learning::lessons::content_verification) claims: Vec<ClaimId>,
+    /// Each claim's latest finding.
+    pub(in crate::features::learning::lessons::content_verification) findings: Vec<Finding>,
+    /// The hints the user gave, searched verbatim, each with the place in
+    /// `findings` of the claim it names.
+    pub(in crate::features::learning::lessons::content_verification) hints: Vec<(usize, String)>,
+    /// The claims a hint names. They are the user's: they take no step, and
+    /// the round's page reading answers the hint.
+    pub(in crate::features::learning::lessons::content_verification) hinted: Vec<ClaimId>,
+}
+
+/// The failure a finding that is not supported records: what its verdict
+/// says, or that no passage was compared, or that none supports it.
+fn failed_check(finding: &Finding, verdict: ClaimVerdict) -> (CheckResult, String) {
+    let kind = match verdict {
+        ClaimVerdict::Contradicted => VerdictKind::Contradicted,
+        ClaimVerdict::Unverified => VerdictKind::CouldNotJudge,
+        _ if finding.evidence.is_empty() => VerdictKind::NoSource,
+        _ => VerdictKind::Unsupported,
+    };
+    (CheckResult::Failed { kind }, finding.reason.clone())
+}
+
 impl ClaimLedger {
-    /// The check a finding records, through the support gate (P4's seam),
-    /// with the gate's assessment when the gate decided the check (a
-    /// supported claim whose support it weighed). `propose_general_knowledge`:
-    /// research has had its chance, so an unsupported claim without invented
-    /// specifics is proposed as general knowledge (D1) rather than researched
-    /// or repaired.
-    fn check_of(
+    /// The check a reading records, named by the reading and not by the
+    /// class that was read: a finding that stands passes as its reading
+    /// passes a statement (a veto that stands is `NotFalse`, never the
+    /// unanimity `KnownCommon` records), any other fails with the kind its
+    /// verdict names, and its fingerprint follows the reading's policy. With
+    /// the gate's assessment when the gate decided the check.
+    pub(super) fn check_of_reading(
         &self,
+        reading: Reading,
         finding: &Finding,
-        propose_general_knowledge: bool,
     ) -> (Check, Option<TrustAssessment>) {
         let evidence: Vec<EvidenceSeen> = finding.evidence.iter().map(seen).collect();
-        let ((result, reason), trust) = match finding.verdict {
-            ClaimVerdict::Supported => {
-                let quote = finding.supporting_quote.clone().unwrap_or_default();
-                let source = finding
-                    .evidence
-                    .iter()
-                    .find(|passage| !quote.is_empty() && passage.text.contains(&quote))
-                    .or_else(|| finding.evidence.first())
-                    .map(|passage| passage.source_id.clone())
-                    .unwrap_or_default();
-                let support = Support {
-                    claim: &finding.statement,
-                    source_version_id: &source,
-                    supporting_quote: &quote,
-                    passages: &finding.evidence,
-                    trust: finding.trust.as_deref(),
-                };
-                let trust = finding
-                    .trust
-                    .as_ref()
-                    .map(|trust| trust.assessment(&source, &quote));
-                // Support found in pass B when the section's citations gave
-                // none: the claim stands on the found passage, and the
-                // ledger says its citation was elsewhere.
-                let result = match &finding.two_pass.supported_by {
-                    Some(found) => CheckResult::SupportedElsewhere {
-                        cited: found.cited.clone(),
-                        source_version_id: source.clone(),
-                        supporting_quote: quote.clone(),
-                    },
-                    None => CheckResult::Supported {
-                        source_version_id: source.clone(),
-                        supporting_quote: quote.clone(),
-                    },
-                };
-                match self.gate.judge(&support) {
-                    Sufficiency::Sufficient => ((result, finding.reason.clone()), trust),
-                    // Only the bar's failure is the gate's; a quotation that
-                    // is not in its passage is a plain unsupported claim.
-                    Sufficiency::Insufficient { reason, kind } => (
-                        (
-                            CheckResult::Failed {
-                                kind: kind.clone().unwrap_or(VerdictKind::Unsupported),
-                            },
-                            reason,
-                        ),
-                        trust.filter(|_| kind.is_some()),
-                    ),
-                    Sufficiency::Contradicted { reason } => (
-                        (
-                            CheckResult::Failed {
-                                kind: VerdictKind::Contradicted,
-                            },
-                            reason,
-                        ),
-                        trust,
-                    ),
-                }
+        let ((result, reason), trust) = match (finding.verdict, reading) {
+            (ClaimVerdict::Supported, Reading::Knowledge) => {
+                ((CheckResult::KnownCommon, finding.reason.clone()), None)
             }
-            verdict => {
-                let kind = match verdict {
-                    ClaimVerdict::Contradicted => VerdictKind::Contradicted,
-                    ClaimVerdict::Unverified => VerdictKind::CouldNotJudge,
-                    _ if propose_general_knowledge && finding.proposes_general_knowledge() => {
-                        VerdictKind::GeneralKnowledgeProposed
-                    }
-                    _ if finding.evidence.is_empty() => VerdictKind::NoSource,
-                    _ => VerdictKind::Unsupported,
-                };
-                ((CheckResult::Failed { kind }, finding.reason.clone()), None)
+            (ClaimVerdict::Supported, Reading::Veto) => {
+                ((CheckResult::NotFalse, finding.reason.clone()), None)
             }
+            (ClaimVerdict::Supported, Reading::Consistency) => {
+                ((CheckResult::Consistent, finding.reason.clone()), None)
+            }
+            (ClaimVerdict::Supported, Reading::Parts | Reading::Ground | Reading::Page) => {
+                self.supported_check(finding)
+            }
+            (verdict, _) => (failed_check(finding, verdict), None),
         };
-        (self.check(result, reason, evidence), trust)
+        let policy = match reading {
+            Reading::Consistency => CONSISTENCY_POLICY,
+            Reading::Knowledge | Reading::Veto => KNOWLEDGE_POLICY,
+            Reading::Parts | Reading::Ground | Reading::Page => POLICY,
+        };
+        (self.check(policy, result, reason, evidence), trust)
+    }
+
+    /// The result of a supported finding through the support gate, and the
+    /// gate's assessment when it weighed the support: the source is the one
+    /// whose passage holds the quotation, else the first passage.
+    fn supported_check(
+        &self,
+        finding: &Finding,
+    ) -> ((CheckResult, String), Option<TrustAssessment>) {
+        let quote = finding.supporting_quote.clone().unwrap_or_default();
+        let source = finding
+            .evidence
+            .iter()
+            .find(|passage| !quote.is_empty() && passage.text.contains(&quote))
+            .or_else(|| finding.evidence.first())
+            .map(|passage| passage.source_id.clone())
+            .unwrap_or_default();
+        let support = Support {
+            claim: &finding.statement,
+            source_version_id: &source,
+            supporting_quote: &quote,
+            passages: &finding.evidence,
+        };
+        let trust = finding
+            .trust
+            .as_ref()
+            .map(|trust| trust.assessment(&source, &quote));
+        // Support found on a page of the course when the section's
+        // citations gave none: the claim stands on the found passage, and
+        // the ledger says its citation was elsewhere.
+        let result = match &finding.two_pass.supported_by {
+            Some(found) => CheckResult::SupportedElsewhere {
+                cited: found.cited.clone(),
+                source_version_id: source.clone(),
+                supporting_quote: quote.clone(),
+            },
+            None => CheckResult::Supported {
+                source_version_id: source.clone(),
+                supporting_quote: quote.clone(),
+            },
+        };
+        match self.gate.judge(&support) {
+            Sufficiency::Sufficient => ((result, finding.reason.clone()), trust),
+            // A quotation that is not in its passage is a plain
+            // unsupported claim.
+            Sufficiency::Insufficient { reason } => (
+                (
+                    CheckResult::Failed {
+                        kind: VerdictKind::Unsupported,
+                    },
+                    reason,
+                ),
+                None,
+            ),
+        }
     }
 
     /// The check an example's run records: it completed, or it did not.
-    fn example_check(&self, observation: &execution::Observation) -> Check {
+    pub(super) fn example_check(&self, observation: &execution::Observation) -> Check {
         let source = format!("execution:{}", observation.id);
         let evidence = observation.evidence();
         let seen = vec![EvidenceSeen {
@@ -296,24 +180,33 @@ impl ClaimLedger {
                 kind: VerdictKind::Unsupported,
             }
         };
-        self.check(result, evidence, seen)
+        self.check(POLICY, result, evidence, seen)
     }
 
-    fn check(&self, result: CheckResult, reason: String, evidence: Vec<EvidenceSeen>) -> Check {
+    fn check(
+        &self,
+        policy: &str,
+        result: CheckResult,
+        reason: String,
+        evidence: Vec<EvidenceSeen>,
+    ) -> Check {
         Check {
             checker: Checker::Local {
                 model: self.checker_model.clone(),
             },
             result,
             reason,
-            fingerprint: EvidenceFingerprint::of(POLICY, &self.checker_model, &evidence),
+            fingerprint: EvidenceFingerprint::of(policy, &self.checker_model, &evidence),
             evidence,
             window_tokens: self.window_tokens,
         }
     }
 
     /// Source versions a claim relied on that are no longer active.
-    fn source_changes(entry: &ClaimLedgerEntry, active: &HashSet<&str>) -> Vec<SourceChange> {
+    pub(super) fn source_changes(
+        entry: &ClaimLedgerEntry,
+        active: &HashSet<&str>,
+    ) -> Vec<SourceChange> {
         let mut cited: Vec<String> = entry
             .basis()
             .map(|basis| basis.source_version_ids.iter().cloned().collect())
@@ -340,446 +233,89 @@ impl ClaimLedger {
             .collect()
     }
 
-    /// Records one pass: which claim each finding and failed example is, and
-    /// what is new about it (§4 `ledger.observe`).
-    pub(in crate::features::learning::lessons::content_verification) async fn observe(
-        &mut self,
-        candidate: &Value,
-        report: &LessonVerificationReport,
-    ) -> Result<()> {
-        // What this pass found, each with its check and the passages shown.
-        let mut found: Vec<Found> = Vec::new();
-        for finding in &report.findings {
-            let (check, trust) = self.check_of(finding, false);
-            found.push((
-                ExtractedClaim {
-                    location: locate(
-                        candidate,
-                        finding.unit,
-                        &finding.quote,
-                        Some(&finding.statement),
-                    ),
-                    statement: finding.statement.clone(),
-                },
-                check,
-                finding.evidence.iter().map(shown).collect(),
-                trust,
-            ));
-        }
-        let located = found
-            .iter()
-            .filter(|(claim, ..)| sentences(&claim.location.quote).len() == 1)
-            .count();
-        tracing::info!(
-            "claim.locate: {located} of {} claims located to one sentence; {} kept their passage",
-            found.len(),
-            found.len() - located
-        );
-        let mut example_ids = Vec::new();
-        for observation in &report.executions {
-            let statement = example_statement(&observation.id);
-            let tracked = self
-                .entries
-                .iter()
-                .any(|entry| entry.statement() == statement && !is_gone(entry.state()));
-            if observation.passed() && !tracked {
-                continue;
-            }
-            let check = self.example_check(observation);
-            found.push((
-                ExtractedClaim {
-                    location: locate(
-                        candidate,
-                        observation.unit.unwrap_or(0),
-                        observation.code(),
-                        None,
-                    ),
-                    statement,
-                },
-                check.clone(),
-                vec![ShownPassage {
-                    source_version_id: format!("execution:{}", observation.id),
-                    start_byte: 0,
-                    end_byte: check.reason.len(),
-                    text: check.reason.clone(),
-                    retrieval_kind: "execution".into(),
-                }],
-                None,
-            ));
-            example_ids.push(observation.id.clone());
-        }
-
-        let reference = self.pending.previous.clone();
-        let reference = reference.as_ref().unwrap_or(candidate);
-        let prior_ids: Vec<ClaimId> = self
-            .entries
-            .iter()
-            .filter(|entry| !is_gone(entry.state()) || self.edited_now.contains(entry.claim_id()))
-            .map(|entry| entry.claim_id().clone())
-            .collect();
-        let texts: HashMap<(usize, String), String> = prior_ids
-            .iter()
-            .filter_map(|id| self.entry(id))
-            .filter_map(|entry| {
-                let location = entry.location();
-                field_text(reference, location.unit_index, &location.field)
-                    .map(|text| ((location.unit_index, location.field.clone()), text))
-            })
-            .collect();
-        let extracted: Vec<ExtractedClaim> =
-            found.iter().map(|(claim, ..)| claim.clone()).collect();
-        let mut assigned = {
-            let prior: Vec<&ClaimLedgerEntry> =
-                prior_ids.iter().filter_map(|id| self.entry(id)).collect();
-            identities(&prior, &extracted, |unit, field| {
-                texts.get(&(unit, field.to_owned())).map(String::as_str)
-            })
-        };
-        let repairs = std::mem::take(&mut self.pending.repairs);
-        // A repaired sentence the matching rules lost (a rewrite that changed
-        // its statement where no single span can be named) continues as the
-        // new text its repair wrote in the same field, never as a sentence
-        // that was there before; the other claims that repair wrote are its
-        // children. Both keep the claim's attempts, so a claim the machine
-        // keeps rewriting still reaches the user (§4 "Bounded"; claim
-        // sources design §9).
-        let owned: Vec<bool> = assigned.assigned.iter().map(Option::is_some).collect();
-        let heirs = successor::heirs(
-            &repairs,
-            &assigned.orphaned,
-            (&extracted, &owned),
-            (self.pending.previous.as_ref(), candidate),
-            |id| self.entry(id).map(|entry| entry.location().field.clone()),
-            field_text,
-        );
-        for (parent, index) in &heirs.successors {
-            if let Some(position) = assigned.orphaned.iter().position(|id| id == parent) {
-                if let Some(slot) = assigned.assigned.get_mut(*index) {
-                    *slot = Some(assigned.orphaned.remove(position));
-                }
-            }
-        }
-        let records: HashMap<ClaimId, RepairRecord> = repairs
-            .into_iter()
-            .map(|record| (record.claim_id.clone(), record))
-            .collect();
-        let active: HashSet<&str> = report.sources.iter().map(|s| s.id.as_str()).collect();
-        let mut claim_ids = Vec::with_capacity(found.len());
-        for (index, ((claim, check, passages, trust), prior)) in
-            found.into_iter().zip(assigned.assigned).enumerate()
-        {
-            let edited = prior.as_ref().is_some_and(|id| self.edited_now.remove(id));
-            let id = match prior {
-                Some(id) if edited => {
-                    let successor = ClaimId::generate();
-                    self.append(
-                        &id,
-                        ClaimEvent::Superseded {
-                            successor: Some(successor.clone()),
-                            by: Actor::User,
-                        },
-                    )
-                    .await?;
-                    self.start(&successor, claim, check, trust, None).await?;
-                    successor
-                }
-                Some(id) => {
-                    let seen = (claim, check, trust);
-                    self.carry_on(&id, candidate, seen, records.get(&id), &active)
-                        .await?;
-                    id
-                }
-                None => {
-                    let id = ClaimId::generate();
-                    let born = heirs.children.get(&index).cloned();
-                    self.start(&id, claim, check, trust, born).await?;
-                    id
-                }
-            };
-            self.show(&id, &passages).await?;
-            claim_ids.push(id);
-        }
-        for id in assigned.orphaned {
-            if self.edited_now.contains(&id) {
-                continue;
-            }
-            let gone = ClaimEvent::Superseded {
-                successor: None,
-                by: Actor::Machine,
-            };
-            let Some(record) = records.get(&id) else {
-                self.append(&id, gone).await?;
-                continue;
-            };
-            // The repair rewrote the claim's part of its field and nothing it
-            // wrote continues the claim: rewritten, its sentence gone with
-            // the rewrite; it took text out only: removed (§4: undo restores
-            // it).
-            match heirs.rewritten.get(&id).cloned().flatten() {
-                Some(after) => {
-                    let event = ClaimEvent::RepairAttempted {
-                        attempt: record.attempt,
-                        escalated: record.escalated,
-                        before: record.before.clone(),
-                        after: Some(after),
-                        outcome: RepairOutcome::Rewritten,
-                    };
-                    self.append(&id, event).await?;
-                    self.append(&id, gone).await?;
-                }
-                None => {
-                    let event = ClaimEvent::RepairAttempted {
-                        attempt: record.attempt,
-                        escalated: record.escalated,
-                        before: record.before.clone(),
-                        after: None,
-                        outcome: RepairOutcome::Removed,
-                    };
-                    self.append(&id, event).await?;
-                }
-            }
-        }
-        // An edited claim no re-extracted claim continues: removed by the edit.
-        for id in std::mem::take(&mut self.edited_now) {
-            self.append(
-                &id,
-                ClaimEvent::Superseded {
-                    successor: None,
-                    by: Actor::User,
-                },
-            )
-            .await?;
-        }
-        self.pending.previous = None;
-        if self.sink.is_some() {
-            self.save_pending().await?;
-        }
-        let examples = claim_ids.split_off(report.findings.len());
-        self.examples = example_ids.into_iter().zip(examples).collect();
-        self.findings = claim_ids;
-        crate::features::learning::lesson_progress::claims(self.tally());
-        Ok(())
-    }
-
-    /// A claim seen for the first time: extracted, born of a repair when one
-    /// wrote it beside its parent's successor (`born`: the parent and the
-    /// attempts it left, claim sources design §9.1), then checked (and the
-    /// gate's assessment, when it decided the check).
-    async fn start(
-        &mut self,
-        id: &ClaimId,
-        claim: ExtractedClaim,
-        check: Check,
-        trust: Option<TrustAssessment>,
-        born: Option<(ClaimId, u8)>,
-    ) -> Result<()> {
-        self.append(
-            id,
-            ClaimEvent::Extracted {
-                location: claim.location,
-                statement: claim.statement,
-            },
-        )
-        .await?;
-        if let Some((parent, attempts_left)) = born {
-            self.append(
-                id,
-                ClaimEvent::BornOfRepair {
-                    parent,
-                    attempts_left,
-                },
-            )
-            .await?;
-        }
-        self.append(id, ClaimEvent::Checked(check)).await?;
-        if let Some(trust) = trust {
-            self.append(id, assessed(trust)).await?;
-        }
-        Ok(())
-    }
-
-    /// A claim seen before: record what changed, then a check only when
-    /// something about it is new (a different decision of the gate counts,
-    /// source provenance §18.7) or a repair awaits its verdict.
-    async fn carry_on(
-        &mut self,
-        id: &ClaimId,
-        candidate: &Value,
-        (claim, check, trust): (ExtractedClaim, Check, Option<TrustAssessment>),
-        repair: Option<&RepairRecord>,
-        active: &HashSet<&str>,
-    ) -> Result<()> {
-        let Some(entry) = self.entry(id).cloned() else {
-            return self.start(id, claim, check, trust, None).await;
-        };
-        // A claim stands on its sentence, not on the quote an extraction
-        // picked: while the stored quote is still in its field, its sentence
-        // did not change, whatever the claim's state (§3 `relitigate`; claim
-        // sources design §18.4 i). A stored passage re-located to one of its
-        // sentences takes the new location below and nothing else; what else
-        // is new about the claim is weighed as for any other.
-        let stands = field_text(
-            candidate,
-            entry.location().unit_index,
-            &entry.location().field,
-        )
-        .is_some_and(|text| text.contains(&entry.location().quote));
-        let observation = Observation {
-            quote: if stands {
-                entry.location().quote.clone()
-            } else {
-                claim.location.quote.clone()
-            },
-            fingerprint: check.fingerprint.clone(),
-            checker_model: self.checker_model.clone(),
-            window_tokens: self.window_tokens,
-            source_changes: Self::source_changes(&entry, active),
-            hint: None,
-            attached_source_version_id: None,
-            gate: trust.as_ref().map(TrustAssessment::verdict),
-        };
-        let information = new_information(&entry, &observation);
-        let quote = claim.location.quote.clone();
-        if claim.location != *entry.location() || claim.statement != entry.statement() {
-            self.append(
-                id,
-                ClaimEvent::Extracted {
-                    location: claim.location,
-                    statement: claim.statement,
-                },
-            )
-            .await?;
-        }
-        let mut decides_repair = false;
-        if let Some(record) = repair {
-            decides_repair = self
-                .append(
-                    id,
-                    ClaimEvent::RepairAttempted {
-                        attempt: record.attempt,
-                        escalated: record.escalated,
-                        before: record.before.clone(),
-                        after: Some(quote),
-                        outcome: RepairOutcome::Rewritten,
-                    },
-                )
-                .await?;
-        }
-        if let Some(change) = &information {
-            let cause = self
-                .entry(id)
-                .and_then(|entry| reopen_cause(entry.state(), change));
-            if let Some(cause) = cause {
-                self.append(id, ClaimEvent::Reopened { cause }).await?;
-            }
-        }
-        let unchecked = matches!(entry.state(), ClaimState::Unchecked);
-        if unchecked || decides_repair || information.is_some() {
-            self.append(id, ClaimEvent::Checked(check)).await?;
-            if let Some(trust) = trust {
-                self.append(id, assessed(trust)).await?;
-            }
-        } else if !entry.state().is_settled()
-            && entry
-                .basis()
-                .is_some_and(|basis| basis.fingerprint == check.fingerprint)
-        {
-            // A new standing policy/reach can leave the verdict unchanged.
-            // Persist its assessment anyway, or a held legacy claim keeps
-            // looking unprocessed and Resume remains enabled forever.
-            // Never transplant an assessment from reselected evidence.
-            if let Some(trust) = trust.filter(|trust| entry.trust() != Some(trust)) {
-                self.append(id, assessed(trust)).await?;
-            }
-        }
-        Ok(())
-    }
-
-    /// The claims research may look for evidence for, with the hints the user
-    /// gave: once per claim and evidence (§4), and a hint once (§5.1).
+    /// The claims research looks for evidence for, with the hints the user
+    /// gave: the statements at a `Research` node, which the policy sends once
+    /// in a statement's life, and a hint once (§5.1). Each with its latest
+    /// finding in `report`.
     pub(in crate::features::learning::lessons::content_verification) fn research_targets(
         &self,
+        policy: &dyn AcceptancePolicy,
         report: &LessonVerificationReport,
-    ) -> (Vec<ClaimId>, Vec<Finding>, Vec<String>) {
-        let mut claims = Vec::new();
-        let mut findings = Vec::new();
-        let mut hints = Vec::new();
+    ) -> Targets {
+        let at_research = self.at(policy, super::position::StepKind::Research);
+        let mut targets = Targets {
+            claims: Vec::new(),
+            findings: Vec::new(),
+            hints: Vec::new(),
+            hinted: Vec::new(),
+        };
         for (finding, id) in report.findings.iter().zip(&self.findings) {
             let Some(entry) = self.entry(id) else {
                 continue;
             };
             let hint = super::super::review_pass::pending_hint(entry);
-            if entry.may_research() || hint.is_some() {
-                claims.push(id.clone());
-                findings.push(finding.clone());
-                hints.extend(hint);
+            if at_research.contains(id) || hint.is_some() {
+                if let Some(hint) = hint {
+                    targets.hints.push((targets.findings.len(), hint));
+                    targets.hinted.push(id.clone());
+                }
+                targets.claims.push(id.clone());
+                targets.findings.push(finding.clone());
             }
         }
-        (claims, findings, hints)
+        targets
+    }
+
+    /// The claims whose user's hint no research round has run with yet, as
+    /// statements waiting for a source.
+    pub(in crate::features::learning::lessons::content_verification) fn hinted_waiting(
+        &self,
+    ) -> Vec<super::Waiting> {
+        self.entries
+            .iter()
+            .filter(|entry| super::super::review_pass::pending_hint(entry).is_some())
+            .map(|entry| super::Waiting {
+                claim: entry.claim_id().clone(),
+                node: "hint",
+                step: Step::Research,
+            })
+            .collect()
     }
 
     /// Records a research round for each claim it looked for (§3
-    /// `Researched`): "found nothing new" is an attempt with no passages.
-    /// Each claim's event carries what the round cost per claim (D5).
+    /// `Researched`): "found nothing new" is an attempt with no passages. Each
+    /// claim's event carries what the round cost per claim (D5) and the
+    /// passages `found` for it, from the sources the round saved. Then, for a
+    /// claim at a `Research` node, the policy's step: `Saved` when the round
+    /// saved a source, `FoundNothing` otherwise. A claim a hint named has no
+    /// node to step.
     pub(in crate::features::learning::lessons::content_verification) async fn record_research(
         &mut self,
-        claims: &[ClaimId],
+        policy: &dyn AcceptancePolicy,
+        claims: &[(ClaimId, usize)],
         searched: &research::Searched,
-        report: &LessonVerificationReport,
+        saved: bool,
     ) -> Result<()> {
-        for id in claims {
-            let passages_found = report
-                .findings
-                .iter()
-                .zip(&self.findings)
-                .find(|(_, claim)| *claim == id)
-                .map_or(0, |(finding, _)| {
-                    finding
-                        .evidence
-                        .iter()
-                        .filter(|passage| searched.sources_added.contains(&passage.source_id))
-                        .count()
-                });
+        let outcome = if saved {
+            Outcome::Saved
+        } else {
+            Outcome::FoundNothing
+        };
+        for (id, passages_found) in claims {
             self.append(
                 id,
                 ClaimEvent::Researched {
                     queries: searched.queries.clone(),
                     sources_added: searched.sources_added.clone(),
-                    passages_found,
+                    passages_found: *passages_found,
                     round_ms_per_claim: searched
                         .per_claim
                         .map(|cost| u64::try_from(cost.as_millis()).unwrap_or(u64::MAX)),
                 },
             )
             .await?;
-        }
-        Ok(())
-    }
-
-    /// Once research has had its chance, an unsupported claim without
-    /// invented specifics is proposed as general knowledge and waits for the
-    /// user; it is never repaired (D1, §13).
-    pub(in crate::features::learning::lessons::content_verification) async fn propose_general_knowledge(
-        &mut self,
-        report: &LessonVerificationReport,
-    ) -> Result<()> {
-        let proposals: Vec<(ClaimId, Check)> = report
-            .findings
-            .iter()
-            .zip(&self.findings)
-            .filter(|(finding, _)| finding.proposes_general_knowledge())
-            .filter_map(|(finding, id)| {
-                let entry = self.entry(id)?;
-                let researched = !entry.may_research()
-                    && matches!(
-                        entry.state().verdict(),
-                        Some(VerdictKind::Unsupported | VerdictKind::NoSource)
-                    );
-                researched.then(|| (id.clone(), self.check_of(finding, true).0))
-            })
-            .collect();
-        for (id, check) in proposals {
-            self.append(&id, ClaimEvent::Checked(check)).await?;
+            self.record_step(policy, id, Step::Research, outcome)
+                .await?;
         }
         Ok(())
     }

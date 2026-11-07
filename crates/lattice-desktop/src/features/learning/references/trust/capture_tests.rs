@@ -245,6 +245,7 @@ async fn creating_a_course_does_not_hold_the_database_while_comparing_its_source
                 extraction_version: "fixture_full_text".into(),
                 signals: not_extracted("test fixture"),
             },
+            found: false,
         })
         .collect();
     let repository = LearningRepository::new(course.pool.clone());

@@ -4840,7 +4840,7 @@ export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; su
  * Supported by a passage of another course source than the ones its
  * section cites; the lesson's citation is repaired to it.
  */
-{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "failed"; kind: VerdictKindDto }
+{ verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "consistent" } | { verdict: "known_common" } | { verdict: "not_false" } | { verdict: "failed"; kind: VerdictKindDto }
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */
@@ -4895,13 +4895,13 @@ export type ChecksumRequest = { algorithm: string; value: string }
  * A conversation that has this document among its linked documents.
  */
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
-export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "general_knowledge" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
+export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
 /**
  * What the user asked for on a claim (§5.1); `resolve_learning_claim`
  * carries it with the lesson's `expected_revision`. Evidence is attached
  * through `attach_learning_claim_evidence` instead.
  */
-export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "accept_all_general_knowledge" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
 /**
  * Where an attach is, for the line the review shows while it runs.
  */
@@ -4940,7 +4940,7 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
  * The card's lines, in order.
  */
 lines: string[] }
-export type ClaimCountsDto = { verified: number; confirmed: number; generalKnowledge: number; queued: number; open: number;
+export type ClaimCountsDto = { verified: number; confirmed: number; queued: number; open: number;
 /**
  * Removed by the user.
  */
@@ -4968,7 +4968,11 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
 /**
  * What the provenance gate weighed (source provenance §18.7).
  */
-{ kind: "standing_assessed"; assessment: StandingAssessedDto }
+{ kind: "standing_assessed"; assessment: StandingAssessedDto } |
+/**
+ * The statement's class and who decided it (claim classes design §3.1).
+ */
+{ kind: "classified"; class: ClassDto; by: ClassifiedByDto }
 /**
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
@@ -5050,7 +5054,7 @@ tried: ResearchSummaryDto }
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
  */
-export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number; by: ActorDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
+export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number } | { state: "unverified"; at: number; reason: UnverifiedReasonDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
 /**
  * Whether a support counted toward the claim's bar.
  */
@@ -5087,6 +5091,8 @@ quote: string;
  */
 quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
+export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
+export type ClassifiedByDto = "model" | "rule" | "writer" | "evidence"
 /**
  * Clean article content extracted from HTML (reader mode).
  *
@@ -7363,7 +7369,50 @@ note: string | null;
  * Whether the claim's support met the bar for its kind; `None` when it
  * was not weighed.
  */
-sufficiency: LearningSufficiencyDto | null }
+sufficiency: LearningSufficiencyDto | null;
+/**
+ * The class the statement was checked as; none for a lesson prepared
+ * before statements were sorted.
+ */
+class?: LearningStatementClassDto | null;
+/**
+ * How the provenance gate labelled its support, by the label's name
+ * (`attributed`, `practice`, `secondary`...); none when it takes none.
+ */
+label?: string | null;
+/**
+ * The parts a Sourced statement's cited passage was read as, which say
+ * what a passage states and what is common knowledge beside it.
+ */
+parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null }
+/**
+ * One part of a statement as the part-wise check read it.
+ */
+export type LearningClaimPartDto = { part: string; kind: LearningClaimPartKindDto;
+/**
+ * The saved source version that states the part; none for another.
+ */
+sourceVersionId: string | null }
+/**
+ * What the part-wise check found of one part of a statement (§3.3).
+ */
+export type LearningClaimPartKindDto =
+/**
+ * A passage states it.
+ */
+"stated" |
+/**
+ * No passage states it, and it is standard knowledge of the field.
+ */
+"common" |
+/**
+ * No passage gives a specific it states.
+ */
+"specific_missing" |
+/**
+ * A passage says otherwise.
+ */
+"contradicted"
 /**
  * A claim's profile (§12.3): its kind and subject.
  */
@@ -7380,10 +7429,10 @@ claimKind: string; subject: LearningClaimSubjectDto | null; measurementOrigin: s
 reasons: LearningTrustReasonDto[] }
 /**
  * How a published claim stands (§5.6): verified against a source, confirmed
- * by the user, accepted as general knowledge, or verified against a source
- * since removed. A string union, like the review panel's.
+ * by the user, or verified against a source since removed. A string union,
+ * like the review panel's.
  */
-export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "general_knowledge" | "source_removed"
+export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "source_removed" | "not_verified"
 /**
  * The subject a claim is about, with what a site-for-subject override can
  * be scoped to: the subject, its aliases and its broader classes.
@@ -7395,8 +7444,7 @@ export type LearningClaimSubjectDto = { name: string; kind: string; aliases: str
 classes: string[] }
 /**
  * The lesson's claims by who acts next and what is done to them (§6.3):
- * "Pass 3 · 4 sent back for stronger sources · 2 being repaired · 5
- * waiting for you · 108 verified".
+ * "2 being repaired · 5 waiting for you · 108 verified".
  */
 export type LearningClaimTally = {
 /**
@@ -7408,12 +7456,6 @@ unchecked: number;
  * research looks for sources before they are checked again.
  */
 searching: number;
-/**
- * The machine's: the checker supported them, but the source check found
- * their sources too weak, and research looks for stronger ones before
- * they are checked again.
- */
-sentBack: number;
 /**
  * The machine's: research is done, and their text is rewritten next or
  * a rewrite awaits its check.
@@ -7428,7 +7470,7 @@ waiting: number;
  */
 verified: number;
 /**
- * Closed by the user or removed: confirmed, general knowledge, removed.
+ * Closed by the user: confirmed, removed or edited away.
  */
 resolvedByYou: number;
 /**
@@ -7486,22 +7528,6 @@ export type LearningCurriculumModule = { id: string; title: string; purpose: str
 export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "edit_lesson"; lesson_id: string; title: string; objective: string; estimated_minutes: number } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
 export type LearningCurriculumRevision = { id: string; programId: string; revisionNumber: number; parentRevisionId: string | null; reason: string; modules: LearningCurriculumModule[]; createdAt: number }
 export type LearningCurriculumRevisionActionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
-/**
- * One round of checking unsupported claims against their next evidence page.
- */
-export type LearningDeeperEvidence = {
-/**
- * The evidence page of this round. Page 1 is each claim's first check.
- */
-page: number;
-/**
- * Claims checked against this page.
- */
-claims: number;
-/**
- * Of those claims, the ones whose check against this page has finished.
- */
-checked: number }
 export type LearningDiagnosticAttemptDto = { id: string; programId: string; status: LearningDiagnosticStatus; revision?: number; prompts: LearningDiagnosticPromptDto[]; responses: LearningDiagnosticResponseDto[]; sourceCoverageGaps: LearningDiagnosticCoverageGapDto[]; interpretation: string; findings?: LearningDiagnosticFindingDto[]; createdAt: number; submittedAt: number | null }
 export type LearningDiagnosticCoverageGapDto = { outcomeId: string; outcomeTitle: string; sourceVersionIds: string[] }
 export type LearningDiagnosticFindingDto = { promptId: string; outcomeId: string; signal: LearningDiagnosticSignal; feedback: string; evidenceQuote: string | null }
@@ -7530,31 +7556,32 @@ export type LearningGenerationActivity = { phase: LearningGenerationPhase; phase
  */
 checksCompleted: number; checksTotal: number; checksReused: number;
 /**
- * Checked claims of this pass that are not supported at present. A claim
- * a deeper evidence page supports leaves this count.
- */
-checksUnresolved: number;
-/**
- * Checked claims of this pass the checker supported but whose sources
- * the source check found too weak for the claim: research looks for
- * stronger sources for them. Not counted in `checks_unresolved`.
- */
-checksSentBack: number;
-/**
  * Set while this pass checks its claims again against references
  * research has just saved: how many it saved.
  */
 newReferences: number | null;
 /**
- * None while looking up saved checks; otherwise the number requiring the
- * model in this pass, after every reusable comparison has been restored.
+ * The lesson's statements by the check each gets, once they are sorted
+ * (claim classes design §3.12); none before.
  */
-modelChecksTotal: number | null;
+statements?: LearningStatementPlan | null;
 /**
- * Set while claims this pass left unsupported are checked against further
- * pages of their evidence.
+ * Calls made to sort, check and rewrite this lesson's statements since
+ * this run began.
  */
-deeperEvidence: LearningDeeperEvidence | null;
+modelCalls?: number;
+/**
+ * The most calls the checks can make in all, once the statements are
+ * sorted. It only comes down: terms of the count are replaced by what
+ * the first checks find.
+ */
+modelCallsCeiling?: number | null;
+/**
+ * How many times the ceiling was published higher than the one before
+ * it: the design allows none (§3.12), and the acceptance run reads this
+ * count from the job.
+ */
+modelCallsCeilingRises?: number;
 /**
  * Where the lesson's claims stand after the latest pass; none before
  * the first pass observed them.
@@ -7664,12 +7691,6 @@ publishable: boolean; audit: LearningLessonAuditDto | null }
 export type LearningLessonAuditState = "running" | "completed" | "stopped"
 export type LearningLessonDto = { id: string; title: string; objective: string; estimatedMinutes: number; preparation: LearningPreparation; blocks: LearningBlockDto[]; completed: boolean }
 export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; checkerModel: string; retrievalMode: string; embeddingModel: string | null; contentSha256: string; claimCount: number;
-/**
- * Of `claim_count`, the claims kept as general knowledge: no saved
- * reference supports or contradicts them, and they were not checked
- * against a source.
- */
-generalKnowledgeCount: number;
 /**
  * Of `claim_count`, the claims the user confirmed without a supporting
  * passage; shown apart from the machine-verified ones (§5.6).
@@ -8007,6 +8028,20 @@ export type LearningRecallDuplicateStatus = "pending" | "confirmed" | "dismissed
 export type LearningRecallDuplicateSuggestionDto = { id: string; cardId: string; possibleDuplicateCardId: string; reason: string; similarity: number | null; status: LearningRecallDuplicateStatus; createdAt: number; decidedAt: number | null }
 export type LearningRecallSchedulerStateDto = { stability: number | null; difficulty: number | null; lastReviewedAt: number | null; dueAt: number; intervalDays: number; reviewCount: number }
 export type LearningRecallWorkspaceDto = { programId: string; cards: LearningRecallCardDto[]; duplicates: LearningRecallDuplicateSuggestionDto[]; dueCount: number; schedulerDisclosure: string }
+/**
+ * A saved page the admission gate refused, or a source research added that
+ * no lesson cites now, listed for the user to remove (claim classes design
+ * 3.6). Nothing is removed without them.
+ */
+export type LearningRemovableSourceDto = { sourceId: string;
+/**
+ * The source's revision, which a removal names.
+ */
+revision: number; title: string; url: string | null;
+/**
+ * Why the gate refused the page; none for a source research added.
+ */
+reason: string | null }
 export type LearningRubricCriterion = { id: string; title: string; description: string; maxPoints: number }
 export type LearningRuntimePresetDto = { id: LearningRuntimePresetId; name: string; description: string;
 /**
@@ -8150,10 +8185,54 @@ export type LearningSourceVersionSummaryDto = { id: string; versionNumber: numbe
 snapshotHash: string | null }
 export type LearningSourceWorkspaceDto = { programId: string; sources: LearningSourceLibraryItemDto[];
 /**
+ * Saved pages the admission gate refused, for the user to remove.
+ */
+notSources?: LearningRemovableSourceDto[];
+/**
+ * Sources research added that no lesson cites now, for the user to
+ * remove.
+ */
+unusedResearch?: LearningRemovableSourceDto[];
+/**
  * What checking the course's waiting claims against a source just
  * added found; null when no re-check ran.
  */
 recheck: WaitingClaimsRecheckDto | null }
+/**
+ * The class a published statement was checked as (claim classes design
+ * §3.1): what the learner is told of the check it met.
+ */
+export type LearningStatementClassDto =
+/**
+ * Checked against the source passage its sentence cites.
+ */
+"sourced" |
+/**
+ * Checked for consistency with the passages its section cites.
+ */
+"reasoning" |
+/**
+ * Standard knowledge, put to the model alone.
+ */
+"common"
+/**
+ * The statements of a lesson by the check each gets (claim classes design
+ * §3.1, §3.12): "73 statements: 36 to check against their sources, 29 to
+ * check for consistency, 8 common knowledge".
+ */
+export type LearningStatementPlan = {
+/**
+ * Checked against their sources.
+ */
+sourced: number;
+/**
+ * Checked for consistency with the passages their section cites.
+ */
+reasoning: number;
+/**
+ * Common knowledge, put to the model alone.
+ */
+common: number }
 /**
  * A subject class as the user named it ("Web platform APIs").
  */
@@ -9044,12 +9123,7 @@ export type ReopenCauseDto = { cause: "sentence_changed" } | { cause: "source_de
 { cause: "trust_changed"; trust: TrustCauseDto }
 export type RepairAttemptDto = { attempt: number; escalated: boolean; before: string; after: string | null; outcome: RepairOutcomeDto; at: number }
 export type RepairLearningOutlineRequestDto = { programId: string; expectedRevision: number }
-export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" } |
-/**
- * Left to the user without a rewrite: the sentence also states
- * something verified or waiting (claim sources design §18.5).
- */
-{ outcome: "not_attempted"; reason: string }
+export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" } | { outcome: "rejected"; reason: string } | { outcome: "superseded_by_user" }
 export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
@@ -10558,6 +10632,7 @@ resultsPerPage: number;
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
 export type UnitKindDto = "block" | "question" | "answer_key"
+export type UnverifiedReasonDto = "unchecked" | "unsupported" | "contradicted"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }
@@ -10627,7 +10702,7 @@ keywords?: string[] }
  * A recorded user action. A confirmation shows the sources it was bound
  * to; the quote digest it is bound to stays on the backend.
  */
-export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "general_knowledge" } | { action: "research_with_hint"; hint: string }
+export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.
@@ -10679,7 +10754,7 @@ export type VectorQuantizationDto =
  * searches rescore against full-precision vectors.
  */
 "i8"
-export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } | { kind: "no_source" } | { kind: "could_not_judge" } | { kind: "general_knowledge_proposed" } |
+export type VerdictKindDto = { kind: "unsupported" } | { kind: "contradicted" } | { kind: "no_source" } | { kind: "could_not_judge" } |
 /**
  * The Verifier's verdict on a claim the local checker verified.
  */

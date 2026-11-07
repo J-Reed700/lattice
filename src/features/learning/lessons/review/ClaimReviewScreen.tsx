@@ -8,9 +8,10 @@ import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSou
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
-import { ALL_RESOLVED, tallyLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { ALL_RESOLVED, tallyLine, teachingNotesForYou, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
+import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
 import { ReviewSourceReader, type ReaderRequest } from '@/features/learning/lessons/review/ReviewSourceReader';
 import { isTeachingWaiting, TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
@@ -38,7 +39,7 @@ function useNarrow(): boolean {
 
 const ALL_KEYS: Array<[string, string]> = [
   ['A', 'Accept'], ['Shift A', 'Accept the source for all'], ['E', 'Edit the sentence'], ['R', 'Remove it'], ['S', 'Add a source'],
-  ['G', 'General knowledge'], ['J / ↓', 'Next claim'], ['K / ↑', 'Previous claim'], ['U', 'Undo'], ['Enter', 'Open a queue row'], ['Esc', 'Close a form, then the screen'],
+  ['J / ↓', 'Next claim'], ['K / ↑', 'Previous claim'], ['U', 'Undo'], ['Enter', 'Open a queue row'], ['Esc', 'Close a form, then the screen'],
 ];
 
 /**
@@ -73,6 +74,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
   const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
   const teachingWaiting = review?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
+  const notVerified = review?.state === 'ready' ? review.claims.filter((claim) => claim.state.state === 'unverified').length : 0;
 
   // After an action, focus moves to the statement of the claim now in focus.
   useEffect(() => {
@@ -105,10 +107,9 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     { id: 'review-edit', keys: 'E', description: 'Edit the sentence', handler: () => click('E') },
     { id: 'review-remove', keys: 'R', description: 'Remove it', handler: () => click('R') },
     { id: 'review-add-source', keys: 'S', description: 'Add a source', handler: () => click('S') },
-    { id: 'review-general', keys: 'G', description: 'General knowledge', handler: () => { if (active?.availableActions.includes('general_knowledge')) void session.run(active, { action: 'general_knowledge' }, 'general_knowledge'); } },
     { id: 'review-undo', keys: 'U', description: 'Undo', handler: () => void session.undoLast() },
     { id: 'review-legend', keys: 'Shift+?', description: 'Keyboard keys', handler: () => setLegend((open) => !open) },
-  ], [session, active]);  
+  ], [session]);
   useKeyboardShortcuts(shortcuts, { context: 'review', enabled: !anyOpen && !session.acting });
   const escape = useMemo(() => [{ id: 'review-escape', keys: 'Escape', description: 'Close a form, then the screen', handler: () => {
     if (reader || trusting) return; // the dialog closes itself
@@ -146,6 +147,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
         {jobActive && <span className="font-medium text-text-primary">Checking your changes · </span>}
         {tallyLine(review.counts) || (teachingWaiting ? teachingNotesForYou(teachingWaiting) : 'Nothing to check yet')}
       </p>}
+      {notVerified > 0 && <p className="mt-1 text-sm text-text-secondary">{unverifiedReviewLine(notVerified)}</p>}
       {review?.state === 'needs_review' && waiting.length === 0 && !review.changedSinceStop && <LessonAuditLine programId={programId} lessonId={lessonId} />}
       {resume.error && <p role="alert" className="mt-1 text-xs text-danger-fg">{resume.error.message}</p>}
     </header>
@@ -175,6 +177,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const focus = (() => {
     if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s claims have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
+    if (session.removedActive) return <RemovedStatements sentences={session.removed} />;
     if (session.teachingActive) return <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
       onKept={(remaining) => session.setMessage(`Kept as written. ${remaining > 0 ? teachingNotesForYou(remaining) : 'No teaching notes left.'}`)} />;
     if (active) return <ClaimInFocus ref={statementRef} programId={programId} item={active} position={position || 1} total={Math.max(ordered.length, 1)}
@@ -196,8 +199,10 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     openedIds={session.opened} settledIds={session.settling}
     onSelect={(claimId) => { session.select(claimId); if (narrow) setNarrowView('claim'); requestAnimationFrame(() => document.getElementById(queueRowId(claimId))?.focus()); }}
     onAcceptSource={(group) => acceptSource(group.claims[0]?.support ?? null)} onAddSource={openGroupSheet}
-    onAcceptProposals={(proposals) => void session.acceptProposals(proposals)} resolved={session.resolved}
-    teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
+    resolved={session.resolved}
+    teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}
+    removedCount={session.removed.reduce((sum, entry) => sum + entry.statements.length, 0)} removedActive={session.removedActive}
+    onOpenRemoved={() => { session.openRemoved(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
 
   return (
     <div ref={rootRef} {...drop.handlers} className={`relative flex h-full min-h-0 flex-col bg-background ${drop.dragging ? 'ring-2 ring-inset ring-accent' : ''}`}>

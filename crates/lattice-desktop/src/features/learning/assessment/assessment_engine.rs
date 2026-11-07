@@ -219,11 +219,10 @@ impl LearningAssessmentResponse {
     }
 }
 
-fn bounded(value: &str, label: &str, max: usize) -> Result<()> {
-    let length = value.trim().chars().count();
-    if length == 0 || length > max {
+fn present(value: &str, label: &str) -> Result<()> {
+    if value.trim().is_empty() {
         return Err(AppError::InvalidInput(format!(
-            "{label} must contain 1–{max} characters."
+            "{label} must not be blank."
         )));
     }
     Ok(())
@@ -241,8 +240,8 @@ fn invalid(message: &str) -> AppError {
 
 pub fn validate_blueprint(blueprint: &LearningAssessmentBlueprint) -> Result<()> {
     id(&blueprint.id, "assessment blueprint")?;
-    bounded(&blueprint.title, "Assessment title", 160)?;
-    bounded(&blueprint.instructions, "Assessment instructions", 4_000)?;
+    present(&blueprint.title, "Assessment title")?;
+    present(&blueprint.instructions, "Assessment instructions")?;
     if blueprint.expected_minutes == 0 {
         return Err(invalid("Assessment time must be at least one minute."));
     }

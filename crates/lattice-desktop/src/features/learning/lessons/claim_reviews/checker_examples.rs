@@ -8,7 +8,9 @@
 
 use std::collections::BTreeMap;
 
-use lattice_core::domain::learning::claim_review::{ClaimLedgerEntry, VerdictKind};
+use lattice_core::domain::learning::claim_review::{
+    AttachOutcome, Checker, ClaimEvent, ClaimLedgerEntry, VerdictKind,
+};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -123,6 +125,29 @@ pub struct CheckerAccuracyDto {
     pub retrieval_misses: u32,
 }
 
+/// The kind of the local checker's failing check that `entry` stands on: its
+/// latest failure, when the latest check that judged it was the local
+/// checker's. A claim the local checker passed and a Verifier disputed was
+/// flagged by the Verifier, and a user's verdict on it says nothing of the
+/// local checker's flags.
+fn local_flag(entry: &ClaimLedgerEntry) -> Option<&VerdictKind> {
+    let latest = entry
+        .events()
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            ClaimEvent::Checked(check)
+            | ClaimEvent::EvidenceAttached {
+                result: AttachOutcome::Checked(check),
+                ..
+            } if !check.result.is_unjudged() => Some(&check.checker),
+            _ => None,
+        });
+    matches!(latest, Some(Checker::Local { .. }))
+        .then(|| entry.latest_failure())
+        .flatten()
+}
+
 /// The file an export writes, under `evals/grounding/` (§15).
 pub fn export_file_name(date: &str) -> String {
     format!("lesson-claims-{date}.jsonl")
@@ -163,7 +188,8 @@ impl CheckerExamples {
     /// a confirmation labels the claim true, a removal or an edit false.
     /// Returns `false`, writing nothing, when the checker's latest judgement
     /// of the claim was not a flag a judge made over passages (no source,
-    /// could not judge, a general-knowledge proposal): those are not scored.
+    /// could not judge, a general-knowledge proposal, or a claim only the
+    /// Verifier flagged): those are not scored.
     pub async fn record_human_verdict(
         &self,
         program_id: &str,
@@ -172,7 +198,7 @@ impl CheckerExamples {
         passages: &[ShownPassage],
         source: LabelSource,
     ) -> Result<bool> {
-        let local_verdict = match entry.latest_failure() {
+        let local_verdict = match local_flag(entry) {
             Some(VerdictKind::Unsupported) => "unsupported",
             Some(VerdictKind::Contradicted) => "contradicted",
             _ => return Ok(false),
@@ -226,7 +252,7 @@ impl CheckerExamples {
         passages: &[ShownPassage],
         passage_was_in_collection: bool,
     ) -> Result<bool> {
-        let local_verdict = match flagged.latest_failure() {
+        let local_verdict = match local_flag(flagged) {
             Some(VerdictKind::Unsupported) => "unsupported",
             Some(VerdictKind::Contradicted) => "contradicted",
             Some(VerdictKind::NoSource) if !passage_was_in_collection => "no_source",
