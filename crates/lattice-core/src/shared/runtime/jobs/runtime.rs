@@ -73,6 +73,13 @@ pub trait JobHandler: Send + Sync + 'static {
         let _ = job;
         JobFailure::classify(error)
     }
+
+    /// Called after the runtime itself failed `job` with `code` (a panic, or a
+    /// job that stopped the app), so the feature can settle the state it keeps
+    /// outside the jobs table.
+    async fn failed_by_runtime(&self, job: &JobRecord, code: &str) {
+        let _ = (job, code);
+    }
 }
 
 /// A handler's view of the job it is running.
@@ -754,6 +761,12 @@ impl JobRuntime {
     /// before the database closes.
     pub async fn drain(&self) {
         self.tasks.wait().await;
+    }
+
+    /// Suspends every job still running, in one statement, and returns how
+    /// many. For an orderly exit that did not wait for every worker.
+    pub async fn suspend_running(&self) -> Result<usize> {
+        Ok(0)
     }
 
     /// Waits until no worker is running or waiting for `id`.

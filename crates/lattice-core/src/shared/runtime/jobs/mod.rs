@@ -337,6 +337,8 @@ impl From<&JobRecord> for JobDto {
 #[cfg(test)]
 mod continue_tests;
 #[cfg(test)]
+mod crash_guard_tests;
+#[cfg(test)]
 mod never_stuck_tests;
 #[cfg(test)]
 mod tests;

@@ -11,8 +11,7 @@ use std::sync::{
 const KIND: &str = "test.work";
 const WAIT: Duration = Duration::from_secs(5);
 const INTERNAL_ERROR: &str = "Lattice hit an internal error while working on this. Retry it; if it happens again, Settings \u{2192} Logs has the details.";
-const STOPPED_THE_APP: &str =
-    "This stopped Lattice twice, so it was not resumed. Retry it to try again.";
+const STOPPED_THE_APP: &str = "Lattice closed unexpectedly twice while this was running, so it was not resumed. Retry it to try again.";
 
 async fn pool() -> sqlx::SqlitePool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()

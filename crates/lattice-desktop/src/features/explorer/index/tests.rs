@@ -1466,6 +1466,65 @@ mod builds {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_that_stopped_the_app_stays_failed_until_the_learner_retries_it() {
+        use lattice_core::shared::runtime::jobs::{JobStore, NewJob, RecoveryPolicy};
+        let rig = Rig::new();
+        let embedder = FakeEmbedder::new("model-a");
+        let root = rig.project("project", &[("src/retry.rs", RETRY_RS)]);
+        let pool = jobs_database().await;
+        let store = JobStore::new(pool.clone());
+        let id = store
+            .submit(&NewJob {
+                kind: FOLDER_INDEX.into(),
+                subject_id: Some(text(&root)),
+                operation_id: "stopped".into(),
+                payload_hash: text(&root),
+                requested: json!({
+                    "root": text(&root),
+                    "indexRoot": text(&root),
+                    "wipePrefix": false,
+                }),
+                progress_total: 100,
+                message: "Queued".into(),
+            })
+            .await
+            .unwrap()
+            .id;
+        for _ in 0..2 {
+            store.claim(&id).await.unwrap().unwrap();
+            store
+                .recover(FOLDER_INDEX, RecoveryPolicy::Requeue)
+                .await
+                .unwrap();
+        }
+        let stopped = store.get(&id).await.unwrap();
+        assert_eq!(stopped.status, JobStatus::Failed);
+        assert_eq!(stopped.error_code.as_deref(), Some("stopped_the_app"));
+
+        let manager = rig
+            .manager_on(rig.config(), Some(Arc::clone(&embedder)), pool)
+            .await;
+        open_settled(&manager, &root).await;
+        manager.close().await;
+        open_settled(&manager, &root).await;
+
+        let after = builds_of(&manager, &root).await;
+        assert_eq!(
+            after.iter().map(|job| job.id.as_str()).collect::<Vec<_>>(),
+            [id.as_str()],
+            "opening the folder keeps the failure and queues nothing"
+        );
+        assert_eq!(after[0].status, JobStatus::Failed);
+        assert_eq!(after[0].error_code.as_deref(), Some("stopped_the_app"));
+
+        let retried = manager.jobs.retry(&id, "learner-retry").await.unwrap();
+        let done = finished(&manager, &root).await;
+        assert_eq!(done.id, retried.id);
+        assert_eq!(done.status, JobStatus::Completed);
+        manager.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn closing_a_folder_leaves_its_build_running() {
         let rig = Rig::new();
         let embedder = FakeEmbedder::new("model-a");

@@ -115,6 +115,11 @@ pub async fn recover_running_runs(repo: &LearningPracticalRepository) -> Result<
     repo.mark_runs_interrupted().await
 }
 
+/// What the plugin's setup runs: settles the runs the last process left running.
+pub async fn recover_at_startup(repo: &LearningPracticalRepository) -> Result<usize> {
+    recover_running_runs(repo).await
+}
+
 async fn cleanup_orphan(run: RunCleanup, active: bool) -> Result<()> {
     if let Some(engine) = run.engine {
         lab_runtime::cleanup_interrupted_run(engine, &run.id).await?;
