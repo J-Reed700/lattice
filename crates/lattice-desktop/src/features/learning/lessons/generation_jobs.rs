@@ -397,7 +397,17 @@ impl LessonGenerationWorker {
                 staged.push((lesson.id.clone(), generated));
                 completed_count = completed_count.max(index as u32 + 1);
                 crate::features::learning::lesson_progress::completed(completed_count);
-                crate::features::learning::lesson_progress::stage("Saving verified lesson");
+                let unverified = staged
+                    .last()
+                    .and_then(|(_, lesson)| lesson.verification.as_ref())
+                    .map_or(0, |report| report.unverified_count());
+                crate::features::learning::lesson_progress::stage(
+                    crate::features::learning::content_verification::not_verified_line(unverified)
+                        .map_or_else(
+                            || "Saving verified lesson".to_owned(),
+                            |line| format!("Lesson ready · {line}"),
+                        ),
+                );
                 if !context
                     .progress(
                         completed_count,

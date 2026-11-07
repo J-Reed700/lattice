@@ -21,11 +21,13 @@ mod readings;
 mod receipts;
 mod stops;
 mod successor;
+mod unverified;
 mod written;
 
 pub(super) use audit::Audited;
 pub(super) use cotenancy::{sentences, CutOf};
 pub(super) use position::StepKind;
+pub(super) use stops::UNREADABLE;
 pub(super) use successor::Rewrites;
 
 use super::provenance_gate::ProvenanceGate;
@@ -804,15 +806,37 @@ impl ClaimLedger {
     /// The report the lesson publishes with: each finding carries the user's
     /// resolution, and the issues are what the ledger leaves open.
     pub(super) fn bind(&self, mut report: LessonVerificationReport) -> LessonVerificationReport {
-        let resolution = |id: &ClaimId| match self.entry(id).map(ClaimLedgerEntry::state) {
+        let confirmed = |id: &ClaimId| match self.entry(id).map(ClaimLedgerEntry::state) {
             Some(ClaimState::Confirmed { at, note, .. }) => Some(Resolution::Confirmed {
                 at: *at,
                 note: note.clone(),
             }),
             _ => None,
         };
+        let resolution = |id: &ClaimId| match self.entry(id).map(ClaimLedgerEntry::state) {
+            Some(ClaimState::Unverified { reason, .. }) => {
+                Some(Resolution::Unverified { reason: *reason })
+            }
+            _ => confirmed(id),
+        };
         for (finding, id) in report.findings.iter_mut().zip(&self.findings) {
-            finding.resolution = resolution(id);
+            // A claim the machine ended whose sentence stands, published not
+            // verified, is no finding of the pass: the finding on its sentence
+            // carries its resolution.
+            finding.resolution = resolution(id).or_else(|| {
+                self.entries
+                    .iter()
+                    .filter(|entry| !self.findings.contains(entry.claim_id()))
+                    .find_map(|entry| match entry.state() {
+                        ClaimState::Unverified { reason, .. }
+                            if entry.location().unit_index == finding.unit
+                                && entry.location().quote == finding.quote =>
+                        {
+                            Some(Resolution::Unverified { reason: *reason })
+                        }
+                        _ => None,
+                    })
+            });
         }
         let confirmed: Vec<String> = report
             .executions
@@ -822,7 +846,7 @@ impl ClaimLedger {
                     && self
                         .examples
                         .get(&observation.id)
-                        .is_some_and(|id| resolution(id).is_some())
+                        .is_some_and(|id| confirmed(id).is_some())
             })
             .map(|observation| observation.id.clone())
             .collect();

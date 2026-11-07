@@ -8,12 +8,12 @@ use crate::features::learning::{
     lesson_evidence::{
         LearningClaimEvidenceDto, LearningClaimPartDto, LearningClaimPartKindDto,
         LearningClaimResolutionDto, LearningEvidencePassageDto, LearningLessonEvidenceDto,
-        LearningStatementClassDto, SavedEvidenceVersion,
+        LearningStatementClassDto, SavedEvidenceVersion, UnverifiedReasonDto,
     },
     references::trust::dto_map,
 };
 use lattice_core::application::services::claim_verification::PartKind;
-use lattice_core::domain::learning::claim_review::Class;
+use lattice_core::domain::learning::claim_review::{Class, UnverifiedReason};
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 
@@ -109,6 +109,16 @@ impl LessonVerificationReport {
                     .is_none_or(|classed| classed.class != Class::Internal)
             })
         };
+        // A sentence that carries a claim published not verified reads not
+        // verified, whatever another claim on it found.
+        let unverified: HashMap<(usize, &str), UnverifiedReason> = claims()
+            .filter_map(|finding| match &finding.resolution {
+                Some(Resolution::Unverified { reason }) => {
+                    Some(((finding.unit, finding.quote.as_str()), *reason))
+                }
+                _ => None,
+            })
+            .collect();
         let teaching_claims = claims()
             .filter(|finding| finding.unit < lesson.blocks.len())
             .map(|finding| {
@@ -151,12 +161,39 @@ impl LessonVerificationReport {
                         .get(passage.source_id.as_str())
                         .is_some_and(|version| version.deleted_at.is_some())
                 });
-                let (resolution, note) = match &finding.resolution {
-                    Some(Resolution::Confirmed { note, .. }) => {
-                        (LearningClaimResolutionDto::ConfirmedByYou, note.clone())
+                let (resolution, note, unverified_reason) = match &finding.resolution {
+                    Some(Resolution::Confirmed { note, .. }) => (
+                        LearningClaimResolutionDto::ConfirmedByYou,
+                        note.clone(),
+                        None,
+                    ),
+                    Some(Resolution::Unverified { reason }) => (
+                        LearningClaimResolutionDto::NotVerified,
+                        None,
+                        Some((*reason).into()),
+                    ),
+                    None if finding.verdict != ClaimVerdict::Supported => (
+                        LearningClaimResolutionDto::NotVerified,
+                        None,
+                        Some(match finding.verdict {
+                            ClaimVerdict::Contradicted => UnverifiedReasonDto::Contradicted,
+                            ClaimVerdict::Unverified => UnverifiedReasonDto::Unchecked,
+                            ClaimVerdict::Supported | ClaimVerdict::Unsupported => {
+                                UnverifiedReasonDto::Unsupported
+                            }
+                        }),
+                    ),
+                    None if source_removed => {
+                        (LearningClaimResolutionDto::SourceRemoved, None, None)
                     }
-                    None if source_removed => (LearningClaimResolutionDto::SourceRemoved, None),
-                    None => (LearningClaimResolutionDto::Verified, None),
+                    None => match unverified.get(&(finding.unit, finding.quote.as_str())) {
+                        Some(reason) => (
+                            LearningClaimResolutionDto::NotVerified,
+                            None,
+                            Some((*reason).into()),
+                        ),
+                        None => (LearningClaimResolutionDto::Verified, None, None),
+                    },
                 };
                 Ok(LearningClaimEvidenceDto {
                     section_index: finding.unit,
@@ -174,6 +211,7 @@ impl LessonVerificationReport {
                     passages,
                     resolution,
                     note,
+                    unverified_reason,
                     sufficiency: finding.trust.as_deref().map(sufficiency),
                     class: finding
                         .class
@@ -323,6 +361,131 @@ mod tests {
         assert_eq!(view.teaching_claims.len(), 1);
         assert_eq!(view.teaching_claims[0].class, None);
         assert_eq!(view.claim_count, 1);
+    }
+
+    fn not_verified(reason: UnverifiedReason) -> Option<Resolution> {
+        Some(Resolution::Unverified { reason })
+    }
+
+    #[test]
+    fn a_claim_published_not_verified_reads_so_with_its_reason_and_is_never_verified() {
+        let (lesson, mut report) = fixture();
+        report.findings[0].verdict = ClaimVerdict::Unsupported;
+        report.findings[0].resolution = not_verified(UnverifiedReason::Unsupported);
+
+        let view = report.learner_view(&lesson, &[]).unwrap();
+
+        let claim = &view.teaching_claims[0];
+        assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);
+        assert_eq!(
+            claim.unverified_reason,
+            Some(UnverifiedReasonDto::Unsupported)
+        );
+        assert_eq!(view.claim_count, 1);
+        assert_eq!(view.confirmed_count, 0);
+        let wire = serde_json::to_value(claim).unwrap();
+        assert_eq!(wire["resolution"], "not_verified");
+        assert_eq!(wire["unverifiedReason"], "unsupported");
+    }
+
+    #[test]
+    fn a_report_counts_the_statements_it_publishes_not_verified_and_says_so() {
+        use crate::features::learning::content_verification::not_verified_line;
+        let (_, mut report) = fixture();
+        assert_eq!(report.unverified_count(), 0);
+        report.findings[0].verdict = ClaimVerdict::Unsupported;
+        report.findings[0].resolution = not_verified(UnverifiedReason::Unchecked);
+        assert_eq!(report.unverified_count(), 1);
+
+        assert_eq!(not_verified_line(0), None);
+        assert_eq!(
+            not_verified_line(1).as_deref(),
+            Some("1 statement not verified")
+        );
+        assert_eq!(
+            not_verified_line(2).as_deref(),
+            Some("2 statements not verified")
+        );
+    }
+
+    #[test]
+    fn a_verified_claim_carries_no_reason_on_the_wire() {
+        let (lesson, report) = fixture();
+
+        let view = report.learner_view(&lesson, &[]).unwrap();
+
+        let wire = serde_json::to_value(&view.teaching_claims[0]).unwrap();
+        assert_eq!(wire["resolution"], "verified");
+        assert!(wire["unverifiedReason"].is_null(), "{wire}");
+    }
+
+    #[test]
+    fn a_sentence_that_carries_an_unverified_claim_reads_not_verified_beside_a_verified_one() {
+        let (lesson, mut report) = fixture();
+        report.findings.push(report.findings[0].clone());
+        report.findings[1].verdict = ClaimVerdict::Contradicted;
+        report.findings[1].resolution = not_verified(UnverifiedReason::Contradicted);
+
+        let view = report.learner_view(&lesson, &[]).unwrap();
+
+        for claim in &view.teaching_claims {
+            assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);
+            assert_eq!(
+                claim.unverified_reason,
+                Some(UnverifiedReasonDto::Contradicted)
+            );
+        }
+    }
+
+    #[test]
+    fn a_claim_the_user_confirmed_stays_confirmed_beside_an_unverified_one() {
+        let (lesson, mut report) = fixture();
+        report.findings.push(report.findings[0].clone());
+        report.findings[0].verdict = ClaimVerdict::Unsupported;
+        report.findings[0].resolution = Some(Resolution::Confirmed {
+            at: 1,
+            note: Some("Checked by hand.".into()),
+        });
+        report.findings[1].verdict = ClaimVerdict::Unsupported;
+        report.findings[1].resolution = not_verified(UnverifiedReason::Unsupported);
+
+        let view = report.learner_view(&lesson, &[]).unwrap();
+
+        assert_eq!(
+            view.teaching_claims[0].resolution,
+            LearningClaimResolutionDto::ConfirmedByYou
+        );
+        assert_eq!(
+            view.teaching_claims[1].resolution,
+            LearningClaimResolutionDto::NotVerified
+        );
+    }
+
+    #[test]
+    fn a_claim_no_passage_supports_and_nobody_resolved_reads_not_verified_never_verified_or_unavailable(
+    ) {
+        for (verdict, reason) in [
+            (ClaimVerdict::Unsupported, UnverifiedReasonDto::Unsupported),
+            (
+                ClaimVerdict::Contradicted,
+                UnverifiedReasonDto::Contradicted,
+            ),
+            (ClaimVerdict::Unverified, UnverifiedReasonDto::Unchecked),
+        ] {
+            let (lesson, mut report) = fixture();
+            report.findings[0].verdict = verdict;
+
+            let view = report.learner_view(&lesson, &[]).unwrap_or_else(|error| {
+                panic!("{verdict:?} makes the lesson unavailable: {error}")
+            });
+
+            let claim = &view.teaching_claims[0];
+            assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);
+            assert_eq!(claim.unverified_reason, Some(reason), "{verdict:?}");
+            assert_eq!(view.claim_count, 1);
+            let wire = serde_json::to_value(claim).unwrap();
+            assert_eq!(wire["resolution"], "not_verified");
+        }
     }
 
     #[test]

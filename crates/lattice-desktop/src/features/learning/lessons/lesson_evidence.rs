@@ -1,5 +1,6 @@
 //! Learner-safe verification report. Assessment claims, keys and explanations
 //! stay on the backend; only teaching claims and original source passages leave.
+use lattice_core::domain::learning::claim_review::UnverifiedReason;
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -30,6 +31,25 @@ pub enum LearningClaimResolutionDto {
     Verified,
     ConfirmedByYou,
     SourceRemoved,
+    NotVerified,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum UnverifiedReasonDto {
+    Unchecked,
+    Unsupported,
+    Contradicted,
+}
+
+impl From<UnverifiedReason> for UnverifiedReasonDto {
+    fn from(reason: UnverifiedReason) -> Self {
+        match reason {
+            UnverifiedReason::Unchecked => Self::Unchecked,
+            UnverifiedReason::Unsupported => Self::Unsupported,
+            UnverifiedReason::Contradicted => Self::Contradicted,
+        }
+    }
 }
 
 /// The class a published statement was checked as (claim classes design
@@ -100,6 +120,8 @@ pub struct LearningClaimEvidenceDto {
     /// what a passage states and what is common knowledge beside it.
     #[serde(default)]
     pub parts: Vec<LearningClaimPartDto>,
+    #[serde(default)]
+    pub unverified_reason: Option<UnverifiedReasonDto>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

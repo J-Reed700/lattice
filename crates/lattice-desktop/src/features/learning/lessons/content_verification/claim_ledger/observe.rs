@@ -266,6 +266,22 @@ impl ClaimLedger {
         targets
     }
 
+    /// The claims whose user's hint no research round has run with yet, as
+    /// statements waiting for a source.
+    pub(in crate::features::learning::lessons::content_verification) fn hinted_waiting(
+        &self,
+    ) -> Vec<super::Waiting> {
+        self.entries
+            .iter()
+            .filter(|entry| super::super::review_pass::pending_hint(entry).is_some())
+            .map(|entry| super::Waiting {
+                claim: entry.claim_id().clone(),
+                node: "hint",
+                step: Step::Research,
+            })
+            .collect()
+    }
+
     /// Records a research round for each claim it looked for (§3
     /// `Researched`): "found nothing new" is an attempt with no passages. Each
     /// claim's event carries what the round cost per claim (D5) and the

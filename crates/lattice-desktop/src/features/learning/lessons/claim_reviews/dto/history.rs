@@ -227,7 +227,9 @@ impl ClaimEventPayloadDto {
                 class: (*class).into(),
                 by: (*by).into(),
             },
-            ClaimEvent::Stepped { .. } | ClaimEvent::CitationDropped { .. } => return None,
+            ClaimEvent::Stepped { .. }
+            | ClaimEvent::CitationDropped { .. }
+            | ClaimEvent::PublishedUnverified { .. } => return None,
         })
     }
 }

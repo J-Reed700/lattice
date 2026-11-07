@@ -8,7 +8,7 @@ import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSou
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
-import { ALL_RESOLVED, tallyLine, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { ALL_RESOLVED, tallyLine, teachingNotesForYou, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
@@ -74,6 +74,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
   const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
   const teachingWaiting = review?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
+  const notVerified = review?.state === 'ready' ? review.claims.filter((claim) => claim.state.state === 'unverified').length : 0;
 
   // After an action, focus moves to the statement of the claim now in focus.
   useEffect(() => {
@@ -146,6 +147,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
         {jobActive && <span className="font-medium text-text-primary">Checking your changes · </span>}
         {tallyLine(review.counts) || (teachingWaiting ? teachingNotesForYou(teachingWaiting) : 'Nothing to check yet')}
       </p>}
+      {notVerified > 0 && <p className="mt-1 text-sm text-text-secondary">{unverifiedReviewLine(notVerified)}</p>}
       {review?.state === 'needs_review' && waiting.length === 0 && !review.changedSinceStop && <LessonAuditLine programId={programId} lessonId={lessonId} />}
       {resume.error && <p role="alert" className="mt-1 text-xs text-danger-fg">{resume.error.message}</p>}
     </header>

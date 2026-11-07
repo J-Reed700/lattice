@@ -3,6 +3,7 @@
 //! docs/design/2026-10-16-lesson-claim-review.md.
 
 use super::{ClaimVerdict, Finding};
+use lattice_core::domain::learning::claim_review::UnverifiedReason;
 use serde::{Deserialize, Serialize};
 
 /// How a claim without a supporting passage was resolved by the user. Set on
@@ -13,6 +14,9 @@ use serde::{Deserialize, Serialize};
 pub(in crate::features::learning) enum Resolution {
     /// "Confirmed by you", with the user's note (required over a contradiction).
     Confirmed { at: i64, note: Option<String> },
+    /// The machine could not settle it and the lesson publishes with it,
+    /// shown to the learner as not verified.
+    Unverified { reason: UnverifiedReason },
 }
 
 impl Finding {
@@ -38,6 +42,13 @@ mod tests {
             (
                 "Small handlers are easier to test.",
                 confirmed.clone(),
+                true,
+            ),
+            (
+                "Small handlers are easier to test.",
+                Some(Resolution::Unverified {
+                    reason: UnverifiedReason::Unsupported,
+                }),
                 true,
             ),
             ("Small handlers are easier to test.", None, false),
