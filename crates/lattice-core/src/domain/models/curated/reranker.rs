@@ -2,6 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
+use super::pins::{pinned_for, unpinned};
+use crate::domain::models::fit::PinnedModel;
+
 use crate::shared::constants::RERANKER_MODEL_DIR;
 
 /// A reranker GGUF, served by the bundled `llama-server --reranking`.
@@ -28,6 +31,12 @@ impl CuratedReranker {
             "https://huggingface.co/{}/resolve/{}/{}",
             self.repo, self.revision, self.file
         )
+    }
+
+    /// The memory facts of the file's header and the bytes of it that stay in system RAM, as
+    /// pinned in the catalog.
+    pub fn pinned(&self) -> PinnedModel {
+        pinned_for(self.repo, self.file).unwrap_or_else(unpinned)
     }
 
     /// Where the file lives under the models folder `models_dir`.

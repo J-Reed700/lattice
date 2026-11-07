@@ -285,6 +285,10 @@ pub struct LearningGenerationJob {
     pub activity: Option<LearningGenerationActivity>,
     pub result_id: Option<String>,
     pub error: Option<String>,
+    /// The code of the error behind `error`, for a job that failed or is
+    /// waiting out a temporary failure; `None` otherwise.
+    #[serde(default)]
+    pub error_code: Option<lattice_core::shared::ipc::ErrorCode>,
     pub retry_of_job_id: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,

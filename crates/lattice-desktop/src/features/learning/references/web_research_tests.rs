@@ -11,11 +11,12 @@ use lattice_core::application::contracts::web::{
 };
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::domain::sourcing::NeedKind;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::json;
 
 use super::web_research::{
-    need_schema, plan_needs, search_need, Candidate, GapNeed, PlannedNeed, Room,
+    need_schema, plan_needs, search_need, with_breadth, Candidate, GapNeed, NeedSearch,
+    PlannedNeed, Room,
 };
 use crate::features::learning::lessons::course_generation_tests::ScriptedModel;
 use crate::features::web::mocks::MockWebService;
@@ -494,7 +495,8 @@ impl WebServiceTrait for Endless {
 }
 
 #[tokio::test]
-async fn a_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full() -> Result<()> {
+async fn a_paged_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full() -> Result<()>
+{
     let web = Endless {
         web: MockWebService::new(),
         pages: Mutex::new(0),
@@ -504,12 +506,203 @@ async fn a_search_of_a_catalog_that_never_runs_out_stops_when_its_room_is_full()
         tokens: 30,
         cost: &cost,
     };
-    let found = search_need(&web, &need("tonal centre", NeedKind::Paper), room).await?;
+    let tonal = need("tonal centre", NeedKind::Paper);
+    let mut search = NeedSearch::new(&tonal);
+    let mut found = Vec::new();
+    while !search.is_done() {
+        found.extend(search.next_page(&web, room).await?);
+    }
     // Twelve a page: the third page fills the room and is the last asked for.
     assert_eq!(found.len(), 30);
     assert_eq!(*web.pages.lock().unwrap(), 3);
     assert_eq!(found[29].result.url, "https://doi.org/10.1000/3.5");
     Ok(())
+}
+
+/// A catalog that answers every page it is asked for with a full page of
+/// results not seen before, and fails from page `fail_from` on so that a
+/// search which keeps paging still ends.
+struct Full {
+    web: MockWebService,
+    asked: Mutex<Vec<usize>>,
+    fail_from: usize,
+}
+
+#[async_trait::async_trait]
+impl WebServiceTrait for Full {
+    async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
+        self.asked.lock().unwrap().push(input.page);
+        if input.page >= self.fail_from {
+            return Err(AppError::ServiceNotAvailable("No further page".into()));
+        }
+        let mut output = self.web.search_web(input).await?;
+        output.results = (0..input.max_results)
+            .map(|i| WebSearchResult {
+                title: format!("Paper {} {i}", input.page),
+                url: format!("https://doi.org/10.1000/{}.{i}", input.page),
+                snippet: String::new(),
+                published_date: None,
+                source: Some("crossref".into()),
+            })
+            .collect();
+        Ok(output)
+    }
+    async fn fetch_url_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+        self.web.fetch_url_content(url).await
+    }
+    fn validate_url(&self, url: &str) -> Result<()> {
+        self.web.validate_url(url)
+    }
+}
+
+#[tokio::test]
+async fn a_search_asks_for_the_first_page_only() -> Result<()> {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 4,
+    };
+    let found = search_need(
+        &web,
+        &need("tonal centre", NeedKind::Paper),
+        Room::for_all(),
+    )
+    .await?;
+    assert_eq!(*web.asked.lock().unwrap(), [1]);
+    assert_eq!(found.len(), 12);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_asks_for_the_next_page_each_time_until_a_page_adds_nothing() -> Result<()> {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 10,
+    };
+    let tonal = need("tonal centre", NeedKind::Paper);
+    let mut search = NeedSearch::new(&tonal);
+    let first = search.next_page(&web, Room::for_all()).await?;
+    assert_eq!(*web.asked.lock().unwrap(), [1]);
+    assert!(!search.is_done());
+    let second = search.next_page(&web, Room::for_all()).await?;
+    assert_eq!(*web.asked.lock().unwrap(), [1, 2]);
+    assert_eq!(first.len(), 12);
+    assert_eq!(second.len(), 12);
+    assert_eq!(second[0].result.url, "https://doi.org/10.1000/2.0");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_is_done_after_a_short_page_and_asks_for_no_more() -> Result<()> {
+    let web = Recording {
+        web: MockWebService::new(),
+        searches: Mutex::new(Vec::new()),
+    };
+    web.web.set_search_results(
+        (0..5)
+            .map(|i| WebSearchResult {
+                title: format!("Article {i}"),
+                url: format!("https://example.org/article-{i}"),
+                snippet: String::new(),
+                published_date: None,
+                source: None,
+            })
+            .collect(),
+    );
+    let tonal = need("tonal centre", NeedKind::Web);
+    let mut search = NeedSearch::new(&tonal);
+    assert_eq!(search.next_page(&web, Room::for_all()).await?.len(), 5);
+    assert!(search.is_done());
+    assert!(search.next_page(&web, Room::for_all()).await?.is_empty());
+    assert_eq!(web.searches.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_whose_later_page_fails_ends_without_an_error() -> Result<()> {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 2,
+    };
+    let tonal = need("tonal centre", NeedKind::Paper);
+    let mut search = NeedSearch::new(&tonal);
+    assert_eq!(search.next_page(&web, Room::for_all()).await?.len(), 12);
+    assert!(search.next_page(&web, Room::for_all()).await?.is_empty());
+    assert!(search.is_done());
+    assert!(search.next_page(&web, Room::for_all()).await?.is_empty());
+    assert_eq!(*web.asked.lock().unwrap(), [1, 2]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_need_search_whose_first_page_fails_returns_the_error() {
+    let web = Full {
+        web: MockWebService::new(),
+        asked: Mutex::new(Vec::new()),
+        fail_from: 1,
+    };
+    let tonal = need("tonal centre", NeedKind::Paper);
+    assert!(search_need(&web, &tonal, Room::for_all()).await.is_err());
+    assert!(NeedSearch::new(&tonal)
+        .next_page(&web, Room::for_all())
+        .await
+        .is_err());
+}
+
+#[test]
+fn a_plan_of_papers_is_searched_on_the_web_and_in_an_encyclopedia_too() {
+    let planned = [
+        need("q1", NeedKind::Paper),
+        need("q2", NeedKind::OfficialDocs),
+    ];
+    let searched = with_breadth(&planned, "  Random assignment ");
+    assert_eq!(searched[..2], planned);
+    assert_eq!(searched.len(), 4);
+    assert_eq!(searched[2], need("q1", NeedKind::Web));
+    assert_eq!(
+        searched[3],
+        need("Random assignment", NeedKind::Encyclopedia)
+    );
+}
+
+#[test]
+fn a_plan_keeps_the_web_and_encyclopedia_searches_it_has_and_adds_only_the_missing_kind() {
+    let both = [
+        need("q1", NeedKind::Paper),
+        need("q2", NeedKind::Web),
+        need("q3", NeedKind::Encyclopedia),
+    ];
+    assert_eq!(with_breadth(&both, "Title"), both);
+
+    let web_only = [need("q1", NeedKind::Web)];
+    assert_eq!(
+        with_breadth(&web_only, "Title"),
+        [
+            need("q1", NeedKind::Web),
+            need("Title", NeedKind::Encyclopedia)
+        ]
+    );
+    let encyclopedia_only = [need("q1", NeedKind::Encyclopedia)];
+    assert_eq!(
+        with_breadth(&encyclopedia_only, "Title"),
+        [
+            need("q1", NeedKind::Encyclopedia),
+            need("q1", NeedKind::Web)
+        ]
+    );
+}
+
+#[test]
+fn a_subtopic_the_planner_covered_with_existing_sources_has_no_searches() {
+    assert!(with_breadth(&[], "Title").is_empty());
+    let papers = [need("q1", NeedKind::Paper)];
+    assert_eq!(
+        with_breadth(&papers, "  "),
+        [need("q1", NeedKind::Paper), need("q1", NeedKind::Web)],
+        "a blank title is no search"
+    );
 }
 
 #[tokio::test]

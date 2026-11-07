@@ -302,6 +302,7 @@ fn founded(claim: &str, judgment: ClaimJudgment) -> ClaimJudgment {
                 quote: None,
                 reason: Some("The cited passage does not state this.".into()),
                 confidence: outcome.confidence,
+                uncertain: false,
             })
         }
         other => other,

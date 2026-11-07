@@ -313,6 +313,7 @@ fn a_lesson_is_ready_only_when_every_claim_is_resolved() {
             confirmed: 1,
             queued: 1,
             open: 1,
+            unverified: 0,
             removed_by_you: 1,
             edited_by_you: 0,
             rewritten: 0,

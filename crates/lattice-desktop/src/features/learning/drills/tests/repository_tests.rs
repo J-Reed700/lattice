@@ -7,7 +7,7 @@ use crate::features::learning::drills::repository::{self, DrillStatus, NewDrill}
 use crate::features::learning::persistence::db;
 use crate::features::learning::repository::LearningRepository;
 use crate::features::learning::tests::{fixture, pool};
-use lattice_core::domain::learning::drills::Drill;
+use lattice_core::domain::learning::drills::{Drill, Material};
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqlitePool};
 
@@ -15,7 +15,7 @@ async fn add(pool: &SqlitePool, id: &str, program_id: Option<&str>) -> Result<()
     let proved = proved();
     let drill = Drill {
         id: id.into(),
-        language: "python".into(),
+        material: Material::code("python"),
         title: "A limiter".into(),
         files: proved.files.clone(),
         key: proved.planted_key(),
@@ -32,6 +32,7 @@ async fn add(pool: &SqlitePool, id: &str, program_id: Option<&str>) -> Result<()
             spec: &spec,
             domain: "rate limiting",
             suite: Some(SUITE),
+            source: None,
             runner: Some("builtin-python"),
             model: MODEL,
             evidence: &evidence,

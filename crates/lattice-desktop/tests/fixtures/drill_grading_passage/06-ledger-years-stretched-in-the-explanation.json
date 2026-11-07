@@ -1,0 +1,123 @@
+{
+  "name": "06-ledger-years-stretched-in-the-explanation",
+  "kind": "valid_extra",
+  "why": "The explanation itself says the ledgers show the fall until 1625, while the source says 1615: a real error against the source that the key does not hold, which the first finding names ('the ledgers cover 1603 to 1615'), so a valid extra. The second names the guild and council swap in full: found. The coopers figure is missed.",
+  "source": {
+    "versionId": "verrenmouth-harbour-and-salt-tax-v1",
+    "startByte": 70211,
+    "endByte": 71207,
+    "title": "Local History 120, reader: Verrenmouth and the salt tax",
+    "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary. The town's charter of 1412 gave its guild of fishers the sole right to land herring, and by 1550 the harbour handled about 9,000 barrels a year. In 1603 the Crown imposed a salt tax of two pence a pound, which the historian Odalys Penhallow argues was the main reason that the fishers moved their curing sheds upriver to Marlow Reach by 1620. Her argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1615.\n\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth, but Penhallow notes that the silting surveys date from 1640, after the move. The town council responded to the exodus in 1622 by offering a seven-year rent waiver to any cooper who settled within the walls. Only eleven coopers accepted the offer. The population fell from roughly 3,400 in 1600 to 2,100 in 1650, and did not recover until the railway reached the town in 1851."
+  },
+  "drill": {
+    "id": "verrenmouth-harbour-and-salt-tax",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Verrenmouth: the harbour and the salt tax",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary.\nIts charter of 1412 gave the town council the sole right to land herring.\nBy 1550 the harbour handled about 9,000 barrels a year.\nIn 1603 the Crown imposed a salt tax of two pence a pound.\nThe historian Odalys Penhallow argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620.\nHer argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1625.\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth.\nPenhallow notes that the silting surveys date from 1640, after the move.\nIn 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only forty coopers accepted.\nThe population fell from roughly 3,400 in 1600 to 2,100 in 1650.\nIt did not recover until the railway reached the town in 1851.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "verrenmouth-harbour-and-salt-tax-charter",
+        "pattern": "fidelity.swapped_entities",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 2,
+          "end": 2
+        },
+        "consequence": "A reader thinks the town council, not the fishers' guild, held the herring monopoly, and misses why the guild's later move mattered.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Its charter of 1412 gave the town council the sole right to land herring.",
+          "after": "Its charter of 1412 gave the guild of fishers the sole right to land herring."
+        },
+        "explanation": "The 1412 charter gave the sole right to land herring to the fishers' guild.",
+        "proof": {
+          "sourced": {
+            "quote": "gave its guild of fishers the sole right to land herring",
+            "planted": "contradicted",
+            "reason": "The source says the charter gave its guild of fishers the sole right to land herring, not the council."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "verrenmouth-harbour-and-salt-tax-coopers",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 9,
+          "end": 9
+        },
+        "consequence": "A reader thinks the council's offer drew a real response, when only eleven coopers took it up.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "In 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only forty coopers accepted.",
+          "after": "In 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only eleven coopers accepted."
+        },
+        "explanation": "Only eleven coopers accepted the offer, not forty.",
+        "proof": {
+          "sourced": {
+            "quote": "offering a seven-year rent waiver to any cooper who settled within the walls. Only eleven coopers accepted the offer",
+            "planted": "contradicted",
+            "reason": "The source says only eleven coopers accepted; the sentence says forty."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary.\nIts charter of 1412 gave the guild of fishers the sole right to land herring.\nBy 1550 the harbour handled about 9,000 barrels a year.\nIn 1603 the Crown imposed a salt tax of two pence a pound.\nThe historian Odalys Penhallow argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620.\nHer argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1625.\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth.\nPenhallow notes that the silting surveys date from 1640, after the move.\nIn 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only eleven coopers accepted.\nThe population fell from roughly 3,400 in 1600 to 2,100 in 1650.\nIt did not recover until the railway reached the town in 1851.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 6,
+        "end": 6
+      },
+      "text": "The ledgers cover 1603 to 1615. Saying the fall ran to 1625 stretches the evidence ten years beyond what the ledgers show.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 2,
+        "end": 2
+      },
+      "text": "The sole right to land herring was the fishers' guild's under the 1412 charter, not the town council's.",
+      "severity": "major"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      "valid_extra",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

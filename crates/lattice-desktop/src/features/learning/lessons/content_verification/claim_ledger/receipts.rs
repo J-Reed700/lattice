@@ -76,6 +76,7 @@ impl ClaimLedger {
                         evidence,
                         supporting_quote: Some(supporting_quote.clone()),
                         resolution: None,
+                        claim_id: None,
                         two_pass: Default::default(),
                         label: None,
                         class: None,

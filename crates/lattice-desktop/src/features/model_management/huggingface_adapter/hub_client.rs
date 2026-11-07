@@ -1,6 +1,9 @@
 //! The Hub HTTP client that implements `ModelCatalogPort`.
 use super::*;
 
+/// The user agent every Hub request carries.
+pub const HUB_USER_AGENT: &str = "RecallDesktop/1.0";
+
 /// Hugging Face Model Hub adapter.
 ///
 /// Implements `ModelCatalogPort` by querying the Hugging Face API.
@@ -20,6 +23,11 @@ impl HuggingFaceAdapter {
             .unwrap_or_else(|_| Client::new());
 
         Self { client }
+    }
+
+    /// The Hub HTTP client, with the adapter's timeout, for other Hub requests to share.
+    pub fn client(&self) -> &Client {
+        &self.client
     }
 
     pub(super) fn search_url(query: &str, limit: usize) -> String {
@@ -53,7 +61,7 @@ impl HuggingFaceAdapter {
         let response = self
             .client
             .get(&url)
-            .header("User-Agent", "RecallDesktop/1.0")
+            .header("User-Agent", HUB_USER_AGENT)
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Hugging Face API request failed: {}", e)))?;
@@ -87,7 +95,7 @@ impl HuggingFaceAdapter {
         let response = self
             .client
             .get(&url)
-            .header("User-Agent", "RecallDesktop/1.0")
+            .header("User-Agent", HUB_USER_AGENT)
             .send()
             .await
             .map_err(|e| AppError::Network(format!("Hugging Face API request failed: {}", e)))?;

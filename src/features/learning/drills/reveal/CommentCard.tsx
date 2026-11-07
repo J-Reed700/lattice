@@ -1,6 +1,7 @@
 import { useId } from 'react';
 
 import { Badge } from '@/components/ui/badge';
+import type { ReviewKind } from '@/features/learning/drills/drillOptions';
 import { lineLabel } from '@/features/learning/drills/reveal/revealCopy';
 import { eyebrow, panel } from '@/features/learning/drills/reveal/revealStyle';
 import { severityLabel, severityTone } from '@/features/learning/drills/severity';
@@ -13,19 +14,20 @@ export interface CommentVerdict {
 }
 
 /** One of the learner's comments: where it is, what it says, the severity they gave it, and what came of it. */
-export function CommentCard({ number, span, text, severity, verdict }: {
+export function CommentCard({ number, span, text, severity, verdict, material = 'code' }: {
   number: number;
   span: CodeReviewSpanDto | null;
   text: string;
   severity: CodeReviewSeverity | null;
   verdict?: CommentVerdict;
+  material?: ReviewKind;
 }) {
   const titleId = useId();
   return (
     <article aria-labelledby={titleId} className={`${panel} p-4 sm:p-5`}>
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h3 id={titleId} className={eyebrow}>Comment {number}</h3>
-        <span className="font-mono text-xs text-text-muted">{span ? lineLabel(span) : 'No lines selected'}</span>
+        <span className="font-mono text-xs text-text-muted">{span ? lineLabel(span, material) : material === 'passage' ? 'No sentences selected' : 'No lines selected'}</span>
         {severity && (
           <div className="inline-flex items-center gap-1.5 text-xs text-text-muted">
             Your severity

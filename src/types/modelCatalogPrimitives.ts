@@ -15,8 +15,6 @@ export type GpuAcceleration = 'Metal' | 'CUDA' | 'ROCm' | 'Vulkan' | 'None';
 
 export type CpuArchitecture = 'ARM64' | 'X86_64';
 
-export type CompatibilityLevel = 'Incompatible' | 'Poor' | 'Good' | 'Excellent';
-
 export type ModelSource = 'Curated' | 'External';
 
 export type ModelSortBy = 'recommended' | 'popularity' | 'likes' | 'size_asc' | 'size_desc' | 'name';

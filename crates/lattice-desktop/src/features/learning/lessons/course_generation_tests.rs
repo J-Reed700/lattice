@@ -1932,3 +1932,172 @@ fn program_request_goal_and_prior_knowledge_have_no_character_limit() -> Result<
     input.prior_knowledge = "Relevant experience and context. ".repeat(1_000);
     service::validate_request(&input)
 }
+
+#[tokio::test]
+async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it() -> Result<()> {
+    use crate::features::learning::{
+        curriculum::LearningGenerationJobKind, curriculum_repository::LearningCurriculumRepository,
+        plan_dto::*,
+    };
+    use std::sync::Mutex;
+    struct Recording {
+        inner: Model,
+        drafted: Mutex<bool>,
+        later: Mutex<Vec<String>>,
+    }
+    #[async_trait::async_trait]
+    impl LLMPort for Recording {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut replies = Vec::new();
+            for prompt in fixture_prompts(request) {
+                replies.push(self.respond(&prompt).await?);
+            }
+            Ok(fixture_completion(request, replies))
+        }
+        fn model_name(&self) -> &str {
+            self.inner.model_name()
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            self.inner.count_tokens(text)
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.inner.max_context_tokens()
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+    impl Recording {
+        async fn respond(&self, prompt: &str) -> Result<String> {
+            {
+                let mut drafted = self
+                    .drafted
+                    .lock()
+                    .map_err(|_| AppError::InternalError("fixture lock".into()))?;
+                if *drafted {
+                    self.later
+                        .lock()
+                        .map_err(|_| AppError::InternalError("fixture lock".into()))?
+                        .push(prompt.into());
+                }
+                if prompt.starts_with("Teach one rigorous, accessible lesson") {
+                    *drafted = true;
+                }
+            }
+            self.inner.respond(prompt).await
+        }
+    }
+
+    let pool = crate::features::learning::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let drafts = crate::features::learning::outline_draft::DraftRunRegistry::new();
+    let draft = service::generate(
+        &repo,
+        &drafts,
+        &outline(4, 3),
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let accepted = service::accept(
+        &repo,
+        &drafts,
+        AcceptLearningProgramRequestDto {
+            program_id: draft.summary.id.clone(),
+            expected_revision: draft.summary.revision,
+            title: "Experimental design".into(),
+        },
+    )
+    .await?;
+    let quote = "A randomized comparison isolates the intervention.";
+    crate::features::learning::content_verification::tests::install_source(
+        &pool,
+        &draft.summary.id,
+        REFERENCE,
+    )
+    .await?;
+    let mut program = repo.get(&draft.summary.id).await?;
+    program.sources = repo.verification_sources(&draft.summary.id).await?;
+    let lesson = &program.modules[0].lessons[0];
+    let mut candidate = lesson_response();
+    for item in candidate["blocks"].as_array_mut().unwrap() {
+        let body = item["body"].as_str().unwrap_or_default().to_owned();
+        item["body"] = json!(format!(
+            "{body}\n\n**Citations:**\n*   \"{quote}\" (SourceIndex: 0)\n*   \"A controlled experiment states its limitations.\" (SourceIndex: 0)"
+        ));
+    }
+    for field in ["blocks", "questions"] {
+        for item in candidate[field].as_array_mut().unwrap() {
+            item["sourceIndex"] = json!(0);
+            item["quote"] = json!(quote);
+        }
+    }
+    let llm = Recording {
+        inner: Model(candidate.to_string()),
+        drafted: Mutex::new(false),
+        later: Mutex::new(Vec::new()),
+    };
+    let jobs = LearningCurriculumRepository::new(pool.clone());
+    jobs.plan(&program.summary.id).await?;
+    let job = jobs
+        .start_job(&StartLearningGenerationJobRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: program.summary.id.clone(),
+            expected_revision: accepted.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: json!({"lessonIds":[lesson.id]}).to_string(),
+            progress_total: 1,
+        })
+        .await?;
+    JobStore::new(pool.clone()).claim(&job.id).await?;
+    let runtimes = crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests();
+    let prepared = crate::features::learning::lesson_progress::run(
+        &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
+        crate::features::learning::lesson_drafts::run(
+            &jobs,
+            &job.id,
+            &lesson.id,
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+        ),
+    )
+    .await?;
+
+    assert_eq!(prepared.blocks.len(), LESSON_SHAPE.len());
+    for block in &prepared.blocks {
+        assert!(!block.body.contains("SourceIndex"), "{}", block.body);
+        assert!(!block.body.contains("Citations:"), "{}", block.body);
+    }
+    let later = llm
+        .later
+        .lock()
+        .map_err(|_| AppError::InternalError("fixture lock".into()))?;
+    assert!(!later.is_empty(), "review and verification made no calls");
+    let injected = [
+        "(SourceIndex:",
+        "Citations:",
+        "\"A randomized comparison isolates the intervention.\" (SourceIndex",
+        "\"A controlled experiment states its limitations.\" (SourceIndex",
+    ];
+    let leak = later.iter().find_map(|prompt| {
+        injected.iter().find_map(|needle| {
+            prompt.find(needle).map(|at| {
+                let mut from = at.saturating_sub(40);
+                while !prompt.is_char_boundary(from) {
+                    from -= 1;
+                }
+                let mut to = (at + 40).min(prompt.len());
+                while !prompt.is_char_boundary(to) {
+                    to += 1;
+                }
+                let head: String = prompt.chars().take(80).collect();
+                format!("{head:?} holds {:?}", &prompt[from..to])
+            })
+        })
+    });
+    assert!(
+        leak.is_none(),
+        "a prompt after the draft still holds the citation apparatus: {}",
+        leak.unwrap_or_default()
+    );
+    Ok(())
+}

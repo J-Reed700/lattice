@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from 'react';
 
 import { ChevronDown, LoaderCircle } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
 import { ClaimHistory } from '@/features/learning/lessons/review/ClaimHistory';
 import type { AnnouncedAction, FixAction } from '@/features/learning/lessons/review/claimReviewCopy';
@@ -31,13 +32,13 @@ function CheckColumn({ title, side }: { title: string; side: CheckerSide | null 
  * first in weight, then More (common knowledge, a search hint, history).
  * Accept on a contradicted claim asks for a note first.
  */
-export function ClaimActions({ item, sharing, suggested, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest = false }: {
+export function ClaimActions({ item, sharing, suggested, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest = false, published = false }: {
   item: ClaimReviewItemDto;
   /** Waiting claims that rest on the same source as this one, this one included. */
   sharing: number;
   suggested: FixAction;
   busy: boolean;
-  error: string | null;
+  error: Error | null;
   form: ActionForm | null;
   onFormChange: (form: ActionForm | null) => void;
   onAct: ClaimActionRunner;
@@ -45,6 +46,8 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
   onAddSource: () => void;
   /** What the user added does not say this: Edit comes first, then another source. */
   closest?: boolean;
+  /** The lesson is published: an edited sentence replaces the one in the lesson. */
+  published?: boolean;
 }) {
   const id = useId();
   const [note, setNote] = useState('');
@@ -126,7 +129,7 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
       {form === 'edit' && <div className="rounded-xl border border-border bg-background p-4">
         <label htmlFor={`${id}-after`} className="block text-xs font-medium text-text-secondary">The sentence</label>
         <textarea id={`${id}-after`} autoFocus value={after} onChange={(event) => setAfter(event.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
-        <p className="mt-1 text-xs text-text-muted">The new sentence is checked against your sources when you resume.</p>
+        <p className="mt-1 text-xs text-text-muted">{published ? 'Your sentence replaces this one in the lesson.' : 'The new sentence is checked against your sources when you resume.'}</p>
         <div className="mt-3 flex gap-2">
           <Button type="button" disabled={busy} onClick={saveEdit}>Save the sentence</Button>
           <Button type="button" variant="ghost" onClick={() => onFormChange(null)}>Cancel</Button>
@@ -151,7 +154,8 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
         <ClaimHistory history={item.history} />
       </div>}
 
-      {(formError || error) && <p role="alert" className="text-xs leading-5 text-danger-fg">{formError || error}</p>}
+      {formError && <p role="alert" className="text-xs leading-5 text-danger-fg">{formError}</p>}
+      {!formError && error && <PlainError error={error} className="text-xs leading-5 text-danger-fg" />}
     </div>
   );
 }

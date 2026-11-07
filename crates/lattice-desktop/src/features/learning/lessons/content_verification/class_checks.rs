@@ -166,6 +166,7 @@ pub(super) fn finding_of(
         trust: None,
         label: None,
         class: Some(classed),
+        claim_id: None,
         two_pass: Default::default(),
     }
 }

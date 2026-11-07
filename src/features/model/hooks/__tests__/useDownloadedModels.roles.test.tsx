@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SETTINGS_QUERY_KEY } from '@/features/settings/hooks/useSettingsQuery';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
@@ -150,6 +151,15 @@ describe('useDownloadedModelsListener', () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith('herb ready'));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("herb downloaded but couldn't start", { message: 'The chat model failed to load: no GPU' }));
     await waitFor(() => expect(mocks.api.warmUpActiveUtilityModel).toHaveBeenCalled());
+  });
+
+  it('marks the settings stale on a finished download, so a Learning model the backend set shows', async () => {
+    client.setQueryData(SETTINGS_QUERY_KEY, { learningModel: null });
+    await mount();
+    expect(client.getQueryState(SETTINGS_QUERY_KEY)?.isInvalidated).toBe(false);
+    await act(async () => { await mocks.handlers.get('download:completed')!({ payload: completed('herb') }); });
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('herb ready'));
+    await waitFor(() => expect(client.getQueryState(SETTINGS_QUERY_KEY)?.isInvalidated).toBe(true));
   });
 
   it('does not warm up a model with no role', async () => {

@@ -16,7 +16,8 @@ use crate::features::learning::lessons::claim_reviews::service::ClaimReviewServi
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::acceptance::{Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
-    CheckResult, ClaimEvent, ClaimLedgerEntry, ClaimState, ReopenCause, VerdictKind,
+    CheckResult, ClaimEvent, ClaimLedgerEntry, ClaimState, ReopenCause, UnverifiedReason,
+    VerdictKind,
 };
 
 /// The draft's input hash in these fixtures, as `prepare` resumes it.
@@ -376,12 +377,58 @@ async fn a_hint_whose_page_does_not_state_the_claim_leaves_it_the_users_with_the
 
     let finished = resumed(&pool, scope, &model, Some(raw)).await?;
 
-    assert!(finished.is_err(), "the claim still waits for the user");
+    // The machine has done all it will do and the claim is still the user's,
+    // so the lesson publishes with its statement not verified, the reason
+    // `unchecked` (publish-unverified design, `NeedsReview`).
+    let (raw, report) = finished.expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    let published: Value = serde_json::from_str(&raw)?;
+    assert!(published["blocks"][0]["body"]
+        .as_str()
+        .unwrap_or_default()
+        .contains(UNSTATED));
+    assert!(
+        matches!(
+            &report.findings[0].resolution,
+            Some(resolution::Resolution::Unverified {
+                reason: UnverifiedReason::Unchecked
+            })
+        ),
+        "{:?}",
+        report.findings[0].resolution
+    );
     let entry = held(&pool, &lesson_id).await?;
-    let ClaimState::Queued { reason, .. } = entry.state() else {
-        panic!("the claim stays the user's: {:?}", entry.state());
-    };
-    assert!(reason.contains("does not say so"), "{reason}");
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Unverified {
+                reason: UnverifiedReason::Unchecked,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    // The page was read, and the reading found the claim unsupported with
+    // its reason.
+    let reading = entry
+        .events()
+        .iter()
+        .rev()
+        .find_map(|record| match &record.event {
+            ClaimEvent::Checked(check) => Some(check),
+            _ => None,
+        })
+        .expect("the hint's page was read");
+    assert!(
+        reading.reason.contains("does not say so"),
+        "{}",
+        reading.reason
+    );
+    assert!(matches!(
+        entry.latest_failure(),
+        Some(VerdictKind::Unsupported)
+    ));
     assert_ne!(entry.state(), before.state());
     let after = after_the_hint(&entry);
     assert!(after.contains(&"checked"), "{after:?}");
@@ -404,10 +451,43 @@ async fn a_hint_whose_round_saved_nothing_is_answered_by_its_research_alone_and_
 
     let finished = resumed(&pool, scope, &model, Some(raw)).await?;
 
-    assert!(finished.is_err(), "the claim still waits for the user");
+    // Nothing was saved and nothing is left for the machine, so the lesson
+    // publishes with the statement not verified, the reason `unchecked`
+    // (publish-unverified design, `NeedsReview`).
+    let (raw, report) = finished.expect("the lesson publishes, its statement not verified");
+    assert!(report.issues.is_empty(), "{:?}", report.issues);
+    let published: Value = serde_json::from_str(&raw)?;
+    assert!(published["blocks"][0]["body"]
+        .as_str()
+        .unwrap_or_default()
+        .contains(CLAIM));
+    assert!(
+        matches!(
+            &report.findings[0].resolution,
+            Some(resolution::Resolution::Unverified {
+                reason: UnverifiedReason::Unchecked
+            })
+        ),
+        "{:?}",
+        report.findings[0].resolution
+    );
     let entry = held(&pool, &lesson_id).await?;
-    assert_eq!(after_the_hint(&entry), ["researched"]);
-    assert_eq!(entry.state(), before.state());
+    assert_eq!(
+        after_the_hint(&entry),
+        ["researched", "published_unverified"]
+    );
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Unverified {
+                reason: UnverifiedReason::Unchecked,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    assert_ne!(entry.state(), before.state());
     assert!(model.judged().is_empty(), "{:?}", model.judged());
     Ok(())
 }

@@ -46,4 +46,9 @@ describe('revealCopy', () => {
     expect(lineLabel({ path: 'src/a.py', start: 3, end: 3 })).toBe('src/a.py · line 3');
     expect(lineLabel({ path: 'src/a.py', start: 3, end: 5 })).toBe('src/a.py · lines 3–5');
   });
+
+  it('names the sentences of a span of an explanation, with no file', () => {
+    expect(lineLabel({ path: 'explanation.md', start: 4, end: 4 }, 'passage')).toBe('Sentence 4');
+    expect(lineLabel({ path: 'explanation.md', start: 4, end: 6 }, 'passage')).toBe('Sentences 4–6');
+  });
 });

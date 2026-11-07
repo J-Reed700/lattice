@@ -1,0 +1,123 @@
+{
+  "name": "04-attribution-seen-from-the-rival-theory",
+  "kind": "exposing_line",
+  "why": "The first finding is on sentences 7 and 8, not on the planted sentence 5. It says Hask is the historian who blames silting and Penhallow the one who replies, so the tax theory is Penhallow's: it names the wrong attribution in full from other sentences, so found. The population reversal is missed. 'Nine thousand barrels is far too many' contradicts nothing in the source and the sentence is faithful: false positive.",
+  "source": {
+    "versionId": "verrenmouth-harbour-and-salt-tax-v1",
+    "startByte": 70211,
+    "endByte": 71207,
+    "title": "Local History 120, reader: Verrenmouth and the salt tax",
+    "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary. The town's charter of 1412 gave its guild of fishers the sole right to land herring, and by 1550 the harbour handled about 9,000 barrels a year. In 1603 the Crown imposed a salt tax of two pence a pound, which the historian Odalys Penhallow argues was the main reason that the fishers moved their curing sheds upriver to Marlow Reach by 1620. Her argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1615.\n\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth, but Penhallow notes that the silting surveys date from 1640, after the move. The town council responded to the exodus in 1622 by offering a seven-year rent waiver to any cooper who settled within the walls. Only eleven coopers accepted the offer. The population fell from roughly 3,400 in 1600 to 2,100 in 1650, and did not recover until the railway reached the town in 1851."
+  },
+  "drill": {
+    "id": "verrenmouth-harbour-and-salt-tax",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Verrenmouth: the harbour and the salt tax",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary.\nIts charter of 1412 gave the guild of fishers the sole right to land herring.\nBy 1550 the harbour handled about 9,000 barrels a year.\nIn 1603 the Crown imposed a salt tax of two pence a pound.\nThe historian Bertram Hask argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620.\nHer argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1615.\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth.\nPenhallow notes that the silting surveys date from 1640, after the move.\nIn 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only eleven coopers accepted.\nThe population rose from roughly 2,100 in 1600 to 3,400 in 1650.\nIt did not recover until the railway reached the town in 1851.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "verrenmouth-harbour-and-salt-tax-attr",
+        "pattern": "fidelity.wrong_attribution",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 5,
+          "end": 5
+        },
+        "consequence": "A reader credits the tax theory to the historian who rejects it and gets the two sides of the debate the wrong way round.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The historian Bertram Hask argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620.",
+          "after": "The historian Odalys Penhallow argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620."
+        },
+        "explanation": "It is Penhallow who argues the tax drove the move; Hask points to silting.",
+        "proof": {
+          "sourced": {
+            "quote": "the historian Odalys Penhallow argues was the main reason that the fishers moved their curing sheds upriver to Marlow Reach by 1620",
+            "planted": "contradicted",
+            "reason": "The source credits the salt-tax argument to Odalys Penhallow; Bertram Hask is the historian who points to silting."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "verrenmouth-harbour-and-salt-tax-pop",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 10,
+          "end": 10
+        },
+        "consequence": "A reader thinks the town grew between 1600 and 1650 when it lost over a third of its people.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The population rose from roughly 2,100 in 1600 to 3,400 in 1650.",
+          "after": "The population fell from roughly 3,400 in 1600 to 2,100 in 1650."
+        },
+        "explanation": "The population fell from about 3,400 to 2,100.",
+        "proof": {
+          "sourced": {
+            "quote": "The population fell from roughly 3,400 in 1600 to 2,100 in 1650",
+            "planted": "contradicted",
+            "reason": "The source says the population fell from roughly 3,400 to 2,100; the sentence reverses the direction."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Verrenmouth grew up around a tidal harbour on the Ellan estuary.\nIts charter of 1412 gave the guild of fishers the sole right to land herring.\nBy 1550 the harbour handled about 9,000 barrels a year.\nIn 1603 the Crown imposed a salt tax of two pence a pound.\nThe historian Odalys Penhallow argues that this tax was the main reason the fishers moved their curing sheds upriver to Marlow Reach by 1620.\nHer argument rests on the tax ledgers, which show curing at the old harbour falling by two thirds between 1603 and 1615.\nOther historians, notably Bertram Hask, point instead to the silting of the estuary mouth.\nPenhallow notes that the silting surveys date from 1640, after the move.\nIn 1622 the town council offered a seven-year rent waiver to any cooper who settled within the walls, and only eleven coopers accepted.\nThe population fell from roughly 3,400 in 1600 to 2,100 in 1650.\nIt did not recover until the railway reached the town in 1851.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 7,
+        "end": 8
+      },
+      "text": "Sentences 7 and 8 present Hask as the one who blames silting and Penhallow as the one who replies to him, so Hask cannot also be the author of the tax argument in 5. The tax theory is Penhallow's.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 3,
+        "end": 3
+      },
+      "text": "Nine thousand barrels a year is far too many for a small tidal harbour.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

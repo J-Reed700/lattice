@@ -13,21 +13,25 @@ async function invokeCommand<T>(
   return result.data;
 }
 
-/** The code review drills' commands. Each throws the backend's message when it fails. */
+/** The review drills' commands. Each throws the backend's message when it fails. */
 export const drillsApi = {
   /** The languages a drill can be written in, in the catalogue's order. */
   codeReviewLanguages: (): Promise<string[]> =>
     invokeCommand('code_review_languages'),
 
+  /** The courses a drill on a passage can draw on. */
+  reviewDrillCourses: (): Promise<Wire.ReviewDrillCourseDto[]> =>
+    invokeCommand('review_drill_courses'),
+
   /** An attempt on a ready drill, or the build that will make one. */
-  startCodeReviewDrill: (
-    language: string,
+  startReviewDrill: (
+    material: Wire.ReviewMaterialDto,
     mode: Wire.AttemptMode,
     lines: number,
     patternsCount: number,
   ): Promise<Wire.StartedCodeReviewDto> =>
-    invokeCommand('start_code_review_drill', {
-      language,
+    invokeCommand('start_review_drill', {
+      material,
       mode,
       lines,
       patternsCount,

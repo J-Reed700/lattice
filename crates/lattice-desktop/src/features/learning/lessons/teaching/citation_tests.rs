@@ -327,3 +327,58 @@ fn a_citation_the_repair_appends_is_checked_against_its_source_like_any_other() 
         .unwrap()
         .starts_with("Citation 1 of this part:"));
 }
+
+#[tokio::test]
+async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_others() -> Result<()>
+{
+    let invented = "An invented quotation that does not appear in the selected source.";
+    let mut original = lesson(EXCERPT);
+    let block = original["blocks"][0].clone();
+    original["blocks"] = json!([block.clone(), block.clone(), block]);
+    original["blocks"][0]["quote"] = json!(invented);
+    original["blocks"][1]["title"] = json!("Example");
+    original["blocks"][2]["citations"] =
+        json!([{"sentence":"The tool behaves as described.","sourceIndex":0,"quote":EXCERPT}]);
+    let approved = || {
+        let check = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The complete explanation was reviewed and no teaching defect was found.","hasDefect":false});
+        json!({"issues":[],"blockChecks":crate::features::learning::teaching_review::fixture_checks((0..3).map(check).collect())}).to_string()
+    };
+    let chained = "This saved reference describes how the example tool behaves.";
+    let patch = json!({"edits":[
+        {"path":"/blocks/0/quote","before":invented,"after":EXCERPT},
+        {"path":"/blocks/1/title","before":"Example","after":"Corrected example"},
+        {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":0},
+        {"path":"/blocks/2/citations/0/quote","before":EXCERPT,"after":chained},
+        {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":0},
+        {"path":"/blocks/2/citations/0/quote","before":chained,"after":EXCERPT}
+    ]});
+    let model = ScriptedModel {
+        outputs: Mutex::new(vec![approved(), patch.to_string(), approved()].into()),
+        prompts: Mutex::new(Vec::new()),
+    };
+
+    let result = review_and_repair(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context().to_string(),
+        &json!({"type":"object"}),
+        original.to_string(),
+        4000,
+    )
+    .await?;
+
+    let mut expected = original.clone();
+    expected["blocks"][0]["quote"] = json!(EXCERPT);
+    expected["blocks"][1]["title"] = json!("Corrected example");
+    assert_eq!(serde_json::from_str::<Value>(&result)?, expected);
+    let prompts = model.prompts.lock().unwrap();
+    assert_eq!(
+        prompts
+            .iter()
+            .filter(|prompt| prompt.contains("You are editing a rejected draft"))
+            .count(),
+        1,
+        "the repair is asked for once"
+    );
+    Ok(())
+}

@@ -90,7 +90,7 @@ export function CodePane({ drill, activePath, onActivePath, writingFix, selectio
               key={active.path}
               path={active.path}
               text={active.text}
-              language={drill.language}
+              language={drill.material.kind === 'code' ? drill.material.language : ''}
               selection={selection}
               highlight={highlight}
               highlightNonce={highlightNonce}

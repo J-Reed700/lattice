@@ -1,5 +1,7 @@
 import { Link } from 'react-router';
 
+import { MODEL_SETTINGS_PATH } from '@/lib/settingsLinks';
+
 /**
  * The one line above the composer that says what is wrong and what to do about
  * it (UX: "every degraded state is actionable").
@@ -47,7 +49,7 @@ export function ChatModelNotice({
           <button type="button" onClick={unavailableModel.onUseDefault} className={ACTION_CLASS}>
             Use default
           </button>
-          <Link to="/settings" className={ACTION_CLASS}>
+          <Link to={MODEL_SETTINGS_PATH} className={ACTION_CLASS}>
             Open model settings
           </Link>
         </span>
@@ -59,7 +61,7 @@ export function ChatModelNotice({
     return (
       <div className={ROW_CLASS}>
         <span>The chat model didn&apos;t load.</span>
-        <Link to="/settings" className={ACTION_CLASS}>
+        <Link to={MODEL_SETTINGS_PATH} className={ACTION_CLASS}>
           Open model settings
         </Link>
       </div>
@@ -70,7 +72,7 @@ export function ChatModelNotice({
     return (
       <div className={ROW_CLASS}>
         <span>No chat model yet.</span>
-        <Link to="/settings" className={ACTION_CLASS}>
+        <Link to={MODEL_SETTINGS_PATH} className={ACTION_CLASS}>
           Choose a model
         </Link>
       </div>
@@ -89,7 +91,7 @@ export function ChatModelNotice({
     return (
       <div className={ROW_CLASS}>
         <span>Document search was unavailable for the last answer: {retrievalUnavailableReason}.</span>
-        <Link to={retrievalUnavailableReason.includes('model') ? '/settings' : '/files'} className={ACTION_CLASS}>
+        <Link to={retrievalUnavailableReason.includes('model') ? MODEL_SETTINGS_PATH : '/files'} className={ACTION_CLASS}>
           {retrievalUnavailableReason.includes('model') ? 'Open model settings' : 'Review documents'}
         </Link>
       </div>

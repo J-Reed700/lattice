@@ -16,6 +16,25 @@ const FIX: FixDiffDto = {
 
 const rows = () => [...screen.getByRole('group', { name: 'The fix as a diff' }).querySelectorAll('[data-kind]')];
 
+describe('FixDiff, for an explanation', () => {
+  it('is prose that wraps, with no scrollbar, and shows no file name', () => {
+    const { container } = render(<FixDiff fix={FIX} prose />);
+    const group = screen.getByRole('group', { name: 'The fix as a diff' });
+    expect(group.className).not.toContain('font-mono');
+    expect(group.className).not.toContain('overflow-x-auto');
+    expect(container.querySelector('.min-w-max')).toBeNull();
+    for (const row of rows()) expect(row.querySelector('.whitespace-pre-wrap')).not.toBeNull();
+    expect(screen.queryByText('src/a.py')).toBeNull();
+  });
+
+  it('is still monospace and scrolling for code', () => {
+    render(<FixDiff fix={FIX} />);
+    const group = screen.getByRole('group', { name: 'The fix as a diff' });
+    expect(group.className).toContain('font-mono');
+    expect(group.className).toContain('overflow-x-auto');
+  });
+});
+
 describe('FixDiff', () => {
   it('names the file and marks each line removed, added or unchanged', () => {
     render(<FixDiff fix={FIX} />);

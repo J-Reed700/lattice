@@ -44,7 +44,7 @@ function closestOf(item: ClaimReviewItemDto | undefined, versionId: string, repo
  * in focus, the forms and sheet open on it, what the last action announced
  * and how to undo it. Resolving moves to the next claim in queue order.
  */
-export function useClaimReviewSession(programId: string, lessonId: string) {
+export function useClaimReviewSession(programId: string, lessonId: string, focusClaimId: string | null = null) {
   const client = useQueryClient();
   const query = useLessonClaimReview(programId, lessonId);
   const resolve = useResolveLearningClaim(programId, lessonId);
@@ -53,14 +53,14 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
   const claims = useMemo(() => review?.claims ?? [], [review]);
 
   const [mode, setMode] = useState<GroupMode | null>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(focusClaimId);
   const [teachingActive, setTeachingActive] = useState(false);
   const [removedActive, setRemovedActive] = useState(false);
   const [opened, setOpened] = useState<Set<string>>(new Set());
   const [settling, setSettling] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<ActionForm | null>(null);
   const [acting, setActing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
   const [message, setMessage] = useState('');
   const [undo, setUndo] = useState<Undo>(null);
   const [closest, setClosest] = useState<{ claimId: string; versionId: string; report: ClaimAttachReportDto } | null>(null);
@@ -135,7 +135,7 @@ export function useClaimReviewSession(programId: string, lessonId: string) {
       }
       return true;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The action could not be saved.');
+      setError(cause instanceof Error ? cause : new Error('The action could not be saved.'));
       return false;
     } finally {
       setActing(false);

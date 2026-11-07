@@ -1337,12 +1337,13 @@ async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<
 }
 },
 /**
- * Starts a drill of `language`: an attempt on a ready one, or, when none is ready, the build that will make one.
- * `lines` and `patterns_count` size that build. The drill comes back as the learner may see it, never with its key.
+ * Starts a drill on `material`, code in a language or a passage of a course: an attempt on a ready one, or, when none
+ * is ready, the build that will make one. `lines` (lines of code, or sentences) and `patterns_count` size that build.
+ * The drill comes back as the learner may see it, never with its key or its source.
  */
-async startCodeReviewDrill(language: string, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
+async startReviewDrill(material: ReviewMaterialDto, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_code_review_drill", { language, mode, lines, patternsCount }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_review_drill", { material, mode, lines, patternsCount }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1389,6 +1390,17 @@ async codeReviewLanguages() : Promise<string[]> {
     return await TAURI_INVOKE("plugin:learning|code_review_languages");
 },
 /**
+ * The courses a drill on a passage can draw on: those with at least one source.
+ */
+async reviewDrillCourses() : Promise<Result<ReviewDrillCourseDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_drill_courses") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Download a model by ID
  *
  * Thin wrapper over `download_model_impl`, the shared model-setup command.
@@ -1410,6 +1422,29 @@ async downloadModel(modelId: string) : Promise<Result<DownloadModelResponse, Api
 async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|check_first_run_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The chat models recommended for this computer, best first.
+ */
+async recommendChatModels() : Promise<Result<RecommendationDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|recommend_chat_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The verdict for each listed model file, in the order asked; `null` when a
+ * file's header could not be read.
+ */
+async readModelFits(files: ModelFileRefDto[]) : Promise<Result<(FitVerdictDto | null)[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|read_model_fits", { files }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -5054,7 +5089,7 @@ tried: ResearchSummaryDto }
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
  */
-export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
+export type ClaimStateDto = { state: "unchecked" } | { state: "open"; machineAttemptsLeft: number } | { state: "queued" } | { state: "resolved_by_evidence" } | { state: "consistent"; at: number } | { state: "confirmed"; at: number } | { state: "removed"; at: number; by: ActorDto } | { state: "edited"; at: number; successor: string | null } | { state: "general_knowledge"; at: number } | { state: "unverified"; at: number; reason: UnverifiedReasonDto } | { state: "reopened"; cause: ReopenCauseDto; previous: ClaimStateDto }
 /**
  * Whether a support counted toward the claim's bar.
  */
@@ -5155,7 +5190,7 @@ export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; cl
 /**
  * The drill as the learner may see it.
  */
-export type CodeReviewDrillDto = { title: string; language: string; files: CodeReviewFileDto[] }
+export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[] }
 /**
  * One file of a drill, as the learner reads it or leaves it.
  */
@@ -5165,6 +5200,14 @@ export type CodeReviewFileDto = { path: string; text: string }
  * learner gave it, when they gave one.
  */
 export type CodeReviewFindingDto = { span: CodeReviewSpanDto | null; text: string; severity: CodeReviewSeverity | null }
+/**
+ * What a drill is made of, as the learner may see it.
+ */
+export type CodeReviewMaterialDto = { kind: "code"; language: string } |
+/**
+ * An explanation of a passage; the passage itself is in the reveal only.
+ */
+{ kind: "passage"; sourceTitle: string }
 /**
  * An attempt: where it stands, the learner's own review and, once it is graded, the reveal.
  */
@@ -5216,7 +5259,11 @@ fix: IssueFix[] | null;
 /**
  * The code before any issue was planted, to read beside the drill's.
  */
-cleanFiles: CodeReviewFileDto[] }
+cleanFiles: CodeReviewFileDto[];
+/**
+ * The source passage an explanation was written from; none for code.
+ */
+source: RevealedSourceDto | null }
 /**
  * How a review fared, as its parts.
  */
@@ -5352,66 +5399,6 @@ error: string | null;
  */
 degraded: string | null }
 export type CompareTableDto = { columns: string[]; rows: CompareRowDto[]; modelName: string; generatedAt: string }
-/**
- * Compatibility level DTO for frontend.
- */
-export type CompatibilityLevelDto =
-/**
- * Model will NOT run
- */
-"Incompatible" |
-/**
- * Model may run poorly
- */
-"Poor" |
-/**
- * Model will run acceptably
- */
-"Good" |
-/**
- * Model will run well
- */
-"Excellent"
-/**
- * Compatibility score DTO for frontend.
- */
-export type CompatibilityScoreDto = {
-/**
- * Overall compatibility level
- */
-compatibility_level: CompatibilityLevelDto;
-/**
- * Overall score (0-100)
- */
-overall_score: number;
-/**
- * RAM score (0-100)
- */
-ram_score: number;
-/**
- * GPU score (0-100)
- */
-gpu_score: number;
-/**
- * Disk score (0-100)
- */
-disk_score: number;
-/**
- * Estimated tokens/second (LLMs only)
- */
-estimated_tokens_per_second: number | null;
-/**
- * Estimated loading time in seconds
- */
-estimated_loading_time_seconds: number;
-/**
- * Recommendations
- */
-recommendations: string[];
-/**
- * Blockers
- */
-blockers: string[] }
 export type CompleteLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto[];
 /**
@@ -5764,7 +5751,11 @@ export type DecidedBy =
 /**
  * A judge, shown the code, the learner's code and the issue.
  */
-"judge"
+"judge" |
+/**
+ * The source passage of an explanation, checked against what the learner wrote.
+ */
+"source"
 /**
  * Response from deleting a batch job.
  */
@@ -5793,6 +5784,7 @@ export type DeleteConversationResponseDto = {
 status: string }
 export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
+export type DeviceKindDto = "dedicated" | "unified" | "processor"
 /**
  * What a diff does with one line.
  */
@@ -6105,6 +6097,14 @@ export type ErrorCode =
  */
 "MODEL_LOAD_ERROR" |
 /**
+ * The prompt is larger than the model's context window
+ */
+"PROMPT_EXCEEDS_WINDOW" |
+/**
+ * No Learning model is set
+ */
+"LEARNING_MODEL_NOT_SET" |
+/**
  * Data processing failed
  */
 "PROCESSING_ERROR" |
@@ -6164,6 +6164,7 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
+export type EvidenceDto = { kind: "measured"; suites: string[] } | { kind: "untested" }
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
 /**
  * A code example's run, as the checker saw it (§5.5).
@@ -6367,7 +6368,7 @@ export type FinderGateDto =
 /**
  * The user turned it off (or, for the archive, the archive fallback).
  */
-"disabled" | "noKey" | "noInstance" | "noContact"
+"disabled" | "noKey" | "noInstance" | "noContact" | "noEmail"
 /**
  * A finder's health since the app started.
  */
@@ -6449,6 +6450,9 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type FitDeviceDto = { name: string; kind: DeviceKindDto; totalBytes: number }
+export type FitKindDto = "fits" | "tight" | "too_large"
+export type FitVerdictDto = { kind: FitKindDto; needsBytes: number; budgetBytes: number; device: FitDeviceDto }
 /**
  * The fix of an issue as the lines it removes and the lines it adds, in the file the issue is in.
  */
@@ -6873,7 +6877,7 @@ findingKey: string }
  * A service whose key lives in the keyring, as the panel and the key
  * commands name it.
  */
-export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange"
+export type KeyServiceDto = "brave" | "tavily" | "exa" | "github" | "semanticScholar" | "apiDataGov" | "stackExchange" | "openAlex" | "marginalia" | "crossrefPlus"
 /**
  * Whether a key service has a key stored, and where to get one.
  */
@@ -7384,7 +7388,12 @@ label?: string | null;
  * The parts a Sourced statement's cited passage was read as, which say
  * what a passage states and what is common knowledge beside it.
  */
-parts?: LearningClaimPartDto[] }
+parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null;
+/**
+ * The claim behind this statement, for acting on it; none in a report
+ * from before findings named theirs.
+ */
+claimId?: string | null }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -7432,7 +7441,7 @@ reasons: LearningTrustReasonDto[] }
  * by the user, or verified against a source since removed. A string union,
  * like the review panel's.
  */
-export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "source_removed"
+export type LearningClaimResolutionDto = "verified" | "confirmed_by_you" | "source_removed" | "not_verified"
 /**
  * The subject a claim is about, with what a site-for-subject override can
  * be scoped to: the subject, its aliases and its broader classes.
@@ -7587,7 +7596,11 @@ modelCallsCeilingRises?: number;
  * the first pass observed them.
  */
 claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
-export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null;
+/**
+ * The code of the error the job recorded; null on older jobs.
+ */
+errorCode?: ErrorCode | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -7779,7 +7792,11 @@ export type LearningOutlineProgressDto = { programId?: string | null; stage: Out
  * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
  * dive's gathering and evidence linking are never a silent spinner.
  */
-detail?: string | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+detail?: string | null;
+/**
+ * Present while the outline waits out a model outage between attempts.
+ */
+waiting?: ModelWaitDto; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
 export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
 /**
  * Outline items whose citation is verified: chosen by evidence linking or
@@ -8671,6 +8688,7 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
+export type ModelFileRefDto = { repo: string; file: string; revision: string | null }
 export type ModelInfo = {
 /**
  * The loaded model's vector-space identity; empty when none is loaded.
@@ -8700,14 +8718,6 @@ description: string;
  * Size in GB
  */
 size_gb: number;
-/**
- * Minimum RAM in GB
- */
-minimum_ram_gb: number;
-/**
- * Recommended RAM in GB
- */
-recommended_ram_gb: number;
 /**
  * Context length in tokens
  */
@@ -8762,7 +8772,8 @@ embedding_dimensions: number | null;
  * models. Frontend uses this to disable + badge incompatible rows so
  * users don't waste a 1GB+ download on a model that won't load.
  */
-embedding_compatibility: EmbeddingCompatibilityDto | null }
+embedding_compatibility: EmbeddingCompatibilityDto | null;
+fit?: FitVerdictDto | null }
 /**
  * Why a turn or job runs on the model it runs on.
  */
@@ -8796,21 +8807,14 @@ export type ModelRecommendationDto = {
  */
 model: ModelMetadataDto;
 /**
- * Compatibility analysis
- */
-compatibility: CompatibilityScoreDto;
-/**
- * Ranking score (0-100)
- */
-ranking_score: number;
-/**
  * Popularity metric from upstream provider (downloads)
  */
 popularity_downloads?: number | null;
 /**
  * Popularity metric from upstream provider (likes)
  */
-popularity_likes?: number | null }
+popularity_likes?: number | null;
+fit: FitVerdictDto | null }
 /**
  * A model a chat or a role can name.
  *
@@ -8819,6 +8823,7 @@ popularity_likes?: number | null }
  * Settings when the model is loaded, so moving a server moves every chat
  * that names it.
  */
+export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 export type ModelRef =
 /**
  * A downloaded GGUF row in `models` (`DownloadedModel::model_id`).
@@ -9047,6 +9052,8 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
+export type RecommendationDto = { modelId: string; name: string; description: string; useFor: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
+export type RecommendationLabelDto = "best" | "fastest" | "smallest_download"
 export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**
  * Function registry statistics
@@ -9383,7 +9390,11 @@ span: CodeReviewSpanDto; consequence: string;
 /**
  * How to say it in an interview.
  */
-explanation: string; fix: FixDiffDto; outcome: IssueResultKind;
+explanation: string; fix: FixDiffDto;
+/**
+ * The words of the source passage that settle the issue, when a source proved it.
+ */
+sourceQuote: string | null; outcome: IssueResultKind;
 /**
  * The position of the finding that earned the credit, when one did.
  */
@@ -9396,7 +9407,23 @@ reason: string;
  * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
  */
 alsoValid: boolean }
+/**
+ * The source passage of a drill on a passage, as the reveal shows it.
+ */
+export type RevealedSourceDto = { title: string; text: string;
+/**
+ * The version of the source the passage is the exact text of.
+ */
+versionId: string }
+/**
+ * A course a drill on a passage can draw on.
+ */
+export type ReviewDrillCourseDto = { programId: string; title: string }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
+/**
+ * What a learner asks to review: code in a language, or a passage from one of their courses.
+ */
+export type ReviewMaterialDto = { kind: "code"; language: string } | { kind: "passage"; programId: string; topic: string | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
  * A selected option records a quiz answer; otherwise the rating records recall.
@@ -10008,6 +10035,7 @@ modelId: string; modelName: string;
  * Total bytes of the download.
  */
 downloadBytes: number }
+export type SpeedClassDto = "fast" | "balanced" | "thorough"
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
@@ -10632,6 +10660,7 @@ resultsPerPage: number;
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
 export type UnitKindDto = "block" | "question" | "answer_key"
+export type UnverifiedReasonDto = "unchecked" | "unsupported" | "contradicted"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateConversationSpaceRequestDto = { spaceId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }
 export type UpdateDailyNoteContentRequestDto = { noteId: string; content: string }

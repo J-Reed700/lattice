@@ -1,11 +1,12 @@
 //! The bank of built drills: what a finished build writes, and what the bank reads back. A drill comes back as the
 //! core's `Drill` with its clean files and its evidence. The hidden suite and the killing tests inside the key's
-//! proofs are what a learner's fix is run against; the learner never sees them.
+//! proofs are what a learner's fix is run against; the learner never sees them. A drill on a passage keeps the
+//! source passage its explanation was written from.
 
-use super::build::Evidence;
+use super::build::{Evidence, SourcePassage};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, decode, encode, now};
-use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue};
+use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
@@ -41,6 +42,8 @@ pub(in crate::features::learning) struct NewDrill<'a> {
     pub domain: &'a str,
     /// The hidden suite, in a runner language.
     pub suite: Option<&'a str>,
+    /// The passage an explanation was written from: `None` for code.
+    pub source: Option<&'a SourcePassage>,
     /// What the suite and the proofs ran on, such as `builtin-python`.
     pub runner: Option<&'a str>,
     /// The model that built the drill, as the server reports it.
@@ -52,13 +55,15 @@ pub(in crate::features::learning) struct NewDrill<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredDrill {
     pub drill: Drill,
-    /// The code before any issue was planted.
+    /// The material before any issue was planted.
     pub clean_files: Vec<DrillFile>,
     pub spec: DrillSpec,
     pub domain: String,
-    /// The course whose topic gave the domain, while the course exists.
+    /// The course whose topic gave the domain, or whose source a passage is from, while the course exists.
     pub program_id: Option<String>,
     pub suite: Option<String>,
+    /// The passage an explanation was written from: `None` for code.
+    pub source: Option<SourcePassage>,
     pub runner: Option<String>,
     pub model: String,
     pub evidence: Evidence,
@@ -81,9 +86,25 @@ pub(in crate::features::learning) async fn insert_in(
             .map_err(db)?,
         None => None,
     };
-    sqlx::query("INSERT INTO learning_drills(id,language,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,NULL)")
+    let source = match (&new.drill.material, new.source) {
+        (Material::Code { .. }, None) => None,
+        (Material::Passage, Some(source)) => Some(encode(source)?),
+        (Material::Code { .. }, Some(_)) => {
+            return Err(AppError::InvalidData(
+                "A drill of code has no source passage.".into(),
+            ))
+        }
+        (Material::Passage, None) => {
+            return Err(AppError::InvalidData(
+                "A drill on a passage needs the source passage it was written from.".into(),
+            ))
+        }
+    };
+    sqlx::query("INSERT INTO learning_drills(id,material,language,source_json,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ready',?,NULL)")
         .bind(&new.drill.id)
-        .bind(&new.drill.language)
+        .bind(material_name(&new.drill.material))
+        .bind(new.drill.material.language())
+        .bind(source)
         .bind(&new.drill.title)
         .bind(new.domain)
         .bind(program_id)
@@ -115,12 +136,23 @@ pub(in crate::features::learning) async fn insert_in(
     Ok(())
 }
 
-/// The oldest ready drill of `language`.
+/// The columns `read` reads.
+const COLUMNS: &str = "id,material,language,source_json,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at";
+
+/// The name a material is stored under.
+fn material_name(material: &Material) -> &'static str {
+    match material {
+        Material::Code { .. } => "code",
+        Material::Passage => "passage",
+    }
+}
+
+/// The oldest ready drill of code in `language`.
 pub(in crate::features::learning) async fn oldest_ready_in(
     connection: &mut SqliteConnection,
     language: &str,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query("SELECT id,language,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at FROM learning_drills WHERE language=? AND status='ready' ORDER BY created_at,rowid LIMIT 1")
+    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='code' AND language=? AND status='ready' ORDER BY created_at,rowid LIMIT 1"))
         .bind(language)
         .fetch_optional(connection)
         .await
@@ -130,12 +162,45 @@ pub(in crate::features::learning) async fn oldest_ready_in(
         .transpose()
 }
 
+/// The oldest ready drill on a passage of the course `program_id` that was built for `topic`, as typed in any case
+/// and with any space around it, or for no topic when there is none.
+pub(in crate::features::learning) async fn oldest_ready_of_course_topic_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    topic: Option<&str>,
+) -> Result<Option<StoredDrill>> {
+    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='passage' AND program_id=?2 AND status='ready' AND ((?1 IS NULL AND json_extract(spec_json,'$.domain') IS NULL) OR lower(trim(json_extract(spec_json,'$.domain')))=lower(trim(?1))) ORDER BY created_at,rowid LIMIT 1"))
+        .bind(topic)
+        .bind(program_id)
+        .fetch_optional(connection)
+        .await
+        .map_err(db)?
+        .as_ref()
+        .map(read)
+        .transpose()
+}
+
+/// The source passages the drills of the course `program_id` were built on, ready or taken.
+pub(in crate::features::learning) async fn drilled_passages(
+    pool: &SqlitePool,
+    program_id: &str,
+) -> Result<Vec<SourcePassage>> {
+    let stored: Vec<String> = sqlx::query_scalar(
+        "SELECT source_json FROM learning_drills WHERE material='passage' AND program_id=? AND source_json IS NOT NULL ORDER BY created_at,rowid",
+    )
+    .bind(program_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    stored.iter().map(|json| decode(json)).collect()
+}
+
 /// A drill by its id, ready or taken.
 pub(in crate::features::learning) async fn find_in(
     connection: &mut SqliteConnection,
     id: &str,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query("SELECT id,language,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at FROM learning_drills WHERE id=?")
+    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE id=?"))
         .bind(id)
         .fetch_optional(connection)
         .await
@@ -180,10 +245,26 @@ pub(in crate::features::learning) async fn domain_uses(
 fn read(row: &SqliteRow) -> Result<StoredDrill> {
     let files: Vec<DrillFile> = decode(&row.get::<String, _>("files_json"))?;
     let key: Vec<KeyIssue> = decode(&row.get::<String, _>("key_json"))?;
+    let material = match (
+        row.get::<String, _>("material").as_str(),
+        row.get::<Option<String>, _>("language"),
+    ) {
+        ("code", Some(language)) => Material::Code { language },
+        ("passage", None) => Material::Passage,
+        (other, _) => {
+            return Err(AppError::Database(format!(
+                "A drill's material {other} does not agree with its language"
+            )))
+        }
+    };
+    let source = row
+        .get::<Option<String>, _>("source_json")
+        .map(|json| decode(&json))
+        .transpose()?;
     Ok(StoredDrill {
         drill: Drill {
             id: row.get("id"),
-            language: row.get("language"),
+            material,
             title: row.get("title"),
             files,
             key,
@@ -193,6 +274,7 @@ fn read(row: &SqliteRow) -> Result<StoredDrill> {
         domain: row.get("domain"),
         program_id: row.get("program_id"),
         suite: row.get("suite"),
+        source,
         runner: row.get("runner"),
         model: row.get("model"),
         evidence: decode(&row.get::<String, _>("evidence_json"))?,

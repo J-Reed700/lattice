@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{Budget, SourceFinder};
 use lattice_core::domain::sourcing::{
     Auth, Cost, Destination, FailureCause, FinderDescriptor, FinderId, FinderOutcome, Identity,
-    Lead, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed, Terms, WaveSlot,
+    KeyService, Lead, NeedKind, Privacy, RatePolicy, Reach, Role, SourceNeed, Terms, WaveSlot,
 };
+use reqwest::header::{HeaderName, HeaderValue};
 use url::Url;
 
 use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp};
@@ -16,7 +17,8 @@ use crate::features::web::services::web::MIN_SITE_REQUEST_INTERVAL;
 
 pub(crate) const RESULTS_PER_PAGE: usize = 10;
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
-const API: &str = "https://api.marginalia.nu";
+const API: &str = "https://api2.marginalia-search.com";
+const SHARED_KEY: &str = "public";
 
 pub(crate) const ID: FinderId = FinderId::from_static("marginalia");
 
@@ -28,9 +30,11 @@ pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
         wave: WaveSlot::Second,
     }],
     reaches: Reach::OpenWeb,
-    auth: Auth::None,
+    auth: Auth::OptionalKey {
+        service: KeyService::Marginalia,
+    },
     privacy: Privacy::QueryLogged {
-        by: "api.marginalia.nu",
+        by: "api2.marginalia-search.com",
     },
     cost: Cost::Free,
     rate: RatePolicy {
@@ -42,24 +46,34 @@ pub(crate) const DESCRIPTOR: FinderDescriptor = FinderDescriptor {
     },
     supports_scope: false,
     identity: Identity::DeclaredClient,
-    sends_to: Destination::Host("api.marginalia.nu"),
+    sends_to: Destination::Host("api2.marginalia-search.com"),
 };
 
 pub(crate) struct Marginalia {
     http: FinderHttp,
     api: String,
+    api_key: String,
     descriptor: FinderDescriptor,
 }
 
 impl Marginalia {
-    pub(crate) fn new(http: FinderHttp) -> Self {
-        Self::with_api(http, API.to_string())
+    pub(crate) fn new(http: FinderHttp, api_key: Option<String>) -> Self {
+        Self::with_api_key(http, API.to_string(), api_key)
     }
 
+    #[cfg(test)]
     pub(crate) fn with_api(http: FinderHttp, api: String) -> Self {
+        Self::with_api_key(http, api, None)
+    }
+
+    pub(crate) fn with_api_key(http: FinderHttp, api: String, api_key: Option<String>) -> Self {
         Self {
             http,
             api,
+            api_key: api_key
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty())
+                .unwrap_or_else(|| SHARED_KEY.to_string()),
             descriptor: DESCRIPTOR,
         }
     }
@@ -110,12 +124,16 @@ impl SourceFinder for Marginalia {
         let started = Instant::now();
         let query = urlencoding::encode(need.query.trim());
         let url = format!(
-            "{}/public/search/{query}?count={RESULTS_PER_PAGE}",
+            "{}/search?query={query}&count={RESULTS_PER_PAGE}&page={page}",
             self.api
         );
 
-        let headers =
+        let mut headers =
             identity::declared_client_headers(self.http.contact.as_deref(), "application/json");
+        if let Ok(mut value) = HeaderValue::from_str(&self.api_key) {
+            value.set_sensitive(self.api_key != SHARED_KEY);
+            headers.insert(HeaderName::from_static("api-key"), value);
+        }
         let body = match self.http.get(&url, headers, MAX_BODY_BYTES).await {
             Fetched::Body(body) => body,
             other => return failed(&self.descriptor, cause_of(other), started),

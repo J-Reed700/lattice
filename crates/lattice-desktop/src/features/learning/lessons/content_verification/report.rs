@@ -1,4 +1,5 @@
 //! Binding, validating and persisting the verification report at publication.
+use super::resolution::Resolution;
 use super::*;
 use crate::features::learning::review_findings::{FindingKind, FindingSite, ReviewFinding};
 
@@ -9,7 +10,94 @@ pub(super) fn content_hash(lesson: &PreparedLearningLesson) -> Result<String> {
         &lesson.keys,
     ))?))
 }
+/// A sentence of a published section the user wrote over, and the claim that
+/// stands for what they wrote.
+pub(in crate::features::learning) struct WrittenOver<'a> {
+    pub unit: usize,
+    /// The section's text before the edit, and the span the edit replaced.
+    pub old_body: &'a str,
+    pub range: (usize, usize),
+    pub new_body: &'a str,
+    /// The claims that stood on the replaced text.
+    pub replaced: &'a HashSet<String>,
+    pub after: &'a str,
+    pub successor: &'a ClaimId,
+    pub at: i64,
+}
+
 impl LessonVerificationReport {
+    pub(in crate::features::learning) fn content_sha256(&self) -> &str {
+        &self.content_sha256
+    }
+
+    /// The report after the user's sentence took the place of the text the
+    /// findings in `edit.replaced` stood on: one finding for the user's
+    /// sentence, confirmed by them, in the place of those, every other
+    /// finding as it was.
+    pub(in crate::features::learning) fn written_over(&mut self, edit: &WrittenOver<'_>) {
+        let replaced = |finding: &Finding| {
+            finding.unit == edit.unit
+                && match &finding.claim_id {
+                    Some(id) => edit.replaced.contains(id),
+                    None => lattice_core::domain::learning::claim_review::span_of(
+                        edit.old_body,
+                        &finding.quote,
+                    )
+                    .is_some_and(|(start, end)| start < edit.range.1 && edit.range.0 < end),
+                }
+        };
+        let first = self.findings.iter().position(replaced);
+        self.findings.retain(|finding| !replaced(finding));
+        let finding = Finding {
+            unit: edit.unit,
+            quote: edit.after.to_owned(),
+            statement: edit.after.to_owned(),
+            verdict: ClaimVerdict::Unverified,
+            reason: "You wrote this sentence; it was not checked against the sources.".into(),
+            evidence: Vec::new(),
+            supporting_quote: None,
+            resolution: Some(Resolution::Confirmed {
+                at: edit.at,
+                note: None,
+            }),
+            claim_id: Some(edit.successor.0.clone()),
+            trust: None,
+            label: None,
+            class: None,
+            two_pass: Default::default(),
+        };
+        let at = first.unwrap_or(self.findings.len());
+        self.findings.insert(at, finding);
+        self.content_sha256 =
+            digest(&json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
+    }
+}
+
+/// How a lesson's preparation ends when `count` of its statements are
+/// published not verified; `None` when none are.
+pub(in crate::features::learning) fn not_verified_line(count: usize) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "{count} statement{} not verified",
+            if count == 1 { "" } else { "s" }
+        )
+    })
+}
+
+impl LessonVerificationReport {
+    /// The statements this lesson publishes not verified.
+    pub(in crate::features::learning) fn unverified_count(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|finding| matches!(finding.resolution, Some(Resolution::Unverified { .. })))
+            .filter(|finding| {
+                finding.class.is_none_or(|classed| {
+                    classed.class != lattice_core::domain::learning::claim_review::Class::Internal
+                })
+            })
+            .count()
+    }
+
     pub(in crate::features::learning) fn reusable(
         &self,
         lesson_id: &str,

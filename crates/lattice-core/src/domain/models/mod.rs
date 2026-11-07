@@ -7,6 +7,7 @@ pub mod classifier;
 pub mod curated;
 pub mod downloaded;
 pub mod embedding_defaults;
+pub mod fit;
 pub mod llm_architecture;
 pub mod metadata;
 pub mod model_ref;

@@ -1,5 +1,7 @@
 //! Curated chat models: the catalog, what a model file supports, and what its context window costs in memory.
 
+use super::pins::{pinned_for, unpinned};
+use crate::domain::models::fit::PinnedModel;
 use crate::domain::models::metadata::ModelFileMetadata;
 use crate::domain::models::selection::ModelFormat;
 use crate::domain::models::selection::{ModelCategory, ModelMetadata, PerformanceTier};
@@ -190,8 +192,22 @@ pub struct CuratedChatModel {
     pub quantization: &'static str,
     /// The window the model was trained for (`<arch>.context_length`).
     pub context_length: u32,
-    kv: KvFootprint,
     pub performance_tier: PerformanceTier,
+    /// The catalog's capability order: higher is more capable, and no two
+    /// entries share a rank. Each entry's comment names the public results
+    /// its place rests on. The recommender offers the highest rank that fits.
+    pub rank: u8,
+    /// Parameters in billions: the element count of the pinned file's tensor
+    /// table (`scripts/catalog/gguf_footprint.py`), to one decimal.
+    pub parameters_b: f32,
+    /// Parameters used for each token, in billions: the experts a
+    /// mixture-of-experts model routes to, or Gemma's effective count without
+    /// its per-layer embedding tables. Equal to `parameters_b` for a dense
+    /// model.
+    pub active_parameters_b: f32,
+    /// Nominal bits per weight of the quantization: 3 for IQ3_* and Q3_*,
+    /// 4 for Q4_*, IQ4_* and MXFP4, then 5, 6 and 8.
+    pub quantization_bits: u8,
     pub capabilities: &'static [&'static str],
     pub license: &'static str,
     /// The GGUF carries multi-token-prediction layers and this entry exists to
@@ -202,54 +218,22 @@ pub struct CuratedChatModel {
     /// The vision projector the repository publishes, if any. Read it
     /// through [`chat_model_vision`].
     pub vision: Option<CuratedVision>,
+    /// One plain sentence on what the model is for, shown on its card.
+    pub use_for: &'static str,
 }
 
-/// What a model's KV cache costs on top of its weights, from its GGUF header,
-/// at f16 (llama.cpp's default cache type).
-///
-/// Counted the way llama.cpp allocates it rather than as if every layer
-/// attended to the whole window: Qwen 3.5/3.6/3.8 give one layer in four full
-/// attention (`full_attention_interval = 4`; the rest keep a fixed recurrent
-/// state), and Gemma 4 gives one in six, the others attending to a sliding
-/// window whose cache stops growing at the window.
-#[derive(Debug, Clone, Copy)]
-struct KvFootprint {
-    /// Key and value bytes per token across the layers that attend to the
-    /// whole window: `layers * kv_heads * (key_len + value_len) * 2`.
-    per_token_bytes: u64,
-    /// The sliding-window layers' cache: `layers * kv_heads * (key_len +
-    /// value_len) * 2 * (window + 512-token batch)`.
-    windowed_bytes: u64,
-}
-
-/// Compute buffers, the recurrent state of hybrid layers and the server
-/// itself. llama.cpp's output buffer alone is `vocab * batch * 4` bytes, about
-/// half a gigabyte for these 250K-token vocabularies at the default batch.
-const RUNTIME_OVERHEAD_BYTES: u64 = 1_000_000_000;
-
-/// The window behind `minimum_ram_gb`: the sidecar's default context when it
-/// cannot size one from the hardware (`DEFAULT_GPU_CONTEXT_SIZE`), and room
-/// for retrieved passages plus a conversation.
-const MINIMUM_WINDOW_TOKENS: u64 = 8_192;
-
-/// The window behind `recommended_ram_gb`: the largest one the sidecar's
-/// automatic sizing chooses (`AUTO_MAX_CONTEXT_SIZE`).
-const COMFORTABLE_WINDOW_TOKENS: u64 = 32_768;
-
-/// Memory the model holds while serving `window_tokens` of context, in GB
-/// (10^9 bytes, as Hugging Face sizes are), rounded up to a tenth.
-///
-/// This is the figure the catalog shows as "Est. memory" and the one
-/// `computeModelFit` compares with 70% of the machine's RAM.
-fn memory_estimate_gb(weights_bytes: u64, kv: KvFootprint, window_tokens: u64) -> f64 {
-    let bytes = weights_bytes
-        + kv.windowed_bytes
-        + kv.per_token_bytes * window_tokens
-        + RUNTIME_OVERHEAD_BYTES;
-    (bytes as f64 / 100_000_000.0).ceil() / 10.0
+/// Every entry of the chat catalog.
+pub fn curated_chat_models() -> &'static [CuratedChatModel] {
+    CURATED_CHAT_MODELS
 }
 
 impl CuratedChatModel {
+    /// The memory facts of this entry's GGUF header and the bytes of it that stay in system RAM,
+    /// as pinned in the catalog.
+    pub fn pinned(&self) -> PinnedModel {
+        pinned_for(self.repo, self.file).unwrap_or_else(unpinned)
+    }
+
     fn metadata(&self) -> ModelMetadata {
         let repo_url = format!("https://huggingface.co/{}", self.repo);
         let file_url = format!("{repo_url}/resolve/main/{}", self.file);
@@ -266,12 +250,6 @@ impl CuratedChatModel {
             category: ModelCategory::LLM,
             description: self.description.into(),
             size_gb: self.size_bytes as f64 / 1_000_000_000.0,
-            minimum_ram_gb: memory_estimate_gb(self.size_bytes, self.kv, MINIMUM_WINDOW_TOKENS),
-            recommended_ram_gb: memory_estimate_gb(
-                self.size_bytes,
-                self.kv,
-                COMFORTABLE_WINDOW_TOKENS,
-            ),
             context_length: self.context_length,
             performance_tier: self.performance_tier,
             supported_quantizations: vec![self.quantization.into()],
@@ -315,17 +293,6 @@ const GEMMA_CAPABILITIES: &[&str] = &[
     "long-context",
     TOOL_CALLING_CAPABILITY,
 ];
-
-/// Qwen 3.5 2B/4B/9B: 24 or 32 blocks, a quarter of them full attention
-/// (6 or 8), 2 or 4 KV heads, 256-wide keys and values.
-const QWEN35_2B_KV: KvFootprint = KvFootprint {
-    per_token_bytes: 6 * 2 * 512 * 2,
-    windowed_bytes: 0,
-};
-const QWEN35_4B_9B_KV: KvFootprint = KvFootprint {
-    per_token_bytes: 8 * 4 * 512 * 2,
-    windowed_bytes: 0,
-};
 
 /// The chat catalog, smallest working set first.
 ///
@@ -376,6 +343,8 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     // Template: thinking off unless `enable_thinking: true`. The 2B model card
     // warns it is more prone to thinking loops, so it stays the floor for
     // machines that cannot hold the 4B.
+    // Rank 1: the smallest entry. No public result in the survey ranks it; it sits below the 4B of
+    // its own family.
     CuratedChatModel {
         id: "qwen3.5-2b-q4_k_m",
         name: "Qwen 3.5 2B",
@@ -386,11 +355,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: QWEN35_2B_KV,
         performance_tier: PerformanceTier::Fast,
+        rank: 1,
+        parameters_b: 1.9,
+        active_parameters_b: 1.9,
+        quantization_bits: 4,
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "The smallest model: quick, but weak at multi-step questions.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 668_227_264,
@@ -399,6 +372,7 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         }),
     },
     // Template: thinking off unless `enable_thinking: true`.
+    // Rank 2: between the 2B and the 9B of its family. No public result in the survey ranks it.
     CuratedChatModel {
         id: "qwen3.5-4b-q4_k_m",
         name: "Qwen 3.5 4B",
@@ -409,11 +383,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: QWEN35_4B_9B_KV,
         performance_tier: PerformanceTier::Balanced,
+        rank: 2,
+        parameters_b: 4.2,
+        active_parameters_b: 4.2,
+        quantization_bits: 4,
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "Light and quick, for simple questions and smaller machines.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 672_423_616,
@@ -425,6 +403,8 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     // the 24 that keep one, 4 are global (2 KV heads, 512-wide) and 20 slide
     // over 512 tokens (256-wide). Template: thinking off unless
     // `enable_thinking: true`.
+    // Rank 3: 4.5B effective parameters (Google's card), above the Qwen 3.5 4B and below the 9B by
+    // size; the survey has no public result for it.
     CuratedChatModel {
         id: "gemma-4-e4b-it-q4_k_m",
         name: "Gemma 4 E4B",
@@ -435,14 +415,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87",
         quantization: "Q4_K_M",
         context_length: 131_072,
-        kv: KvFootprint {
-            per_token_bytes: 4 * 2 * 1024 * 2,
-            windowed_bytes: 20 * 2 * 512 * 2 * (512 + 512),
-        },
         performance_tier: PerformanceTier::Balanced,
+        rank: 3,
+        parameters_b: 7.5,
+        active_parameters_b: 4.5,
+        quantization_bits: 4,
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "Quick everyday answers on smaller machines.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 990_372_672,
@@ -452,6 +433,9 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     },
     // Template: thinking off unless `enable_thinking: true`; a system
     // message anywhere but first raises a template error.
+    // Rank 5: Qwen's card reports IFEval 91.5, IFBench 64.5, MMLU-Pro 82.5, BFCL-V4 66.1 and AA-LCR
+    // 63.0 for the 9B, below the Gemma 4 12B's IFBench 74. The one entry Lattice has measured (course
+    // eval, memory families).
     CuratedChatModel {
         id: "qwen3.5-9b-q4_k_m",
         name: "Qwen 3.5 9B",
@@ -462,11 +446,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: QWEN35_4B_9B_KV,
         performance_tier: PerformanceTier::Balanced,
+        rank: 5,
+        parameters_b: 9.0,
+        active_parameters_b: 9.0,
+        quantization_bits: 4,
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "A dependable all-rounder, grounded in your sources; the model Lattice tests with.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_166_080,
@@ -481,6 +469,9 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     // differs from the plain 9B's: thinking is ON unless
     // `enable_thinking: false`, and up to two leading system or developer
     // messages are merged instead of raising.
+    // Rank 4: the 9B's weights with an MTP block, and 75 tensors quantized differently from the
+    // plain Q4_K_M. Nothing public or of Lattice's own measures that quantization, so it sits one place
+    // under the plain file.
     CuratedChatModel {
         id: "qwen3.5-9b-mtp-q4_k_m",
         name: "Qwen 3.5 9B (MTP)",
@@ -491,14 +482,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 9 * 4 * 512 * 2,
-            windowed_bytes: 0,
-        },
         performance_tier: PerformanceTier::Balanced,
+        rank: 4,
+        parameters_b: 9.0,
+        active_parameters_b: 9.0,
+        quantization_bits: 4,
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: true,
+        use_for: "The all-rounder, with faster answers on Apple Silicon.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 918_165_984,
@@ -509,6 +501,9 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     // Gemma 4 12B: 48 blocks, 8 global (1 KV head, 512-wide) and 40 sliding
     // over 1024 tokens (8 KV heads, 256-wide). Template: thinking off unless
     // `enable_thinking: true`.
+    // Rank 9: IFBench 74 against the Qwen 3.5 9B's 64.5; MRCR v2 8-needle 128k 43.4%, AA-LCR 63.7%,
+    // tau2 69.0 (Google's card; IFBench also on Artificial Analysis, 73.5). At 4 bits it is under its own
+    // Q6_K and Q8_0.
     CuratedChatModel {
         id: "gemma-4-12b-it-q4_k_m",
         name: "Gemma 4 12B",
@@ -519,14 +514,212 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "0a270ec9fe6b34f4a0d33992b6135117b484ebc4766ab76b51d4ae8c457e4c42",
         quantization: "Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 8 * 1024 * 2,
-            windowed_bytes: 40 * 8 * 512 * 2 * (1024 + 512),
-        },
         performance_tier: PerformanceTier::Balanced,
+        rank: 9,
+        parameters_b: 11.9,
+        active_parameters_b: 11.9,
+        quantization_bits: 4,
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "A balanced choice: good writing and reasoning at a steady pace.",
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 175_115_840,
+            projector_sha256: "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e",
+            geometry: GEMMA4_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/Qwen3.5-9B-GGUF at commit 3885219b, 2026-11-07.
+    // KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (32 blocks, one in
+    // four full attention, 4 KV heads, 256-wide), the same as the Q4_K_M. Template: byte-identical to
+    // the Q4_K_M's, so thinking is off unless `enable_thinking: true`.
+    // Rank 6: the same model and benchmarks as the Q4_K_M (rank 5), at more bits. No public figure
+    // separates the two quantizations; ordered by bits per weight within one model.
+    CuratedChatModel {
+        id: "qwen3.5-9b-q6_k",
+        name: "Qwen 3.5 9B (Q6_K)",
+        description: "The Qwen 3.5 9B at 6 bits: closer to full precision than the default Q4_K_M, for graphics cards with 12 GB or more. About 1.8 GB larger to download.",
+        repo: "unsloth/Qwen3.5-9B-GGUF",
+        file: "Qwen3.5-9B-Q6_K.gguf",
+        size_bytes: 7_458_301_152,
+        sha256: "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59",
+        quantization: "Q6_K",
+        context_length: 262_144,
+        performance_tier: PerformanceTier::Balanced,
+        rank: 6,
+        parameters_b: 9.0,
+        active_parameters_b: 9.0,
+        quantization_bits: 6,
+        capabilities: QWEN_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        use_for: "The same all-rounder at higher precision.",
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 918_166_080,
+            projector_sha256: "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+            geometry: QWEN_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/Qwen3.5-9B-GGUF at commit 3885219b, 2026-11-07.
+    // KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (32 blocks, one in
+    // four full attention, 4 KV heads, 256-wide), the same as the Q4_K_M. Template: byte-identical to
+    // the Q4_K_M's, so thinking is off unless `enable_thinking: true`.
+    // Rank 7: the same model as ranks 5 and 6 at 8 bits; ordered by bits per weight, and below the
+    // Gemma 4 12B and 26B A4B 3-bit by their IFBench and tau2 figures.
+    CuratedChatModel {
+        id: "qwen3.5-9b-q8_0",
+        name: "Qwen 3.5 9B (Q8_0)",
+        description: "The Qwen 3.5 9B at 8 bits, effectively full precision, for graphics cards with 12 GB or more. Twice the Q4_K_M's download.",
+        repo: "unsloth/Qwen3.5-9B-GGUF",
+        file: "Qwen3.5-9B-Q8_0.gguf",
+        size_bytes: 9_527_502_048,
+        sha256: "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4",
+        quantization: "Q8_0",
+        context_length: 262_144,
+        performance_tier: PerformanceTier::Balanced,
+        rank: 7,
+        parameters_b: 9.0,
+        active_parameters_b: 9.0,
+        quantization_bits: 8,
+        capabilities: QWEN_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        use_for: "The same all-rounder at higher precision.",
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 918_166_080,
+            projector_sha256: "f70dc3509053962b0d0d3ee8a7eacebf5d60aa560cad78254ae8698516ae029f",
+            geometry: QWEN_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/gemma-4-12b-it-GGUF at commit fc034cfff751,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py
+    // (48 blocks, 8 global with 1 KV head 512-wide, 40 sliding over 1024 tokens with 8 KV heads
+    // 256-wide), the same as the Q4_K_M. Template: byte-identical to the Q4_K_M's.
+    // Rank 10: the 12B's IFBench 74, MRCR 43.4%, AA-LCR 63.7% and tau2 69.0, at 6 bits; one place
+    // under the Q8_0 and above its Q4_K_M by bits per weight.
+    CuratedChatModel {
+        id: "gemma-4-12b-it-q6_k",
+        name: "Gemma 4 12B (Q6_K)",
+        description: "Google's Gemma 4 12B at 6 bits: nearly the unquantized model's quality on a 12 to 16 GB graphics card, with native tool calls.",
+        repo: "unsloth/gemma-4-12b-it-GGUF",
+        file: "gemma-4-12b-it-Q6_K.gguf",
+        size_bytes: 9_786_022_720,
+        sha256: "6f394336500bb5409bd68c31aa9d75097b5e6104f6cf30c82a09a7b64df41faf",
+        quantization: "Q6_K",
+        context_length: 262_144,
+        performance_tier: PerformanceTier::Balanced,
+        rank: 10,
+        parameters_b: 11.9,
+        active_parameters_b: 11.9,
+        quantization_bits: 6,
+        capabilities: GEMMA_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        use_for: "A balanced choice: good writing and reasoning at a steady pace.",
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 175_115_840,
+            projector_sha256: "91f086971e56d7a7d8d39e271873fccdb49541bd259d6e02c401a4f1cb7a219e",
+            geometry: GEMMA4_VISION,
+        }),
+    },
+    // ByteShape's repository, not unsloth's: unsloth's UD-IQ3_S is 12.0 GB and scores 0.956 of BF16.
+    // Size and SHA-256: the tree API of byteshape/Qwen3.8-27B-GGUF at commit 3fdfbd9b4a61,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (65
+    // blocks incl. 1 MTP, 17 full attention, 4 KV heads 256-wide), the same as the unsloth UD-Q4_K_M.
+    // The projector is the repository's mmproj-bf16.gguf (qwen3vl_merger, the same geometry as the
+    // unsloth F16). Template: thinking ON unless `enable_thinking: false`; `reasoning_effort` takes
+    // xhigh (default), medium or low and raises on `high`, unlike unsloth's.
+    // Rank 14: the 27B's card (IFBench 79.5, GPQA 89.2); ByteShape's own test on an RTX 4080 scores
+    // this file 0.987 of BF16 at 52.4 tok/s. Under the UD-Q4_K_M only for the bits it gives up.
+    CuratedChatModel {
+        id: "qwen3.8-27b-iq3_s",
+        name: "Qwen 3.8 27B (IQ3_S, 3-bit)",
+        description: "3-bit quantization of Qwen's newest dense model, ByteShape's IQ3_S, so a 16 GB graphics card can hold all of it. Keeps 0.987 of the full model's score in ByteShape's own test; a step below the 4-bit file in accuracy. Tight at long contexts.",
+        repo: "byteshape/Qwen3.8-27B-GGUF",
+        file: "Qwen3.8-27B-IQ3_S-3.23bpw.gguf",
+        size_bytes: 11_035_354_496,
+        sha256: "40171062abb191d5fb8a04b19efea377a16daebf1fd17d5e8b25808537aa782f",
+        quantization: "IQ3_S",
+        context_length: 262_144,
+        performance_tier: PerformanceTier::Accurate,
+        rank: 14,
+        parameters_b: 27.3,
+        active_parameters_b: 27.3,
+        quantization_bits: 3,
+        capabilities: QWEN_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        use_for: "For complex reasoning and multi-step work, like building and checking courses. Answers more slowly.",
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-bf16.gguf",
+            projector_bytes: 931_145_952,
+            projector_sha256: "e43a597863a21bfa48b0fbd4553a771ae4117e25bb172e66f1dbc3fc6d037131",
+            geometry: QWEN_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/gemma-4-26B-A4B-it-GGUF at commit c099eb48e663,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py (30
+    // blocks, 5 global with 2 KV heads 512-wide, 25 sliding over 1024 tokens with 8 KV heads
+    // 256-wide), the same as the UD-Q4_K_M. Template: byte-identical to the 12B's.
+    // Rank 8: the model's HHEM 5.2%, MRCR 44.1% and tau2 68.2 (about level with the 12B), at 3 bits.
+    // No measurement of this quantization exists; the 26B's score level with the 12B's, less what 3 bits
+    // cost, puts it under the 12B at 4 bits and up.
+    CuratedChatModel {
+        id: "gemma-4-26b-a4b-it-ud-iq3_s",
+        name: "Gemma 4 26B A4B (UD-IQ3_S, 3-bit)",
+        description: "3-bit quantization of Google's mixture-of-experts Gemma 4, unsloth's UD-IQ3_S, so a 16 GB graphics card can hold all of it, answering at about 4B-model speed. A step below the 4-bit file in accuracy.",
+        repo: "unsloth/gemma-4-26B-A4B-it-GGUF",
+        file: "gemma-4-26B-A4B-it-UD-IQ3_S.gguf",
+        size_bytes: 11_289_671_136,
+        sha256: "878be93f9c238ea853b3fd1eb602637ce3cf1cddea56dc345d9a7bf2d6093e29",
+        quantization: "UD-IQ3_S",
+        context_length: 262_144,
+        performance_tier: PerformanceTier::Accurate,
+        rank: 8,
+        parameters_b: 25.2,
+        active_parameters_b: 3.8,
+        quantization_bits: 3,
+        capabilities: GEMMA_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        use_for: "For fast answers and high throughput, with strong quality for its speed.",
+        vision: Some(CuratedVision {
+            projector_remote_file: "mmproj-F16.gguf",
+            projector_bytes: 1_193_058_784,
+            projector_sha256: "418a6d8723067cd712235facbbc5cba6c8fbbd413fc1292d2aace5a027d5a42f",
+            geometry: GEMMA4_VISION,
+        }),
+    },
+    // Size and SHA-256: the tree API of unsloth/gemma-4-12b-it-GGUF at commit fc034cfff751,
+    // 2026-11-07. KV shape: the file's own header, read by scripts/catalog/gguf_footprint.py
+    // (48 blocks, 8 global with 1 KV head 512-wide, 40 sliding over 1024 tokens with 8 KV heads
+    // 256-wide), the same as the Q4_K_M. Template: byte-identical to the Q4_K_M's.
+    // Rank 11: the 12B's IFBench 74, MRCR 43.4%, AA-LCR 63.7% and tau2 69.0 at 8 bits; the top of
+    // the 12B, above the 3-bit 26B A4B, which the card has level on tau2 and MRCR before 3 bits cost it
+    // more.
+    CuratedChatModel {
+        id: "gemma-4-12b-it-q8_0",
+        name: "Gemma 4 12B (Q8_0)",
+        description: "Google's Gemma 4 12B at 8 bits, effectively full precision, for graphics cards with 16 GB. Native tool calls.",
+        repo: "unsloth/gemma-4-12b-it-GGUF",
+        file: "gemma-4-12b-it-Q8_0.gguf",
+        size_bytes: 12_669_647_680,
+        sha256: "f20e7ff1be28c283eeeb18fc895733791c56a5851d5cd3fe9691b7f7d12afa72",
+        quantization: "Q8_0",
+        context_length: 262_144,
+        performance_tier: PerformanceTier::Accurate,
+        rank: 11,
+        parameters_b: 11.9,
+        active_parameters_b: 11.9,
+        quantization_bits: 8,
+        capabilities: GEMMA_CAPABILITIES,
+        license: "Apache-2.0",
+        mtp_draft: false,
+        use_for: "A balanced choice: good writing and reasoning at a steady pace.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 175_115_840,
@@ -540,6 +733,9 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     // thinking ON unless `enable_thinking: false`; `reasoning_effort` accepts
     // only xhigh (default), high, medium and low and raises on anything else;
     // `preserve_thinking` defaults on, so prior reasoning stays in the prefix.
+    // Rank 15: the model card reports IFBench 79.5 and GPQA 89.2, above every other family here.
+    // ByteShape's test puts unsloth's UD-IQ3_S at 0.956 of BF16, so this larger quantization is at least
+    // that close.
     CuratedChatModel {
         id: "qwen3.8-27b-ud-q4_k_m",
         name: "Qwen 3.8 27B",
@@ -550,14 +746,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
         quantization: "UD-Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 17 * 4 * 512 * 2,
-            windowed_bytes: 0,
-        },
         performance_tier: PerformanceTier::Accurate,
+        rank: 15,
+        parameters_b: 27.3,
+        active_parameters_b: 27.3,
+        quantization_bits: 4,
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "For complex reasoning and multi-step work, like building and checking courses. Answers more slowly.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 927_607_488,
@@ -568,6 +765,9 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     // No plain Q4_K_M here either; UD-Q4_K_M is the nearest. 30 blocks, 5
     // global (2 KV heads, 512-wide) and 25 sliding over 1024 tokens (8 KV
     // heads, 256-wide). Template: thinking off unless `enable_thinking: true`.
+    // Rank 13: 3.8B active of 25.2B. Vectara HHEM 2026-10-22: 5.2% hallucination (Qwen 3.5 27B
+    // 12.1%); MRCR 8-needle 128k 44.1%, tau2 68.2, about level with the 12B on the card's own numbers.
+    // Under the dense 27B.
     CuratedChatModel {
         id: "gemma-4-26b-a4b-it-ud-q4_k_m",
         name: "Gemma 4 26B A4B",
@@ -578,14 +778,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f",
         quantization: "UD-Q4_K_M",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 5 * 2 * 1024 * 2,
-            windowed_bytes: 25 * 8 * 512 * 2 * (1024 + 512),
-        },
         performance_tier: PerformanceTier::Accurate,
+        rank: 13,
+        parameters_b: 25.2,
+        active_parameters_b: 3.8,
+        quantization_bits: 4,
         capabilities: GEMMA_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "For fast answers and high throughput, with strong quality for its speed.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 1_193_058_784,
@@ -599,6 +800,8 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
     // 10 full attention (2 KV heads, 256-wide). Template: thinking ON unless
     // `enable_thinking: false`; `preserve_thinking` (default off) keeps prior
     // reasoning in the prefix.
+    // Rank 12: an older generation than the Qwen 3.8 and Gemma 4. The one public figure the survey
+    // has for the family is HHEM 10.5% for Qwen 3.5 35B A3B, against the Gemma 26B A4B's 5.2%.
     CuratedChatModel {
         id: "qwen3.6-35b-a3b-ud-q4_k_xl",
         name: "Qwen 3.6 35B A3B",
@@ -609,14 +812,15 @@ pub(super) const CURATED_CHAT_MODELS: &[CuratedChatModel] = &[
         sha256: "707a55a8a4397ecde44de0c499d3e68c1ad1d240d1da65826b4949d1043f4450",
         quantization: "UD-Q4_K_XL",
         context_length: 262_144,
-        kv: KvFootprint {
-            per_token_bytes: 10 * 2 * 512 * 2,
-            windowed_bytes: 0,
-        },
         performance_tier: PerformanceTier::Accurate,
+        rank: 12,
+        parameters_b: 34.7,
+        active_parameters_b: 3.0,
+        quantization_bits: 4,
         capabilities: QWEN_CAPABILITIES,
         license: "Apache-2.0",
         mtp_draft: false,
+        use_for: "For fast answers with strong quality for its speed.",
         vision: Some(CuratedVision {
             projector_remote_file: "mmproj-F16.gguf",
             projector_bytes: 899_283_680,
@@ -633,27 +837,4 @@ pub fn get_curated_llm_models() -> Vec<ModelMetadata> {
         .iter()
         .map(CuratedChatModel::metadata)
         .collect()
-}
-
-/// First-run chat-model tier, by system RAM. One family, sized to the
-/// machine: a model that does not fit swaps, and a first chat that swaps looks
-/// broken.
-///
-/// - `< 8 GB`  → Qwen 3.5 2B Q4 (2.4 GB working set)
-/// - `8–16 GB` → Qwen 3.5 4B Q4 (4.1 GB)
-/// - `≥ 16 GB` → Qwen 3.5 9B Q4 (7.0 GB)
-///
-/// Each fits inside 56% of its tier's smallest machine, the share the catalog
-/// browser calls "Fits". Larger machines still start on the 9B: it is what
-/// the evaluations measure, it downloads in minutes rather than the better
-/// part of an hour, and the 27B and the mixture-of-experts models are one
-/// choice away in the catalog.
-pub fn recommend_chat_model_for_ram(effective_ram_gb: f64) -> &'static str {
-    if effective_ram_gb < 8.0 {
-        "qwen3.5-2b-q4_k_m"
-    } else if effective_ram_gb < 16.0 {
-        "qwen3.5-4b-q4_k_m"
-    } else {
-        "qwen3.5-9b-q4_k_m"
-    }
 }

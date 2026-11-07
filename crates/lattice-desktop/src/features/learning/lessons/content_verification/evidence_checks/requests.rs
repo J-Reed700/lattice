@@ -50,6 +50,7 @@ pub(super) async fn finish(
         supporting_quote,
         resolution: None,
         trust: None,
+        claim_id: None,
         two_pass: TwoPass {
             parts: parts.clone(),
             ..TwoPass::default()

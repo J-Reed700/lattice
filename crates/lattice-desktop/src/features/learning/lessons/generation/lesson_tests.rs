@@ -255,3 +255,29 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
     let found = schema_findings(&lesson);
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[tokio::test]
+async fn a_lesson_with_no_reference_material_asks_for_it_in_plain_words() {
+    use crate::features::learning::lessons::course_generation_tests::outline;
+    let program = crate::features::learning::tests::fixture();
+    let lesson = &program.modules[0].lessons[0];
+    let references = ReferenceCollection::lexical(&[]).unwrap();
+
+    let error = prepare_lesson_with_references(
+        &outline(1, 1),
+        &BuiltinRuntimes::for_tests(),
+        &program,
+        lesson,
+        &references,
+    )
+    .await
+    .err()
+    .map(|error| error.to_string())
+    .unwrap_or_default();
+
+    assert!(
+        error.contains("Add reference material in Sources before preparing a lesson."),
+        "{error}"
+    );
+    assert!(!error.contains("MVP"), "{error}");
+}

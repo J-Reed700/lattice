@@ -48,8 +48,6 @@ pub struct ModelInfoDto {
     pub context_length: u32,
     /// Model capabilities (e.g., ["chat", "code", "reasoning"])
     pub capabilities: Vec<String>,
-    /// Minimum RAM required to run model (in GB)
-    pub minimum_ram_gb: f64,
 }
 
 /// The models currently on the local filesystem.
@@ -70,51 +68,6 @@ pub struct DownloadedModelDto {
     pub size_gb: f64,
     /// When the model was downloaded
     pub downloaded_at: DateTime<Utc>,
-}
-
-/// Performance tier, by available RAM, for model recommendations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PerformanceTier {
-    /// Low-end systems (<8GB RAM)
-    Low,
-    /// Medium-tier systems (8-16GB RAM)
-    Medium,
-    /// High-end systems (>16GB RAM)
-    High,
-}
-
-/// Request for model recommendations.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GetRecommendationsRequestDto {
-    /// Performance tier (if None, auto-detect from system)
-    pub tier: Option<PerformanceTier>,
-}
-
-/// List of recommended models based on system capabilities.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecommendedModelsDto {
-    /// Top 3 recommended models
-    pub recommendations: Vec<RecommendedModelDto>,
-}
-
-/// A single model recommendation with reasoning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RecommendedModelDto {
-    /// Model metadata
-    pub model: ModelInfoDto,
-    /// Reason for recommendation
-    pub reason: String,
-    /// Performance tier this recommendation is for
-    pub tier: PerformanceTier,
-}
-
-/// Best model for the current system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BestModelDto {
-    /// Best model metadata
-    pub model: ModelInfoDto,
-    /// Reason for selection
-    pub reason: String,
 }
 
 /// Request to check if a model is downloaded.

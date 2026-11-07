@@ -1,0 +1,123 @@
+{
+  "name": "18-quarters-total-and-entirely",
+  "kind": "valid_extra",
+  "why": "The explanation says 14 of 24 quarters, but 2015 to 2019 is 20 quarters and the source says 14 of the 20: a real error against the source that the key does not hold, which the first finding names, so a valid extra. The second uses the grain concession in sentence 7 to show that 'entirely' in sentence 5 is wrong: found from other sentences. The wage settlement order is missed.",
+  "source": {
+    "versionId": "orsland-inflation-target-v1",
+    "startByte": 41007,
+    "endByte": 42012,
+    "title": "Macroeconomics 220, case study: Inflation targeting in Orsland",
+    "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent, to be met over a horizon of eight quarters. Economist Tamsin Ridgewell studied the 60 months after the change and found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points. She argues that the target worked chiefly by anchoring expectations: surveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\n\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall. Her study compares Orsland only with its own past, so it does not show that a neighbouring country without a target would have done worse. The central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side, after a large wage settlement in the mining sector. Ridgewell regards these misses as small, the largest being 0.9 percentage points."
+  },
+  "drill": {
+    "id": "orsland-inflation-target",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "The Orsland inflation target",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 months after the change.\nShe found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points.\nShe argues that the target worked entirely by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore does not show that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 24 quarters of 2015 to 2019, mostly on the high side.\nThis preceded a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "orsland-inflation-target-entirely",
+        "pattern": "scope.overgeneralisation",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 5,
+          "end": 5
+        },
+        "consequence": "A reader thinks anchored expectations explain all of the fall, which Ridgewell herself does not claim.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "She argues that the target worked entirely by anchoring expectations.",
+          "after": "She argues that the target worked chiefly by anchoring expectations."
+        },
+        "explanation": "Ridgewell says the target worked chiefly, not entirely, by anchoring expectations, and concedes grain prices may explain part of the fall.",
+        "proof": {
+          "sourced": {
+            "quote": "the target worked chiefly by anchoring expectations",
+            "planted": "contradicted",
+            "reason": "The source says chiefly; the sentence says entirely, and the source goes on to concede another part-explanation."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "orsland-inflation-target-order",
+        "pattern": "fidelity.wrong_date_or_order",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 11,
+          "end": 11
+        },
+        "consequence": "A reader sees the wage settlement as a later event and loses the explanation for the high-side misses.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "This preceded a large wage settlement in the mining sector.",
+          "after": "This followed a large wage settlement in the mining sector."
+        },
+        "explanation": "The misses followed the large wage settlement in the mining sector.",
+        "proof": {
+          "sourced": {
+            "quote": "after a large wage settlement in the mining sector",
+            "planted": "contradicted",
+            "reason": "The source says the misses came after the settlement; the sentence says they came before it."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 months after the change.\nShe found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points.\nShe argues that the target worked chiefly by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore does not show that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 24 quarters of 2015 to 2019, mostly on the high side.\nThis followed a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 10,
+        "end": 10
+      },
+      "text": "2015 to 2019 is five years, which is 20 quarters, not 24, so '14 of the 24 quarters' has the wrong total.",
+      "severity": "minor"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 7,
+        "end": 7
+      },
+      "text": "This says grain prices may account for part of the fall, so sentence 5 cannot say the target worked entirely through expectations.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 1
+        }
+      },
+      "missed"
+    ],
+    "findings": [
+      "valid_extra",
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      }
+    ]
+  }
+}

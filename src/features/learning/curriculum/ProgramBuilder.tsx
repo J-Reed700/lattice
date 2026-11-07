@@ -2,6 +2,7 @@ import { type FormEvent, useState } from 'react';
 
 import { ArrowRight, BookOpen, Check, Clock3, Layers3, Link2, Sparkles } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { OutlineGenerationProgress } from '@/features/learning/curriculum/OutlineGenerationProgress';
 import { programBuilderDraftKeys } from '@/features/learning/curriculum/programBuilderDraft';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
@@ -17,7 +18,7 @@ const depths: { id: LearningCourseDepth; title: string; modules: string; lessons
 
 export function ProgramBuilder({ pending, error, onGenerate, onCancel, progress, onStop, onOpenDraft, cancelling, cancelError }: {
   progress?: LearningOutlineProgressDto | null; onStop?: () => void; onOpenDraft?: () => void; cancelling?: boolean; cancelError?: string;
-  pending: boolean; error?: string; onGenerate: (request: GenerateLearningProgramRequestDto) => void; onCancel: () => void;
+  pending: boolean; error?: Error; onGenerate: (request: GenerateLearningProgramRequestDto) => void; onCancel: () => void;
 }) {
   // The text survives leaving the builder; it clears once a course is made from it.
   const [goal, setGoal] = useDraft(programBuilderDraftKeys.goal);
@@ -60,7 +61,8 @@ export function ProgramBuilder({ pending, error, onGenerate, onCancel, progress,
           <div className="mt-8 border-t border-border pt-7"><h3 className="text-xs font-semibold uppercase tracking-[.15em] text-accent">03 · Materials, if you have them</h3><p className="mt-3 text-sm leading-6 text-text-secondary">Use textbooks, papers, notes, or reference pages you trust. Start with a topic or add your own materials. Lattice automatically researches supporting references when sources are missing or review finds gaps.</p><button type="button" aria-expanded={materialsOpen} aria-controls="course-materials" onClick={() => setMaterialsOpen(!materialsOpen)} className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-xl border border-border px-4 text-sm font-medium text-text-primary hover:bg-background"><BookOpen size={16} />{materialsOpen ? 'Hide materials' : 'Add optional materials'}{documents.length > 0 && ` · ${documents.length} selected`}</button>
             <div id="course-materials" hidden={!materialsOpen} className="mt-5 space-y-4">{materialsOpen && <LearningDocumentPicker selected={documents} onChange={setDocuments} />}<label className="block text-xs font-medium text-text-secondary" htmlFor="reference-urls">Reference URLs (one per line; each URL saves one page)<div className="mt-2 flex items-start gap-2 rounded-xl border border-border bg-background px-3 py-2"><Link2 size={15} className="mt-1 shrink-0 text-text-muted" /><textarea id="reference-urls" value={urls} onChange={(event) => setUrls(event.target.value)} rows={2} placeholder="https://…" className="w-full resize-y bg-transparent text-sm outline-hidden" /></div></label></div>
           </div>
-          {!pending && (formError || error) && <p role="alert" className="mt-5 rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-700">{formError || `The outline could not be generated: ${error}`}</p>}
+          {!pending && formError && <p role="alert" className="mt-5 rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-700">{formError}</p>}
+          {!pending && !formError && error && <PlainError error={error} className="mt-5 rounded-lg bg-rose-500/10 px-4 py-3 text-sm text-rose-700" />}
           {!pending && <div className="mt-8 border-t border-border pt-6"><button type="submit" className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-accent-fg transition hover:brightness-95">Create outline<ArrowRight size={17} /></button><p className="mt-3 text-center text-xs leading-5 text-text-muted">Writing and reviewing can take several minutes, depending on your model and course depth. You can follow each step and cancel while it runs.</p></div>}
         </fieldset>
         {pending && <OutlineGenerationProgress onOpenDraft={onOpenDraft} progress={progress} cancelling={cancelling} onCancel={onStop} cancelError={cancelError} deepDive={depth === 'deep_dive'} />}

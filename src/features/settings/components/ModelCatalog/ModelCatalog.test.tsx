@@ -16,8 +16,6 @@ const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
   category: 'LLM',
   description: 'A general-purpose instruction model.',
   size_gb: 4.4,
-  minimum_ram_gb: 8,
-  recommended_ram_gb: 16,
   context_length: 32768,
   performance_tier: 'Balanced',
   supported_quantizations: ['Q4_K_M'],
@@ -36,18 +34,6 @@ const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
 
 const recommendation = (overrides: Partial<ModelMetadata> = {}): ModelRecommendation => ({
   model: metadata(overrides),
-  compatibility: {
-    compatibility_level: 'Excellent',
-    overall_score: 94,
-    ram_score: 98,
-    gpu_score: 92,
-    disk_score: 99,
-    estimated_tokens_per_second: 34.5,
-    estimated_loading_time_seconds: 4.2,
-    recommendations: [],
-    blockers: [],
-  },
-  ranking_score: 92,
   popularity_downloads: 12_000,
   popularity_likes: 310,
 });

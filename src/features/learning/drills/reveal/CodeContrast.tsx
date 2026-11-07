@@ -14,6 +14,8 @@ export interface ContrastFocus {
   reviewed: ExplorerLineRange;
   clean: ExplorerLineRange | null;
   nonce: number;
+  /** The words of the source that settle the issue, for an explanation. */
+  quote?: string | null;
 }
 
 function CodePane({ title, path, file, language, range, nonce }: {

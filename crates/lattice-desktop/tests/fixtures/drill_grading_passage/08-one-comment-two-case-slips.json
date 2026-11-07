@@ -1,0 +1,128 @@
+{
+  "name": "08-one-comment-two-case-slips",
+  "kind": "two_issues",
+  "why": "One finding over sentences 5 to 7 names both slips in its own words (the Court of Appeal, not the Supreme Court; two firms of equal size, not a firm and a private customer): both issues found by the same finding. The second is a remark on citation style: false positive.",
+  "source": {
+    "versionId": "tamsin-contracts-act-section-12-v1",
+    "startByte": 5120,
+    "endByte": 6240,
+    "title": "Contract Law 301, casebook: Exclusion clauses under section 12",
+    "text": "Under section 12 of the Tamsin Contracts Act 1974, a clause that excludes or limits liability for breach is enforceable only if it satisfies a reasonableness test. The court asks whether the clause was fair and reasonable having regard to the circumstances known to the parties when the contract was made, not those that arose later. In Harrowgate Freight v Oyelaran (1991), the Court of Appeal held that a clause capping liability at the carriage price was unreasonable, because Oyelaran, a small florist, had no real opportunity to negotiate it and could not have insured against the loss. The court distinguished the earlier case of Pell v Brightwater Mills (1983), where a cap was upheld between two firms of equal size who had each taken independent advice.\n\nSection 12 does not apply to a clause excluding liability for death or personal injury caused by negligence; such a clause is void whatever its terms. The burden of proving that a clause is reasonable lies on the party who relies on it. A court may uphold part of a clause and strike the rest if the two parts can be separated without changing its meaning."
+  },
+  "drill": {
+    "id": "tamsin-contracts-act-section-12",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Exclusion clauses under the Tamsin Contracts Act",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Section 12 of the Tamsin Contracts Act 1974 governs clauses that exclude or limit liability for breach.\nSuch a clause is enforceable only if it passes a reasonableness test.\nThe court asks whether the clause was fair and reasonable in light of the circumstances the parties knew of when the contract was made.\nCircumstances that arose later are not considered.\nIn Harrowgate Freight v Oyelaran (1991), the Supreme Court held that a clause capping liability at the carriage price was unreasonable.\nOyelaran was a small florist who had no real opportunity to negotiate the clause and could not have insured against the loss.\nThe court distinguished Pell v Brightwater Mills (1983), where a cap was upheld between a firm and a private customer who had taken independent advice.\nSection 12 does not apply to a clause excluding liability for death or personal injury caused by negligence.\nSuch a clause is void whatever its terms.\nThe burden of proving that a clause is reasonable lies on the party who relies on it.\nA court may uphold part of a clause and strike the rest if the two parts can be separated without changing its meaning.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tamsin-contracts-act-section-12-court",
+        "pattern": "fidelity.wrong_attribution",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 5,
+          "end": 5
+        },
+        "consequence": "A reader gives the decision the authority of the highest court when it was a Court of Appeal ruling.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "In Harrowgate Freight v Oyelaran (1991), the Supreme Court held that a clause capping liability at the carriage price was unreasonable.",
+          "after": "In Harrowgate Freight v Oyelaran (1991), the Court of Appeal held that a clause capping liability at the carriage price was unreasonable."
+        },
+        "explanation": "Harrowgate was decided by the Court of Appeal.",
+        "proof": {
+          "sourced": {
+            "quote": "the Court of Appeal held that a clause capping liability at the carriage price was unreasonable",
+            "planted": "contradicted",
+            "reason": "The source names the Court of Appeal; the sentence names the Supreme Court."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tamsin-contracts-act-section-12-pell",
+        "pattern": "scope.shifted_population",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 7,
+          "end": 7
+        },
+        "consequence": "A reader thinks a cap can be upheld against an ordinary customer, when Pell was between two firms of equal size.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "The court distinguished Pell v Brightwater Mills (1983), where a cap was upheld between a firm and a private customer who had taken independent advice.",
+          "after": "The court distinguished Pell v Brightwater Mills (1983), where a cap was upheld between two firms of equal size who had each taken independent advice."
+        },
+        "explanation": "In Pell the cap was upheld between two firms of equal size who had each taken independent advice.",
+        "proof": {
+          "sourced": {
+            "quote": "a cap was upheld between two firms of equal size who had each taken independent advice",
+            "planted": "contradicted",
+            "reason": "The source says two firms of equal size; the sentence moves the result to a firm and a private customer."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Section 12 of the Tamsin Contracts Act 1974 governs clauses that exclude or limit liability for breach.\nSuch a clause is enforceable only if it passes a reasonableness test.\nThe court asks whether the clause was fair and reasonable in light of the circumstances the parties knew of when the contract was made.\nCircumstances that arose later are not considered.\nIn Harrowgate Freight v Oyelaran (1991), the Court of Appeal held that a clause capping liability at the carriage price was unreasonable.\nOyelaran was a small florist who had no real opportunity to negotiate the clause and could not have insured against the loss.\nThe court distinguished Pell v Brightwater Mills (1983), where a cap was upheld between two firms of equal size who had each taken independent advice.\nSection 12 does not apply to a clause excluding liability for death or personal injury caused by negligence.\nSuch a clause is void whatever its terms.\nThe burden of proving that a clause is reasonable lies on the party who relies on it.\nA court may uphold part of a clause and strike the rest if the two parts can be separated without changing its meaning.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 5,
+        "end": 7
+      },
+      "text": "Two slips in the case law. Harrowgate was decided by the Court of Appeal, not the Supreme Court, and the cap that was upheld in Pell was between two firms of equal size who both took advice, not between a firm and a private customer.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 1,
+        "end": 1
+      },
+      "text": "Cases and statutes should be cited with full citations here.",
+      "severity": "nit"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0,
+            1
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

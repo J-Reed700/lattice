@@ -113,6 +113,8 @@ pub enum SkipReason {
         setting: InstanceSetting,
     },
     NoContact,
+    /// A contact is set but is not an email address.
+    NoEmail,
     CircuitOpen {
         until: DateTime<Utc>,
         last: Box<FailureCause>,
@@ -132,6 +134,7 @@ impl fmt::Display for SkipReason {
             SkipReason::NoKey { service } => write!(f, "no {} key", service.keyring_id()),
             SkipReason::NoInstance { .. } => f.write_str("no instance URL set"),
             SkipReason::NoContact => f.write_str("needs a contact"),
+            SkipReason::NoEmail => f.write_str("needs an email contact"),
             SkipReason::CircuitOpen { until, last } => {
                 write!(f, "paused until {} ({last})", until.format("%H:%M:%S UTC"))
             }
