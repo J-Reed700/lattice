@@ -138,7 +138,7 @@ describe('ModelSetupModal', () => {
     await install();
     fireEvent.click(screen.getByRole('button', { name: 'Choose models' }));
     expect(props.onDismiss).toHaveBeenCalled();
-    expect(router.navigate).toHaveBeenCalledWith('/settings');
+    expect(router.navigate).toHaveBeenCalledWith('/settings?tab=downloaded-models');
     expect(props.onComplete).toHaveBeenCalled();
   });
 });

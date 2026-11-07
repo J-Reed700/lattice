@@ -122,7 +122,7 @@ describe('IndexingStatusPopover', () => {
     expect(screen.getByText('5 minutes ago')).toBeInTheDocument();
     expect(screen.getByText('ferns.md')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Show all →' }));
-    expect(h.navigate).toHaveBeenCalledWith('/settings');
+    expect(h.navigate).toHaveBeenCalledWith('/settings?tab=indexing');
     expect(onClose).toHaveBeenCalled();
     expect(listener).not.toHaveBeenCalled();
     act(() => { vi.runAllTimers(); });

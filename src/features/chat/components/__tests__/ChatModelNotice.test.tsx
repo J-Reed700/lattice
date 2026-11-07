@@ -22,13 +22,13 @@ describe('ChatModelNotice', () => {
   it('says the model did not load, with the way to fix it', () => {
     renderNotice({ warmupPhase: 'failed' });
     expect(screen.getByText("The chat model didn't load.")).toBeInTheDocument();
-    expect(screen.getByText('Open model settings')).toHaveAttribute('href', '/settings');
+    expect(screen.getByText('Open model settings')).toHaveAttribute('href', '/settings?tab=downloaded-models');
   });
 
   it('says there is no model rather than claiming a download', () => {
     renderNotice({ hasChatModel: false, warmupPhase: 'idle' });
     expect(screen.getByText('No chat model yet.')).toBeInTheDocument();
-    expect(screen.getByText('Choose a model')).toHaveAttribute('href', '/settings');
+    expect(screen.getByText('Choose a model')).toHaveAttribute('href', '/settings?tab=downloaded-models');
   });
 
   it('says it is warming up, with no action to take', () => {
@@ -78,7 +78,7 @@ describe('ChatModelNotice', () => {
     expect(screen.getByText(reason)).toBeInTheDocument();
     // The default model's warm-up says nothing about a chat on a model of its own.
     expect(screen.queryByText("The chat model didn't load.")).not.toBeInTheDocument();
-    expect(screen.getByText('Open model settings')).toHaveAttribute('href', '/settings');
+    expect(screen.getByText('Open model settings')).toHaveAttribute('href', '/settings?tab=downloaded-models');
     await userEvent.click(screen.getByRole('button', { name: 'Use default' }));
     expect(onUseDefault).toHaveBeenCalledTimes(1);
   });
