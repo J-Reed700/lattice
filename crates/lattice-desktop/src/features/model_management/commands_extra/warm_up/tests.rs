@@ -72,7 +72,7 @@ async fn a_learning_model_that_fails_to_warm_up_changes_no_setting() {
     let (container, model_id) = container_with_a_chat_model_that_cannot_load(&dir).await;
     let unset = warm_up_learning_model_impl(&container).await;
     assert!(matches!(unset, Err(AppError::LearningModelNotSet(message))
-        if message == "No Learning model is set. Choose one in Settings → Models under Learning."));
+        if message == "No Learning model is set. Choose one in Settings → Downloaded."));
 
     for learning_model in [
         serde_json::json!({"kind": "local", "model_id": model_id}),

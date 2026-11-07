@@ -183,7 +183,7 @@ fn a_prompt_that_fills_the_window_has_a_code_of_its_own() {
 
 #[test]
 fn an_unset_learning_model_has_a_code_of_its_own() {
-    let sentence = "No Learning model is set. Choose one in Settings -> Models under Learning.";
+    let sentence = "No Learning model is set. Choose one in Settings → Downloaded.";
     let api_err: ApiError = AppError::LearningModelNotSet(sentence.into()).into();
     assert_eq!(api_err.code, ErrorCode::LearningModelNotSet);
     assert_eq!(api_err.message, "No Learning model is set");

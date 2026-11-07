@@ -570,7 +570,7 @@ impl RoleModels {
     }
 
     /// The window `local` would launch with below `floor`, when that is
-    /// known before loading it: the one saved in Settings → Models, else the
+    /// known before loading it: the one saved in Settings → Downloaded, else the
     /// one the model was trained for.
     fn window_short_of(
         &self,
@@ -588,7 +588,7 @@ impl RoleModels {
     }
 
     /// The refusal for `model`, whose `window` is below the work's `floor`.
-    /// A Learning refusal is remembered, so Settings → Models can say so
+    /// A Learning refusal is remembered, so Settings → Downloaded can say so
     /// beside the model until it covers the window.
     fn short_window(
         &self,

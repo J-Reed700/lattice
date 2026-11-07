@@ -962,7 +962,7 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
             Window::Set(8_704),
         )),
         "Learning work needs a context window of at least 20,480 tokens. Your Learning model, \
-         Qwen3.5-9B, is set to 8,704 in Settings → Models. Set it to 20,480 or more, or choose \
+         Qwen3.5-9B, is set to 8,704 in Settings → Downloaded. Set it to 20,480 or more, or choose \
          a larger Learning model."
     );
     assert_eq!(
@@ -973,7 +973,7 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
             Window::Running(8_192),
         )),
         "This chat needs a context window of at least 12,000 tokens. Ornith-1.5-9B is running \
-         with 8,192. Set its context window to 12,000 or more in Settings → Models, or choose a \
+         with 8,192. Set its context window to 12,000 or more in Settings → Downloaded, or choose a \
          larger model for this chat."
     );
     assert_eq!(
@@ -985,7 +985,7 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
         )),
         "Learning work needs a context window of at least 300,000 tokens. Your Learning model, \
          Qwen3.5-9B, was trained for 262,144 tokens. Set its context window to 300,000 or more \
-         in Settings → Models (a stretched window costs some quality), or choose a larger \
+         in Settings → Downloaded (a stretched window costs some quality), or choose a larger \
          Learning model."
     );
     assert_eq!(
@@ -1008,7 +1008,7 @@ fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
             "ornith-1.5-9b"
         )),
         "Your Learning model, ornith-1.5-9b, is not downloaded any more. Choose one in \
-         Settings → Models under Learning."
+         Settings → Downloaded."
     );
     assert_eq!(refusal::tokens(1_048_576), "1,048,576");
     assert_eq!(refusal::tokens(999), "999");
@@ -1028,7 +1028,7 @@ fn verifier_refusals_name_the_verifier_role_and_its_fix() {
             "qwen3.5-27b"
         )),
         "Your Verifier model, qwen3.5-27b, is not downloaded any more. Choose one in \
-         Settings → Models under Verifier."
+         Settings → Downloaded."
     );
     assert_eq!(
         message(no_tools(ModelRole::Verifier, "Qwen3.5-27B")),
