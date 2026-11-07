@@ -480,4 +480,121 @@ mod tests {
         assert_eq!(instructions(&other), INSTRUCTIONS);
         assert_eq!(schema(&original)["properties"]["edits"]["minItems"], 1);
     }
+
+    fn parted() -> Value {
+        json!({"blocks":[
+            {"kind":"explanation","title":"First","body":"Alpha holds. Beta fails."},
+            {"kind":"explanation","title":"Second","body":"Gamma holds. Delta fails."},
+            {"kind":"explanation","title":"Third","body":"Epsilon holds.","citations":[{"sentence":"Epsilon holds.","sourceIndex":0,"quote":"Epsilon is stated by the source."}]}],
+            "questions":[{"kind":"quiz","prompt":"Which?","options":["a","b"],"explanation":"The cache holds 128 entries."}]})
+    }
+
+    fn patched(edits: Value) -> Result<Value> {
+        apply(&parted(), &json!({ "edits": edits }).to_string())
+    }
+
+    fn good() -> Value {
+        json!({"path":"/blocks/0/body","before":"Beta fails.","after":"Beta holds."})
+    }
+
+    fn only_block_0_changed(revised: &Value) {
+        let mut expected = parted();
+        expected["blocks"][0]["body"] = json!("Alpha holds. Beta holds.");
+        assert_eq!(revised, &expected);
+    }
+
+    #[test]
+    fn a_block_with_a_broken_edit_keeps_its_text_and_another_blocks_good_edit_applies() -> Result<()>
+    {
+        let revised = patched(json!([
+            good(),
+            {"path":"/blocks/1/body","before":"Absent.","after":"Present."}
+        ]))?;
+
+        only_block_0_changed(&revised);
+        assert_eq!(revised["blocks"][1], parted()["blocks"][1]);
+        Ok(())
+    }
+
+    #[test]
+    fn an_edit_that_changes_nothing_is_dropped_and_the_others_apply() -> Result<()> {
+        let revised = patched(json!([
+            {"path":"/blocks/1/title","before":"Second","after":"Second"},
+            good(),
+            {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":0}
+        ]))?;
+
+        only_block_0_changed(&revised);
+        Ok(())
+    }
+
+    #[test]
+    fn a_patch_whose_parts_all_have_problems_is_refused_and_names_every_edit() {
+        let message = patched(json!([
+            {"path":"/blocks/0/body","before":"Absent.","after":"Present."},
+            {"path":"/blocks/1/body","before":"Missing.","after":"Present."},
+            {"path":"/questions/0/explanation","before":"Nowhere.","after":"Somewhere."}
+        ]))
+        .unwrap_err()
+        .to_string();
+
+        for number in ["edit 0", "edit 1", "edit 2"] {
+            assert!(message.contains(number), "{number}: {message}");
+        }
+    }
+
+    #[test]
+    fn a_part_with_one_good_and_one_broken_edit_keeps_all_its_values() {
+        let original = parted();
+        let message = patched(json!([
+            good(),
+            {"path":"/blocks/0/title","before":"Absent","after":"Present"}
+        ]))
+        .unwrap_err()
+        .to_string();
+
+        assert!(message.contains("edit 1"), "{message}");
+        assert_eq!(original, parted());
+    }
+
+    #[test]
+    fn a_one_section_input_with_one_broken_edit_is_refused_whole() {
+        let section = parted()["blocks"][0].clone();
+        let input = json!({ "blocks": [section] });
+        let patch = json!({"edits":[
+            {"path":"/blocks/0/title","before":"First","after":"Opening"},
+            {"path":"/blocks/0/body","before":"Absent.","after":"Present."}
+        ]});
+
+        let message = apply(&input, &patch.to_string()).unwrap_err().to_string();
+
+        assert!(message.contains("edit 1"), "{message}");
+    }
+
+    #[test]
+    fn a_questions_broken_edit_does_not_stop_a_blocks_good_edit() -> Result<()> {
+        let revised = patched(json!([
+            {"path":"/questions/0/explanation","before":"Nowhere.","after":"Somewhere."},
+            good()
+        ]))?;
+
+        only_block_0_changed(&revised);
+        Ok(())
+    }
+
+    #[test]
+    fn five_edits_to_one_number_refuse_that_block_only() -> Result<()> {
+        let revised = patched(json!([
+            good(),
+            {"path":"/blocks/2/citations/0/sourceIndex","before":0,"after":1},
+            {"path":"/blocks/2/citations/0/sourceIndex","before":1,"after":2},
+            {"path":"/blocks/2/citations/0/sourceIndex","before":2,"after":3},
+            {"path":"/blocks/2/citations/0/sourceIndex","before":3,"after":4},
+            {"path":"/blocks/2/citations/0/sourceIndex","before":4,"after":5}
+        ]))?;
+
+        only_block_0_changed(&revised);
+        assert_eq!(revised["blocks"][2], parted()["blocks"][2]);
+        Ok(())
+    }
 }
