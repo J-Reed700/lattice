@@ -4,7 +4,6 @@
 
 use super::tests::{builds, course, indexes, pages};
 use super::*;
-use crate::features::learning::tests;
 use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
 use lattice_core::shared::runtime::jobs::{JobStatus, RecoveryPolicy};
 use lattice_core::shared::Result;
@@ -12,11 +11,13 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn a_build_that_stopped_the_app_stays_failed_until_the_learner_retries_it() -> Result<()> {
-    let pool = tests::pool().await?;
+    // A build running as a job saves progress beside its own reads, which the
+    // one-connection test database cannot do.
     let temp = tempfile::tempdir().unwrap();
+    let pool = first_tests::pool(temp.path()).await?;
     let courses = indexes(
         &pool,
-        temp.path(),
+        &temp.path().join("course-index"),
         FixedEmbedders::new(Some(FakeEmbedder::new("model-a"))),
     );
     let (program, _) = course(&pool, &pages(2)).await?;
