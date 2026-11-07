@@ -306,6 +306,7 @@ export const COMMAND_PLUGINS = {
   quick_capture: 'dailynotes',
   read_file_bytes: 'file',
   read_file_content: 'file',
+  read_model_fits: 'model',
   read_web_page: 'web',
   reassess_learning_source_trust: 'learning',
   recommend_chat_models: 'model',

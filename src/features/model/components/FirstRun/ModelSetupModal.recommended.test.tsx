@@ -122,6 +122,15 @@ describe('ModelSetupModal recommended list', () => {
     expect(radios[2]).not.toHaveAccessibleName(/Best for this computer|Fastest|Smallest download|Tested by Lattice/);
   });
 
+  it('says each card’s speed in words, not the backend’s code', async () => {
+    renderModal();
+    const radios = await cards();
+    expect(radios[0]).toHaveAccessibleName(/Medium/);
+    expect(radios[1]).toHaveAccessibleName(/Fast/);
+    expect(radios[2]).toHaveAccessibleName(/Slower/);
+    for (const radio of radios) expect(radio).not.toHaveAccessibleName(/balanced|thorough|Speed: fast/);
+  });
+
   it('says a card runs on the processor, slower, when there is no usable graphics card', async () => {
     const cpu = { name: 'AMD Ryzen 7 5800X', kind: 'processor', totalBytes: 32 * GB };
     mocks.api.recommendChatModels.mockResolvedValue({
@@ -177,7 +186,7 @@ describe('ModelSetupModal recommended list', () => {
     await cards();
     fireEvent.click(screen.getByRole('button', { name: 'See all models' }));
     expect(props.onDismiss).toHaveBeenCalled();
-    expect(router.navigate).toHaveBeenCalledWith('/settings');
+    expect(router.navigate).toHaveBeenCalledWith('/settings?tab=models');
     expect(props.onComplete).toHaveBeenCalled();
   });
 });

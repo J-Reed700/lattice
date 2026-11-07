@@ -1427,6 +1427,18 @@ async recommendChatModels() : Promise<Result<RecommendationDto[], ApiError>> {
 }
 },
 /**
+ * The verdict for each listed model file, in the order asked; `null` when a
+ * file's header could not be read.
+ */
+async readModelFits(files: ModelFileRefDto[]) : Promise<Result<(FitVerdictDto | null)[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|read_model_fits", { files }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Start downloading the default embedding model used during first run.
  *
  * Returns a JSON string for compatibility with existing first-run flow.
@@ -8608,6 +8620,7 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
+export type ModelFileRefDto = { repo: string; file: string; revision?: string | null }
 export type ModelInfo = {
 /**
  * The loaded model's vector-space identity; empty when none is loaded.

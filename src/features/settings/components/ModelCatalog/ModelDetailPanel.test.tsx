@@ -5,7 +5,9 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
+import { ApiProvider } from '@/contexts/ApiContext';
 import VaultAPI from '@/lib/api';
+import { createTestApi } from '@/tests/apiClient';
 import { deferred } from '@/tests/deferred';
 import type { ModelMetadata, ModelRecommendation } from '@/types/modelCatalog';
 
@@ -90,9 +92,13 @@ const recommendation = (overrides: Partial<ModelMetadata> = {}, extra: Partial<M
 } as unknown as ModelRecommendation);
 
 let queryClient: QueryClient;
-const renderPanel = (model: ModelRecommendation, props: Record<string, unknown> = {}) => {
+const renderPanel = (model: ModelRecommendation, props: Record<string, unknown> = {}, readModelFits?: ReturnType<typeof vi.fn>) => {
   const onBack = vi.fn();
-  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  const client = readModelFits ? createTestApi({ readModelFits: readModelFits as never }) : null;
+  const wrapper = ({ children }: { children: ReactNode }) => {
+    const tree = <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    return client ? <ApiProvider client={client}>{tree}</ApiProvider> : tree;
+  };
   render(<ModelDetailPanel model={model} onBack={onBack} {...props} />, { wrapper });
   return { onBack };
 };
@@ -126,8 +132,8 @@ describe('ModelDetailPanel', () => {
     expect(screen.getByText('Chat · Q4_K_M · 4.4 GB')).toBeInTheDocument();
     expect(screen.getByText('Checking…')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Download' })).toBeInTheDocument();
-    expect(screen.getByText('8.0 GB')).toBeInTheDocument();
-    expect(screen.getByText('16.0 GB')).toBeInTheDocument();
+    expect(screen.queryByText('Estimated minimum memory')).not.toBeInTheDocument();
+    expect(screen.queryByText('Estimated comfortable memory')).not.toBeInTheDocument();
     expect(screen.getByText(`${(32768).toLocaleString()} tokens`)).toBeInTheDocument();
     expect(screen.getByText('GGUF')).toBeInTheDocument();
     expect(screen.getByText('Apache-2.0')).toBeInTheDocument();
@@ -138,6 +144,40 @@ describe('ModelDetailPanel', () => {
     expect(onBack).toHaveBeenCalled();
   });
 
+  describe('a model whose size has not been read', () => {
+    const device = { name: 'Test GPU', kind: 'dedicated' as const, totalBytes: 16 * 1_073_741_824 };
+    const verdict = { kind: 'fits' as const, needsBytes: 11.2 * 1_073_741_824, budgetBytes: 15 * 1_073_741_824, device };
+
+    it('asks for exactly its repo and file, and says Checking size meanwhile', async () => {
+      const readModelFits = vi.fn().mockReturnValue(new Promise(() => {}));
+      renderPanel(recommendation({}, { fit: null } as never), {}, readModelFits);
+      await waitFor(() => expect(readModelFits).toHaveBeenCalledTimes(1));
+      expect(readModelFits).toHaveBeenCalledWith([expect.objectContaining({ repo: 'saga/Saga-7B-GGUF', file: 'saga-7b-Q4_K_M.gguf' })]);
+      expect(screen.getAllByText('Checking size').length).toBeGreaterThan(0);
+    });
+
+    it('shows the verdict’s usage line when the answer comes', async () => {
+      const readModelFits = vi.fn().mockResolvedValue({ ok: true, data: [verdict] });
+      renderPanel(recommendation({}, { fit: null } as never), {}, readModelFits);
+      expect((await screen.findAllByText('Fits · Uses 11.2 of 16 GB on Test GPU')).length).toBeGreaterThan(0);
+      expect(screen.queryByText('Checking size')).not.toBeInTheDocument();
+    });
+
+    it('says Size unknown when the header could not be read', async () => {
+      const readModelFits = vi.fn().mockResolvedValue({ ok: true, data: [null] });
+      renderPanel(recommendation({}, { fit: null } as never), {}, readModelFits);
+      expect((await screen.findAllByText('Size unknown')).length).toBeGreaterThan(0);
+      expect(screen.queryByText('Checking size')).not.toBeInTheDocument();
+    });
+
+    it('is never asked for when the row arrived with its verdict', async () => {
+      const readModelFits = vi.fn();
+      renderPanel(recommendation({}, { fit: verdict } as never), {}, readModelFits);
+      expect(screen.getAllByText('Fits · Uses 11.2 of 16 GB on Test GPU').length).toBeGreaterThan(0);
+      expect(readModelFits).not.toHaveBeenCalled();
+    });
+  });
+
   it('says what it cannot estimate', async () => {
     h.capabilities = null;
     renderPanel(recommendation(
@@ -145,7 +185,7 @@ describe('ModelDetailPanel', () => {
       { popularity_downloads: null, popularity_likes: null } as never,
     ));
     expect(screen.getByText('Not enough size or hardware information to estimate fit.')).toBeInTheDocument();
-    expect(screen.getAllByText('Unknown')).toHaveLength(3);
+    expect(screen.getAllByText('Unknown')).toHaveLength(1);
     expect(screen.getByText('Safetensors')).toBeInTheDocument();
     // No source to download from: no control at all.
     await waitFor(() => expect(h.downloaded.isModelDownloaded).toHaveBeenCalled());

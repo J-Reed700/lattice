@@ -146,7 +146,7 @@ describe('ModelSetupModal', () => {
     await install();
     fireEvent.click(screen.getByRole('button', { name: 'See all models' }));
     expect(props.onDismiss).toHaveBeenCalled();
-    expect(router.navigate).toHaveBeenCalledWith('/settings');
+    expect(router.navigate).toHaveBeenCalledWith('/settings?tab=models');
     expect(props.onComplete).toHaveBeenCalled();
   });
 });

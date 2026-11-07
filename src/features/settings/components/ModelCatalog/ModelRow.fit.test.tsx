@@ -78,6 +78,12 @@ describe('ModelRow fit label', () => {
     expect(screen.getByText('Fits').closest('[title]')?.getAttribute('title')).toContain('NVIDIA GeForce RTX 4080');
   });
 
+  it('shows no memory estimate beside the verdict, so the screen has one memory figure', () => {
+    render(<ModelRow model={row(verdict('fits'), { minimum_ram_gb: 8 })} {...rowProps} />);
+    expect(screen.queryByText(/Est\. memory/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Memory estimate unavailable')).not.toBeInTheDocument();
+  });
+
   it('shows the backend’s verdict whatever the catalog’s own memory estimate says', () => {
     render(<ModelRow model={row(verdict('too_large'), { minimum_ram_gb: 1 })} {...rowProps} />);
     expect(screen.getByText('Too large for this computer')).toBeInTheDocument();
