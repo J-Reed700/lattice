@@ -10,6 +10,7 @@ import type {
   ReopenCauseDto,
   ResearchSummaryDto,
   SourceKindDto,
+  UnverifiedReasonDto,
   WaitingClaimsRecheckDto,
 } from '@/lib/bindings';
 
@@ -194,6 +195,7 @@ function verdictCopy(item: ClaimReviewItemDto): WhyItWaits {
 
 /** The chip, the one-line reason, the specific lack and the suggested fixes. */
 export function whyItWaits(item: ClaimReviewItemDto): WhyItWaits {
+  if (item.state.state === 'unverified') return { chip: 'Not verified', reason: UNVERIFIED_REASONS[item.state.reason], detail: null, fixes: ['accept', 'edit', 'add_source'] };
   const copy = verdictCopy(item);
   if (item.state.state !== 'reopened') return copy;
   return { ...copy, chip: 'Reopened', detail: [REOPENED[item.state.cause.cause], copy.detail].filter(Boolean).join(' ') || null };
@@ -209,6 +211,7 @@ export function resolvedChip(item: ClaimReviewItemDto): string {
     case 'removed': return state.by === 'user' ? 'Removed by you' : 'Removed';
     case 'edited': return state.successor ? 'Edited' : 'Removed by an edit';
     case 'general_knowledge': return 'Common knowledge';
+    case 'unverified': return 'Not verified';
     case 'unchecked':
     case 'open': return 'Being checked';
     case 'queued':
@@ -280,6 +283,15 @@ export function jobTallyLine(tally: LearningClaimTally): string {
   ];
   return parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`).join(' · ');
 }
+
+/** Why a statement went into the lesson without being verified. */
+export const UNVERIFIED_REASONS: Record<UnverifiedReasonDto, string> = {
+  unchecked: 'The check could not be completed.',
+  unsupported: 'The lesson’s sources do not state this.',
+  contradicted: 'A source appears to disagree with this.',
+};
+export const statementsNotVerified = (count: number) => `${plural(count, 'statement', 'statements')} not verified`;
+export const unverifiedReviewLine = (count: number) => `${plural(count, 'statement', 'statements')} could not be verified. You can check each one here; the lesson is already published.`;
 
 export const claimsNeedYou = (count: number) => `${claimsCount(count)} need${count === 1 ? 's' : ''} you`;
 export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching note', 'teaching notes')} for you`;
