@@ -493,6 +493,7 @@ async fn live_build_eval() -> Result<()> {
             tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
                 pattern: pattern.clone(),
                 due_at: Some(i64::MAX),
+                pending: false,
             }));
             let started = Instant::now();
             let built = build(llm.as_ref(), &runtimes, &pool, &spec, &name).await?;
@@ -670,6 +671,7 @@ async fn live_passage_build_eval() -> Result<()> {
         tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
             pattern: pattern.clone(),
             due_at: Some(i64::MAX),
+            pending: false,
         }));
         let started = Instant::now();
         let seed = format!("{run}:{name}");

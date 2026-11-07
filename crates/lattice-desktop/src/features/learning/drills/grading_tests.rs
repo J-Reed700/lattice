@@ -104,6 +104,7 @@ fn key_issue(pattern: &str, severity: Severity, span: LineSpan, consequence: &st
             reason: "The edit introduces it.".into(),
         },
         origin: Origin::Planted,
+        lesson: None,
     }
 }
 

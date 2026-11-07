@@ -99,6 +99,7 @@ fn sourced_issue() -> KeyIssue {
             reason: "The source gives 14%, not 40%.".into(),
         },
         origin: Origin::Planted,
+        lesson: None,
     }
 }
 

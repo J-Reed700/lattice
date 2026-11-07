@@ -161,6 +161,11 @@ pub const LANGUAGES: [&str; 15] = [
     "shell",
 ];
 
+/// The language of `LANGUAGES` most of the fenced code in `texts` is written in, ties to the one listed first; `None` when no fence names one.
+pub fn language_of_code(_texts: &[&str]) -> Option<&'static str> {
+    None
+}
+
 /// The pattern with this id.
 pub fn pattern(id: &str) -> Option<&'static Pattern> {
     CATALOGUE.iter().find(|pattern| pattern.id == id)

@@ -14,15 +14,18 @@ mod edits;
 mod fix;
 mod grading;
 mod key;
+mod lessons;
 mod schedule;
 #[cfg(test)]
 mod tests;
 
-pub use catalogue::{pattern, patterns_for, Family, Languages, Pattern, CATALOGUE, LANGUAGES};
+pub use catalogue::{
+    language_of_code, pattern, patterns_for, Family, Languages, Pattern, CATALOGUE, LANGUAGES,
+};
 pub use diff::{line_diff, DiffKind, DiffLine};
 pub use drill::{
-    weight, Drill, DrillFile, Edit, KeyIssue, LineSpan, Material, Origin, Proof, Severity,
-    SourceVerdict,
+    weight, Drill, DrillFile, Edit, KeyIssue, LessonLink, LineSpan, Material, Origin, Proof,
+    Severity, SourceVerdict,
 };
 pub use edits::{apply, overlaps, EditFault};
 pub use fix::{DecidedBy, FixOutcome, IssueCheck, IssueFix, SuiteVerdict};
@@ -31,4 +34,7 @@ pub use grading::{
     FindingOutcome, IssueOutcome, Score, SeverityTally,
 };
 pub use key::{check_key, severity_floor, KeyFault};
-pub use schedule::{rating, ratings, targets, IssueRating, PatternDue, PatternRating};
+pub use lessons::{next_lessons, LessonStanding};
+pub use schedule::{
+    lesson_rating, per_pattern, rating, ratings, targets, IssueRating, PatternDue, PatternRating,
+};

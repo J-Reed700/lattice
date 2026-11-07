@@ -877,6 +877,7 @@ mod beside {
             explanation: format!("Say what is wrong with {id}."),
             proof,
             origin,
+            lesson: None,
         }
     }
 

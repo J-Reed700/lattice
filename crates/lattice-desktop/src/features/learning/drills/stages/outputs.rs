@@ -201,6 +201,7 @@ impl Proved {
                 explanation: proven.mutation.explanation.clone(),
                 proof: proven.proof.clone(),
                 origin: Origin::Planted,
+                lesson: None,
             })
             .collect()
     }

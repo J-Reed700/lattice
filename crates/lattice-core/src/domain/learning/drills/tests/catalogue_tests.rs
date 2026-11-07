@@ -616,3 +616,95 @@ fn python_gets_the_patterns_it_got_before_the_passage_ones() {
         .collect();
     assert_eq!(python, PYTHON_BEFORE_PASSAGES);
 }
+
+#[test]
+fn the_language_most_fences_are_written_in_is_the_codes() {
+    let texts = [
+        "Intro.\n```python\nprint(1)\n```\n",
+        "```rust\nfn main() {}\n```\n```python\nx = 1\n```\n",
+    ];
+    assert_eq!(language_of_code(&texts), Some("python"));
+}
+
+#[test]
+fn a_fence_names_its_language_by_an_alias() {
+    for (info, language) in [
+        ("py", "python"),
+        ("ts", "typescript"),
+        ("rs", "rust"),
+        ("c++", "cpp"),
+        ("cs", "csharp"),
+        ("golang", "go"),
+        ("bash", "shell"),
+        ("JS", "javascript"),
+        (".python", "python"),
+        ("postgresql", "sql"),
+        ("kt", "kotlin"),
+    ] {
+        let text = format!("```{info}\ncode\n```\n");
+        assert_eq!(language_of_code(&[text.as_str()]), Some(language), "{info}");
+    }
+}
+
+#[test]
+fn closing_fences_and_fences_with_no_language_count_for_nothing() {
+    let text = "```\nplain\n```\n```rust\nlet x = 1;\n```\n";
+    assert_eq!(language_of_code(&[text]), Some("rust"));
+    assert_eq!(language_of_code(&["```\nplain\n```\n"]), None);
+}
+
+#[test]
+fn a_closing_fence_is_not_read_as_an_opening_one() {
+    let text = "```python\nx\n```\n```go\ny\n```\n```go\nz\n```\n";
+    assert_eq!(language_of_code(&[text]), Some("go"));
+    let one = "```python\nx\n```python\nnot a block\n";
+    assert_eq!(language_of_code(&[one]), Some("python"));
+}
+
+#[test]
+fn fences_in_no_language_of_the_catalogue_are_ignored() {
+    let text = "```yaml\na: 1\n```\n```json\n{}\n```\n```powershell\nls\n```\n```text\nx\n```\n";
+    assert_eq!(language_of_code(&[text]), None);
+}
+
+#[test]
+fn a_tie_goes_to_the_language_listed_first() {
+    let text = "```rust\na\n```\n```python\nb\n```\n";
+    assert_eq!(language_of_code(&[text]), Some("python"));
+    let text = "```shell\na\n```\n```go\nb\n```\n";
+    assert_eq!(language_of_code(&[text]), Some("go"));
+}
+
+#[test]
+fn tilde_fences_and_fences_indented_up_to_three_spaces_count() {
+    assert_eq!(language_of_code(&["~~~python\nx\n~~~\n"]), Some("python"));
+    assert_eq!(language_of_code(&["   ```rust\nx\n   ```\n"]), Some("rust"));
+    assert_eq!(language_of_code(&["````go\nx\n````\n"]), Some("go"));
+}
+
+#[test]
+fn a_fence_indented_four_spaces_does_not_count() {
+    assert_eq!(language_of_code(&["    ```python\n    x\n    ```\n"]), None);
+}
+
+#[test]
+fn an_info_string_with_attributes_names_its_first_word() {
+    assert_eq!(
+        language_of_code(&["```python {linenos}\nx\n```\n"]),
+        Some("python")
+    );
+    assert_eq!(
+        language_of_code(&["```rust title=x\nx\n```\n"]),
+        Some("rust")
+    );
+    assert_eq!(
+        language_of_code(&["```python{.numberLines}\nx\n```\n"]),
+        Some("python")
+    );
+}
+
+#[test]
+fn no_texts_name_no_language() {
+    assert_eq!(language_of_code(&[]), None);
+    assert_eq!(language_of_code(&["No code here."]), None);
+}

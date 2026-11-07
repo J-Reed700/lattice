@@ -214,6 +214,7 @@ impl DrillBuild<'_> {
                     reason: reason.clone(),
                 },
                 origin: Origin::FoundInReview,
+                lesson: None,
             });
         }
         Ok(BlindReview {

@@ -183,3 +183,35 @@ fn a_drill_with_a_sourced_issue_survives_being_stored() {
     let stored = serde_json::to_string(&drill).unwrap();
     assert_eq!(serde_json::from_str::<Drill>(&stored).unwrap(), drill);
 }
+
+fn lesson_link() -> LessonLink {
+    LessonLink {
+        lesson_id: "lesson-3".to_owned(),
+        sentences: vec!["Spacing raises recall.".to_owned()],
+        source: Some("The trial report".to_owned()),
+    }
+}
+
+#[test]
+fn a_key_issue_with_no_lesson_is_stored_without_a_lesson_key() {
+    let stored = serde_json::to_value(issue(Severity::Major, 3, 3)).unwrap();
+    assert!(stored.get("lesson").is_none());
+}
+
+#[test]
+fn a_key_issue_stored_before_lessons_reads_with_no_lesson() {
+    let mut stored = serde_json::to_value(issue(Severity::Major, 3, 3)).unwrap();
+    stored.as_object_mut().unwrap().remove("lesson");
+    let read: KeyIssue = serde_json::from_value(stored).unwrap();
+    assert_eq!(read.lesson, None);
+}
+
+#[test]
+fn a_key_issue_with_a_lesson_link_survives_storage() {
+    let mut tied = issue(Severity::Major, 3, 3);
+    tied.lesson = Some(lesson_link());
+    let stored = serde_json::to_string(&tied).unwrap();
+    assert_eq!(serde_json::from_str::<KeyIssue>(&stored).unwrap(), tied);
+    let link = serde_json::to_value(&tied).unwrap();
+    assert_eq!(link["lesson"]["lesson_id"], "lesson-3");
+}

@@ -65,6 +65,9 @@ pub struct PatternDue {
     pub pattern: String,
     /// `None`: never practised.
     pub due_at: Option<i64>,
+    /// A drill that plants it is out and not yet graded.
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// Where a pattern stands, in the order the next drill prefers.
@@ -142,4 +145,19 @@ pub fn targets(
         chosen.push(picked.pattern);
     }
     chosen
+}
+
+/// The rating a review gives the lesson its drill was built from: the mean of the ratings of the issues tied to it.
+pub fn lesson_rating(
+    _material: &Material,
+    _key: &[KeyIssue],
+    _assessment: &Assessment,
+) -> Option<PatternRating> {
+    None
+}
+
+/// One rating per pattern, for the schedule, which takes one review per pattern per attempt: the mean of that
+/// pattern's ratings, patterns in the order they first appear.
+pub fn per_pattern(ratings: &[IssueRating]) -> Vec<IssueRating> {
+    ratings.to_vec()
 }
