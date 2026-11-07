@@ -240,6 +240,9 @@ pub(super) async fn run<F>(
                             .publish_unverified(policy, Unsettled::Waiting(claims))
                             .await?;
                         if marked > 0 {
+                            if let Some(finished) = publish(review, policy).await? {
+                                return Ok(finished);
+                            }
                             continue;
                         }
                     }
@@ -254,51 +257,18 @@ pub(super) async fn run<F>(
                         .publish_unverified(policy, Unsettled::Unreadable(stopped.clone()))
                         .await?;
                     if marked > 0 {
+                        if let Some(finished) = publish(review, policy).await? {
+                            return Ok(finished);
+                        }
                         continue;
                     }
                 }
                 return review.finish(Verdict::Stop(*reason)).await;
             }
             Decision::Publish => {
-                // The last sync point: an edit made during this pass is
-                // applied and verified before anything publishes.
-                if !review.still_publishes(policy).await? {
-                    continue;
+                if let Some(finished) = publish(review, policy).await? {
+                    return Ok(finished);
                 }
-                // Sections after cuts (claim classes design §3.10): the flow
-                // repairs and the sections that go are settled and checked
-                // before the lesson is final, and the sections that go are then
-                // taken out.
-                match review.settle().await? {
-                    Settled::Again => continue,
-                    Settled::Done => {}
-                }
-                // The last guard (acceptance design §2.9): the lesson holds no
-                // sentence that a claim the machine ended stood on.
-                if let Some((reason, claims)) = review.ended_but_standing() {
-                    if review.publish_unverified(policy, Unsettled::Ended).await? > 0 {
-                        continue;
-                    }
-                    let reason = Some(reason);
-                    return review.finish(Verdict::Hold { claims, reason }).await;
-                }
-                review.excise().await?;
-                // Then the Verifier audit, when the course opted in (§14.3):
-                // review pass → audit → publish. Its checks, and anything the
-                // user did while it ran, are read back before publishing.
-                match review.audit().await? {
-                    Audit::Off => {}
-                    Audit::Agreed => {
-                        if !review.still_publishes(policy).await? {
-                            continue;
-                        }
-                    }
-                    Audit::Hold { claims, reason } => {
-                        let reason = reason.map(|stop| *stop);
-                        return review.finish(Verdict::Hold { claims, reason }).await;
-                    }
-                }
-                return review.finish(Verdict::Publish).await;
             }
             Decision::NeedsReview(claims) => {
                 if review
@@ -306,6 +276,9 @@ pub(super) async fn run<F>(
                     .await?
                     > 0
                 {
+                    if let Some(finished) = publish(review, policy).await? {
+                        return Ok(finished);
+                    }
                     continue;
                 }
                 let reason = None;
@@ -314,6 +287,59 @@ pub(super) async fn run<F>(
             Decision::Repair(targets) => review.repair(policy, &targets).await?,
         }
     }
+}
+
+/// The Publish branch, entered when every statement has ended or has been
+/// marked not verified: `None` when the lesson is not ready yet and the round
+/// goes again.
+async fn publish<F>(
+    review: &mut dyn Review<Finished = F>,
+    policy: &dyn AcceptancePolicy,
+) -> Result<Option<F>> {
+    // The last sync point: an edit made during this pass is applied and
+    // verified before anything publishes.
+    if !review.still_publishes(policy).await? {
+        return Ok(None);
+    }
+    // Sections after cuts (claim classes design §3.10): the flow repairs and
+    // the sections that go are settled and checked before the lesson is final,
+    // and the sections that go are then taken out.
+    match review.settle().await? {
+        Settled::Again => return Ok(None),
+        Settled::Done => {}
+    }
+    // The last guard (acceptance design §2.9): the lesson holds no sentence
+    // that a claim the machine ended stood on, or the claim is marked not
+    // verified.
+    if let Some((reason, claims)) = review.ended_but_standing() {
+        if review.publish_unverified(policy, Unsettled::Ended).await? == 0 {
+            let reason = Some(reason);
+            return review
+                .finish(Verdict::Hold { claims, reason })
+                .await
+                .map(Some);
+        }
+    }
+    review.excise().await?;
+    // Then the Verifier audit, when the course opted in (§14.3): review pass →
+    // audit → publish. Its checks, and anything the user did while it ran, are
+    // read back before publishing.
+    match review.audit().await? {
+        Audit::Off => {}
+        Audit::Agreed => {
+            if !review.still_publishes(policy).await? {
+                return Ok(None);
+            }
+        }
+        Audit::Hold { claims, reason } => {
+            let reason = reason.map(|stop| *stop);
+            return review
+                .finish(Verdict::Hold { claims, reason })
+                .await
+                .map(Some);
+        }
+    }
+    review.finish(Verdict::Publish).await.map(Some)
 }
 
 #[cfg(test)]
