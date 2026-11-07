@@ -137,7 +137,7 @@ fn a_bold_line_at_body_size_is_still_a_heading() {
 /// A typeface whose regular weight reads as bold set a whole article's body
 /// "in bold": FSMe declares stems of 184 for its regular weight and 196 for
 /// its bold, both past the bold-stem bar, and every short line of a two-column
-/// TISMIR article became a `####` heading, 825 of its 1,101 lines, quoted that
+/// journal article became a `####` heading, 805 of its 1,101 lines, quoted that
 /// way in a lesson (2026-11-06).
 #[test]
 fn a_body_set_all_in_bold_is_not_promoted_line_by_line() {
