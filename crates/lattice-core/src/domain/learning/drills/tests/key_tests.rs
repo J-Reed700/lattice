@@ -40,7 +40,7 @@ fn planted_issue(id: &str, span: LineSpan, fix: Edit) -> KeyIssue {
 fn drill_of(files: Vec<DrillFile>, key: Vec<KeyIssue>) -> Drill {
     Drill {
         id: "drill".to_owned(),
-        language: "python".to_owned(),
+        material: Material::code("python"),
         title: "A report".to_owned(),
         files,
         key,
@@ -239,16 +239,213 @@ fn an_issue_whose_pattern_is_not_in_the_catalogue_is_refused() {
 }
 
 #[test]
-fn an_issue_whose_pattern_does_not_apply_to_the_language_is_refused() {
+fn an_issue_whose_pattern_does_not_apply_to_the_material_is_refused() {
     let mut drill = valid();
     drill.key[2].pattern = "errors.unwrap_on_fallible".to_owned();
     assert_eq!(
         refused(&drill),
-        KeyFault::PatternNotForLanguage { issue: 2 }
+        KeyFault::PatternNotForMaterial { issue: 2 }
     );
     let mut rust = valid();
-    rust.language = "rust".to_owned();
-    assert_eq!(refused(&rust), KeyFault::PatternNotForLanguage { issue: 3 });
+    rust.material = Material::code("rust");
+    assert_eq!(refused(&rust), KeyFault::PatternNotForMaterial { issue: 3 });
+}
+
+#[test]
+fn a_code_pattern_in_a_passage_drill_and_a_passage_pattern_in_a_code_drill_are_refused() {
+    let mut passage = valid();
+    passage.material = Material::Passage;
+    assert_eq!(
+        refused(&passage),
+        KeyFault::PatternNotForMaterial { issue: 0 }
+    );
+
+    let mut code = valid();
+    code.key[1].pattern = "fidelity.misquoted_figure".to_owned();
+    assert_eq!(refused(&code), KeyFault::PatternNotForMaterial { issue: 1 });
+}
+
+const CLEAN_NOTE: &str = "The trial enrolled 140 adults.\nThe drug cut relapses by 14 percent.\n";
+const PLANTED_NOTE: &str = "The trial enrolled 140 adults.\nThe drug cut relapses by 40 percent.\n";
+
+fn note_issue(pattern: &str, severity: Severity, proof: Proof) -> KeyIssue {
+    KeyIssue {
+        id: "figure".to_owned(),
+        pattern: pattern.to_owned(),
+        severity,
+        span: span("explanation.md", 2, 2),
+        consequence: "A reader would expect nearly half of relapses to be avoided.".to_owned(),
+        fix: edit(
+            "explanation.md",
+            "The drug cut relapses by 40 percent.",
+            "The drug cut relapses by 14 percent.",
+        ),
+        explanation: "The source gives 14 percent, not 40.".to_owned(),
+        proof,
+        origin: Origin::Planted,
+    }
+}
+
+fn sourced(planted: SourceVerdict) -> Proof {
+    Proof::Sourced {
+        quote: "relapses fell by 14 percent".to_owned(),
+        planted,
+        reason: "The source states 14.".to_owned(),
+    }
+}
+
+fn note(issue: KeyIssue) -> Drill {
+    Drill {
+        id: "note".to_owned(),
+        material: Material::Passage,
+        title: "A study note".to_owned(),
+        files: vec![file("explanation.md", PLANTED_NOTE)],
+        key: vec![issue],
+    }
+}
+
+fn check_note(drill: &Drill) -> Result<(), KeyFault> {
+    check_key(&[file("explanation.md", CLEAN_NOTE)], drill)
+}
+
+#[test]
+fn a_passage_drill_with_a_sourced_issue_passes() {
+    let drill = note(note_issue(
+        "fidelity.misquoted_figure",
+        Severity::Major,
+        sourced(SourceVerdict::Contradicted),
+    ));
+    assert_eq!(check_note(&drill), Ok(()));
+}
+
+#[test]
+fn a_contradicted_figure_entity_direction_or_definition_is_at_least_major() {
+    for id in [
+        "fidelity.misquoted_figure",
+        "fidelity.swapped_entities",
+        "fidelity.wrong_attribution",
+        "reasoning.reversed_relation",
+        "definition.wrong_definition",
+        "definition.conflated_terms",
+    ] {
+        for severity in [Severity::Minor, Severity::Nit] {
+            let drill = note(note_issue(
+                id,
+                severity,
+                sourced(SourceVerdict::Contradicted),
+            ));
+            assert_eq!(
+                check_note(&drill),
+                Err(KeyFault::SeverityBelowFloor {
+                    issue: 0,
+                    floor: Severity::Major
+                }),
+                "{id} {severity:?}"
+            );
+        }
+        for severity in [Severity::Major, Severity::Critical] {
+            let drill = note(note_issue(
+                id,
+                severity,
+                sourced(SourceVerdict::Contradicted),
+            ));
+            assert_eq!(check_note(&drill), Ok(()), "{id} {severity:?}");
+        }
+    }
+}
+
+#[test]
+fn an_unsupported_issue_is_at_least_minor() {
+    for id in [
+        "scope.dropped_qualifier",
+        "reasoning.unsupported_mechanism",
+        "fidelity.misquoted_figure",
+    ] {
+        let nit = note(note_issue(
+            id,
+            Severity::Nit,
+            sourced(SourceVerdict::Unsupported),
+        ));
+        assert_eq!(
+            check_note(&nit),
+            Err(KeyFault::SeverityBelowFloor {
+                issue: 0,
+                floor: Severity::Minor
+            }),
+            "{id}"
+        );
+        let minor = note(note_issue(
+            id,
+            Severity::Minor,
+            sourced(SourceVerdict::Unsupported),
+        ));
+        assert_eq!(check_note(&minor), Ok(()), "{id}");
+    }
+}
+
+#[test]
+fn a_contradicted_scope_or_other_reasoning_issue_has_the_minor_floor() {
+    for id in [
+        "scope.overgeneralisation",
+        "reasoning.correlation_as_cause",
+        "reasoning.non_sequitur",
+    ] {
+        let nit = note(note_issue(
+            id,
+            Severity::Nit,
+            sourced(SourceVerdict::Contradicted),
+        ));
+        assert_eq!(
+            check_note(&nit),
+            Err(KeyFault::SeverityBelowFloor {
+                issue: 0,
+                floor: Severity::Minor
+            }),
+            "{id}"
+        );
+        let minor = note(note_issue(
+            id,
+            Severity::Minor,
+            sourced(SourceVerdict::Contradicted),
+        ));
+        assert_eq!(check_note(&minor), Ok(()), "{id}");
+    }
+}
+
+#[test]
+fn the_floor_is_a_function_of_the_pattern_and_the_proof() {
+    let figure = pattern("fidelity.misquoted_figure").unwrap();
+    let scope = pattern("scope.dropped_qualifier").unwrap();
+    let off_by_one = pattern("correctness.off_by_one").unwrap();
+    assert_eq!(
+        severity_floor(figure, &sourced(SourceVerdict::Contradicted)),
+        Some(Severity::Major)
+    );
+    assert_eq!(
+        severity_floor(figure, &sourced(SourceVerdict::Unsupported)),
+        Some(Severity::Minor)
+    );
+    assert_eq!(
+        severity_floor(scope, &sourced(SourceVerdict::Contradicted)),
+        Some(Severity::Minor)
+    );
+    let judged = Proof::Judged {
+        reason: "It does.".to_owned(),
+    };
+    assert_eq!(severity_floor(figure, &judged), None);
+    assert_eq!(severity_floor(off_by_one, &judged), None);
+}
+
+#[test]
+fn a_consistency_issue_proven_by_a_judge_has_no_floor() {
+    let drill = note(note_issue(
+        "consistency.self_contradiction",
+        Severity::Nit,
+        Proof::Judged {
+            reason: "The two sentences disagree.".to_owned(),
+        },
+    ));
+    assert_eq!(check_note(&drill), Ok(()));
 }
 
 #[test]

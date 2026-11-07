@@ -37,9 +37,11 @@ export function moveItem<T>(items: readonly T[], index: number, delta: -1 | 1): 
   return moved;
 }
 
-/** "Line 12 of api.py" or "Lines 12–14 of api.py". */
-export function describeSpan(span: CodeReviewSpanDto): string {
-  const lines = span.start === span.end ? `Line ${span.start}` : `Lines ${span.start}–${span.end}`;
+/** "Line 12 of api.py" or "Lines 12–14 of api.py"; for a passage, "Sentence 3" or "Sentences 3–4". */
+export function describeSpan(span: CodeReviewSpanDto, material: 'code' | 'passage' = 'code'): string {
+  const one = span.start === span.end;
+  if (material === 'passage') return one ? `Sentence ${span.start}` : `Sentences ${span.start}–${span.end}`;
+  const lines = one ? `Line ${span.start}` : `Lines ${span.start}–${span.end}`;
   return `${lines} of ${span.path}`;
 }
 

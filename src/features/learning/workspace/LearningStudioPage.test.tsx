@@ -631,17 +631,17 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.deck).toHaveBeenCalledWith('deck-1');
   });
 
-  it('lists code review drills beside Flashcards, opens them at /studio?drills=open and comes back', async () => {
+  it('lists review drills beside Flashcards, opens them at /studio?drills=open and comes back', async () => {
     const user = userEvent.setup();
     mocks.list.mockResolvedValue(ok([]));
     show();
     expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Code review drills' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Review drills' })).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Start a drill' }));
     expect(await screen.findByText('The drill screen')).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Flashcards' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Back from the drills' }));
-    expect(await screen.findByRole('heading', { name: 'Code review drills' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Review drills' })).toBeVisible();
     expect(screen.queryByText('The drill screen')).not.toBeInTheDocument();
   });
 

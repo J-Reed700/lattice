@@ -316,6 +316,7 @@ async fn compare(
             reason: Some("No relevant saved passages were found for this claim.".into()),
             quote: None,
             confidence: None,
+            uncertain: false,
         });
         let (_, _, finding, _) = finish(pending, judgment, None).await?;
         return Ok(Comparison::Done(finding, false));

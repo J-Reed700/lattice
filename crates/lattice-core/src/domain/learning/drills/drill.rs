@@ -73,6 +73,44 @@ pub struct Edit {
     pub after: String,
 }
 
+/// What a drill asks a learner to review.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Material {
+    /// Code in one language of the catalogue.
+    Code { language: String },
+    /// An explanation of a passage of a learner's source, one sentence to a
+    /// line.
+    Passage,
+}
+
+impl Material {
+    /// Code in `language`.
+    pub fn code(language: impl Into<String>) -> Self {
+        Self::Code {
+            language: language.into(),
+        }
+    }
+
+    /// The language of code, `None` for a passage.
+    pub fn language(&self) -> Option<&str> {
+        match self {
+            Self::Code { language } => Some(language),
+            Self::Passage => None,
+        }
+    }
+}
+
+/// What a passage's source says of a planted sentence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceVerdict {
+    /// The source states the opposite.
+    Contradicted,
+    /// The source does not support it.
+    Unsupported,
+}
+
 /// What shows a planted issue is real.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -82,6 +120,13 @@ pub enum Proof {
     /// An independent judge, shown both versions, confirmed that the edit
     /// introduces exactly this problem and that the clean code lacks it.
     Judged { reason: String },
+    /// The source passage supports the clean sentence with an exact quote, and
+    /// the checker found the planted one contradicted or unsupported by it.
+    Sourced {
+        quote: String,
+        planted: SourceVerdict,
+        reason: String,
+    },
 }
 
 /// Where a key issue came from.
@@ -115,13 +160,45 @@ pub struct KeyIssue {
     pub origin: Origin,
 }
 
-/// Code to review and what is known to be wrong with it.
+/// Material to review and what is known to be wrong with it. A drill stored
+/// with a `language` and no `material` is read as code in that language.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "StoredDrill")]
 pub struct Drill {
     pub id: String,
-    /// A language id of the catalogue.
-    pub language: String,
+    pub material: Material,
     pub title: String,
     pub files: Vec<DrillFile>,
     pub key: Vec<KeyIssue>,
+}
+
+/// A drill as stored: new rows hold a `material`, rows from before passages
+/// hold the language of their code.
+#[derive(Deserialize)]
+struct StoredDrill {
+    id: String,
+    material: Option<Material>,
+    language: Option<String>,
+    title: String,
+    files: Vec<DrillFile>,
+    key: Vec<KeyIssue>,
+}
+
+impl TryFrom<StoredDrill> for Drill {
+    type Error = String;
+
+    fn try_from(stored: StoredDrill) -> Result<Self, String> {
+        let material = match (stored.material, stored.language) {
+            (Some(material), _) => material,
+            (None, Some(language)) => Material::Code { language },
+            (None, None) => return Err("a drill has neither a material nor a language".to_owned()),
+        };
+        Ok(Self {
+            id: stored.id,
+            material,
+            title: stored.title,
+            files: stored.files,
+            key: stored.key,
+        })
+    }
 }

@@ -1,0 +1,115 @@
+{
+  "name": "16-soil-general-comments-no-lines",
+  "kind": "no_span",
+  "why": "The first finding has no lines selected and names the contradiction between a faded effect and a yield advantage that grew, with the right figure (7 percent): found. The second is a remark about what the explanation leaves out (fertiliser costs): false positive. The pathogen mechanism is missed.",
+  "source": {
+    "versionId": "tarn-valley-liming-trial-v1",
+    "startByte": 9840,
+    "endByte": 10778,
+    "title": "Soil Science 250, field report: The Tarn Valley liming trial",
+    "text": "Soils in the upper Tarn Valley have a mean pH of 5.1, which limits the uptake of phosphorus by barley. Agronomist Soledad Varga ran a four-year liming trial on 24 plots, applying ground limestone at 2 tonnes per hectare. Plots that received lime reached a mean pH of 6.2 after two years, and barley yields on those plots rose by 18 percent against untreated plots. Varga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\n\nThe effect faded: by the fourth year the pH of limed plots had drifted back to 5.6 and the yield advantage fell to 7 percent. Varga recommends reapplying lime every three years. She stresses that the trial used a single soil type, a silt loam, and that sandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied. The trial did not measure the cost of liming, so no claim about profitability can be drawn from it."
+  },
+  "drill": {
+    "id": "tarn-valley-liming-trial",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "Liming acid soils in the Tarn Valley",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of phosphorus by barley.\nSoledad Varga, an agronomist, ran a four-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots.\nVarga explains the yield gain by the killing of soil pathogens that attack barley roots.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had grown to 25 percent.\nVarga recommends reapplying lime every three years.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tarn-valley-liming-trial-mech",
+        "pattern": "reasoning.unsupported_mechanism",
+        "severity": "minor",
+        "span": {
+          "path": "explanation.md",
+          "start": 6,
+          "end": 6
+        },
+        "consequence": "A reader believes liming works by killing pathogens, and misses the phosphorus release that the later sentences depend on.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Varga explains the yield gain by the killing of soil pathogens that attack barley roots.",
+          "after": "Varga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic."
+        },
+        "explanation": "Varga explains the gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.",
+        "proof": {
+          "sourced": {
+            "quote": "Varga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic",
+            "planted": "unsupported",
+            "reason": "The source gives phosphorus release as Varga's explanation; pathogens are not mentioned."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tarn-valley-liming-trial-fade",
+        "pattern": "reasoning.reversed_relation",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 8,
+          "end": 8
+        },
+        "consequence": "A reader thinks the benefit of liming grew over time, and sees no reason to reapply the lime.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "By the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had grown to 25 percent.",
+          "after": "By the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent."
+        },
+        "explanation": "The yield advantage fell to 7 percent by the fourth year.",
+        "proof": {
+          "sourced": {
+            "quote": "by the fourth year the pH of limed plots had drifted back to 5.6 and the yield advantage fell to 7 percent",
+            "planted": "contradicted",
+            "reason": "The source says the yield advantage fell to 7 percent; the sentence says it grew to 25 percent."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "Soils in the upper Tarn Valley have a mean pH of 5.1.\nThis acidity limits the uptake of phosphorus by barley.\nSoledad Varga, an agronomist, ran a four-year liming trial on 24 plots.\nShe applied ground limestone at 2 tonnes per hectare.\nAfter two years the limed plots reached a mean pH of 6.2, and their barley yields were 18 percent higher than on untreated plots.\nVarga explains the yield gain by the release of aluminium-bound phosphorus as the soil becomes less acidic.\nThe effect faded over time.\nBy the fourth year the pH of the limed plots had drifted back to 5.6 and the yield advantage had fallen to 7 percent.\nVarga recommends reapplying lime every three years.\nShe stresses that the trial used a single soil type, a silt loam.\nSandy soils, which have little buffering capacity, can overshoot to an alkaline pH if the same dose is applied.\nThe trial did not measure the cost of liming, so no claim about profitability can be drawn from it.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": null,
+      "text": "The explanation says the effect faded and then says the yield advantage grew by the fourth year, which is the opposite of fading. The advantage fell, to 7 percent.",
+      "severity": "major"
+    },
+    {
+      "span": null,
+      "text": "The explanation should have said something about fertiliser costs.",
+      "severity": "nit"
+    }
+  ],
+  "labels": {
+    "issues": [
+      "missed",
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

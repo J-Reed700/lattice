@@ -107,6 +107,11 @@ pub struct JudgeOutcome {
     /// Probability of `verdict` among the three labels, from the first token's
     /// log-probabilities. `None` when the provider does not report them.
     pub confidence: Option<f32>,
+    /// The strict policy recorded `Unsupported` in place of an answer the
+    /// judge was unsure of: its first token below the confidence floor, or
+    /// disagreeing with the verdict its text gives. `confidence` is then the
+    /// first token's, which may be high.
+    pub uncertain: bool,
 }
 
 /// How one claim's request ended.
@@ -380,6 +385,7 @@ impl<'a> ClaimChecker<'a> {
                 quote: None,
                 reason: Some(format!("The checker could not confidently establish a factual finding from these passages. {}",labeled_value(&text,&["Reason","Explanation"]).unwrap_or_default())),
                 confidence,
+                uncertain: true,
             }));
         }
         let mut explanation = parse_judge_explanation(&text, evidence, verdict);
@@ -436,6 +442,7 @@ impl<'a> ClaimChecker<'a> {
             quote,
             reason: explanation.reason,
             confidence,
+            uncertain: false,
         }))
     }
 }

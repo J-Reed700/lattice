@@ -1,0 +1,128 @@
+{
+  "name": "20-economics-setup-in-one-comment",
+  "kind": "two_issues",
+  "why": "One finding over sentences 1 to 3 gives both corrections (2 percent, not 3; 60 months, not 60 days): both issues found by it. The second claims eight quarters is too short a horizon for any bank to meet a target, which is a remark that the source and the explanation do not contradict: false positive.",
+  "source": {
+    "versionId": "orsland-inflation-target-v1",
+    "startByte": 41007,
+    "endByte": 42012,
+    "title": "Macroeconomics 220, case study: Inflation targeting in Orsland",
+    "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent, to be met over a horizon of eight quarters. Economist Tamsin Ridgewell studied the 60 months after the change and found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points. She argues that the target worked chiefly by anchoring expectations: surveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\n\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall. Her study compares Orsland only with its own past, so it does not show that a neighbouring country without a target would have done worse. The central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side, after a large wage settlement in the mining sector. Ridgewell regards these misses as small, the largest being 0.9 percentage points."
+  },
+  "drill": {
+    "id": "orsland-inflation-target",
+    "material": {
+      "kind": "passage"
+    },
+    "title": "The Orsland inflation target",
+    "files": [
+      {
+        "path": "explanation.md",
+        "text": "In 2009 the Orsland central bank adopted an inflation target of 3 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 days after the change.\nShe found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points.\nShe argues that the target worked chiefly by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore does not show that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side.\nThis followed a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "orsland-inflation-target-target",
+        "pattern": "fidelity.misquoted_figure",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 1,
+          "end": 1
+        },
+        "consequence": "A reader takes the target to be half as high again as it was.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "In 2009 the Orsland central bank adopted an inflation target of 3 percent.",
+          "after": "In 2009 the Orsland central bank adopted an inflation target of 2 percent."
+        },
+        "explanation": "The target was 2 percent, not 3.",
+        "proof": {
+          "sourced": {
+            "quote": "adopted an inflation target of 2 percent",
+            "planted": "contradicted",
+            "reason": "The source gives a target of 2 percent; the sentence gives 3."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "orsland-inflation-target-months",
+        "pattern": "fidelity.wrong_unit_or_magnitude",
+        "severity": "major",
+        "span": {
+          "path": "explanation.md",
+          "start": 3,
+          "end": 3
+        },
+        "consequence": "A reader believes the results come from two months of data, which could not show a change in annual inflation.",
+        "fix": {
+          "path": "explanation.md",
+          "before": "Tamsin Ridgewell studied the 60 days after the change.",
+          "after": "Tamsin Ridgewell studied the 60 months after the change."
+        },
+        "explanation": "She studied the 60 months after the change, five years.",
+        "proof": {
+          "sourced": {
+            "quote": "studied the 60 months after the change",
+            "planted": "contradicted",
+            "reason": "The source says 60 months; the sentence says 60 days."
+          }
+        },
+        "origin": "planted"
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "explanation.md",
+      "text": "In 2009 the Orsland central bank adopted an inflation target of 2 percent.\nThe target was to be met over a horizon of eight quarters.\nTamsin Ridgewell studied the 60 months after the change.\nShe found that the standard deviation of annual inflation fell from 3.4 to 1.2 percentage points.\nShe argues that the target worked chiefly by anchoring expectations.\nSurveys of firms showed that the share expecting inflation above 4 percent fell from 41 to 12 percent.\nRidgewell concedes that the world price of grain, which had been unusually volatile before 2009, was stable afterwards, and that this may account for part of the fall.\nHer study compares Orsland only with its own past.\nIt therefore does not show that a neighbouring country without a target would have done worse.\nThe central bank itself missed the target in 14 of the 20 quarters of 2015 to 2019, mostly on the high side.\nThis followed a large wage settlement in the mining sector.\nRidgewell regards these misses as small, the largest being 0.9 percentage points.\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 1,
+        "end": 3
+      },
+      "text": "The set-up is misreported twice: the target the bank adopted was 2 percent, not 3, and Ridgewell's study covered the 60 months after the change, not 60 days.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "explanation.md",
+        "start": 2,
+        "end": 2
+      },
+      "text": "A horizon of eight quarters is too short for any central bank to meet a target.",
+      "severity": "minor"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 0
+        }
+      },
+      {
+        "found": {
+          "finding": 0
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            0,
+            1
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}
