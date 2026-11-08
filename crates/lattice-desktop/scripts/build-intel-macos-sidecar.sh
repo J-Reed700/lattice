@@ -22,7 +22,13 @@ from verify_llama_binaries import TARGETS
 print(TARGETS[sys.argv[2]].cmake_backend)
 PY
 )"
-git clone --filter=blob:none --branch "$TAG" https://github.com/ggml-org/llama.cpp.git "$BUILD_DIR/source"
+for attempt in 1 2 3 4 5 6 7 8; do
+  rm -rf "$BUILD_DIR/source"
+  git clone --filter=blob:none --branch "$TAG" https://github.com/ggml-org/llama.cpp.git "$BUILD_DIR/source" && break
+  [ "$attempt" -lt 8 ] || exit 1
+  echo "Clone failed; attempt $((attempt + 1)) of 8 in 15 s"
+  sleep 15
+done
 args=(
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_SKIP_RPATH=ON -DBUILD_SHARED_LIBS=OFF
   -DGGML_NATIVE=OFF -DGGML_OPENMP=OFF -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF

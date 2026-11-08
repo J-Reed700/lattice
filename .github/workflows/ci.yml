@@ -513,7 +513,8 @@ jobs:
       - name: Generate text with the packaged CPU engine
         shell: bash
         run: |
-          curl --fail --location --retry 3 --max-time 60 \
+          curl --fail --location --max-time 60 \
+            --retry 8 --retry-delay 15 --retry-max-time 300 --retry-connrefused \
             https://huggingface.co/ggml-org/models-moved/resolve/main/tinyllamas/stories260K.gguf \
             -o "$RUNNER_TEMP/stories260K.gguf"
           binary="$(node --input-type=module -e "import fs from 'node:fs'; const m=JSON.parse(fs.readFileSync('e2e-results/desktop/manifest.json')); console.log(m.sidecar)")"
