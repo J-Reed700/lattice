@@ -38,8 +38,15 @@ pub enum WordMatch {
 
 /// The terms [`match_words`] matches `query` by, in order: its words of two characters or more, lower case, each once,
 /// the first [`MAX_TERMS`].
-pub fn query_terms(_query: &str) -> Vec<String> {
-    Vec::new()
+pub fn query_terms(query: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    query
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|term| term.chars().count() >= 2)
+        .map(str::to_lowercase)
+        .filter(|term| seen.insert(term.clone()))
+        .take(MAX_TERMS)
+        .collect()
 }
 
 /// An FTS5 `MATCH` expression for free text: every word as a quoted literal
@@ -52,13 +59,8 @@ pub fn match_expression(query: &str) -> Option<String> {
 /// [`match_expression`], with `words` deciding whether a word also matches
 /// as a prefix.
 pub fn match_words(query: &str, words: WordMatch) -> Option<String> {
-    let mut seen = HashSet::new();
-    let terms: Vec<String> = query
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .filter(|term| term.chars().count() >= 2)
-        .map(str::to_lowercase)
-        .filter(|term| seen.insert(term.clone()))
-        .take(MAX_TERMS)
+    let terms: Vec<String> = query_terms(query)
+        .into_iter()
         .map(|term| {
             let quoted = format!("\"{}\"", term.replace('"', "\"\""));
             if words == WordMatch::Prefix && term.chars().count() >= 4 {
