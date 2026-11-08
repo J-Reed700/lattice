@@ -4965,29 +4965,23 @@ export type ChecksumRequest = { algorithm: string; value: string }
  * A conversation that has this document among its linked documents.
  */
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
-/**
- * Whether the place of a taken-out sentence is known.
- */
-export type PutBackPlaceDto = "known" | "choose"
-/**
- * A sentence the machine rewrote, with what replaced it, as plain text.
- */
-export type RewrittenDto = { original: string; rewrite: string;
-/**
- * The reason the check gave, when it recorded one.
- */
-why: string | null }
-/**
- * A section of the lesson: its index and title.
- */
-export type ReviewSectionDto = { index: number; title: string }
 export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "put_back" | "restore_original" | "undo"
 /**
  * What the user asked for on a claim (§5.1); `resolve_learning_claim`
  * carries it with the lesson's `expected_revision`. Evidence is attached
  * through `attach_learning_claim_evidence` instead.
  */
-export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "put_back"; text: string | null; section: number | null } | { action: "restore_original" } | { action: "undo" }
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } |
+/**
+ * Put a sentence the machine took out back: as it was (`text` null) or
+ * as the user writes it. `section` (0-based) puts it at the end of that
+ * section; null puts it where it was.
+ */
+{ action: "put_back"; text: string | null; section: number | null } |
+/**
+ * Put the sentence the machine rewrote back in place of the rewrite.
+ */
+{ action: "restore_original" } | { action: "undo" }
 /**
  * Where an attach is, for the line the review shows while it runs.
  */
@@ -9147,6 +9141,10 @@ telemetryEnabled: boolean;
 crashReporting: boolean }
 export type ProvenanceDto = { input: "saved_passage"; startByte: number; endByte: number } | { input: "link"; url: string } | { input: "document"; documentId: string } | { input: "pasted_text" }
 /**
+ * Whether the place of a taken-out sentence is known.
+ */
+export type PutBackPlaceDto = "known" | "choose"
+/**
  * Where a quick capture landed, so the UI can name the destination
  * instead of saying "saved" and leaving the user to guess.
  */
@@ -9585,11 +9583,23 @@ export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: 
  * What a learner asks to review: code in a language, or a passage from one of their courses.
  */
 export type ReviewMaterialDto = { kind: "code"; language: string } | { kind: "passage"; programId: string; topic: string | null }
+/**
+ * A section of the lesson: its index and title.
+ */
+export type ReviewSectionDto = { index: number; title: string }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
  * A selected option records a quiz answer; otherwise the rating records recall.
  */
 selectedOption: number | null; rating: StudyRating }
+/**
+ * A sentence the machine rewrote, with what replaced it, as plain text.
+ */
+export type RewrittenDto = { original: string; rewrite: string;
+/**
+ * The reason the check gave, when it recorded one.
+ */
+why: string | null }
 /**
  * Router settings for conversation scope and routing decisions.
  */
@@ -9909,14 +9919,14 @@ onboarding: OnboardingSettingsDto;
  * contact and the archive fallback. Keys live in the keyring.
  */
 sourcing: SourcingSettingsDto }
-/**
- * The key's issues of one severity and how many of them were found.
- */
 export type SettleLearningTeachingFindingsRequestDto = { programId: string; lessonId: string;
 /**
  * The findings' `findingKey`s from the review.
  */
 findingKeys: string[]; settle: TeachingSettleDto }
+/**
+ * The key's issues of one severity and how many of them were found.
+ */
 export type SeverityTallyDto = { severity: CodeReviewSeverity; found: number; halfFound: number; total: number }
 /**
  * One neighbour of a document, collapsed from its chunk hits.
