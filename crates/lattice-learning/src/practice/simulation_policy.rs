@@ -4,7 +4,8 @@ use crate::{
     assessment_engine::LearningRubricCriterion,
     dto::{LearningPracticeCitationDto, LearningSourceVersionDto},
     practical_dto::{
-        LearningInterviewPlanDto, LearningSimulationSpeaker, LearningSimulationTurnDto,
+        LearningInterviewPlanDto, LearningSimulationSessionDto, LearningSimulationSpeaker,
+        LearningSimulationStatus, LearningSimulationTurnDto,
     },
 };
 
@@ -37,6 +38,7 @@ pub enum SessionEvent {
 
 #[derive(Debug, Clone, Default)]
 pub struct SessionState {
+    pub session: Option<LearningSimulationSessionDto>,
     pub turns: Vec<LearningSimulationTurnDto>,
     pub rubric: Vec<LearningRubricCriterion>,
     pub interview_plan: Option<LearningInterviewPlanDto>,
@@ -56,6 +58,7 @@ impl SessionState {
         final_feedback: bool,
     ) -> Self {
         Self {
+            session: None,
             turns,
             rubric,
             interview_plan,
@@ -63,6 +66,24 @@ impl SessionState {
             reviewed_interview,
             final_feedback,
             finished: false,
+        }
+    }
+
+    pub fn from_context(
+        activity: &crate::practice::practical_generation::SimulationActivityContext,
+        session: &LearningSimulationSessionDto,
+        sources: &[LearningSourceVersionDto],
+        final_feedback: bool,
+    ) -> Self {
+        Self {
+            session: Some(session.clone()),
+            turns: session.turns.clone(),
+            rubric: activity.rubric.clone(),
+            interview_plan: activity.interview_plan.clone(),
+            sources: sources.to_vec(),
+            reviewed_interview: final_feedback && activity.interview_answers.is_some(),
+            final_feedback,
+            finished: final_feedback || session.status != LearningSimulationStatus::Active,
         }
     }
 
@@ -82,9 +103,10 @@ impl SessionState {
             .interview_plan
             .iter()
             .flat_map(|plan| plan.questions.iter().map(|question| question.id.as_str()));
-        let source_ids = self.sources.iter().flat_map(|source| {
-            [source.source_id.as_str(), source.version.id.as_str()]
-        });
+        let source_ids = self
+            .sources
+            .iter()
+            .flat_map(|source| [source.source_id.as_str(), source.version.id.as_str()]);
         rubric_ids
             .chain(question_ids)
             .chain(source_ids)
@@ -103,6 +125,31 @@ impl SessionState {
         self.turns
             .iter()
             .any(|turn| turn.speaker == LearningSimulationSpeaker::Counterpart)
+    }
+
+    pub fn as_simulation_session(&self) -> LearningSimulationSessionDto {
+        if let Some(session) = &self.session {
+            return session.clone();
+        }
+        LearningSimulationSessionDto {
+            id: String::new(),
+            program_id: String::new(),
+            activity_id: String::new(),
+            activity_revision: 0,
+            practice_session_id: None,
+            learner_role: String::new(),
+            counterpart_role: String::new(),
+            status: if self.finished {
+                LearningSimulationStatus::Submitted
+            } else {
+                LearningSimulationStatus::Active
+            },
+            revision: 0,
+            turns: self.turns.clone(),
+            created_at: 0,
+            updated_at: 0,
+            submitted_at: None,
+        }
     }
 }
 
@@ -175,8 +222,11 @@ impl From<&str> for Rejection {
 
 impl From<lattice_core::shared::error::AppError> for Rejection {
     fn from(err: lattice_core::shared::error::AppError) -> Self {
-        Self {
-            reason: err.to_string(),
+        match err {
+            lattice_core::shared::error::AppError::InvalidInput(reason) => Self { reason },
+            other => Self {
+                reason: other.to_string(),
+            },
         }
     }
 }
@@ -193,20 +243,112 @@ pub trait TurnPolicy: Send + Sync {
     fn check(&self, reply: &Reply, state: &SessionState) -> Result<(), Rejection>;
 }
 
+fn cue_simulation_turn(event: &SessionEvent, state: &SessionState) -> Option<Cue> {
+    match event {
+        SessionEvent::Start => {
+            if state.finished {
+                None
+            } else {
+                Some(Cue::Opening)
+            }
+        }
+        SessionEvent::LearnerTurn(_) => {
+            if state.finished {
+                None
+            } else {
+                Some(Cue::FollowUp)
+            }
+        }
+        SessionEvent::Finish => {
+            if state.has_learner_turn() {
+                Some(Cue::Closing)
+            } else {
+                None
+            }
+        }
+        SessionEvent::Checkpoint => None,
+    }
+}
+
+fn check_common_simulation_reply(reply: &Reply, state: &SessionState) -> Result<(), Rejection> {
+    if reply.content.trim().is_empty() {
+        return Err(Rejection::new("Simulation turn must not be blank."));
+    }
+    let content = reply.content.to_ascii_lowercase();
+    let internal_ids = state.internal_ids();
+    if internal_ids
+        .iter()
+        .any(|id| content.contains(&id.to_ascii_lowercase()))
+    {
+        return Err(Rejection::new(
+            "Keep internal identifiers out of the learner-facing content. Use question numbers or summaries; evaluatedQuestionIds and citation IDs belong only in their structured fields.",
+        ));
+    }
+    if reply.citations.len() > state.citation_limit() {
+        return Err(Rejection::new(
+            "Citations must reference supplied source passages and must be empty when no sources are provided.",
+        ));
+    }
+    crate::practice::practice_generation::validate_citations(&reply.citations, &state.sources)?;
+    if !state.reviewed_interview && reply.evaluated_question_ids.is_some() {
+        return Err(Rejection::new(
+            "Only a reviewed interview debrief can return evaluated question IDs.",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InterviewQuestionsPolicy;
 
 impl TurnPolicy for InterviewQuestionsPolicy {
-    fn cue(&self, _event: &SessionEvent, _state: &SessionState) -> Option<Cue> {
-        None
+    fn cue(&self, event: &SessionEvent, state: &SessionState) -> Option<Cue> {
+        cue_simulation_turn(event, state)
     }
 
-    fn system(&self, _cue: &Cue) -> &str {
-        ""
+    fn system(&self, cue: &Cue) -> &str {
+        match cue {
+            Cue::Opening | Cue::FollowUp => INTERVIEW_QUESTIONS_INTERVIEWER_PROMPT,
+            Cue::Closing => INTERVIEW_QUESTIONS_CLOSING_PROMPT,
+        }
     }
 
-    fn check(&self, _reply: &Reply, _state: &SessionState) -> Result<(), Rejection> {
-        Err(Rejection::new("stub"))
+    fn check(&self, reply: &Reply, state: &SessionState) -> Result<(), Rejection> {
+        if reply.content.trim().is_empty() {
+            return Err(Rejection::new("Simulation turn must not be blank."));
+        }
+        let content = reply.content.to_ascii_lowercase();
+        let internal_ids = state.internal_ids();
+        if internal_ids
+            .iter()
+            .any(|id| content.contains(&id.to_ascii_lowercase()))
+        {
+            return Err(Rejection::new(
+                "Keep internal identifiers out of the learner-facing content. Use question numbers or summaries; evaluatedQuestionIds and citation IDs belong only in their structured fields.",
+            ));
+        }
+        if !state.final_feedback {
+            if let Some(plan) = &state.interview_plan {
+                let session = state.as_simulation_session();
+                crate::practice::practical_generation::validate_interviewer_reply(
+                    &reply.content,
+                    &session,
+                    plan,
+                )?;
+            }
+        }
+        if reply.citations.len() > state.citation_limit() {
+            return Err(Rejection::new(
+                "Citations must reference supplied source passages and must be empty when no sources are provided.",
+            ));
+        }
+        crate::practice::practice_generation::validate_citations(&reply.citations, &state.sources)?;
+        if !state.reviewed_interview && reply.evaluated_question_ids.is_some() {
+            return Err(Rejection::new(
+                "Only a reviewed interview debrief can return evaluated question IDs.",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -214,16 +356,19 @@ impl TurnPolicy for InterviewQuestionsPolicy {
 pub struct ScenarioPolicy;
 
 impl TurnPolicy for ScenarioPolicy {
-    fn cue(&self, _event: &SessionEvent, _state: &SessionState) -> Option<Cue> {
-        None
+    fn cue(&self, event: &SessionEvent, state: &SessionState) -> Option<Cue> {
+        cue_simulation_turn(event, state)
     }
 
-    fn system(&self, _cue: &Cue) -> &str {
-        ""
+    fn system(&self, cue: &Cue) -> &str {
+        match cue {
+            Cue::Opening | Cue::FollowUp => SCENARIO_COUNTERPART_PROMPT,
+            Cue::Closing => SCENARIO_CLOSING_PROMPT,
+        }
     }
 
-    fn check(&self, _reply: &Reply, _state: &SessionState) -> Result<(), Rejection> {
-        Err(Rejection::new("stub"))
+    fn check(&self, reply: &Reply, state: &SessionState) -> Result<(), Rejection> {
+        check_common_simulation_reply(reply, state)
     }
 }
 
@@ -288,6 +433,7 @@ mod tests {
 
     fn interview_state() -> SessionState {
         SessionState {
+            session: None,
             turns: vec![LearningSimulationTurnDto {
                 id: "turn-1".into(),
                 ordinal: 0,
@@ -308,6 +454,7 @@ mod tests {
 
     fn scenario_state() -> SessionState {
         SessionState {
+            session: None,
             turns: vec![LearningSimulationTurnDto {
                 id: "turn-1".into(),
                 ordinal: 0,
@@ -383,9 +530,8 @@ mod tests {
     fn test_interview_questions_enforces_single_question_check() {
         let policy = InterviewQuestionsPolicy;
         let state = interview_state();
-        let multi_q = Reply::new(
-            "What is the lease duration? And what happens if the network partitions?",
-        );
+        let multi_q =
+            Reply::new("What is the lease duration? And what happens if the network partitions?");
         let err = policy
             .check(&multi_q, &state)
             .expect_err("interview question reply with multiple questions must be rejected");
@@ -402,11 +548,7 @@ mod tests {
     fn test_interview_questions_enforces_internal_id_check() {
         let policy = InterviewQuestionsPolicy;
         let state = interview_state();
-        let leaked_id = state
-            .rubric
-            .first()
-            .map(|c| c.id.as_str())
-            .unwrap_or("");
+        let leaked_id = state.rubric.first().map(|c| c.id.as_str()).unwrap_or("");
         let leaking_reply = Reply::new(format!(
             "Let us evaluate criterion {leaked_id} for your answer: what is your next step?"
         ));
@@ -491,11 +633,7 @@ mod tests {
     fn test_scenario_enforces_reply_checks() {
         let policy = ScenarioPolicy;
         let state = scenario_state();
-        let leaked_id = state
-            .rubric
-            .first()
-            .map(|c| c.id.as_str())
-            .unwrap_or("");
+        let leaked_id = state.rubric.first().map(|c| c.id.as_str()).unwrap_or("");
         let leaking_reply = Reply::new(format!(
             "Observing {leaked_id}: the primary is running out of disk space."
         ));
