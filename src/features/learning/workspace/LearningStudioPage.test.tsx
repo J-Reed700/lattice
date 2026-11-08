@@ -349,7 +349,7 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Plan' }));
     expect(await screen.findByTestId('plan-panel')).toBeVisible();
     const line = screen.getByRole('region', { name: 'Lesson preparation' });
-    expect(within(line).getByRole('status')).toHaveTextContent('Preparing lesson: Reading field notes · Verifying factual claims');
+    expect(within(line).getByRole('status')).toHaveTextContent('Preparing lesson: Reading field notes · Verifying factual statements');
     expect(within(line).queryByRole('button', { name: 'Details' })).not.toBeInTheDocument();
 
     await user.click(within(line).getByRole('button', { name: 'View' }));

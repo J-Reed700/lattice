@@ -507,7 +507,7 @@ async fn an_empty_claim_plan_ends_research_honestly_instead_of_failing() -> Resu
             );
             assert_eq!(
                 exhausted.to_string(),
-                "No further public search can help 1 unresolved claim (0 searches already tried)"
+                "No further public search can help 1 unresolved statement (0 searches already tried)"
             );
             assert_eq!(llm.prompts.lock().unwrap().len(), 1, "only the planner ran");
             assert_eq!(

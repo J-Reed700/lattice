@@ -111,13 +111,13 @@ describe('Claim review screen, adding a source to the whole lesson', () => {
     await run.progress({ stage: 'saving' });
     expect(screen.getByText('Saving it to your sources')).toBeVisible();
     await run.progress({ stage: 'checking', done: 0, total: 2, statement: 'Monarch fact number 1 is stated in the guide.' });
-    expect(screen.getByText('Checking claim 1 of 2: Monarch fact number 1 is stated in the guide.')).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Claims checked' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByText('Checking statement 1 of 2: Monarch fact number 1 is stated in the guide.')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Statements checked' })).toHaveAttribute('aria-valuenow', '0');
     await run.progress({ stage: 'checking', done: 1, total: 2, statement: 'Monarch fact number 2 is stated in the guide.' });
-    expect(screen.getByRole('progressbar', { name: 'Claims checked' })).toHaveAttribute('aria-valuenow', '1');
+    expect(screen.getByRole('progressbar', { name: 'Statements checked' })).toHaveAttribute('aria-valuenow', '1');
 
     await run.finish(report());
-    expect(await screen.findByText('Added Monarch Watch. Verified 1 of 2 claims; 1 is not mentioned by it.')).toBeVisible();
+    expect(await screen.findByText('Added Monarch Watch. Verified 1 of 2 statements; 1 is not mentioned by it.')).toBeVisible();
     expect(screen.queryByRole('heading', { name: BUTTON })).not.toBeInTheDocument();
   });
 
@@ -128,7 +128,7 @@ describe('Claim review screen, adding a source to the whole lesson', () => {
     api.attachLesson.mockResolvedValue(ok(report({ others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null } })));
     await user.type(screen.getByLabelText('Page address'), URL_);
     await user.click(screen.getByRole('button', { name: 'Add and check' }));
-    expect(await screen.findByText('Added Monarch Watch. No open claims in this lesson to check against it.')).toBeVisible();
+    expect(await screen.findByText('Added Monarch Watch. No open statements in this lesson to check against it.')).toBeVisible();
   });
 
   it('reloads the review after the attach', async () => {

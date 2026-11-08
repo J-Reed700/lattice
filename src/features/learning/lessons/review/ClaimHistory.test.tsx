@@ -13,7 +13,7 @@ const event = (ordinal: number, overrides: Partial<ClaimEventDto> = {}): ClaimEv
 describe('ClaimHistory', () => {
   it('says nothing has been recorded for a claim with no events', () => {
     render(<ClaimHistory history={[]} />);
-    expect(screen.getByText('Nothing has been recorded for this claim yet.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing has been recorded for this statement yet.')).toBeInTheDocument();
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
   });
 
@@ -22,7 +22,7 @@ describe('ClaimHistory', () => {
       event(1),
       event(2, { actor: 'user', event: { kind: 'user_action', action: { action: 'remove' }, note: null } }),
     ]} />);
-    const items = within(screen.getByRole('list', { name: 'Claim history' })).getAllByRole('listitem');
+    const items = within(screen.getByRole('list', { name: 'Statement history' })).getAllByRole('listitem');
     expect(items).toHaveLength(2);
     expect(items[0]).toHaveTextContent('Searched: monarch migration · 1 passage found');
     expect(items[1]).toHaveTextContent('Removed the sentence');

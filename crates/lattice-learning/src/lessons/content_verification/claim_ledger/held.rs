@@ -132,7 +132,7 @@ mod tests {
             review_outcome(&[held("a", 2), held("b", 3)]),
             (
                 "needs_review:a,b".to_owned(),
-                "Needs your review: 5 claims in 2 lessons".to_owned()
+                "Needs your review: 5 statements in 2 lessons".to_owned()
             )
         );
     }
@@ -168,7 +168,8 @@ mod tests {
             review_outcome(&[stopped]),
             (
                 "needs_review:a".to_owned(),
-                "Stopped: the checking model's answers could not be read for 3 claims".to_owned()
+                "Stopped: the checking model's answers could not be read for 3 statements"
+                    .to_owned()
             )
         );
     }

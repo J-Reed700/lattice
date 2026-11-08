@@ -241,7 +241,7 @@
           "standing": null,
           "counts": {
             "outcome": "not_counted",
-            "reason": "Its date rules it out for this claim."
+            "reason": "Its date rules it out for this statement."
           },
           "quote": "100 °C at 101.325 kPa",
           "quoteSpan": null,

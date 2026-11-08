@@ -1192,7 +1192,7 @@ export async function installLearningStudioBackend(page: Page) {
         const request = getRequest<{ lessonId: string; claimId: string; expectedRevision: number; action: ClaimActionRequestDto }>(args);
         const review = state.claimReviews[request.lessonId];
         if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
-        if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This claim changed; reload and act again." };
+        if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This statement changed; reload and act again." };
         const claim = review.claims.find((item) => item.claimId === request.claimId);
         if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
         const now = Date.now();

@@ -52,7 +52,7 @@ async function openSheetFromTheNote() {
   await userEvent.click(await screen.findByRole('button', { name: 'Open the teaching notes' }));
   const notes = await screen.findByRole('region', { name: 'Teaching review' });
   await userEvent.click(within(notes).getByRole('button', { name: 'Add a source' }));
-  expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Add a source for this statement' })).toBeVisible();
 }
 
 const confirmedClaim = (index: number): ClaimReviewItemDto => ({ ...waitingOnSource(index), state: { state: 'confirmed', at: 2 }, availableActions: [] });
@@ -66,12 +66,12 @@ async function openNotesFromTheQueue() {
 async function openSheet() {
   const notes = screen.getByRole('region', { name: 'Teaching review' });
   await userEvent.click(within(notes).getByRole('button', { name: 'Add a source' }));
-  expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Add a source for this statement' })).toBeVisible();
 }
 
 /** The sheet is gone, the notes are still shown, and no statement took the user's place. */
 async function staysOnTheNotes() {
-  await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+  await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this statement' })).not.toBeInTheDocument());
   expect(await screen.findByRole('region', { name: 'Teaching review' })).toBeVisible();
   expect(screen.getByRole('button', { name: /^Teaching notes/ })).toHaveAttribute('aria-current', 'true');
   expect(screen.queryByRole('button', { name: 'Edit the sentence' })).not.toBeInTheDocument();
@@ -177,7 +177,7 @@ describe('Claim review screen, acting on a teaching note', () => {
     await openSheetFromTheNote();
     expect(screen.getByLabelText('Page address')).toHaveFocus();
     await userEvent.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this statement' })).not.toBeInTheDocument());
     expect(await screen.findByRole('region', { name: 'Teaching review' })).toBeVisible();
     expect(api.attach).not.toHaveBeenCalled();
     expect(api.settle).not.toHaveBeenCalled();
@@ -187,10 +187,10 @@ describe('Claim review screen, acting on a teaching note', () => {
     show(review([waitingOnSource(1)], { counts: counts(1) }));
     await screen.findByRole('button', { name: 'Edit the sentence' });
     await userEvent.keyboard('s');
-    expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Add a source for this statement' })).toBeVisible();
     expect(screen.getByLabelText('Page address')).toHaveFocus();
     await userEvent.keyboard('{Escape}');
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this statement' })).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Edit the sentence' })).toBeVisible();
   });
 

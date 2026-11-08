@@ -13,7 +13,7 @@ const STATEMENTS = [
   'The river froze over in early December.',
 ];
 
-test('Accepting one source for all its claims verifies those it states, keeps the rest, and undoes in one step', async ({ page, browserName }) => {
+test('Accepting one source for all its statements verifies those it states, keeps the rest, and undoes in one step', async ({ page, browserName }) => {
   await installLearningStudioBackend(page);
   await page.goto('/studio');
   await expect(page.getByRole('button', { name: /Reasoning from field observations/ })).toBeVisible();
@@ -25,25 +25,25 @@ test('Accepting one source for all its claims verifies those it states, keeps th
   await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
   await page.locator(`#lesson-${lesson.id}`).getByRole('button', { name: 'Review', exact: true }).click();
 
-  const queue = page.getByRole('navigation', { name: 'Claims waiting for you' });
-  const group = queue.getByRole('region', { name: `${ALMANAC.title} · 5 claims` });
-  await expect(group.getByText('archive.example.org · reference work · 5 claims')).toBeVisible();
+  const queue = page.getByRole('navigation', { name: 'Statements waiting for you' });
+  const group = queue.getByRole('region', { name: `${ALMANAC.title} · 5 statements` });
+  await expect(group.getByText('archive.example.org · reference work · 5 statements')).toBeVisible();
   await group.getByRole('button', { name: 'Accept this source for all 5' }).click();
 
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText(/5 claims rest on this source in this course/)).toBeVisible();
+  await expect(dialog.getByText(/5 statements rest on this source in this course/)).toBeVisible();
   await expect(dialog.getByRole('radio', { name: /a reliable identified source/ })).toBeChecked();
   await page.screenshot({ path: `e2e-results/claim-review-bulk-dialog-${browserName}.png` });
-  await dialog.getByRole('button', { name: 'Accept for 5 claims' }).click();
+  await dialog.getByRole('button', { name: 'Accept for 5 statements' }).click();
 
-  await expect(page.getByText(/Trusted County Farmers’ Almanac, 1890 for this course: 4 claims verified, 1 still needs you\./)).toBeVisible();
-  await expect(page.getByTestId('review-tally')).toContainText('1 claim needs you');
+  await expect(page.getByText(/Trusted County Farmers’ Almanac, 1890 for this course: 4 statements verified, 1 still needs you\./)).toBeVisible();
+  await expect(page.getByTestId('review-tally')).toContainText('1 statement needs you');
   // The contradicted one is now in focus; its statement also appears in the evidence excerpt, so read the statement itself.
-  await expect(page.getByRole('article', { name: 'Claim in focus' }).locator('[data-claim-statement]')).toContainText('The river froze over in early December.');
+  await expect(page.getByRole('article', { name: 'Statement in focus' }).locator('[data-claim-statement]')).toContainText('The river froze over in early December.');
 
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(page.getByText('Undone. 5 left.')).toBeVisible();
-  await expect(page.getByTestId('review-tally')).toContainText('5 claims need you');
+  await expect(page.getByTestId('review-tally')).toContainText('5 statements need you');
 
   expect(await unsupportedCommands(page)).toEqual([]);
 });

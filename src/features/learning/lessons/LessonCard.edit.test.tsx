@@ -32,7 +32,7 @@ const draft: LearningLessonDto = { ...ready, preparation: 'outline' };
 const program = { summary: { id: 'program-1', revision: 44, status: 'active' }, sources: [], modules: [] } as unknown as LearningProgramDto;
 const held: LearningGenerationJob = {
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 44,
-  status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 1 claim', activity: null,
+  status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 1 statement', activity: null,
   resultId: 'needs_review:lesson-1', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
 };
 

@@ -44,14 +44,14 @@ describe('ClaimQueue selection', () => {
 
   it('selects every statement of a group from its header, and none again once all are', async () => {
     const selection = setup();
-    const section = screen.getByRole('region', { name: /2 claims/ });
+    const section = screen.getByRole('region', { name: /2 statements/ });
     await userEvent.click(within(section).getByRole('button', { name: 'Select all 2' }));
     expect(selection.setMany).toHaveBeenLastCalledWith(['claim-1', 'claim-2'], true);
   });
 
   it('offers Select none once a whole group is selected', async () => {
     const selection = setup(['claim-1', 'claim-2']);
-    const section = screen.getByRole('region', { name: /2 claims/ });
+    const section = screen.getByRole('region', { name: /2 statements/ });
     expect(within(section).queryByRole('button', { name: 'Select all 2' })).not.toBeInTheDocument();
     await userEvent.click(within(section).getByRole('button', { name: 'Select none' }));
     expect(selection.setMany).toHaveBeenLastCalledWith(['claim-1', 'claim-2'], false);

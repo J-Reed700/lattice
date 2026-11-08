@@ -98,13 +98,13 @@ describe('Claim review screen: editing the section of a statement', () => {
 
   it('does not offer it before the lesson is published', async () => {
     show(review([statement], { state: 'needs_review', counts }));
-    expect(await screen.findByLabelText('Claim in focus')).toBeVisible();
+    expect(await screen.findByLabelText('Statement in focus')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Edit the section' })).not.toBeInTheDocument();
   });
 
   it('does not offer it on a statement outside a section’s text', async () => {
     show(review([inAnswerKey], { state: 'ready', counts }));
-    expect(await screen.findByLabelText('Claim in focus')).toBeVisible();
+    expect(await screen.findByLabelText('Statement in focus')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Edit the section' })).not.toBeInTheDocument();
   });
 });

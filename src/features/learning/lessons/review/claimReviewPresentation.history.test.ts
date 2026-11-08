@@ -74,18 +74,18 @@ describe('describeEvent', () => {
   });
 
   it('words evidence the user added', () => {
-    expect(event({ kind: 'evidence_attached', provenance: { input: 'link' }, result: { outcome: 'no_passage' } })).toBe('Added a link: it does not mention the claim');
+    expect(event({ kind: 'evidence_attached', provenance: { input: 'link' }, result: { outcome: 'no_passage' } })).toBe('Added a link: it does not mention the statement');
     expect(event({ kind: 'evidence_attached', provenance: { input: 'document' }, result: { outcome: 'checked', check: check('local', failed({ kind: 'contradicted' })) } }))
       .toBe('Added a file: a source says otherwise');
     expect(event({ kind: 'evidence_attached', provenance: { input: 'pasted_text' }, result: { outcome: 'checked', check: check('local', { verdict: 'supported', supportingQuote: 'q' }) } }))
-      .toBe('Added pasted text: it states the claim');
-    expect(event({ kind: 'evidence_attached', provenance: { input: 'saved_passage' }, result: { outcome: 'no_passage' } })).toBe('Added a saved passage: it does not mention the claim');
+      .toBe('Added pasted text: it supports the statement');
+    expect(event({ kind: 'evidence_attached', provenance: { input: 'saved_passage' }, result: { outcome: 'no_passage' } })).toBe('Added a saved passage: it does not mention the statement');
   });
 
   it('words the claim’s own life', () => {
     expect(event({ kind: 'superseded', successor: 'c2' })).toBe('Replaced by a re-extracted claim');
     expect(event({ kind: 'superseded', successor: null })).toBe('Removed by an edit');
-    expect(event({ kind: 'born_of_repair' })).toBe('Added while repairing another claim');
+    expect(event({ kind: 'born_of_repair' })).toBe('Added while repairing another statement');
     expect(event({ kind: 'classified', class: 'sourced', by: 'rule' })).toBe('Sorted as a statement that needs a source, by a rule');
     expect(event({ kind: 'classified', class: 'common', by: 'model' })).toBe('Sorted as common knowledge, by the model');
     expect(event({ kind: 'classified', class: 'sourced', by: 'writer' })).toBe('Sorted as a statement that needs a source, by the writer’s citation');

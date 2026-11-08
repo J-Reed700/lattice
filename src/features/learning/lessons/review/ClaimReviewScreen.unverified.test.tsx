@@ -16,7 +16,7 @@ vi.mock('@/lib/api', () => ({ default: {
 
 const ok = <T,>(data: T) => ({ ok: true, data });
 const counts = { verified: 12, confirmed: 0, queued: 0, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 };
-const OLD = 'Every claim is verified, confirmed by you, removed or edited.';
+const OLD = 'Every statement is verified, confirmed by you, removed or edited.';
 
 const unverified = (index: number): ClaimReviewItemDto => claimItem({
   claimId: `claim-${index}`, statement: `Unverified statement ${index}.`, state: { state: 'unverified', at: 2, reason: 'unsupported' }, verdictKind: null, reason: null,

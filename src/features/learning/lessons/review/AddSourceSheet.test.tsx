@@ -78,7 +78,7 @@ describe('Add a source', () => {
   it('adds a link for one claim with progress, then shows the result', async () => {
     const user = userEvent.setup();
     const onAdded = sheet({ level: 'claim', claimIds: ['claim-1'] });
-    expect(screen.getByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Add a source for this statement' })).toBeVisible();
     const run = pendingAttach();
     await user.type(screen.getByLabelText('Page address'), URL_);
     await user.click(screen.getByRole('button', { name: 'Add and check' }));
@@ -91,7 +91,7 @@ describe('Add a source', () => {
     await run.progress({ stage: 'saving' });
     expect(screen.getByText('Saving it to your sources')).toBeVisible();
     await run.progress({ stage: 'checking', done: 0, total: 1, statement: 'Monarchs migrate up to 3,000 miles.' });
-    expect(screen.getByText('Checking claim 1 of 1: Monarchs migrate up to 3,000 miles.')).toBeVisible();
+    expect(screen.getByText('Checking statement 1 of 1: Monarchs migrate up to 3,000 miles.')).toBeVisible();
     await run.finish(report());
     await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ line: 'Added Monarch Watch; it states this. 32 left.', stated: true }), ['claim-1']));
   });
@@ -100,19 +100,19 @@ describe('Add a source', () => {
     const user = userEvent.setup();
     const ids = Array.from({ length: 15 }, (_, index) => `claim-${index + 1}`);
     const onAdded = sheet({ level: 'group', claimIds: ids });
-    expect(screen.getByRole('heading', { name: 'Add a source for these 15 claims' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Add a source for these 15 statements' })).toBeVisible();
     const run = pendingAttach();
     await user.type(screen.getByLabelText('Page address'), URL_);
     await user.click(screen.getByRole('button', { name: 'Add and check' }));
     expect(api.attach.mock.calls[0][0]).toMatchObject({ claimId: 'claim-1', scope: { scope: 'claims', claimIds: ids } });
     await run.progress({ stage: 'checking', done: 4, total: 15, statement: 'Monarch fact number 5.' });
-    expect(screen.getByText(/Checking claim 5 of 15/)).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Claims checked' })).toHaveAttribute('aria-valuenow', '4');
+    expect(screen.getByText(/Checking statement 5 of 15/)).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Statements checked' })).toHaveAttribute('aria-valuenow', '4');
     await run.progress({ stage: 'checking', done: 9, total: 15, statement: 'Monarch fact number 10.' });
-    expect(screen.getByRole('progressbar', { name: 'Claims checked' })).toHaveAttribute('aria-valuenow', '9');
+    expect(screen.getByRole('progressbar', { name: 'Statements checked' })).toHaveAttribute('aria-valuenow', '9');
     await run.finish(report({ others: { tried: 14, verified: 11, notVerified: 2, noPassage: 1, stopped: null } }));
     await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.anything(),
-      expect.objectContaining({ line: 'Added Monarch Watch. Verified 12 of 15 claims; 2 do not match what it says; 1 is not mentioned by it.' }), ids));
+      expect.objectContaining({ line: 'Added Monarch Watch. Verified 12 of 15 statements; 2 do not match what it says; 1 is not mentioned by it.' }), ids));
   });
 
   it('shows the closest passage when the page does not say it', async () => {
@@ -165,10 +165,10 @@ describe('Add a source', () => {
   it('accepts a dropped link, a pasted address, pasted text and a dropped file', async () => {
     const user = userEvent.setup();
     screenWith(review([waitingOnSource(1)]));
-    const queue = await screen.findByRole('navigation', { name: 'Claims waiting for you' });
+    const queue = await screen.findByRole('navigation', { name: 'Statements waiting for you' });
 
     fireEvent.drop(queue, { dataTransfer: { types: ['text/uri-list'], getData: (type: string) => (type === 'text/uri-list' ? URL_ : '') } });
-    expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Add a source for this statement' })).toBeVisible();
     expect(screen.getByLabelText('Page address')).toHaveValue(URL_);
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 

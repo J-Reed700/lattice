@@ -134,6 +134,6 @@ describe('Putting back and restoring from the review', () => {
     show([cut('a', 'Loops repeat a block.')]);
     const list = await open();
     await userEvent.click(within(list).getByRole('button', { name: 'Add a source' }));
-    expect(await screen.findByText('Add a source for this claim')).toBeVisible();
+    expect(await screen.findByText('Add a source for this statement')).toBeVisible();
   });
 });

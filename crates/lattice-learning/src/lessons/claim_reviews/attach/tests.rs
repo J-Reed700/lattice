@@ -624,7 +624,7 @@ async fn pasted_text_that_supports_the_claim_verifies_it_and_checks_the_others()
     assert_eq!(report.others.no_passage, 1);
     assert_eq!(
         report.lines[1],
-        "Also checked 1 other open claim against this source: 0 verified, 1 no passage."
+        "Also checked 1 other open statement against this source: 0 verified, 1 no passage."
     );
     assert_eq!(report.revision, world.ledger.revision().0);
 
@@ -1101,7 +1101,7 @@ async fn a_lesson_with_no_open_claims_saves_the_source_and_checks_nothing() {
     assert_eq!(*judge.checks.lock().unwrap(), 0);
     assert_eq!(
         report.lines.last().unwrap(),
-        "No open claims in this lesson to check against it."
+        "No open statements in this lesson to check against it."
     );
     assert!(stages
         .iter()

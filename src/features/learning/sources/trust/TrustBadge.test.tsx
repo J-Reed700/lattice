@@ -39,7 +39,7 @@ describe('Trust badge', () => {
     expect(reasons.map((item) => item.textContent)).toEqual(trust.reasons.map((reason) => reason.text));
     expect(dialog).toHaveTextContent('Publisher standing: Identified');
     expect(dialog).toHaveTextContent('Author: Jane Doe');
-    expect(dialog).toHaveTextContent('Your verdicts: 7 of 9 claims it supported held, 2 overturned');
+    expect(dialog).toHaveTextContent('Your verdicts: 7 of 9 statements it supported held, 2 overturned');
     expect(dialog).toHaveTextContent('Trust python.org as primary for: Python');
   });
 });

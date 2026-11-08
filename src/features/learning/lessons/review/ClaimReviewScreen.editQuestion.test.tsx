@@ -109,7 +109,7 @@ describe('Claim review screen: editing the question of a statement or a note', (
 
   it('does not offer it before the lesson is published', async () => {
     show(review([onUnit('claim-1', 2, 'question', 'prompt')], { state: 'needs_review', counts, sections: SECTIONS }));
-    expect(await screen.findByLabelText('Claim in focus')).toBeVisible();
+    expect(await screen.findByLabelText('Statement in focus')).toBeVisible();
     expect(screen.queryByRole('button', EDIT)).not.toBeInTheDocument();
   });
 

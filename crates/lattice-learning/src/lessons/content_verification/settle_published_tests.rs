@@ -834,7 +834,7 @@ async fn removing_a_published_statement_with_an_old_revision_writes_nothing() ->
     assert!(
         error
             .to_string()
-            .contains("This claim changed; reload and act again."),
+            .contains("This statement changed; reload and act again."),
         "{error}"
     );
     assert_eq!(stored(&course).await?, before);
@@ -882,7 +882,7 @@ async fn removing_part_of_a_published_sentence_is_still_refused_and_writes_nothi
     assert!(
         error
             .to_string()
-            .contains("This claim is part of a sentence. Edit the sentence to say what goes."),
+            .contains("This statement is part of a sentence. Edit the sentence to say what goes."),
         "{error}"
     );
     Ok(())

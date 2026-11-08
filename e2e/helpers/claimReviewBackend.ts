@@ -187,7 +187,7 @@ export function claimReviewBackend() {
     const progress = (stage: ClaimAttachProgressDto) => onProgress !== undefined && send(onProgress, stage);
     const review = reviews[request.lessonId];
     if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
-    if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This claim changed; reload and act again." };
+    if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This statement changed; reload and act again." };
     const claim = review.claims.find((item) => item.claimId === request.claimId);
     if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
     const { evidence } = request;
@@ -225,7 +225,7 @@ export function claimReviewBackend() {
     review.changedSinceStop = true;
     recount(review);
     progress({ stage: "done" });
-    const lines = [stated ? `Verified against ${title}.` : `Nothing in ${title} mentions this claim. It is saved in your sources.`];
+    const lines = [stated ? `Verified against ${title}.` : `Nothing in ${title} mentions this statement. It is saved in your sources.`];
     if (others.tried) lines.push(`Also checked ${others.tried} other open claim${others.tried === 1 ? "" : "s"} against this source: ${others.verified} verified, ${others.noPassage} no passage.`);
     return {
       revision: review.revision,

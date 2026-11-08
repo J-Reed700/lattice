@@ -271,3 +271,60 @@ fn outline_item(
         _ => item,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn running_preparation(activity: LearningGenerationActivity) -> JobRecord {
+        JobRecord {
+            id: "job-1".into(),
+            kind: "learning.lesson_preparation".into(),
+            subject_id: Some("program-1".into()),
+            operation_id: "operation-1".into(),
+            payload_hash: "hash".into(),
+            status: JobStatus::Running,
+            requested: serde_json::json!({}),
+            progress_current: 0,
+            progress_total: 1,
+            progress_message: String::new(),
+            activity: serde_json::to_value(activity).ok(),
+            staged_result: None,
+            result_ref: None,
+            error_code: None,
+            cause_code: None,
+            error_message: None,
+            retry_of_job_id: None,
+            retry_count: 0,
+            retry_not_before: None,
+            created_at: 0,
+            started_at: Some(0),
+            finished_at: None,
+            heartbeat_at: None,
+        }
+    }
+
+    #[test]
+    fn a_running_preparation_counts_statements_checked_and_names_its_phase_in_statements() {
+        let job = running_preparation(LearningGenerationActivity {
+            phase: LearningGenerationPhase::Evidence,
+            checks_completed: 2,
+            checks_total: 4,
+            ..Default::default()
+        });
+        let item = lesson_item(&job, &HashMap::new(), &HashMap::new());
+        assert_eq!(item.detail.as_deref(), Some("Verifying factual statements"));
+        assert_eq!(
+            item.progress.map(|progress| progress.unit),
+            Some("statements checked".to_string())
+        );
+        assert_eq!(
+            phase_words(LearningGenerationPhase::Inventory),
+            "Identifying factual statements"
+        );
+        assert_eq!(
+            phase_words(LearningGenerationPhase::Research),
+            "Researching unresolved statements"
+        );
+    }
+}

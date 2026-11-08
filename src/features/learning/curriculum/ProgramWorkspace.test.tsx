@@ -113,7 +113,7 @@ describe('Course page', () => {
 
   it('the Lessons tab renders the goal once, one preparation status, and no inline claim review', async () => {
     show(program(GOAL));
-    expect(await screen.findByText('2 claims need you')).toBeVisible();
+    expect(await screen.findByText('2 statements need you')).toBeVisible();
     expect(screen.getAllByRole('region', { name: 'Lesson preparation' })).toHaveLength(1);
     expect(screen.queryAllByRole('region', { name: /claim review/i })).toHaveLength(0);
     // The title is the goal: shown once, with no Goal disclosure repeating it.
