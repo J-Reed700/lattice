@@ -15,6 +15,15 @@ use lattice_core::shared::runtime::jobs::{JobContext, JobHandler, JobOutcome, Jo
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
+type BankRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    String,
+);
+
 fn worker(pool: &SqlitePool, model: Arc<Recorder>) -> QuizBankWorker {
     let llm: Arc<dyn LLMPort> = model;
     QuizBankWorker {
@@ -184,7 +193,7 @@ async fn a_resumed_quiz_job_inserts_its_saved_stage_output_once() -> Result<()> 
         );
     }
     assert!(model.requests().is_empty(), "the stage ran again");
-    let rows: Vec<(String, String, Option<String>, String, Option<String>, String)> = sqlx::query_as(
+    let rows: Vec<BankRow> = sqlx::query_as(
         "SELECT origin,review_status,lesson_id,source_quote,author_model,outcome_id FROM learning_assessment_candidates WHERE id=?",
     )
     .bind(&item_id)
