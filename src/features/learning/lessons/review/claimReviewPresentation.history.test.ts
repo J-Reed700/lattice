@@ -67,6 +67,12 @@ describe('describeEvent', () => {
     expect(event({ kind: 'user_action', action: { action: 'research_with_hint', hint: 'Livy book 1' }, note: null })).toBe('Asked for a search: “Livy book 1”');
   });
 
+  it('words a put back and a restore of the original', () => {
+    expect(event({ kind: 'user_action', action: { action: 'put_back', sentence: 'Water boils at 100 degrees.', edited: false }, note: null })).toBe('Put back in the lesson: “Water boils at 100 degrees.”');
+    expect(event({ kind: 'user_action', action: { action: 'put_back', sentence: 'Water boils near 100 degrees.', edited: true }, note: null })).toBe('Put back after editing: “Water boils near 100 degrees.”');
+    expect(event({ kind: 'user_action', action: { action: 'restore_original', original: 'The old sentence.', rewrite: 'The new sentence.' }, note: null })).toBe('Restored the original: “The new sentence.” → “The old sentence.”');
+  });
+
   it('words evidence the user added', () => {
     expect(event({ kind: 'evidence_attached', provenance: { input: 'link' }, result: { outcome: 'no_passage' } })).toBe('Added a link: it does not mention the claim');
     expect(event({ kind: 'evidence_attached', provenance: { input: 'document' }, result: { outcome: 'checked', check: check('local', failed({ kind: 'contradicted' })) } }))
