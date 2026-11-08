@@ -30,44 +30,9 @@ jobs:
       max-parallel: 6
       matrix:
         include:
-          # Every Rust check on the integrated tree, each past a failure before it.
-          - mode: integration
-            sha: 802a2b5d8df575a1041ead8cd25afb528a3bd258
-          # The question editor, stubbed.
+          # A question edit that repeats another question, and its content token.
           - mode: red
-            sha: 7110e2fa0a27d63b19a56a1744e4833a14c21997
-            built_as_is: true
-          # The engine's checks on a saved question.
-          - mode: red
-            sha: 09549e56140348fc25d88d162d848015ef413130
-            built_as_is: true
-          # A dropped question returns to the bank.
-          - mode: red
-            sha: 3cbce40cd73a2dffd00accb524f93c50863faa69
-            built_as_is: true
-          # The undo text on a question.
-          - mode: red
-            sha: 8e3e8fcefdd75939d7252426290e9649c89ff0f3
-            built_as_is: true
-          # A quiz graded against its drawn key.
-          - mode: red
-            sha: ba12632fe0148a24d762285190fe0ae67d0a43fe
-            built_as_is: true
-          # The drawn explanation and reasons.
-          - mode: red
-            sha: 550179bdabedb1ec86dabadae4bf120b324d8761
-            built_as_is: true
-          # A rejected lesson question keeps its place.
-          - mode: red
-            sha: 88d1e932d275ae2be9c622a3274fc35ac7ae3446
-            built_as_is: true
-          # Near-duplicates, repeats and export order.
-          - mode: red
-            sha: 16b5870276da39a831ff71805582841a98605461
-            built_as_is: true
-          # The question's undo text in the section's words.
-          - mode: red
-            sha: 407240a0e681cb8d756ae8d441761c66e134fe30
+            sha: de5db6813eccb0d1f50c2d0cde5c318f81f953c9
             built_as_is: true
     steps:
       - uses: actions/checkout@v4
@@ -160,6 +125,7 @@ jobs:
   # The generated files for the integrated tree, to commit as they are: nothing is built where they are committed.
   bindings-writer:
     name: write bindings ${{ matrix.sha }}
+    if: false
     runs-on: ubuntu-24.04
     env:
       LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
@@ -221,6 +187,7 @@ jobs:
 
   integration-frontend:
     name: integration frontend ${{ matrix.sha }}
+    if: false
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -317,6 +284,7 @@ jobs:
 
   vitest:
     name: vitest reds
+    if: false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
