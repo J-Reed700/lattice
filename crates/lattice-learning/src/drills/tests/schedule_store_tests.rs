@@ -4,9 +4,9 @@
 
 use super::support::{
     code, course, explanation_files, extra_finding, files, lessons_of, operator_finding,
-    passage_spec, planted, proved, quiet, review, review_assessment, schedule_pattern, set_state,
-    spacing_passage, spec, unchecked, FakeGrader, ScriptedModel, Waiting, LITERALS, MODEL,
-    OPERATOR, SUITE,
+    passage_spec, planted, proved, quiet, record_unfit, review, review_assessment,
+    schedule_pattern, set_state, spacing_passage, spec, unchecked, FakeGrader, ScriptedModel,
+    Waiting, LITERALS, MODEL, OPERATOR, SUITE,
 };
 use crate::drills::attempts::{self, AttemptMode, Graded, Submission};
 use crate::drills::bank::Shelf;
@@ -580,15 +580,15 @@ async fn a_drill_of_a_lesson_moves_that_lessons_schedule_with_the_rating_given()
     Ok(())
 }
 
-#[tokio::test]
-async fn only_an_issue_with_a_link_to_the_lesson_rates_it_when_a_code_drill_is_graded() -> Result<()>
-{
+/// A course with a code drill built from its first lesson, with a link to the lesson on its first issue when `link`,
+/// taken, submitted and graded; the pool, the course and the lesson.
+async fn graded_code_drill(link: bool) -> Result<(SqlitePool, String, String)> {
     let pool = pool().await?;
     let program = course_of(&pool).await?;
     let course = program.summary.id.clone();
     let lesson = lesson_of(&program, 0, 0);
     Put {
-        link: true,
+        link,
         ..Put::of("built", &course, &lesson)
     }
     .stock(&pool)
@@ -624,6 +624,13 @@ async fn only_an_issue_with_a_link_to_the_lesson_rates_it_when_a_code_drill_is_g
         .grade(&none(), None, &FakeGrader::new(review_assessment()))
         .await?;
     assert!(matches!(outcome, JobOutcome::Committed), "{outcome:?}");
+    Ok((pool, course, lesson))
+}
+
+#[tokio::test]
+async fn only_an_issue_with_a_link_to_the_lesson_rates_it_when_a_code_drill_is_graded() -> Result<()>
+{
+    let (pool, course, lesson) = graded_code_drill(true).await?;
 
     let row = lesson_schedule(&pool, &course, &lesson)
         .await?
@@ -637,6 +644,28 @@ async fn only_an_issue_with_a_link_to_the_lesson_rates_it_when_a_code_drill_is_g
     assert!(pattern_schedule(&pool, "code:python", LITERALS)
         .await?
         .is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_code_drill_with_no_lesson_issue_rates_its_lesson_by_every_rated_issue() -> Result<()> {
+    let (pool, course, lesson) = graded_code_drill(false).await?;
+
+    let row = lesson_schedule(&pool, &course, &lesson)
+        .await?
+        .expect("the lesson was rated");
+    let at = row.last_reviewed_at.expect("reviewed");
+    assert_eq!(
+        row,
+        once(StudyRating::Hard, at),
+        "the operator was found and the literals missed, and none has a link"
+    );
+    let all = standings(&pool, &course, &Material::code("python"), None).await?;
+    assert_eq!(
+        standing(&all, &lesson).due_at,
+        Some(row.due_at),
+        "the lesson is no longer new"
+    );
     Ok(())
 }
 
@@ -960,42 +989,41 @@ async fn a_lesson_is_pending_while_a_drill_of_it_is_ready_or_waits_for_its_grade
 }
 
 #[tokio::test]
-async fn a_lesson_recorded_as_not_fitting_a_material_on_the_current_basis_does_not_fit_it(
+async fn a_lesson_recorded_as_not_fitting_passages_on_the_current_basis_does_not_fit_them(
 ) -> Result<()> {
     let pool = pool().await?;
     let program = course_of(&pool).await?;
     let course = program.summary.id.clone();
     let (first, second) = (lesson_of(&program, 0, 0), lesson_of(&program, 0, 1));
+    let passage = Material::Passage;
     let code = Material::code("python");
 
-    let all = standings(&pool, &course, &code, None).await?;
+    let all = standings(&pool, &course, &passage, None).await?;
     assert!(
         standing(&all, &first).fits && standing(&all, &second).fits,
         "no record, no refusal"
     );
 
     let current = basis(&pool, &course, &first).await?;
-    record_fit(&pool, &course, &first, &code, false, &current).await?;
-    let all = standings(&pool, &course, &code, None).await?;
+    record_fit(&pool, &course, &first, &passage, false, &current).await?;
+    let all = standings(&pool, &course, &passage, None).await?;
     assert!(!standing(&all, &first).fits);
     assert!(standing(&all, &second).fits);
-    let all = standings(&pool, &course, &Material::Passage, None).await?;
+    let all = standings(&pool, &course, &code, None).await?;
     assert!(
         standing(&all, &first).fits,
-        "a lesson that does not fit code can still be explained"
+        "a lesson that does not fit passages can still be drilled in code"
     );
-    let all = standings(&pool, &course, &Material::code("rust"), None).await?;
-    assert!(!standing(&all, &first).fits, "code is code in any language");
 
-    record_fit(&pool, &course, &first, &code, false, "another basis").await?;
-    let all = standings(&pool, &course, &code, None).await?;
+    record_fit(&pool, &course, &first, &passage, false, "another basis").await?;
+    let all = standings(&pool, &course, &passage, None).await?;
     assert!(
         standing(&all, &first).fits,
         "a record on another basis no longer stands"
     );
 
-    record_fit(&pool, &course, &first, &code, true, &current).await?;
-    let all = standings(&pool, &course, &code, None).await?;
+    record_fit(&pool, &course, &first, &passage, true, &current).await?;
+    let all = standings(&pool, &course, &passage, None).await?;
     assert!(standing(&all, &first).fits);
     assert_eq!(
         count(&pool, "SELECT count(*) FROM learning_drill_lesson_fits").await?,
@@ -1005,16 +1033,129 @@ async fn a_lesson_recorded_as_not_fitting_a_material_on_the_current_basis_does_n
     Ok(())
 }
 
+async fn fits_code(pool: &SqlitePool, course: &str, lesson: &str, language: &str) -> Result<bool> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    schedules::lesson_fits_in(&mut connection, course, lesson, &Material::code(language)).await
+}
+
+#[tokio::test]
+async fn a_lesson_the_code_check_turned_down_on_its_current_basis_does_not_fit_code() -> Result<()>
+{
+    let pool = pool().await?;
+    let program = course_of(&pool).await?;
+    let course = program.summary.id.clone();
+    let (first, second) = (lesson_of(&program, 0, 0), lesson_of(&program, 0, 1));
+    let code = Material::code("python");
+
+    let all = standings(&pool, &course, &code, None).await?;
+    assert!(
+        standing(&all, &first).fits && standing(&all, &second).fits,
+        "no check, no refusal"
+    );
+
+    record_unfit(&pool, &course, &first, &code).await?;
+    let all = standings(&pool, &course, &code, None).await?;
+    assert!(!standing(&all, &first).fits);
+    assert!(standing(&all, &second).fits);
+    assert!(!fits_code(&pool, &course, &first, "python").await?);
+    assert!(
+        !fits_code(&pool, &course, &first, "rust").await?,
+        "code is code in any language"
+    );
+    let all = standings(&pool, &course, &Material::Passage, None).await?;
+    assert!(
+        standing(&all, &first).fits,
+        "a lesson that does not fit code can still be explained"
+    );
+    assert_eq!(count(&pool, CODE_CHECKS).await?, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_code_check_made_on_another_basis_or_that_said_the_lesson_teaches_does_not_stop_it_fitting_code(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course_of(&pool).await?;
+    let course = program.summary.id.clone();
+    let first = lesson_of(&program, 0, 0);
+    record_unfit(&pool, &course, &first, &Material::code("python")).await?;
+    assert!(!fits_code(&pool, &course, &first, "python").await?);
+    let (current,): (String,) =
+        sqlx::query_as("SELECT basis FROM learning_drill_code_checks WHERE lesson_id=?")
+            .bind(&first)
+            .fetch_one(&pool)
+            .await
+            .map_err(db)?;
+
+    sqlx::query("UPDATE learning_drill_code_checks SET basis='another basis'")
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(
+        fits_code(&pool, &course, &first, "python").await?,
+        "a verdict on another basis no longer stands"
+    );
+
+    sqlx::query("UPDATE learning_drill_code_checks SET basis=?")
+        .bind(&current)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(!fits_code(&pool, &course, &first, "python").await?);
+    let objective: String = sqlx::query_scalar("SELECT objective FROM learning_lessons WHERE id=?")
+        .bind(&first)
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    sqlx::query("UPDATE learning_lessons SET objective='Another objective' WHERE id=?")
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(
+        fits_code(&pool, &course, &first, "python").await?,
+        "the lesson's objective changed, so the question is asked again"
+    );
+
+    sqlx::query("UPDATE learning_lessons SET objective=? WHERE id=?")
+        .bind(&objective)
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    sqlx::query("UPDATE learning_drill_code_checks SET teaches=1")
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert!(fits_code(&pool, &course, &first, "python").await?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_fit_table_no_longer_decides_whether_a_lesson_fits_code() -> Result<()> {
+    let pool = pool().await?;
+    let program = course_of(&pool).await?;
+    let course = program.summary.id.clone();
+    let first = lesson_of(&program, 0, 0);
+    let code = Material::code("python");
+    let current = basis(&pool, &course, &first).await?;
+    record_fit(&pool, &course, &first, &code, false, &current).await?;
+    assert!(fits_code(&pool, &course, &first, "python").await?);
+    let all = standings(&pool, &course, &code, None).await?;
+    assert!(standing(&all, &first).fits);
+    Ok(())
+}
+
 #[tokio::test]
 async fn changing_a_source_of_the_course_ends_a_record_made_before() -> Result<()> {
     let pool = pool().await?;
     let program = course_of(&pool).await?;
     let course = program.summary.id.clone();
     let lesson = lesson_of(&program, 0, 0);
-    let code = Material::code("python");
+    let passage = Material::Passage;
     let current = basis(&pool, &course, &lesson).await?;
-    record_fit(&pool, &course, &lesson, &code, false, &current).await?;
-    let all = standings(&pool, &course, &code, None).await?;
+    record_fit(&pool, &course, &lesson, &passage, false, &current).await?;
+    let all = standings(&pool, &course, &passage, None).await?;
     assert!(!standing(&all, &lesson).fits);
 
     sqlx::query("UPDATE learning_source_library SET deleted_at=5 WHERE program_id=?")
@@ -1022,7 +1163,7 @@ async fn changing_a_source_of_the_course_ends_a_record_made_before() -> Result<(
         .execute(&pool)
         .await
         .map_err(db)?;
-    let all = standings(&pool, &course, &code, None).await?;
+    let all = standings(&pool, &course, &passage, None).await?;
     assert!(
         standing(&all, &lesson).fits,
         "the sources changed, so the question is asked again"
@@ -1135,7 +1276,7 @@ async fn deleting_a_course_removes_its_schedules_and_fits_and_keeps_its_drills_w
             .execute(&pool)
             .await
             .map_err(db)?;
-        sqlx::query("INSERT INTO learning_drill_lesson_fits(program_id,lesson_id,material,fits,basis,decided_at) VALUES(?,?,'code',0,'b',1)")
+        sqlx::query("INSERT INTO learning_drill_lesson_fits(program_id,lesson_id,material,fits,basis,decided_at) VALUES(?,?,'passage',0,'b',1)")
             .bind(&course)
             .bind(lesson)
             .execute(&pool)
@@ -1260,6 +1401,8 @@ async fn insert_check(
 }
 
 const CHECKS: &str = "SELECT count(*) FROM learning_drill_passage_checks";
+
+const CODE_CHECKS: &str = "SELECT count(*) FROM learning_drill_code_checks";
 
 #[tokio::test]
 async fn deleting_a_lesson_removes_its_passage_checks() -> Result<()> {
@@ -1395,5 +1538,105 @@ async fn the_passage_check_table_refuses_a_lesson_or_version_of_another_course_a
     assert!(insert_check(&pool, &program, &lesson, &version, (0, 10), 1)
         .await
         .is_ok());
+    Ok(())
+}
+
+/// Stores a verdict of the code fit check on the lesson `lesson` of the course `program`.
+async fn insert_code_check(
+    pool: &SqlitePool,
+    program: &str,
+    lesson: &str,
+    teaches: i64,
+) -> std::result::Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+    sqlx::query("INSERT INTO learning_drill_code_checks(program_id,lesson_id,basis,teaches,reason,model,checked_at) VALUES(?,?,'b',?,'r','m',1)")
+        .bind(program)
+        .bind(lesson)
+        .bind(teaches)
+        .execute(pool)
+        .await
+}
+
+#[tokio::test]
+async fn deleting_a_lesson_removes_its_code_check() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let lessons = lessons_of(&pool, &program).await?;
+    for lesson in lessons.iter().take(2) {
+        insert_code_check(&pool, &program, lesson, 1)
+            .await
+            .map_err(db)?;
+    }
+    assert_eq!(count(&pool, CODE_CHECKS).await?, 2);
+
+    sqlx::query("DELETE FROM learning_lessons WHERE id=?")
+        .bind(&lessons[1])
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(count(&pool, CODE_CHECKS).await?, 1);
+    let kept: String = sqlx::query_scalar("SELECT lesson_id FROM learning_drill_code_checks")
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(kept, lessons[0]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_a_course_removes_its_code_checks() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let other = course(&pool).await?;
+    for owner in [&program, &other] {
+        let lesson = lessons_of(&pool, owner).await?[0].clone();
+        insert_code_check(&pool, owner, &lesson, 0)
+            .await
+            .map_err(db)?;
+    }
+    assert_eq!(count(&pool, CODE_CHECKS).await?, 2);
+
+    sqlx::query("DELETE FROM learning_programs WHERE id=?")
+        .bind(&program)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(count(&pool, CODE_CHECKS).await?, 1);
+    let kept: String = sqlx::query_scalar("SELECT program_id FROM learning_drill_code_checks")
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(kept, other);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_code_check_table_refuses_a_lesson_of_another_course_and_what_is_not_a_verdict(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let other = course(&pool).await?;
+    let lesson = lessons_of(&pool, &program).await?[0].clone();
+    let elsewhere = lessons_of(&pool, &other).await?[0].clone();
+
+    assert!(
+        insert_code_check(&pool, &program, &elsewhere, 1)
+            .await
+            .is_err(),
+        "a lesson of another course"
+    );
+    assert!(
+        insert_code_check(&pool, &program, &lesson, 2)
+            .await
+            .is_err(),
+        "teaches is 0 or 1"
+    );
+    assert_eq!(count(&pool, CODE_CHECKS).await?, 0);
+    assert!(insert_code_check(&pool, &program, &lesson, 1).await.is_ok());
+    assert!(
+        insert_code_check(&pool, &program, &lesson, 0)
+            .await
+            .is_err(),
+        "one verdict for a lesson"
+    );
     Ok(())
 }

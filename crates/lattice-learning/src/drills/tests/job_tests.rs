@@ -2,8 +2,9 @@
 //! reviews, and that cancelling it stops the model and stores nothing.
 
 use super::support::{
-    blind_answer, blind_assessment, built_drill, clean_code_answer, code_spec, entry_answer,
-    grade_answer, judge_answer, lesson_spec, messages, plant_answer, review_answer, ScriptedModel,
+    blind_answer, blind_assessment, built_drill, clean_code_answer, code_check_answer, code_spec,
+    entry_answer, grade_answer, judge_answer, lesson_spec, messages, plant_answer, review_answer,
+    ScriptedModel,
 };
 use crate::drills::bank::queue_build;
 use crate::drills::jobs::{drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD};
@@ -124,6 +125,7 @@ async fn run_to_the_end(pool: &SqlitePool, worker: DrillBuildWorker, id: &str) -
 async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_review() -> Result<()> {
     let pool = pool().await?;
     let model = Arc::new(ScriptedModel::new([
+        code_check_answer(true),
         clean_code_answer(),
         review_answer(vec![]),
         plant_answer(),
@@ -142,6 +144,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
     assert_eq!(
         model.purposes(),
         [
+            "code fit check",
             "clean code",
             "clean review",
             "plant",
@@ -171,7 +174,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
     assert_eq!(stored.drill.key[2].id, "review-1");
 
     let requests = model.requests();
-    let grade = messages(&requests[6]);
+    let grade = messages(&requests[7]);
     assert!(
         grade[1]
             .1
@@ -224,6 +227,7 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
     let pool = pool().await?;
     let nothing = || json!({"issues": [], "findings": []}).to_string();
     let model = Arc::new(ScriptedModel::new([
+        code_check_answer(true),
         clean_code_answer(),
         review_answer(vec![]),
         plant_answer(),

@@ -4,8 +4,8 @@
 //! since drills were built from a lesson; a spec stored before passages is still read.
 
 use super::support::{
-    baseline, build, code, code_spec, idle_grader, last, review_answer, spec, system, FakeRunner,
-    ScriptedModel, OPERATOR,
+    baseline, build, code, code_check_answer, code_spec, idle_grader, last, review_answer, spec,
+    system, FakeRunner, ScriptedModel, OPERATOR,
 };
 use crate::drills::build::ask::render_files;
 use crate::drills::build::Baseline;
@@ -57,12 +57,12 @@ async fn first_request_of_clean_code(
     if !patterns.is_empty() {
         spec.patterns = patterns.iter().map(|id| (*id).to_owned()).collect();
     }
-    let model = ScriptedModel::new(["{}".to_owned()]);
+    let model = ScriptedModel::new([code_check_answer(true), "{}".to_owned()]);
     let grader = idle_grader();
     let _ = build(&pool, &model, runner, &grader)
         .clean_code(&spec)
         .await;
-    let request = model.requests().remove(0);
+    let request = model.requests().remove(1);
     Ok((system(&request), last(&request)))
 }
 

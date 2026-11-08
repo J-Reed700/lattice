@@ -76,6 +76,7 @@ pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
             "You decide whether a passage from a course's sources",
             "passage check",
         ),
+        ("You decide whether a lesson of a course", "code fit check"),
         (
             "You write the code for a code review exercise",
             "clean code",
@@ -1279,6 +1280,22 @@ pub(super) fn teaches_answer(teaches: bool) -> String {
     .to_string()
 }
 
+/// The reason [`code_check_answer`] gives for a lesson that teaches what code can show.
+pub(super) const CODE_TEACHES_REASON: &str =
+    "The lesson teaches a rule a program can follow or break.";
+
+/// The reason [`code_check_answer`] gives for a lesson that does not.
+pub(super) const CODE_NOT_TEACHES_REASON: &str = "The lesson teaches only what people say aloud.";
+
+/// What the model answers to the code fit check: `teaches`, with a reason.
+pub(super) fn code_check_answer(teaches: bool) -> String {
+    json!({
+        "reason": if teaches { CODE_TEACHES_REASON } else { CODE_NOT_TEACHES_REASON },
+        "lessonTeachesWhatCodeCanShow": teaches
+    })
+    .to_string()
+}
+
 /// The source the planted sentences go against: the figure is 14%, and the benefit smaller for known material.
 pub(super) fn spacing_check() -> ScriptedCheck {
     ScriptedCheck::new(|sentence| {
@@ -1547,12 +1564,30 @@ pub(super) async fn lessons_of(pool: &SqlitePool, program_id: &str) -> Result<Ve
 }
 
 /// Records that the lesson `lesson_id` of the course `program_id` does not fit `material`, on the lesson's basis now.
+/// Code is turned down by a build whose code fit check answers no.
 pub(super) async fn record_unfit(
     pool: &SqlitePool,
     program_id: &str,
     lesson_id: &str,
     material: &Material,
 ) -> Result<()> {
+    if material.language().is_some() {
+        let spec = DrillSpec {
+            material: material.clone(),
+            program_id: Some(program_id.to_owned()),
+            lesson_id: Some(lesson_id.to_owned()),
+            ..spec()
+        };
+        let model = ScriptedModel::new([code_check_answer(false)]);
+        let grader = idle_grader();
+        return match build(pool, &model, None, &grader).clean_code(&spec).await {
+            Err(AppError::InvalidInput(_)) => Ok(()),
+            other => Err(AppError::InternalError(format!(
+                "The code fit check did not turn the lesson down: {:?}",
+                other.map(|_| ())
+            ))),
+        };
+    }
     let mut connection = pool.acquire().await.map_err(db)?;
     let basis = schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?;
     schedules::record_fit_in(
