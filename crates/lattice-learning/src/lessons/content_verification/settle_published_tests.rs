@@ -887,19 +887,180 @@ async fn removing_part_of_a_published_sentence_is_still_refused_and_writes_nothi
 }
 
 #[tokio::test]
-async fn the_undo_of_a_removal_in_a_published_lesson_is_still_refused() -> Result<()> {
+async fn the_undo_of_a_removal_in_a_published_lesson_puts_the_sentence_back_where_it_was_and_the_statement_as_it_was(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+    let state = format!("{:?}", state_of(&ledger(&course).await?, &claim.0));
+    act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+    assert!(offered_for(&course, GOOD).await?.contains(&"undo".into()));
+
+    let revision = act(&course, &claim, ClaimActionRequestDto::Undo).await?;
+
+    let after = stored(&course).await?;
+    assert_eq!(
+        after.blocks, before.blocks,
+        "the text is as it was, whitespace and all"
+    );
+    assert_eq!(revision, before.ledger_revision + 2);
+    assert_eq!(after.content_revision, before.content_revision);
+    assert_eq!(
+        format!("{:?}", state_of(&ledger(&course).await?, &claim.0)),
+        state
+    );
+    let now = read(&course).await?;
+    assert_eq!(
+        now.claims, seen.claims,
+        "the findings the removal dropped are back"
+    );
+    assert_eq!(now.view.claim_count, seen.view.claim_count);
+    assert!(!offered_for(&course, GOOD).await?.contains(&"undo".into()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_returns_every_claim_the_removal_ended_whichever_one_it_is_asked_on(
+) -> Result<()> {
+    for undo_on_overlap in [false, true] {
+        let course = unchecked().await?;
+        let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+        let body = stored(&course).await?.blocks[0].clone();
+        let overlap = extract(
+            &course,
+            "overlap",
+            ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+            "Field-name whitespace is kept.",
+        )
+        .await?;
+        let before = stored(&course).await?;
+        let seen = read(&course).await?;
+        let states = |ledger: &Ledger| {
+            [&target, &overlap].map(|id| format!("{:?}", state_of(ledger, &id.0)))
+        };
+        let was = states(&ledger(&course).await?);
+        act(&course, &target, ClaimActionRequestDto::Remove).await?;
+
+        let asked = if undo_on_overlap { &overlap } else { &target };
+        act(&course, asked, ClaimActionRequestDto::Undo).await?;
+
+        let after = stored(&course).await?;
+        assert_eq!(after.blocks, before.blocks);
+        assert_eq!(states(&ledger(&course).await?), was);
+        assert_eq!(read(&course).await?.claims, seen.claims);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_restores_the_exact_text_around_the_sentence() -> Result<()> {
+    for (body, sentence) in [
+        ("A one. B two. C three.", "B two."),
+        ("A one. B two. C three.", "A one."),
+        ("A one. B two. C three.", "C three."),
+        (
+            "A one.
+
+B two.
+
+C three.",
+            "B two.",
+        ),
+        (
+            "A one.
+
+B two. C three.",
+            "B two.",
+        ),
+        (
+            "A one. B two.
+
+C three.",
+            "B two.",
+        ),
+        (
+            "A one.
+
+B two.
+
+C three.",
+            "B two.",
+        ),
+        ("A one. B two.", "B two."),
+    ] {
+        let course = unchecked().await?;
+        set_body(&course, 0, body).await?;
+        let claim = extract(
+            &course,
+            "line",
+            ClaimLocation::locate(0, UnitKind::Block, "body", sentence, body),
+            sentence,
+        )
+        .await?;
+        act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+        assert_ne!(stored(&course).await?.blocks[0], body);
+
+        act(&course, &claim, ClaimActionRequestDto::Undo).await?;
+
+        assert_eq!(
+            stored(&course).await?.blocks[0],
+            body,
+            "{sentence:?} in {body:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_by_hand_when_the_section_changed_after_it() -> Result<()>
+{
     let course = unchecked().await?;
     let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+    set_body(&course, 0, "The section was rewritten by hand.").await?;
 
     let error = refused(&course, &claim, ClaimActionRequestDto::Undo).await;
 
     assert!(
         error
             .to_string()
-            .contains("This lesson is published. Prepare it again to do that."),
+            .contains("The section changed after this; undo it by hand."),
         "{error}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_undo_of_a_batch_remove_puts_every_sentence_back_in_one_step() -> Result<()> {
+    let course = three().await?;
+    let statements = three_statements();
+    let ids = ids_of(&course, &statements).await?;
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+    let removed = act_many(
+        &course,
+        &ids,
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+
+    let undone = act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
+
+    assert_eq!(undone, removed + 1);
+    let after = stored(&course).await?;
+    assert_eq!(after.blocks, before.blocks);
+    assert_eq!(after.ledger_revision, removed + 1);
+    assert_eq!(read(&course).await?.claims, seen.claims);
+    let ledger = ledger(&course).await?;
+    for id in &ids {
+        assert!(
+            matches!(state_of(&ledger, id), ClaimState::Unverified { .. }),
+            "{:?}",
+            state_of(&ledger, id)
+        );
+    }
     Ok(())
 }
 

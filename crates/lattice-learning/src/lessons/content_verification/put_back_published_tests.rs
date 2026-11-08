@@ -121,23 +121,36 @@ async fn taken_out(
     unit: usize,
     cut: Option<(Option<&str>, Option<&str>)>,
 ) -> Result<ClaimId> {
+    taken_out_as(course, id, CUT, CUT, unit, cut).await
+}
+
+/// A claim for `statement` that stood on `sentence`, which the machine took
+/// out of a section.
+async fn taken_out_as(
+    course: &Course,
+    id: &str,
+    statement: &str,
+    sentence: &str,
+    unit: usize,
+    cut: Option<(Option<&str>, Option<&str>)>,
+) -> Result<ClaimId> {
     let id = ClaimId(id.into());
     let body = bodies(course).await?.get(unit).cloned().unwrap_or_default();
-    let with = format!("{body} {CUT}");
+    let with = format!("{body} {sentence}");
     append(
         course,
         &id,
         ClaimEvent::Extracted {
-            location: ClaimLocation::locate(unit, UnitKind::Block, "body", CUT, &with),
-            statement: CUT.into(),
+            location: ClaimLocation::locate(unit, UnitKind::Block, "body", sentence, &with),
+            statement: statement.into(),
         },
     )
     .await?;
     append(course, &id, failed()).await?;
-    append(course, &id, repair(CUT, None, RepairOutcome::Removed)).await?;
+    append(course, &id, repair(statement, None, RepairOutcome::Removed)).await?;
     if let Some((before, after)) = cut {
         let cut = CutPlace {
-            sentence: CUT.into(),
+            sentence: sentence.into(),
             before: before.map(str::to_owned),
             after: after.map(str::to_owned),
         };
@@ -435,5 +448,182 @@ async fn a_source_that_supports_a_taken_out_sentence_puts_it_back_where_it_stood
         .await?;
     assert!(back.is_some());
     assert!(bodies(&course).await?[0].starts_with(&format!("{GOOD} {CUT}")));
+    Ok(())
+}
+
+const OTHER_CUT: &str = "Each row becomes a dictionary.";
+
+async fn act_many(
+    course: &Course,
+    ids: &[&ClaimId],
+    action: ClaimActionRequestDto,
+    revision: i64,
+) -> Result<i64> {
+    let ids: Vec<String> = ids.iter().map(|id| id.0.clone()).collect();
+    ClaimReviewService::new(course.pool.clone())
+        .resolve_many(&course.lesson_id, &ids, action, revision)
+        .await
+}
+
+#[tokio::test]
+async fn putting_a_sentence_back_brings_back_every_claim_the_machine_took_out_with_it() -> Result<()>
+{
+    let course = published().await?;
+    let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let second = taken_out_as(
+        &course,
+        "also",
+        "Rows are not read all at once.",
+        CUT,
+        0,
+        Some((Some(GOOD), None)),
+    )
+    .await?;
+    let before = written(&course).await?;
+
+    act(&course, &first, put_back(None, None)).await?;
+
+    let after = written(&course).await?;
+    assert_eq!(after.0[0].matches(CUT).count(), 1, "{:?}", after.0);
+    assert_eq!(after.1, before.1 + 1, "one step");
+    for id in [&first, &second] {
+        let entry = claim(&course, id).await?;
+        assert!(!entry.taken_out(), "{id:?} is still taken out");
+        assert!(matches!(entry.state(), ClaimState::Confirmed { .. }));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_taken_out_with_another_sentence_stays_out_when_one_is_put_back() -> Result<()> {
+    let course = published().await?;
+    let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let other = taken_out_as(&course, "other", OTHER_CUT, OTHER_CUT, 0, None).await?;
+
+    act(&course, &first, put_back(None, None)).await?;
+
+    assert!(claim(&course, &other).await?.taken_out());
+    Ok(())
+}
+
+#[tokio::test]
+async fn undoing_a_put_back_takes_back_every_claim_it_brought_back_whichever_it_is_asked_on(
+) -> Result<()> {
+    for undo_on_second in [false, true] {
+        let course = published().await?;
+        let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+        let second = taken_out_as(
+            &course,
+            "also",
+            "Rows are not read all at once.",
+            CUT,
+            0,
+            Some((Some(GOOD), None)),
+        )
+        .await?;
+        let before = bodies(&course).await?;
+        act(&course, &first, put_back(None, None)).await?;
+        let revision = ledger(&course).await?.revision.0;
+
+        let asked = if undo_on_second { &second } else { &first };
+        act(&course, asked, ClaimActionRequestDto::Undo).await?;
+
+        assert_eq!(bodies(&course).await?, before);
+        assert_eq!(ledger(&course).await?.revision.0, revision + 1);
+        for id in [&first, &second] {
+            assert!(claim(&course, id).await?.taken_out(), "{id:?}");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn putting_many_sentences_back_is_one_all_or_nothing_step_and_one_undo_takes_them_all_back(
+) -> Result<()> {
+    let course = published().await?;
+    let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let second = taken_out_as(&course, "other", OTHER_CUT, OTHER_CUT, 1, None).await?;
+    let before = written(&course).await?;
+
+    let revision = act_many(
+        &course,
+        &[&first, &second],
+        put_back(None, Some(1)),
+        before.1,
+    )
+    .await?;
+
+    assert_eq!(revision, before.1 + 1);
+    let after = bodies(&course).await?;
+    assert!(
+        after[1].contains(CUT) && after[1].contains(OTHER_CUT),
+        "{after:?}"
+    );
+    for id in [&first, &second] {
+        assert!(!claim(&course, id).await?.taken_out());
+    }
+
+    let undone = act_many(
+        &course,
+        &[&first, &second],
+        ClaimActionRequestDto::Undo,
+        revision,
+    )
+    .await?;
+
+    assert_eq!(undone, revision + 1);
+    assert_eq!(bodies(&course).await?, before.0);
+    for id in [&first, &second] {
+        assert!(claim(&course, id).await?.taken_out());
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn putting_many_sentences_back_where_they_were_writes_each_where_it_stood() -> Result<()> {
+    let course = published().await?;
+    let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let second = taken_out_as(&course, "other", OTHER_CUT, OTHER_CUT, 1, None).await?;
+
+    let revision = ledger(&course).await?.revision.0;
+    act_many(&course, &[&first, &second], put_back(None, None), revision).await?;
+
+    let after = bodies(&course).await?;
+    assert!(after[0].starts_with(&format!("{GOOD} {CUT}")), "{after:?}");
+    assert!(after[1].contains(OTHER_CUT), "{after:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_put_back_with_one_sentence_whose_place_is_unknown_writes_nothing() -> Result<()> {
+    let course = published().await?;
+    let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let lost = taken_out_as(&course, "lost", OTHER_CUT, OTHER_CUT, 9, None).await?;
+    let before = written(&course).await?;
+
+    let error = act_many(&course, &[&first, &lost], put_back(None, None), before.1)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains(CHOOSE), "{error}");
+    assert_eq!(written(&course).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_put_back_cannot_carry_text_for_one_sentence() -> Result<()> {
+    let course = published().await?;
+    let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let before = written(&course).await?;
+
+    let error = act_many(&course, &[&first], put_back(Some(WRITTEN), None), before.1)
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if message == "Choose one statement for that."),
+        "{error:?}"
+    );
+    assert_eq!(written(&course).await?, before);
     Ok(())
 }

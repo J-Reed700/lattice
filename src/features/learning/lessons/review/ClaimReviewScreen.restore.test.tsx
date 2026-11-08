@@ -7,9 +7,9 @@ import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimRevie
 import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
 import type { ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
 
-const api = vi.hoisted(() => ({ review: vi.fn(), resolve: vi.fn(), audit: vi.fn(), plan: vi.fn(), trust: vi.fn() }));
+const api = vi.hoisted(() => ({ review: vi.fn(), resolve: vi.fn(), resolveMany: vi.fn(), audit: vi.fn(), plan: vi.fn(), trust: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
-  getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, getLearningLessonAudit: api.audit,
+  getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, resolveLearningClaims: api.resolveMany, getLearningLessonAudit: api.audit,
   getLearningPlan: api.plan, getLearningSourceTrust: api.trust,
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
 } }));
@@ -49,6 +49,7 @@ describe('Putting back and restoring from the review', () => {
     api.plan.mockResolvedValue(ok({ jobs: [] }));
     api.trust.mockResolvedValue(ok({ sources: [], claim: null }));
     api.resolve.mockResolvedValue(ok({ revision: 8 }));
+    api.resolveMany.mockResolvedValue(ok({ revision: 8 }));
   });
 
   it('puts a sentence back where it was and announces it with Undo', async () => {
@@ -85,14 +86,35 @@ describe('Putting back and restoring from the review', () => {
     expect(JSON.stringify(api.resolve.mock.calls[0])).toContain('"text":"Loops repeat a body."');
   });
 
-  it('puts back every selected sentence one after the other', async () => {
+  it('puts back every selected sentence in one call and one Undo takes them all back', async () => {
     show([cut('a', 'First one.'), cut('b', 'Second one.')]);
     const list = await open();
     await userEvent.click(within(list).getByRole('checkbox', { name: 'Select: First one.' }));
     await userEvent.click(within(list).getByRole('checkbox', { name: 'Select: Second one.' }));
     await userEvent.click(within(list).getByRole('button', { name: 'Put back' }));
-    await waitFor(() => expect(api.resolve).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(api.resolveMany).toHaveBeenCalledTimes(1));
+    expect(api.resolveMany).toHaveBeenCalledWith(expect.objectContaining({
+      claimIds: ['a', 'b'], expectedRevision: 7, action: { action: 'put_back', text: null, section: null },
+    }));
+    expect(api.resolve).not.toHaveBeenCalled();
     expect(await screen.findByText('Put back 2 sentences in the lesson.')).toBeVisible();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(api.resolveMany).toHaveBeenCalledTimes(2));
+    expect(api.resolveMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      claimIds: ['a', 'b'], expectedRevision: 8, action: { action: 'undo' },
+    }));
+    expect(api.resolve).not.toHaveBeenCalled();
+  });
+
+  it('puts back one sentence the machine took out with several statements as one claim', async () => {
+    const sentence = 'Loops repeat a block.';
+    show([cut('a', sentence), { ...cut('b', sentence), statement: 'Loops repeat.' }]);
+    const list = await open();
+    expect(within(list).getAllByText(sentence)).toHaveLength(1);
+    await userEvent.click(within(list).getByRole('button', { name: 'Put it back' }));
+    await waitFor(() => expect(api.resolve).toHaveBeenCalledTimes(1));
+    expect(api.resolve).toHaveBeenCalledWith(expect.objectContaining({ claimId: 'a' }));
   });
 
   it('restores the original of a rewritten sentence', async () => {
