@@ -83,7 +83,7 @@ describe('describeEvent', () => {
   });
 
   it('words the claim’s own life', () => {
-    expect(event({ kind: 'superseded', successor: 'c2' })).toBe('Replaced by a re-extracted claim');
+    expect(event({ kind: 'superseded', successor: 'c2' })).toBe('Replaced by a newer statement');
     expect(event({ kind: 'superseded', successor: null })).toBe('Removed by an edit');
     expect(event({ kind: 'born_of_repair' })).toBe('Added while repairing another statement');
     expect(event({ kind: 'classified', class: 'sourced', by: 'rule' })).toBe('Sorted as a statement that needs a source, by a rule');
