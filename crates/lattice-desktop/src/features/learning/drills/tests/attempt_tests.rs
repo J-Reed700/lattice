@@ -2,19 +2,20 @@
 //! again, what a submission is refused for, and that asking twice finds the same job.
 
 use super::support::{
-    extra_finding, operator_finding, operator_fixed, proved, review_assessment, stock, unchecked,
-    MODEL,
+    code_spec, course, extra_finding, opened, operator_finding, operator_fixed, proved,
+    review_assessment, stock, stock_on, unchecked, MODEL,
 };
 use crate::features::learning::drills::attempts::{
     self, Attempt, AttemptMode, AttemptStatus, Graded, Submission,
 };
+use crate::features::learning::drills::bank::Shelf;
 use crate::features::learning::drills::jobs::{DRILL_BUILD, DRILL_GRADING, GRADING_STEPS};
 use crate::features::learning::drills::repository::DrillStatus;
 use crate::features::learning::persistence::db;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    ratings, score, Assessment, DrillFile, Finding, IssueFix, IssueRating, LineSpan, PatternRating,
-    Score, Severity,
+    ratings, score, Assessment, DrillFile, Finding, IssueFix, IssueRating, LineSpan, Material,
+    PatternRating, Score, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
@@ -45,10 +46,8 @@ fn submission(findings: Vec<Finding>) -> Submission {
 async fn open() -> Result<(SqlitePool, Attempt)> {
     let pool = pool().await?;
     stock(&pool, "drill").await?;
-    let begun = attempts::start(&pool, "python", AttemptMode::Practice)
-        .await?
-        .expect("a ready drill");
-    Ok((pool, begun.attempt))
+    let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
+    Ok((pool, attempt))
 }
 
 /// An open attempt that has been handed in with one finding.
@@ -125,9 +124,7 @@ async fn a_row_must_agree_with_its_status() -> Result<()> {
 async fn deleting_a_drill_deletes_its_attempts() -> Result<()> {
     let (pool, _) = open().await?;
     stock(&pool, "other").await?;
-    attempts::start(&pool, "python", AttemptMode::Interview)
-        .await?
-        .expect("the other drill");
+    opened(&pool, "other", AttemptMode::Interview).await?;
     assert_eq!(
         scalar(&pool, "SELECT count(*) FROM learning_drill_attempts").await?,
         2
@@ -146,8 +143,10 @@ async fn deleting_a_drill_deletes_its_attempts() -> Result<()> {
 #[tokio::test]
 async fn starting_takes_the_drill_opens_an_attempt_and_queues_the_next_build() -> Result<()> {
     let pool = pool().await?;
-    stock(&pool, "drill").await?;
-    let begun = attempts::start(&pool, "python", AttemptMode::Interview)
+    let spec = code_spec(&pool).await?;
+    let program = spec.course().expect("a course").to_owned();
+    stock_on(&pool, "drill", &spec).await?;
+    let begun = attempts::start(&pool, Shelf::of(&spec)?, None, AttemptMode::Interview)
         .await?
         .expect("a ready drill");
     let attempt = &begun.attempt;
@@ -170,8 +169,13 @@ async fn starting_takes_the_drill_opens_an_attempt_and_queues_the_next_build() -
     );
     assert_eq!(begun.drill.drill.id, "drill");
     assert_eq!(begun.drill.status, DrillStatus::Taken);
-    let next = JobStore::new(pool.clone()).get(&begun.next_build).await?;
+    let queued = begun.next_build.as_deref().expect("the next build");
+    let next = JobStore::new(pool.clone()).get(queued).await?;
     assert_eq!(next.kind, DRILL_BUILD);
+    assert_eq!(
+        next.subject_id,
+        Some(format!("drill:{program}:code:python"))
+    );
     assert_eq!(attempts::get(&pool, &attempt.id).await?.0, *attempt);
     Ok(())
 }
@@ -179,10 +183,25 @@ async fn starting_takes_the_drill_opens_an_attempt_and_queues_the_next_build() -
 #[tokio::test]
 async fn with_no_drill_ready_nothing_is_opened() -> Result<()> {
     let pool = pool().await?;
-    stock(&pool, "drill").await?;
-    assert!(attempts::start(&pool, "javascript", AttemptMode::Practice)
-        .await?
-        .is_none());
+    let spec = code_spec(&pool).await?;
+    let program = spec.course().expect("a course").to_owned();
+    stock_on(&pool, "drill", &spec).await?;
+    let javascript = Material::code("javascript");
+    let other = course(&pool).await?;
+    for shelf in [
+        Shelf {
+            program_id: &program,
+            material: &javascript,
+        },
+        Shelf {
+            program_id: &other,
+            material: &spec.material,
+        },
+    ] {
+        assert!(attempts::start(&pool, shelf, None, AttemptMode::Practice)
+            .await?
+            .is_none());
+    }
     assert_eq!(
         scalar(&pool, "SELECT count(*) FROM learning_drill_attempts").await?,
         0
@@ -193,8 +212,14 @@ async fn with_no_drill_ready_nothing_is_opened() -> Result<()> {
 
 #[tokio::test]
 async fn a_drill_is_given_to_one_attempt() -> Result<()> {
-    let (pool, _) = open().await?;
-    assert!(attempts::start(&pool, "python", AttemptMode::Practice)
+    let pool = pool().await?;
+    let spec = code_spec(&pool).await?;
+    stock_on(&pool, "drill", &spec).await?;
+    let shelf = Shelf::of(&spec)?;
+    assert!(attempts::start(&pool, shelf, None, AttemptMode::Practice)
+        .await?
+        .is_some());
+    assert!(attempts::start(&pool, shelf, None, AttemptMode::Practice)
         .await?
         .is_none());
     Ok(())

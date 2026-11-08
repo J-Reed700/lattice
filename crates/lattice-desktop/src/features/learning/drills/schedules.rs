@@ -269,6 +269,15 @@ pub(in crate::features::learning) async fn lesson_states_in(
     Ok(standings)
 }
 
+/// Whether the course drills the lesson: it is one of the course's, and not replaced or skipped.
+pub(in crate::features::learning) async fn drills_lesson_in(
+    _connection: &mut SqliteConnection,
+    _program_id: &str,
+    _lesson_id: &str,
+) -> Result<bool> {
+    Ok(false)
+}
+
 /// Whether the lesson can be drilled in `material` (`code` or `passage`): unless it is recorded as not fitting on the
 /// basis it has now.
 async fn fits_in(

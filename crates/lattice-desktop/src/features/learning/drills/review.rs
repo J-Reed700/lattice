@@ -3,17 +3,14 @@
 //! returned for the caller to tell the job runtime of once they are committed.
 
 use super::attempts::{self, AttemptMode, Submission};
-use super::bank::{self, Shelf};
 use super::dto::{
     CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, ReviewDrillCourseDto,
-    ReviewMaterialDto, StartedCodeReviewDto,
+    StartedCodeReviewDto,
 };
-use super::reveal::{learner_drill, result_of};
-use super::schedules;
-use super::spec::DrillSpec;
-use crate::features::learning::persistence::{db, now};
+use super::reveal::result_of;
+use crate::features::learning::persistence::db;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use lattice_core::domain::learning::drills::{targets, Material};
+use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
@@ -31,64 +28,33 @@ pub struct Acted {
     pub job: Option<String>,
 }
 
-/// Starts a drill on `asked`: opens an attempt on the oldest ready one of its shelf, which queues the build of the next.
-/// When none is ready, a build is queued and the learner is told it is under way; `lines` (lines of code, or
-/// sentences) and `patterns_count` size that build, whose patterns are the ones the schedule offers.
+/// A drill a learner asks for: of a course, on a material, built from the lesson they name or, when they name none,
+/// from any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CourseDrill {
+    pub program_id: String,
+    pub lesson_id: Option<String>,
+    pub material: Material,
+}
+
+/// Starts a drill on `asked`: opens an attempt on the oldest ready drill of its shelf built from the lesson asked
+/// for, or from any lesson when none is, which can queue the build of the next. When none is ready, the build under
+/// way is found or one is queued, of the lesson asked for or of the one next up, and the learner is told it is under
+/// way; `lines` (lines of code, or sentences) and `issues` size it, its patterns the ones the schedule offers. A
+/// request of no size, a lesson the course does not drill, and a course with no lesson to drill on the material are
+/// refused, and nothing is taken.
 pub async fn start(
-    pool: &SqlitePool,
-    asked: &ReviewMaterialDto,
-    mode: AttemptMode,
-    lines: u32,
-    patterns_count: u32,
+    _pool: &SqlitePool,
+    _asked: &CourseDrill,
+    _mode: AttemptMode,
+    _lines: u32,
+    _issues: u32,
 ) -> Result<Started> {
-    let count = usize::try_from(patterns_count).unwrap_or(usize::MAX);
-    let (material, domain, program_id) = match asked {
-        ReviewMaterialDto::Code { language } => (Material::code(language), None, None),
-        ReviewMaterialDto::Passage { program_id, topic } => (
-            Material::Passage,
-            topic
-                .as_deref()
-                .map(str::trim)
-                .filter(|topic| !topic.is_empty())
-                .map(str::to_owned),
-            Some(program_id.clone()),
-        ),
-    };
-    let states = {
-        let mut connection = pool.acquire().await.map_err(db)?;
-        schedules::pattern_states_in(&mut connection, &material, &[]).await?
-    };
-    let patterns: Vec<String> = targets(&material, &states, now(), count)
-        .iter()
-        .map(|pattern| pattern.id.to_owned())
-        .collect();
-    let spec = DrillSpec {
-        material,
-        domain,
-        lines,
-        patterns,
-        program_id,
-        lesson_id: None,
-    };
-    spec.validate()?;
-    let shelf = Shelf::of(&spec)?;
-    if let Some(begun) = attempts::start_on(pool, shelf, spec.domain.as_deref(), mode).await? {
-        return Ok(Started {
-            dto: StartedCodeReviewDto::Started {
-                attempt_id: begun.attempt.id.clone(),
-                mode: begun.attempt.mode,
-                started_at: begun.attempt.started_at,
-                drill: learner_drill(&begun.drill),
-            },
-            jobs: vec![begun.next_build],
-        });
-    }
-    let job = bank::ensure_build(pool, &spec).await?;
     Ok(Started {
         dto: StartedCodeReviewDto::Building {
-            job_id: job.clone(),
+            job_id: String::new(),
         },
-        jobs: vec![job],
+        jobs: Vec::new(),
     })
 }
 

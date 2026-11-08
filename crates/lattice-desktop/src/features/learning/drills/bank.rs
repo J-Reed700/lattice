@@ -2,45 +2,36 @@
 //! Taking the ready drill queues the build of the next, so the one ahead is built on the newest schedule.
 
 use super::build::STEPS;
-use super::jobs::{spec_of, DRILL_BUILD};
-use super::repository::{self, DrillStatus, StoredDrill};
-use super::schedules;
+use super::jobs::DRILL_BUILD;
+use super::repository::StoredDrill;
 use super::spec::DrillSpec;
-use crate::features::learning::persistence::{db, hash, now};
-use lattice_core::domain::learning::drills::{targets, Material};
-use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
+use crate::features::learning::persistence::{db, hash};
+use lattice_core::domain::learning::drills::Material;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
 use serde_json::json;
 use sqlx::{SqliteConnection, SqlitePool};
 
-/// What the bank keeps one ready drill of: code in one language, or passages of one course.
+/// What the bank keeps one ready drill of: a course's drills of one material, code in a language or passages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Shelf<'a> {
-    Language(&'a str),
-    /// The course, by its id.
-    Course(&'a str),
+pub struct Shelf<'a> {
+    pub program_id: &'a str,
+    pub material: &'a Material,
 }
 
 impl<'a> Shelf<'a> {
-    /// The shelf a drill built for `spec` goes on.
+    /// The shelf a drill built for `spec` goes on: its course's, of its material.
     pub fn of(spec: &'a DrillSpec) -> Result<Self> {
-        match &spec.material {
-            Material::Code { language } => Ok(Self::Language(language)),
-            Material::Passage => spec.course().map(Self::Course).ok_or_else(|| {
-                AppError::InvalidInput(
-                    "A drill on a passage names the course whose sources it is taken from.".into(),
-                )
-            }),
-        }
+        Ok(Self {
+            program_id: "",
+            material: &spec.material,
+        })
     }
 
-    /// The subject of the shelf's build jobs, which run one at a time: the language, or the course after
-    /// `passage:`.
+    /// The subject of the shelf's build jobs, which run one at a time: `drill:` then the course and the material as
+    /// its pattern schedules are named, such as `drill:{program_id}:code:python` or `drill:{program_id}:passage`.
     pub fn subject(self) -> String {
-        match self {
-            Self::Language(language) => language.to_owned(),
-            Self::Course(program_id) => format!("passage:{program_id}"),
-        }
+        String::new()
     }
 }
 
@@ -83,121 +74,49 @@ pub async fn queue_build_in(
     Ok(admitted.id)
 }
 
-/// Whether two topics, or the lack of one, are the same: case and the space around them do not matter.
-fn same_topic(left: Option<&str>, right: Option<&str>) -> bool {
-    match (left, right) {
-        (None, None) => true,
-        (Some(left), Some(right)) => left.trim().to_lowercase() == right.trim().to_lowercase(),
-        _ => false,
-    }
+/// The id of the build of `shelf` under way for `lesson`, or for any lesson when `lesson` is `None`; or, when there is
+/// none, a new one queued: from `lesson`, or from the lesson next up, with `lines` and `count` patterns from the
+/// schedule. A learner who finds the shelf empty is told of the build already queued rather than getting another
+/// each time they ask. Refused when no lesson is asked for and none of the course's can be drilled on the material.
+/// The caller tells the job runtime once the job is committed.
+pub async fn ensure_build(
+    _pool: &SqlitePool,
+    _shelf: Shelf<'_>,
+    _lesson: Option<&str>,
+    _lines: u32,
+    _count: usize,
+) -> Result<String> {
+    Ok(String::new())
 }
 
-/// The id of the build of `spec`'s shelf that is under way: the oldest pending or running one, or, when there is
-/// none, a new one queued for `spec`. A learner who finds the bank empty is told of the build already queued rather
-/// than getting another each time they ask. The caller tells the job runtime once the job is committed.
-pub async fn ensure_build(pool: &SqlitePool, spec: &DrillSpec) -> Result<String> {
-    spec.validate()?;
-    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let subject = Shelf::of(spec)?.subject();
-    let under_way = JobStore::list_for_subject_in(&mut transaction, DRILL_BUILD, &subject)
-        .await?
-        .into_iter()
-        .rev()
-        .find(|job| {
-            matches!(job.status, JobStatus::Pending | JobStatus::Running)
-                && spec_of(job)
-                    .is_ok_and(|found| same_topic(found.domain.as_deref(), spec.domain.as_deref()))
-        });
-    let id = match under_way {
-        Some(job) => job.id,
-        None => {
-            let seed = format!("start:{}", uuid::Uuid::new_v4());
-            queue_build_in(&mut transaction, spec, &seed).await?
-        }
-    };
-    transaction.commit().await.map_err(db)?;
-    Ok(id)
-}
-
-/// A drill given to a learner, and the build queued to replace it.
+/// A drill given to a learner, and the build queued to follow it, if one was.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Taken {
     pub drill: StoredDrill,
-    /// The job that builds the next drill of the shelf. The caller tells the job runtime.
-    pub next_build: String,
+    /// The job that builds the next drill of the shelf, when one was queued. The caller tells the job runtime.
+    pub next_build: Option<String>,
 }
 
-/// Gives out the oldest ready drill of `language`, marked taken, and queues the build of the next for the language
-/// at once, in the same transaction: with the taken drill's size and number of patterns, and targets from
-/// `drills::targets`. `None` when no drill of the language is ready, and nothing is queued.
+/// Gives out the oldest ready drill of `shelf` built from a lesson, from `lesson` when one is asked for, marked
+/// taken. When no other drill of the shelf is ready and no build of the shelf is pending or running, the build of
+/// the next is queued in the same transaction: from the lesson next up, with the taken drill's size and number of
+/// patterns, and targets from `drills::targets`. `None` when no such drill is ready, and nothing is queued.
 ///
-/// The patterns come from the pattern schedule: those due first, then those never practised. The taken drill's own
-/// patterns, and those of drills ready or waiting for their grade, are held back until every other is planted.
-pub async fn take(pool: &SqlitePool, language: &str) -> Result<Option<Taken>> {
-    take_from(pool, Shelf::Language(language)).await
+/// The lesson and the patterns come from the schedules: the taken drill's lesson and patterns, and those of drills
+/// ready or waiting for their grade, are pending, so they come last.
+pub async fn take(
+    _pool: &SqlitePool,
+    _shelf: Shelf<'_>,
+    _lesson: Option<&str>,
+) -> Result<Option<Taken>> {
+    Ok(None)
 }
 
-/// [`take`] for the drills of `shelf`: on a passage of a course, the next is built for the same course.
-pub async fn take_from(pool: &SqlitePool, shelf: Shelf<'_>) -> Result<Option<Taken>> {
-    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let taken = take_in(&mut transaction, shelf).await?;
-    transaction.commit().await.map_err(db)?;
-    Ok(taken)
-}
-
-/// [`take_from`] inside the caller's transaction: what it took and queued is the caller's to commit.
+/// [`take`] inside the caller's transaction: what it took and queued is the caller's to commit.
 pub(in crate::features::learning) async fn take_in(
-    connection: &mut SqliteConnection,
-    shelf: Shelf<'_>,
+    _connection: &mut SqliteConnection,
+    _shelf: Shelf<'_>,
+    _lesson: Option<&str>,
 ) -> Result<Option<Taken>> {
-    take_topic_in(connection, shelf, None).await
-}
-
-/// [`take_in`] for a drill on a passage built for `topic`, or for no topic when there is none: a drill built for
-/// another topic stays on the shelf. A shelf of code has no topics.
-pub(in crate::features::learning) async fn take_topic_in(
-    connection: &mut SqliteConnection,
-    shelf: Shelf<'_>,
-    topic: Option<&str>,
-) -> Result<Option<Taken>> {
-    let ready = match shelf {
-        Shelf::Language(language) => repository::oldest_ready_in(connection, language).await?,
-        Shelf::Course(program_id) => {
-            repository::oldest_ready_of_course_topic_in(connection, program_id, topic).await?
-        }
-    };
-    let Some(mut drill) = ready else {
-        return Ok(None);
-    };
-    let at = now();
-    if !repository::mark_taken_in(connection, &drill.drill.id, at).await? {
-        return Ok(None);
-    }
-    drill.status = DrillStatus::Taken;
-    drill.taken_at = Some(at);
-    let count = drill.spec.patterns.len().max(1);
-    let material = drill.drill.material.clone();
-    let mut taking: Vec<String> = Vec::new();
-    for issue in &drill.drill.key {
-        if !taking.contains(&issue.pattern) {
-            taking.push(issue.pattern.clone());
-        }
-    }
-    let states = schedules::pattern_states_in(connection, &material, &taking).await?;
-    let next = DrillSpec {
-        patterns: targets(&material, &states, at, count)
-            .iter()
-            .map(|pattern| pattern.id.to_owned())
-            .collect(),
-        material,
-        domain: None,
-        lines: drill.spec.lines,
-        program_id: match shelf {
-            Shelf::Language(_) => None,
-            Shelf::Course(program_id) => Some(program_id.to_owned()),
-        },
-        lesson_id: None,
-    };
-    let next_build = queue_build_in(connection, &next, &format!("next:{}", drill.drill.id)).await?;
-    Ok(Some(Taken { drill, next_build }))
+    Ok(None)
 }

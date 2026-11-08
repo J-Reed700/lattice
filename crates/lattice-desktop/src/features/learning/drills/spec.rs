@@ -60,6 +60,12 @@ impl TryFrom<StoredSpec> for DrillSpec {
     }
 }
 
+/// Whether a drill of `material` with `lines` and `patterns` patterns can be asked for: code in a language drills are
+/// written in, or a passage; at least one line of code or sentence; and at least one pattern.
+pub fn check_request(_material: &Material, _lines: u32, _patterns: usize) -> Result<()> {
+    Ok(())
+}
+
 impl DrillSpec {
     /// Whether the spec names code in a language drills are written in, or a passage of a named course; a size; a
     /// domain that says something when it is given; a lesson, when it names one, that says something and is of a

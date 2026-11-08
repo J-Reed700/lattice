@@ -5,15 +5,15 @@
 
 use super::support::{
     contradicted, course, course_of, explanation, explanation_answer, explanation_files,
-    figure_mutation, fix_answer, held_back, idle_grader, last, lesson_titled, no_verdict,
-    passage_baseline, passage_build, passage_code, passage_lesson_spec, passage_plant_answer,
-    passage_spec, prepare_lesson, quiet, raised_all, reversed_mutation, spacing_check,
-    spacing_passage, supported, system, unchecked, unsupported, unsure, FakeGrader, ScriptedCheck,
-    ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH,
-    MODEL, REVERSED, SECOND, SLEEP, SLEEP_LESSON, SMALLER_QUOTE, SPACING, SPACING_LESSON, THIRD,
-    THIRD_PLANTED,
+    figure_mutation, fix_answer, held_back, idle_grader, last, lesson_titled, lessons_of,
+    no_verdict, passage_baseline, passage_build, passage_code, passage_lesson_spec,
+    passage_plant_answer, passage_spec, prepare_lesson, quiet, raised_all, reversed_mutation,
+    spacing_check, spacing_passage, supported, system, unchecked, unsupported, unsure, FakeGrader,
+    ScriptedCheck, ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST,
+    FIRST_PLANTED, FOURTH, MODEL, REVERSED, SECOND, SLEEP, SLEEP_LESSON, SMALLER_QUOTE, SPACING,
+    SPACING_LESSON, THIRD, THIRD_PLANTED,
 };
-use crate::features::learning::drills::bank::{self, take, take_from, Shelf};
+use crate::features::learning::drills::bank::{self, take, Shelf};
 use crate::features::learning::drills::build::{
     Baseline, CleanCode, CleanReview, Evidence, Mutation, Planted, Proved, ProvenMutation,
     SourcePassage, Trail, Verification,
@@ -136,15 +136,19 @@ fn clean_review() -> CleanReview {
     }
 }
 
-/// Puts a ready drill on `source` of the course `program_id` into the bank.
+/// Puts a ready drill on `source`, built from the lesson `lesson_id` of the course `program_id`, into the bank.
 pub(super) async fn drilled(
     pool: &SqlitePool,
     id: &str,
     program_id: &str,
+    lesson_id: &str,
     source: &SourcePassage,
 ) -> Result<()> {
     let drill = planted_drill(id);
-    let spec = passage_spec(program_id);
+    let spec = DrillSpec {
+        lesson_id: Some(lesson_id.to_owned()),
+        ..passage_spec(program_id)
+    };
     let planted = Planted {
         mutations: Vec::new(),
         trail: Trail::default(),
@@ -189,12 +193,15 @@ async fn at(pool: &SqlitePool, id: &str, created_at: i64) -> Result<()> {
 
 #[test]
 fn a_passage_spec_names_its_course() {
-    let spec = passage_spec("course");
+    let spec = DrillSpec {
+        lesson_id: Some("lesson".into()),
+        ..passage_spec("course")
+    };
     assert!(spec.validate().is_ok());
     for course in [None, Some(" ".to_owned())] {
         let without = DrillSpec {
             program_id: course,
-            ..passage_spec("course")
+            ..spec.clone()
         };
         assert!(
             matches!(without.validate(), Err(AppError::InvalidInput(_))),
@@ -203,12 +210,12 @@ fn a_passage_spec_names_its_course() {
     }
     let code_pattern = DrillSpec {
         patterns: vec!["correctness.wrong_operator".into()],
-        ..passage_spec("course")
+        ..spec.clone()
     };
     assert!(code_pattern.validate().is_err());
     let empty = DrillSpec {
         lines: 0,
-        ..passage_spec("course")
+        ..spec.clone()
     };
     assert!(
         matches!(empty.validate(), Err(AppError::InvalidInput(message)) if message.contains("sentence"))
@@ -307,7 +314,8 @@ async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_ne
         first.text, opening,
         "the first two paragraphs: four sentences"
     );
-    drilled(&pool, "first", &program, &first).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    drilled(&pool, "first", &program, &lesson, &first).await?;
 
     let second = next_passage(&pool, &spec).await?;
     assert_eq!(
@@ -319,7 +327,7 @@ async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_ne
         text.get(second.start_byte..second.end_byte),
         Some(second.text.as_str())
     );
-    drilled(&pool, "second", &program, &second).await?;
+    drilled(&pool, "second", &program, &lesson, &second).await?;
 
     let third = next_passage(&pool, &spec).await?;
     assert_eq!(
@@ -1148,7 +1156,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
         .ok_or_else(|| AppError::InternalError("The job was not claimed.".into()))?;
     assert_eq!(
         store.get(&job).await?.subject_id,
-        Some(format!("passage:{program}"))
+        Some(format!("drill:{program}:passage"))
     );
     let context = JobContext::detached(&store, &job).await?;
     let blind = json!({"findings": [
@@ -1185,7 +1193,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     );
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_of_course_topic_in(&mut connection, &program, None)
+    let stored = repository::find_in(&mut connection, &passage_code().drill_id)
         .await?
         .expect("the drill is in the course's bank");
     drop(connection);
@@ -1548,7 +1556,8 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
     let source = spacing_passage();
-    drilled(&pool, "passage", &program, &source).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    drilled(&pool, "passage", &program, &lesson, &source).await?;
     let mut connection = pool.acquire().await.map_err(db)?;
     let stored = repository::find_in(&mut connection, "passage")
         .await?
@@ -1556,7 +1565,13 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     drop(connection);
     assert_eq!(stored.drill, planted_drill("passage"));
     assert_eq!(stored.source, Some(source.clone()));
-    assert_eq!(stored.spec, passage_spec(&program));
+    assert_eq!(
+        stored.spec,
+        DrillSpec {
+            lesson_id: Some(lesson),
+            ..passage_spec(&program)
+        }
+    );
     assert_eq!(stored.program_id.as_deref(), Some(program.as_str()));
     let (material, language): (String, Option<String>) =
         sqlx::query_as("SELECT material,language FROM learning_drills WHERE id='passage'")
@@ -1706,8 +1721,6 @@ async fn a_code_drill_stored_before_passages_still_reads() -> Result<()> {
     assert_eq!(stored.drill.material, Material::code("python"));
     assert_eq!(stored.spec.material, Material::code("python"));
     assert_eq!(stored.source, None);
-    let ready = repository::oldest_ready_in(&mut connection, "python").await?;
-    assert_eq!(ready.map(|ready| ready.drill.id), Some("old".to_owned()));
     Ok(())
 }
 
@@ -1743,50 +1756,100 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
     let pool = pool().await?;
     let first = course(&pool).await?;
     let second = course(&pool).await?;
+    let first_lessons = lessons_of(&pool, &first).await?;
+    let second_lessons = lessons_of(&pool, &second).await?;
     let source = spacing_passage();
-    drilled(&pool, "first-new", &first, &source).await?;
-    drilled(&pool, "first-old", &first, &source).await?;
-    drilled(&pool, "second", &second, &source).await?;
+    drilled(&pool, "first-new", &first, &first_lessons[0], &source).await?;
+    drilled(&pool, "first-old", &first, &first_lessons[0], &source).await?;
+    drilled(&pool, "second", &second, &second_lessons[0], &source).await?;
     at(&pool, "first-new", 20).await?;
     at(&pool, "first-old", 10).await?;
+    let python = Material::code("python");
+    let passages = Material::Passage;
 
     assert_eq!(
-        take(&pool, "python").await?,
+        take(
+            &pool,
+            Shelf {
+                program_id: &first,
+                material: &python
+            },
+            None
+        )
+        .await?,
         None,
         "no passage is on a language's shelf"
     );
-    let taken = take_from(&pool, Shelf::Course(&first))
-        .await?
-        .expect("a ready drill of the first course");
+    let taken = take(
+        &pool,
+        Shelf {
+            program_id: &first,
+            material: &passages,
+        },
+        None,
+    )
+    .await?
+    .expect("a ready drill of the first course");
     assert_eq!(taken.drill.drill.id, "first-old");
-    let job = JobStore::new(pool.clone()).get(&taken.next_build).await?;
-    assert_eq!(job.subject_id, Some(format!("passage:{first}")));
-    let queued = spec_of(&job)?;
+    assert_eq!(taken.next_build, None, "first-new is ready");
+
+    let taken = take(
+        &pool,
+        Shelf {
+            program_id: &second,
+            material: &passages,
+        },
+        None,
+    )
+    .await?
+    .expect("a ready drill of the second course");
+    assert_eq!(taken.drill.drill.id, "second");
+    let next = taken.next_build.as_deref().expect("a build was queued");
+    let job = JobStore::new(pool.clone()).get(next).await?;
+    assert_eq!(job.subject_id, Some(format!("drill:{second}:passage")));
     let expected: Vec<String> = targets(&Material::Passage, &held_back(&taken.drill.drill), 0, 2)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();
     assert_eq!(
-        queued,
+        spec_of(&job)?,
         DrillSpec {
             material: Material::Passage,
             domain: None,
             lines: 4,
             patterns: expected,
-            program_id: Some(first.clone()),
-            lesson_id: None,
-        }
+            program_id: Some(second.clone()),
+            lesson_id: Some(second_lessons[1].clone()),
+        },
+        "the lesson the drill was built from is pending, so the next is built from the one after"
     );
-
-    let taken = take_from(&pool, Shelf::Course(&second))
-        .await?
-        .expect("a ready drill of the second course");
-    assert_eq!(taken.drill.drill.id, "second");
-    assert_eq!(take_from(&pool, Shelf::Course(&second)).await?, None);
-    let again = take_from(&pool, Shelf::Course(&first))
-        .await?
-        .expect("the other drill of the first course");
+    assert_eq!(
+        take(
+            &pool,
+            Shelf {
+                program_id: &second,
+                material: &passages
+            },
+            None
+        )
+        .await?,
+        None
+    );
+    let again = take(
+        &pool,
+        Shelf {
+            program_id: &first,
+            material: &passages,
+        },
+        None,
+    )
+    .await?
+    .expect("the other drill of the first course");
     assert_eq!(again.drill.drill.id, "first-new");
+    assert!(
+        again.next_build.is_some(),
+        "the first course's shelf is empty now"
+    );
     Ok(())
 }
 
@@ -1794,21 +1857,30 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
 async fn a_build_under_way_for_a_course_is_found_again_and_another_course_gets_its_own(
 ) -> Result<()> {
     let pool = pool().await?;
-    let first = bank::ensure_build(&pool, &passage_spec("one")).await?;
-    assert_eq!(
-        bank::ensure_build(&pool, &passage_spec("one")).await?,
-        first
-    );
-    let other = bank::ensure_build(&pool, &passage_spec("two")).await?;
-    assert_ne!(other, first);
-    assert_eq!(Shelf::of(&passage_spec("one"))?, Shelf::Course("one"));
-    assert_eq!(Shelf::Course("one").subject(), "passage:one");
-    assert_eq!(Shelf::of(&super::support::spec())?.subject(), "python");
-    let lost = DrillSpec {
-        program_id: None,
-        ..passage_spec("one")
+    let one = course(&pool).await?;
+    let two = course(&pool).await?;
+    let passages = Material::Passage;
+    let on_one = Shelf {
+        program_id: &one,
+        material: &passages,
     };
-    assert!(Shelf::of(&lost).is_err());
+    let on_two = Shelf {
+        program_id: &two,
+        material: &passages,
+    };
+    let first = bank::ensure_build(&pool, on_one, None, 4, 2).await?;
+    assert_eq!(bank::ensure_build(&pool, on_one, None, 4, 2).await?, first);
+    let other = bank::ensure_build(&pool, on_two, None, 4, 2).await?;
+    assert_ne!(other, first);
+    let store = JobStore::new(pool.clone());
+    assert_eq!(
+        store.get(&first).await?.subject_id,
+        Some(format!("drill:{one}:passage"))
+    );
+    assert_eq!(
+        store.get(&other).await?.subject_id,
+        Some(format!("drill:{two}:passage"))
+    );
     Ok(())
 }
 

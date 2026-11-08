@@ -86,7 +86,7 @@ async fn a_drill_comes_back_as_it_went_in_with_a_row_for_each_pattern() -> Resul
     let pool = pool().await?;
     add(&pool, "drill", None).await?;
     let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_in(&mut connection, "python")
+    let stored = repository::find_in(&mut connection, "drill")
         .await?
         .expect("the drill");
     drop(connection);
@@ -242,7 +242,15 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
     let pool = pool().await?;
     for (sql, index) in [
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language='python' AND status='ready' ORDER BY created_at,rowid LIMIT 1",
+            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL AND (NULL IS NULL OR lesson_id=NULL) ORDER BY created_at,rowid LIMIT 1",
+            "learning_drills_shelf",
+        ),
+        (
+            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL AND ('l' IS NULL OR lesson_id='l') ORDER BY created_at,rowid LIMIT 1",
+            "learning_drills_shelf",
+        ),
+        (
+            "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL)",
             "learning_drills_shelf",
         ),
         (
