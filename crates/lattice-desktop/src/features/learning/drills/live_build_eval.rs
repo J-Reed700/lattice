@@ -12,7 +12,8 @@ use std::time::Instant;
 
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DiffKind, KeyIssue, Material, Origin, PatternDue, Proof,
+    line_diff, pattern, targets, DiffKind, DrillFile, Edit, KeyIssue, LineSpan, Material, Origin,
+    PatternDue, Proof, Severity, SourceVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
@@ -22,12 +23,12 @@ use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 use super::support::{
-    code, literals_mutation, planted, proved, quiet, review, stock, unchecked, KILLING_TEST,
-    LITERALS, MODEL, OPERATOR, SUITE,
+    code, lesson_brief, literals_mutation, planted, proved, quiet, review, stock, unchecked,
+    KILLING_TEST, LITERALS, MODEL, OPERATOR, SUITE,
 };
 use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
-    BlindReview, DrillBuild, DroppedMutation, Evidence, ModelCall, Stage, Trail,
+    BlindReview, DrillBuild, DroppedMutation, Evidence, ModelCall, SourcePassage, Stage, Trail,
 };
 use crate::features::learning::drills::grading::JudgeGrader;
 use crate::features::learning::drills::material::{material_for, ClaimSourceCheck};
@@ -48,6 +49,11 @@ struct Counts {
     dropped: Vec<Dropped>,
     /// Issues of the key that the blind review found and the judge confirmed.
     found_in_review: usize,
+    /// Issues of the key tied to the lesson's sentences.
+    lesson_issues: usize,
+    lesson_checks: usize,
+    /// Lesson checks that did not find the change breaking the sentences and the clean code following them.
+    lesson_checks_failed: usize,
 }
 
 /// A defect that was not proven, and why.
@@ -84,7 +90,33 @@ fn counts_of(stored: &StoredDrill) -> Counts {
             .iter()
             .filter(|issue| issue.origin == Origin::FoundInReview)
             .count(),
+        lesson_issues: 0,
+        lesson_checks: 0,
+        lesson_checks_failed: 0,
     }
+}
+
+/// Over the drills built: the lessons drilled, those of them none of whose drills kept a lesson issue, and the lesson
+/// checks made and failed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+struct LessonTotals {
+    lessons: usize,
+    lessons_with_no_lesson_issue: usize,
+    lesson_checks: usize,
+    lesson_checks_failed: usize,
+}
+
+/// The totals over the (lesson id, counts) of each drill built.
+fn lesson_totals(built: &[(String, Counts)]) -> LessonTotals {
+    let _ = built;
+    LessonTotals::default()
+}
+
+/// The course and lesson of each of `count` drills: the courses in turn, and in each course lessons spread evenly
+/// over its list, in order; a course with no lesson is left out, and one with fewer lessons than drills repeats them.
+fn lesson_plan(courses: &[(String, Vec<String>)], count: usize) -> Vec<(String, String)> {
+    let _ = (courses, count);
+    Vec::new()
 }
 
 /// A drill with everything its build kept, as JSON: its code, its clean code, its key with each proof, its evidence
@@ -443,6 +475,12 @@ fn languages(list: &str) -> Vec<String> {
         .collect()
 }
 
+/// The course ids in a comma list, without blanks.
+fn course_ids(list: &str) -> Vec<String> {
+    let _ = list;
+    Vec::new()
+}
+
 fn write(directory: &Path, name: &str, text: &str) -> Result<()> {
     std::fs::write(directory.join(name), text)?;
     Ok(())
@@ -618,6 +656,13 @@ fn passage_json(name: &str, stored: &StoredDrill, seconds: f64) -> Value {
     })
 }
 
+/// The passage drill for a person to read: the source, the explanation as reviewed, each planted error with its proof,
+/// what was dropped, the clean review and the models.
+fn passage_markdown(name: &str, stored: &StoredDrill, seconds: f64) -> String {
+    let _ = (name, stored, seconds);
+    String::new()
+}
+
 /// A copy of the app's database, its migrations brought up to this build's.
 async fn copied_database(path: &str) -> Result<SqlitePool> {
     let options = sqlx::sqlite::SqliteConnectOptions::new()
@@ -750,6 +795,9 @@ async fn the_counts_are_what_was_planted_proved_and_dropped() -> Result<()> {
             proven_by_judge: 1,
             dropped: Vec::new(),
             found_in_review: 0,
+            lesson_issues: 0,
+            lesson_checks: 0,
+            lesson_checks_failed: 0,
         }
     );
 
@@ -775,8 +823,261 @@ async fn the_counts_are_what_was_planted_proved_and_dropped() -> Result<()> {
                 why: "The original code already has this problem.".into()
             }],
             found_in_review: 1,
+            lesson_issues: 0,
+            lesson_checks: 0,
+            lesson_checks_failed: 0,
         }
     );
+    Ok(())
+}
+
+/// The lesson checks of [`lesson_drill`]: the first passes, the second does not break its sentence.
+fn lesson_checks_json() -> Value {
+    json!([
+        {"issue": "planted-1", "pattern": OPERATOR, "sentences": [1, 3], "breaks": true, "follows": true,
+         "reason": "The edit lets one call more through.", "trail": {"calls": [], "runs": []}},
+        {"issue": "planted-2", "pattern": LITERALS, "sentences": [2], "breaks": false, "follows": true,
+         "reason": "The literals are still named.", "trail": {"calls": [], "runs": []}}
+    ])
+}
+
+/// The stored drill with the brief of a lesson, a link on its first issue and two lesson checks, one failing.
+async fn lesson_drill() -> Result<StoredDrill> {
+    let mut drill = stored().await?;
+    let brief = lesson_brief();
+    drill.domain = brief.lesson.clone();
+    drill.drill.key[0].lesson = brief.link(&[1, 3]);
+    drill.evidence.lesson_checks = serde_json::from_value(lesson_checks_json())?;
+    drill.evidence.brief = Some(brief);
+    Ok(drill)
+}
+
+#[tokio::test]
+async fn the_counts_hold_the_lesson_issues_and_the_lesson_checks_that_failed() -> Result<()> {
+    let mut drill = lesson_drill().await?;
+    let counts = counts_of(&drill);
+    assert_eq!(
+        (
+            counts.lesson_issues,
+            counts.lesson_checks,
+            counts.lesson_checks_failed
+        ),
+        (1, 2, 1)
+    );
+    assert_eq!(counts.planted, 2);
+
+    // A check whose clean code does not follow the sentences has failed too.
+    let mut checks = lesson_checks_json();
+    checks[0]["follows"] = json!(false);
+    drill.evidence.lesson_checks = serde_json::from_value(checks)?;
+    drill.drill.key[1].lesson = drill.drill.key[0].lesson.clone();
+    let counts = counts_of(&drill);
+    assert_eq!(
+        (
+            counts.lesson_issues,
+            counts.lesson_checks,
+            counts.lesson_checks_failed
+        ),
+        (2, 2, 2)
+    );
+    Ok(())
+}
+
+#[test]
+fn the_lesson_totals_count_the_lessons_drilled_those_with_no_lesson_issue_and_the_failed_checks() {
+    let counts = |lesson_issues, lesson_checks, lesson_checks_failed| Counts {
+        planted: 3,
+        proven_by_test: 2,
+        proven_by_judge: 1,
+        dropped: Vec::new(),
+        found_in_review: 0,
+        lesson_issues,
+        lesson_checks,
+        lesson_checks_failed,
+    };
+    let built = vec![
+        ("lesson-a".to_owned(), counts(1, 1, 0)),
+        ("lesson-a".to_owned(), counts(0, 2, 1)),
+        ("lesson-b".to_owned(), counts(0, 1, 1)),
+        ("lesson-c".to_owned(), counts(2, 2, 0)),
+        ("lesson-d".to_owned(), counts(0, 0, 0)),
+    ];
+    assert_eq!(
+        lesson_totals(&built),
+        LessonTotals {
+            lessons: 4,
+            lessons_with_no_lesson_issue: 2,
+            lesson_checks: 6,
+            lesson_checks_failed: 2,
+        }
+    );
+    assert_eq!(lesson_totals(&[]), LessonTotals::default());
+}
+
+#[tokio::test]
+async fn the_markdown_shows_the_course_the_lesson_its_brief_each_issues_lesson_words_and_the_lesson_checks(
+) -> Result<()> {
+    let drill = lesson_drill().await?;
+    let counts = counts_of(&drill);
+    let text = markdown(&drill, &counts, 12.4);
+
+    assert!(!text.contains("- Domain:"));
+    assert!(text.contains(
+        "- Course: Rate limiting in services\n- Lesson: A sliding-window limiter\n- Built by: scripted-drill-model"
+    ));
+    assert!(
+        text.contains("- Found in review: 0\n- Lesson issues: 1\n- Lesson checks: 2, failed: 1\n")
+    );
+    // The brief, as the model was shown it, in a text fence.
+    let brief = lesson_brief().render();
+    assert!(text.contains(&format!("## The brief\n\n```text\n{brief}\n```\n")));
+    // The sentences the first issue cites, each with its source or as the lesson's own teaching.
+    assert!(text.contains(
+        "From the lesson:\n\n> A limiter refuses a call once the calls in its window reach the limit.\n(the lesson's own teaching)\n"
+    ));
+    assert!(text.contains(
+        "> A sliding window forgets the calls older than its length.\n(Rate limiting notes)\n"
+    ));
+    assert_eq!(text.matches("From the lesson:").count(), 1);
+    // Each check: the issue, the pattern, the sentences, both answers, whether it passed, and why.
+    assert!(text.contains("## The lesson checks\n\n"));
+    assert!(text.contains(&format!(
+        "- planted-1 ({OPERATOR}), L1, L3: breaks them: yes, the clean code follows them: yes, passed. The edit lets one call more through.\n"
+    )));
+    assert!(text.contains(&format!(
+        "- planted-2 ({LITERALS}), L2: breaks them: no, the clean code follows them: yes, failed. The literals are still named.\n"
+    )));
+    Ok(())
+}
+
+/// The stored drill as a drill on a passage: two sentences, each with a planted error and a proof from the source.
+async fn passage_drill() -> Result<StoredDrill> {
+    let mut drill = lesson_drill().await?;
+    let path = "explanation.md";
+    let clean = [
+        "Spreading study over sessions improved recall by 14% a week later.",
+        "The benefit was smaller for material learners already knew well.",
+    ];
+    let planted = [
+        "Spreading study over sessions improved recall by 40% a week later.",
+        "The benefit was larger for material learners already knew well.",
+    ];
+    let file = |lines: &[&str; 2]| {
+        vec![DrillFile {
+            path: path.into(),
+            text: format!("{}\n{}\n", lines[0], lines[1]),
+        }]
+    };
+    drill.drill.material = Material::Passage;
+    drill.drill.title = "Why spacing study sessions helps".into();
+    drill.drill.files = file(&planted);
+    drill.clean_files = file(&clean);
+    drill.suite = None;
+    drill.runner = None;
+    drill.source = Some(SourcePassage {
+        version_id: "spacing-v1".into(),
+        start_byte: 0,
+        end_byte: 27,
+        title: "Spacing and memory".into(),
+        text: "Learners recalled 14% more.".into(),
+    });
+    let issues = [
+        (
+            "planted-1",
+            "fidelity.misquoted_figure",
+            Severity::Major,
+            "recalled 14% more a week later",
+            "The source gives 14%, not 40%.",
+        ),
+        (
+            "planted-2",
+            "reasoning.reversed_relation",
+            Severity::Minor,
+            "It was smaller for material that was already well known.",
+            "The source says smaller, not larger.",
+        ),
+    ];
+    for (position, (id, pattern, severity, quote, reason)) in issues.into_iter().enumerate() {
+        let issue = &mut drill.drill.key[position];
+        issue.id = id.into();
+        issue.pattern = pattern.into();
+        issue.severity = severity;
+        issue.lesson = None;
+        issue.span = LineSpan {
+            path: path.into(),
+            start: position as u32 + 1,
+            end: position as u32 + 1,
+        };
+        issue.fix = Edit {
+            path: path.into(),
+            before: format!("{}\n", planted[position]),
+            after: format!("{}\n", clean[position]),
+        };
+        issue.consequence = format!("Consequence {position}.");
+        issue.explanation = format!("Explanation {position}.");
+        issue.proof = Proof::Sourced {
+            quote: quote.into(),
+            planted: SourceVerdict::Contradicted,
+            reason: reason.into(),
+        };
+    }
+    drill.evidence.dropped.push(DroppedMutation {
+        mutation: literals_mutation(),
+        why: "The source supports the planted sentence.".into(),
+        trail: Trail::default(),
+    });
+    drill.evidence.clean_review.repairs = serde_json::from_value(json!([
+        {"description": "A sentence said more than the source.", "severity": "minor",
+         "edit": {"path": path, "before": "a", "after": "b"}}
+    ]))?;
+    drill.evidence.plant.call("plant", "another-model");
+    Ok(drill)
+}
+
+#[tokio::test]
+async fn the_passage_markdown_shows_the_source_the_explanation_and_each_planted_error_with_its_proof(
+) -> Result<()> {
+    let drill = passage_drill().await?;
+    let text = passage_markdown("passage-03", &drill, 7.6);
+
+    assert!(text.starts_with("# Why spacing study sessions helps (passage-03)\n\n"));
+    assert!(text.contains(
+        "- Course: Rate limiting in services\n- Lesson: A sliding-window limiter\n- Built by: scripted-drill-model\n- Built in 8 seconds\n"
+    ));
+    assert!(text.contains("## The brief\n\n```text\n<brief>"));
+    // The source passage, then the explanation as the learner reviews it, numbered.
+    assert!(text.contains(
+        "## The source passage\n\n### Spacing and memory\n\n```text\nLearners recalled 14% more.\n```\n"
+    ));
+    assert!(text.contains(
+        "## The explanation as reviewed\n\n```text\n1 | Spreading study over sessions improved recall by 40% a week later.\n2 | The benefit was larger for material learners already knew well.\n```\n"
+    ));
+    // Each issue: pattern, id, severity, sentences, planted and clean text, consequence, explanation and proof.
+    let figure = pattern("fidelity.misquoted_figure")
+        .expect("a pattern")
+        .name;
+    assert!(text.contains(&format!(
+        "### 1. {figure} (fidelity.misquoted_figure), planted-1, Major, sentences 1 to 1\n\n"
+    )));
+    assert!(text.contains(
+        "- Planted: Spreading study over sessions improved recall by 40% a week later.\n"
+    ));
+    assert!(text
+        .contains("- Clean: Spreading study over sessions improved recall by 14% a week later.\n"));
+    assert!(text.contains("- Consequence: Consequence 0.\n- In an interview: Explanation 0.\n"));
+    assert!(text.contains(
+        "Proven by the source, which says \"recalled 14% more a week later\": The source gives 14%, not 40%."
+    ));
+    assert!(text.contains("reasoning.reversed_relation), planted-2, Minor, sentences 2 to 2"));
+    assert!(text
+        .contains("- Planted: The benefit was larger for material learners already knew well.\n"));
+    // What was dropped and why, the clean review and the models.
+    assert!(text.contains(&format!(
+        "- {LITERALS}: The source supports the planted sentence."
+    )));
+    assert!(text.contains("- Minor: A sentence said more than the source."));
+    assert!(text.contains("Every call ran on: another-model"));
+    assert!(!text.contains("The hidden suite"));
     Ok(())
 }
 
@@ -813,6 +1114,9 @@ async fn the_markdown_holds_what_a_person_needs_to_judge_each_planted_issue() ->
     assert!(text.contains(SUITE.lines().next().expect("a suite")));
     assert!(text.contains("## Dropped\n\nNothing was dropped."));
     assert!(text.contains("## Models"));
+    assert!(text.contains("- Lesson: rate limiting\n"));
+    assert!(text.contains("The drill was built from no lesson."));
+    assert!(text.contains("No issue was a lesson issue."));
     Ok(())
 }
 
@@ -859,6 +1163,8 @@ async fn the_json_holds_the_code_the_clean_code_the_key_the_proofs_the_evidence_
         "language",
         "title",
         "domain",
+        "lesson_id",
+        "lesson_title",
         "model",
         "runner",
         "seconds",
@@ -900,10 +1206,65 @@ fn code_is_numbered_to_the_width_of_its_last_line() {
 }
 
 #[test]
-fn languages_come_from_a_comma_list_without_blanks() {
+fn courses_come_from_a_comma_list_without_blanks() {
     assert_eq!(
-        languages("python, javascript,,rust , "),
-        ["python", "javascript", "rust"]
+        course_ids("course-1, course-2,,course-3 , "),
+        ["course-1", "course-2", "course-3"]
     );
-    assert!(languages(" , ").is_empty());
+    assert!(course_ids(" , ").is_empty());
+}
+
+fn lessons(prefix: &str, count: usize) -> Vec<String> {
+    (1..=count).map(|n| format!("{prefix}{n}")).collect()
+}
+
+fn pairs(plan: &[(&str, &str)]) -> Vec<(String, String)> {
+    plan.iter()
+        .map(|(course, lesson)| ((*course).to_owned(), (*lesson).to_owned()))
+        .collect()
+}
+
+#[test]
+fn lesson_plan_takes_the_courses_in_turn_and_spreads_each_courses_drills_over_its_lessons() {
+    let courses = vec![
+        ("A".to_owned(), lessons("a", 6)),
+        ("B".to_owned(), lessons("b", 3)),
+    ];
+    assert_eq!(
+        lesson_plan(&courses, 6),
+        pairs(&[
+            ("A", "a1"),
+            ("B", "b1"),
+            ("A", "a3"),
+            ("B", "b2"),
+            ("A", "a5"),
+            ("B", "b3")
+        ])
+    );
+}
+
+#[test]
+fn lesson_plan_repeats_a_courses_lessons_when_it_has_fewer_than_its_drills_and_leaves_out_a_course_with_none(
+) {
+    let courses = vec![
+        ("A".to_owned(), lessons("a", 2)),
+        ("B".to_owned(), Vec::new()),
+        ("C".to_owned(), lessons("c", 1)),
+    ];
+    assert_eq!(
+        lesson_plan(&courses, 5),
+        pairs(&[
+            ("A", "a1"),
+            ("C", "c1"),
+            ("A", "a1"),
+            ("C", "c1"),
+            ("A", "a2")
+        ])
+    );
+}
+
+#[test]
+fn lesson_plan_is_empty_when_no_course_has_a_lesson() {
+    assert!(lesson_plan(&[], 4).is_empty());
+    assert!(lesson_plan(&[("A".to_owned(), Vec::new())], 4).is_empty());
 }

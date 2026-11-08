@@ -536,7 +536,7 @@ pub(super) fn plant_answer() -> String {
 
 /// The lesson the code of the fixtures is written for: two units of its own teaching and one from a source. The
 /// operator change breaks the first, the literals change the second.
-pub(super) fn lesson_brief() -> LessonBrief {
+pub fn lesson_brief() -> LessonBrief {
     let unit = |text: &str, source: Option<&str>| LessonSentence {
         text: text.into(),
         source: source.map(str::to_owned),
