@@ -257,6 +257,7 @@ fn adjacent_cut_sentences_the_user_put_back_are_written_in_their_original_order_
 fn a_put_back_a_pass_already_wrote_is_not_written_again_beside_the_others() {
     let entries = adjacent_put_backs();
     let once = pass(&entries, &[ALPHA, ECHO].join(" "));
+    assert_eq!(once, [ALPHA, BRAVO, CHARLIE, DELTA, ECHO].join(" "));
     assert_eq!(pass(&entries, &once), once);
 }
 
