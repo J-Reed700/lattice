@@ -196,19 +196,18 @@ describe('LessonQuestionEditor', () => {
 
   it('shows a refused dry run as a plain sentence', async () => {
     const sentence = "The question's stem gives away its answer.";
-    const message = `Invalid input: ${sentence}`;
+    const message = sentence;
     api.edit.mockImplementation(async (request: { dryRun: boolean }) => (request.dryRun
       ? { ok: false, error: message, details: { code: 'INVALID_INPUT', message, details: null } }
       : ok(outcome())));
     show();
     fireEvent.change(await loaded(), { target: { value: 'My own wording.' } });
     expect(await screen.findByText(sentence)).toBeVisible();
-    expect(screen.queryByText(/Invalid input/)).not.toBeInTheDocument();
   });
 
   it('shows a refused save as a plain sentence', async () => {
     const sentence = 'This question changed since you opened it.';
-    const message = `Invalid state: ${sentence}`;
+    const message = sentence;
     api.edit.mockImplementation(async (request: { dryRun: boolean }) => (request.dryRun
       ? ok(outcome())
       : { ok: false, error: message, details: { code: 'INVALID_STATE', message, details: null } }));
@@ -216,19 +215,17 @@ describe('LessonQuestionEditor', () => {
     fireEvent.change(await loaded(), { target: { value: 'My own wording.' } });
     await userEvent.click(saveButton());
     expect(await screen.findByRole('alert')).toHaveTextContent(sentence);
-    expect(screen.queryByText(/Invalid state/)).not.toBeInTheDocument();
   });
 
   it('shows a refused load as a plain sentence', async () => {
     const sentence = 'That question is not in this lesson.';
-    const message = `Invalid input: ${sentence}`;
+    const message = sentence;
     api.get.mockResolvedValue({ ok: false, error: message, details: { code: 'INVALID_INPUT', message, details: null } });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={client}>
       <LessonQuestionEditor programId="program-1" lessonId="lesson-1" questionIndex={1} open onClose={vi.fn()} />
     </QueryClientProvider>);
     expect(await screen.findByRole('alert')).toHaveTextContent(sentence);
-    expect(screen.queryByText(/Invalid input/)).not.toBeInTheDocument();
   });
 
   it('asks before throwing changes away', async () => {

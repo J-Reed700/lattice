@@ -10,7 +10,6 @@ import type { DroppedSource } from '@/features/learning/lessons/review/useReview
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import type { AttachEvidenceDto, AttachNextStepDto, AttachScopeDto, ClaimAttachReportDto } from '@/lib/bindings';
-import { refusalSentence } from '@/lib/errorHandling';
 
 type Mode = 'link' | 'paste' | 'file' | 'saved';
 
@@ -117,7 +116,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
       if (report.failure || !report.source) { setFailed({ report, host }); return; }
       onAdded(report, lesson ? lessonSourceSummary(report) : attachSummary(report, ids.length, Math.max(0, remaining)), ids);
     } catch (error) {
-      setFormError(error instanceof Error ? refusalSentence(error) : 'The source could not be added.');
+      setFormError(error instanceof Error ? error.message : 'The source could not be added.');
     }
   };
 

@@ -5,7 +5,6 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useApi } from '@/contexts/ApiContext';
 import { useEditLearningLessonSection } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
-import { refusalSentence } from '@/lib/errorHandling';
 
 const DRY_RUN_DELAY_MS = 400;
 
@@ -71,7 +70,7 @@ function EditorBody({ programId, lessonId, sectionIndex, title: titleProp, body:
           setChecked(result.data.checkedStatementsAffected);
           setDryError(null);
         } else {
-          setDryError(refusalSentence({ message: result.error, code: result.details?.code }));
+          setDryError(result.error);
         }
       })();
     }, DRY_RUN_DELAY_MS);
@@ -142,7 +141,7 @@ function EditorBody({ programId, lessonId, sectionIndex, title: titleProp, body:
           {preview && <div className="studio-lesson-prose mt-1 rounded-lg border border-border bg-background px-3 py-2"><MarkdownViewer content={body} /></div>}
         </div>
         <p aria-live="polite" className="min-h-5 text-sm leading-6 text-text-secondary">{line}</p>
-        {save.error && <p role="alert" className="text-sm text-danger-fg">{refusalSentence(save.error)}</p>}
+        {save.error && <p role="alert" className="text-sm text-danger-fg">{save.error.message}</p>}
         {asking ? (
           <div role="group" aria-label="Discard your changes?" className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium text-text-primary">Discard your changes?</p>

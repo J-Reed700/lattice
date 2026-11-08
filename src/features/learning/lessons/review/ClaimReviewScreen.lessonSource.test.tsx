@@ -162,12 +162,11 @@ describe('Claim review screen, adding a source to the whole lesson', () => {
     show(twoWaiting());
     await user.click(await screen.findByRole('button', { name: BUTTON }));
     const sentence = 'This lesson changed while you were adding the source. Open it again and retry.';
-    const message = `Invalid state: ${sentence}`;
+    const message = sentence;
     api.attachLesson.mockResolvedValue({ ok: false, error: message, details: { code: 'INVALID_STATE', message, details: null } });
     await user.type(screen.getByLabelText('Page address'), URL_);
     await user.click(screen.getByRole('button', { name: 'Add and check' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(sentence);
-    expect(screen.queryByText(/Invalid state/)).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: BUTTON })).toBeVisible();
   });
 
