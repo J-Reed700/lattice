@@ -87,6 +87,9 @@ export type TakenOutSentence = {
   place: 'known' | 'choose';
 };
 
+/** The last sentence of the plain text before a sentence, or '' when it does not end in one. */
+export const sentenceBefore = (contextBefore: string) => contextBefore.trim().match(/[^.!?]*[.!?]+["'’”)\]]*$/)?.[0].trim() ?? '';
+
 /** A sentence the machine rewrote, with the claim its original is restored on. */
 export type RewrittenSentence = { claimId: string; original: string; rewrite: string; why: string | null };
 

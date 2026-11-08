@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { LoaderCircle } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { ReviewCheckbox, SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
 import { useResolveLearningClaims, useSettleTeachingFindings } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
@@ -58,7 +59,7 @@ function statusLine(last: Settled) {
  * sentence can also take the sentence out of the lesson, or hand it to Add a
  * source.
  */
-export function TeachingFindings({ programId, lessonId, findings, lessonAnchor = null, published = false, revision, onAddSource }: {
+export function TeachingFindings({ programId, lessonId, findings, lessonAnchor = null, published = false, revision, onAddSource, editSection }: {
   programId: string;
   lessonId: string;
   findings: TeachingFindingDto[];
@@ -70,6 +71,8 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
   revision?: number;
   /** Opens Add a source for the note's first claim. */
   onAddSource?: (claimId: string, findingKey: string) => void;
+  /** Opens the editor on the note's section; null when the note has none to edit. */
+  editSection?: (finding: TeachingFindingDto) => (() => void) | null;
 }) {
   const settle = useSettleTeachingFindings(programId, lessonId);
   const resolveMany = useResolveLearningClaims(programId, lessonId);
@@ -159,7 +162,9 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
       </p>}
       {errors[BATCH] && <p role="alert" className="mb-2 text-xs leading-5 text-rose-700">{errors[BATCH]}</p>}
       <ul role="list" className="space-y-2">
-        {findings.map((finding) => (
+        {findings.map((finding) => {
+          const openEditor = editSection?.(finding) ?? null;
+          return (
           <li key={finding.findingKey}>
             <article id={teachingNoteId(finding.findingKey)} tabIndex={-1} aria-label={`${finding.unitTitle}: ${KIND_LABELS[finding.kind]}`}
               className="flex gap-3 rounded-xl border border-border bg-background p-4 focus-visible:outline-2 focus-visible:outline-accent">
@@ -199,13 +204,15 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
                       {(finding.resolution !== 'removed' || (revision !== undefined && finding.claimIds.length > 0)) && <button type="button"
                         disabled={acting !== null} onClick={() => void undoResolved(finding)} className={`${smallButton} border-border text-text-secondary`}>Undo</button>}
                     </>}
+                  {openEditor && <Button type="button" variant="ghost" size="sm" disabled={acting !== null} onClick={openEditor}>Edit the section</Button>}
                   {acting === finding.findingKey && <span role="status" className="inline-flex items-center gap-1 text-xs text-text-muted"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Saving…</span>}
                 </div>
                 {errors[finding.findingKey] && <p role="alert" className="mt-2 text-xs leading-5 text-rose-700">{errors[finding.findingKey]}</p>}
               </div>
             </article>
           </li>
-        ))}
+          );
+        })}
       </ul>
       <SelectionBar count={chosen.length} noun={['teaching note', 'teaching notes']} busy={acting !== null} onClear={selection.clear}
         actions={[

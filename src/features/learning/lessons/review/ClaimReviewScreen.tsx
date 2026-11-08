@@ -10,7 +10,7 @@ import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lesson
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
 import { ALL_RESOLVED, NEEDS_NOTE_HINT, cannotHere, tallyLine, teachingNotesWait, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
-import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, sentenceBefore, type ClaimGroup, type TakenOutSentence } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
@@ -24,7 +24,7 @@ import { useReviewSelection } from '@/features/learning/lessons/review/useReview
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { useLearningProgram } from '@/features/learning/workspace/useLearningStudio';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import type { ClaimReviewItemDto, ClaimSupportDto } from '@/lib/bindings';
+import type { ClaimReviewItemDto, ClaimSupportDto, TeachingFindingDto } from '@/lib/bindings';
 
 const NARROW = '(max-width: 767px)';
 
@@ -82,16 +82,32 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   // A published lesson's section text comes from the course the page already loads for the lesson card.
   const published = review?.state === 'ready';
   const course = useLearningProgram(published ? programId : null);
+  /** The section's text with the first of `wanted` it still holds as the focus, else `fallback`; null when the course has not loaded it. */
+  const sectionAt = (index: number, wanted: Array<string | null | undefined>, fallback = '') => {
+    if (!published) return null;
+    const lesson = course.data?.modules.flatMap((entry) => entry.lessons).find((candidate) => candidate.id === lessonId);
+    const block = lesson?.blocks[index];
+    if (!block) return null;
+    const focusText = wanted.find((text) => text && block.body.includes(text)) ?? fallback;
+    return { sectionIndex: index, title: block.title, body: block.body, focusText };
+  };
   const sectionOf = (claim: ClaimReviewItemDto | null | undefined) => {
     const place = claim?.location;
-    if (!claim || !place || !published || place.unitKind !== 'block' || place.field !== 'body') return null;
-    const lesson = course.data?.modules.flatMap((entry) => entry.lessons).find((candidate) => candidate.id === lessonId);
-    const block = lesson?.blocks[place.unitIndex];
-    if (!block) return null;
-    const focusText = block.body.includes(place.quote) ? place.quote : claim.presentation.sentence;
-    return { sectionIndex: place.unitIndex, title: block.title, body: block.body, focusText };
+    if (!claim || !place || place.unitKind !== 'block' || place.field !== 'body') return null;
+    return sectionAt(place.unitIndex, [place.quote], claim.presentation.sentence);
   };
   const editable = sectionOf(active);
+  const noteEditor = (finding: TeachingFindingDto) => {
+    const section = finding.site === 'section' && finding.unitIndex !== null ? sectionAt(finding.unitIndex, [finding.sentence, finding.passage]) : null;
+    return section ? () => setEditing(section) : null;
+  };
+  const takenOutEditor = (entry: TakenOutSentence) => {
+    const claim = review?.claims.find((candidate) => candidate.claimId === entry.statements[0]?.claimId);
+    const place = claim?.location;
+    if (!claim || !place || entry.place !== 'known' || place.unitKind !== 'block' || place.field !== 'body') return null;
+    const section = sectionAt(place.unitIndex, [sentenceBefore(claim.presentation.contextBefore)]);
+    return section ? () => setEditing(section) : null;
+  };
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
   const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
@@ -212,12 +228,12 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
     if (session.removedActive && sheetNode) return sheetNode;
     if (session.removedActive) return <RemovedStatements sentences={session.removed} rewritten={session.rewritten} sections={review.sections}
-      busy={session.acting} error={session.error}
+      busy={session.acting} error={session.error} editSection={takenOutEditor}
       onPutBack={(claimIds, text, section) => void session.restore(claimIds, { action: 'put_back', text, section }, 'put_back')}
       onRestore={(claimId) => void session.restore([claimId], { action: 'restore_original' }, 'restore_original')}
       onAddSource={(claimId) => openSheet({ level: 'claim', claimIds: [claimId], others: [] })} />;
     if (session.teachingActive) return sheetNode || <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
-      published={review.state === 'ready'} revision={review.revision} onAddSource={openNoteSheet} />;
+      published={review.state === 'ready'} revision={review.revision} onAddSource={openNoteSheet} editSection={noteEditor} />;
     if (active) return <ClaimInFocus ref={statementRef} programId={programId} item={active} position={position || 1} total={Math.max(ordered.length, 1)}
       onPrevious={session.activeIndex > 0 ? () => session.step(-1) : null} onNext={session.activeIndex >= 0 && session.activeIndex < ordered.length - 1 ? () => session.step(1) : null}
       sharing={sharingOf(active.support)} busy={session.acting} error={session.error} form={session.form} onFormChange={session.setForm}

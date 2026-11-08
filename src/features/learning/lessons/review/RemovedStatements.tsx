@@ -35,7 +35,7 @@ function SectionPicker({ sections, known, value, onChange, disabled }: {
 
 const sectionOf = (value: string): number | null => (value === WHERE_IT_WAS || value === NONE ? null : Number(value));
 
-function TakenOutRow({ entry, sections, busy, checked, onToggle, onPutBack, onAddSource }: {
+function TakenOutRow({ entry, sections, busy, checked, onToggle, onPutBack, onAddSource, onEditSection }: {
   entry: TakenOutSentence;
   sections: ReviewSectionDto[];
   busy: boolean;
@@ -43,6 +43,7 @@ function TakenOutRow({ entry, sections, busy, checked, onToggle, onPutBack, onAd
   onToggle: (shiftKey: boolean) => void;
   onPutBack: (text: string | null, section: number | null) => void;
   onAddSource: () => void;
+  onEditSection: (() => void) | null;
 }) {
   const [only] = entry.statements;
   const alone = entry.statements.length === 1 && only?.statement === entry.sentence;
@@ -53,6 +54,7 @@ function TakenOutRow({ entry, sections, busy, checked, onToggle, onPutBack, onAd
   const unplaced = !known && place === NONE;
   const editing = text !== null;
   const editBox = useId();
+  const editSection = onEditSection && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onEditSection}>Edit the section</Button>;
   return (
     <li className="flex gap-3 rounded-xl border border-border p-4">
       {actionable && <ReviewCheckbox checked={checked} label={`Select: ${entry.sentence}`} onToggle={onToggle} disabled={busy} />}
@@ -84,8 +86,10 @@ function TakenOutRow({ entry, sections, busy, checked, onToggle, onPutBack, onAd
               ? <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => setText(null)}>Cancel</Button>
               : <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => setText(entry.sentence)}>Edit and put back</Button>}
             <Button type="button" size="sm" variant="outline" disabled={busy} onClick={onAddSource}>Add a source</Button>
+            {editSection}
           </div>
         </div>}
+        {!actionable && editSection && <div className="mt-3">{editSection}</div>}
       </div>
     </li>
   );
@@ -97,7 +101,7 @@ function TakenOutRow({ entry, sections, busy, checked, onToggle, onPutBack, onAd
  * sentences rewritten. Each can be put back or its original restored; nothing
  * here waits for the user.
  */
-export function RemovedStatements({ sentences, rewritten = [], sections = [], busy = false, error = null, onPutBack, onRestore, onAddSource }: {
+export function RemovedStatements({ sentences, rewritten = [], sections = [], busy = false, error = null, onPutBack, onRestore, onAddSource, editSection }: {
   sentences: TakenOutSentence[];
   rewritten?: RewrittenSentence[];
   sections?: ReviewSectionDto[];
@@ -107,6 +111,8 @@ export function RemovedStatements({ sentences, rewritten = [], sections = [], bu
   onPutBack?: (claimIds: string[], text: string | null, section: number | null) => void;
   onRestore?: (claimId: string) => void;
   onAddSource?: (claimId: string) => void;
+  /** Opens the editor on the section the sentence came out of; null when it has none to edit. */
+  editSection?: (entry: TakenOutSentence) => (() => void) | null;
 }) {
   const ids = sentences.flatMap((entry) => (entry.claimId ? [entry.claimId] : []));
   const selection = useReviewSelection(ids);
@@ -128,7 +134,7 @@ export function RemovedStatements({ sentences, rewritten = [], sections = [], bu
             checked={entry.claimId ? selection.isSelected(entry.claimId) : false}
             onToggle={(shiftKey) => entry.claimId && selection.toggle(entry.claimId, { shiftKey })}
             onPutBack={(text, section) => entry.claimId && onPutBack?.([entry.claimId], text, section)}
-            onAddSource={() => entry.claimId && onAddSource?.(entry.claimId)} />
+            onAddSource={() => entry.claimId && onAddSource?.(entry.claimId)} onEditSection={editSection?.(entry) ?? null} />
         ))}
       </ul>
       {acting && chosen.length > 0 && <div className="sticky bottom-0 z-10 mt-3 space-y-2 bg-surface pt-2">
