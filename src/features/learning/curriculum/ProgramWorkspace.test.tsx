@@ -54,6 +54,10 @@ vi.mock('@/features/learning/curriculum/CourseSyllabus', () => ({
   ),
 }));
 vi.mock('@/features/reading/components/CitationVisibilityToggle', () => ({ CitationVisibilityToggle: () => null }));
+vi.mock('@/features/learning/memory/MemoryPanels', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/features/learning/memory/MemoryPanels')>(),
+  NotebookPanel: () => null,
+}));
 
 const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), cancel: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {

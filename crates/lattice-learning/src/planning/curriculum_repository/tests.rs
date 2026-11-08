@@ -906,7 +906,11 @@ fn module_request(
     module: usize,
 ) -> StartLearningModuleJobsRequestDto {
     StartLearningModuleJobsRequestDto {
-        operation_id: op_id(),
+        operation_id: stable_job_operation_id(
+            &program.summary.id,
+            &format!("module:{}", program.modules[module].id),
+            program.summary.revision,
+        ),
         program_id: program.summary.id.clone(),
         module_id: program.modules[module].id.clone(),
         expected_revision: program.summary.revision,
@@ -1115,5 +1119,38 @@ async fn a_job_names_the_lessons_it_prepares() -> Result<()> {
     assert_eq!(job.lesson_ids, lessons);
     assert_eq!(repo.job(&job.id).await?.lesson_ids, lessons);
     assert_eq!(repo.jobs(&program.summary.id).await?[0].lesson_ids, lessons);
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelling_a_queued_lesson_and_preparing_the_module_again_requeues_it() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let first_jobs = repo
+        .start_module_jobs(&module_request(&program, 0))
+        .await
+        .unwrap();
+    repo.cancel_job(&LearningGenerationJobActionRequestDto {
+        operation_id: op_id(),
+        program_id: program.summary.id.clone(),
+        job_id: first_jobs[1].id.clone(),
+        expected_revision: program.summary.revision,
+    })
+    .await
+    .unwrap();
+    let second_jobs = repo
+        .start_module_jobs(&module_request(&program, 0))
+        .await
+        .unwrap();
+    assert_eq!(second_jobs.len(), 2);
+    assert_eq!(second_jobs[0].id, first_jobs[0].id);
+    assert_eq!(second_jobs[0].status, LearningGenerationJobStatus::Pending);
+    assert_ne!(second_jobs[1].id, first_jobs[1].id);
+    assert_eq!(second_jobs[1].status, LearningGenerationJobStatus::Pending);
+    assert_eq!(
+        second_jobs[1].retry_of_job_id.as_deref(),
+        Some(first_jobs[1].id.as_str())
+    );
     Ok(())
 }
