@@ -1,10 +1,13 @@
 import pathlib
 import sqlite3
+import sys
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "crates/lattice-desktop/migrations"
+sys.path.insert(0, str(ROOT / "scripts"))
+import sqlx_migrations  # noqa: E402
 TARGET = MIGRATIONS / "20261025120000_fts_rowid_maintenance.sql"
 
 
@@ -14,7 +17,7 @@ class FtsMaintenanceTest(unittest.TestCase):
         self.db.execute("PRAGMA foreign_keys=ON")
         before = sorted(p for p in MIGRATIONS.glob("*.sql") if p.name < TARGET.name)
         for migration in before:
-            self.db.executescript("BEGIN;\n" + migration.read_text(encoding="utf-8") + "\nCOMMIT;")
+            sqlx_migrations.apply(self.db, migration)
         self.db.execute("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,checksum) VALUES('d','/d','d',1,'now','x')")
         self.db.execute("INSERT INTO text_chunks(id,document_id,content,context_prefix,chunk_index) VALUES('c1','d','alpha original','Heading',0)")
         self.db.execute("INSERT INTO text_chunks(id,document_id,content,context_prefix,chunk_index) VALUES('c2','d','beta sibling','Other',1)")
@@ -23,7 +26,7 @@ class FtsMaintenanceTest(unittest.TestCase):
         self.db.execute("INSERT INTO conversation_message_bookmarks(id,conversation_id,message_id,title,note) VALUES('b1','v1','m1','bookmark original','note')")
         self.db.commit()
         for migration in sorted(p for p in MIGRATIONS.glob("*.sql") if p.name >= TARGET.name):
-            self.db.executescript("BEGIN;\n" + migration.read_text(encoding="utf-8") + "\nCOMMIT;")
+            sqlx_migrations.apply(self.db, migration)
 
     def tearDown(self):
         self.db.close()
@@ -107,7 +110,7 @@ class FtsMaintenanceTest(unittest.TestCase):
             db = sqlite3.connect(":memory:")
             db.execute("PRAGMA foreign_keys=ON")
             for migration in sorted(p for p in MIGRATIONS.glob("*.sql") if p.name < TARGET.name):
-                db.executescript("BEGIN;\n" + migration.read_text(encoding="utf-8") + "\nCOMMIT;")
+                sqlx_migrations.apply(db, migration)
             db.execute("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,checksum) VALUES('d','/d','d',1,'now','x')")
             db.execute("INSERT INTO conversations(id,title) VALUES('v','scale')")
             db.executemany(
@@ -124,7 +127,7 @@ class FtsMaintenanceTest(unittest.TestCase):
             )
             db.commit()
             for migration in sorted(p for p in MIGRATIONS.glob("*.sql") if p.name >= TARGET.name):
-                db.executescript("BEGIN;\n" + migration.read_text(encoding="utf-8") + "\nCOMMIT;")
+                sqlx_migrations.apply(db, migration)
             return db
 
         def measured_steps(db, statement, args=()):

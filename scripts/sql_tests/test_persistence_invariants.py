@@ -1,10 +1,13 @@
 import sqlite3
+import sys
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 MIGRATIONS = ROOT / "crates/lattice-desktop/migrations"
+sys.path.insert(0, str(ROOT / "scripts"))
+import sqlx_migrations  # noqa: E402
 
 
 def new_db():
@@ -17,7 +20,7 @@ def apply_migrations(db, stop_before=None):
     for migration in sorted(MIGRATIONS.glob("*.sql")):
         if stop_before is not None and migration.name >= stop_before:
             break
-        db.executescript("BEGIN;\n" + migration.read_text(encoding="utf-8") + "\nCOMMIT;")
+        sqlx_migrations.apply(db, migration)
 
 
 class PersistenceInvariantTests(unittest.TestCase):
@@ -43,7 +46,7 @@ class PersistenceInvariantTests(unittest.TestCase):
         db.execute("INSERT INTO conversation_messages(id,conversation_id,role,content) VALUES('message','conversation','user','body')")
         db.execute("INSERT INTO conversation_summaries(id,conversation_id,summary_text,up_to_message_id,original_message_count,original_tokens,summary_tokens,compression_ratio) VALUES('summary','conversation','summary','message',1,2,1,0.5)")
         db.commit()
-        db.executescript("BEGIN;\n" + (MIGRATIONS / target).read_text(encoding="utf-8") + "\nCOMMIT;")
+        sqlx_migrations.apply(db, MIGRATIONS / target)
         row = db.execute("SELECT id,file_path,size_bytes,status FROM documents").fetchone()
         self.assertEqual(row, ("keep", "/A.txt", 4, "indexed"))
         self.assertEqual(db.execute("SELECT COUNT(*) FROM image_metadata WHERE id='image'").fetchone()[0], 1)
@@ -65,7 +68,7 @@ class PersistenceInvariantTests(unittest.TestCase):
         db.execute("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,checksum,status) VALUES('bad','/bad','bad',-1,'now','h','pending')")
         db.commit()
         with self.assertRaisesRegex(sqlite3.IntegrityError, "documents_id_size_status_invariant"):
-            db.executescript("BEGIN;\n" + (MIGRATIONS / target).read_text(encoding="utf-8") + "\nCOMMIT;")
+            sqlx_migrations.apply(db, MIGRATIONS / target)
         # executescript leaves the failed transaction open; roll it back just as
         # the migration runner does when a transactional upgrade fails.
         db.rollback()

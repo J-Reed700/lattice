@@ -289,6 +289,9 @@ pub struct LearningGenerationJob {
     /// waiting out a temporary failure; `None` otherwise.
     #[serde(default)]
     pub error_code: Option<lattice_core::shared::ipc::ErrorCode>,
+    /// Ended by an update that replaced how lessons are prepared: history, not an attempt to resume.
+    #[serde(default)]
+    pub ended_by_update: bool,
     pub retry_of_job_id: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,
