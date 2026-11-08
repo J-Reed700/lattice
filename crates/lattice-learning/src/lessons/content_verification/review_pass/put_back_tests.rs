@@ -3,7 +3,7 @@
 
 use super::*;
 use lattice_core::domain::learning::claim_review::{
-    ClaimLocation, EventProvenance, PutPlace, UnitKind,
+    ClaimLocation, CutPlace, EventProvenance, PutPlace, UnitKind,
 };
 use serde_json::json;
 
@@ -149,4 +149,139 @@ fn a_put_back_is_live_until_the_user_takes_it_back_or_acts_on_the_claim_again() 
         )
         .unwrap();
     assert!(live(&removed, is_put_back).is_none());
+}
+
+const ALPHA: &str = "Alpha comes first.";
+const BRAVO: &str = "Bravo comes second.";
+const CHARLIE: &str = "Charlie comes third.";
+const DELTA: &str = "Delta comes fourth.";
+const ECHO: &str = "Echo comes last.";
+
+/// A claim whose sentence the machine cut, recorded between `before` and
+/// `after`, that the user put back to `stored`.
+fn put_back_claim(
+    id: &str,
+    sentence: &str,
+    before: &str,
+    after: &str,
+    stored: Anchor,
+) -> ClaimLedgerEntry {
+    let mut entry = ClaimLedgerEntry::extracted(
+        ClaimId(id.into()),
+        provenance(Actor::Machine),
+        ClaimLocation::locate(0, UnitKind::Block, "body", sentence, sentence),
+        sentence.into(),
+    )
+    .unwrap();
+    entry
+        .append(
+            provenance(Actor::Machine),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    let cut = CutPlace {
+        sentence: sentence.into(),
+        before: Some(before.into()),
+        after: Some(after.into()),
+    };
+    entry
+        .append(provenance(Actor::Machine), ClaimEvent::SentenceCut { cut })
+        .unwrap();
+    entry
+        .append(
+            provenance(Actor::User),
+            ClaimEvent::UserAction {
+                action: UserAction::PutBack {
+                    sentence: sentence.into(),
+                    edited: false,
+                    place: PutPlace {
+                        unit_index: 0,
+                        field: "body".into(),
+                        anchor: stored,
+                    },
+                },
+                note: None,
+            },
+        )
+        .unwrap();
+    entry
+}
+
+/// Bravo, Charlie and Delta cut one after the other, each recorded against
+/// the text the cuts before it left, and put back to where the first cut's
+/// record puts them all.
+fn adjacent_put_backs() -> [ClaimLedgerEntry; 3] {
+    let after_alpha = || Anchor::After(ALPHA.into());
+    [
+        put_back_claim("bravo", BRAVO, ALPHA, CHARLIE, after_alpha()),
+        put_back_claim("charlie", CHARLIE, ALPHA, DELTA, after_alpha()),
+        put_back_claim("delta", DELTA, ALPHA, ECHO, after_alpha()),
+    ]
+}
+
+fn pass(entries: &[ClaimLedgerEntry], text: &str) -> String {
+    let mut draft = json!({"blocks": [{"title": "A", "body": text}], "questions": []});
+    let found = changes(entries, &draft);
+    apply(None, &mut draft, found);
+    body(&draft).to_owned()
+}
+
+#[test]
+fn adjacent_cut_sentences_the_user_put_back_are_written_in_their_original_order_whatever_the_order_of_the_claims(
+) {
+    let [bravo, charlie, delta] = adjacent_put_backs();
+    let original = [ALPHA, BRAVO, CHARLIE, DELTA, ECHO].join(" ");
+    for order in [
+        [&bravo, &charlie, &delta],
+        [&delta, &bravo, &charlie],
+        [&charlie, &delta, &bravo],
+        [&delta, &charlie, &bravo],
+    ] {
+        let entries: Vec<ClaimLedgerEntry> = order.iter().map(|entry| (*entry).clone()).collect();
+        assert_eq!(
+            pass(&entries, &[ALPHA, ECHO].join(" ")),
+            original,
+            "{:?}",
+            entries
+                .iter()
+                .map(|entry| entry.claim_id().0.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn a_put_back_a_pass_already_wrote_is_not_written_again_beside_the_others() {
+    let entries = adjacent_put_backs();
+    let once = pass(&entries, &[ALPHA, ECHO].join(" "));
+    assert_eq!(pass(&entries, &once), once);
+}
+
+#[test]
+fn a_sentence_the_user_wrote_between_the_recorded_neighbours_sends_the_put_back_to_its_stored_place(
+) {
+    let entries = [put_back_claim(
+        "charlie",
+        CHARLIE,
+        ALPHA,
+        ECHO,
+        Anchor::Before(ECHO.into()),
+    )];
+    let mine = "The user wrote this one.";
+    assert_eq!(
+        pass(&entries, &[ALPHA, mine, ECHO].join(" ")),
+        [ALPHA, mine, CHARLIE, ECHO].join(" ")
+    );
+}
+
+#[test]
+fn a_section_end_the_user_chose_is_kept_over_the_cut_record() {
+    let entries = [put_back_claim("bravo", BRAVO, ALPHA, CHARLIE, Anchor::End)];
+    assert_eq!(
+        pass(&entries, &[ALPHA, CHARLIE, ECHO].join(" ")),
+        [ALPHA, CHARLIE, ECHO, BRAVO].join(" ")
+    );
 }

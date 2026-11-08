@@ -23,6 +23,8 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::{AppError, Result};
 
+use crate::lessons::content_verification::{ClaimVerdict, Finding, LessonVerificationReport};
+
 const CUT: &str = "Rows are read lazily from the file.";
 const WRITTEN: &str = "Rows come from the file one at a time.";
 const REWRITE: &str = "Rows are read from the file.";
@@ -625,5 +627,194 @@ async fn a_batch_put_back_cannot_carry_text_for_one_sentence() -> Result<()> {
         "{error:?}"
     );
     assert_eq!(written(&course).await?, before);
+    Ok(())
+}
+
+const ALPHA: &str = "Alpha comes first.";
+const BRAVO: &str = "Bravo comes second.";
+const CHARLIE: &str = "Charlie comes third.";
+const DELTA: &str = "Delta comes fourth.";
+const ECHO: &str = "Echo comes last.";
+
+fn original_order() -> String {
+    [ALPHA, BRAVO, CHARLIE, DELTA, ECHO].join(" ")
+}
+
+/// Bravo, Charlie and Delta cut from the first section one after the other:
+/// each cut recorded the neighbours the earlier cuts left it.
+async fn adjacent_cuts(course: &Course) -> Result<[ClaimId; 3]> {
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(format!("{ALPHA} {ECHO}"))
+        .bind(&course.lesson_id)
+        .execute(&course.pool)
+        .await?;
+    let mut ids = Vec::new();
+    for (id, sentence, before, after) in [
+        ("bravo", BRAVO, ALPHA, CHARLIE),
+        ("charlie", CHARLIE, ALPHA, DELTA),
+        ("delta", DELTA, ALPHA, ECHO),
+    ] {
+        let cut = Some((Some(before), Some(after)));
+        ids.push(taken_out_as(course, id, sentence, sentence, 0, cut).await?);
+    }
+    Ok(ids.try_into().unwrap())
+}
+
+/// Whether the sentences of `body` that are in the original are in its order.
+fn in_original_order(body: &str) -> bool {
+    let at: Vec<usize> = [ALPHA, BRAVO, CHARLIE, DELTA, ECHO]
+        .iter()
+        .filter_map(|sentence| body.find(sentence))
+        .collect();
+    at.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+#[tokio::test]
+async fn putting_adjacent_cut_sentences_back_in_one_batch_restores_the_original_whatever_the_order(
+) -> Result<()> {
+    for order in [[0, 1, 2], [2, 0, 1], [1, 2, 0], [2, 1, 0]] {
+        let course = published().await?;
+        let ids = adjacent_cuts(&course).await?;
+        let revision = ledger(&course).await?.revision.0;
+        let chosen: Vec<&ClaimId> = order.iter().map(|index| &ids[*index]).collect();
+
+        act_many(&course, &chosen, put_back(None, None), revision).await?;
+
+        assert_eq!(
+            bodies(&course).await?[0],
+            original_order(),
+            "batch {order:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn putting_adjacent_cut_sentences_back_one_at_a_time_keeps_their_order_in_every_order(
+) -> Result<()> {
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let course = published().await?;
+        let ids = adjacent_cuts(&course).await?;
+        for index in order {
+            act(&course, &ids[index], put_back(None, None)).await?;
+            let body = bodies(&course).await?[0].clone();
+            assert!(in_original_order(&body), "{order:?}: {body}");
+        }
+        assert_eq!(
+            bodies(&course).await?[0],
+            original_order(),
+            "one at a time {order:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_sentence_whose_recorded_neighbours_have_a_sentence_between_them_is_not_placed_by_guessing(
+) -> Result<()> {
+    let course = published().await?;
+    let ids = adjacent_cuts(&course).await?;
+    let mine = "The user wrote this one.";
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(format!("{ALPHA} {mine} {ECHO}"))
+        .bind(&course.lesson_id)
+        .execute(&course.pool)
+        .await?;
+    let before = written(&course).await?;
+
+    let error = act(&course, &ids[1], put_back(None, None))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if message == CHOOSE),
+        "{error:?}"
+    );
+    assert_eq!(written(&course).await?, before);
+    Ok(())
+}
+
+/// Gives the stored report an old finding for `claim`, as the report held
+/// while the machine's cut of its sentence stood.
+async fn give_finding(course: &Course, claim: &ClaimId, reason: &str) -> Result<()> {
+    let mut stored: LessonVerificationReport = serde_json::from_str(&report(course).await?)?;
+    stored.findings.push(Finding {
+        unit: 0,
+        quote: CUT.into(),
+        statement: CUT.into(),
+        verdict: ClaimVerdict::Unsupported,
+        reason: reason.into(),
+        evidence: Vec::new(),
+        supporting_quote: None,
+        resolution: None,
+        claim_id: Some(claim.0.clone()),
+        trust: None,
+        label: None,
+        class: None,
+        two_pass: Default::default(),
+    });
+    sqlx::query(
+        "UPDATE learning_lesson_verifications SET report_json=? WHERE program_id=? AND lesson_id=?",
+    )
+    .bind(serde_json::to_string(&stored)?)
+    .bind(&course.program_id)
+    .bind(&course.lesson_id)
+    .execute(&course.pool)
+    .await?;
+    Ok(())
+}
+
+async fn findings_of(course: &Course) -> Result<Vec<(Option<String>, String)>> {
+    let stored: LessonVerificationReport = serde_json::from_str(&report(course).await?)?;
+    Ok(stored
+        .findings
+        .into_iter()
+        .map(|finding| (finding.claim_id, finding.reason))
+        .collect())
+}
+
+#[tokio::test]
+async fn putting_a_sentence_back_replaces_the_findings_of_every_claim_that_stood_on_it_and_undo_brings_them_back_where_they_stood(
+) -> Result<()> {
+    let course = published().await?;
+    let first = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let second = taken_out_as(
+        &course,
+        "also",
+        "Rows are not read all at once.",
+        CUT,
+        0,
+        Some((Some(GOOD), None)),
+    )
+    .await?;
+    give_finding(&course, &first, "Taken out: first.").await?;
+    give_finding(&course, &second, "Taken out: second.").await?;
+    let before = findings_of(&course).await?;
+
+    act(&course, &first, put_back(None, None)).await?;
+
+    let after = findings_of(&course).await?;
+    assert!(
+        after
+            .iter()
+            .all(|(_, reason)| !reason.starts_with("Taken out")),
+        "{after:?}"
+    );
+    let own: Vec<_> = after
+        .iter()
+        .filter(|(id, _)| id.as_deref() == Some(first.0.as_str()))
+        .collect();
+    assert_eq!(own.len(), 1, "{after:?}");
+
+    act(&course, &second, ClaimActionRequestDto::Undo).await?;
+
+    assert_eq!(findings_of(&course).await?, before);
     Ok(())
 }

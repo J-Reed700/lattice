@@ -112,9 +112,9 @@ enum Change {
 }
 
 /// The user's edits and removals, located in the draft.
-fn changes(ledger: &ClaimLedger, candidate: &Value) -> Vec<Change> {
+fn changes(entries: &[ClaimLedgerEntry], candidate: &Value) -> Vec<Change> {
     let mut changes = Vec::new();
-    for entry in ledger.entries() {
+    for entry in entries {
         let location = entry.location();
         let put_back = live(entry, |action| matches!(action, UserAction::PutBack { .. }));
         if let Some(UserAction::PutBack {
@@ -286,7 +286,7 @@ pub(super) fn has_user_changes(ledger: &ClaimLedger, candidate: &Value) -> bool 
     apply(
         ledger.pending.previous.as_ref(),
         &mut copy,
-        changes(ledger, candidate),
+        changes(ledger.entries(), candidate),
     );
     copy != *candidate
 }
@@ -299,7 +299,7 @@ pub(super) async fn apply_user_changes(
     candidate: &mut Value,
 ) -> Result<bool> {
     let original = candidate.clone();
-    let changes = changes(ledger, candidate);
+    let changes = changes(ledger.entries(), candidate);
     let applied = apply(ledger.pending.previous.as_ref(), candidate, changes);
     if *candidate == original {
         return Ok(false);

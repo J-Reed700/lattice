@@ -1022,12 +1022,7 @@ async fn the_undo_of_a_removal_is_refused_by_hand_when_the_section_changed_after
 
     let error = refused(&course, &claim, ClaimActionRequestDto::Undo).await;
 
-    assert!(
-        error
-            .to_string()
-            .contains("The section changed after this; undo it by hand."),
-        "{error}"
-    );
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
     Ok(())
 }
 
@@ -1326,5 +1321,128 @@ async fn a_batch_asked_for_something_that_needs_one_statement_is_refused_and_wri
             "{error}"
         );
     }
+    Ok(())
+}
+
+const AFTER_IT: &str = "This section changed after you removed this sentence, so it can't go back on its own. Edit the section to add it back.";
+const FIRST_UNDO: &str = "First undo the other sentences you removed from this section.";
+
+const ALPHA: &str = "Alpha comes first.";
+const BRAVO: &str = "Bravo comes second.";
+const CHARLIE: &str = "Charlie comes third.";
+const DELTA: &str = "Delta comes fourth.";
+const ECHO: &str = "Echo comes last.";
+
+fn five() -> String {
+    [ALPHA, BRAVO, CHARLIE, DELTA, ECHO].join(" ")
+}
+
+/// The first section reads as `five`, with a claim on each of the three
+/// sentences between the first and the last.
+async fn adjacent(course: &Course) -> Result<[ClaimId; 3]> {
+    let body = five();
+    set_body(course, 0, &body).await?;
+    let mut ids = Vec::new();
+    for (id, sentence) in [("bravo", BRAVO), ("charlie", CHARLIE), ("delta", DELTA)] {
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", sentence, &body);
+        ids.push(extract(course, id, location, sentence).await?);
+    }
+    Ok(ids.try_into().unwrap())
+}
+
+fn in_order(body: &str) -> bool {
+    let at: Vec<usize> = [ALPHA, BRAVO, CHARLIE, DELTA, ECHO]
+        .iter()
+        .filter_map(|sentence| body.find(sentence))
+        .collect();
+    at.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+#[tokio::test]
+async fn a_batch_undo_of_a_batch_remove_of_adjacent_statements_leaves_the_text_byte_for_byte_as_it_was(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    let before = stored(&course).await?;
+    let ids = vec![bravo.0.clone(), charlie.0.clone()];
+    let removed = act_many(
+        &course,
+        &ids,
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        [ALPHA, DELTA, ECHO].join(" ")
+    );
+
+    act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
+
+    assert_eq!(stored(&course).await?.blocks, before.blocks);
+    Ok(())
+}
+
+#[tokio::test]
+async fn adjacent_removals_undone_in_any_order_come_back_in_place_or_are_refused_until_the_ones_after_them_are_back(
+) -> Result<()> {
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let course = unchecked().await?;
+        let ids = adjacent(&course).await?;
+        for id in &ids {
+            act(&course, id, ClaimActionRequestDto::Remove).await?;
+        }
+        assert_eq!(stored(&course).await?.blocks[0], [ALPHA, ECHO].join(" "));
+
+        let mut waiting = order.to_vec();
+        while !waiting.is_empty() {
+            let mut refused_now = Vec::new();
+            for index in &waiting {
+                let before = stored(&course).await?;
+                match act(&course, &ids[*index], ClaimActionRequestDto::Undo).await {
+                    Ok(_) => {
+                        let body = stored(&course).await?.blocks[0].clone();
+                        assert!(in_order(&body), "{order:?}: {body}");
+                    }
+                    Err(error) => {
+                        assert!(error.to_string().contains(FIRST_UNDO), "{error}");
+                        assert_eq!(stored(&course).await?, before, "{order:?}");
+                        refused_now.push(*index);
+                    }
+                }
+            }
+            assert!(refused_now.len() < waiting.len(), "{order:?}: no progress");
+            waiting = refused_now;
+        }
+
+        assert_eq!(stored(&course).await?.blocks[0], five(), "{order:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_after_it_and_names_that_reason(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    act(&course, &bravo, ClaimActionRequestDto::Remove).await?;
+    act(
+        &course,
+        &charlie,
+        edit(CHARLIE, "Delta replaces the third."),
+    )
+    .await?;
+
+    let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    assert!(!error.to_string().contains(FIRST_UNDO), "{error}");
     Ok(())
 }

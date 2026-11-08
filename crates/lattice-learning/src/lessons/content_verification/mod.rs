@@ -60,7 +60,7 @@ mod learner_view;
 pub(crate) use learner_view::ClaimStates;
 mod portability;
 mod put_text;
-pub(crate) use put_text::{insert_sentence, remove_sentence};
+pub(crate) use put_text::{insert_sentence, put_place, remove_sentence, Placing};
 mod quote_claims;
 mod readings;
 mod resolution;
