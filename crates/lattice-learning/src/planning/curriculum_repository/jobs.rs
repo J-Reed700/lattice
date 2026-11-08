@@ -30,9 +30,12 @@ impl LearningCurriculumRepository {
         let scopes = job_scopes(&mut *connection, program_id).await?;
         let mut jobs = Vec::new();
         for kind in [LESSON_PREPARATION, QUIZ_BANK, QUIZ_GRADING] {
-            jobs.extend(JobStore::list_for_subject_in(&mut *connection, kind, program_id).await?);
+            let mut of_kind =
+                JobStore::list_for_subject_in(&mut *connection, kind, program_id).await?;
+            of_kind.reverse();
+            jobs.extend(of_kind);
         }
-        jobs.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+        jobs.sort_by_key(|job| job.created_at);
         jobs.into_iter()
             .filter_map(|job| {
                 let scope = scopes.get(&job.id)?.clone();
@@ -92,9 +95,43 @@ impl LearningCurriculumRepository {
     /// The caller dispatches them.
     pub async fn start_module_jobs(
         &self,
-        _request: &StartLearningModuleJobsRequestDto,
+        request: &StartLearningModuleJobsRequestDto,
     ) -> Result<Vec<LearningGenerationJob>> {
-        Err(AppError::InvalidState("not built".into()))
+        validate_operation_id(&request.operation_id)?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let lessons: Vec<String> = sqlx::query_scalar(
+            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' AND NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped')) ORDER BY m.ordinal,l.ordinal",
+        )
+        .bind(&request.program_id)
+        .bind(&request.module_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?;
+        if lessons.is_empty() {
+            check_program_open(&mut tx, &request.program_id, request.expected_revision).await?;
+        }
+        let mut ids = Vec::new();
+        for lesson in &lessons {
+            let single = StartLearningGenerationJobRequestDto {
+                operation_id: stable_job_operation_id(
+                    &request.program_id,
+                    &format!("{}:{lesson}", request.operation_id),
+                    request.expected_revision,
+                ),
+                program_id: request.program_id.clone(),
+                expected_revision: request.expected_revision,
+                kind: LearningGenerationJobKind::LessonPreparation,
+                request_json: serde_json::json!({ "lessonIds": [lesson] }).to_string(),
+                progress_total: 1,
+            };
+            ids.push(Self::admit_job(&mut tx, &single).await?);
+        }
+        tx.commit().await.map_err(db)?;
+        let mut jobs = Vec::new();
+        for id in &ids {
+            jobs.push(self.job(id).await?);
+        }
+        Ok(jobs)
     }
 
     /// Saves a lesson job for the runtime to run. The caller dispatches it.
@@ -102,6 +139,18 @@ impl LearningCurriculumRepository {
         &self,
         request: &StartLearningGenerationJobRequestDto,
     ) -> Result<LearningGenerationJob> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let id = Self::admit_job(&mut tx, request).await?;
+        tx.commit().await.map_err(db)?;
+        self.job(&id).await
+    }
+
+    /// The checks, dedupe and rows of one lesson job inside the caller's
+    /// transaction; returns the new job's id or the existing one's.
+    async fn admit_job(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        request: &StartLearningGenerationJobRequestDto,
+    ) -> Result<String> {
         validate_operation_id(&request.operation_id)?;
         if !(1..=3).contains(&request.progress_total) {
             return Err(AppError::InvalidInput(
@@ -148,7 +197,6 @@ impl LearningCurriculumRepository {
         }
         let digest = hash(&parsed)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let operation = curriculum_operation(
             &request.operation_id,
             &request.program_id,
@@ -156,28 +204,13 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different job data.",
         );
-        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
-            tx.commit().await.map_err(db)?;
-            return self.job(&id).await;
+        if let Some(id) = operation.replay::<String, _>(&mut **tx).await? {
+            return Ok(id);
         }
-        let program = sqlx::query(
-            "SELECT revision,status,content_revision FROM learning_programs WHERE id=?",
-        )
-        .bind(&request.program_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
-        if program.get::<i64, _>("revision") != request.expected_revision
-            || program.get::<String, _>("status") != "active"
-        {
-            return Err(AppError::InvalidState(
-                "Program changed or is not active; reload and retry.".into(),
-            ));
-        }
-        let content_revision: i64 = program.get("content_revision");
-        let next_lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.preparation='outline' AND l.completed=0 ORDER BY m.ordinal,l.ordinal")
-            .bind(&request.program_id).fetch_all(&mut *tx).await.map_err(db)?;
+        let content_revision =
+            check_program_open(tx, &request.program_id, request.expected_revision).await?;
+        let next_lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' ORDER BY m.ordinal,l.ordinal")
+            .bind(&request.program_id).fetch_all(&mut **tx).await.map_err(db)?;
         if (lesson_ids.len() == 1
             && lesson_ids
                 .first()
@@ -192,9 +225,9 @@ impl LearningCurriculumRepository {
         }
         // A new UI revision or operation ID must not create duplicate work for
         // a lesson already queued against the same teaching inputs.
-        let scopes = job_scopes(&mut tx, &request.program_id).await?;
+        let scopes = job_scopes(&mut **tx, &request.program_id).await?;
         let mut active =
-            JobStore::list_for_subject_in(&mut tx, LESSON_PREPARATION, &request.program_id)
+            JobStore::list_for_subject_in(&mut **tx, LESSON_PREPARATION, &request.program_id)
                 .await?
                 .into_iter()
                 .filter(|job| {
@@ -230,12 +263,11 @@ impl LearningCurriculumRepository {
                     "A selected lesson already has preparation in progress. Let that job finish or cancel it before starting an overlapping batch.".into(),
                 ));
             }
-            operation.record(&mut *tx, &existing.id).await?;
-            tx.commit().await.map_err(db)?;
-            return self.job(&existing.id).await;
+            operation.record(&mut **tx, &existing.id).await?;
+            return Ok(existing.id);
         }
         let admitted = JobStore::submit_in(
-            &mut tx,
+            &mut **tx,
             &NewJob {
                 kind: LESSON_PREPARATION.into(),
                 subject_id: Some(request.program_id.clone()),
@@ -250,11 +282,10 @@ impl LearningCurriculumRepository {
         if admitted.created {
             sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) VALUES(?,?,?,?)")
                 .bind(&admitted.id).bind(&request.program_id).bind(request.expected_revision).bind(content_revision)
-                .execute(&mut *tx).await.map_err(db)?;
+                .execute(&mut **tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &admitted.id).await?;
-        tx.commit().await.map_err(db)?;
-        self.job(&admitted.id).await
+        operation.record(&mut **tx, &admitted.id).await?;
+        Ok(admitted.id)
     }
 
     /// Commits the cancellation. The caller then signals the running worker.
@@ -404,6 +435,29 @@ impl LearningCurriculumRepository {
     }
 }
 
+/// The outline revision of a program that is active at `expected_revision`.
+async fn check_program_open(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    program_id: &str,
+    expected_revision: i64,
+) -> Result<i64> {
+    let program =
+        sqlx::query("SELECT revision,status,content_revision FROM learning_programs WHERE id=?")
+            .bind(program_id)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
+    if program.get::<i64, _>("revision") != expected_revision
+        || program.get::<String, _>("status") != "active"
+    {
+        return Err(AppError::InvalidState(
+            "Program changed or is not active; reload and retry.".into(),
+        ));
+    }
+    Ok(program.get("content_revision"))
+}
+
 /// What a job action does: the user's cancel, retry or resume (§6.2).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum JobAction {
@@ -534,7 +588,16 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
             .cause_code
             .and_then(|code| serde_json::from_value(serde_json::Value::String(code)).ok()),
         ended_by_update,
-        lesson_ids: Vec::new(),
+        lesson_ids: job
+            .requested
+            .get("lessonIds")
+            .and_then(serde_json::Value::as_array)
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(|id| id.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
         retry_of_job_id: job.retry_of_job_id,
         created_at: job.created_at,
         started_at: job.started_at,

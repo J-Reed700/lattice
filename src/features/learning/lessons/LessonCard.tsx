@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { ResizableColumns } from '@/components/ui/ResizableColumns';
 import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueries';
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
-import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
+import { useCancelLearningGenerationJob, useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { splitCheck } from '@/features/learning/lessons/active/checkReveal';
 import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
 import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
@@ -15,6 +15,7 @@ import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraf
 import { LessonSectionEditor } from '@/features/learning/lessons/edit/LessonSectionEditor';
 import { LessonEvidencePanel, LessonSectionEvidence, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
 import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
+import { preparationQueue, queuedLesson, queuedLine } from '@/features/learning/lessons/preparationQueue';
 import { claimsCount, claimsNeedYou, statementsNotVerified, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { currentPreparationJobs, isWaitingForYou, jobHoldingLesson, reviewHold, type ReviewHold } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
@@ -120,12 +121,17 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     claims: waiting ? claimsNeedYou(waiting) : 'Waiting for you',
     audit_stop: 'Waiting for the independent check', audit: 'Waiting for the independent check', resolved: 'Ready to resume',
   };
-  const preparingThis = lesson.preparation === 'outline' && activeJob?.activity?.lessonTitle === lesson.title;
+  const cancel = useCancelLearningGenerationJob();
+  const place = lesson.preparation === 'outline' ? queuedLesson(preparationQueue(jobs), lesson.id) : null;
+  const queuedThis = place?.job.status === 'pending' ? place : null;
+  const preparingThis = lesson.preparation === 'outline' && (place ? place.job.status === 'running' : activeJob?.activity?.lessonTitle === lesson.title);
+  const preparingJob = place?.job ?? activeJob;
   // The first that applies, as §4.4 orders them.
   const statusLabel = reviewState === 'stopped' ? 'Stopped with a cause to fix'
     : needsReview ? holdLabel[hold]
     : lesson.preparation === 'ready' ? ['Ready', teachingWaiting > 0 ? teachingNotesForYou(teachingWaiting) : null, notVerified > 0 ? statementsNotVerified(notVerified) : null].filter(Boolean).join(' · ')
-    : preparingThis ? preparingLine(activeJob?.activity)
+    : queuedThis ? queuedLine(queuedThis.ahead)
+    : preparingThis ? preparingLine(preparingJob?.activity)
     : 'Outline';
   const reviewable = Boolean(onReview) && (needsReview || teachingWaiting > 0 || notVerified > 0);
   const openReview = () => onReview?.(program.summary.id, lesson.id);
@@ -148,6 +154,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
           <ChevronDown size={13} className={`shrink-0 text-text-muted transition ${expanded ? 'rotate-180' : ''}`} />
         </button>
         <span className="studio-lesson-status">{needsReview && <ClipboardCheck size={12} aria-hidden="true" className="mr-1 inline" />}{statusLabel}</span>
+        {queuedThis && <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate({ operationId: crypto.randomUUID(), programId: program.summary.id, jobId: queuedThis.job.id, expectedRevision: program.summary.revision })} className="studio-lesson-review disabled:opacity-50">Cancel</button>}
         {reviewable && <button type="button" onClick={openReview} className="studio-lesson-review">Review</button>}
       </div>
       {expanded && <ResizableColumns id={bodyId} label="Lesson notes width" storageKey="lattice.studio.lesson-margin-width" className={`studio-lesson-body studio-lesson-layout ${hasMargin ? '' : 'without-margin'}`} sidebar={hasMargin ? (<aside className="studio-lesson-margin" aria-label={`Lesson outline and notes for ${lesson.title}`}><div className="studio-margin-sticky">
@@ -172,11 +179,11 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
             </div>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6">
-              <div><h4 className="font-medium text-text-primary">Ready when you are</h4><p className="mt-1 text-sm text-text-secondary">This prepares this lesson only. The accepted outline stays in place if preparation fails.</p></div>
-              <div className="flex flex-col items-start gap-1.5 sm:items-end">
-                <Button variant="outline" type="button" disabled={pending || program.summary.status !== 'active' || Boolean(waitsForIndex)} aria-describedby={heldByIndex ? indexWaitId : undefined} onClick={onPrepare} className="studio-button studio-button-primary disabled:opacity-50">{program.summary.status !== 'active' ? 'Accept the course to begin' : pending ? 'Preparing…' : 'Prepare lesson'}</Button>
+              <div><h4 className="font-medium text-text-primary">{queuedThis ? 'Waiting its turn' : 'Ready when you are'}</h4><p className="mt-1 text-sm text-text-secondary">{queuedThis ? 'It starts when the lessons ahead of it finish. Cancel it from the lesson list.' : 'This prepares this lesson only. The accepted outline stays in place if preparation fails.'}</p></div>
+              {!queuedThis && <div className="flex flex-col items-start gap-1.5 sm:items-end">
+                <Button variant="outline" type="button" disabled={pending || preparingThis || program.summary.status !== 'active' || Boolean(waitsForIndex)} aria-describedby={heldByIndex ? indexWaitId : undefined} onClick={onPrepare} className="studio-button studio-button-primary disabled:opacity-50">{program.summary.status !== 'active' ? 'Accept the course to begin' : pending || preparingThis ? 'Preparing…' : 'Prepare lesson'}</Button>
                 {heldByIndex && <p id={indexWaitId} className="text-xs tabular-nums text-text-secondary">{heldByIndex}</p>}
-              </div>
+              </div>}
             </div>
           ) : (
             <>
