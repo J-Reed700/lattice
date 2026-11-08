@@ -320,6 +320,15 @@ mod tests {
     }
 
     #[test]
+    fn a_quotation_finding_is_not_handed_the_part_s_quote_as_its_passage() {
+        let candidate = json!({"blocks":[{"title":"Sums","body":"Add.","quote":"The excerpt this whole section cites."}],"questions":[{"prompt":"What is 2+2?","quote":"The excerpt this question cites."}]});
+        for site in [FindingSite::Section(0), FindingSite::Question(0)] {
+            let finding = ReviewFinding::new(FindingKind::Quotation, Some(site), "x");
+            assert_eq!(unit(&candidate, &finding).passage, None, "{site:?}");
+        }
+    }
+
+    #[test]
     fn a_unit_s_hash_changes_with_its_text_only() {
         let candidate = json!({"blocks":[{"title":"Sums","body":"Add."},{"title":"Other","body":"B"}],"questions":[{"prompt":"What is 2+2?"}]});
         let finding = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(0)), "x");

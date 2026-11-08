@@ -41,6 +41,22 @@ describe('TeachingFindings', () => {
     expect(within(card).getByText('2 repairs tried and did not settle it.')).toBeVisible();
   });
 
+  it('says what the passage under a note is: the lesson, the quotation it cites or the question', () => {
+    show([
+      note(0),
+      note(1, { kind: 'quotation', passageRole: 'quotation', passage: 'The excerpt the sentence cites.' }),
+      note(2, { kind: 'answer_key', site: 'question', unitTitle: 'Question 1', passage: 'What is 2 + 2?' }),
+      note(3, { kind: 'quotation', passage: null }),
+    ]);
+    const card = (name: string) => screen.getByRole('article', { name });
+    expect(within(card('Section 1: Part 1: Teaching review')).getByText('In the lesson')).toBeVisible();
+    expect(within(card('Section 2: Part 2: Source quotation')).getByText('The quotation it cites')).toBeVisible();
+    expect(within(card('Question 1: Answer key')).getByText('The question')).toBeVisible();
+    const bare = card('Section 4: Part 4: Source quotation');
+    expect(within(bare).queryByText('In the lesson')).not.toBeInTheDocument();
+    expect(within(bare).queryByText('The quotation it cites')).not.toBeInTheDocument();
+  });
+
   it('never shows a note written for the model that repairs the lesson', () => {
     const finding = { ...note(0), note: 'Fix blocks[2]: add an entry to the citations of blocks[2] with the sourceIndex.' } as TeachingFindingDto;
     show([finding]);

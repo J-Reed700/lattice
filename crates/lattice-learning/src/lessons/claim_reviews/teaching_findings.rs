@@ -61,6 +61,16 @@ pub enum TeachingSettleDto {
     Reopen,
 }
 
+/// What the passage under a finding is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TeachingPassageRoleDto {
+    /// Text of the lesson, or a question's prompt.
+    Lesson,
+    /// The quotation of a source that a sentence or a part cites.
+    Quotation,
+}
+
 /// A teaching-review finding the repairs did not settle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +87,8 @@ pub struct TeachingFindingDto {
     pub summary: String,
     /// The passage the finding is about, when one was chosen.
     pub passage: Option<String>,
+    /// Whether the passage is the lesson's own text or a quotation it cites.
+    pub passage_role: TeachingPassageRoleDto,
     /// Repairs that tried to settle it.
     pub repairs: u32,
     pub state: TeachingFindingStateDto,
@@ -255,6 +267,7 @@ impl TeachingFindingsRepository {
                     unit_title: row.get("unit_title"),
                     summary,
                     passage,
+                    passage_role: TeachingPassageRoleDto::Lesson,
                     repairs: u32::try_from(row.get::<i64, _>("repairs")).unwrap_or_default(),
                     state: if row.get::<String, _>("state") == "kept" {
                         TeachingFindingStateDto::Kept

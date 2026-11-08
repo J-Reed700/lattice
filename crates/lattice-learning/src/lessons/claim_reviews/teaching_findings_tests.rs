@@ -543,6 +543,28 @@ async fn summary_of(store: &TeachingFindingsRepository, key: &str) -> String {
         .summary
 }
 
+async fn dto_of(store: &TeachingFindingsRepository, key: &str) -> TeachingFindingDto {
+    store
+        .list("l1")
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|finding| finding.finding_key == key)
+        .unwrap()
+}
+
+async fn section_text(store: &TeachingFindingsRepository, ordinal: i64, body: &str) {
+    sqlx::query(
+        "INSERT INTO learning_blocks (lesson_id, ordinal, kind, title, body, source_ids_json) \
+         VALUES ('l1', ?, 'explanation', 'Sums', ?, '[]')",
+    )
+    .bind(ordinal)
+    .bind(body)
+    .execute(&store.pool)
+    .await
+    .unwrap();
+}
+
 const LONG: &str = "The default timeout for every outgoing request in the client library is 30 seconds unless the caller sets another value.";
 
 fn uncited(shown: &str) -> String {
@@ -563,7 +585,8 @@ async fn an_old_row_for_a_missing_citation_gets_its_sentence_in_full() {
         summary_of(&store, &short).await,
         "No source is cited for this sentence: \u{201c}The default timeout is 30 seconds.\u{201d}"
     );
-    // The note cut the sentence at 90 characters; the passage holds all of it.
+    // The note cut the sentence at 90 characters. The stored passage is the
+    // quote the section cites, not the sentence, so the sentence is left out.
     let cut: String = LONG.chars().take(90).collect();
     let long = old_row(
         &store,
@@ -574,7 +597,7 @@ async fn an_old_row_for_a_missing_citation_gets_its_sentence_in_full() {
     .await;
     assert_eq!(
         summary_of(&store, &long).await,
-        format!("No source is cited for this sentence: \u{201c}{LONG}\u{201d}")
+        "No source is cited for this sentence."
     );
 }
 
@@ -611,11 +634,12 @@ async fn an_old_row_leaves_the_sentence_out_rather_than_cut_it() {
     let cut: String = LONG.chars().take(90).collect();
     // Two sentences start with the cut-off text, so which one is not known.
     let other = format!("{cut} and nothing else.");
+    section_text(&store, 0, &format!("{LONG} {other}")).await;
     let ambiguous = old_row(
         &store,
         ("quotation", "section", Some(0)),
         &uncited(&cut),
-        Some(&format!("{LONG} {other}")),
+        None,
     )
     .await;
     assert_eq!(
@@ -651,11 +675,12 @@ async fn an_old_row_for_a_quote_that_lacks_a_figure_says_what_it_lacks() {
 async fn an_old_row_for_a_sentence_citation_and_for_a_part_citation_is_rebuilt() {
     let store = TeachingFindingsRepository::new(pool().await);
     let cut: String = LONG.chars().take(80).collect();
+    section_text(&store, 2, &format!("Before it. {LONG} After it.")).await;
     let sentence = old_row(
         &store,
         ("quotation", "section", Some(2)),
         &format!("The source citation of the sentence \"{cut}\" could not be confirmed: The generated quotation does not match a valid passage in the saved reference. No material was published."),
-        Some(LONG),
+        Some("A quotation of the source."),
     )
     .await;
     assert_eq!(
@@ -760,4 +785,113 @@ async fn an_old_row_no_format_matches_gets_the_plain_line_for_its_kind() {
             "A quotation here could not be matched to a saved source.",
         ]
     );
+}
+
+#[tokio::test]
+async fn a_quotation_finding_lists_its_quote_as_a_quotation_and_the_rest_as_the_lesson() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    let mut quote = set_aside(
+        FindingKind::Quotation,
+        FindingSite::Section(1),
+        "Section 2 cites a quote.",
+        0,
+    );
+    quote.finding.passage = Some("A quotation of the source.".into());
+    let bare = set_aside(
+        FindingKind::Quotation,
+        FindingSite::Question(0),
+        "Question 1 cites nothing.",
+        0,
+    );
+    store
+        .record(
+            "l1",
+            "j1",
+            &lesson(),
+            &[example_finding(), quote, bare],
+            true,
+        )
+        .await
+        .unwrap();
+    let teaching = dto_of(&store, "teaching:section-0").await;
+    assert_eq!(teaching.passage_role, TeachingPassageRoleDto::Lesson);
+    let quote = dto_of(&store, "quotation:section-1").await;
+    assert_eq!(quote.passage.as_deref(), Some("A quotation of the source."));
+    assert_eq!(quote.passage_role, TeachingPassageRoleDto::Quotation);
+    // The part's own quote is not borrowed for a finding that cites none.
+    let bare = dto_of(&store, "quotation:question-0").await;
+    assert_eq!(bare.passage, None);
+    // A question's prompt is the lesson's text.
+    let key = set_aside(
+        FindingKind::AnswerKey,
+        FindingSite::Question(0),
+        "Question 1 has a disputed key.",
+        1,
+    );
+    store
+        .record("l1", "j2", &lesson(), &[key], false)
+        .await
+        .unwrap();
+    let key = dto_of(&store, "answer_key:question-0").await;
+    assert_eq!(key.passage.as_deref(), Some("What is 2 + 2?"));
+    assert_eq!(key.passage_role, TeachingPassageRoleDto::Lesson);
+}
+
+#[tokio::test]
+async fn an_old_sentence_level_quotation_row_shows_no_passage_and_a_part_level_one_keeps_it() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    let cut: String = LONG.chars().take(90).collect();
+    let reason = "The generated quotation does not match a valid passage in the saved reference. No material was published.";
+    let rows = [
+        (
+            ("quotation", "section", Some(0)),
+            uncited("The default timeout is 30 seconds."),
+        ),
+        (
+            ("quotation", "section", Some(1)),
+            format!("Section 2 (candidate blocks-1): the quote cited for \"{cut}\" does not contain 30. Cite a quote of a supplied excerpt that does, in an entry of the citations of /blocks/1, or write the general form when no excerpt states it."),
+        ),
+        (
+            ("quotation", "section", Some(2)),
+            format!("The source citation of the sentence \"{cut}\" could not be confirmed: {reason}"),
+        ),
+        (
+            ("quotation", "section", Some(3)),
+            "Fix the schema violation at /blocks/3/quote: it is too long.".to_owned(),
+        ),
+    ];
+    let mut sentence_level = Vec::new();
+    for (place, note) in &rows {
+        sentence_level
+            .push(old_row(&store, *place, note, Some("The quote the section cites.")).await);
+    }
+    for key in &sentence_level {
+        assert_eq!(dto_of(&store, key).await.passage, None, "{key}");
+    }
+    let part = old_row(
+        &store,
+        ("quotation", "section", Some(4)),
+        &format!("The source citation at blocks[4] could not be confirmed: {reason}"),
+        Some("The quote the section cites."),
+    )
+    .await;
+    let part = dto_of(&store, &part).await;
+    assert_eq!(
+        part.passage.as_deref(),
+        Some("The quote the section cites.")
+    );
+    assert_eq!(part.passage_role, TeachingPassageRoleDto::Quotation);
+    let critique = old_row(
+        &store,
+        ("teaching", "section", Some(5)),
+        "Section 6 (candidate blocks-5): The example is wrong.",
+        Some("The sentence the reviewer chose."),
+    )
+    .await;
+    let critique = dto_of(&store, &critique).await;
+    assert_eq!(
+        critique.passage.as_deref(),
+        Some("The sentence the reviewer chose.")
+    );
+    assert_eq!(critique.passage_role, TeachingPassageRoleDto::Lesson);
 }

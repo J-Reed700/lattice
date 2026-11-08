@@ -537,6 +537,39 @@ fn a_gap_is_summarised_with_every_statement_whole() {
     assert_eq!(findings.len(), 1);
     assert_eq!(
         findings[0].summary,
-        format!("These statements were never checked against a source: \u{201c}{long}\u{201d}, \u{201c}It is slow.\u{201d}.")
+        format!("Some statements here were never checked against a source. The checker read them as: \u{201c}{long}\u{201d}, \u{201c}It is slow.\u{201d}.")
+    );
+}
+
+#[test]
+fn one_gap_says_the_checker_read_it_that_way() {
+    let lesson = PreparedLearningLesson {
+        blocks: vec![LearningBlockDto {
+            kind: LearningBlockKind::Explanation,
+            title: "CSV header names".into(),
+            body: GOOD.into(),
+            rubric: vec![],
+            source_ids: vec![],
+        }],
+        questions: vec![],
+        keys: vec![],
+        verification: None,
+    };
+    let mut report = attest("lesson", &lesson);
+    report.coverage_audit = vec![CoverageUnit {
+        index: 0,
+        complete: false,
+        reason: "gaps".into(),
+        missing_assertions: vec![MissingAssertion {
+            passage_id: "unit-0-passage-0".into(),
+            statement: "It is slow.".into(),
+        }],
+    }];
+
+    let findings = report.coverage_findings(1);
+
+    assert_eq!(
+        findings[0].summary,
+        "A statement here was never checked against a source. The checker read it as: \u{201c}It is slow.\u{201d}."
     );
 }

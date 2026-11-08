@@ -938,6 +938,19 @@ mod tests {
     }
 
     #[test]
+    fn a_quotation_that_matches_no_saved_reference_shows_the_quote_that_failed() {
+        let found = quotation_findings(&[
+            json!({"path":"blocks[2]","quote":"A span the source does not hold.","error":"it was not found."}),
+            json!({"path":"questions[0]","quote":"","error":"it was not found."}),
+        ]);
+        let passages: Vec<_> = found
+            .iter()
+            .map(|finding| finding.passage.as_deref())
+            .collect();
+        assert_eq!(passages, [Some("A span the source does not hold."), None]);
+    }
+
+    #[test]
     fn a_quotation_that_matches_no_saved_reference_is_named_by_its_part() {
         let found = quotation_findings(&[
             json!({"path":"blocks[2]","error":"it was not found."}),

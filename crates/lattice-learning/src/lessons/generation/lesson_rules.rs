@@ -609,6 +609,7 @@ mod tests {
             findings[0].summary,
             format!("No source is cited for this sentence: \u{201c}{LONG_SENTENCE}\u{201d}")
         );
+        assert_eq!(findings[0].passage, None);
     }
 
     #[test]
@@ -625,6 +626,10 @@ mod tests {
         assert_eq!(
             findings[0].summary,
             format!("The quotation cited for this sentence does not contain 30: \u{201c}{LONG_SENTENCE}\u{201d}")
+        );
+        assert_eq!(
+            findings[0].passage.as_deref(),
+            Some("A timeout applies to each request, in seconds.")
         );
     }
 
