@@ -1,7 +1,8 @@
 name: CI
 
-# Never merges. Builds a Windows installer of #366's head for a click-through:
-# Lattice Preview, with its own identifier, exe name, library folder and log folder.
+# Never merges. Builds two Windows installers of #366's head, each a separate app with
+# its own identifier, exe name and home folder: Lattice Preview for a click-through,
+# and Lattice Test, built with the e2e build's WebDriver plugin for scripted runs.
 on:
   pull_request:
 
@@ -14,9 +15,23 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  preview-installer:
-    name: Lattice Preview installer
+  installer:
+    name: ${{ matrix.product }} installer
     runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: Lattice Preview
+            identifier: tech.lattice.preview
+            exe: lattice-preview
+            home: .lattice-preview
+            features: ''
+          - product: Lattice Test
+            identifier: tech.lattice.test
+            exe: lattice-test
+            home: .lattice-test
+            features: desktop-e2e
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,11 +93,13 @@ jobs:
             if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
           }
       # The library, its default vault and its logs all follow this home.
-      - name: Give the preview a library folder of its own
+      - name: Give the build a home folder of its own
         shell: bash
+        env:
+          HOME_FOLDER: ${{ matrix.home }}
         run: |
           python - <<'PYCODE'
-          import pathlib, re
+          import os, pathlib, re
           path = pathlib.Path("crates/lattice-core/src/shared/fs/roots.rs")
           text = path.read_bytes().decode("utf-8")
           pattern = re.compile(
@@ -92,23 +109,45 @@ jobs:
               r"\.map\(PathBuf::from\))"
           )
           newline = "\r\n" if "\r\n" in text else "\n"
-          fallback = newline + '        .or_else(|| dirs::home_dir().map(|home| home.join(".lattice-preview")))'
+          home = os.environ["HOME_FOLDER"]
+          fallback = newline + f'        .or_else(|| dirs::home_dir().map(|home| home.join("{home}")))'
           text, count = pattern.subn(lambda match: match.group(1) + fallback, text)
           if count != 1:
-              raise SystemExit(f"Expected lattice_home_override once, found {count}: the preview would use the real library")
+              raise SystemExit(f"Expected lattice_home_override once, found {count}: the build would use the real library")
           path.write_bytes(text.encode("utf-8"))
           PYCODE
           git diff -- crates/lattice-core/src/shared/fs/roots.rs
+      - name: Write the build's Tauri config
+        shell: bash
+        env:
+          IDENTIFIER: ${{ matrix.identifier }}
+          PRODUCT: ${{ matrix.product }}
+          EXE: ${{ matrix.exe }}
+          FEATURES: ${{ matrix.features }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, pathlib
+          config = {"identifier": os.environ["IDENTIFIER"], "productName": os.environ["PRODUCT"], "mainBinaryName": os.environ["EXE"]}
+          # The WebDriver plugin needs the e2e build's global Tauri object and capability.
+          if "desktop-e2e" in os.environ["FEATURES"].split(","):
+              e2e = json.loads(pathlib.Path("crates/lattice-desktop/tauri.e2e.conf.json").read_text(encoding="utf-8"))
+              config["app"] = e2e["app"]
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "build.json"
+          out.write_text(json.dumps(config, indent=2), encoding="utf-8")
+          print(out.read_text(encoding="utf-8"))
+          PYCODE
       - name: Build the installer
         shell: bash
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}\target\desktop-e2e
+          FEATURES: ${{ matrix.features }}
         run: |
-          printf '%s' '{"identifier":"tech.lattice.preview","productName":"Lattice Preview","mainBinaryName":"lattice-preview"}' > "$RUNNER_TEMP/preview.json"
-          npx tauri build --ci --config "$RUNNER_TEMP/preview.json" --bundles nsis
+          features=()
+          [ -z "$FEATURES" ] || features=(--features "$FEATURES")
+          npx tauri build --ci "${features[@]}" --config "$RUNNER_TEMP/build.json" --bundles nsis
       - uses: actions/upload-artifact@v4
         with:
-          name: lattice-preview-8173b4081
+          name: ${{ matrix.exe }}-8173b4081
           path: target/desktop-e2e/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
