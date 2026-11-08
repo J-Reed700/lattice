@@ -87,7 +87,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust-check
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && runner.os != 'macOS' }}
           cache-on-failure: true
 
       # Debug builds accept empty sidecars; the sidecar-binaries job checks
@@ -426,3 +426,42 @@ jobs:
             e2e-results/artifacts/
           if-no-files-found: warn
           retention-days: 14
+
+  # Main's caches sit at the 10 GB limit; PR caches and superseded main caches evicted the useful ones.
+  prune-caches:
+    name: prune caches
+    needs: [rust-check, desktop-compatibility, repository-barrier, dependency-audit, frontend]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete pull request caches and superseded main caches
+        shell: bash
+        run: |
+          gh cache list --limit 1000 --json id,key,ref,createdAt,sizeInBytes > caches.json
+          python3 - <<'PYCODE'
+          import json, subprocess
+          caches = json.load(open('caches.json'))
+          doomed = [c for c in caches if c['ref'].startswith('refs/pull/')]
+          groups = {}
+          for c in caches:
+              if c['ref'] == 'refs/heads/main':
+                  groups.setdefault(c['key'].rsplit('-', 1)[0], []).append(c)
+          for group in groups.values():
+              group.sort(key=lambda c: c['createdAt'], reverse=True)
+              doomed.extend(group[1:])
+          gone = set()
+          for c in doomed:
+              result = subprocess.run(['gh', 'cache', 'delete', str(c['id'])], capture_output=True, text=True)
+              if result.returncode == 0:
+                  gone.add(c['id'])
+                  print(f"deleted {c['key']} ({c['ref']}) {c['sizeInBytes'] / 1e6:.0f} MB")
+              else:
+                  print(f"::warning::could not delete {c['key']}: {result.stderr.strip()}")
+          kept = sum(c['sizeInBytes'] for c in caches if c['id'] not in gone)
+          print(f"kept {kept / 1e6:.0f} MB")
+          PYCODE
