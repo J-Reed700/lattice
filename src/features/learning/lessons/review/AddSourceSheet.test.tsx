@@ -96,6 +96,20 @@ describe('Add a source', () => {
     await waitFor(() => expect(onAdded).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ line: 'Added Monarch Watch; it states this. 32 left.', stated: true }), ['claim-1']));
   });
 
+  it('shows the whole statement being checked, with the full line as its title', async () => {
+    const user = userEvent.setup();
+    sheet({ level: 'claim', claimIds: ['claim-1'] });
+    const run = pendingAttach();
+    await user.type(screen.getByLabelText('Page address'), URL_);
+    await user.click(screen.getByRole('button', { name: 'Add and check' }));
+    const statement = `Monarchs that hatch late in the season migrate up to 3,000 miles ${'to the mountains of central Mexico '.repeat(2)}and overwinter there.`;
+    expect(statement.length).toBeGreaterThan(80);
+    await run.progress({ stage: 'checking', done: 0, total: 1, statement });
+    const line = screen.getByText(`Checking statement 1 of 1: ${statement}`);
+    expect(line).toBeVisible();
+    expect(line).toHaveAttribute('title', `Checking statement 1 of 1: ${statement}`);
+  });
+
   it('adds one page for a whole group and sums the result', async () => {
     const user = userEvent.setup();
     const ids = Array.from({ length: 15 }, (_, index) => `claim-${index + 1}`);

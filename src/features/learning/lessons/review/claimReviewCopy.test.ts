@@ -295,7 +295,7 @@ describe('adding a source', () => {
     expect(progressLine({ stage: 'saving' })).toBe('Saving it to your sources');
     expect(progressLine({ stage: 'done' })).toBe('Done');
     expect(progressLine({ stage: 'checking', done: 1, total: 4, statement: 'Short.' })).toBe('Checking statement 2 of 4: Short.');
-    expect(progressLine({ stage: 'checking', done: 9, total: 4, statement: 'x'.repeat(100) })).toBe(`Checking statement 4 of 4: ${'x'.repeat(79)}…`);
+    expect(progressLine({ stage: 'checking', done: 9, total: 4, statement: 'x'.repeat(100) })).toBe(`Checking statement 4 of 4: ${'x'.repeat(100)}`);
   });
 
   it('explains each failure in one sentence, naming the host when known', () => {
