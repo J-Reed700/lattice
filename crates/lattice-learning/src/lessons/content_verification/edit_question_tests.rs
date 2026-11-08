@@ -114,6 +114,7 @@ fn bank_item(outcome: &str, text: &QuestionText) -> BankItem {
         source_quote: String::new(),
         lesson_id: None,
         origin: "lesson",
+        review_status: "agreed",
     }
 }
 
