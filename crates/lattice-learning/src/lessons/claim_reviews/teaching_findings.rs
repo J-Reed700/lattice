@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
-use super::teaching_summary::{derive, Stored};
+use super::teaching_summary::{derive, passage_shown, Stored};
 use crate::persistence::{db, now};
 use crate::review_findings::{site_sha256, unit, FindingKey, FindingKind, FindingSite, SetAside};
 
@@ -236,22 +236,27 @@ impl TeachingFindingsRepository {
                     .ok_or_else(corrupt)?;
                 let kind =
                     FindingKind::from_column(&row.get::<String, _>("kind")).ok_or_else(corrupt)?;
-                let passage: Option<String> = row.get("passage");
+                let mut passage: Option<String> = row.get("passage");
                 let summary = match row
                     .get::<Option<String>, _>("summary")
                     .filter(|summary| !summary.is_empty())
                 {
                     Some(summary) => summary,
-                    None => derive(&Stored {
-                        kind,
-                        site,
-                        note: &row.get::<String, _>("note"),
-                        passage: passage.as_deref(),
-                        section: match site {
-                            FindingSite::Section(index) => sections.get(&index).map(String::as_str),
-                            _ => None,
-                        },
-                    }),
+                    None => {
+                        let note = row.get::<String, _>("note");
+                        passage = passage_shown(kind, &note, passage);
+                        derive(&Stored {
+                            kind,
+                            site,
+                            note: &note,
+                            section: match site {
+                                FindingSite::Section(index) => {
+                                    sections.get(&index).map(String::as_str)
+                                }
+                                _ => None,
+                            },
+                        })
+                    }
                 };
                 Ok(TeachingFindingDto {
                     finding_key: row.get("finding_key"),
@@ -267,7 +272,11 @@ impl TeachingFindingsRepository {
                     unit_title: row.get("unit_title"),
                     summary,
                     passage,
-                    passage_role: TeachingPassageRoleDto::Lesson,
+                    passage_role: if kind == FindingKind::Quotation {
+                        TeachingPassageRoleDto::Quotation
+                    } else {
+                        TeachingPassageRoleDto::Lesson
+                    },
                     repairs: u32::try_from(row.get::<i64, _>("repairs")).unwrap_or_default(),
                     state: if row.get::<String, _>("state") == "kept" {
                         TeachingFindingStateDto::Kept

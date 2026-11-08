@@ -658,7 +658,8 @@ fn cite_sentences(
                             "The source citation of the sentence \"{shown}\" could not be confirmed: {message}"
                         ),
                     )
-                    .with_summary(summary),
+                    .with_summary(summary)
+                    .with_passage(&cited.quote),
                 );
             }
             Err(other) => return Err(other),
@@ -695,7 +696,8 @@ fn citation(
         .with_summary(format!(
             "The quotation cited in {} could not be found in its source.",
             plain_part(site)
-        )),
+        ))
+        .with_passage(quote),
     );
     if sources.is_empty() {
         return Ok(Vec::new());

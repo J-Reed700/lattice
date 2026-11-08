@@ -114,6 +114,13 @@ impl ReviewFinding {
         self
     }
 
+    /// This finding with `passage` as the passage it is about; none when
+    /// `passage` is blank.
+    pub fn with_passage(mut self, passage: &str) -> Self {
+        self.passage = (!passage.trim().is_empty()).then(|| passage.to_owned());
+        self
+    }
+
     pub fn key(&self) -> FindingKey {
         FindingKey {
             kind: self.kind,
@@ -213,9 +220,7 @@ pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {
                     |title| format!("Section {}: {title}", index + 1),
                 ),
                 sha256,
-                passage: (finding.kind == FindingKind::Quotation)
-                    .then(|| text(block, "quote"))
-                    .flatten(),
+                passage: None,
             }
         }
         FindingSite::Question(index) => {
@@ -224,7 +229,7 @@ pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {
                 title: format!("Question {}", index + 1),
                 sha256,
                 passage: if finding.kind == FindingKind::Quotation {
-                    text(question, "quote")
+                    None
                 } else {
                     text(question, "prompt")
                 },

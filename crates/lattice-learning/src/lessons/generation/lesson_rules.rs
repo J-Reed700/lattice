@@ -73,8 +73,10 @@ fn structure(site: FindingSite, summary: String, note: String) -> ReviewFinding 
 
 /// A citation a part lacks. Not structure: it does not hold up the content
 /// review, and the repair that follows settles it by appending the citation.
-fn citation(site: FindingSite, summary: String, note: String) -> ReviewFinding {
-    ReviewFinding::new(FindingKind::Quotation, Some(site), note).with_summary(summary)
+fn citation(site: FindingSite, summary: String, note: String, quote: &str) -> ReviewFinding {
+    ReviewFinding::new(FindingKind::Quotation, Some(site), note)
+        .with_summary(summary)
+        .with_passage(quote)
 }
 
 /// "2 checks", "1 contrast": `count` of `noun`, in the plural unless it is one.
@@ -198,16 +200,16 @@ fn uncited_specifics(
                 .cloned()
                 .collect()
         };
-        let (summary, note) = if quotes.is_empty() {
+        let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
             let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.");
-            (summary, note)
+            (summary, note, "")
         } else {
-            let missing = quotes
+            let (missing, quote) = quotes
                 .iter()
-                .map(|quote| lacking(quote))
-                .min_by_key(Vec::len)
+                .map(|quote| (lacking(quote), *quote))
+                .min_by_key(|(missing, _)| missing.len())
                 .unwrap_or_default();
             if missing.is_empty() {
                 continue;
@@ -217,9 +219,9 @@ fn uncited_specifics(
                 join_plain(&missing)
             );
             let note = format!("{label}: the quote cited for \"{shown}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
-            (summary, note)
+            (summary, note, quote)
         };
-        findings.push(citation(site, summary, note));
+        findings.push(citation(site, summary, note, quote));
     }
 }
 

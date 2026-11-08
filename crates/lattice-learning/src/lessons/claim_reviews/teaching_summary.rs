@@ -11,12 +11,30 @@ const CITED_CUT: usize = 80;
 
 const AUDIT_NOTE: &str = "The claim audit found assertions here that were not extracted for checking, so no source has confirmed them: ";
 
+/// Whether a note is about a part's own quotation, not a sentence's.
+fn names_a_part(note: &str) -> bool {
+    note.starts_with("The source citation at ") || note.starts_with("The source quotation at ")
+}
+
+/// What the passage of a finding with no summary is. Before findings had a
+/// summary a quotation finding on a section was given the section's quote:
+/// the citation in question for a part, the wrong text for a sentence.
+pub(crate) fn passage_shown(
+    kind: FindingKind,
+    note: &str,
+    stored: Option<String>,
+) -> Option<String> {
+    match kind {
+        FindingKind::Quotation if !names_a_part(note) => None,
+        _ => stored,
+    }
+}
+
 /// A stored finding with no summary, and the text it is about.
 pub(crate) struct Stored<'a> {
     pub kind: FindingKind,
     pub site: FindingSite,
     pub note: &'a str,
-    pub passage: Option<&'a str>,
     /// The published section the finding is about, for a section's finding.
     pub section: Option<&'a str>,
 }
@@ -58,12 +76,7 @@ fn whole_sentence(shown: &str, cut: usize, row: &Stored) -> Option<String> {
         return Some(shown.to_owned());
     }
     let mut found: Vec<String> = Vec::new();
-    for sentence in row
-        .passage
-        .into_iter()
-        .chain(row.section)
-        .flat_map(prose_sentences)
-    {
+    for sentence in row.section.into_iter().flat_map(prose_sentences) {
         if sentence.starts_with(shown) && !found.contains(&sentence) {
             found.push(sentence);
         }
@@ -113,22 +126,23 @@ fn quotation(row: &Stored) -> Option<String> {
             whole_sentence(shown, CITED_CUT, row),
         ));
     }
-    (note.starts_with("The source citation at ") || note.starts_with("The source quotation at "))
-        .then(|| {
-            format!(
-                "The quotation cited in {} could not be found in its source.",
-                plain_part(row.site)
-            )
-        })
+    names_a_part(note).then(|| {
+        format!(
+            "The quotation cited in {} could not be found in its source.",
+            plain_part(row.site)
+        )
+    })
 }
 
 fn teaching(note: &str) -> Option<String> {
     if let Some(list) = note.strip_prefix(AUDIT_NOTE) {
         let statements: Vec<String> = list.split("; ").map(quoted).collect();
         return Some(match statements.as_slice() {
-            [only] => format!("This statement was never checked against a source: {only}."),
+            [only] => format!(
+                "A statement here was never checked against a source. The checker read it as: {only}."
+            ),
             _ => format!(
-                "These statements were never checked against a source: {}.",
+                "Some statements here were never checked against a source. The checker read them as: {}.",
                 statements.join(", ")
             ),
         });

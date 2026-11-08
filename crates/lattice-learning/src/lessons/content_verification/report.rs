@@ -170,9 +170,11 @@ impl LessonVerificationReport {
                     .map(|statement| format!("\u{201c}{statement}\u{201d}"))
                     .collect();
                 let summary = match quoted.as_slice() {
-                    [only] => format!("This statement was never checked against a source: {only}."),
+                    [only] => format!(
+                        "A statement here was never checked against a source. The checker read it as: {only}."
+                    ),
                     _ => format!(
-                        "These statements were never checked against a source: {}.",
+                        "Some statements here were never checked against a source. The checker read them as: {}.",
                         quoted.join(", ")
                     ),
                 };

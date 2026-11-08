@@ -207,6 +207,7 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
                 "The quotation cited in {} could not be found in its source.",
                 plain_part(site)
             ))
+            .with_passage(check["quote"].as_str().unwrap_or_default())
         })
         .collect()
 }
