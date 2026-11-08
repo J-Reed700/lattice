@@ -275,7 +275,7 @@ async fn retrieve_from_reads_one_source_version_only() -> Result<()> {
 
 #[tokio::test]
 async fn the_first_pace_counts_from_when_embedding_began() {
-    let ((), stages) = crate::features::learning::lesson_progress::staged(async {
+    let ((), stages) = crate::lesson_progress::staged(async {
         let mut indexing = IndexingStages::default();
         indexing.embedding(0, 64);
         std::thread::sleep(std::time::Duration::from_millis(200));
