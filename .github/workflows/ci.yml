@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 8173b40812a07dc76fd6e17558b2a5d174dce287
+          ref: 250a38d52f0d5db45dc3de828f2bc2e0de0a6319
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -143,7 +143,7 @@ jobs:
           npx tauri build --ci "${features[@]}" --config "$RUNNER_TEMP/build.json" --bundles nsis
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.exe }}-8173b4081
+          name: ${{ matrix.exe }}-250a38d52
           path: target/desktop-e2e/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
