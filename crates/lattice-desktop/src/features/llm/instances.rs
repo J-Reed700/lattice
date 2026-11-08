@@ -14,12 +14,11 @@ use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 
 use crate::features::llm::engine::factory::{CreatedLlm, LocalServerOptions, ServerFacts};
-use crate::features::llm::engine::sidecar_manager::{
-    resident_bytes_of, Admission, ServerBuffers, SidecarConfig,
-};
+use crate::features::llm::engine::sidecar_manager::{resident_bytes_of, Admission, SidecarConfig};
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::loading::LocalModel;
 use crate::infrastructure::ml::instance_pool::{Alive, InstancePool, Lease, Loaded};
+use lattice_core::domain::models::fit::ServerBuffers;
 
 mod admission;
 mod invalidation;

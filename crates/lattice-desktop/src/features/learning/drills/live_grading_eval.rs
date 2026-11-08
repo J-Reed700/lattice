@@ -10,8 +10,8 @@ use std::time::Instant;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    check_key, overlapping, validate, Assessment, Drill, DrillFile, Finding, FindingOutcome,
-    IssueOutcome, Material, Proof,
+    check_key, overlapping, pattern, validate, Assessment, Drill, DrillFile, Finding,
+    FindingOutcome, IssueOutcome, Material, Proof,
 };
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::shared::error::{AppError, Result};
@@ -53,6 +53,9 @@ struct Labels {
 
 /// The set of cases on code, and the one `LATTICE_DRILL_GRADING_SET` names for the live eval.
 const CODE_SET: &str = "drill_grading";
+
+/// The set of cases on code whose keys hold issues tied to a lesson's sentences.
+const LESSON_SET: &str = "drill_grading_lesson";
 
 fn grading_set() -> String {
     std::env::var("LATTICE_DRILL_GRADING_SET").unwrap_or_else(|_| CODE_SET.to_owned())
@@ -259,7 +262,7 @@ fn report(model: Value, graded: &[Graded]) -> Value {
 
 /// The model the live tests are configured for: the llama.cpp server `LATTICE_LLAMACPP_SETTINGS` describes or, with
 /// `LATTICE_USE_LEARNING_MODEL=1`, the Learning model those settings name, reached as the app reaches it.
-pub(in crate::features::learning::drills) async fn model() -> Result<Arc<dyn LLMPort>> {
+pub(in crate::features::learning::tests) async fn model() -> Result<Arc<dyn LLMPort>> {
     let path = std::env::var("LATTICE_LLAMACPP_SETTINGS").map_err(|_| {
         AppError::InvalidConfig(
             "Set LATTICE_LLAMACPP_SETTINGS to the settings file the live tests read.".into(),
@@ -587,6 +590,13 @@ fn shows_its_kind(case: &Case) -> bool {
             .filter(|outcome| matches!(outcome, FindingOutcome::Matches { issues } if issues.contains(&issue)))
             .count()
     };
+    // The labels of the issues tied to a lesson, with their positions in the key.
+    let linked = labels.issues.iter().enumerate().filter(|(issue, _)| {
+        case.drill
+            .key
+            .get(*issue)
+            .is_some_and(|key| key.lesson.is_some())
+    });
     match case.kind.as_str() {
         "find" => labels.issues.iter().any(|outcome| matches!(outcome, IssueOutcome::Found { .. })),
         "wrong_reason" | "vague" => labels.issues.iter().any(|outcome| matches!(outcome, IssueOutcome::HalfFound { .. })),
@@ -605,6 +615,17 @@ fn shows_its_kind(case: &Case) -> bool {
             .iter()
             .zip(&labels.findings)
             .any(|(found, outcome)| found.span.is_none() && matches!(outcome, FindingOutcome::Matches { .. })),
+        "lesson_words" => linked.clone().any(|(issue, outcome)| {
+            matches!(outcome, IssueOutcome::Found { finding } if case.review.get(*finding).is_some_and(|found| {
+                let name = case.drill.key.get(issue).and_then(|key| pattern(&key.pattern)).map_or("", |known| known.name);
+                !found.text.to_lowercase().contains(&name.to_lowercase())
+            }))
+        }),
+        "lesson_vague" => linked.clone().any(|(_, outcome)| matches!(outcome, IssueOutcome::HalfFound { .. })),
+        "lesson_misapplied" => {
+            labels.findings.contains(&FindingOutcome::FalsePositive)
+                && linked.clone().any(|(_, outcome)| matches!(outcome, IssueOutcome::Missed))
+        }
         _ => true,
     }
 }
@@ -644,6 +665,49 @@ fn the_cases_cover_what_the_design_asks_for_and_each_shows_its_kind() -> Result<
     assert_eq!(
         finding_classes,
         BTreeSet::from(["false_positive", "matches", "valid_extra"])
+    );
+    Ok(())
+}
+
+#[test]
+fn every_labelled_lesson_case_holds_together() -> Result<()> {
+    let cases = cases(LESSON_SET)?;
+    assert!(cases.len() >= 10, "the lesson cases are written");
+    check_cases_hold_together(&cases);
+    for (stem, case) in &cases {
+        assert!(
+            case.drill.key.iter().any(|issue| issue.lesson.is_some()),
+            "{stem}: a lesson case has an issue tied to the lesson"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_lesson_cases_cover_what_the_design_asks_for_and_each_shows_its_kind() -> Result<()> {
+    let cases = cases(LESSON_SET)?;
+    for (kind, least) in [
+        ("lesson_words", 3),
+        ("lesson_vague", 2),
+        ("lesson_misapplied", 2),
+        ("mixed", 3),
+    ] {
+        let count = cases.iter().filter(|(_, case)| case.kind == kind).count();
+        assert!(
+            count >= least,
+            "there are fewer than {least} cases of kind {kind}"
+        );
+    }
+    for (stem, case) in &cases {
+        assert!(shows_its_kind(case), "{stem} is not a {} case", case.kind);
+    }
+    let languages: BTreeSet<&str> = cases
+        .iter()
+        .filter_map(|(_, case)| case.drill.material.language())
+        .collect();
+    assert!(
+        languages.len() >= 4,
+        "the cases are in at least four languages"
     );
     Ok(())
 }

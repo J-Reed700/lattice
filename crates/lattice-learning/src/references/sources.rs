@@ -1,0 +1,273 @@
+//! Acquire immutable, bounded source snapshots for Learning Studio.
+
+use crate::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
+use crate::dto::{LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto};
+use crate::references::trust::capture;
+use lattice_core::application::ports::LibraryPassagesPort;
+use lattice_core::application::ports::WebServiceTrait;
+use lattice_core::shared::error::{AppError, Result};
+use sqlx::SqlitePool;
+use std::collections::HashSet;
+use std::sync::Arc;
+
+// Keep this in sync with the repository's 2,400-character document excerpt
+// and generation's source snapshot limit.
+const MAX_EXCERPT_CHARS: usize = 2400;
+const MAX_TITLE_CHARS: usize = 180;
+
+/// Everything source acquisition needs, bound as one small named bundle.
+///
+/// The command layer assembles this from the container; the acquisition
+/// code never sees the container itself.
+#[derive(Clone)]
+pub struct SourceDeps {
+    /// Library document text for indexed-document references.
+    pub library: Arc<dyn LibraryPassagesPort>,
+    /// The host's safe web service for URL references.
+    pub web: Arc<dyn WebServiceTrait>,
+    /// Source-library rows: before-use refreshes persist here.
+    pub pool: SqlitePool,
+}
+
+#[derive(Debug, Clone)]
+pub struct InitialReference {
+    pub source_id: String,
+    pub origin: String,
+    pub captured: crate::source_library::CapturedLearningSource,
+    /// The course's outline research found the page; the user did not choose
+    /// it.
+    pub found: bool,
+}
+pub struct AcquiredSources {
+    pub sources: Vec<LearningSourceDto>,
+    pub references: Vec<InitialReference>,
+}
+pub(crate) fn validate_capture(
+    captured: &crate::source_library::CapturedLearningSource,
+) -> Result<()> {
+    if captured.text.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "The reference contains no readable text.".into(),
+        ));
+    }
+    if captured.truncated {
+        return Err(AppError::InvalidInput("The reference could not be captured in full. Use a complete document or a readable chapter URL.".into()));
+    }
+    Ok(())
+}
+pub fn preview(
+    id: &str,
+    captured: &crate::source_library::CapturedLearningSource,
+) -> LearningSourceDto {
+    let headings = captured
+        .text
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .take(35)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let text = if headings.is_empty() {
+        captured.text.clone()
+    } else {
+        format!(
+            "{}\n\n{}",
+            headings.chars().take(1200).collect::<String>(),
+            captured.text
+        )
+    };
+    LearningSourceDto {
+        id: id.into(),
+        title: captured.title.chars().take(MAX_TITLE_CHARS).collect(),
+        url: captured
+            .resolved_url
+            .clone()
+            .or_else(|| captured.requested_url.clone()),
+        excerpt: text.chars().take(MAX_EXCERPT_CHARS).collect(),
+        acquired_at: chrono::Utc::now().timestamp_millis(),
+    }
+}
+/// Capture every indexed chunk of a library document, in order. The joined
+/// text is what retrieval later maps the library's chunk hits back onto.
+pub async fn capture_document(
+    library: &dyn LibraryPassagesPort,
+    document_id: &str,
+) -> Result<crate::source_library::CapturedLearningSource> {
+    let document = library.document_text(document_id).await?.ok_or_else(|| {
+        AppError::InvalidInput(
+            "The document has no indexed text. Let its import finish first.".into(),
+        )
+    })?;
+    let text = document
+        .chunks
+        .iter()
+        .map(|chunk| chunk.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let signals = capture::document_signals(&document, &text);
+    let captured = crate::source_library::CapturedLearningSource {
+        title: document.title,
+        publisher: capture::publisher(&signals),
+        requested_url: None,
+        resolved_url: None,
+        truncated: false,
+        text,
+        extraction_version: "document_chunks_v2".into(),
+        signals,
+    };
+    validate_capture(&captured)?;
+    Ok(captured)
+}
+
+/// Acquire sources selected by document ID and supplied URL. URLs are checked
+/// through the host's DNS-aware safe web service, including its pinned public
+/// resolver and redirect checks. Any acquisition failure is returned to the
+/// caller; a partial result is never presented as a complete source set.
+pub async fn acquire(
+    deps: &SourceDeps,
+    request: &GenerateLearningProgramRequestDto,
+) -> Result<AcquiredSources> {
+    let mut unique_documents = HashSet::new();
+    if request
+        .document_ids
+        .iter()
+        .any(|id| id.trim().is_empty() || id.trim() != id || !unique_documents.insert(id.as_str()))
+    {
+        return Err(AppError::InvalidInput(
+            "The selected document list contains an empty or duplicate identifier.".into(),
+        ));
+    }
+    let mut unique_urls = HashSet::new();
+    if request
+        .source_urls
+        .iter()
+        .any(|url| url.trim().is_empty() || !unique_urls.insert(url.trim()))
+    {
+        return Err(AppError::InvalidInput(
+            "The source URL list contains an empty or duplicate address.".into(),
+        ));
+    }
+
+    let library = deps.library.clone();
+    let mut sources = Vec::new();
+    let mut references = Vec::new();
+    for document_id in &request.document_ids {
+        let captured = capture_document(library.as_ref(), document_id).await?;
+        let id = uuid::Uuid::new_v4().to_string();
+        sources.push(preview(&id, &captured));
+        references.push(InitialReference {
+            source_id: id,
+            origin: document_id.clone(),
+            captured,
+            found: false,
+        });
+    }
+    let safe_web = &deps.web;
+    let mut acquisition_errors = Vec::new();
+    for supplied_url in &request.source_urls {
+        let url = supplied_url.trim();
+        // This safe host service validates the URL with its public-only
+        // resolver, revalidates every redirect, and pins checked DNS answers
+        // into the connection before performing the actual read.
+        let page = match safe_web.fetch_reference_page(url).await {
+            Ok(page) => page,
+            Err(error) => {
+                tracing::warn!(url, %error, "Skipping unreachable or blocked reference URL");
+                acquisition_errors.push(format!("{url}: {error}"));
+                continue;
+            }
+        };
+        let title = page.output.title.clone().unwrap_or_else(|| url.into());
+        let captured = capture::web_capture(page, url, title);
+        if let Err(error) = validate_capture(&captured) {
+            tracing::warn!(url, %error, "Skipping invalid captured reference content");
+            acquisition_errors.push(format!("{url}: {error}"));
+            continue;
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        sources.push(preview(&id, &captured));
+        references.push(InitialReference {
+            source_id: id,
+            origin: url.into(),
+            captured,
+            found: false,
+        });
+    }
+    if sources.is_empty() && (!request.document_ids.is_empty() || !request.source_urls.is_empty()) {
+        let details = if !acquisition_errors.is_empty() {
+            format!(
+                " The following errors occurred: {}",
+                acquisition_errors.join("; ")
+            )
+        } else {
+            String::new()
+        };
+        return Err(AppError::InvalidInput(
+            format!("The selected materials did not provide usable text. Choose different materials or remove them to create a topic-based course.{details}")
+        ));
+    }
+    Ok(AcquiredSources {
+        sources,
+        references,
+    })
+}
+
+pub async fn ensure_before_use_sources(
+    deps: &SourceDeps,
+    program_id: &str,
+) -> lattice_core::shared::error::Result<()> {
+    let repo = crate::source_library::LearningSourceLibraryRepository::new(deps.pool.clone());
+    let workspace = repo.workspace(program_id).await?;
+    for source in workspace.sources.iter().filter(|s| {
+        s.kind == LearningSourceKind::Web && s.freshness_policy == LearningSourcePolicy::BeforeUse
+    }) {
+        if source.pending_version_id.is_some() {
+            return Err(lattice_core::shared::error::AppError::InvalidInput(format!("A newer version of '{}' is available. Adopt it or change the freshness policy before preparing a lesson.",source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("this source"))));
+        }
+        let operation_id = uuid::Uuid::new_v4().to_string();
+        let request = RefreshLearningSourceRequestDto {
+            operation_id: operation_id.clone(),
+            program_id: program_id.into(),
+            source_id: source.id.clone(),
+            expected_revision: source.revision,
+        };
+        let refreshed = async {
+            let url = source.requested_url.as_deref().ok_or_else(|| {
+                lattice_core::shared::error::AppError::Database(
+                    "Web source has no requested URL".into(),
+                )
+            })?;
+            let page = deps
+                .web
+                .fetch_reference_page(url)
+                .await
+                .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
+            let title = page.output.title.clone().unwrap_or_else(|| url.into());
+            Ok::<_, lattice_core::shared::error::AppError>(capture::web_capture(page, url, title))
+        }
+        .await;
+        let (captured, failure) = match refreshed {
+            Ok(value) => (Some(value), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        repo.refresh(&request, captured, failure).await?;
+        let refreshed = repo.workspace(program_id).await?;
+        let latest = refreshed
+            .sources
+            .iter()
+            .find(|s| s.id == source.id)
+            .and_then(|s| s.latest_check.as_ref())
+            .filter(|check| check.operation_id == operation_id);
+        match latest.map(|check| &check.status) {
+            Some(status) => {
+                crate::source_library::LearningSourceLibraryRepository::before_use_allows(status)?
+            }
+            None => {
+                return Err(lattice_core::shared::error::AppError::ServiceNotAvailable(format!(
+                    "Could not verify the before-use source '{}'. Retry after the source is reachable.",
+                    source.active_version.as_ref().map(|v|v.title.as_str()).unwrap_or("web source")
+                )))
+            }
+        }
+    }
+    Ok(())
+}

@@ -7,9 +7,10 @@ use syn::{
 
 fn test_only(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|a| {
-        a.path().is_ident("cfg")
-            && a.parse_args::<syn::Path>()
-                .is_ok_and(|p| p.is_ident("test"))
+        a.path().segments.last().is_some_and(|s| s.ident == "test")
+            || (a.path().is_ident("cfg")
+                && a.parse_args::<syn::Path>()
+                    .is_ok_and(|p| p.is_ident("test")))
     })
 }
 struct Sql<'a> {
@@ -154,6 +155,8 @@ mod tests {
             #[cfg(test)] mod tests {
                 fn fixture() { sqlx::query("SELECT name FROM files"); }
             }
+            #[test] fn counts() { sqlx::query("SELECT name FROM files"); }
+            #[tokio::test] async fn counts_async() { sqlx::query("CREATE TABLE files (name TEXT)"); }
         "#,
         )
         .unwrap();

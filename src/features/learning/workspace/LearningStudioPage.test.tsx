@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@/tests/interactionDom';
-import { createMemoryRouter, RouterProvider } from 'react-router';
+import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { formItem, quizForm, quizOverview } from '@/features/learning/quizzes/quizTestData';
@@ -23,7 +23,7 @@ vi.mock('@/features/learning/portability/PortabilityPanel', () => ({ Portability
   <button onClick={() => onImported('copy')}>Complete test copy</button>
 </> }));
 vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCourseFlow: ({ onImported }: { onImported: (id: string, title: string) => void }) => <button onClick={() => onImported('imported-1', 'Imported course')}>Complete test import</button> }));
-vi.mock('@/features/learning/drills/CodeReviewDrillScreen', () => ({ CodeReviewDrillScreen: ({ onBack }: { onBack: () => void }) => <div><p>The drill screen</p><button type="button" onClick={onBack}>Back from the drills</button></div> }));
+vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({ CourseDrillsPanel: ({ programId }: { programId: string }) => <p>{`Review drills of ${programId}`}</p> }));
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
@@ -108,9 +108,13 @@ function imported(value: LearningProgramDto, id: string, title: string): Learnin
 function ok<T>(data: T) { return { ok: true as const, data }; }
 function fail(error: string) { return { ok: false as const, error }; }
 
+function Where() {
+  return <span data-testid="search">{useLocation().search}</span>;
+}
+
 function show(path = '/studio') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
-  const router = createMemoryRouter([{ path: '/studio', element: <LearningStudioPage /> }], { initialEntries: [path] });
+  const router = createMemoryRouter([{ path: '/studio', element: <><LearningStudioPage /><Where /></> }], { initialEntries: [path] });
   return render(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>);
 }
 
@@ -118,6 +122,7 @@ describe('Learning Studio program workflow', () => {
   afterEach(() => activityClient.removeQueries({ queryKey: STUDY_ACTIVITY_KEY }));
   beforeEach(() => {
     vi.resetAllMocks();
+    localStorage.clear();
     mocks.documents.mockReturnValue([{ id: 'document-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 12 } satisfies DocumentMetadata]);
     mocks.memory.mockResolvedValue(ok({ programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }));
     mocks.flush.mockResolvedValue(true);
@@ -640,24 +645,70 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.deck).toHaveBeenCalledWith('deck-1');
   });
 
-  it('lists review drills beside Flashcards, opens them at /studio?drills=open and comes back', async () => {
-    const user = userEvent.setup();
-    mocks.list.mockResolvedValue(ok([]));
-    show();
-    expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Review drills' })).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Start a drill' }));
-    expect(await screen.findByText('The drill screen')).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'Flashcards' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Back from the drills' }));
-    expect(await screen.findByRole('heading', { name: 'Review drills' })).toBeVisible();
-    expect(screen.queryByText('The drill screen')).not.toBeInTheDocument();
-  });
+  describe('the review drills link', () => {
+    const search = () => screen.getByTestId('search').textContent;
+    const course = (id: string, status: 'draft' | 'active' = 'active'): LearningProgramDto => {
+      const base = program(status);
+      return { ...base, summary: { ...base.summary, id, title: `Course ${id}` } } as LearningProgramDto;
+    };
+    const offer = (...courses: LearningProgramDto[]) => {
+      mocks.list.mockResolvedValue(ok(courses.map(summary)));
+      mocks.get.mockImplementation(async (id: string) => ok(courses.find((value) => value.summary.id === id)));
+    };
 
-  it('opens the drills straight from a /studio?drills=open link', async () => {
-    mocks.list.mockResolvedValue(ok([]));
-    show('/studio?drills=open');
-    expect(await screen.findByText('The drill screen')).toBeVisible();
-    expect(screen.queryByRole('heading', { name: 'Flashcards' })).not.toBeInTheDocument();
+    it('opens the course opened last at Review drills, and leaves the address', async () => {
+      offer(course('program-1'), course('program-2'));
+      localStorage.setItem('lattice.studio.lastCourse', 'program-2');
+      show('/studio?drills=open');
+      expect(await screen.findByText('Review drills of program-2')).toBeVisible();
+      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
+      expect(search()).toBe('');
+    });
+
+    it('opens the first active course when none was opened before', async () => {
+      offer(course('program-0', 'draft'), course('program-1'), course('program-2'));
+      show('/studio?drills=open');
+      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
+      expect(search()).toBe('');
+    });
+
+    it('opens the first active course when the one opened last is gone', async () => {
+      offer(course('program-1'), course('program-2'));
+      localStorage.setItem('lattice.studio.lastCourse', 'deleted');
+      show('/studio?drills=open');
+      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
+    });
+
+    it('opens the first active course when the one opened last is still a draft', async () => {
+      offer(course('program-1'), course('program-2', 'draft'));
+      localStorage.setItem('lattice.studio.lastCourse', 'program-2');
+      show('/studio?drills=open');
+      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
+    });
+
+    it('stays on the library, with the address cleared, when no course is active', async () => {
+      offer(course('program-1', 'draft'));
+      show('/studio?drills=open');
+      expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
+      await waitFor(() => expect(search()).toBe(''));
+      expect(screen.queryByText(/Review drills of/)).not.toBeInTheDocument();
+    });
+
+    it('does not offer drills in the library any more', async () => {
+      mocks.list.mockResolvedValue(ok([]));
+      show();
+      expect(await screen.findByRole('heading', { name: 'Flashcards' })).toBeVisible();
+      expect(screen.queryByRole('heading', { name: 'Review drills' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Start a drill' })).not.toBeInTheDocument();
+    });
+
+    it('is remembered from the course opened', async () => {
+      const user = userEvent.setup();
+      offer(course('program-1'), course('program-2'));
+      show();
+      await user.click(await screen.findByRole('button', { name: /Course program-2/ }));
+      await screen.findByRole('tablist', { name: 'Program workspace' });
+      expect(localStorage.getItem('lattice.studio.lastCourse')).toBe('program-2');
+    });
   });
 });

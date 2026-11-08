@@ -113,3 +113,13 @@ pub async fn course_drills(
         .await
         .map_err(ApiError::from)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_languages_the_screen_offers_are_the_catalogues_in_its_order() {
+        assert_eq!(code_review_languages(), LANGUAGES);
+    }
+}

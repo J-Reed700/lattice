@@ -1,5 +1,6 @@
 use super::*;
 use crate::features::llm::engine::gguf_metadata::read_model_info;
+use lattice_core::domain::models::fit::Footprint;
 
 /// Process-wide registry of live sidecars, held as Tauri-managed state so the
 /// `RunEvent::ExitRequested` handler can drain it synchronously before the

@@ -66,7 +66,7 @@ async fn live_batched_verification_matches_individual_checks_and_measures_cost()
     // The checker supports what a passage states; whether that support is
     // enough is the provenance gate's (`provenance_gate_tests`).
     cases.extend(serde_json::from_str::<Vec<serde_json::Value>>(
-        include_str!("content_verification/sufficiency_cases.json"),
+        include_str!("../../../../../lattice-learning/src/lessons/content_verification/sufficiency_cases.json"),
     )?);
     // Evidence present for a different claim must not fill this claim's gap.
     cases.insert(0,serde_json::json!({"claim":"The measured value of sample A is 12.","passages":["Sample A was measured."],"expected":"unsupported"}));
@@ -1050,7 +1050,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         "This replay has no Verifier audit adapter; it must not bypass an enabled audit"
     );
     let worker = LessonGenerationWorker {
-        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+        runtimes: crate::features::learning::tests::runtimes(),
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),

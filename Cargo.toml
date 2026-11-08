@@ -1,10 +1,12 @@
 # The Rust workspace. The desktop app is `crates/lattice-desktop` (the Tauri
 # shell, features and infrastructure); `crates/lattice-core` holds the domain,
-# ports and contracts it depends on. `crates/lattice-sync` is a separate
-# workspace with its own lockfile.
+# ports and contracts it depends on. `crates/lattice-learning` is Learning
+# Studio's engine, on `crates/lattice-index` (the passage and vector indexes)
+# and `crates/lattice-store` (workspace notes). `crates/lattice-sync` is a
+# separate workspace with its own lockfile.
 [workspace]
 resolver = "2"
-members = ["crates/lattice-core", "crates/lattice-desktop"]
+members = ["crates/lattice-core", "crates/lattice-desktop", "crates/lattice-index", "crates/lattice-learning", "crates/lattice-store"]
 # Vendored third-party crates stay out of workspace lints, fmt and tests.
 exclude = ["crates/vendor"]
 
@@ -51,6 +53,7 @@ tokio = { version = "1.35", features = ["full"] }
 # event-bus poll instead of waiting for RecvError::Closed.
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 unicode-normalization = "0.1"
 url = "2.5"
 urlencoding = "2.1.3"
