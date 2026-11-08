@@ -31,6 +31,9 @@ jobs:
     # below builds and verifies a real sidecar instead.
     env:
       LATTICE_ALLOW_UNPINNED_SIDECAR: ${{ matrix.os == 'macos-15-intel' && '1' || '0' }}
+      # Backtraces keep file and line. Full debug info made the cache too big
+      # to keep and the test build too big for the Ubuntu runner's memory.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
       fail-fast: false
       # GitHub runs five macOS jobs at a time for the account, and every pull
@@ -61,18 +64,24 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - name: Restore cargo cache
-        id: cargo-cache
-        uses: actions/cache/restore@v4
+      # Two test crates compile at once at about 7.5 GB each, past the
+      # runner's 16 GB and 3 GB of swap; the runner then shuts down (exit 143).
+      - name: Add swap for the test build
+        if: runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 16G /ci-swapfile
+          sudo chmod 600 /ci-swapfile
+          sudo mkswap /ci-swapfile
+          sudo swapon /ci-swapfile
+          free -m
+
+      # Only main saves: each pull request's own cache pushed the repository
+      # past GitHub's 10 GB, which evicted main's, so every job started cold.
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: cargo-${{ matrix.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ matrix.os }}-
+          key: rust-check
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
 
       # Debug builds accept empty sidecars; the sidecar-binaries job checks
       # the real ones.
@@ -89,9 +98,16 @@ jobs:
                            crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
           esac
 
-      - name: cargo check
+      - name: cargo fmt --check
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+
+      # Clippy checks everything cargo check did, so it runs in its place, first.
+      # The workspace defines additional safety lints in Cargo.toml. Existing
+      # warnings are not promoted to errors yet.
+      - name: cargo clippy
         working-directory: crates/lattice-desktop
-        run: cargo check --workspace --all-targets
+        run: cargo clippy --workspace --all-targets
 
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
@@ -118,7 +134,9 @@ jobs:
           # (about 1 GB) needs several GB while it compiles, and four at once
           # exceed the runner's commit limit ("The paging file is too small",
           # os error 1455), which rustc reports as E0786 invalid metadata.
-          cargo test --locked --features bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
+          # The same selection and features as the test step, which then has
+          # nothing left to build; checked are the desktop crate's executables.
+          cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -128,7 +146,7 @@ jobs:
           }
           $exes = Get-Content $json | ForEach-Object {
                     $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
-                    if ($m -and $m.executable) { $m.executable }
+                    if ($m -and $m.executable -and $m.package_id -match 'crates[/\\]lattice-desktop') { $m.executable }
                   }
           if (-not $exes) { throw "cargo reported no test executables" }
           foreach ($exe in $exes) {
@@ -162,32 +180,9 @@ jobs:
             LATTICE_LAB_SMOKE_ENGINE=docker \
             cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
 
-      # The workspace defines additional safety lints in Cargo.toml. Existing
-      # warnings are not promoted to errors yet.
-      - name: cargo clippy
-        working-directory: crates/lattice-desktop
-        run: cargo clippy --workspace --all-targets
-
       - name: generated bindings are current
         working-directory: crates/lattice-desktop
         run: cargo run --features bindings-export --bin export_bindings -- --check
-
-      - name: cargo fmt --check
-        working-directory: crates/lattice-desktop
-        run: cargo fmt --all -- --check
-
-      # A test failure should not discard a completed native compilation and
-      # force the next repair attempt to rebuild every dependency.
-      - name: Save cargo cache
-        if: ${{ !cancelled() && steps.cargo-cache.outputs.cache-primary-key != '' && steps.cargo-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
@@ -241,6 +236,7 @@ jobs:
         with:
           workspaces: ". -> target"
           key: desktop-compatibility-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
       - name: Fetch verified published sidecars
         if: ${{ !matrix.intel }}
