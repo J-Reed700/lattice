@@ -288,7 +288,8 @@ impl ClaimReviewService {
 
     /// Writes the question's new text, ends the statements that stood on what
     /// changed, and keeps the rest. A dry run writes nothing. A new prompt or
-    /// choice is written as a statement only when it replaces one.
+    /// choice is written as a statement only when it replaces one. A question
+    /// the bank had dropped is agreed again by a valid save.
     pub async fn edit_question(&self, edit: QuestionEdit) -> Result<QuestionEditOutcome> {
         let QuestionEdit {
             program_id,
@@ -441,7 +442,7 @@ impl ClaimReviewService {
         };
         let answer_changed = answer_changed(old, &new);
         sqlx::query(
-            "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json) WHERE id=?",
+            "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json), review_status=CASE WHEN review_status='dropped' THEN 'agreed' ELSE review_status END WHERE id=?",
         )
         .bind(&new.prompt)
         .bind(options)
