@@ -7,7 +7,7 @@ import { toast } from '../stores/toastStore';
 
 vi.mock('../stores/toastStore', () => ({ toast: { error: vi.fn() } }));
 let dispose = () => {};
-afterEach(() => { dispose(); diagnostics.clear(); vi.restoreAllMocks(); });
+afterEach(() => { dispose(); diagnostics.clear(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 it('captures uncaught exceptions and rejections with accurate messages and throttled notices', () => {
   diagnostics.clear();
   dispose = installGlobalDiagnostics();
@@ -47,4 +47,31 @@ it('points to the logs when the toast message is empty', () => {
     message: 'Open Settings → Logs for details.',
     duration: 8000,
   });
+});
+it('logs the browser\'s resize-loop notice as a warning and does not tell the user about it', () => {
+  diagnostics.clear();
+  dispose = installGlobalDiagnostics();
+  window.dispatchEvent(new ErrorEvent('error', { message: 'ResizeObserver loop completed with undelivered notifications.' }));
+  window.dispatchEvent(new ErrorEvent('error', { message: 'ResizeObserver loop limit exceeded' }));
+  expect(toast.error).not.toHaveBeenCalled();
+  expect(diagnostics.getSnapshot().map(entry => [entry.level, entry.message])).toEqual([
+    ['warn', 'ResizeObserver loop limit exceeded'],
+    ['warn', 'ResizeObserver loop completed with undelivered notifications.'],
+  ]);
+});
+it('still tells the user about the next error after a resize-loop notice', () => {
+  diagnostics.clear();
+  dispose = installGlobalDiagnostics();
+  window.dispatchEvent(new ErrorEvent('error', { message: 'ResizeObserver loop completed with undelivered notifications.' }));
+  window.dispatchEvent(new ErrorEvent('error', { error: new Error('Render callback failed') }));
+  expect(vi.mocked(toast.error).mock.calls).toEqual([
+    ['An unexpected error occurred', { message: 'Render callback failed', duration: 8000 }],
+  ]);
+});
+it('treats a thrown error as an error even when its text is the resize-loop notice', () => {
+  diagnostics.clear();
+  dispose = installGlobalDiagnostics();
+  window.dispatchEvent(new ErrorEvent('error', { error: new Error('ResizeObserver loop completed with undelivered notifications.') }));
+  expect(toast.error).toHaveBeenCalledTimes(1);
+  expect(diagnostics.getSnapshot()[0].level).toBe('error');
 });

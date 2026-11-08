@@ -8,6 +8,9 @@ use lattice_core::shared::runtime::jobs::{
 
 pub const LESSON_PREPARATION: &str = "learning.lesson_preparation";
 
+/// The outcome code of a lesson preparation attempt an update ended: it has no saved work to resume.
+pub(crate) const ENDED_BY_UPDATE: &str = "ended_by_update";
+
 /// Jobs for a course share its source snapshots and accepted outline: each one
 /// refreshes and re-embeds the same sources and seeds the same snapshot, and
 /// two at once would do that work twice over the same rows. Different courses

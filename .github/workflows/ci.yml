@@ -30,10 +30,26 @@ jobs:
       max-parallel: 6
       matrix:
         include:
-          # After the compile fixes, so its tree is built as it is.
+          # Edit the section from the cards: the put-back unit, stubbed.
           - mode: red
-            sha: d2bcbf2c4001e46d409d0c882565f43d4527acde
+            sha: 9f7e377b12039cd685a0d75875ce637c469b7249
             built_as_is: true
+          # A source added to the whole lesson, stubbed.
+          - mode: red
+            sha: ba56d844916c21a58dcbe90b37f044ba7aa45053
+            built_as_is: true
+          # Hardened tests on the trees before their fixes.
+          - mode: red
+            sha: cb66996352bf80a0e99ae876394c7c8898b4b588
+            built_as_is: true
+          - mode: red
+            sha: 9e9df75887e976f16b57d6065dca84466fb85e58
+            built_as_is: true
+          - mode: red
+            sha: d46890e26080a4801688f83dfc9f6ff72ab895f7
+          # Every Rust check on the integrated tree, each past a failure before it.
+          - mode: integration
+            sha: c43df3456e3221a486611eb544601412b4d65b95
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,7 +141,6 @@ jobs:
   # The generated files for the integrated tree, to commit as they are: nothing is built where they are committed.
   bindings-writer:
     name: write bindings ${{ matrix.sha }}
-    if: false
     runs-on: ubuntu-24.04
     env:
       LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
@@ -133,7 +148,7 @@ jobs:
     strategy:
       matrix:
         sha:
-          - 5e1c685c8f33e930a12c6d497b1debf89054b143
+          - c43df3456e3221a486611eb544601412b4d65b95
     steps:
       - uses: actions/checkout@v4
         with:
@@ -187,13 +202,12 @@ jobs:
 
   integration-frontend:
     name: integration frontend ${{ matrix.sha }}
-    if: false
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         sha:
-          - 5e1c685c8f33e930a12c6d497b1debf89054b143
+          - c43df3456e3221a486611eb544601412b4d65b95
     steps:
       - uses: actions/checkout@v4
         with:
@@ -284,7 +298,6 @@ jobs:
 
   vitest:
     name: vitest reds
-    if: false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -318,7 +331,9 @@ jobs:
             echo "::endgroup::"
             echo "red $sha exit $code"
           done <<'LIST'
-          e45919d124f151935c2c97b06980a86e0dacad43 src/features/learning/lessons/review/claimReviewPresentation.history.test.ts
+          1dcfaa831be3f1154baf81bdeba40b66529da218 src/features/learning/lessons/review/ClaimReviewScreen.editFromCards.test.tsx
+          9f7e377b12039cd685a0d75875ce637c469b7249 src/features/learning/lessons/review/ClaimReviewScreen.editFromCards.test.tsx
+          ba56d844916c21a58dcbe90b37f044ba7aa45053 src/features/learning/lessons/review/ClaimReviewScreen.lessonSource.test.tsx
           LIST
 
       - name: Upload each red's vitest log

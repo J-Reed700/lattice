@@ -32,6 +32,7 @@ fn job(status: LearningGenerationJobStatus) -> LearningGenerationJob {
         result_id: None,
         error: None,
         error_code: None,
+        ended_by_update: false,
         retry_of_job_id: None,
         created_at: 10,
         started_at: None,

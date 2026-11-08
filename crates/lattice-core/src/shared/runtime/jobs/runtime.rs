@@ -666,7 +666,7 @@ impl JobRuntime {
                 );
                 let message = format!(
                     "{error} The previous attempt failed the same way and nothing was saved \
-                     in between, so another attempt would fail again."
+                     in between, so Lattice stopped retrying it on its own."
                 );
                 self.settle(id, backoff, || {
                     self.store()

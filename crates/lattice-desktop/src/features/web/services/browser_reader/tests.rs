@@ -249,3 +249,22 @@ fn without_a_reader_a_read_is_unavailable() {
     assert!(matches!(error, AppError::ServiceNotAvailable(_)));
     assert!(error.to_string().contains("no browser"));
 }
+
+#[test]
+fn a_reader_window_takes_the_arguments_the_apps_windows_were_given() {
+    let windows = [
+        tauri::utils::config::WindowConfig::default(),
+        tauri::utils::config::WindowConfig {
+            additional_browser_args: Some("--one --two".to_string()),
+            ..Default::default()
+        },
+    ];
+    assert_eq!(shared_browser_args(&windows), Some("--one --two"));
+}
+
+#[test]
+fn windows_given_no_arguments_give_the_reader_none() {
+    let windows = [tauri::utils::config::WindowConfig::default()];
+    assert_eq!(shared_browser_args(&windows), None);
+    assert_eq!(shared_browser_args(&[]), None);
+}
