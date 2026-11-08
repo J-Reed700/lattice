@@ -63,6 +63,8 @@ pub(super) struct Cuts {
     /// The sections that go, with the title or prompt of each.
     pub(super) going: BTreeMap<usize, String>,
     pub(super) mended: BTreeMap<usize, Mended>,
+    #[serde(default)]
+    pub(crate) reviewed_without_going: Option<String>,
 }
 
 impl Cuts {
@@ -598,7 +600,11 @@ pub(super) async fn settle(
         crate::lesson_progress::flow_repaired();
         ledger.save_cuts().await?;
     }
-    if edited != lesson || !going.is_empty() {
+    let without_going = going.out_of(&edited);
+    let without_going_digest = digest(&without_going.to_string());
+    let needs_going_review = !going.is_empty()
+        && ledger.cuts.reviewed_without_going.as_deref() != Some(without_going_digest.as_str());
+    if edited != lesson || needs_going_review {
         // The review reads the lesson as it will be, and the others' text it
         // changes comes back to the sections' places.
         let protected: Vec<Protected> = Protected::of_ledger(ledger, &[])
@@ -613,12 +619,14 @@ pub(super) async fn settle(
             crate::teaching::LESSON_REPAIR_SYSTEM,
             prompt,
             schema,
-            going.out_of(&edited).to_string(),
+            without_going.to_string(),
             output_tokens,
             references,
             &protected,
         ))
         .await?;
+        ledger.cuts.reviewed_without_going = Some(digest(&reviewed));
+        ledger.save_cuts().await?;
         let reviewed: Value = parse_json(&reviewed)?;
         if let Some(merged) = going.back_in(&edited, &reviewed) {
             edited = merged;

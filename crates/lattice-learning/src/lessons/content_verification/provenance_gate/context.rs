@@ -241,7 +241,9 @@ impl Judgements {
         }
         let mut units: Vec<_> = missing.into_iter().collect();
         units.sort_by_key(|(unit, _)| *unit);
-        for (unit, statements) in units {
+        let topic = &self.topic;
+        let known_classes = &self.known_classes;
+        let tasks = units.into_iter().map(|(unit, statements)| async move {
             let to_profile: Vec<ClaimToProfile> = statements
                 .iter()
                 .enumerate()
@@ -255,8 +257,8 @@ impl Judgements {
                 llm,
                 &ProfileRequest {
                     unit_title: &unit_title,
-                    course_topic: &self.topic,
-                    known_classes: &self.known_classes,
+                    course_topic: topic,
+                    known_classes,
                     claims: &to_profile,
                 },
             )
@@ -266,17 +268,20 @@ impl Judgements {
                     "The claim profile call answered for a different number of claims.".into(),
                 ));
             }
-            let rows: Vec<_> = statements
-                .iter()
-                .zip(judged)
-                .map(|(statement, judged)| {
-                    known.insert(statement.clone(), judged.value.clone());
-                    stored(
-                        claim_profile_key(statement, &self.known_classes, &self.model),
-                        judged,
-                    )
-                })
-                .collect();
+            Ok::<_, AppError>((statements, judged))
+        });
+        let judged_units = futures::future::try_join_all(tasks).await?;
+        let mut rows = Vec::new();
+        for (statements, judged) in judged_units {
+            for (statement, judged) in statements.into_iter().zip(judged) {
+                known.insert(statement.clone(), judged.value.clone());
+                rows.push(stored(
+                    claim_profile_key(&statement, &self.known_classes, &self.model),
+                    judged,
+                ));
+            }
+        }
+        if !rows.is_empty() {
             self.store.save_claim_profiles(&rows).await?;
         }
         claims
