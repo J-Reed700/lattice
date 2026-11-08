@@ -104,6 +104,7 @@ describe('Putting back and restoring from the review', () => {
     expect(api.resolveMany).toHaveBeenLastCalledWith(expect.objectContaining({
       claimIds: ['a', 'b'], expectedRevision: 8, action: { action: 'undo' },
     }));
+    expect(await screen.findByText('Undone. 2 sentences are out of the lesson again.')).toBeVisible();
     expect(api.resolve).not.toHaveBeenCalled();
   });
 
