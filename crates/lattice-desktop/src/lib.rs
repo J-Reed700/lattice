@@ -118,3 +118,5 @@ mod lib_tests {
         assert_eq!(NAME, "lattice-desktop");
     }
 }
+
+// CI demo commit: this pull request changes lattice-desktop only, and never merges.
