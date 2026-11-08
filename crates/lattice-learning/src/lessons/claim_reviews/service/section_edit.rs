@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 
+use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
     HumanBinding, UnitKind, UnverifiedReason, UserAction,

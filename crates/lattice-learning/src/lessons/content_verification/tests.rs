@@ -1562,6 +1562,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
         embedding_model: None,
         page_budget: None,
         unexecuted_languages: vec![],
+        replaced_findings: Vec::new(),
     }
 }
 

@@ -304,8 +304,9 @@ fn a_cut_recorded_in_another_block_does_not_make_this_blocks_place_ambiguous() {
         put_back_claim("bravo", BRAVO, ALPHA, ECHO, Anchor::After(ECHO.into())),
         put_back_claim_in(1, "zulu", "Zulu comes elsewhere.", ECHO, ALPHA, Anchor::End),
     ];
+    let body_a = [ALPHA, ECHO].join(" ");
     let mut draft = json!({"blocks": [
-        {"title": "A", "body": [ALPHA, ECHO].join(" ")},
+        {"title": "A", "body": body_a},
         {"title": "B", "body": "Other."},
     ], "questions": []});
     let found = changes(&entries, &draft);

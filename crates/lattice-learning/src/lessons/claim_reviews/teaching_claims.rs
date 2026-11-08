@@ -252,6 +252,7 @@ mod tests {
             claim_ids: Vec::new(),
             resolution,
             resolved_at,
+            part_changed: false,
             repairs: 0,
             state,
         }

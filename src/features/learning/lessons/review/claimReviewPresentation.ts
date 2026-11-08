@@ -360,6 +360,8 @@ function describeUserAction(action: UserActionDto, note: string | null): string 
     case 'edit': return `Edited: “${action.before}” → “${action.after}”`;
     case 'remove': return 'Removed the sentence';
     case 'research_with_hint': return `Asked for a search: “${action.hint}”`;
+    case 'put_back': return action.edited ? `Put back after editing: “${action.sentence}”` : `Put back in the lesson: “${action.sentence}”`;
+    case 'restore_original': return `Restored the original: “${action.rewrite}” → “${action.original}”`;
   }
 }
 

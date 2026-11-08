@@ -82,7 +82,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   // A published lesson's section text comes from the course the page already loads for the lesson card.
   const published = review?.state === 'ready';
   const course = useLearningProgram(published ? programId : null);
-  const sectionOf = (claim: ClaimReviewItemDto | null) => {
+  const sectionOf = (claim: ClaimReviewItemDto | null | undefined) => {
     const place = claim?.location;
     if (!claim || !place || !published || place.unitKind !== 'block' || place.field !== 'body') return null;
     const lesson = course.data?.modules.flatMap((entry) => entry.lessons).find((candidate) => candidate.id === lessonId);

@@ -137,6 +137,7 @@ fn report(units: usize) -> LessonVerificationReport {
         embedding_model: None,
         page_budget: None,
         unexecuted_languages: Vec::new(),
+        replaced_findings: Vec::new(),
     }
 }
 
