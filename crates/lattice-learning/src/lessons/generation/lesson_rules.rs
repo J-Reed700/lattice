@@ -6,7 +6,7 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
-use crate::content_verification::{figures, needs_citation, Givens, CITED_KINDS};
+use crate::content_verification::{figures, names_a_source, needs_citation, Givens, CITED_KINDS};
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -231,6 +231,91 @@ fn uncited_specifics(
     }
 }
 
+/// Whether `line` is a citation label: "Citation:" or "Citations:", with or
+/// without a list marker or bold.
+fn is_citation_label(line: &str) -> bool {
+    let line = without_marker(line.trim()).trim_start_matches(['*', '_', '>', ' ']);
+    let word: String = line.chars().take_while(|c| c.is_alphabetic()).collect();
+    let after = line
+        .get(word.len()..)
+        .unwrap_or_default()
+        .trim_start_matches(['*', '_']);
+    (word.eq_ignore_ascii_case("citation") || word.eq_ignore_ascii_case("citations"))
+        && after.starts_with(':')
+}
+
+/// Whether `sentence` names a choice by its number, as "Option 2".
+fn names_a_choice(sentence: &str) -> bool {
+    lazy_regex::regex!(r"(?i)\b(?:option|choice)s?\s+#?\d+\b").is_match(sentence)
+}
+
+/// Writer scaffolding in the text a learner reads: a sentence naming a source
+/// by its number, a citation label line and, in an answer explanation, a
+/// choice named by its number. Code is exempt.
+fn scaffolding(
+    item: &Value,
+    fields: &[&str],
+    (site, label): (FindingSite, &str),
+    findings: &mut Vec<ReviewFinding>,
+) {
+    let path = match site {
+        FindingSite::Section(index) => format!("/blocks/{index}"),
+        FindingSite::Question(index) => format!("/questions/{index}"),
+        FindingSite::Lesson => return,
+    };
+    let mut texts: Vec<(&str, bool)> = Vec::new();
+    for field in fields {
+        let explanation = *field == "explanation";
+        match item.get(*field) {
+            Some(Value::String(value)) => texts.push((value, explanation)),
+            Some(Value::Array(values)) => {
+                texts.extend(
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|v| (v, explanation)),
+                );
+            }
+            _ => {}
+        }
+    }
+    for (body, explanation) in texts {
+        let labels: Vec<String> = prose(body)
+            .lines()
+            .filter(|line| is_citation_label(line))
+            .map(|line| line.trim().to_owned())
+            .collect();
+        for line in &labels {
+            let summary = format!(
+                "This line is a citation written into the lesson's text: \u{201c}{line}\u{201d}"
+            );
+            let note = format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports in an entry of the citations of {path}.");
+            findings.push(citation(site, summary, note, ("", line.as_str())));
+        }
+        for sentence in prose_sentences(body) {
+            if labels.iter().any(|line| line.contains(&sentence)) {
+                continue;
+            }
+            let (summary, note) = if names_a_source(&sentence) {
+                let summary = format!(
+                    "This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}"
+                );
+                let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence in the citations list of {path}.");
+                (summary, note)
+            } else if explanation && names_a_choice(&sentence) {
+                let summary = format!(
+                    "This explanation names a choice by its number, which learners don't see: \u{201c}{sentence}\u{201d}"
+                );
+                let note = format!("{label} names a choice by its number in \"{sentence}\". Name the choice by its words instead.");
+                (summary, note)
+            } else {
+                continue;
+            };
+            findings.push(citation(site, summary, note, ("", sentence.as_str())));
+        }
+    }
+}
+
 /// What `lesson_rules` reports, as its notes: for evals outside the crate,
 /// which assert a reviewed lesson keeps the lesson's form.
 pub fn lesson_rule_notes(candidate: &Value) -> Vec<String> {
@@ -400,8 +485,14 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         }
     }
     for (index, block) in blocks.iter().enumerate() {
+        let label = format!("Section {} (candidate blocks-{index})", index + 1);
+        scaffolding(
+            block,
+            &["body"],
+            (FindingSite::Section(index), &label),
+            &mut findings,
+        );
         if CITED_KINDS.contains(&text(block, "kind")) {
-            let label = format!("Section {} (candidate blocks-{index})", index + 1);
             uncited_specifics(
                 block,
                 "body",
@@ -412,6 +503,12 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
     }
     for (index, question) in questions.iter().enumerate() {
         let label = format!("Question {}", index + 1);
+        scaffolding(
+            question,
+            &["prompt", "options", "explanation"],
+            (FindingSite::Question(index), &label),
+            &mut findings,
+        );
         uncited_specifics(
             question,
             "explanation",
