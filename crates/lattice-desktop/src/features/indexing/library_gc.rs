@@ -172,6 +172,7 @@ impl LibraryGc {
                 "Could not roll back a failed import's blob; the next startup sweep will collect it"
             ),
         }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         if settled {
             if let Some(id) = intent {
                 self.forget(&[id]).await;

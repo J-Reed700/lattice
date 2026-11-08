@@ -626,6 +626,69 @@ async fn cancelling_mid_file_releases_its_library_blob_and_nothing_restarts_it(
 }
 
 #[tokio::test]
+async fn cancelling_mid_file_with_the_old_wait_reads_the_record_too_early() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let mut harness = ImportHarness::new(dir.path()).await?;
+    let paths = write_files(
+        dir.path(),
+        &[
+            (
+                "in_flight.txt",
+                "pause here while this document is prepared",
+            ),
+            ("queued.txt", "this document is never reached"),
+        ],
+    );
+    let job_id = harness.files(&paths, None).await?;
+    tokio::time::timeout(WAIT, harness.embedding.entered.notified()).await?;
+    // The blob is already in the library, and nothing references it yet.
+    assert_eq!(harness.blobs(), 1);
+
+    assert_eq!(harness.imports.cancel(&job_id).await?, 2);
+    assert_eq!(
+        harness.item_states(&job_id).await?,
+        ["cancelled", "cancelled"],
+        "the file in flight is settled at once"
+    );
+    harness.embedding.release.notify_one();
+    tokio::time::timeout(WAIT, async {
+        while harness.jobs.store().get(&job_id).await.is_ok() && harness.blobs() > 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
+    assert_eq!(
+        harness.blobs(),
+        0,
+        "the blob copied for the cancelled file is released at cancel time"
+    );
+    assert_eq!(harness.count("SELECT count(*) FROM documents").await?, 0);
+    assert_eq!(
+        harness.count("SELECT count(*) FROM file_intents").await?,
+        0,
+        "the import's record goes with the blob it gave back"
+    );
+    assert_eq!(
+        harness.jobs.store().get(&job_id).await?.status,
+        JobStatus::Cancelled
+    );
+
+    // Recovery must not restart work the user cancelled.
+    harness.restart().await?;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        harness.item_states(&job_id).await?,
+        ["cancelled", "cancelled"]
+    );
+    assert_eq!(harness.count("SELECT count(*) FROM documents").await?, 0);
+    assert!(
+        harness.imports.retry(&job_id, None, None).await.is_err(),
+        "nothing failed, so nothing to retry"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn an_import_reads_its_status_and_its_files_from_one_snapshot() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
