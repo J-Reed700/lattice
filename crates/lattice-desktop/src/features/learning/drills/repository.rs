@@ -3,6 +3,7 @@
 //! proofs are what a learner's fix is run against; the learner never sees them. A drill on a passage keeps the
 //! source passage its explanation was written from.
 
+use super::bank::Shelf;
 use super::build::{Evidence, SourcePassage};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, decode, encode, now};
