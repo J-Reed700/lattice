@@ -87,8 +87,12 @@ pub struct ReviewFinding {
     /// `None` for a reviewer's issue until the evidence check places it;
     /// an issue it cannot place is about the whole lesson.
     pub site: Option<FindingSite>,
-    /// What the repair is asked to correct and the user is shown.
+    /// What the repair is asked to correct. It is written for the model.
     pub note: String,
+    /// What is wrong, in plain words, for the user. Empty when the producer
+    /// wrote none.
+    #[serde(default)]
+    pub summary: String,
     /// The passage the reviewer chose, when it chose one.
     pub passage: Option<String>,
 }
@@ -99,8 +103,15 @@ impl ReviewFinding {
             kind,
             site,
             note: note.into(),
+            summary: String::new(),
             passage: None,
         }
+    }
+
+    /// This finding with the plain-words `summary` the user is shown.
+    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = summary.into();
+        self
     }
 
     pub fn key(&self) -> FindingKey {
@@ -109,6 +120,17 @@ impl ReviewFinding {
             site: self.site.unwrap_or(FindingSite::Lesson),
         }
     }
+}
+
+/// `items` as a plain list: "a", "a and b", "a, b and c".
+pub(crate) fn join_plain(_items: &[String]) -> String {
+    String::new()
+}
+
+/// How a summary names the part a site is: "section 3", "question 2" or
+/// "the lesson".
+pub(crate) fn plain_part(_site: FindingSite) -> String {
+    String::new()
 }
 
 /// A finding's identity across passes and reviews.
@@ -254,6 +276,38 @@ mod tests {
                 .key()
                 .id(),
             "teaching:lesson"
+        );
+    }
+
+    #[test]
+    fn a_list_reads_as_plain_words() {
+        let list =
+            |items: &[&str]| join_plain(&items.iter().map(|i| (*i).to_owned()).collect::<Vec<_>>());
+        assert_eq!(list(&[]), "");
+        assert_eq!(list(&["30"]), "30");
+        assert_eq!(list(&["30", "seconds"]), "30 and seconds");
+        assert_eq!(
+            list(&["30", "seconds", "retry once"]),
+            "30, seconds and retry once"
+        );
+    }
+
+    #[test]
+    fn a_part_is_named_by_its_place_in_the_lesson_counted_from_one() {
+        assert_eq!(plain_part(FindingSite::Section(2)), "section 3");
+        assert_eq!(plain_part(FindingSite::Question(1)), "question 2");
+        assert_eq!(plain_part(FindingSite::Lesson), "the lesson");
+    }
+
+    #[test]
+    fn a_summary_is_set_apart_from_the_note_written_for_the_model() {
+        let finding = ReviewFinding::new(FindingKind::Teaching, None, "Fix blocks[2].")
+            .with_summary("The example is wrong.");
+        assert_eq!(finding.note, "Fix blocks[2].");
+        assert_eq!(finding.summary, "The example is wrong.");
+        assert_eq!(
+            ReviewFinding::new(FindingKind::Teaching, None, "x").summary,
+            ""
         );
     }
 

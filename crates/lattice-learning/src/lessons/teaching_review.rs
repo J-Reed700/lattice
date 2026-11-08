@@ -394,6 +394,11 @@ mod tests {
         assert!(actual
             .iter()
             .all(|f| f.kind == FindingKind::Teaching && f.site.is_none()));
+        // The reviewer's own statement of the problem is what the user reads.
+        assert_eq!(
+            actual.iter().map(|f| f.summary.clone()).collect::<Vec<_>>(),
+            findings
+        );
         assert_eq!(model.prompts.lock().unwrap().len(), 1);
         Ok(())
     }
@@ -461,6 +466,10 @@ mod tests {
             .find(|i| i.note.contains("membrane behavior"))
             .unwrap();
         assert_eq!(defect.site, Some(FindingSite::Section(1)));
+        assert_eq!(
+            defect.summary,
+            "The claimed membrane behavior contradicts the stated boundary condition."
+        );
         let prompts = model.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 2);
         let retry: Value = serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap())?;

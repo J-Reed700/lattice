@@ -50,6 +50,16 @@ pub enum TeachingFindingStateDto {
     Kept,
 }
 
+/// What the user does with waiting or kept teaching findings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TeachingSettleDto {
+    /// Keep the text as written: waiting becomes kept.
+    Keep,
+    /// Take a kept finding back: kept becomes waiting.
+    Reopen,
+}
+
 /// A teaching-review finding the repairs did not settle.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -62,8 +72,8 @@ pub struct TeachingFindingDto {
     pub unit_index: Option<u32>,
     /// "Section 3: Loops", "Question 2" or "Whole lesson".
     pub unit_title: String,
-    /// The reviewer's note.
-    pub note: String,
+    /// What is wrong, in plain words.
+    pub summary: String,
     /// The passage the finding is about, when one was chosen.
     pub passage: Option<String>,
     /// Repairs that tried to settle it.
@@ -224,7 +234,7 @@ impl TeachingFindingsRepository {
                         .get::<Option<i64>, _>("unit_index")
                         .and_then(|index| u32::try_from(index).ok()),
                     unit_title: row.get("unit_title"),
-                    note: row.get("note"),
+                    summary: row.get("note"),
                     passage: row.get("passage"),
                     repairs: u32::try_from(row.get::<i64, _>("repairs")).unwrap_or_default(),
                     state: if row.get::<String, _>("state") == "kept" {
@@ -235,6 +245,19 @@ impl TeachingFindingsRepository {
                 })
             })
             .collect()
+    }
+
+    /// Keeps or reopens every finding in `finding_keys` in one transaction:
+    /// all or nothing. Refused when the list is empty, the lesson is not in
+    /// the course, or a finding is not in the state the change needs.
+    pub async fn settle(
+        &self,
+        _program_id: &str,
+        _lesson_id: &str,
+        _finding_keys: &[String],
+        _settle: TeachingSettleDto,
+    ) -> Result<()> {
+        Err(AppError::InternalError("not built yet".into()))
     }
 
     /// "Keep as written": the user resolves a waiting finding without a

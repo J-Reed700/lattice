@@ -894,4 +894,53 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn a_block_without_a_body_or_a_rubric_is_named_in_plain_words() {
+        let found = structure(json!([
+            {"kind":"explanation","title":"Fine","body":"A crisp, correct explanation."},
+            {"kind":"recap","title":"Empty","body":"  "},
+            {"kind":"guided_practice","title":"Bare","rubric":[]}
+        ]));
+        let summaries: Vec<_> = found
+            .iter()
+            .map(|finding| finding.summary.as_str())
+            .collect();
+        assert_eq!(
+            summaries,
+            [
+                "Section 2 has no text.",
+                "Section 3 has no text.",
+                "Section 3 is a practice section and needs two to four clear criteria for judging an answer."
+            ]
+        );
+    }
+
+    #[test]
+    fn material_that_cannot_be_read_is_named_in_plain_words() {
+        let found = structural_findings(&json!({"type":"object"}), "not json").unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].summary, "The lesson could not be read as a whole.");
+    }
+
+    #[test]
+    fn a_quotation_that_matches_no_saved_reference_is_named_by_its_part() {
+        let found = quotation_findings(&[
+            json!({"path":"blocks[2]","error":"it was not found."}),
+            json!({"path":"questions[0]","error":"it was not found."}),
+            json!({"path":"requirements","error":"it was not found."}),
+        ]);
+        let summaries: Vec<_> = found
+            .iter()
+            .map(|finding| finding.summary.as_str())
+            .collect();
+        assert_eq!(
+            summaries,
+            [
+                "The quotation cited in section 3 could not be found in its source.",
+                "The quotation cited in question 1 could not be found in its source.",
+                "The quotation cited in the lesson could not be found in its source."
+            ]
+        );
+    }
 }

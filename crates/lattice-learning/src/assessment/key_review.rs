@@ -376,6 +376,10 @@ mod tests {
         let issues = check(&model, &candidate()).await?;
         assert_eq!(issues.len(), 1);
         assert!(issues[0].note.starts_with("Question 1 has a disputed"));
+        assert_eq!(
+            issues[0].summary,
+            "A second, independent solution disagreed with the answer key."
+        );
         assert_eq!(issues[0].site, Some(FindingSite::Question(0)));
         assert_eq!(issues[0].passage.as_deref(), Some("Question 0"));
         let prompts = model.prompts.lock().unwrap();

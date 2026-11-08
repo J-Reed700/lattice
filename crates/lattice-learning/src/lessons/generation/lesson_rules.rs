@@ -548,6 +548,127 @@ mod tests {
         assert!(lesson_rules(&candidate).is_empty());
     }
 
+    const LONG_SENTENCE: &str = "The default timeout for every outgoing request in the client library is 30 seconds unless the caller sets another value.";
+
+    /// What the user reads is the whole sentence, not the first 90
+    /// characters the note for the model keeps.
+    #[test]
+    fn an_uncited_specific_is_summarised_with_its_whole_sentence() {
+        let mut candidate = lesson();
+        candidate["blocks"][0]["body"] = json!(LONG_SENTENCE);
+
+        let findings = lesson_rules(&candidate);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].summary,
+            format!("No source is cited for this sentence: \u{201c}{LONG_SENTENCE}\u{201d}")
+        );
+    }
+
+    #[test]
+    fn a_quote_that_lacks_the_figure_is_summarised_with_what_it_lacks_and_the_whole_sentence() {
+        let mut candidate = lesson();
+        candidate["blocks"][0]["body"] = json!(LONG_SENTENCE);
+        candidate["blocks"][0]["citations"] = json!([{
+            "sentence":LONG_SENTENCE,"sourceIndex":0,
+            "quote":"A timeout applies to each request, in seconds."}]);
+
+        let findings = lesson_rules(&candidate);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].summary,
+            format!("The quotation cited for this sentence does not contain 30: \u{201c}{LONG_SENTENCE}\u{201d}")
+        );
+    }
+
+    #[test]
+    fn each_broken_rule_says_what_is_wrong_in_plain_words() {
+        let mut candidate = lesson();
+        candidate["blocks"][4]["title"] = json!("first  IDEA");
+        candidate["blocks"][10]["kind"] = json!("explanation");
+        candidate["questions"][3]["prompt"] = json!("q1?");
+        candidate["questions"][4]["options"] = json!(["Yes", "yes", "Maybe", "No way"]);
+
+        let summaries: Vec<_> = lesson_rules(&candidate)
+            .into_iter()
+            .map(|finding| finding.summary)
+            .collect();
+
+        assert_eq!(
+            summaries,
+            [
+                "Section 5 has the same title as section 1.",
+                "The lesson does not have the sections it is written with. It has 3 explanations, 2 worked examples, 1 contrast, 2 checks, 1 guided practice, 1 independent practice, 1 reflection, 0 recaps.",
+                "Question 4 asks the same thing as question 3.",
+                "Question 5 needs four distinct answer choices.",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_missing_title_prompt_or_explanation_is_named_in_plain_words() {
+        let mut candidate = lesson();
+        candidate["blocks"][0]["title"] = json!("");
+        candidate["questions"][0]["explanation"] = json!("");
+        candidate["questions"][1]["prompt"] = json!("  ");
+
+        let summaries: Vec<_> = lesson_rules(&candidate)
+            .into_iter()
+            .map(|finding| finding.summary)
+            .collect();
+
+        assert_eq!(
+            summaries,
+            [
+                "Section 1 needs a title.",
+                "Question 1 needs an answer explanation.",
+                "Question 2 needs a prompt.",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_check_and_a_recap_out_of_place_are_named_in_plain_words() {
+        let mut candidate = lesson();
+        let blocks = candidate["blocks"].as_array_mut().unwrap();
+        blocks.swap(1, 3);
+        blocks.swap(9, 10);
+        let summaries: Vec<_> = lesson_rules(&candidate)
+            .into_iter()
+            .map(|finding| finding.summary)
+            .collect();
+        assert_eq!(
+            summaries,
+            [
+                "Section 2 is a check on an idea that no worked example has shown since the previous check.",
+                "Section 10 recaps the lesson before the learner is asked to explain it from memory.",
+            ]
+        );
+
+        let mut giveaway = lesson();
+        giveaway["blocks"][3]["body"] = json!(format!("{CASE} {REVEAL}"));
+        let findings = lesson_rules(&giveaway);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].summary,
+            "Section 4 is a check, but it does not hold its answer back until the learner has tried."
+        );
+    }
+
+    #[test]
+    fn too_few_questions_of_a_kind_are_named_in_plain_words() {
+        let mut candidate = lesson();
+        candidate["questions"].as_array_mut().unwrap().truncate(5);
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(
+            findings[0].summary,
+            "The lesson needs at least two questions each for practice, quiz and test. It has 2 practice questions, 2 quiz questions, 1 test question."
+        );
+    }
+
     #[test]
     fn a_quote_that_lacks_the_figure_does_not_cite_it() {
         let mut candidate = lesson();
