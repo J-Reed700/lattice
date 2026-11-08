@@ -128,11 +128,26 @@ pub enum LearningPracticalRunStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CaseCheckDetailDto {
+    pub case_id: String,
+    pub category: String,
+    pub args: Vec<String>,
+    pub expected: Option<String>,
+    pub actual: Option<String>,
+    pub printed: String,
+    pub error: Option<String>,
+    pub visibility: crate::practice::coding::problem::Visibility,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct LearningPracticalCheckResultDto {
     pub name: String,
     pub status: LearningPracticalCheckStatus,
     pub message: String,
     pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub detail: Option<CaseCheckDetailDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
