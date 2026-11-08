@@ -646,12 +646,13 @@ async fn an_old_row_leaves_the_sentence_out_rather_than_cut_it() {
         summary_of(&store, &ambiguous).await,
         "No source is cited for this sentence."
     );
-    // No text holds the sentence at all.
+    // No section text holds the sentence; the stored passage does, but it is
+    // the quote the section cites, so it is not used.
     let unknown = old_row(
         &store,
         ("quotation", "section", Some(1)),
         &uncited(&cut),
-        None,
+        Some(LONG),
     )
     .await;
     assert_eq!(
@@ -676,11 +677,14 @@ async fn an_old_row_for_a_sentence_citation_and_for_a_part_citation_is_rebuilt()
     let store = TeachingFindingsRepository::new(pool().await);
     let cut: String = LONG.chars().take(80).collect();
     section_text(&store, 2, &format!("Before it. {LONG} After it.")).await;
+    // The stored passage holds another sentence that starts with the cut
+    // text, which must not make the sentence ambiguous.
+    let misleading = format!("{cut} and nothing more.");
     let sentence = old_row(
         &store,
         ("quotation", "section", Some(2)),
         &format!("The source citation of the sentence \"{cut}\" could not be confirmed: The generated quotation does not match a valid passage in the saved reference. No material was published."),
-        Some("A quotation of the source."),
+        Some(&misleading),
     )
     .await;
     assert_eq!(
