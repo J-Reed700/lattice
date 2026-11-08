@@ -6,7 +6,6 @@ use lattice_learning::dto::{LearningPreparation, LearningProgramStatus};
 use lattice_learning::lessons::generation_jobs::*;
 use lattice_learning::repository::LearningRepository;
 use lattice_learning::service;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 
 #[path = "../lessons/live_lesson_tests.rs"]
