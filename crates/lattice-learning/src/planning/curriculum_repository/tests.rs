@@ -724,6 +724,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
             question_id: duplicate_question_id,
             correct_index: 0,
             explanation: "One is the answer.".into(),
+            rationales: vec![],
         }],
     };
     broken.verification = Some(crate::content_verification::tests::attest(&target, &broken));

@@ -2239,3 +2239,21 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     );
     Ok(())
 }
+
+#[test]
+fn a_questions_reasons_travel_with_its_unit_and_a_question_without_them_is_unchanged() {
+    let mut lesson = candidate(GOOD);
+    lesson["questions"] = json!([
+        {"prompt":"Which?","options":["a","b","c","d"],"correctIndex":0,"explanation":"A holds.",
+            "rationales":["","B fails.","C fails.","D fails."]},
+        {"prompt":"Why?","options":["a","b","c","d"],"correctIndex":1,"explanation":"B holds."}
+    ]);
+
+    let content = units(&lesson).unwrap();
+
+    assert_eq!(
+        content[1]["rationales"],
+        json!(["", "B fails.", "C fails.", "D fails."])
+    );
+    assert!(content[2].get("rationales").is_none());
+}

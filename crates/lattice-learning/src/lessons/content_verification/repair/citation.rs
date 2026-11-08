@@ -153,23 +153,17 @@ pub(super) fn appended(section: &Value, repaired: &Value) -> Vec<Value> {
 /// was confined to the failed sentences. Only a citation of a sentence that
 /// stands in the section's text is kept, and none twice.
 pub(super) fn restore_appended(confined: &mut Value, appended: Vec<Value>, field: &str) {
-    let text = if field == "blocks" {
-        "body"
-    } else {
-        "explanation"
-    };
-    let held = confined
-        .get(text)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
+    let held: Vec<String> = crate::lessons::text_edits::citable_texts(confined, field != "blocks")
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
     let standing: Vec<Value> = appended
         .into_iter()
         .filter(|entry| {
             entry
                 .get("sentence")
                 .and_then(Value::as_str)
-                .is_some_and(|sentence| held.contains(sentence))
+                .is_some_and(|sentence| held.iter().any(|text| text.contains(sentence)))
         })
         .collect();
     if standing.is_empty() {

@@ -731,6 +731,17 @@ fn a_citation_for_a_sentence_the_confinement_took_back_is_not_kept() {
 }
 
 #[test]
+fn a_citation_for_a_sentence_of_a_choices_reason_is_kept() {
+    let mut confined = json!({"prompt":"Which?","explanation":"A holds.",
+        "rationales":["","B fails at 5 attempts.","C fails."],"citations":[]});
+    let kept = json!({"sentence":"B fails at 5 attempts.","sourceIndex":0,"quote":"y"});
+
+    citation::restore_appended(&mut confined, vec![kept.clone()], "questions");
+
+    assert_eq!(confined["citations"], json!([kept]));
+}
+
+#[test]
 fn a_section_given_back_no_citation_gets_no_citations_field() {
     let section = json!({"kind":"explanation","body":"Keep this. Fix this."});
     let stray = json!({"sentence":"A sentence the section lacks.","sourceIndex":0,"quote":"x"});

@@ -280,3 +280,24 @@ fn a_claim_on_the_title_field_follows_the_title_text() {
     assert_eq!(plan.edited.len(), 1);
     assert_eq!(plan.written[0].text, "Boiling is not a phase change.");
 }
+
+#[test]
+fn a_claim_on_a_choices_reason_is_an_answer_key_claim_edited_when_that_reason_is_rewritten() {
+    const FIRST: &str = "B fails because it reverses the order.";
+    let old = format!("{FIRST} It also drops the cache.");
+    let new = "B fails because it swaps the order. It also drops the cache.";
+    let claim = ClaimLedgerEntry::extracted(
+        ClaimId("reason".into()),
+        provenance(Actor::Machine),
+        ClaimLocation::locate(2, UnitKind::AnswerKey, "rationales/1", FIRST, &old),
+        FIRST.into(),
+    )
+    .unwrap();
+
+    let plan = plan(&[claim], 2, "rationales/1", &old, new);
+
+    assert_eq!(plan.edited.len(), 1);
+    assert_eq!(plan.edited[0].0, ClaimId("reason".into()));
+    assert_eq!(plan.written.len(), 1);
+    assert!(plan.kept.is_empty() && plan.removed.is_empty());
+}

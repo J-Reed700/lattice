@@ -154,3 +154,20 @@ fn a_quotation_item_that_names_no_source_stays() {
         "Sayings:\n\n- \"Measure twice.\""
     );
 }
+
+#[test]
+fn a_choices_reason_loses_its_apparatus_like_the_explanation() {
+    let draft = serde_json::json!({"blocks":[],"questions":[{
+        "explanation":"A holds (SourceIndex: 0).",
+        "rationales":["","B fails (SourceIndex: 0).","C fails."]}]})
+    .to_string();
+
+    let cleaned: serde_json::Value =
+        serde_json::from_str(&super::super::strip_draft_apparatus(draft)).unwrap();
+
+    assert_eq!(cleaned["questions"][0]["explanation"], "A holds.");
+    assert_eq!(
+        cleaned["questions"][0]["rationales"],
+        serde_json::json!(["", "B fails.", "C fails."])
+    );
+}

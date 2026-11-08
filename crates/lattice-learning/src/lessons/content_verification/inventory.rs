@@ -145,6 +145,11 @@ pub(crate) fn inputs(content: &[Value]) -> Vec<Value> {
             passages(&unit["body"], "/body", index, &mut text);
         }
         passages(&unit["explanation"], "/explanation", index, &mut text);
+        for (slot, reason) in unit["rationales"].as_array().into_iter().flatten().enumerate() {
+            if reason.as_str().is_some_and(|reason| !reason.trim().is_empty()) {
+                passages(reason, &format!("/rationales/{slot}"), index, &mut text);
+            }
+        }
         let mut input = json!({"index":index,"kind":unit.get("kind"),"correctIndex":unit.get("correctIndex"),"passages":text});
         // A check names misconceptions as wrong below its reveal line
         // (learning science lessons §3.3), as a quiz names wrong options: the
@@ -714,6 +719,37 @@ mod tests {
         assert!(fields(1).is_empty(), "a reflection holds no claims");
         assert_eq!(fields(2), ["/explanation"]);
         assert!(input[0].get("context").is_none());
+    }
+
+    #[test]
+    fn a_wrong_choices_reason_is_a_passage_of_its_own_beside_the_explanation() {
+        let content = vec![
+            json!({"kind":"assessment","correctIndex":0,"prompt":"Stem?",
+            "options":["A","B","C","D"],
+            "explanation":"A holds because the lesson says so.",
+            "rationales":["","B fails for one reason.","C fails for another.","D fails for a third."]}),
+        ];
+        let input = inputs(&content);
+        let found: Vec<(&str, &str)> = input[0]["passages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| (p["field"].as_str().unwrap(), p["text"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("/explanation", "A holds because the lesson says so."),
+                ("/rationales/1", "B fails for one reason."),
+                ("/rationales/2", "C fails for another."),
+                ("/rationales/3", "D fails for a third."),
+            ]
+        );
+        assert!(input[0]["context"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| !p["field"].as_str().unwrap().starts_with("/rationales")));
     }
 
     #[tokio::test]

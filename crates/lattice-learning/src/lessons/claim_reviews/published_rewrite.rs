@@ -80,11 +80,12 @@ pub(super) struct Written {
 }
 
 /// The kind of unit a field belongs to: a question's prompt and choices, its
-/// answer key's explanation, else a section's field.
+/// answer key's explanation and choice reasons, else a section's field.
 fn unit_kind_of(field: &str) -> UnitKind {
     match field {
         "prompt" => UnitKind::Question,
         "explanation" => UnitKind::AnswerKey,
+        _ if field.starts_with("rationales/") => UnitKind::AnswerKey,
         _ if field.starts_with("options/") => UnitKind::Question,
         _ => UnitKind::Block,
     }
