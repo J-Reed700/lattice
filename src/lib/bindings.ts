@@ -5069,7 +5069,11 @@ outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: Sn
 /**
  * The card's lines, in order.
  */
-lines: string[] }
+lines: string[];
+/**
+ * What the source did for a sentence the machine took out; null for any other claim.
+ */
+putBack: PutBackOutcomeDto | null }
 export type ClaimCountsDto = { verified: number; confirmed: number; queued: number; open: number;
 /**
  * Removed by the user.
@@ -9253,6 +9257,10 @@ telemetryEnabled: boolean;
  */
 crashReporting: boolean }
 export type ProvenanceDto = { input: "saved_passage"; startByte: number; endByte: number } | { input: "link"; url: string } | { input: "document"; documentId: string } | { input: "pasted_text" }
+/**
+ * What a source did for a sentence the machine took out.
+ */
+export type PutBackOutcomeDto = "back" | "no_place" | "stays_out"
 /**
  * Whether the place of a taken-out sentence is known.
  */

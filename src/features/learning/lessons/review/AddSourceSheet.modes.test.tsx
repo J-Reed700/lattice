@@ -33,7 +33,7 @@ vi.mock('./AddSourceResult', () => ({
   ),
 }));
 
-const report = (overrides: Partial<ClaimAttachReportDto> = {}) => ({ source: { sourceId: 's1' }, failure: null, outcomes: [], lines: [], others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, ...overrides } as unknown as ClaimAttachReportDto);
+const report = (overrides: Partial<ClaimAttachReportDto> = {}) => ({ source: { sourceId: 's1' }, failure: null, outcomes: [], lines: [], putBack: null, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, ...overrides } as unknown as ClaimAttachReportDto);
 
 function renderSheet(props: Partial<ComponentProps<typeof AddSourceSheet>> = {}) {
   const handlers = { onClose: vi.fn(), onAdded: vi.fn() };

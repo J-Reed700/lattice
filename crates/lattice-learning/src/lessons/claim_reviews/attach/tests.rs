@@ -35,7 +35,7 @@ use serde_json::{json, Value};
 use super::super::recheck::waiting_claims;
 use super::acquire::{acquire, Acquired};
 use super::failures::AttachFailureDto;
-use super::report::{ClaimAttachProgressDto, SnapshotNoteDto};
+use super::report::{ClaimAttachProgressDto, PutBackOutcomeDto, SnapshotNoteDto};
 use super::{
     attach, attach_to, attach_to_lesson, AttachDeps, AttachRequest, Evidence, LessonSourceRequest,
     Others,
@@ -110,6 +110,21 @@ fn removed_claim(id: &str, statement: &str) -> ClaimLedgerEntry {
             ClaimEvent::UserAction {
                 action: UserAction::Remove,
                 note: None,
+            },
+        )
+        .unwrap();
+    entry
+}
+
+/// A claim the machine took out of the lesson, which a source may put back.
+fn taken_out_claim(id: &str, statement: &str) -> ClaimLedgerEntry {
+    let mut entry = open_claim(id, statement);
+    entry
+        .append(
+            provenance(Actor::Machine),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
             },
         )
         .unwrap();
@@ -713,6 +728,64 @@ async fn a_contradicting_source_keeps_the_claim_for_the_user_with_its_reason() {
         water.state().verdict(),
         Some(VerdictKind::Contradicted)
     ));
+}
+
+#[tokio::test]
+async fn a_source_that_supports_a_taken_out_sentence_it_cannot_put_back_reports_no_place() {
+    let world = world_with(vec![taken_out_claim("water", WATER)]).await;
+    let web = ScriptedWeb::article();
+    let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+    let judge = Judge::says("supported");
+    let report = world
+        .attach(&web, &snapshots, &judge, "water", World::pasted(NOTES))
+        .await
+        .unwrap();
+
+    assert_eq!(report.put_back, Some(PutBackOutcomeDto::NoPlace));
+    assert!(
+        !report
+            .lines
+            .iter()
+            .any(|line| line.starts_with("The source supports it")),
+        "{:?}",
+        report.lines
+    );
+}
+
+#[tokio::test]
+async fn a_source_that_does_not_support_a_taken_out_sentence_reports_it_stays_out() {
+    let world = world_with(vec![taken_out_claim("water", WATER)]).await;
+    let web = ScriptedWeb::article();
+    let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+    let judge = Judge::says("contradicted");
+    let report = world
+        .attach(&web, &snapshots, &judge, "water", World::pasted(NOTES))
+        .await
+        .unwrap();
+
+    assert_eq!(report.put_back, Some(PutBackOutcomeDto::StaysOut));
+    assert!(
+        !report
+            .lines
+            .iter()
+            .any(|line| line.starts_with("The source does not support it")),
+        "{:?}",
+        report.lines
+    );
+}
+
+#[tokio::test]
+async fn a_claim_the_machine_did_not_take_out_has_no_put_back_outcome() {
+    let world = world().await;
+    let web = ScriptedWeb::article();
+    let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+    let judge = Judge::says("supported");
+    let report = world
+        .attach(&web, &snapshots, &judge, "water", World::pasted(NOTES))
+        .await
+        .unwrap();
+
+    assert_eq!(report.put_back, None);
 }
 
 #[tokio::test]

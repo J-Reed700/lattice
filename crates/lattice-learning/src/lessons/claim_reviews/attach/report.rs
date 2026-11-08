@@ -81,6 +81,17 @@ pub struct ClaimAttachReportDto {
     pub others: OtherClaimsCheckedDto,
     /// The card's lines, in order.
     pub lines: Vec<String>,
+    /// What the source did for a sentence the machine took out; null for any other claim.
+    pub put_back: Option<PutBackOutcomeDto>,
+}
+
+/// What a source did for a sentence the machine took out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PutBackOutcomeDto {
+    Back,
+    NoPlace,
+    StaysOut,
 }
 
 pub(super) fn source_ref(saved: &SavedSource) -> SourceRefDto {
@@ -181,6 +192,7 @@ pub(super) fn not_saved(revision: Revision, failure: AttachFailureDto) -> ClaimA
         failure: Some(failure),
         snapshot: SnapshotNoteDto::NotApplicable,
         others: OtherClaimsCheckedDto::default(),
+        put_back: None,
     }
 }
 
@@ -216,6 +228,7 @@ pub(super) fn added_to_lesson(
         snapshot,
         others,
         lines,
+        put_back: None,
     }
 }
 
@@ -251,5 +264,6 @@ pub(super) fn checked(
         snapshot,
         others,
         lines,
+        put_back: None,
     }
 }

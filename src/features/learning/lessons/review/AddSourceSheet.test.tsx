@@ -33,7 +33,7 @@ const checked = (supported: boolean): ClaimAttachReportDto['outcome'] => ({ outc
   result: supported ? { verdict: 'supported', sourceVersionId: 'version-watch', supportingQuote: 'They fly up to 3,000 miles.' } : { verdict: 'failed', kind: { kind: 'unsupported' } },
 } });
 const report = (overrides: Partial<ClaimAttachReportDto> = {}): ClaimAttachReportDto => ({
-  revision: 8, source, alreadySaved: false, outcome: checked(true), failure: null, snapshot: { state: 'not_applicable' }, others: none, lines: [], ...overrides,
+  revision: 8, source, alreadySaved: false, outcome: checked(true), failure: null, snapshot: { state: 'not_applicable' }, others: none, lines: [], putBack: null, ...overrides,
 });
 
 /** The attach answers when the test says, with progress events in between. */

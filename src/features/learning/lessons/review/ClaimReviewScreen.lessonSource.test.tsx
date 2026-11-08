@@ -24,7 +24,7 @@ const BUTTON = 'Add a source to the lesson';
 const source = { sourceId: 'source-watch', sourceVersionId: 'version-watch', title: 'Monarch Watch', url: URL_, addedBy: 'user' as const };
 const report = (overrides: Partial<ClaimAttachReportDto> = {}): ClaimAttachReportDto => ({
   revision: 8, source, alreadySaved: false, outcome: null, failure: null, snapshot: { state: 'not_applicable' },
-  others: { tried: 2, verified: 1, notVerified: 0, noPassage: 1, stopped: null }, lines: [], ...overrides,
+  others: { tried: 2, verified: 1, notVerified: 0, noPassage: 1, stopped: null }, lines: [], putBack: null, ...overrides,
 });
 
 function show(data: LessonClaimReviewDto | null) {

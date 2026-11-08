@@ -19,7 +19,7 @@ const checkedResult = (supported: boolean) => ({
   },
 });
 const report = (overrides: Partial<ClaimAttachReportDto> = {}): ClaimAttachReportDto => ({
-  revision: 1, source, alreadySaved: false, outcome: checkedResult(true), failure: null, snapshot: { state: 'not_applicable' }, others: none, lines: [], ...overrides,
+  revision: 1, source, alreadySaved: false, outcome: checkedResult(true), failure: null, snapshot: { state: 'not_applicable' }, others: none, lines: [], putBack: null, ...overrides,
 });
 
 describe('source words', () => {
@@ -296,6 +296,27 @@ describe('adding a source', () => {
     expect(progressLine({ stage: 'done' })).toBe('Done');
     expect(progressLine({ stage: 'checking', done: 1, total: 4, statement: 'Short.' })).toBe('Checking statement 2 of 4: Short.');
     expect(progressLine({ stage: 'checking', done: 9, total: 4, statement: 'x'.repeat(100) })).toBe(`Checking statement 4 of 4: ${'x'.repeat(100)}`);
+  });
+
+  describe('the put-back outcome of an attach', () => {
+    const base = attachSummary(report(), 1, 3).line;
+
+    it.each([
+      ['back', 'The source supports it, so it is back in the lesson.'],
+      ['no_place', 'The source supports it. Choose where it goes and put it back.'],
+      ['stays_out', 'The source does not support it, so it stays out of the lesson.'],
+    ] as const)('follows the summary of one statement with its sentence for %s', (putBack, sentence) => {
+      expect(attachSummary(report({ putBack }), 1, 3).line).toBe(`${base} ${sentence}`);
+    });
+
+    it('leaves the sentence out when more than one statement is in scope (a guard: it passes before and after the change)', () => {
+      expect(attachSummary(report({ putBack: 'back' }), 15, 18).line).toBe(attachSummary(report(), 15, 18).line);
+    });
+
+    it('does not read the sentence from the lines', () => {
+      const line = 'The source supports it, so it is back in the lesson.';
+      expect(attachSummary(report({ lines: [line], putBack: null }), 1, 3).line).toBe(base);
+    });
   });
 
   it('explains each failure in one sentence, naming the host when known', () => {

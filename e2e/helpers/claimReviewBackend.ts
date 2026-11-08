@@ -197,7 +197,7 @@ export function claimReviewBackend() {
       if (evidence.url.includes("403")) {
         const failure = { kind: "refused" as const, message: `${hostOf(evidence.url)} refused the request (HTTP 403).`, nextSteps: [{ step: "paste_text" as const, origin: evidence.url }, { step: "add_file" as const }] };
         progress({ stage: "done" });
-        return { revision: review.revision, source: null, alreadySaved: false, outcome: null, failure, snapshot: { state: "not_applicable" }, others, lines: [failure.message] };
+        return { revision: review.revision, source: null, alreadySaved: false, outcome: null, failure, snapshot: { state: "not_applicable" }, others, lines: [failure.message], putBack: null };
       }
     }
     progress({ stage: "saving" });
@@ -236,6 +236,7 @@ export function claimReviewBackend() {
       snapshot: { state: "not_applicable" },
       others,
       lines,
+      putBack: null,
     };
   }
 

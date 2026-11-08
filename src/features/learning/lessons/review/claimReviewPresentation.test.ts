@@ -150,7 +150,7 @@ describe('claim review presentation', () => {
     const report: ClaimAttachReportDto = {
       revision: 8, source: { ...support().source, title: 'Monarch Watch' }, alreadySaved: false,
       outcome: { outcome: 'checked', check: { checker: { role: 'local', model: 'qwen' }, result: { verdict: 'supported', sourceVersionId: 'v', supportingQuote: 'q' }, reason: '', fingerprint: 'f', evidence: [], windowTokens: 1 } },
-      failure: null, snapshot: { state: 'not_applicable' }, others: { tried: 14, verified: 11, notVerified: 2, noPassage: 1, stopped: null }, lines: [],
+      failure: null, snapshot: { state: 'not_applicable' }, others: { tried: 14, verified: 11, notVerified: 2, noPassage: 1, stopped: null }, lines: [], putBack: null,
     };
     expect(attachSummary(report, 15, 18).line).toBe('Added Monarch Watch. Verified 12 of 15 statements; 2 do not match what it says; 1 is not mentioned by it.');
     expect(attachSummary(report, 1, 32).line).toBe('Added Monarch Watch; it states this. 32 left.');

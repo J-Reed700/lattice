@@ -29,7 +29,7 @@ const checked = (supported: boolean): ClaimAttachReportDto['outcome'] => ({ outc
 } });
 const report = (supported: boolean): ClaimAttachReportDto => ({
   revision: 8, source, alreadySaved: false, outcome: checked(supported), failure: null, snapshot: { state: 'not_applicable' },
-  others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [],
+  others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, lines: [], putBack: null,
 });
 
 const aboutSentence = (overrides: Partial<TeachingFindingDto> = {}) => teachingFinding({
