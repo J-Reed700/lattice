@@ -341,9 +341,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
+      - name: Install cargo-audit through the GitHub API
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_VERSION: 0.22.2
+        run: |
+          asset="cargo-audit-x86_64-unknown-linux-gnu-v$AUDIT_VERSION.tgz"
+          cd "$RUNNER_TEMP"
+          for attempt in 1 2 3 4 5; do
+            gh release download "cargo-audit/v$AUDIT_VERSION" --repo rustsec/rustsec --pattern "$asset" --clobber && break
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep 15
+          done
+          echo "ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39  $asset" | sha256sum --check
+          tar -xzf "$asset" --strip-components=1 -C "$(dirname "$(command -v cargo)")" "cargo-audit-x86_64-unknown-linux-gnu-v$AUDIT_VERSION/cargo-audit"
+          cargo audit --version
       - name: Desktop advisories
         working-directory: crates/lattice-desktop
         run: cargo audit --deny yanked --file ../../Cargo.lock
