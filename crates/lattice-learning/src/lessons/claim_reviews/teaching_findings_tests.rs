@@ -1135,6 +1135,17 @@ async fn reopening_takes_kept_and_resolved_notes_back_and_clears_the_resolution(
         )
         .await
         .unwrap();
+    let resolved = dto_of(&store, "teaching:section-0").await;
+    assert_eq!(resolved.state, TeachingFindingStateDto::Resolved);
+    assert_eq!(
+        resolved.resolution,
+        Some(TeachingResolutionDto::SourceAdded)
+    );
+    assert!(resolved.resolved_at.is_some());
+    assert_eq!(
+        dto_of(&store, "structure:section-1").await.state,
+        TeachingFindingStateDto::Kept
+    );
     store
         .settle(
             "p1",
