@@ -16,7 +16,7 @@ pub(super) const ONLY_SECTION: &str = "Only a section's text can be changed in a
 const EDITED_THE_SECTION: &str =
     "This changed when you edited the section. Edit the section again to change it back.";
 const EDITED_THE_QUESTION: &str =
-    "This question changed after that, so it can't be undone on its own. Edit the question to change it back.";
+    "This changed when you edited the question. Edit the question again to change it back.";
 
 const PUBLISHED: &str = "This lesson is published. Prepare it again to do that.";
 
