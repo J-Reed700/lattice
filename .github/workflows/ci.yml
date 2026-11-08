@@ -236,6 +236,14 @@ jobs:
         working-directory: crates/lattice-desktop
         run: cargo clippy ${{ env.PACKAGE_ARGS }} --all-targets -- -D warnings
 
+      - name: Page file for four test-build jobs
+        if: matrix.os == 'windows-latest'
+        uses: al-cheb/configure-pagefile-action@v1.5
+        with:
+          minimum-size: 24GB
+          maximum-size: 24GB
+          disk-root: "C:"
+
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
       # that Cargo silently dropped for the lib harness, and a passing job
@@ -257,13 +265,11 @@ jobs:
           # eats the compiler diagnostics, which live on the same stream, and
           # turns a build failure into a misleading "no test executables".
           $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          # Two jobs, not four: each test crate that reads the lattice rlib
-          # (about 1 GB) needs several GB while it compiles, and four at once
-          # exceed the runner's commit limit ("The paging file is too small",
-          # os error 1455), which rustc reports as E0786 invalid metadata.
+          # Four jobs need a bigger page file than the runner's: each test crate that
+          # reads the lattice rlib takes several GB, and os error 1455 shows as E0786.
           # The same selection and features as the test step, which then has
           # nothing left to build; checked are the desktop crate's executables.
-          cargo test --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
+          cargo test --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-run --timings --message-format=json > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -285,6 +291,14 @@ jobs:
             }
             Write-Host "OK $exe"
           }
+
+      - name: Upload the Windows test build's timings
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-build-timings
+          path: target/cargo-timings/cargo-timing.html
+          if-no-files-found: warn
 
       - name: Install cargo-nextest through the GitHub API
         shell: bash
@@ -308,6 +322,13 @@ jobs:
           [ "$actual" = "$sha" ] || { echo "::error::$asset SHA-256 is $actual, expected $sha"; exit 1; }
           tar -xzf "$asset" -C "$(dirname "$(command -v cargo)")"
           cargo nextest --version
+
+      - name: Windows tests write their temporary files to the local disk
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
 
       - name: All desktop Rust unit, command and integration tests
         working-directory: crates/lattice-desktop

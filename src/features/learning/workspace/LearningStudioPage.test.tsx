@@ -662,14 +662,14 @@ describe('Learning Studio program workflow', () => {
       show('/studio?drills=open');
       expect(await screen.findByText('Review drills of program-2')).toBeVisible();
       expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
-      expect(search()).toBe('');
+      await waitFor(() => expect(search()).toBe(''));
     });
 
     it('opens the first active course when none was opened before', async () => {
       offer(course('program-0', 'draft'), course('program-1'), course('program-2'));
       show('/studio?drills=open');
       expect(await screen.findByText('Review drills of program-1')).toBeVisible();
-      expect(search()).toBe('');
+      await waitFor(() => expect(search()).toBe(''));
     });
 
     it('opens the first active course when the one opened last is gone', async () => {
