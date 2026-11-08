@@ -1167,6 +1167,66 @@ async fn a_long_subtopic_title_from_the_planner_is_read_not_refused() -> Result<
     Ok(())
 }
 
+/// Keeps the text of every request the wrapped model answers.
+struct SystemText<'a> {
+    inner: &'a dyn lattice_core::application::ports::LLMPort,
+    sent: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::LLMPort for SystemText<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        self.sent
+            .lock()
+            .unwrap()
+            .push(serde_json::to_string(request).unwrap());
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.inner.is_ready().await
+    }
+}
+
+#[tokio::test]
+async fn the_planner_looks_first_for_material_the_learner_can_learn_from() -> Result<()> {
+    let request = request(LearningCourseDepth::Focused);
+    let llm = model(vec![plan_output(&[(
+        "Randomized comparison",
+        &["randomized controlled trial design documentation"],
+    )])]);
+    let recording = SystemText {
+        inner: &llm,
+        sent: Mutex::new(vec![]),
+    };
+    outline_references::plan(&recording, &request, &[], &OutlineProgress::default()).await?;
+    let sent = recording.sent.lock().unwrap().join(" ");
+    assert!(
+        sent.contains(
+            "material a learner with the stated prior knowledge can learn the subtopic from"
+        ),
+        "the plan asks for material at the learner's level"
+    );
+    assert!(
+        !sent.contains(
+            "to find primary documentation, official specifications, standards, papers, textbooks or institutional guidance"
+        ),
+        "the plan no longer asks for specifications first"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_reference_plan_schema_bounds_no_text_but_a_blank_one() -> Result<()> {
     let request = request(LearningCourseDepth::Focused);
