@@ -217,9 +217,9 @@ impl From<AppError> for ApiError {
                 details: Some(msg.clone()),
             },
             AppError::HttpStatus { ref message, .. } => ApiError {
-                code: ErrorCode::NetworkError,
-                message: "Network error".to_string(),
-                details: Some(message.clone()),
+                code: ErrorCode::HttpStatus,
+                message: message.clone(),
+                details: None,
             },
             AppError::InvalidUrl(ref msg) => ApiError {
                 code: ErrorCode::InvalidInput,

@@ -377,11 +377,12 @@ impl WebService {
                 info!(url, words = page.word_count, "URL served from page cache");
                 return Ok(served_from_cache(page, lookup_start));
             }
-            Some(CachedFetch::Refusal { reason }) => {
+            Some(CachedFetch::Refusal { status, reason }) => {
                 info!(url, %reason, "URL refusal served from page cache");
-                return Err(AppError::Network(format!(
-                    "{reason} (this site refused earlier; not retried)"
-                )));
+                return Err(AppError::HttpStatus {
+                    status,
+                    message: format!("{reason} (this site refused earlier; not retried)"),
+                });
             }
             None => {}
         }

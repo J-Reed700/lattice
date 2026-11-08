@@ -162,9 +162,9 @@ impl JobFailure {
         use crate::shared::error::AppError;
         match error {
             AppError::Network(_)
-            | AppError::HttpStatus { .. }
             | AppError::ServiceNotAvailable(_)
             | AppError::RateLimitExceeded(_) => true,
+            AppError::HttpStatus { status, .. } => AppError::is_retry_later_status(*status),
             error => Self::is_database_busy(error),
         }
     }
@@ -193,10 +193,8 @@ impl JobFailure {
     /// work, so it is retried for as long as the outage lasts.
     pub fn is_outage(error: &crate::shared::error::AppError) -> bool {
         use crate::shared::error::AppError;
-        matches!(
-            error,
-            AppError::Network(_) | AppError::HttpStatus { .. } | AppError::RateLimitExceeded(_)
-        ) || Self::is_database_busy(error)
+        matches!(error, AppError::Network(_) | AppError::RateLimitExceeded(_))
+            || Self::is_database_busy(error)
     }
 
     /// Outages are deferred; anything else fails the attempt.

@@ -9,17 +9,23 @@ use reqwest::StatusCode;
 pub(crate) fn status_error(status: StatusCode) -> AppError {
     match status {
         StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
-            AppError::Network(format!(
-                "HTTP {} {}: Site blocked automated access. Try importing the PDF or local file version.",
-                status.as_u16(),
-                status.canonical_reason().unwrap_or("Unknown"),
-            ))
+            AppError::HttpStatus {
+                status: status.as_u16(),
+                message: format!(
+                    "HTTP {} {}: Site blocked automated access. Try importing the PDF or local file version.",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or("Unknown"),
+                ),
+            }
         }
-        _ => AppError::Network(format!(
-            "HTTP {}: {}",
-            status,
-            status.canonical_reason().unwrap_or("Unknown")
-        )),
+        _ => AppError::HttpStatus {
+            status: status.as_u16(),
+            message: format!(
+                "HTTP {}: {}",
+                status,
+                status.canonical_reason().unwrap_or("Unknown")
+            ),
+        },
     }
 }
 
