@@ -341,6 +341,7 @@ export const COMMAND_PLUGINS = {
   rescan_vault: 'vault',
   reset_settings: 'settings',
   resolve_learning_claim: 'learning',
+  resolve_learning_claims: 'learning',
   resolve_wikilink: 'extraction',
   restage_message_image: 'conversation',
   restore_learning_canvas_snapshot: 'learning',

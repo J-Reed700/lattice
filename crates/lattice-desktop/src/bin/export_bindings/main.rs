@@ -154,6 +154,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::course_index_close,
             lattice::features::learning::plugin::get_learning_lesson_claim_review,
             lattice::features::learning::plugin::resolve_learning_claim,
+            lattice::features::learning::plugin::resolve_learning_claims,
             lattice::features::learning::plugin::attach_learning_claim_evidence,
             lattice::features::learning::plugin::keep_learning_teaching_finding,
             lattice::features::learning::plugin::resume_learning_lesson_review,

@@ -728,6 +728,17 @@ async resolveLearningClaim(request: ResolveLearningClaimRequestDto) : Promise<Re
 }
 },
 /**
+ * Applies one action to every claim in the request, all or nothing.
+ */
+async resolveLearningClaims(request: ResolveLearningClaimsRequestDto) : Promise<Result<ResolveLearningClaimResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|resolve_learning_claims", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Attach the user's evidence to a claim (§5.4): save it as a course
  * source, check the claim against it, then the other open claims in scope,
  * reporting each stage on `on_progress`.
@@ -9237,6 +9248,20 @@ export type ResolveLearningClaimResultDto = {
  * The review's revision after the action: send it with the next one.
  */
 revision: number }
+/**
+ * One action for several claims at once (`Confirm`, `Remove`, or `Undo` of
+ * the last such batch).
+ */
+export type ResolveLearningClaimsRequestDto = { programId: string; lessonId: string;
+/**
+ * The claims the action is for.
+ */
+claimIds: string[]; action: ClaimActionRequestDto;
+/**
+ * The review's revision the user acted on; for an Undo, the revision
+ * the batch returned.
+ */
+expectedRevision: number; operationId: string }
 /**
  * Response for link resolution (for frontend compatibility).
  */
