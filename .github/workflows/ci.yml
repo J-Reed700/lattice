@@ -47,7 +47,7 @@ jobs:
       matrix:
         os: >-
           ${{ fromJSON((endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows'))
-          && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest"]' || '["ubuntu-24.04"]')
+          && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest", "macos-latest"]' || '["ubuntu-24.04"]')
           || format('["ubuntu-24.04", "windows-latest"{0}{1}]',
           github.event.pull_request.draft != true && ', "macos-latest"' || '',
           github.event_name == 'push' && ', "macos-15-intel"' || '')) }}
