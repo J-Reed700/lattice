@@ -425,6 +425,23 @@ mod tests {
     }
 
     #[test]
+    fn each_reviewed_part_carries_the_label_the_user_sees_beside_its_key() {
+        let original = json!({
+            "blocks":[{"body":"one","title":"First"},{"body":"two","title":"Second"}],
+            "questions":[{"prompt":"ask"},{"prompt":"again"}]
+        });
+        let (reviewed, ids) = review_candidate(&original);
+        assert_eq!(reviewed["blocks"][0]["label"], "Section 1");
+        assert_eq!(reviewed["blocks"][1]["label"], "Section 2");
+        assert_eq!(reviewed["questions"][0]["label"], "Question 1");
+        assert_eq!(reviewed["questions"][1]["label"], "Question 2");
+        assert_eq!(reviewed["blocks"][1]["index"], 1);
+        assert_eq!(ids[1], ["section-1-passage-0"]);
+        assert_eq!(reviewed["blocks"][1]["title"], "Second");
+        assert_eq!(original["blocks"][1].get("label"), None);
+    }
+
+    #[test]
     fn passages_preserve_every_byte_and_ids_are_scoped_to_the_section() {
         let body = "🦀 Rust’s ‘book’\n```rust\n    println!(\"a  b\");\n```\r\n".repeat(40);
         let original = json!({"blocks":[{"body":body,"title":"Unicode and code"}]});

@@ -128,6 +128,16 @@ async fn a_defect_one_repair_did_not_fix_publishes_and_waits_for_the_user() -> R
 }
 
 #[tokio::test]
+async fn the_reviewer_is_told_to_name_a_part_by_its_label_or_title() -> Result<()> {
+    let model = model(vec![review(None)]);
+    run(&model, lesson(EXCERPT)).await?;
+    let prompts = model.prompts.lock().unwrap();
+    assert!(prompts[0].contains("by its label"));
+    assert!(prompts[0].contains("never by its section-N key or its index"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_pass_that_fixes_the_defect_publishes_with_nothing_waiting() -> Result<()> {
     let model = model(vec![
         review(Some(

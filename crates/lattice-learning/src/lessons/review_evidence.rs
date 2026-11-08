@@ -726,6 +726,198 @@ mod tests {
         assert!(first(&response, &issues, &evidence).is_err());
     }
 
+    fn parts_evidence() -> HashMap<String, EvidenceKind> {
+        HashMap::from([
+            ("blocks-1".into(), EvidenceKind::Candidate),
+            ("blocks-2".into(), EvidenceKind::Candidate),
+            ("blocks-4".into(), EvidenceKind::Candidate),
+            ("questions-0".into(), EvidenceKind::Candidate),
+            ("reference-0".into(), EvidenceKind::Reference),
+            ("requirements".into(), EvidenceKind::Requirements),
+        ])
+    }
+
+    /// A decision on issue-0 with the given verdict and basis, citing `ids`;
+    /// `part` is its partId, left out when `None`.
+    fn part_decision(verdict: &str, basis: &str, ids: Value, part: Option<&str>) -> String {
+        let mut decision = json!({"verdict":verdict,"basis":basis,"evidenceIds":ids,"requirementId":null,"reason":"The supplied evidence settles this proposal."});
+        if let (Some(part), Some(fields)) = (part, decision.as_object_mut()) {
+            fields.insert("partId".into(), json!(part));
+        }
+        json!({"issue-0":decision}).to_string()
+    }
+
+    #[test]
+    fn an_issue_is_placed_at_the_part_the_decision_names_not_the_lowest_it_cites() -> Result<()> {
+        let issues = proposal("The worked example contradicts its explanation.");
+        let evidence = parts_evidence();
+        let both = json!(["blocks-2", "blocks-4"]);
+        for (part, site) in [
+            ("blocks-4", FindingSite::Section(4)),
+            ("blocks-2", FindingSite::Section(2)),
+            ("questions-0", FindingSite::Question(0)),
+        ] {
+            assert_eq!(
+                placed(first(
+                    &part_decision("actionable", "internal_conflict", both.clone(), Some(part)),
+                    &issues,
+                    &evidence
+                )?),
+                vec![(issues[0].note.clone(), Some(site))]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_external_fact_issue_is_placed_where_the_decision_says_not_at_the_references() -> Result<()>
+    {
+        let issues = proposal("A proposed factual correction.");
+        let evidence = parts_evidence();
+        for (part, site) in [
+            ("blocks-1", FindingSite::Section(1)),
+            ("lesson", FindingSite::Lesson),
+        ] {
+            assert_eq!(
+                placed(first(
+                    &part_decision(
+                        "actionable",
+                        "external_fact",
+                        json!(["reference-0"]),
+                        Some(part)
+                    ),
+                    &issues,
+                    &evidence
+                )?),
+                vec![(issues[0].note.clone(), Some(site))]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_actionable_decision_without_a_candidate_part_or_lesson_is_refused() -> Result<()> {
+        let issues = proposal("A proposed factual correction.");
+        let evidence = parts_evidence();
+        let decide = |part| {
+            first(
+                &part_decision("actionable", "external_fact", json!(["reference-0"]), part),
+                &issues,
+                &evidence,
+            )
+        };
+        assert!(decide(Some("blocks-1"))?.len() == 1);
+        for part in [
+            None,
+            Some("requirements"),
+            Some("reference-0"),
+            Some("blocks-9"),
+            Some(""),
+        ] {
+            assert!(decide(part).is_err(), "{part:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_not_established_decision_needs_no_part_and_its_part_is_ignored() -> Result<()> {
+        let issues = proposal("A proposed factual correction.");
+        let evidence = parts_evidence();
+        for part in [None, Some("blocks-1"), Some("requirements")] {
+            assert!(first(
+                &part_decision("not_established", "external_fact", json!([]), part),
+                &issues,
+                &evidence
+            )?
+            .is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_finding_that_already_has_a_site_keeps_it_whatever_the_decision_names() -> Result<()> {
+        let evidence = parts_evidence();
+        let section = vec![ReviewFinding::new(
+            FindingKind::Teaching,
+            Some(FindingSite::Section(4)),
+            "Section 5 (candidate blocks-4): a proposed factual correction.",
+        )];
+        for part in ["blocks-1", "questions-0", "lesson"] {
+            assert_eq!(
+                first(
+                    &part_decision(
+                        "actionable",
+                        "external_fact",
+                        json!(["reference-0"]),
+                        Some(part)
+                    ),
+                    &section,
+                    &evidence
+                )?,
+                section
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_decision_schema_requires_a_part_among_the_candidates_or_lesson() {
+        let keys = ["issue-0".to_owned()];
+        let ids = [
+            "blocks-0".to_owned(),
+            "questions-1".to_owned(),
+            "reference-0".to_owned(),
+            "requirements".to_owned(),
+        ];
+        let schema = schema(&keys, &ids);
+        let decision = &schema["properties"]["issue-0"];
+        assert!(decision["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("partId")));
+        assert_eq!(
+            decision["properties"]["partId"]["enum"],
+            json!(["blocks-0", "questions-1", "lesson"])
+        );
+    }
+
+    #[tokio::test]
+    async fn each_candidate_part_is_offered_with_the_label_the_user_sees() -> Result<()> {
+        use crate::lessons::course_generation_tests::ScriptedModel;
+        let model = ScriptedModel {
+            outputs: std::sync::Mutex::new(vec![json!({"issue-0":{"verdict":"not_established","basis":"external_fact","evidenceIds":[],"requirementId":null,"reason":"No passage establishes this correction."}}).to_string()].into()),
+            prompts: Default::default(),
+        };
+        let sources = ReferenceCollection::lexical(&[])?;
+        check(
+            &model,
+            &proposal("Section 2 of the lesson is wrong."),
+            &json!({}),
+            &json!({"blocks":[{"body":"one"},{"body":"two"}],"questions":[{"prompt":"ask"}]}),
+            &sources,
+            None,
+        )
+        .await?;
+        let prompts = model.prompts.lock().unwrap();
+        assert!(prompts[0].contains("partId"));
+        let request: Value = serde_json::from_str(prompts[0].rsplit("\n\n").next().unwrap())?;
+        let parts: Vec<_> = request["candidateParts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|part| (part["id"].as_str().unwrap(), part["label"].as_str()))
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                ("blocks-0", Some("Section 1")),
+                ("blocks-1", Some("Section 2")),
+                ("questions-0", Some("Question 1")),
+            ]
+        );
+        Ok(())
+    }
+
     #[test]
     fn the_decision_schema_bounds_no_text_but_a_blank() {
         let keys = ["issue-0".to_owned()];
