@@ -3,7 +3,7 @@
 use super::outline_reference_tests::*;
 use crate::{
     dto::*,
-    lessons::course_generation_tests::request,
+    lessons::course_generation_tests::{repair_answer, request},
     outline_draft::{
         repair_saved, DraftRunRegistry, LearningOutlineIssueKind, LearningOutlineReviewStatus,
         RepairLearningOutlineRequestDto,
@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 fn changed_module(candidate: &Value, index: usize, objective: &str) -> Value {
     let mut module = candidate["modules"][index].clone();
     module["lessons"][0]["objective"] = json!(objective);
-    json!({"module":module})
+    repair_answer(module.clone())
 }
 
 async fn generate(
