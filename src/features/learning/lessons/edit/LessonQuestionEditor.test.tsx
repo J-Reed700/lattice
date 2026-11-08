@@ -96,7 +96,7 @@ describe('LessonQuestionEditor', () => {
       after: {
         kind: 'single_choice', prompt: 'What does DictReader do with a header name that holds spaces?',
         choices: ['It keeps them.', 'It trims them silently.', 'It drops the column.', 'It raises an error.'], right: 2, explanation: 'Trimming is up to you.',
-        rationales: QUESTION.rationales,
+        rationales: ['', 'Nothing trims a header name.', '', 'No error is raised for spaces.'],
       },
     }]);
     expect(onSaved).toHaveBeenCalledTimes(1);
@@ -170,6 +170,16 @@ describe('LessonQuestionEditor', () => {
     const [save] = requests().filter((request) => request.dryRun === false);
     expect(save.after.right).toBe(2);
     expect(save.after.rationales).toEqual(['It does keep them, so this is not wrong.', 'Nothing trims a header name.', '', 'No error is raised for spaces.']);
+  });
+
+  it('keeps a reason written for a choice when the right answer moves away and back', async () => {
+    show();
+    await loaded();
+    await userEvent.click(radios()[2]);
+    await userEvent.click(radios()[0]);
+    expect(reasonBox(3)).toHaveValue('The column stays in the file.');
+    expect(screen.getByText('No changes yet.')).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
   });
 
   it('a question stored without reasons shows empty fields and is not changed by showing them', async () => {

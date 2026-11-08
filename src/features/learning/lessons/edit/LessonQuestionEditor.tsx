@@ -32,6 +32,11 @@ const sameQuestion = (a: LessonQuestionDto, b: LessonQuestionDto) =>
 /** The reasons as one per choice once any is written; a question stored without them keeps none until one is. */
 const padded = (question: LessonQuestionDto) => question.choices.map((_, index) => reasonAt(question, index));
 
+/** The question as sent: the right choice's reason is empty, wherever the draft still holds one the user wrote. */
+const asSent = (question: LessonQuestionDto): LessonQuestionDto =>
+  question.rationales.length === 0 ? question
+    : { ...question, rationales: padded(question).map((reason, at) => (at === question.right ? '' : reason)) };
+
 type Props = {
   programId: string;
   lessonId: string;
@@ -67,7 +72,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
     const timer = setTimeout(() => {
       void (async () => {
         const result = await api.editLearningLessonQuestion({
-          programId, lessonId, questionIndex, before: opened, after: draft, dryRun: true,
+          programId, lessonId, questionIndex, before: opened, after: asSent(draft), dryRun: true,
         });
         if (!current) return;
         if (result.ok) {
@@ -92,7 +97,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
 
   const submit = async () => {
     try {
-      await save.mutateAsync({ questionIndex, before: opened, after: draft });
+      await save.mutateAsync({ questionIndex, before: opened, after: asSent(draft) });
     } catch {
       return;
     }
@@ -105,11 +110,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
   const setReason = (index: number, text: string) =>
     setDraft((value) => ({ ...value, rationales: padded(value).map((reason, at) => (at === index ? text : reason)) }));
   const chooseRight = (index: number) =>
-    setDraft((value) => ({
-      ...value,
-      right: index,
-      rationales: value.rationales.length === 0 ? [] : padded(value).map((reason, at) => (at === index ? '' : reason)),
-    }));
+    setDraft((value) => ({ ...value, right: index }));
   const removeChoice = (index: number) =>
     setDraft((value) => ({
       ...value,
