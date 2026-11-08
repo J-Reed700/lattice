@@ -147,6 +147,31 @@ describe('Claim review screen, acting on a teaching note', () => {
     await staysOnTheNotes();
   });
 
+  async function acceptThenOpenNotes() {
+    api.resolve.mockResolvedValue(ok({ revision: 8 }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    expect(await screen.findByRole('button', { name: 'Undo' })).toBeVisible();
+    await openNotesFromTheQueue();
+    await openSheet();
+    await addLink();
+  }
+
+  it('drops the Undo of an earlier statement action when a source is added from a note', async () => {
+    api.attach.mockResolvedValue(ok(report(true)));
+    show(withClaims(aboutSentence({ claimIds: ['claim-9'] }), [waitingOnSource(1), confirmedClaim(9)]));
+    await acceptThenOpenNotes();
+    expect(await screen.findByText('Source added. The note is resolved.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
+  it('drops the Undo of an earlier statement action when the source does not state the sentence', async () => {
+    api.attach.mockResolvedValue(ok(report(false)));
+    show(withClaims(aboutSentence({ claimIds: ['claim-9'] }), [waitingOnSource(1), confirmedClaim(9)]));
+    await acceptThenOpenNotes();
+    expect(await screen.findByText(/Added Monarch Watch; it does not say this\./)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
   it('closes the sheet opened from a note with Escape from the focused address field, back to the notes', async () => {
     show(published(aboutSentence()));
     await openSheetFromTheNote();
