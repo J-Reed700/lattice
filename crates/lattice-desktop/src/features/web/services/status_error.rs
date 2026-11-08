@@ -4,6 +4,15 @@
 use lattice_core::shared::error::AppError;
 use reqwest::StatusCode;
 
+/// A status as a line: its code and standard reason, or the code alone when it
+/// has none.
+pub(crate) fn status_line(status: StatusCode) -> String {
+    match status.canonical_reason() {
+        Some(reason) => format!("HTTP {} {reason}", status.as_u16()),
+        None => format!("HTTP {}", status.as_u16()),
+    }
+}
+
 /// What a page request's error status is: a block for 403, 429 and 503, which
 /// sites answer to automated readers, and the status itself for any other.
 pub(crate) fn status_error(status: StatusCode) -> AppError {
@@ -12,19 +21,14 @@ pub(crate) fn status_error(status: StatusCode) -> AppError {
             AppError::HttpStatus {
                 status: status.as_u16(),
                 message: format!(
-                    "HTTP {} {}: Site blocked automated access. Try importing the PDF or local file version.",
-                    status.as_u16(),
-                    status.canonical_reason().unwrap_or("Unknown"),
+                    "{}: Site blocked automated access. Try importing the PDF or local file version.",
+                    status_line(status),
                 ),
             }
         }
         _ => AppError::HttpStatus {
             status: status.as_u16(),
-            message: format!(
-                "HTTP {}: {}",
-                status,
-                status.canonical_reason().unwrap_or("Unknown")
-            ),
+            message: status_line(status),
         },
     }
 }

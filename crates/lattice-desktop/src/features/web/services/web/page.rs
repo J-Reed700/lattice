@@ -10,6 +10,7 @@ use crate::features::web::services::page_cache::{CachedFetch, CachedPage};
 use crate::features::web::services::provenance::{
     self, PageMetadata, PageProvenance, PageReading, TextForm,
 };
+use crate::features::web::services::status_error::status_line;
 use crate::features::web::services::{browser_reader, identity, reference_text};
 use chrono::{NaiveDate, Utc};
 use encoding_rs::{Encoding, UTF_8};
@@ -250,11 +251,7 @@ enum LiveFailure {
 impl LiveFailure {
     fn describe(&self) -> String {
         match self {
-            LiveFailure::Status(status) => format!(
-                "HTTP {}: {}",
-                status,
-                status.canonical_reason().unwrap_or("Unknown")
-            ),
+            LiveFailure::Status(status) => status_line(*status),
             LiveFailure::Transport(detail) => format!("Failed to fetch URL: {detail}"),
         }
     }
