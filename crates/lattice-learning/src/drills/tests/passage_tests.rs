@@ -45,6 +45,7 @@ use lattice_core::domain::learning::drills::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
+use lattice_core::shared::text::segmentation::sentences;
 use serde_json::json;
 use sqlx::SqlitePool;
 use std::sync::mpsc;
@@ -409,6 +410,176 @@ async fn a_hits_paragraph_is_taken_by_the_weight_of_the_words_it_holds_and_not_t
     let picked = next_passage(&pool, &spec).await?;
     assert_eq!(picked.version_id, version);
     assert_eq!(picked.text, rare);
+    Ok(())
+}
+
+/// `count` distinct sentences of filler about a harbour, none holding a word of the query of [`SPACING_LESSON`] or
+/// another word that begins with one.
+fn filler_sentences(count: usize) -> Vec<String> {
+    const TRADES: [&str; 10] = [
+        "baker", "weaver", "cooper", "mason", "tanner", "potter", "sailor", "miller", "carter",
+        "smith",
+    ];
+    const CARGO: [&str; 3] = ["salt", "barley", "timber"];
+    (0..count)
+        .map(|number| {
+            format!(
+                "At the harbour the {} number {number} loaded crates of {} onto the grey cart.",
+                TRADES[number % TRADES.len()],
+                CARGO[number % CARGO.len()],
+            )
+        })
+        .collect()
+}
+
+/// A sentence holding the words of the query of [`SPACING_LESSON`]: `number` makes it distinct.
+fn lesson_sentence(number: usize) -> String {
+    format!("Spacing study over sessions helps recall of item {number}, and learners improve and explain several.")
+}
+
+/// A sentence of filler with one word of the query of [`SPACING_LESSON`] in it.
+fn touched_sentence(number: usize) -> String {
+    format!("At the harbour the baker number {number} told of recall onto the grey cart.")
+}
+
+/// `count` sentences on one line, those of `lesson` the lesson's own and those of `touched` holding one word of its
+/// query, and the byte span of each in the line.
+fn one_line_of(count: usize, lesson: &[usize], touched: &[usize]) -> (String, Vec<(usize, usize)>) {
+    let mut line = String::new();
+    let mut spans = Vec::new();
+    for (number, filler) in filler_sentences(count).into_iter().enumerate() {
+        let sentence = if lesson.contains(&number) {
+            lesson_sentence(number)
+        } else if touched.contains(&number) {
+            touched_sentence(number)
+        } else {
+            filler
+        };
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        spans.push((line.len(), line.len() + sentence.len()));
+        line.push_str(&sentence);
+    }
+    (line, spans)
+}
+
+/// The text from the start of sentence `first` to the end of sentence `last` of `spans`.
+fn run_of<'a>(line: &'a str, spans: &[(usize, usize)], first: usize, last: usize) -> &'a str {
+    let (start, _) = spans[first];
+    let (_, end) = spans[last];
+    &line[start..end]
+}
+
+#[tokio::test]
+async fn a_long_paragraph_gives_a_run_of_as_many_sentences_as_the_explanation() -> Result<()> {
+    let pool = pool().await?;
+    let (line, spans) = one_line_of(30, &[12, 13, 14, 15], &[]);
+    assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
+    assert_eq!(sentences(&line).len(), 30);
+    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.text, run_of(&line, &spans, 12, 15));
+    assert_eq!(sentences(&picked.text).len(), 4);
+    assert_eq!(
+        line.get(picked.start_byte..picked.end_byte),
+        Some(picked.text.as_str())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_last_run_of_a_long_paragraph_takes_the_sentences_left_over() -> Result<()> {
+    let pool = pool().await?;
+    let (line, spans) = one_line_of(30, &[26, 27, 28], &[]);
+    assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
+    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.text, run_of(&line, &spans, 24, 29));
+    assert_eq!(sentences(&picked.text).len(), 6);
+    assert_eq!(
+        line.get(picked.start_byte..picked.end_byte),
+        Some(picked.text.as_str())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_second_drill_of_a_long_paragraph_takes_another_run_of_it() -> Result<()> {
+    let pool = pool().await?;
+    let (line, spans) = one_line_of(30, &[12, 13, 14, 15], &[21]);
+    assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
+    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+
+    let first = next_passage(&pool, &spec).await?;
+    assert_eq!(first.text, run_of(&line, &spans, 12, 15));
+    drilled(&pool, "first", &program, &lesson, &first).await?;
+
+    let second = next_passage(&pool, &spec).await?;
+    let held = sentences(&second.text).len();
+    assert!((4..=7).contains(&held), "{held}: {second:?}");
+    assert_eq!(
+        line.get(second.start_byte..second.end_byte),
+        Some(second.text.as_str())
+    );
+    assert!(
+        second.end_byte <= first.start_byte || first.end_byte <= second.start_byte,
+        "{first:?} {second:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_hard_wrapped_paragraph_is_cut_only_at_the_end_of_a_sentence() -> Result<()> {
+    let pool = pool().await?;
+    let mut words = String::new();
+    for (number, filler) in filler_sentences(16).into_iter().enumerate() {
+        let sentence = if (6..=9).contains(&number) {
+            lesson_sentence(number)
+        } else {
+            filler
+        };
+        words.push_str(&sentence);
+        words.push(' ');
+    }
+    let mut text = String::new();
+    let mut width = 0;
+    for word in words.split_whitespace() {
+        if width + word.len() + 1 > 60 && width > 0 {
+            text.push('\n');
+            width = 0;
+        } else if width > 0 {
+            text.push(' ');
+            width += 1;
+        }
+        text.push_str(word);
+        width += word.len();
+    }
+    assert!(
+        !text.contains("\n\n") && text.len() > 1200,
+        "{}",
+        text.len()
+    );
+    assert_eq!(text.matches('.').count(), 16);
+    let program = course_of(&pool, &[("Harbour log", text.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert!(picked.text.len() < text.trim().len(), "{picked:?}");
+    assert!(sentences(&picked.text).len() >= 4, "{}", picked.text);
+    assert!(picked.text.ends_with('.'), "{}", picked.text);
+    let before = text.get(..picked.start_byte).unwrap_or("x").trim();
+    assert!(before.is_empty() || before.ends_with('.'), "{before}");
+    assert_eq!(
+        text.get(picked.start_byte..picked.end_byte),
+        Some(picked.text.as_str())
+    );
     Ok(())
 }
 
