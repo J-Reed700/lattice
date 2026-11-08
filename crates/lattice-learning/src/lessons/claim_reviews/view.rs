@@ -497,13 +497,14 @@ fn item(
     let presentation = presentation::presentation(entry, units, &unit_title);
     let (support, also_supported) = support::supports(entry, context);
     let available = offered(entry, published);
-    let place = available.contains(&ClaimActionKind::PutBack).then(|| {
-        let lesson = Lesson { units, published };
-        match put_back::place(&lesson, claims, entry) {
-            Some(_) => PutBackPlaceDto::Known,
-            None => PutBackPlaceDto::Choose,
-        }
+    let put_place = available
+        .contains(&ClaimActionKind::PutBack)
+        .then(|| put_back::place(&Lesson { units, published }, claims, entry));
+    let place = put_place.as_ref().map(|found| match found {
+        Some(_) => PutBackPlaceDto::Known,
+        None => PutBackPlaceDto::Choose,
     });
+    let put_back_unit = put_place.flatten().map(|found| found.unit_index);
     let rewritten = entry
         .rewrite()
         .filter(|_| available.contains(&ClaimActionKind::RestoreOriginal))
@@ -580,7 +581,7 @@ fn item(
         also_supported,
         tried: presentation::tried(entry, sources),
         place,
-        put_back_unit: None,
+        put_back_unit,
         rewritten,
     }
 }

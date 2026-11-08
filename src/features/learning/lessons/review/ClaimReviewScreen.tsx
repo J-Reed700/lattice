@@ -104,8 +104,8 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const takenOutEditor = (entry: TakenOutSentence) => {
     const claim = review?.claims.find((candidate) => candidate.claimId === entry.statements[0]?.claimId);
     const place = claim?.location;
-    if (!claim || !place || entry.place !== 'known' || place.unitKind !== 'block' || place.field !== 'body') return null;
-    const section = sectionAt(place.unitIndex, [sentenceBefore(claim.presentation.contextBefore)]);
+    if (!claim || !place || claim.putBackUnit === null || place.unitKind !== 'block' || place.field !== 'body') return null;
+    const section = sectionAt(claim.putBackUnit, [sentenceBefore(claim.presentation.contextBefore)]);
     return section ? () => setEditing(section) : null;
   };
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));
