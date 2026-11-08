@@ -319,3 +319,26 @@ async fn a_lesson_with_no_reference_material_asks_for_it_in_plain_words() {
     );
     assert!(!error.contains("MVP"), "{error}");
 }
+
+#[tokio::test]
+async fn the_lesson_writers_prompt_says_to_name_a_choice_by_its_words() {
+    use crate::lessons::course_generation_tests::outline;
+    let program = crate::tests::fixture();
+    let lesson = &program.modules[0].lessons[0];
+    let references = ReferenceCollection::lexical(&program.sources).unwrap();
+
+    let prompt = lesson_prompt(
+        &outline(1, 1),
+        &program,
+        lesson,
+        &references,
+        Vec::new(),
+        Vec::new(),
+        true,
+    )
+    .unwrap();
+
+    assert!(prompt.contains(
+        "An explanation names each choice by its words, never by its number or position."
+    ));
+}

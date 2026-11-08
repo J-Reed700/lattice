@@ -333,3 +333,35 @@ async fn an_answer_missing_a_statement_is_asked_for_once_more_and_then_refused()
     assert_eq!(model.prompts.lock().unwrap().len(), 2);
     Ok(())
 }
+
+#[test]
+fn a_label_word_before_a_number_is_no_figure() {
+    for text in [
+        "Source 0 describes the usual pattern.",
+        "Option 2 is wrong because it reverses the order.",
+        "Step 3: run ls",
+        "Idea 1:",
+        "Step 3.2 runs the check.",
+        "see sources 2",
+        "Choice #3 fails.",
+    ] {
+        assert_eq!(figures(text).count(), 0, "{text}");
+    }
+    assert_eq!(figures("Open port 22").collect::<Vec<_>>(), ["22"]);
+    assert_eq!(
+        figures("Section 230 of the act").collect::<Vec<_>>(),
+        ["230"]
+    );
+    assert_eq!(figures("Part 15 rules").collect::<Vec<_>>(), ["15"]);
+    assert_eq!(figures("version 1.2 adds").collect::<Vec<_>>(), ["1.2"]);
+    assert_eq!(figures("Step 3 retries 3 times").collect::<Vec<_>>(), ["3"]);
+}
+
+#[test]
+fn a_source_label_alone_needs_no_citation() {
+    assert!(!needs_citation(
+        "Source 0 describes the usual pattern.",
+        &Givens::NONE
+    ));
+    assert!(needs_citation("The default port is 22.", &Givens::NONE));
+}
