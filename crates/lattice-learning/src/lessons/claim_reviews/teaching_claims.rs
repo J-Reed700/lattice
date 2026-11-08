@@ -2,8 +2,9 @@
 //! sentence out or add a source for it from the note. A note names the live
 //! claims whose sentence in the published section is exactly the note's. When
 //! the section no longer holds the sentence and the user's removal of it
-//! stands, the note shows as removed and names the claims that removal ended,
-//! which taking it back needs; nothing stores that. Draft lessons have none.
+//! stands, the note shows as removed and names the claims an undo of that removal
+//! takes back, none when the removal came with an edit of the whole section.
+//! Draft lessons have none.
 
 use std::collections::HashMap;
 
@@ -13,6 +14,7 @@ use sqlx::{Row, SqlitePool};
 
 use super::actions::in_section_body;
 use super::published_edit::{gone, placed};
+use super::published_restore::undoable_in_published;
 use super::teaching_findings::{
     TeachingFindingDto, TeachingFindingSiteDto, TeachingFindingStateDto, TeachingResolutionDto,
 };
@@ -80,7 +82,7 @@ pub(super) fn name_claims(
         if body.contains(sentence) {
             continue;
         }
-        let removals: Vec<(String, i64)> = ledger
+        let removals: Vec<(String, i64, bool)> = ledger
             .claims
             .iter()
             .filter(in_unit)
@@ -89,18 +91,25 @@ pub(super) fn name_claims(
                     at,
                     by: Actor::User,
                 } if claim_quote(&entry.location().quote, entry.statement()).trim() == sentence => {
-                    Some((entry.claim_id().0.clone(), *at))
+                    Some((
+                        entry.claim_id().0.clone(),
+                        *at,
+                        undoable_in_published(entry),
+                    ))
                 }
                 _ => None,
             })
             .collect();
-        let Some(latest) = removals.iter().map(|(_, at)| *at).max() else {
+        let Some(latest) = removals.iter().map(|(_, at, _)| *at).max() else {
             continue;
         };
         finding.state = TeachingFindingStateDto::Resolved;
         finding.resolution = Some(TeachingResolutionDto::Removed);
         finding.resolved_at = Some(latest);
-        finding.claim_ids = removals.into_iter().map(|(id, _)| id).collect();
+        finding.claim_ids = removals
+            .into_iter()
+            .filter_map(|(id, _, undoable)| undoable.then_some(id))
+            .collect();
     }
 }
 

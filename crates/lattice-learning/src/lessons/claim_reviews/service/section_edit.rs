@@ -274,6 +274,14 @@ impl ClaimReviewService {
                     &mut tx,
                     &lesson_id,
                     item.entry.claim_id(),
+                    machine.clone(),
+                    ClaimEvent::SectionEdited {},
+                )
+                .await?;
+                append_in(
+                    &mut tx,
+                    &lesson_id,
+                    item.entry.claim_id(),
                     user.clone(),
                     resolution.event.clone(),
                 )

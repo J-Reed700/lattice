@@ -9,9 +9,12 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::AppError;
 
-use super::published_restore::undoable_in_published;
+use super::published_restore::{ended_by_section_edit, undoable_in_published};
 
 pub(super) const ONLY_SECTION: &str = "Only a section's text can be changed in a published lesson.";
+
+const EDITED_THE_SECTION: &str =
+    "This changed when you edited the section. Edit the section again to change it back.";
 
 const PUBLISHED: &str = "This lesson is published. Prepare it again to do that.";
 
@@ -70,6 +73,9 @@ fn offered_when_published(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> 
 /// Why `action` is not carried out on a published lesson's claim; `None`
 /// when it is offered, or the ledger alone is to refuse it.
 pub(super) fn refusal(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> Option<AppError> {
+    if action == ClaimActionKind::Undo && ended_by_section_edit(entry) {
+        return Some(AppError::InvalidState(EDITED_THE_SECTION.into()));
+    }
     if !entry.allows(action) || offered_when_published(entry, action) {
         return None;
     }

@@ -293,7 +293,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       <AcceptSourceDialog programId={programId} support={trusting?.support ?? null} sharing={trusting?.sharing ?? 0}
         onClose={() => setTrusting(null)} onTrusted={(result, support) => { setTrusting(null); session.trusted(result, support); }} />
       <ReviewSourceReader programId={programId} request={reader} onClose={() => setReader(null)} />
-      {editing && <LessonSectionEditor programId={programId} lessonId={lessonId} {...editing} open onClose={() => setEditing(null)} onSaved={() => session.setMessage('Section saved.')} />}
+      {editing && <LessonSectionEditor programId={programId} lessonId={lessonId} {...editing} open onClose={() => setEditing(null)} onSaved={() => session.say('Section saved.')} />}
     </div>
   );
 }

@@ -195,7 +195,8 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
                       <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
                         {finding.state === 'kept' ? 'Kept as written' : finding.resolution === 'source_added' ? 'Source added' : 'Removed from the lesson'}
                       </span>
-                      {(finding.resolution !== 'removed' || revision !== undefined) && <button type="button"
+                      {finding.resolution === 'removed' && finding.claimIds.length === 0 && <span className="text-xs text-text-muted">Edit the section to bring it back.</span>}
+                      {(finding.resolution !== 'removed' || (revision !== undefined && finding.claimIds.length > 0)) && <button type="button"
                         disabled={acting !== null} onClick={() => void undoResolved(finding)} className={`${smallButton} border-border text-text-secondary`}>Undo</button>}
                     </>}
                   {acting === finding.findingKey && <span role="status" className="inline-flex items-center gap-1 text-xs text-text-muted"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Saving…</span>}

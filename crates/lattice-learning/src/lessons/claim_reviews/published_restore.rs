@@ -180,22 +180,38 @@ struct Undoing {
 }
 
 /// What the removal at `ordinal` took out of the claim's section: the text and
-/// the texts either side of it, as the last `TextRemoved` before it recorded
+/// the texts either side of it, as the `TextRemoved` recorded with it noted
 /// them.
 fn removal_of(entry: &ClaimLedgerEntry, ordinal: u32) -> Option<Removal> {
+    match recorded_with(entry, ordinal)? {
+        ClaimEvent::TextRemoved {
+            text,
+            follows,
+            precedes,
+        } => Some((text.clone(), follows.clone(), precedes.clone())),
+        _ => None,
+    }
+}
+
+/// The machine's record written right before the user event at `ordinal`.
+fn recorded_with(entry: &ClaimLedgerEntry, ordinal: u32) -> Option<&ClaimEvent> {
     entry
         .events()
         .iter()
         .rev()
-        .filter(|record| record.ordinal < ordinal)
-        .find_map(|record| match &record.event {
-            ClaimEvent::TextRemoved {
-                text,
-                follows,
-                precedes,
-            } => Some((text.clone(), follows.clone(), precedes.clone())),
-            _ => None,
-        })
+        .find(|record| record.ordinal < ordinal)
+        .map(|record| &record.event)
+}
+
+/// Whether the user's edit of the claim's whole section ended it: that is
+/// taken back by editing the section again, not by an undo of the claim.
+pub(super) fn ended_by_section_edit(entry: &ClaimLedgerEntry) -> bool {
+    last_user_event(entry).is_some_and(|(ordinal, _)| {
+        matches!(
+            recorded_with(entry, ordinal),
+            Some(ClaimEvent::SectionEdited {})
+        )
+    })
 }
 
 /// Why a removal cannot go back: another sentence the user removed from the
@@ -233,6 +249,9 @@ pub(super) fn undoable_in_published(entry: &ClaimLedgerEntry) -> bool {
     let Some((ordinal, event)) = last_user_event(entry) else {
         return false;
     };
+    if ended_by_section_edit(entry) {
+        return false;
+    }
     match event {
         ClaimEvent::UserAction {
             action:

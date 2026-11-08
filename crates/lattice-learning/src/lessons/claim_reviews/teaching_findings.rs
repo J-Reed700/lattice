@@ -107,7 +107,8 @@ pub struct TeachingFindingDto {
     /// The whole sentence a quotation finding is about, when it is about one.
     pub sentence: Option<String>,
     /// The live claims on exactly that sentence in the published section; for a
-    /// note shown removed, the claims the user's removal ended.
+    /// note shown removed, the claims an undo of the user's removal takes back,
+    /// none when that removal came with an edit of the whole section.
     pub claim_ids: Vec<String>,
     /// How a resolved finding was resolved.
     pub resolution: Option<TeachingResolutionDto>,
