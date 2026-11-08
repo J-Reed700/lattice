@@ -23,6 +23,9 @@ pub struct BankItem {
     /// `lesson` for the lesson's own reviewed questions, `bank` for items
     /// written for a quiz.
     pub origin: &'static str,
+    /// `agreed` for items forms may draw, `dropped` for a lesson question the
+    /// bank's checks reject, kept so the lesson's questions keep their places.
+    pub review_status: &'static str,
 }
 
 /// A stable content token: same format, stem and options, same item.
@@ -65,7 +68,8 @@ pub(crate) async fn insert_bank_items_in(
         if exists.is_some() {
             continue;
         }
-        let near = sqlx::query_scalar::<_, String>(
+        let near = entry.review_status == "agreed"
+            && sqlx::query_scalar::<_, String>(
             "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND outcome_id=? AND review_status<>'dropped'",
         )
         .bind(program_id)
@@ -78,7 +82,7 @@ pub(crate) async fn insert_bank_items_in(
         if near {
             continue;
         }
-        sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,'agreed',?,?,?,?)")
+        sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)
             .bind(program_id)
             .bind(outcome)
@@ -91,6 +95,7 @@ pub(crate) async fn insert_bank_items_in(
             .bind(author_model)
             .bind(&hash)
             .bind(now())
+            .bind(entry.review_status)
             .bind(entry.origin)
             .bind(&entry.lesson_id)
             .bind(&entry.source_quote)

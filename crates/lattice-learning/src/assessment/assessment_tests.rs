@@ -636,6 +636,7 @@ pub(crate) async fn fill_bank(
                 source_quote: String::new(),
                 lesson_id: lesson_id.clone(),
                 origin: "bank",
+                review_status: "agreed",
             });
         }
     }
