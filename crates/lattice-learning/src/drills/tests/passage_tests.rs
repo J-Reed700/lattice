@@ -47,6 +47,8 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use serde_json::json;
 use sqlx::SqlitePool;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// The course's sources as stored: each version's id, title and whole text.
@@ -2202,4 +2204,95 @@ async fn a_stored_passage_drill_records_that_the_lesson_fits_passages() -> Resul
     .map_err(db)?;
     assert_eq!(fits, [(1, "basis-1".to_owned())]);
     Ok(())
+}
+
+/// A source of `count` short paragraphs of two sentences each, every one made of words the query of [`SPACING_LESSON`]
+/// holds, so that every chunk of it matches.
+fn large_source(count: usize) -> String {
+    (0..count)
+        .map(|number| {
+            format!(
+                "Spacing study over sessions helps recall of item {number}. Spread sessions strengthen recall after {number} days."
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Picks the passage for [`SPACING_LESSON`] from a course of one large source, in a thread of its own so that a
+/// picker that never returns fails the test instead of hanging it, and checks that it came back within a minute and
+/// is exact bytes of the source. With `already_drilled`, a drill covering the whole source was recorded first.
+fn picks_within_the_deadline(already_drilled: bool) {
+    const DEADLINE: Duration = Duration::from_secs(60);
+    let text = large_source(6_000);
+    assert!(text.len() >= 500_000, "{}", text.len());
+    let size = text.len();
+    let body = text.clone();
+    let (ready_sender, ready_receiver) = mpsc::channel::<std::result::Result<String, String>>();
+    let (done_sender, done_receiver) =
+        mpsc::channel::<(std::result::Result<SourcePassage, String>, Duration)>();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async move {
+            let setup = async {
+                let pool = pool().await?;
+                let program = course_of(&pool, &[("Large source", body.as_str())]).await?;
+                let (version, _) = source_titled(&pool, &program, "Large source").await?;
+                let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+                if already_drilled {
+                    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+                    let whole = SourcePassage {
+                        version_id: version.clone(),
+                        start_byte: 0,
+                        end_byte: body.len(),
+                        title: "Large source".to_owned(),
+                        text: body.clone(),
+                    };
+                    drilled(&pool, "whole", &program, &lesson, &whole).await?;
+                }
+                Ok::<_, AppError>((pool, spec, version))
+            };
+            let (pool, spec, version) = match setup.await {
+                Ok(done) => done,
+                Err(error) => {
+                    let _ = ready_sender.send(Err(format!("{error:?}")));
+                    return;
+                }
+            };
+            let _ = ready_sender.send(Ok(version));
+            let started = Instant::now();
+            let picked = next_passage(&pool, &spec).await;
+            let _ = done_sender.send((
+                picked.map_err(|error| format!("{error:?}")),
+                started.elapsed(),
+            ));
+        });
+    });
+    let version = ready_receiver
+        .recv_timeout(Duration::from_secs(600))
+        .expect("the course was set up within ten minutes")
+        .expect("the course was set up");
+    let (picked, elapsed) = done_receiver.recv_timeout(DEADLINE).unwrap_or_else(|_| {
+        panic!("no passage was picked within {DEADLINE:?} from a source of {size} bytes")
+    });
+    let passage = picked.expect("a passage was picked");
+    assert!(elapsed < DEADLINE, "{elapsed:?}");
+    assert_eq!(passage.version_id, version);
+    assert_eq!(
+        text.get(passage.start_byte..passage.end_byte),
+        Some(passage.text.as_str())
+    );
+}
+
+#[test]
+fn a_passage_is_picked_from_a_large_fresh_course_within_the_deadline() {
+    picks_within_the_deadline(false);
+}
+
+#[test]
+fn a_passage_is_picked_from_a_large_course_whose_every_place_was_drilled_within_the_deadline() {
+    picks_within_the_deadline(true);
 }
