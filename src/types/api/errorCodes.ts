@@ -60,6 +60,7 @@ export const ErrorCode = {
 
   // Concurrency Errors
   CONCURRENT_MODIFICATION: 'CONCURRENT_MODIFICATION',
+  CONFLICT: 'CONFLICT',
   QUEUE_FULL: 'QUEUE_FULL',
 
   // Backup & Recovery Errors

@@ -295,6 +295,11 @@ impl From<AppError> for ApiError {
                 message: format!("Concurrent modification: {}", resource),
                 details: Some(details.clone()),
             },
+            AppError::Conflict(ref msg) => ApiError {
+                code: ErrorCode::InternalError,
+                message: msg.clone(),
+                details: None,
+            },
             AppError::QueueFull => ApiError {
                 code: ErrorCode::QueueFull,
                 message: "Processing queue is full".to_string(),

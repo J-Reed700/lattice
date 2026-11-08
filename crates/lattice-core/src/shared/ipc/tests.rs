@@ -182,6 +182,17 @@ fn a_prompt_that_fills_the_window_has_a_code_of_its_own() {
 }
 
 #[test]
+fn a_conflict_error_serializes_with_conflict_code() {
+    let api_err: ApiError = AppError::Conflict("Revision conflict".into()).into();
+    assert_eq!(api_err.code, ErrorCode::Conflict);
+    assert_eq!(api_err.message, "Revision conflict");
+    assert_eq!(
+        serde_json::to_string(&api_err.code).unwrap(),
+        "\"CONFLICT\""
+    );
+}
+
+#[test]
 fn an_unset_learning_model_has_a_code_of_its_own() {
     let sentence = "No Learning model is set. Choose one in Settings → Downloaded.";
     let api_err: ApiError = AppError::LearningModelNotSet(sentence.into()).into();
