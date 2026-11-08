@@ -25,9 +25,55 @@ pub(crate) struct WrittenOver<'a> {
     pub at: i64,
 }
 
+/// A sentence of a published section the user took out, with the claims
+/// that stood on it.
+pub(crate) struct TakenOut<'a> {
+    pub unit: usize,
+    /// The section's text before the removal, and the span it took out.
+    pub old_body: &'a str,
+    pub range: (usize, usize),
+    pub new_body: &'a str,
+    /// The claims that stood on the removed text.
+    pub removed: &'a HashSet<String>,
+}
+
+/// Whether `finding` stood on the text at `range` of `old_body` in `unit`:
+/// its claim is in `claims`, or it names no claim and quotes that text.
+fn stood_on(
+    finding: &Finding,
+    unit: usize,
+    claims: &HashSet<String>,
+    old_body: &str,
+    range: (usize, usize),
+) -> bool {
+    finding.unit == unit
+        && match &finding.claim_id {
+            Some(id) => claims.contains(id),
+            None => lattice_core::domain::learning::claim_review::span_of(old_body, &finding.quote)
+                .is_some_and(|(start, end)| start < range.1 && range.0 < end),
+        }
+}
+
 impl LessonVerificationReport {
     pub(crate) fn content_sha256(&self) -> &str {
         &self.content_sha256
+    }
+
+    /// The report after the user took out the text the findings in
+    /// `removal.removed` stood on: those findings are gone, every other
+    /// finding as it was.
+    pub(crate) fn taken_out(&mut self, removal: &TakenOut<'_>) {
+        self.findings.retain(|finding| {
+            !stood_on(
+                finding,
+                removal.unit,
+                removal.removed,
+                removal.old_body,
+                removal.range,
+            )
+        });
+        self.content_sha256 =
+            digest(&json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
     }
 
     /// The report after the user's sentence took the place of the text the
@@ -36,15 +82,7 @@ impl LessonVerificationReport {
     /// finding as it was.
     pub(crate) fn written_over(&mut self, edit: &WrittenOver<'_>) {
         let replaced = |finding: &Finding| {
-            finding.unit == edit.unit
-                && match &finding.claim_id {
-                    Some(id) => edit.replaced.contains(id),
-                    None => lattice_core::domain::learning::claim_review::span_of(
-                        edit.old_body,
-                        &finding.quote,
-                    )
-                    .is_some_and(|(start, end)| start < edit.range.1 && edit.range.0 < end),
-                }
+            stood_on(finding, edit.unit, edit.replaced, edit.old_body, edit.range)
         };
         let first = self.findings.iter().position(replaced);
         self.findings.retain(|finding| !replaced(finding));

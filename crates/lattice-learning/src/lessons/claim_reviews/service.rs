@@ -5,9 +5,11 @@
 //! checker-accuracy examples (§15) and trust calibration (source provenance
 //! §13). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
+use std::collections::HashSet;
+
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimLedgerEntry, EventProvenance,
+    Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance,
     HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
@@ -18,12 +20,15 @@ use super::actions::{in_section_body, refusal, ONLY_SECTION};
 use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
 use super::published_edit::{self, PublishedEdit};
-use super::repository::ClaimReviewRepository;
+use super::published_remove;
+use super::repository::{
+    append_in, bump_revision, check_revision, revision_conflict, ClaimReviewRepository,
+};
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::persistence::now;
+use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
@@ -32,6 +37,13 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §6.2: Resume reruns nothing that has not changed.
 pub const NOTHING_CHANGED: &str =
     "Nothing changed since the last pass. Resolve a claim or add evidence first.";
+
+/// What a batch refuses when its action needs the user's eye on one statement.
+const ONE_STATEMENT: &str = "Choose one statement for that.";
+const NO_STATEMENTS: &str = "Choose the statements first.";
+/// Why an Undo of a batch is refused once anything else was done.
+const MOVED: &str = "Something changed since then. Undo them one at a time.";
+const NEEDS_NOTE: &str = "It needs a note before it can be accepted.";
 
 #[derive(Clone)]
 pub struct ClaimReviewService {
@@ -42,13 +54,21 @@ pub struct ClaimReviewService {
     checker_model: Option<String>,
 }
 
-/// One claim's event, the accuracy label it gives (§15), and the verdict
-/// calibration records (`trust`) or forgets on Undo (`forget`).
+/// One claim's event, the accuracy label it gives (§15) or, on Undo, the
+/// label it takes back (`unlabel`), and the verdict calibration records
+/// (`trust`) or forgets on Undo (`forget`).
 struct Resolution {
     event: ClaimEvent,
     label: Option<LabelSource>,
+    unlabel: Option<LabelSource>,
     trust: Option<TrustVerdict>,
     forget: Option<TrustVerdict>,
+}
+
+/// A claim and the action checked for it, ready to write.
+struct Planned<'a> {
+    entry: &'a ClaimLedgerEntry,
+    resolution: Resolution,
 }
 
 impl ClaimReviewService {
@@ -135,56 +155,229 @@ impl ClaimReviewService {
             .clone()
             .ok_or_else(|| AppError::NotFound("This lesson has no claim review.".into()))?;
         if ledger.revision != Revision(expected_revision) {
-            return Err(AppError::InvalidState(
-                "This claim changed; reload and act again.".into(),
-            ));
+            return Err(revision_conflict());
         }
         let entry = ledger
             .claims
             .iter()
             .find(|entry| entry.claim_id().0 == claim_id)
             .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
-        let published = review.state == LessonReviewState::Ready;
-        if published {
-            if let Some(refusal) = refusal(entry, action_kind(&action)) {
+        let resolution = self.plan(&review, lesson_id, entry, action).await?;
+        self.carry_out(
+            &review,
+            lesson_id,
+            ledger.revision,
+            vec![Planned { entry, resolution }],
+        )
+        .await
+    }
+
+    /// Applies one action to every claim in `claim_ids`, all or nothing:
+    /// each claim is checked as `resolve` checks it, and when any is refused
+    /// nothing is written. Undo takes the claims' last action back and needs
+    /// the revision the batch returned. Returns the review's new revision.
+    pub async fn resolve_many(
+        &self,
+        lesson_id: &str,
+        claim_ids: &[String],
+        action: ClaimActionRequestDto,
+        expected_revision: i64,
+    ) -> Result<i64> {
+        let kind = action_kind(&action);
+        let in_bulk = match &action {
+            ClaimActionRequestDto::Confirm {
+                note,
+                source_version_ids,
+            } => note.is_none() && source_version_ids.is_empty(),
+            ClaimActionRequestDto::Remove | ClaimActionRequestDto::Undo => true,
+            _ => false,
+        };
+        if !in_bulk {
+            return Err(AppError::InvalidInput(ONE_STATEMENT.into()));
+        }
+        let ledger = self.store.load(lesson_id).await?;
+        let review = ledger
+            .review
+            .clone()
+            .ok_or_else(|| AppError::NotFound("This lesson has no claim review.".into()))?;
+        if ledger.revision != Revision(expected_revision) {
+            return Err(if kind == ClaimActionKind::Undo {
+                AppError::InvalidState(MOVED.into())
+            } else {
+                revision_conflict()
+            });
+        }
+        let mut chosen: Vec<&ClaimLedgerEntry> = Vec::new();
+        for id in claim_ids {
+            let entry = ledger
+                .claims
+                .iter()
+                .find(|entry| entry.claim_id().0 == *id)
+                .ok_or_else(|| {
+                    AppError::NotFound("No claim with that id in this lesson.".into())
+                })?;
+            if !chosen
+                .iter()
+                .any(|seen| seen.claim_id() == entry.claim_id())
+            {
+                chosen.push(entry);
+            }
+        }
+        if chosen.is_empty() {
+            return Err(AppError::InvalidInput(NO_STATEMENTS.into()));
+        }
+        let mut planned = Vec::new();
+        let mut refused: Vec<AppError> = Vec::new();
+        for &entry in &chosen {
+            match self.plan(&review, lesson_id, entry, action.clone()).await {
+                Ok(resolution) => planned.push(Planned { entry, resolution }),
+                Err(
+                    error @ (AppError::InvalidInput(_)
+                    | AppError::InvalidState(_)
+                    | AppError::NotFound(_)),
+                ) => refused.push(error),
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(first) = refused.first() {
+            let verb = match kind {
+                ClaimActionKind::Confirm => "accepted",
+                ClaimActionKind::Remove => "removed",
+                _ => "undone",
+            };
+            let message = plain(first);
+            return Err(AppError::InvalidState(if refused.len() == chosen.len() {
+                format!("None of these can be {verb}: {message}")
+            } else {
+                format!(
+                    "{} of these can't be {verb}: {message} Nothing was changed.",
+                    refused.len()
+                )
+            }));
+        }
+        self.carry_out(&review, lesson_id, ledger.revision, planned)
+            .await
+    }
+
+    /// One claim's action checked against the claim and, in a published
+    /// lesson, the lesson's text, with nothing written: what `resolve` and
+    /// `resolve_many` both write.
+    async fn plan(
+        &self,
+        review: &LessonReview,
+        lesson_id: &str,
+        entry: &ClaimLedgerEntry,
+        action: ClaimActionRequestDto,
+    ) -> Result<Resolution> {
+        let kind = action_kind(&action);
+        if review.state == LessonReviewState::Ready {
+            if let Some(refusal) = refusal(entry, kind) {
                 return Err(refusal);
             }
         }
-        let resolution = self.resolution(&review, lesson_id, entry, action).await?;
-        let rewrite = match &resolution.event {
-            ClaimEvent::UserAction {
-                action: UserAction::Edit { before, after },
-                ..
-            } if published => Some((before.clone(), after.clone())),
-            _ => None,
-        };
-        let revision = match rewrite {
-            Some((before, after)) => {
-                published_edit::apply(
-                    &self.pool,
-                    PublishedEdit {
-                        lesson_id,
-                        claim_id: entry.claim_id(),
-                        before: &before,
-                        after: &after,
-                        expected_revision: ledger.revision,
-                        user: provenance(&review),
-                    },
-                )
-                .await?
+        if kind != ClaimActionKind::Undo && !entry.allows(kind) {
+            return Err(AppError::InvalidState(not_now(kind).into()));
+        }
+        if let ClaimActionRequestDto::Confirm { note, .. } = &action {
+            if note.as_deref().is_none_or(|text| text.trim().is_empty())
+                && entry.confirm_requires_note()
+            {
+                return Err(AppError::InvalidState(NEEDS_NOTE.into()));
             }
-            None => {
-                self.store
-                    .append(
-                        lesson_id,
-                        entry.claim_id(),
-                        provenance(&review),
-                        resolution.event,
-                        ledger.revision,
-                    )
-                    .await?
+        }
+        self.resolution(review, lesson_id, entry, action).await
+    }
+
+    /// Writes the planned claims' events and text changes in one
+    /// transaction under `revision`, then records what each gave the checker
+    /// examples and trust calibration. Returns the review's revision after.
+    async fn carry_out(
+        &self,
+        review: &LessonReview,
+        lesson_id: &str,
+        revision: Revision,
+        planned: Vec<Planned<'_>>,
+    ) -> Result<i64> {
+        let written = self.commit(review, lesson_id, revision, &planned).await?;
+        let mut redecided = false;
+        for item in planned {
+            redecided |= self.settle(review, lesson_id, item).await?;
+        }
+        // A bar the verdicts moved may have re-decided this lesson's claims.
+        if redecided {
+            return Ok(self.store.load(lesson_id).await?.revision.0);
+        }
+        Ok(written.0)
+    }
+
+    /// The planned claims' events, and in a published lesson the edits and
+    /// removals of its text, written in one transaction that checks the
+    /// review's revision and advances it once.
+    async fn commit(
+        &self,
+        review: &LessonReview,
+        lesson_id: &str,
+        revision: Revision,
+        planned: &[Planned<'_>],
+    ) -> Result<Revision> {
+        let published = review.state == LessonReviewState::Ready;
+        let user = provenance(review);
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        check_revision(&mut tx, lesson_id, revision).await?;
+        let mut ended: HashSet<ClaimId> = HashSet::new();
+        for item in planned {
+            let id = item.entry.claim_id();
+            if ended.contains(id) {
+                continue;
             }
-        };
+            match &item.resolution.event {
+                ClaimEvent::UserAction {
+                    action: UserAction::Edit { before, after },
+                    ..
+                } if published => {
+                    ended.extend(
+                        published_edit::apply_in(
+                            &mut tx,
+                            PublishedEdit {
+                                lesson_id,
+                                claim_id: id,
+                                before,
+                                after,
+                                user: user.clone(),
+                            },
+                        )
+                        .await?,
+                    );
+                }
+                ClaimEvent::UserAction {
+                    action: UserAction::Remove,
+                    ..
+                } if published => {
+                    ended.extend(published_remove::remove_in(&mut tx, lesson_id, id, &user).await?);
+                }
+                event => {
+                    append_in(&mut tx, lesson_id, id, user.clone(), event.clone()).await?;
+                }
+            }
+        }
+        bump_revision(&mut tx, lesson_id).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(Revision(revision.0 + 1))
+    }
+
+    /// What a written claim gives the checker examples and trust
+    /// calibration; whether it moved a bar that re-decided this lesson's
+    /// claims.
+    async fn settle(
+        &self,
+        review: &LessonReview,
+        lesson_id: &str,
+        item: Planned<'_>,
+    ) -> Result<bool> {
+        let Planned { entry, resolution } = item;
+        if let Some(source) = resolution.unlabel {
+            self.examples.forget(&entry.claim_id().0, source).await?;
+        }
         if let Some(label) = resolution.label {
             let shown = self.store.shown_passages(lesson_id).await?;
             let passages = shown.get(entry.claim_id()).cloned().unwrap_or_default();
@@ -203,22 +396,7 @@ impl ClaimReviewService {
         if let Some(verdict) = resolution.forget {
             redecided = forget_verdict(&self.pool, &entry.claim_id().0, verdict).await?;
         }
-        // A bar the verdict moved may have re-decided this lesson's claims.
-        if redecided.lessons.iter().any(|lesson| lesson == lesson_id) {
-            return Ok(self.store.load(lesson_id).await?.revision.0);
-        }
-        Ok(revision.0)
-    }
-
-    /// Applies one action to every claim in `claim_ids`, all or nothing.
-    pub async fn resolve_many(
-        &self,
-        _lesson_id: &str,
-        _claim_ids: &[String],
-        _action: ClaimActionRequestDto,
-        _expected_revision: i64,
-    ) -> Result<i64> {
-        Err(AppError::InternalError("not built yet".into()))
+        Ok(redecided.lessons.iter().any(|lesson| lesson == lesson_id))
     }
 
     /// Whether claim activity or a different checker gives verification new
@@ -272,6 +450,7 @@ impl ClaimReviewService {
             Ok(Resolution {
                 event: ClaimEvent::UserAction { action, note },
                 label,
+                unlabel: None,
                 trust,
                 forget: None,
             })
@@ -398,16 +577,15 @@ impl ClaimReviewService {
             },
             _ => None,
         };
-        if let Some((source, _)) = forgotten {
-            self.examples.forget(&entry.claim_id().0, source).await?;
-        }
-        // Calibration forgets after the Undo is on the ledger: a bar moving
-        // back re-decides claims, which advances the review's revision.
+        // The example and calibration forget after the Undo is on the
+        // ledger: a bar moving back re-decides claims, which advances the
+        // review's revision.
         Ok(Resolution {
             event: ClaimEvent::Undone {
                 event_ordinal: ordinal,
             },
             label: None,
+            unlabel: forgotten.map(|(source, _)| source),
             trust: None,
             forget: forgotten.map(|(_, verdict)| verdict),
         })
@@ -459,6 +637,29 @@ impl ClaimReviewService {
         let location = entry.location();
         crate::content_verification::field_text(&candidate, location.unit_index, &location.field)
             .ok_or_else(|| AppError::NotFound("The claim's section is not in the draft.".into()))
+    }
+}
+
+/// The text of a refusal as the user reads it, without the error's kind.
+fn plain(error: &AppError) -> String {
+    match error {
+        AppError::InvalidInput(message)
+        | AppError::InvalidState(message)
+        | AppError::NotFound(message) => message.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Why the claim's state does not allow `action`.
+fn not_now(action: ClaimActionKind) -> &'static str {
+    match action {
+        ClaimActionKind::Confirm => "It is not waiting to be accepted.",
+        ClaimActionKind::Edit | ClaimActionKind::Remove => {
+            "It has already been removed or replaced."
+        }
+        ClaimActionKind::Unconfirm => "It has not been accepted.",
+        ClaimActionKind::ResearchWithHint => "It is not waiting for a search.",
+        ClaimActionKind::AttachEvidence | ClaimActionKind::Undo => "That can't be done to it now.",
     }
 }
 
