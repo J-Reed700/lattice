@@ -86,15 +86,10 @@ pub fn check_request(material: &Material, lines: u32, patterns: usize) -> Result
 }
 
 impl DrillSpec {
-    /// Whether the spec can be built: [`check_request`] on its material, size and patterns; a course and a lesson of
-    /// it, both saying something; and each pattern in the catalogue, applying to the material and listed once.
+    /// Whether the spec can be built: [`check_request`] on its material, size and patterns; a lesson, then a course, both
+    /// saying something; and each pattern in the catalogue, applying to the material and listed once.
     pub fn validate(&self) -> Result<()> {
         check_request(&self.material, self.lines, self.patterns.len())?;
-        if self.course().is_none() {
-            return Err(AppError::InvalidInput(
-                "A drill names the course it is built for.".into(),
-            ));
-        }
         match self.lesson_id.as_deref() {
             None => {
                 return Err(AppError::InvalidInput(
@@ -107,6 +102,11 @@ impl DrillSpec {
                 ));
             }
             Some(_) => {}
+        }
+        if self.course().is_none() {
+            return Err(AppError::InvalidInput(
+                "A drill names the course it is built for.".into(),
+            ));
         }
         self.targets().map(drop)
     }

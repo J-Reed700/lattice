@@ -1188,9 +1188,13 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     );
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::find_in(&mut connection, &passage_code().drill_id)
-        .await?
-        .expect("the drill is in the course's bank");
+    let stored = repository::oldest_ready_on(
+        &mut connection,
+        Shelf::of(&spec)?,
+        spec.lesson_id.as_deref(),
+    )
+    .await?
+    .expect("the drill is in the course's bank");
     drop(connection);
     assert_eq!(stored.drill.material, Material::Passage);
     assert_eq!(stored.spec, spec);
