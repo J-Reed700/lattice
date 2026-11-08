@@ -1135,3 +1135,123 @@ async fn a_learners_long_note_is_held_to_the_chat_limit() -> Result<()> {
     assert!(at_the_limit.is_ok(), "report: {:?}", at_the_limit.err());
     Ok(())
 }
+
+/// Three questions; the second has its right choice much the longest of four.
+pub(crate) const PLACED_PROMPTS: [&str; 3] = [
+    "Which layer of the atmosphere holds most of its weather?",
+    "What does a barometer record over a day?",
+    "Why do tides rise and fall twice daily?",
+];
+
+pub(crate) fn placed_questions() -> Vec<(&'static str, [&'static str; 4], usize)> {
+    vec![
+        (
+            PLACED_PROMPTS[0],
+            ["Troposphere", "Mesosphere", "Exosphere", "Ionosphere"],
+            0,
+        ),
+        (
+            PLACED_PROMPTS[1],
+            [
+                "Air pressure, which falls ahead of a storm and rises as skies clear again",
+                "Wind",
+                "Rain",
+                "Heat",
+            ],
+            0,
+        ),
+        (
+            PLACED_PROMPTS[2],
+            ["Lunar pull", "Solar wind", "Ocean salt", "Glacier melt"],
+            0,
+        ),
+    ]
+}
+
+/// A program with its first lesson published with `placed_questions`.
+async fn placed_lesson(pool: &SqlitePool) -> Result<(String, String)> {
+    let program = crate::tests::fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let program_id = program.summary.id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    programs
+        .prepare(
+            &program_id,
+            &lesson_id,
+            1,
+            &crate::tests::prepared_with_questions(&lesson_id, &placed_questions()),
+        )
+        .await?;
+    Ok((program_id, lesson_id))
+}
+
+#[tokio::test]
+async fn a_lesson_question_the_bank_rejects_keeps_its_place_as_dropped() -> Result<()> {
+    let pool = migrated().await?;
+    let (_, lesson_id) = placed_lesson(&pool).await?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT prompt,review_status FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
+    )
+    .bind(&lesson_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    let expected: Vec<(String, String)> = PLACED_PROMPTS
+        .iter()
+        .zip(["agreed", "dropped", "agreed"])
+        .map(|(prompt, status)| ((*prompt).to_string(), status.to_string()))
+        .collect();
+    assert_eq!(rows, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, lesson_id) = placed_lesson(&pool).await?;
+    let dropped: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND review_status='dropped'",
+    )
+    .bind(&lesson_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(db)?;
+    let dropped = dropped.unwrap_or_default();
+    assert!(
+        !dropped.is_empty(),
+        "the rejected question is kept, marked dropped"
+    );
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id),
+    };
+    fill_bank(&pool, &program_id, &scope).await?;
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let bank = LearningAssessmentRepository::bank_in(&mut *connection, &program_id).await?;
+    assert!(bank.iter().all(|c| c.candidate.id != dropped));
+    drop(connection);
+    let form = LearningAssessmentRepository::new(pool.clone())
+        .start_quiz(
+            &StartLearningQuizRequestDto {
+                operation_id: id(),
+                form_id: id(),
+                program_id,
+                scope,
+                mode: LearningQuizMode::Graded,
+                retake_of_form_id: None,
+            },
+            "start",
+        )
+        .await?;
+    assert!(!form.items.is_empty());
+    assert!(form.items.iter().all(|item| item.id != dropped));
+    Ok(())
+}

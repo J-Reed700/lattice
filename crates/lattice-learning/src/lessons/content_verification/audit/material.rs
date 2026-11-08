@@ -150,3 +150,7 @@ async fn passages(
         })
         .collect())
 }
+
+#[cfg(test)]
+#[path = "material_tests.rs"]
+mod tests;
