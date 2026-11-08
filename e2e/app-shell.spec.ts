@@ -1309,7 +1309,7 @@ test('catalog offers category previews, bounded pages, and honest search results
             default_filename: `${id}.gguf`, files: [], total_size_bytes: 1000000000,
             embedding_dimensions: category === 'Embedding' ? 384 : null, embedding_compatibility: null,
           },
-          popularity_downloads: 100000 - index * 1000 - variant, popularity_likes: 100,
+          popularity_downloads: 100000 - index * 1000 - variant, popularity_likes: 100, fit: null,
         } satisfies Fixture<CommandResult<'get_all_recommended_models'>[number]>;
       })
     ));
@@ -1322,6 +1322,10 @@ test('catalog offers category previews, bounded pages, and honest search results
       activity_snapshot: () => ({ items: [], running: 0 }),
       is_model_already_downloaded: () => false,
       get_all_recommended_models: () => models,
+      read_model_fits: (args) => (args as { files: unknown[] }).files.map(() => ({
+        kind: 'fits' as const, needsBytes: 6000000000, budgetBytes: 24000000000,
+        device: { name: 'Apple M3 Pro', kind: 'unified' as const, totalBytes: 34359738368 },
+      })),
       get_model_variants: (args) => {
         if (localStorage.getItem('test:catalog-versions-error')) throw new Error('Repository temporarily unavailable');
         const base = models.find(({ model }) => model.model_id === (args as { repoId: string }).repoId)!.model;
