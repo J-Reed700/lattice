@@ -590,6 +590,17 @@ async fn cancelling_mid_file_releases_its_library_blob_and_nothing_restarts_it(
         }
     })
     .await?;
+    tokio::time::timeout(WAIT, async {
+        while harness
+            .count("SELECT count(*) FROM file_intents")
+            .await
+            .unwrap_or(1)
+            > 0
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await?;
     assert_eq!(
         harness.blobs(),
         0,
