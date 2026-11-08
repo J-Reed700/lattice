@@ -131,7 +131,14 @@ impl CaptureError {
     /// The error a job raises to be retried later, saying what the capture hit
     /// once.
     pub fn outage(&self) -> AppError {
-        AppError::Network(self.to_string())
+        match self {
+            Self::Network(detail) => AppError::Network(detail.clone()),
+            Self::Blocked { status } => AppError::HttpStatus {
+                status: *status,
+                message: format!("The site answered {status}"),
+            },
+            other => AppError::Network(other.to_string()),
+        }
     }
 
     /// A stable code for the snapshot row and the viewer.
