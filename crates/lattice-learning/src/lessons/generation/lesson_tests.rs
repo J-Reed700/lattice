@@ -496,6 +496,10 @@ fn a_questions_reasons_are_trimmed_and_kept_with_its_key_in_the_writers_order() 
         "Three confuses the cause with the effect.",
         "Four is the cause stated backwards."
     ]);
+    value["questions"][1]
+        .as_object_mut()
+        .unwrap()
+        .remove("rationales");
     let lesson: GeneratedLesson = serde_json::from_value(value).unwrap();
 
     let (prepared, _) = assemble(lesson, &[source()], &HashSet::from(["source-a"])).unwrap();
