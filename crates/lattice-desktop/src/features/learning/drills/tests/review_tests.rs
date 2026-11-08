@@ -839,7 +839,8 @@ async fn a_graded_review_reveals_every_issue_every_finding_the_score_the_ratings
     Ok(())
 }
 
-/// What the first key issue of the drill "drill" breaks of its lesson: a sentence of a source and one of the lesson's own.
+/// What the first key issue of the drill "drill" breaks of its lesson: a sentence of a source and one of the lesson's
+/// own.
 fn lesson_link() -> LessonLink {
     LessonLink {
         lesson_id: "lesson".into(),
