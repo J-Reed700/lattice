@@ -187,6 +187,15 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Windows tests write their temporary files to the local disk
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          try { Get-MpComputerStatus | Format-List RealTimeProtectionEnabled, IoavProtectionEnabled, AntivirusEnabled } catch { "Defender status unavailable: $($_.Exception.Message)" }
+          Get-PSDrive C, D | Format-Table Name, Used, Free
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+
       - name: All desktop Rust unit, command and integration tests
         working-directory: crates/lattice-desktop
         run: cargo nextest run --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
