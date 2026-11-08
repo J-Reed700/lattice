@@ -2430,7 +2430,7 @@ async fn a_claim_at_a_rewrite_whose_finding_was_lost_sends_the_repair_its_reason
         let findings = passes::latest_findings(&ledger, &mut ClaimChecks::default(), &pass).await?;
 
         let report = pass_report(findings);
-        let context = super::super::repair_loop::repair_context(
+        let context = super::super::repair_request::repair_context(
             "{}",
             &lesson,
             &report,

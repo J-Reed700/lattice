@@ -94,6 +94,7 @@ pub(in crate::features::learning) use provenance_gate::{
 mod repair;
 pub(in crate::features::learning) use repair::{confine, Protected};
 mod repair_loop;
+mod repair_request;
 mod repair_work;
 mod report;
 pub(in crate::features::learning) use report::WrittenOver;
@@ -109,13 +110,12 @@ mod support_gate;
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
-use repair_loop::repair_context;
-#[cfg(test)]
 pub(in crate::features::learning) use repair_loop::verify_and_repair;
-pub(in crate::features::learning) use repair_loop::{
-    has_pending_repair, verify_and_repair_with_references,
-};
-use repair_loop::{repair_fingerprint, PendingRepair};
+pub(in crate::features::learning) use repair_loop::verify_and_repair_with_references;
+pub(in crate::features::learning) use repair_request::has_pending_repair;
+#[cfg(test)]
+use repair_request::repair_context;
+use repair_request::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
 pub(in crate::features::learning) use report::{
