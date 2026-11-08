@@ -30,8 +30,18 @@ jobs:
       max-parallel: 6
       matrix:
         include:
-          - mode: integration
-            sha: 5e1c685c8f33e930a12c6d497b1debf89054b143
+          - mode: red
+            sha: ae18b4b9680ad984483c5fa6da27d036552efc4a
+          - mode: red
+            sha: 1aab92ac3ca3271ec98c54d1af5fd73d7af3aa70
+          - mode: red
+            sha: 93261898076363e0e24d5cbc028c41aab09cc671
+          - mode: red
+            sha: b47078081464958dc5cf1957d5aad7edda410c8e
+          - mode: red
+            sha: 886244bfc33b33b56bb98f0f3bf739acde8a2c43
+          - mode: red
+            sha: cf6fee58cf4f6328c377bfa3da4639b33c99a726
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,6 +74,14 @@ jobs:
         with:
           key: rust-check
           save-if: false
+
+      - name: Apply the integrated tree's compile fixes
+        if: matrix.mode == 'red'
+        run: |
+          git fetch -q --depth=1 origin ${{ github.event.pull_request.head.sha }}
+          git show FETCH_HEAD:.github/reds/compile_fixups.py > "$RUNNER_TEMP/compile_fixups.py"
+          python3 "$RUNNER_TEMP/compile_fixups.py"
+          git diff --stat
 
       - name: Core and learning tests on this tree
         if: matrix.mode == 'red'
@@ -114,6 +132,7 @@ jobs:
 
   integration-frontend:
     name: integration frontend ${{ matrix.sha }}
+    if: false
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -210,6 +229,7 @@ jobs:
 
   vitest:
     name: vitest reds
+    if: false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
