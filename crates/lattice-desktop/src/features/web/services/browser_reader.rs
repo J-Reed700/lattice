@@ -24,6 +24,11 @@ use super::web::is_blocked_ip;
 use lattice_core::shared::error::{AppError, Result};
 use std::net::IpAddr;
 
+/// Every webview in one WebView2 data folder must be given the same arguments.
+fn shared_browser_args(windows: &[tauri::utils::config::WindowConfig]) -> Option<&str> {
+    None
+}
+
 /// The reserved address the page reports back through. `.invalid` can never
 /// resolve (RFC 2606), so a report that somehow escaped would go nowhere.
 const REPORT_HOST: &str = "lattice-page-reader.invalid";
