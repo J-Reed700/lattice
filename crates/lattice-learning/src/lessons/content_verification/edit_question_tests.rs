@@ -15,6 +15,7 @@ use crate::assessment_engine::{
 };
 use crate::assessment_repository::{insert_bank_items_in, BankItem};
 use crate::content_verification::digest;
+use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::{
     ClaimReviewService, QuestionEdit, QuestionEditOutcome, QuestionText,
@@ -1150,12 +1151,14 @@ async fn the_longest_right_choice_of_two_is_not_refused() -> Result<()> {
 }
 
 async fn set_status(course: &Course, prompt: &str, status: &str) -> Result<()> {
-    sqlx::query("UPDATE learning_assessment_candidates SET review_status=? WHERE lesson_id=? AND prompt=?")
-        .bind(status)
-        .bind(&course.lesson_id)
-        .bind(prompt)
-        .execute(&course.pool)
-        .await?;
+    sqlx::query(
+        "UPDATE learning_assessment_candidates SET review_status=? WHERE lesson_id=? AND prompt=?",
+    )
+    .bind(status)
+    .bind(&course.lesson_id)
+    .bind(prompt)
+    .execute(&course.pool)
+    .await?;
     Ok(())
 }
 
@@ -1222,5 +1225,44 @@ async fn a_save_leaves_a_reported_question_reported() -> Result<()> {
     edit(&course, 0, q0(), after, false).await?;
 
     assert_eq!(statuses(&course).await?, ["reported", "agreed", "agreed"]);
+    Ok(())
+}
+
+const EDITED_THE_QUESTION: &str = "This question changed after that, so it can't be undone on its own. Edit the question to change it back.";
+
+#[tokio::test]
+async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_questions_text(
+) -> Result<()> {
+    let course = published().await?;
+    let seen = ledger(&course).await?;
+    let ended = [
+        entry_for(&seen, P0).claim_id().clone(),
+        entry_for(&seen, E0_FIRST).claim_id().clone(),
+    ];
+    let after = QuestionText {
+        prompt: NEW_PROMPT.into(),
+        explanation: NEW_EXPLANATION.into(),
+        ..q0()
+    };
+    edit(&course, 0, q0(), after, false).await?;
+    let written = snapshot(&course).await?;
+
+    for claim in &ended {
+        let revision = ledger(&course).await?.revision.0;
+        let result = ClaimReviewService::new(course.pool.clone())
+            .resolve(
+                &course.lesson_id,
+                &claim.0,
+                ClaimActionRequestDto::Undo,
+                revision,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(AppError::InvalidState(_))),
+            "{result:?}"
+        );
+        assert_eq!(refused(result), EDITED_THE_QUESTION);
+    }
+    assert_eq!(snapshot(&course).await?, written);
     Ok(())
 }
