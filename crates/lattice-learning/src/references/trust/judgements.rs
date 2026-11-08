@@ -150,7 +150,7 @@ pub async fn reprofile_claim(
     .await?;
     if judged.len() != claims.len() {
         return Err(AppError::InternalError(
-            "The claim profile call answered for a different number of claims.".into(),
+            "The model profiled a different number of statements than it was asked for.".into(),
         ));
     }
     let judged = judged.remove(0);

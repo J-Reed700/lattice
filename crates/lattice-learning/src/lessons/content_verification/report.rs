@@ -524,7 +524,7 @@ impl LessonVerificationReport {
         } else if self.lesson_id != lesson_id || self.content_sha256 != content_hash(lesson)? {
             "was made for another revision of the lesson"
         } else if self.findings.is_empty() || !findings_complete {
-            "does not answer for every statement its claim inventory lists"
+            "does not answer for every statement its inventory lists"
         } else if !self.issues.is_empty() {
             return Ok(Some(format!(
                 "leaves {} open: {}",

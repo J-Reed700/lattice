@@ -547,7 +547,7 @@ impl<'a> Judge<'a> {
                         why = if answer.cut_off {
                             "the answer was cut off at its output limit".into()
                         } else {
-                            "the answer left out some claims".into()
+                            "the answer left out some statements".into()
                         };
                         best = read;
                     }

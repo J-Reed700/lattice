@@ -25,7 +25,7 @@ fn parameters(policy: &Policy) -> Vec<LearningTrustPolicyParameterDto> {
         parameter(
             "accept_reliability",
             policy.accept_reliability,
-            "A level is accepted as a claim's only support when its claims hold this often. A wrong published claim costs a misconception to unlearn; a right claim held for review costs one confirmation. At 0.9 an error is weighed as nine confirmations.",
+            "A level is accepted as a statement's only support when its statements hold this often. A wrong published statement costs a misconception to unlearn; a right statement held for review costs one confirmation. At 0.9 an error is weighed as nine confirmations.",
         ),
         parameter(
             "bar_move_probability",
@@ -35,7 +35,7 @@ fn parameters(policy: &Policy) -> Vec<LearningTrustPolicyParameterDto> {
         parameter(
             "prior_strength",
             policy.prior_strength,
-            "Each cell starts as if it had this many verdicts at exactly the target, so the design's table stands until your verdicts outweigh it: relaxing an empty cell takes 21 straight held claims, tightening it two straight failures.",
+            "Each cell starts as if it had this many verdicts at exactly the target, so the design's table stands until your verdicts outweigh it: relaxing an empty cell takes 21 straight held statements, tightening it two straight failures.",
         ),
         parameter(
             "resemblance_copy",

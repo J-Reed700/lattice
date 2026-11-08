@@ -120,7 +120,7 @@ pub(super) fn insufficient(
     reasons.push(Reason::new(
         ReasonCode::BelowBar,
         format!(
-            "{} claim{about}: {}; needs {}",
+            "{} statement{about}: {}; needs {}",
             capitalised(kind_name(kind)),
             if have_levels.is_empty() {
                 "no support that can be counted".to_owned()

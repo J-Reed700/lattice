@@ -448,7 +448,7 @@ fn describe(
         f64::from(*held) * 100.0 / f64::from(total)
     };
     Some(format!(
-        "{} sources on {} claims: {total} verdicts, {share:.0}% held; {verb} since {} (probability {:.2} that they hold {} the {:.0}% target)",
+        "{} sources on {} statements: {total} verdicts, {share:.0}% held; {verb} since {} (probability {:.2} that they hold {} the {:.0}% target)",
         capitalised(level.as_str()),
         kind.as_str().replace('_', "-"),
         day(*since),
