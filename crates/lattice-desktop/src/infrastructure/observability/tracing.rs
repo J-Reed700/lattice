@@ -322,6 +322,59 @@ pub(crate) fn daily_log_files(log_dir: &std::path::Path) -> Vec<std::path::PathB
 mod tests {
     use super::*;
 
+    const LOG_PROBE: &str = "LATTICE_LOG_DIRECTORY_PROBE";
+
+    #[test]
+    fn print_log_directory() {
+        if std::env::var_os(LOG_PROBE).is_none() {
+            return;
+        }
+        println!("LOGS\t{}", log_directory().display());
+    }
+
+    fn log_directory_of_child(home: Option<&std::path::Path>) -> std::path::PathBuf {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args([
+                "--exact",
+                "infrastructure::observability::tracing::tests::print_log_directory",
+                "--nocapture",
+            ])
+            .env(LOG_PROBE, "1");
+        match home {
+            Some(home) => child.env(lattice_core::shared::fs::roots::LATTICE_HOME_ENV, home),
+            None => child.env_remove(lattice_core::shared::fs::roots::LATTICE_HOME_ENV),
+        };
+        let output = child.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find_map(|line| line.split_once("LOGS\t").map(|(_, path)| path))
+            .map(std::path::PathBuf::from)
+            .expect("the child printed its log folder")
+    }
+
+    #[test]
+    fn lattice_home_moves_the_log_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            log_directory_of_child(Some(dir.path())),
+            dir.path().join("logs")
+        );
+    }
+
+    #[test]
+    fn without_lattice_home_the_log_folder_stays_in_local_app_data() {
+        assert_eq!(
+            log_directory_of_child(None),
+            dirs::data_local_dir().unwrap().join("lattice").join("logs")
+        );
+    }
+
     #[test]
     fn release_builds_default_to_info() {
         if cfg!(debug_assertions) {
