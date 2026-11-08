@@ -742,7 +742,7 @@ async fn an_old_row_for_unchecked_assertions_and_for_a_reviewer_s_critique_is_re
     .await;
     assert_eq!(
         summary_of(&store, &audit).await,
-        "These statements were never checked against a source: \u{201c}Water boils at 100 C\u{201d}, \u{201c}Ice floats\u{201d}."
+        "Some statements here were never checked against a source. The checker read them as: \u{201c}Water boils at 100 C\u{201d}, \u{201c}Ice floats\u{201d}."
     );
     let critique = old_row(
         &store,
