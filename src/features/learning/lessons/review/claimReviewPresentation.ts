@@ -404,7 +404,7 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
         : payload.result.check.result.verdict === 'failed' ? verdictWords(payload.result.check.result.kind).toLowerCase() : 'it supports the statement';
       return `Added ${input}: ${result}`;
     }
-    case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
+    case 'superseded': return payload.successor ? 'Replaced by a newer statement' : 'Removed by an edit';
     case 'born_of_repair': return 'Added while repairing another statement';
     case 'classified': return `Sorted as ${CLASSES[payload.class]}, ${CLASSIFIERS[payload.by]}`;
     case 'reopened': return REOPEN_CAUSES[payload.cause.cause];
