@@ -598,88 +598,6 @@ fn a_citation_label_line_is_one_finding_not_two() {
 }
 
 #[test]
-fn an_explanation_naming_a_choice_by_its_number_is_a_finding() {
-    let sentence = "Option 1 is wrong because it reverses the order.";
-    let mut candidate = lesson();
-    candidate["questions"][0]["explanation"] = json!(format!("Two follows. {sentence}"));
-
-    let findings = lesson_rules(&candidate);
-
-    assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(0));
-    assert_eq!(
-        findings[0].summary,
-        format!("This explanation names a choice by its number, letter or position, and the choices are shuffled before learners see them: \u{201c}{sentence}\u{201d}")
-    );
-    assert_eq!(findings[0].sentence.as_deref(), Some(sentence));
-}
-
-#[test]
-fn a_choice_named_by_number_in_a_prompt_or_an_option_is_no_choice_finding() {
-    let mut candidate = lesson();
-    candidate["questions"][0]["prompt"] = json!("Why is option 2 wrong here?");
-    candidate["questions"][0]["options"] = json!(["Option 2 reverses it", "Two", "Three", "Four"]);
-    assert!(!findings_of(&candidate)
-        .iter()
-        .any(|(summary, _)| summary.contains("names a choice by its number")));
-}
-
-fn explanation_findings(explanation: &str) -> Vec<ReviewFinding> {
-    let mut candidate = lesson();
-    candidate["questions"][0]["explanation"] = json!(explanation);
-    lesson_rules(&candidate)
-}
-
-#[test]
-fn an_explanation_naming_a_choice_by_its_letter_or_position_is_a_finding() {
-    for explanation in [
-        "Option B confuses ls with a system search.",
-        "Answer C mistakes the parent folder for the working directory.",
-        "That is the misconception behind the first choice.",
-        "The second option is not supported by any excerpt.",
-        "The last option describes destructive behaviour.",
-        "Choices 2 and 3 are relative paths.",
-    ] {
-        let findings = explanation_findings(explanation);
-        assert_eq!(findings.len(), 1, "{explanation}");
-        assert_eq!(findings[0].sentence.as_deref(), Some(explanation));
-        assert!(
-            findings[0].summary.contains("number, letter or position"),
-            "{explanation}"
-        );
-    }
-}
-
-#[test]
-fn an_explanation_naming_no_choice_by_letter_or_position_is_no_finding() {
-    for explanation in [
-        "The first .. moves you from /var/log to /var.",
-        "An option a learner might pick is to ignore the error.",
-        "Plan B is to use an absolute path.",
-        "The second step creates the folder.",
-        "Choosing the parent folder is the tempting wrong answer.",
-        "The final answer is /var, two levels up.",
-        "Your first answer might be /var, which forgets the second step.",
-    ] {
-        assert!(
-            explanation_findings(explanation).is_empty(),
-            "{explanation}"
-        );
-    }
-}
-
-#[test]
-fn a_choice_named_by_letter_or_position_in_a_prompt_or_an_option_is_no_choice_finding() {
-    let mut candidate = lesson();
-    candidate["questions"][0]["prompt"] = json!("Why is option B wrong here?");
-    candidate["questions"][0]["options"] =
-        json!(["The first choice reverses it", "Two", "Three", "Four"]);
-    assert!(!findings_of(&candidate)
-        .iter()
-        .any(|(summary, _)| summary.contains("names a choice by its")));
-}
-
-#[test]
 fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
     let mut candidate = lesson();
     candidate["blocks"][0]["body"] =
@@ -687,7 +605,5 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
     assert!(lesson_rules(&candidate).is_empty());
     candidate["blocks"][0]["body"] =
         json!("The second option is wrong. Two sources agree that the shell replies.");
-    candidate["questions"][0]["explanation"] =
-        json!("The parent folder is wrong because it reverses the order.");
     assert!(lesson_rules(&candidate).is_empty());
 }

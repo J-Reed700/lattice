@@ -244,21 +244,8 @@ fn is_citation_label(line: &str) -> bool {
         && after.starts_with(':')
 }
 
-/// Whether `sentence` names a choice by its number, letter or position, as
-/// "Option 2", "Option B" or "the first choice".
-fn names_a_choice(sentence: &str) -> bool {
-    lazy_regex::regex!(r"(?i)\b(?:option|choice)s?\s+#?\d+\b").is_match(sentence)
-        || lazy_regex::regex!(r"(?i:\b(?:option|choice|answer)s?)\s+\(?[A-H]\b\)?")
-            .is_match(sentence)
-        || lazy_regex::regex!(
-            r"(?i)\b(?:first|second|third|fourth|fifth|last)\s+(?:choice|option)s?\b"
-        )
-        .is_match(sentence)
-}
-
 /// Writer scaffolding in the text a learner reads: a sentence naming a source
-/// by its number, a citation label line and, in an answer explanation, a
-/// choice named by its number, letter or position. Code is exempt.
+/// by its number and a citation label line. Code is exempt.
 fn scaffolding(
     item: &Value,
     fields: &[&str],
@@ -270,23 +257,15 @@ fn scaffolding(
         FindingSite::Question(index) => format!("/questions/{index}"),
         FindingSite::Lesson => return,
     };
-    let mut texts: Vec<(&str, bool)> = Vec::new();
+    let mut texts: Vec<&str> = Vec::new();
     for field in fields {
-        let explanation = *field == "explanation";
         match item.get(*field) {
-            Some(Value::String(value)) => texts.push((value, explanation)),
-            Some(Value::Array(values)) => {
-                texts.extend(
-                    values
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(|v| (v, explanation)),
-                );
-            }
+            Some(Value::String(value)) => texts.push(value),
+            Some(Value::Array(values)) => texts.extend(values.iter().filter_map(Value::as_str)),
             _ => {}
         }
     }
-    for (body, explanation) in texts {
+    for body in texts {
         let labels: Vec<String> = prose(body)
             .lines()
             .filter(|line| is_citation_label(line))
@@ -303,21 +282,13 @@ fn scaffolding(
             if labels.iter().any(|line| line.contains(&sentence)) {
                 continue;
             }
-            let (summary, note) = if names_a_source(&sentence) {
-                let summary = format!(
-                    "This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}"
-                );
-                let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence in the citations list of {path}.");
-                (summary, note)
-            } else if explanation && names_a_choice(&sentence) {
-                let summary = format!(
-                    "This explanation names a choice by its number, letter or position, and the choices are shuffled before learners see them: \u{201c}{sentence}\u{201d}"
-                );
-                let note = format!("{label} names a choice by its number, letter or position in \"{sentence}\". The choices are shuffled before learners see them: name the choice by its words instead.");
-                (summary, note)
-            } else {
+            if !names_a_source(&sentence) {
                 continue;
-            };
+            }
+            let summary = format!(
+                "This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}"
+            );
+            let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence in the citations list of {path}.");
             findings.push(citation(site, summary, note, ("", sentence.as_str())));
         }
     }
