@@ -4607,8 +4607,6 @@ dependencies = [
  "usearch",
  "uuid",
  "walkdir",
- "wasmtime",
- "wasmtime-wasi",
  "webview2-com",
  "windows 0.52.0",
  "winreg 0.52.0",

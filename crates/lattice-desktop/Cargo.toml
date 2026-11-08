@@ -86,12 +86,9 @@ futures = { workspace = true }
 async-stream = "0.3"
 reqwest = { workspace = true }
 hex = { workspace = true }
-# Learner execution: restricted JavaScript and CPython/WASI guests, behind the
-# `learning-labs` feature. Native compiler projects use the optional container
-# provider.
+# Runs the browser reader's check script in a test, behind the `learning-labs`
+# feature. The learner guests are lattice-learning's.
 rquickjs = { version = "=0.14.0", default-features = false, features = ["std", "loader"], optional = true }
-wasmtime = { version = "=48.0.8", default-features = false, features = ["cranelift", "runtime", "std"], optional = true }
-wasmtime-wasi = { version = "=48.0.8", default-features = false, features = ["p1"], optional = true }
 lopdf = { version = "0.44", default-features = false }
 encoding_rs = "0.8"
 zip = "9"
@@ -250,7 +247,7 @@ custom-protocol = ["tauri/custom-protocol"]
 # Built-in JavaScript and Python labs. The engines run only in the lab runner,
 # a child process of the app; without them practical runs report the runtimes
 # unavailable.
-learning-labs = ["dep:rquickjs", "dep:wasmtime", "dep:wasmtime-wasi", "lattice-learning/learning-labs"]
+learning-labs = ["dep:rquickjs", "lattice-learning/learning-labs"]
 
 test-utils = []   # Testing utilities and mocks
 desktop-e2e = ["dep:tauri-plugin-wdio-webdriver"] # Explicitly instrumented test bundles only
