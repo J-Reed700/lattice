@@ -4,7 +4,7 @@
 //! count. Terms are looked up as the store's tokenizer keeps words.
 
 use super::*;
-use lattice_index::passage_index::indexed_term;
+use lattice_index::passage_index::{indexed_term, query_terms};
 use std::collections::{BTreeSet, HashMap};
 
 /// Function words that match nearly every passage; never a content term.
@@ -17,6 +17,9 @@ const FUNCTION_WORDS: &[&str] = &[
     "use", "used", "uses", "using", "was", "we", "were", "what", "when", "where", "which", "while",
     "who", "will", "with", "without", "would", "you", "your",
 ];
+
+/// What FTS5 gives a term whose inverse document frequency is not above zero.
+const MIN_WEIGHT: f64 = 1e-6;
 
 /// The words of `text` a keyword match should rest on, as the index keeps
 /// them: not function words.
@@ -105,8 +108,30 @@ impl ReferenceCollection<'_> {
     /// The weight of each of `query`'s terms in this collection, as the index keeps words: its `bm25` inverse document
     /// frequency over the collection's passages, floored at a small positive number as FTS5 does. A term in no
     /// passage has none.
-    pub(crate) async fn term_weights(&self, _query: &str) -> Result<HashMap<String, f64>> {
-        Ok(HashMap::new())
+    pub(crate) async fn term_weights(&self, query: &str) -> Result<HashMap<String, f64>> {
+        let terms: Vec<String> = query_terms(query)
+            .iter()
+            .flat_map(|term| term.split(|c: char| !c.is_alphanumeric()))
+            .filter(|word| !word.is_empty())
+            .map(indexed_term)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if terms.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let store = self.store().await?;
+        let counts = store.term_counts(&terms).await?;
+        let passages = f64::from(store.counts("").await?.passages_total);
+        Ok(counts
+            .into_iter()
+            .filter(|(_, holding)| *holding > 0)
+            .map(|(term, holding)| {
+                let holding = f64::from(u32::try_from(holding).unwrap_or(u32::MAX));
+                let idf = ((passages - holding + 0.5) / (holding + 0.5)).ln();
+                (term, if idf > 0.0 { idf } else { MIN_WEIGHT })
+            })
+            .collect())
     }
 
     /// What `query` is about in this collection: its distinctive content
