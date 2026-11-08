@@ -15,6 +15,9 @@ mod dto_tests;
 #[cfg(test)]
 mod migration_tests;
 mod published_edit;
+mod published_remove;
+#[cfg(test)]
+mod published_remove_tests;
 pub mod recheck;
 pub mod repository;
 pub mod service;

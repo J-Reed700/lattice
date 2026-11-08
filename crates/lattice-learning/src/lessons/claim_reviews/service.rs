@@ -210,6 +210,17 @@ impl ClaimReviewService {
         Ok(revision.0)
     }
 
+    /// Applies one action to every claim in `claim_ids`, all or nothing.
+    pub async fn resolve_many(
+        &self,
+        _lesson_id: &str,
+        _claim_ids: &[String],
+        _action: ClaimActionRequestDto,
+        _expected_revision: i64,
+    ) -> Result<i64> {
+        Err(AppError::InternalError("not built yet".into()))
+    }
+
     /// Whether claim activity or a different checker gives verification new
     /// work since the lesson stopped.
     pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
