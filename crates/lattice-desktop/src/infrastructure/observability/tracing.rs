@@ -236,7 +236,8 @@ fn stdout_writer() -> NonBlocking {
 
 /// The rotating file log, written through a background worker.
 ///
-/// Logs go to `<data_local_dir>/lattice/logs/lattice.log`.
+/// Logs go to `<LATTICE_HOME>/logs/lattice.log` when `LATTICE_HOME` is set,
+/// else `<data_local_dir>/lattice/logs/lattice.log`.
 /// If the directory cannot be determined, falls back to the system temp dir.
 fn file_writer() -> NonBlocking {
     let log_dir = log_directory();
@@ -290,15 +291,13 @@ where
 
 /// Determine the log directory path.
 ///
-/// Uses the platform-appropriate local data directory:
+/// `<LATTICE_HOME>/logs` when `LATTICE_HOME` is set; otherwise the
+/// platform-appropriate local data directory:
 /// - macOS: `~/Library/Application Support/lattice/logs`
 /// - Linux: `~/.local/share/lattice/logs`
 /// - Windows: `{FOLDERID_LocalAppData}\lattice\logs`
 pub(crate) fn log_directory() -> std::path::PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("lattice")
-        .join("logs")
+    lattice_core::shared::fs::roots::log_root()
 }
 
 /// The daily log files in `log_dir`, newest first. The date suffix sorts by
