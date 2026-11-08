@@ -1135,3 +1135,286 @@ async fn a_learners_long_note_is_held_to_the_chat_limit() -> Result<()> {
     assert!(at_the_limit.is_ok(), "report: {:?}", at_the_limit.err());
     Ok(())
 }
+
+struct OpenQuiz {
+    program_id: String,
+    scope: LearningQuizScopeDto,
+    form: LearningAssessmentFormDto,
+    /// The single-choice question and its option texts in the order shown.
+    keyed: String,
+    shown: Vec<String>,
+}
+
+impl OpenQuiz {
+    fn position(&self, text: &str) -> usize {
+        self.shown.iter().position(|o| o == text).unwrap()
+    }
+}
+
+async fn lesson_program(pool: &SqlitePool) -> Result<(String, LearningQuizScopeDto)> {
+    let program = crate::tests::fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    programs
+        .prepare(
+            &program.summary.id,
+            &lesson_id,
+            1,
+            &crate::tests::prepared(&lesson_id),
+        )
+        .await?;
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id),
+    };
+    fill_bank(pool, &program.summary.id, &scope).await?;
+    Ok((program.summary.id, scope))
+}
+
+async fn start_lesson_quiz(
+    repo: &LearningAssessmentRepository,
+    program_id: &str,
+    scope: &LearningQuizScopeDto,
+) -> Result<OpenQuiz> {
+    let form = repo
+        .start_quiz(
+            &StartLearningQuizRequestDto {
+                operation_id: id(),
+                form_id: id(),
+                program_id: program_id.into(),
+                scope: scope.clone(),
+                mode: LearningQuizMode::Graded,
+                retake_of_form_id: None,
+            },
+            "start",
+        )
+        .await?;
+    let item = form
+        .items
+        .iter()
+        .find(|i| i.format == LearningItemFormat::SingleChoice)
+        .unwrap();
+    Ok(OpenQuiz {
+        program_id: program_id.into(),
+        scope: scope.clone(),
+        keyed: item.id.clone(),
+        shown: item.options.clone(),
+        form,
+    })
+}
+
+/// Answer the quiz's single-choice question with the option at `shown` and
+/// submit; returns the submitted form.
+async fn submit_with_answer(
+    repo: &LearningAssessmentRepository,
+    quiz: &OpenQuiz,
+    shown: usize,
+) -> Result<LearningAssessmentFormDto> {
+    let mut answer = engine::LearningAssessmentResponse::empty(quiz.keyed.clone());
+    answer.selected_indices = vec![shown];
+    let saved = repo
+        .save_response(
+            &SaveLearningAssessmentResponseRequestDto {
+                operation_id: id(),
+                program_id: quiz.program_id.clone(),
+                form_id: quiz.form.id.clone(),
+                expected_revision: quiz.form.revision,
+                response: answer,
+                assistance: vec![],
+            },
+            "answer",
+        )
+        .await?;
+    let (form, _) = repo
+        .submit(
+            &MutateLearningAssessmentFormRequestDto {
+                operation_id: id(),
+                program_id: quiz.program_id.clone(),
+                form_id: quiz.form.id.clone(),
+                expected_revision: saved.revision,
+            },
+            "submit",
+        )
+        .await?;
+    Ok(form)
+}
+
+/// As [`submit_with_answer`], returning that question's result.
+async fn answer_and_submit(
+    repo: &LearningAssessmentRepository,
+    quiz: &OpenQuiz,
+    shown: usize,
+) -> Result<LearningAssessmentItemResultDto> {
+    let form = submit_with_answer(repo, quiz, shown).await?;
+    Ok(form
+        .submission
+        .unwrap()
+        .item_results
+        .into_iter()
+        .find(|r| r.item_id == quiz.keyed)
+        .unwrap())
+}
+
+#[tokio::test]
+async fn a_changed_right_answer_does_not_regrade_an_open_quiz() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, scope) = lesson_program(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    sqlx::query("UPDATE learning_assessment_answer_keys SET key_json=? WHERE candidate_id=?")
+        .bind(r#"{"kind":"choice","value":1}"#)
+        .bind(&quiz.keyed)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    let result = answer_and_submit(&repo, &quiz, quiz.position("Alpha")).await?;
+    assert_eq!(result.correct, Some(true), "{}", result.detail);
+    assert_eq!(result.score, 1.0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_removed_choice_does_not_break_or_regrade_an_open_quiz() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, scope) = lesson_program(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    sqlx::query("UPDATE learning_assessment_candidates SET options_json=? WHERE id=?")
+        .bind(r#"["Alpha","Bravo","Charlie"]"#)
+        .bind(&quiz.keyed)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    let result = answer_and_submit(&repo, &quiz, quiz.position("Delta")).await?;
+    assert_eq!(result.correct, Some(false));
+    assert!(
+        result.detail.contains("Delta") && result.detail.contains("Alpha"),
+        "{}",
+        result.detail
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_quiz_drawn_after_a_change_uses_the_changed_question() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, scope) = lesson_program(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let first = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    sqlx::query("UPDATE learning_assessment_candidates SET options_json=? WHERE id=?")
+        .bind(r#"["Alpha","Bravo","Charlie"]"#)
+        .bind(&first.keyed)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    sqlx::query("UPDATE learning_assessment_answer_keys SET key_json=? WHERE candidate_id=?")
+        .bind(r#"{"kind":"choice","value":1}"#)
+        .bind(&first.keyed)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    repo.submit(
+        &MutateLearningAssessmentFormRequestDto {
+            operation_id: id(),
+            program_id: program_id.clone(),
+            form_id: first.form.id.clone(),
+            expected_revision: first.form.revision,
+        },
+        "submit-first",
+    )
+    .await?;
+    let quiz = start_lesson_quiz(&repo, &program_id, &first.scope).await?;
+    assert_eq!(quiz.keyed, first.keyed);
+    assert_eq!(quiz.shown.len(), 3);
+    assert!(!quiz.shown.iter().any(|o| o == "Delta"));
+    let result = answer_and_submit(&repo, &quiz, quiz.position("Bravo")).await?;
+    assert_eq!(result.correct, Some(true), "{}", result.detail);
+    Ok(())
+}
+
+fn reveal_of(form: &LearningAssessmentFormDto, item_id: &str) -> LearningKeyRevealDto {
+    form.items
+        .iter()
+        .find(|i| i.id == item_id)
+        .unwrap()
+        .key_reveal
+        .clone()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_submitted_quiz_reveals_the_explanation_it_was_drawn_with() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, scope) = lesson_program(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    sqlx::query(
+        "UPDATE learning_assessment_answer_keys SET key_json=?,explanation=? WHERE candidate_id=?",
+    )
+    .bind(r#"{"kind":"choice","value":1}"#)
+    .bind("Bravo is right because the edited lesson says so.")
+    .bind(&quiz.keyed)
+    .execute(&pool)
+    .await
+    .map_err(db)?;
+    let form = submit_with_answer(&repo, &quiz, quiz.position("Alpha")).await?;
+    let reveal = reveal_of(&form, &quiz.keyed);
+    assert_eq!(reveal.explanation, "Because the lesson says so.");
+    assert_eq!(reveal.correct_indices, vec![quiz.position("Alpha")]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, scope) = lesson_program(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let reasons = [
+        "",
+        "Bravo fails here.",
+        "Charlie fails here.",
+        "Delta fails here.",
+    ];
+    let candidates: Vec<String> = sqlx::query_scalar(
+        "SELECT c.id FROM learning_assessment_candidates c WHERE c.program_id=? AND c.format='single_choice'",
+    )
+    .bind(&program_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    for candidate in &candidates {
+        sqlx::query(
+            "UPDATE learning_assessment_answer_keys SET distractor_rationales_json=? WHERE candidate_id=?",
+        )
+        .bind(serde_json::to_string(&reasons).unwrap())
+        .bind(candidate)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    }
+    let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    sqlx::query(
+        "UPDATE learning_assessment_answer_keys SET distractor_rationales_json='[]' WHERE candidate_id=?",
+    )
+    .bind(&quiz.keyed)
+    .execute(&pool)
+    .await
+    .map_err(db)?;
+    let form = submit_with_answer(&repo, &quiz, quiz.position("Bravo")).await?;
+    let reveal = reveal_of(&form, &quiz.keyed);
+    assert_eq!(reveal.distractor_rationales.len(), 4);
+    assert_eq!(
+        reveal.distractor_rationales[quiz.position("Bravo")],
+        "Bravo fails here."
+    );
+    assert_eq!(reveal.distractor_rationales[quiz.position("Alpha")], "");
+    Ok(())
+}

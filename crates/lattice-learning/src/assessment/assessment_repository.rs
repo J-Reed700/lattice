@@ -320,8 +320,8 @@ async fn candidate_in(
     candidate_from_row(&row, outcomes)
 }
 
-/// The immutable questions a form retained, fetched together with their keys
-/// and outcome links. Scope by both program and requested ids.
+/// The bank rows a form drew from, fetched together with their keys and
+/// outcome links. Scope by both program and requested ids.
 async fn candidates_in(
     connection: &mut SqliteConnection,
     program_id: &str,
@@ -359,8 +359,53 @@ async fn candidates_in(
     Ok(candidates)
 }
 
+/// The question as its form drew it: the form item's prompt, options, key,
+/// explanation and wrong-choice reasons over the bank row. An item without a
+/// key copy is read from the bank whole.
+fn drawn_candidate(bank: &StoredCandidate, item: &SqliteRow) -> Result<StoredCandidate> {
+    let Some(key) = item.get::<Option<String>, _>("key_json") else {
+        return Ok(bank.clone());
+    };
+    let order: Vec<usize> = decode(item.get("option_order_json"))?;
+    let shown: Vec<String> = decode(item.get("options_json"))?;
+    let mut authored: Vec<(usize, String)> = order.into_iter().zip(shown).collect();
+    authored.sort_by_key(|(index, _)| *index);
+    let mut drawn = bank.clone();
+    drawn.candidate.prompt = item.get("prompt");
+    drawn.candidate.options = authored.into_iter().map(|(_, option)| option).collect();
+    drawn.candidate.left = decode(item.get("left_items_json"))?;
+    drawn.candidate.key = decode(&key)?;
+    if let Some(explanation) = item.get::<Option<String>, _>("explanation") {
+        drawn.candidate.explanation = explanation;
+    }
+    if let Some(reasons) = item.get::<Option<String>, _>("distractor_rationales_json") {
+        drawn.candidate.distractor_rationales = decode(&reasons)?;
+    }
+    Ok(drawn)
+}
+
 impl LearningAssessmentRepository {
-    /// One bank item with its key, for the grading job.
+    /// One question as a form drew it, for the grading job.
+    pub async fn drawn_candidate_in(
+        connection: &mut SqliteConnection,
+        program_id: &str,
+        form_id: &str,
+        candidate_id: &str,
+    ) -> Result<StoredCandidate> {
+        let bank = candidate_in(connection, program_id, candidate_id).await?;
+        let item = sqlx::query(
+            "SELECT * FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?",
+        )
+        .bind(form_id)
+        .bind(candidate_id)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| invalid("That question is not part of this quiz."))?;
+        drawn_candidate(&bank, &item)
+    }
+
+    /// One bank item with its key.
     pub async fn stored_candidate_in(
         connection: &mut SqliteConnection,
         program_id: &str,
