@@ -124,7 +124,15 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
             if let Some(block) = block.as_object_mut() {
                 block.remove("body");
                 block.insert("index".into(), json!(index));
+                block.insert("label".into(), json!(format!("Section {}", index + 1)));
                 block.insert("bodyPassages".into(), json!(passages));
+            }
+        }
+    }
+    if let Some(questions) = candidate.get_mut("questions").and_then(Value::as_array_mut) {
+        for (index, question) in questions.iter_mut().enumerate() {
+            if let Some(question) = question.as_object_mut() {
+                question.insert("label".into(), json!(format!("Question {}", index + 1)));
             }
         }
     }

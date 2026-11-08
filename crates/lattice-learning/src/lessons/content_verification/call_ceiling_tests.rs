@@ -59,7 +59,7 @@ impl Rounds {
                 return Ok(fault(prompt, section, sentence));
             }
             if prompt.starts_with("Check whether proposed lesson-review findings are justified") {
-                return Ok(json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"requirementId":null,"reason":"The step asks for something the explanation beside it never set up."}}).to_string());
+                return Ok(json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{section}")],"partId":format!("blocks-{section}"),"requirementId":null,"reason":"The step asks for something the explanation beside it never set up."}}).to_string());
             }
             if prompt.starts_with("You are editing a rejected draft.") {
                 return Ok(json!({"edits":[{"path":format!("/blocks/{section}/body"),"before":sentence,"after":written}]}).to_string());

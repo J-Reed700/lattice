@@ -28,7 +28,7 @@ fn review(defect: Option<&str>) -> String {
 }
 
 fn actionable() -> String {
-    json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}}).to_string()
+    json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}}).to_string()
 }
 
 fn retitle(after: &str) -> String {
