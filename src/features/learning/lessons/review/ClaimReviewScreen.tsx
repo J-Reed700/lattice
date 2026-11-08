@@ -179,8 +179,8 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const auditStop = review?.stopReason?.code.startsWith(AUDIT_STOP_PREFIX) ? review.stopReason : null;
   const position = session.activeIndex >= 0 ? session.activeIndex + 1 : 0;
   const settleNote = (findingKey: string) => settleNotes.mutateAsync({ findingKeys: [findingKey], settle: 'source_added' })
-    .then(() => session.setMessage('Source added. The note is resolved.'))
-    .catch((error: unknown) => session.setMessage(error instanceof Error ? error.message : 'The note could not be resolved.'));
+    .then(() => session.say('Source added. The note is resolved.'))
+    .catch((error: unknown) => session.say(error instanceof Error ? error.message : 'The note could not be resolved.'));
   const sheetNode = sheet && review && (!sheet.findingKey || session.teachingActive) && <AddSourceSheet key={sheet.target.claimIds.join(',')} programId={programId} lessonId={lessonId} revision={review.revision}
     target={sheet.target} initial={sheet.initial} remaining={waiting.length - 1} onClose={() => setSheet(null)}
     onAdded={(report, summary, scope) => {
@@ -188,7 +188,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       setSheet(null);
       if (!findingKey) { session.added(report, summary, scope); return; }
       requestAnimationFrame(() => document.getElementById(teachingNoteId(findingKey))?.focus());
-      if (summary.stated) void settleNote(findingKey); else session.setMessage(summary.line);
+      if (summary.stated) void settleNote(findingKey); else session.say(summary.line);
     }} />;
 
   const focus = (() => {

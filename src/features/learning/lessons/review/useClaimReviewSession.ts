@@ -183,6 +183,11 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
     setUndo({ kind: 'trust', scope: { scope: 'source', programId, sourceId: support.source.sourceId } });
   };
 
+  const say = (line: string) => {
+    setMessage(line);
+    setUndo(null);
+  };
+
   const added = (report: ClaimAttachReportDto, summary: AttachSummary, scope: string[]) => {
     setMessage(summary.line);
     setUndo(null);
@@ -245,7 +250,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
   return {
     query, review, claims, waiting, groups, ordered, resolved, settling, opened,
     mode: currentMode, setMode, active, activeIndex, teachingActive, removed, removedActive, select, step, openTeaching, openRemoved,
-    form, setForm, acting, error, message, setMessage, undo, undoLast, run, runMany, trusted, added,
+    form, setForm, acting, error, message, setMessage, say, undo, undoLast, run, runMany, trusted, added,
     closestSupport, focusTick,
   };
 }
