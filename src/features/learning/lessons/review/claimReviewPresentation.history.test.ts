@@ -23,7 +23,7 @@ const failed = (kind: VerdictKindDto) => ({ verdict: 'failed', kind });
 
 describe('describeEvent', () => {
   it('words what the checker found', () => {
-    expect(event({ kind: 'extracted', field: 'body', statement: 'Rome was founded in 753 BC.' })).toBe('Claim found in body: “Rome was founded in 753 BC.”');
+    expect(event({ kind: 'extracted', field: 'body', statement: 'Rome was founded in 753 BC.' })).toBe('Statement found in body: “Rome was founded in 753 BC.”');
     expect(event({ kind: 'checked', check: check('local', { verdict: 'supported', supportingQuote: 'q' }, 'matches Livy') }))
       .toBe('Checker (herb-4b): supported · matches Livy');
     expect(event({ kind: 'checked', check: check('verifier', { verdict: 'supported_elsewhere', supportingQuote: 'q' }) }))
