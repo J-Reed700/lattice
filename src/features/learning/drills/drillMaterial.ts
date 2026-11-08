@@ -1,6 +1,7 @@
 import type { AttemptMode, CodeReviewDrillDto } from '@/lib/bindings';
 
 import { languageLabel, type ReviewKind } from './drillOptions';
+import { MODE_LABEL } from './reveal/revealCopy';
 
 export function kindOf(drill: CodeReviewDrillDto): ReviewKind {
   return drill.material.kind;
@@ -19,6 +20,6 @@ export function materialLabel(drill: CodeReviewDrillDto): string {
 }
 
 /** What a drill is, for the line under its title: the lesson, what it is made of and the mode, as "Spacing · C# · Interview". */
-export function drillMeta(_drill: CodeReviewDrillDto, _mode: AttemptMode): string {
-  return '';
+export function drillMeta(drill: CodeReviewDrillDto, mode: AttemptMode): string {
+  return [...(drill.lesson ? [drill.lesson.title] : []), materialLabel(drill), MODE_LABEL[mode]].join(' · ');
 }

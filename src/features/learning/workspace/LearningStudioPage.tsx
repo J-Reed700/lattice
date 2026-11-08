@@ -15,6 +15,7 @@ import { ExportAllCourses } from '@/features/learning/portability/ExportAllCours
 import { ImportCourseFlow } from '@/features/learning/portability/ImportCourseFlow';
 import { useExportAllPending } from '@/features/learning/portability/useLearningPortability';
 import { FlashcardDeckView } from '@/features/learning/recall/flashcards/FlashcardDeckView';
+import { readLastCourse, writeLastCourse } from '@/features/learning/workspace/lastCourse';
 import { ProgramLibrary } from '@/features/learning/workspace/ProgramLibrary';
 import { StudyActivityPanel } from '@/features/learning/workspace/StudyActivityPanel';
 import {
@@ -215,6 +216,27 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
       setSelectedId(next.programId ?? null);
     }
   };
+
+  const latestSelectDestination = useRef(handleSelectDestination);
+  latestSelectDestination.current = handleSelectDestination;
+  useEffect(() => {
+    if (selectedId) writeLastCourse(selectedId);
+  }, [selectedId]);
+  // `?drills=open` (the command palette) opens the review drills of the course opened last, else of the first active one.
+  const drillsLink = searchParams.get('drills') === 'open';
+  const programList = programs.data;
+  useEffect(() => {
+    if (!drillsLink || !programList) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('drills');
+      return next;
+    }, { replace: true });
+    const active = programList.filter((item) => item.status === 'active');
+    const last = readLastCourse();
+    const target = active.find((item) => item.id === last) ?? active[0];
+    if (target) latestSelectDestination.current({ programId: target.id, tab: 'drills' });
+  }, [drillsLink, programList, setSearchParams]);
 
   const handleSelectFramework = (action: FrameworkAction) => {
     if (action === 'interleaving') {

@@ -66,8 +66,9 @@ export function sizeOf(id: DrillSizeId, material: ReviewKind = 'code'): DrillSiz
 }
 
 /** What is asked of the backend to review: a passage, or code in the language chosen; none for code with no language. */
-export function materialOf(_options: DrillOptions): DrillMaterialDto | null {
-  return null;
+export function materialOf(options: DrillOptions): DrillMaterialDto | null {
+  if (options.material === 'passage') return { kind: 'passage' };
+  return options.language ? { kind: 'code', language: options.language } : null;
 }
 
 /** A language's display name; an id the registry does not know shows as itself. */
@@ -80,20 +81,55 @@ export function validMinutes(minutes: number): boolean {
   return Number.isInteger(minutes) && minutes >= 1;
 }
 
-/** The last choices the learner started a drill with, or the defaults. */
+const CHOICES_KEY = 'lattice.drills.choices';
+const LANGUAGE_KEY = 'lattice.drills.language';
+
+const isKind = (value: unknown): value is ReviewKind => value === 'code' || value === 'passage';
+const isMode = (value: unknown): value is DrillMode => value === 'practice' || value === 'interview';
+const isSize = (value: unknown): value is DrillSizeId => DRILL_SIZES.some((size) => size.id === value);
+
+/** The last material, mode, size and time limit the learner started a drill with, or the defaults; they hold across courses. */
 export function readChoices(): DrillOptions {
-  return DEFAULT_OPTIONS;
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(CHOICES_KEY) ?? 'null');
+    if (!stored || typeof stored !== 'object') return DEFAULT_OPTIONS;
+    const { material, mode, size, minutes } = stored as Record<string, unknown>;
+    return {
+      material: isKind(material) ? material : DEFAULT_OPTIONS.material,
+      language: null,
+      lessonId: null,
+      mode: isMode(mode) ? mode : DEFAULT_OPTIONS.mode,
+      size: isSize(size) ? size : DEFAULT_OPTIONS.size,
+      minutes: typeof minutes === 'number' && validMinutes(minutes) ? minutes : DEFAULT_OPTIONS.minutes,
+    };
+  } catch {
+    return DEFAULT_OPTIONS;
+  }
 }
 
-export function writeChoices(_options: DrillOptions): void {
-  // Nothing is kept yet.
+export function writeChoices(options: DrillOptions): void {
+  try {
+    const minutes = validMinutes(options.minutes) ? options.minutes : DEFAULT_OPTIONS.minutes;
+    localStorage.setItem(CHOICES_KEY, JSON.stringify({ material: options.material, mode: options.mode, size: options.size, minutes }));
+  } catch {
+    // The choices still hold for this session.
+  }
 }
 
 /** The language the learner last started a code drill of the course in; none before one. */
-export function readCourseLanguage(_programId: string): string | null {
-  return null;
+export function readCourseLanguage(programId: string): string | null {
+  try {
+    const stored = localStorage.getItem(`${LANGUAGE_KEY}.${programId}`);
+    return stored || null;
+  } catch {
+    return null;
+  }
 }
 
-export function writeCourseLanguage(_programId: string, _language: string): void {
-  // Nothing is kept yet.
+export function writeCourseLanguage(programId: string, language: string): void {
+  try {
+    localStorage.setItem(`${LANGUAGE_KEY}.${programId}`, language);
+  } catch {
+    // The language still holds for this session.
+  }
 }

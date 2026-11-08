@@ -38,6 +38,8 @@ const descriptions: Record<string, TaskDescription> = {
   add_learning_text_source: source('Saving your reference text', 'Save your text as a course reference'),
   refresh_learning_source: source('Checking your reference for updates', 'Fetch the source again', 'Compare it with the saved version'),
   search_learning_sources_semantically: { ...source('Finding relevant passages', 'Search the saved references for relevant passages'), detail: 'Searching the text saved in this course for relevant evidence.' },
+  course_drills: { title: 'Loading your review drills', tab: 'drills', detail: 'This is taking longer than usual. The request is still waiting for a response.', involves: ['Read the course’s lessons and its drills'] },
+  start_course_drill: { title: 'Starting your review drill', tab: 'drills', detail: 'Waiting for the app to take a drill or start writing one.', involves: ['Take a ready drill of the lesson, or start writing one'] },
   export_learning_pack: { title: 'Exporting your study pack', tab: 'portability', quickStart: true, detail: 'Larger courses and attachments take longer to package.', involves: ['Collect the selected course material', 'Write the study pack to your chosen location'] },
   preview_learning_pack_import: { title: 'Checking your study pack', tab: 'portability', quickStart: true, detail: 'Reading the pack and checking its contents before you decide what to import.', involves: ['Read and validate the pack', 'Prepare an import preview'] },
   apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },

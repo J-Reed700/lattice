@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useSearchParams } from 'react-router';
-
 import { isJobFinished, useJobStatus, type JobDto } from '@/features/jobs/api';
+import type { StartedCodeReviewDto } from '@/lib/bindings';
 
 import { drillsApi } from './api';
 import { DRILL_BUILD, DRILL_GRADING, shelfOf } from './drillJobs';
-import { materialOf, readChoices, validMinutes, writeChoices, type DrillOptions } from './drillOptions';
-import { initialState, reduce, type DrillAction, type DrillState } from './drillState';
+import {
+  materialOf,
+  readChoices,
+  readCourseLanguage,
+  sizeOf,
+  validMinutes,
+  writeChoices,
+  writeCourseLanguage,
+  type DrillOptions,
+} from './drillOptions';
+import { initialState, limitOf, reduce, type DrillAction, type DrillState } from './drillState';
 import { changedFiles, toFindingDto, type FindingInput } from './findings';
 import { clearReviewDraft, EMPTY_DRAFT, readReviewDraft, writeReviewDraft } from './reviewDraft';
-
-/** The address of an attempt: `?drills=open&attempt=<id>`. */
-export const ATTEMPT_PARAM = 'attempt';
 
 /** How often a build that is waited for is asked about again, in case the report that ended it was missed. */
 const BUILD_POLL_MS = 30_000;
@@ -39,25 +44,21 @@ function usePoll(tick: () => void, intervalMs: number, active: boolean) {
 
 /**
  * The code review drill screen's state: the learner's choices, the start and the wait for a build, the review they
- * write, the hand-in and the wait for its grade, and the reveal. The attempt's id is in the address, so an attempt
- * the learner left is read again from the backend when they come back to it.
+ * write, the hand-in and the wait for its grade, and the reveal. An attempt the learner left is read again from the
+ * backend when they open it from the recent drills.
  */
 export function useCodeReviewDrill(programId: string) {
-  const [params, setParams] = useSearchParams();
-  const attemptParam = params.get(ATTEMPT_PARAM);
-  const [state, setState] = useState<DrillState>(() => initialState(attemptParam ? 'loading' : 'choose', readChoices()));
+  const [state, setState] = useState<DrillState>(() =>
+    initialState('choose', { ...readChoices(), language: readCourseLanguage(programId) }),
+  );
   // The reducer runs when an action is dispatched, so the state asynchronous work reads is never behind a render.
   const stateRef = useRef(state);
   const attemptRef = useRef<string | null>(null);
-  const paramRef = useRef(attemptParam);
-  const setParamsRef = useRef(setParams);
   // Each thing the learner does that supersedes the last takes a new run; results of an older run are dropped.
   const runRef = useRef(0);
   const mounted = useRef(false);
   const asking = useRef(false);
   const askAgain = useRef(false);
-  paramRef.current = attemptParam;
-  setParamsRef.current = setParams;
 
   useEffect(() => {
     mounted.current = true;
@@ -73,24 +74,52 @@ export function useCodeReviewDrill(programId: string) {
 
   const live = useCallback((run: number) => mounted.current && run === runRef.current, []);
 
-  /** The attempt the screen holds, and the address that names it. */
+  /** The attempt the screen holds. */
   const holdAttempt = useCallback((id: string | null) => {
     attemptRef.current = id;
-    if (paramRef.current === id) return;
-    setParamsRef.current(
-      (current) => {
-        const next = new URLSearchParams(current);
-        if (id) next.set(ATTEMPT_PARAM, id);
-        else next.delete(ATTEMPT_PARAM);
-        return next;
-      },
-      { replace: true },
-    );
   }, []);
 
-  const attemptOnce = useCallback(async (_run: number) => {
-    return;
-  }, []);
+  const open = useCallback(
+    (started: Extract<StartedCodeReviewDto, { status: 'started' }>) => {
+      const minutes = started.mode === 'interview' ? stateRef.current.options.minutes : null;
+      const draft = { ...EMPTY_DRAFT, minutes };
+      writeReviewDraft(started.attemptId, draft);
+      holdAttempt(started.attemptId);
+      dispatch({
+        type: 'opened',
+        draft,
+        session: {
+          attemptId: started.attemptId,
+          mode: started.mode,
+          startedAt: started.startedAt,
+          drill: started.drill,
+          limitMs: limitOf(started.mode, minutes),
+        },
+      });
+    },
+    [dispatch, holdAttempt],
+  );
+
+  const attemptOnce = useCallback(
+    async (run: number) => {
+      const { options } = stateRef.current;
+      const material = materialOf(options);
+      if (!material) {
+        dispatch({ type: 'failed', failure: { message: 'Choose the language of the drill.', retry: 'start' } });
+        return;
+      }
+      const { lines, issues } = sizeOf(options.size, options.material);
+      try {
+        const started = await drillsApi.startCourseDrill(programId, options.lessonId, material, options.mode, lines, issues);
+        if (!live(run)) return;
+        if (started.status === 'started') open(started);
+        else dispatch({ type: 'building', jobId: started.jobId });
+      } catch (error) {
+        if (live(run)) dispatch({ type: 'failed', failure: { message: messageOf(error), retry: 'start' } });
+      }
+    },
+    [dispatch, live, open, programId],
+  );
 
   /** Asks for a drill. One ask is out at a time, so a drill is never taken twice; asking meanwhile asks once more. */
   const ask = useCallback(async () => {
@@ -115,15 +144,16 @@ export function useCodeReviewDrill(programId: string) {
       if (patch) dispatch({ type: 'options', patch });
       const { options } = stateRef.current;
       if (options.mode === 'interview' && !validMinutes(options.minutes)) return;
-      if (!materialOf(options)) return;
+      const material = materialOf(options);
+      if (!material) return;
       runRef.current += 1;
       writeChoices(options);
-      // The address keeps naming the last attempt until the new one opens, so it changes once, not twice.
+      if (material.kind === 'code') writeCourseLanguage(programId, material.language);
       attemptRef.current = null;
       dispatch({ type: 'starting' });
       void ask();
     },
-    [ask, dispatch],
+    [ask, dispatch, programId],
   );
 
   /** Back to the choices. A build under way goes on without the screen. */
@@ -202,18 +232,6 @@ export function useCodeReviewDrill(programId: string) {
     }
   }, [dispatch, live]);
 
-  // The address leads: an attempt it names is read from the backend; one it no longer names is left.
-  useEffect(() => {
-    if (attemptParam === attemptRef.current) return;
-    if (attemptParam) {
-      void restore(attemptParam);
-    } else {
-      runRef.current += 1;
-      attemptRef.current = null;
-      dispatch({ type: 'reset' });
-    }
-  }, [attemptParam, dispatch, restore]);
-
   useJobStatus((job) => {
     const current = stateRef.current;
     if (current.stage === 'starting' && !current.failure && job.kind === DRILL_BUILD) {
@@ -264,10 +282,15 @@ export function useCodeReviewDrill(programId: string) {
     }
   }, [refresh, regrade, restore, start, submit]);
 
-  /** Another drill on the same material and in the mode of the one just done. */
+  /** Another drill on the same material and in the mode of the one just done, on whichever lesson is next. */
   const nextDrill = useCallback(() => {
-    reset();
-  }, [reset]);
+    const { result } = stateRef.current;
+    if (!result) return;
+    const mode = result.mode === 'interview' ? 'interview' : 'practice';
+    const { material } = result.drill;
+    if (material.kind === 'code') start({ material: 'code', language: material.language, mode, lessonId: null });
+    else start({ material: 'passage', mode, lessonId: null });
+  }, [start]);
 
   const setOptions = useCallback((patch: Partial<DrillOptions>) => dispatch({ type: 'options', patch }), [dispatch]);
   const add = useCallback((input: FindingInput) => dispatch({ type: 'add', input }), [dispatch]);
@@ -287,7 +310,9 @@ export function useCodeReviewDrill(programId: string) {
     /** Gives up waiting for a build; it goes on without the screen. */
     stopWaiting: reset,
     /** Opens an attempt from the recent list. */
-    restore: (_id: string) => undefined,
+    restore: (id: string) => {
+      void restore(id);
+    },
     /** Back to the choices; a build under way goes on without the screen. */
     toChoices: reset,
     building: state.building,
