@@ -360,9 +360,77 @@ fn cleanup_record(row: &sqlx::sqlite::SqliteRow) -> Result<RunCleanup> {
     })
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct RawCaseCheckLine {
+    case_id: String,
+    status: String,
+    #[serde(default)]
+    actual: Option<String>,
+    #[serde(default)]
+    printed: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    elapsed_ms: Option<u64>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    args: Option<Vec<String>>,
+    #[serde(default)]
+    expected: Option<String>,
+    #[serde(default)]
+    visibility: Option<String>,
+}
+
 /// Parses per-case check results from runner stdout if present.
-fn extract_case_checks(_stdout: &str) -> Vec<LearningPracticalCheckResultDto> {
-    // Stage 1 stub: per-case extraction returns empty to compile without panicking,
-    // causing tests expecting per-case check rows to fail on assertion.
-    Vec::new()
+fn extract_case_checks(stdout: &str) -> Vec<LearningPracticalCheckResultDto> {
+    let nonce = crate::practice::coding::harness::DEFAULT_NONCE;
+    let mut checks = Vec::new();
+    for line in stdout.lines() {
+        if let Some(idx) = line.find(nonce) {
+            if let Some(json_str) = line.get(idx + nonce.len()..) {
+                if let Ok(raw) = serde_json::from_str::<RawCaseCheckLine>(json_str.trim()) {
+                    let status = match raw.status.to_lowercase().as_str() {
+                        "passed" | "ran" => LearningPracticalCheckStatus::Passed,
+                        "failed" => LearningPracticalCheckStatus::Failed,
+                        "error" => LearningPracticalCheckStatus::Error,
+                        "not_run" | "timed_out" => LearningPracticalCheckStatus::NotRun,
+                        _ => LearningPracticalCheckStatus::Error,
+                    };
+                    let message = match status {
+                        LearningPracticalCheckStatus::Passed => "Case passed.".to_string(),
+                        LearningPracticalCheckStatus::Failed => "Case failed.".to_string(),
+                        LearningPracticalCheckStatus::Error => {
+                            raw.error.clone().unwrap_or_else(|| "Case raised an error.".to_string())
+                        }
+                        LearningPracticalCheckStatus::NotRun => "Case not run.".to_string(),
+                    };
+                    let visibility = match raw.visibility.as_deref() {
+                        Some(v) if v.eq_ignore_ascii_case("hidden") => {
+                            crate::practice::coding::problem::Visibility::Hidden
+                        }
+                        _ => crate::practice::coding::problem::Visibility::Example,
+                    };
+                    let detail = CaseCheckDetailDto {
+                        case_id: raw.case_id.clone(),
+                        category: raw.category.unwrap_or_default(),
+                        args: raw.args.unwrap_or_default(),
+                        expected: raw.expected,
+                        actual: raw.actual,
+                        printed: raw.printed.unwrap_or_default(),
+                        error: raw.error,
+                        visibility,
+                    };
+                    checks.push(LearningPracticalCheckResultDto {
+                        name: raw.case_id,
+                        status,
+                        message,
+                        duration_ms: raw.elapsed_ms.map(|ms| ms as i64),
+                        detail: Some(detail),
+                    });
+                }
+            }
+        }
+    }
+    checks
 }
