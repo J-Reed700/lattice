@@ -91,6 +91,13 @@ describe('useAutosave', () => {
 
     expect(result.current.status).toBe('conflict');
     expect(result.current.conflict).toBe(true);
+
+    act(() => {
+      result.current.clearConflict();
+    });
+
+    expect(result.current.conflict).toBe(false);
+    expect(result.current.status).toBe('idle');
   });
 
   it('transitions to error when a non-conflict error occurs', async () => {

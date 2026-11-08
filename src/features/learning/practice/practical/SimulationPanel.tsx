@@ -1,15 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import React, { useMemo, useRef, useState, useEffect } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Play, Send, Users } from "lucide-react";
+import { Play, Users } from "lucide-react";
 
 import { TiptapViewer } from "@/components/TiptapEditor";
-import { useApi } from '@/contexts/ApiContext';
+import { useApi } from "@/contexts/ApiContext";
 import { learningPracticalWorkspaceKey } from "@/features/learning/api/learningQueryKeys";
 import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
 import { AnswerTimer } from "@/features/learning/practice/practical/AnswerTimer";
-import { errorText, questionLabel, unwrap, uuid } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
+import {
+  errorText,
+  questionLabel,
+  unwrap,
+  uuid,
+} from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
 import { PracticeCitation } from "@/features/learning/practice/PracticeCitation";
+import {
+  PracticeThread,
+  type PracticeThreadTurn,
+} from "@/features/learning/practice/shared/PracticeThread";
+import { StatusLine } from "@/features/learning/practice/shared/StatusLine";
 import { useCitationDisplayStore } from "@/features/reading/stores/citationDisplayStore";
 import type {
   FinishLearningSimulationRequestDto,
@@ -32,25 +42,37 @@ export function SimulationPanel({
   session: LearningSimulationSessionDto | null;
   onSession: (session: LearningSimulationSessionDto) => void;
   onRestart?: () => void;
-}) {
+}): JSX.Element {
   const api = useApi();
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const client = useQueryClient();
   const isInterview = activity.kind === "interview" || Boolean(activity.interviewPlan);
-  const [learnerRole, setLearnerRole] = useState(
-    () => activity.interviewPlan?.learnerRole || (activity.kind === "interview" ? "Candidate" : "Incident lead"),
-  );
-  const [counterpartRole, setCounterpartRole] = useState(
-    () => activity.interviewPlan?.counterpartRole || (activity.kind === "interview" ? "Interviewer" : "On-call engineer"),
-  );
 
-  useEffect(() => {
-    setLearnerRole(activity.interviewPlan?.learnerRole || (activity.kind === "interview" ? "Candidate" : "Incident lead"));
-    setCounterpartRole(activity.interviewPlan?.counterpartRole || (activity.kind === "interview" ? "Interviewer" : "On-call engineer"));
-  }, [activity.id, activity.kind, activity.interviewPlan?.learnerRole, activity.interviewPlan?.counterpartRole]);
+  // Computed default roles based on activity
+  const defaultLearnerRole =
+    activity.interviewPlan?.learnerRole ||
+    (activity.kind === "interview" ? "Candidate" : "Incident lead");
+  const defaultCounterpartRole =
+    activity.interviewPlan?.counterpartRole ||
+    (activity.kind === "interview" ? "Interviewer" : "On-call engineer");
+
+  // Replace effect-derived role state with render-time computed values
+  const [customLearnerRole, setCustomLearnerRole] = useState<string | null>(null);
+  const [customCounterpartRole, setCustomCounterpartRole] = useState<string | null>(null);
+  const [prevActivityKey, setPrevActivityKey] = useState(activity.id);
+
+  if (prevActivityKey !== activity.id) {
+    setPrevActivityKey(activity.id);
+    setCustomLearnerRole(null);
+    setCustomCounterpartRole(null);
+  }
+
+  const learnerRole = customLearnerRole ?? defaultLearnerRole;
+  const counterpartRole = customCounterpartRole ?? defaultCounterpartRole;
 
   // Kept per session, so leaving the simulation does not lose the reply.
-  const [message, setMessage] = useDraft(session ? `simulation:${session.id}` : null);
+  const draftKey = session ? `simulation:${session.id}` : null;
+  const [message, setMessage] = useDraft(draftKey);
   const [error, setError] = useState<string | null>(null);
   const [retryOperation, setRetryOperation] = useState<"start" | "turn" | "finish" | null>(null);
   const busyRef = useRef(false);
@@ -60,9 +82,11 @@ export function SimulationPanel({
     turn?: SendLearningSimulationTurnRequestDto;
     finish?: FinishLearningSimulationRequestDto;
   }>({});
+
   const refreshAfterError = () => {
     void client.invalidateQueries({ queryKey: learningPracticalWorkspaceKey(programId) });
   };
+
   // Bring the newest turn into view inside the log: the interviewer's next
   // question, or the start of the closing feedback, not the end of it.
   const turnCount = session?.turns.length ?? 0;
@@ -72,32 +96,45 @@ export function SimulationPanel({
     if (!log || !newest || turnCount === 0) return;
     log.scrollTop += newest.getBoundingClientRect().top - log.getBoundingClientRect().top - 12;
   }, [session?.id, turnCount]);
-  useEffect(() => {
-    if (session?.status === "submitted") {
-      setError(null);
-      setRetryOperation(null);
-    }
-  }, [session?.status]);
+
   const start = useMutation({
     retry: false,
     mutationFn: async (request: StartLearningSimulationRequestDto) =>
       unwrap(await api.startLearningSimulation(request)),
     onError: refreshAfterError,
   });
+
   const turn = useMutation({
     retry: false,
     mutationFn: async (request: SendLearningSimulationTurnRequestDto) =>
       unwrap(await api.sendLearningSimulationTurn(request)),
     onError: refreshAfterError,
   });
+
   const finish = useMutation({
     retry: false,
     mutationFn: async (request: FinishLearningSimulationRequestDto) =>
       unwrap(await api.finishLearningSimulation(request)),
     onError: refreshAfterError,
   });
+
   const busy = start.isPending || turn.isPending || finish.isPending;
+
+  const busyLabel = useMemo(() => {
+    if (start.isPending) {
+      return isInterview ? "Starting the interview…" : "Starting simulation…";
+    }
+    if (finish.isPending) {
+      return "Preparing your feedback…";
+    }
+    if (turn.isPending) {
+      return isInterview ? "The interviewer is responding…" : "Your counterpart is responding…";
+    }
+    return null;
+  }, [start.isPending, finish.isPending, turn.isPending, isInterview]);
+
   const lastQuestionId = session?.turns.filter((item) => item.speaker === "counterpart").at(-1)?.id;
+
   const begin = async () => {
     if (busyRef.current || !learnerRole.trim() || !counterpartRole.trim()) return;
     busyRef.current = true;
@@ -106,8 +143,7 @@ export function SimulationPanel({
     let request = retryRef.current.start;
     if (
       !request ||
-      `${request.activityId}:${request.learnerRole}:${request.counterpartRole}` !==
-        fingerprint
+      `${request.activityId}:${request.learnerRole}:${request.counterpartRole}` !== fingerprint
     ) {
       request = {
         operationId: uuid(),
@@ -133,14 +169,18 @@ export function SimulationPanel({
       busyRef.current = false;
     }
   };
-  const send = async (retryPending = false) => {
+
+  const send = async (retryPending = false, explicitContent?: string) => {
     if (
-      busyRef.current || session?.status !== "active" ||
-      (!message.trim() && !(retryPending && retryRef.current.turn))
-    ) return;
+      busyRef.current ||
+      session?.status !== "active" ||
+      (!explicitContent && !message.trim() && !(retryPending && retryRef.current.turn))
+    ) {
+      return;
+    }
     busyRef.current = true;
     setError(null);
-    const content = message.trim();
+    const content = (explicitContent ?? message).trim();
     let request = retryRef.current.turn;
     if (
       request?.sessionId !== session.id ||
@@ -169,8 +209,15 @@ export function SimulationPanel({
       busyRef.current = false;
     }
   };
+
   const end = async () => {
-    if (busyRef.current || session?.status !== "active" || !session.turns.some((item) => item.speaker === "learner")) return;
+    if (
+      busyRef.current ||
+      session?.status !== "active" ||
+      !session.turns.some((item) => item.speaker === "learner")
+    ) {
+      return;
+    }
     busyRef.current = true;
     setError(null);
     let request = retryRef.current.finish;
@@ -197,10 +244,38 @@ export function SimulationPanel({
       busyRef.current = false;
     }
   };
+
+  const threadTurns: PracticeThreadTurn[] = useMemo(() => {
+    if (!session) return [];
+    return session.turns.map((turnItem) => ({
+      id: turnItem.id,
+      speaker: turnItem.speaker === "learner" ? "learner" : turnItem.speaker === "counterpart" ? "counterpart" : "coach",
+      speakerLabel:
+        turnItem.speaker === "learner"
+          ? session.learnerRole
+          : turnItem.speaker === "counterpart"
+            ? session.counterpartRole
+            : "Coach",
+      content: turnItem.content,
+      extra: showCitations && turnItem.citations && turnItem.citations.length > 0 ? (
+        <div className="mt-2 space-y-1">
+          {turnItem.citations.map((citation, index) => (
+            <PracticeCitation
+              key={`${citation.sourceId}:${index}`}
+              programId={programId}
+              citation={citation}
+              canOpen={activity.practiceMode !== "demonstrate" || session.status === "submitted"}
+            />
+          ))}
+        </div>
+      ) : null,
+    }));
+  }, [session, showCitations, programId, activity.practiceMode]);
+
   return (
-    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5">
+    <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-5">
       <div className="flex items-start gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-accent-muted text-accent">
           <Users size={18} />
         </span>
         <div className="min-w-0 flex-1">
@@ -211,91 +286,187 @@ export function SimulationPanel({
             {isInterview ? "Answer one question at a time" : "Take a role, respond to the situation"}
           </h3>
           <p className="mt-1 text-xs leading-5 text-text-secondary">
-            {isInterview ? "The interviewer opens the conversation and probes your reasoning. Finish the simulation to review feedback against the role’s criteria." : <>The counterpart responds in turns. This is a practice record tied to
-            activity revision {activity.revision}; it does not claim operational
-            readiness.</>}
+            {isInterview ? (
+              "The interviewer opens the conversation and probes your reasoning. Finish the simulation to review feedback against the role’s criteria."
+            ) : (
+              <>
+                The counterpart responds in turns. This is a practice record tied to activity revision{" "}
+                {activity.revision}; it does not claim operational readiness.
+              </>
+            )}
           </p>
         </div>
       </div>
+
       {!session ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <label className="text-xs font-medium text-text-secondary">
             Your role
             <input
               value={learnerRole}
-              onChange={(event) => setLearnerRole(event.target.value)}
+              onChange={(event) => setCustomLearnerRole(event.target.value)}
               maxLength={100}
               disabled={busy}
-              className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
+              className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2.5 text-sm text-text-primary"
             />
           </label>
           <label className="text-xs font-medium text-text-secondary">
             Counterpart role
             <input
               value={counterpartRole}
-              onChange={(event) => setCounterpartRole(event.target.value)}
+              onChange={(event) => setCustomCounterpartRole(event.target.value)}
               maxLength={100}
               disabled={busy}
-              className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
+              className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2.5 text-sm text-text-primary"
             />
           </label>
-          <button
-            type="button"
-            disabled={
-              busy || !learnerRole.trim() || !counterpartRole.trim()
-            }
-            onClick={() => void begin()}
-            className="inline-flex w-fit items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"
-          >
-            <Play size={13} /> {isInterview ? "Start interview" : "Start simulation"}
-          </button>
+          <div className="sm:col-span-2">
+            <button
+              type="button"
+              disabled={busy || !learnerRole.trim() || !counterpartRole.trim()}
+              onClick={() => void begin()}
+              className="inline-flex w-fit items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"
+            >
+              <Play size={13} /> {isInterview ? "Start interview" : "Start simulation"}
+            </button>
+          </div>
+          {busy && <StatusLine busy={busyLabel} />}
+          {error && (
+            <StatusLine
+              error={error}
+              onRetry={() => void begin()}
+              retryAriaLabel="Retry same operation"
+            />
+          )}
         </div>
       ) : (
-        <>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-background px-4 py-3">
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-surface-sunken px-4 py-3">
             <div className="text-xs text-text-secondary">
-              <strong className="text-text-primary">
-                {session.learnerRole}
-              </strong>{" "}
-              with{" "}
-              <strong className="text-text-primary">
-                {session.counterpartRole}
-              </strong>{" "}
-              · {session.status === "active" ? "in progress" : "finished"}
+              <strong className="text-text-primary">{session.learnerRole}</strong> with{" "}
+              <strong className="text-text-primary">{session.counterpartRole}</strong> ·{" "}
+              {session.status === "active" ? "in progress" : "finished"}
             </div>
             {session.status === "active" && (
               <button
                 type="button"
                 disabled={busy || !session.turns.some((item) => item.speaker === "learner")}
                 onClick={() => void end()}
-                className="rounded-full border border-border px-3 py-2 text-xs"
+                className="rounded-full border border-border-default bg-surface px-3 py-2 text-xs font-medium text-text-primary hover:border-accent hover:text-accent disabled:opacity-40"
               >
                 {isInterview ? "Finish interview" : "Finish simulation"}
               </button>
             )}
             {session.status !== "active" && onRestart && (
-              <button type="button" onClick={onRestart} className="rounded-full border border-border px-3 py-2 text-xs">
+              <button
+                type="button"
+                onClick={onRestart}
+                className="rounded-full border border-border-default bg-surface px-3 py-2 text-xs font-medium text-text-primary hover:border-accent hover:text-accent"
+              >
                 Start another attempt
               </button>
             )}
           </div>
-          <div
-            ref={logRef}
-            aria-label="Simulation turns"
-            role="log"
-            aria-live="polite"
-            aria-busy={busy}
-            className="mt-3 max-h-[min(70vh,640px)] space-y-3 overflow-y-auto rounded-xl border border-border bg-background/40 p-3"
-          >
-            {session.turns.length === 0 ? (
-              <p className="p-4 text-xs text-text-muted">
-                {activity.interviewPlan ? "Introduce yourself to begin the interview." : "Your first response will begin the conversation."}
-              </p>
-            ) : (
-              session.turns.map((turnItem) => (
+
+          {session.status === "active" ? (
+            <PracticeThread
+              conversationId={session.id}
+              turns={threadTurns}
+              draftKey={draftKey}
+              placeholder={`Respond as ${session.learnerRole}…`}
+              sendLabel="Send"
+              sendAriaLabel="Send simulation turn"
+              busyLabel={busyLabel}
+              error={error}
+              onRetry={() => {
+                if (retryOperation === "finish") void end();
+                else if (retryOperation === "turn") void send(true);
+                else void begin();
+              }}
+              retryAriaLabel="Retry same operation"
+              disabled={busy}
+              maxLength={LEARNER_TEXT_MAX_CHARS}
+              logRef={logRef}
+              logLabel="Simulation turns"
+              inputLabel="Your response"
+              emptyText={
+                activity.interviewPlan
+                  ? "Introduce yourself to begin the interview."
+                  : "Your first response will begin the conversation."
+              }
+              clearOnSend={false}
+              onSend={async (content) => {
+                await send(false, content);
+              }}
+              renderTurnContent={(turnItem) =>
+                turnItem.speaker === "learner" ? (
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-text-secondary">
+                    {turnItem.content}
+                  </p>
+                ) : (
+                  <div className="mt-1 text-sm leading-6 text-text-secondary">
+                    <TiptapViewer content={turnItem.content} images={isInterview ? [] : undefined} />
+                  </div>
+                )
+              }
+              composerTop={
+                <>
+                  {isInterview && lastQuestionId && !finish.isPending && (
+                    <AnswerTimer since={lastQuestionId} running={!turn.isPending} />
+                  )}
+                  {activity.practiceMode !== "demonstrate" &&
+                    activity.interviewPlan?.questions &&
+                    activity.interviewPlan.questions.length > 0 && (
+                      <div
+                        className="flex flex-wrap items-center gap-1.5 pt-1"
+                        role="group"
+                        aria-label="Tailored interview quick prompts"
+                      >
+                        <span className="text-xs font-medium text-text-muted">
+                          Quick prompts:
+                        </span>
+                        {activity.interviewPlan.questions.map((q) => {
+                          const promptText = `Please ask me this practice question: ${q.question}`;
+                          const truncated = questionLabel(q.question);
+                          return (
+                            <button
+                              key={q.id}
+                              type="button"
+                              disabled={busy}
+                              onClick={() => {
+                                setMessage(
+                                  message.trim()
+                                    ? `${message.trim()}\n\n${promptText}`
+                                    : promptText,
+                                );
+                              }}
+                              className="max-w-full truncate rounded-full border border-border-default bg-surface px-2.5 py-1 text-xs text-text-secondary hover:border-accent hover:text-accent transition-colors disabled:opacity-40"
+                              title={questionLabel(q.question, 300)}
+                            >
+                              Ask me: {truncated}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                </>
+              }
+            />
+          ) : (
+            <div
+              ref={logRef}
+              role="log"
+              aria-label="Simulation turns"
+              className="max-h-[min(70vh,640px)] space-y-3 overflow-y-auto rounded-xl border border-border-default bg-surface p-3"
+            >
+              {session.turns.map((turnItem) => (
                 <article
                   key={turnItem.id}
-                  className={`max-w-[92%] rounded-xl border p-3 ${turnItem.speaker === "learner" ? "ml-auto border-accent/20 bg-accent/5" : "border-border bg-surface"}`}
+                  className={`max-w-[92%] rounded-xl border p-3 ${
+                    turnItem.speaker === "learner"
+                      ? "ml-auto border-border-default bg-surface-raised"
+                      : "border-border-default bg-surface-sunken"
+                  }`}
                 >
                   <div className="text-xs font-semibold uppercase tracking-[.12em] text-text-muted">
                     {turnItem.speaker === "learner"
@@ -313,121 +484,23 @@ export function SimulationPanel({
                       <TiptapViewer content={turnItem.content} images={isInterview ? [] : undefined} />
                     </div>
                   )}
-                  {showCitations && turnItem.citations.map((citation, index) => (
-                    <PracticeCitation
-                      key={`${citation.sourceId}:${index}`}
-                      programId={programId}
-                      citation={citation}
-                      canOpen={activity.practiceMode !== "demonstrate" || session.status === "submitted"}
-                    />
-                  ))}
+                  {showCitations && turnItem.citations && turnItem.citations.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {turnItem.citations.map((citation, index) => (
+                        <PracticeCitation
+                          key={`${citation.sourceId}:${index}`}
+                          programId={programId}
+                          citation={citation}
+                          canOpen={activity.practiceMode !== "demonstrate" || session.status === "submitted"}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </article>
-              ))
-            )}
-          </div>
-          {session.status === "active" && (
-            <div className="mt-3 space-y-2">
-              {/* Finishing leaves the last question unanswered, so there is no answer to time. */}
-              {isInterview && lastQuestionId && !finish.isPending && (
-                <AnswerTimer since={lastQuestionId} running={!turn.isPending} />
-              )}
-              {activity.practiceMode !== "demonstrate" && activity.interviewPlan?.questions &&
-                activity.interviewPlan.questions.length > 0 && (
-                  <div
-                    className="flex flex-wrap items-center gap-1.5"
-                    role="group"
-                    aria-label="Tailored interview quick prompts"
-                  >
-                    <span className="text-xs font-medium text-text-muted">
-                      Quick prompts:
-                    </span>
-                    {activity.interviewPlan.questions.map((q) => {
-                      const promptText = `Please ask me this practice question: ${q.question}`;
-                      const truncated = questionLabel(q.question);
-                      return (
-                        <button
-                          key={q.id}
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            setMessage(
-                              message.trim()
-                                ? `${message.trim()}\n\n${promptText}`
-                                : promptText,
-                            );
-                          }}
-                          className="max-w-full truncate rounded-full border border-border bg-background px-2.5 py-1 text-xs text-text-secondary hover:border-accent hover:text-accent transition-colors"
-                          title={questionLabel(q.question, 300)}
-                        >
-                          Ask me: {truncated}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              <div className="flex gap-2">
-                <label className="sr-only" htmlFor="simulation-message">
-                  Your response
-                </label>
-                <textarea
-                  id="simulation-message"
-                  rows={3}
-                  maxLength={LEARNER_TEXT_MAX_CHARS}
-                  disabled={busy}
-                  value={message}
-                  onChange={(event) => setMessage(event.target.value)}
-                  onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter")
-                      void send();
-                  }}
-                  placeholder={`Respond as ${session.learnerRole}…`}
-                  className="min-w-0 flex-1 resize-y rounded-xl border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-hidden focus:border-accent"
-                />
-                <button
-                  type="button"
-                  aria-label="Send simulation turn"
-                  disabled={busy || !message.trim()}
-                  onClick={() => void send()}
-                  className="self-end rounded-full bg-accent p-3 text-accent-fg disabled:opacity-40"
-                >
-                  <Send size={15} />
-                </button>
-              </div>
+              ))}
             </div>
           )}
-        </>
-      )}
-      {busy && (
-        <p role="status" className="mt-3 flex items-center gap-2 text-xs text-text-muted">
-          <LoaderCircle size={14} className="animate-spin" />
-          {start.isPending
-            ? isInterview ? "Starting the interview…" : "Starting simulation…"
-            : finish.isPending
-              ? "Preparing your feedback…"
-              : isInterview ? "The interviewer is responding…" : "Your counterpart is responding…"}
-        </p>
-      )}
-      {error && (
-        <p
-          role="alert"
-          className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
-        >
-          {error}{" "}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              retryOperation === "finish"
-                ? void end()
-                : retryOperation === "turn"
-                  ? void send(true)
-                  : void begin()
-            }
-            className="ml-2 underline"
-          >
-            Retry same operation
-          </button>
-        </p>
+        </div>
       )}
     </section>
   );

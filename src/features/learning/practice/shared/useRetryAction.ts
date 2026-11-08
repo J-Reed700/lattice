@@ -1,3 +1,5 @@
+import { useCallback, useState } from 'react';
+
 export interface RetryAction {
   label: string;
   run: () => Promise<void> | void;
@@ -11,13 +13,24 @@ export interface UseRetryActionResult {
 }
 
 /**
- * Minimal Stage 1 non-panicking stub for useRetryAction.
+ * Shared retry hook for transient operation failures across practice and sources panels.
  */
 export function useRetryAction(): UseRetryActionResult {
+  const [retryAction, setRetryAction] = useState<RetryAction | null>(null);
+
+  const clearRetry = useCallback(() => {
+    setRetryAction(null);
+  }, []);
+
+  const runRetry = useCallback(async () => {
+    if (!retryAction) return;
+    await retryAction.run();
+  }, [retryAction]);
+
   return {
-    retryAction: null,
-    setRetryAction: () => {},
-    clearRetry: () => {},
-    runRetry: async () => {},
+    retryAction,
+    setRetryAction,
+    clearRetry,
+    runRetry,
   };
 }

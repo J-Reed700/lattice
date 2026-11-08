@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApi } from '@/contexts/ApiContext';
 import type { LearningLabFile, LearningPracticalDraftDto, SaveLearningPracticalDraftRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
+import { isConflictError } from '../shared/useAutosave';
 
 const AUTOSAVE_DELAY_MS = 550;
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -47,6 +48,7 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'The lab draft could not be saved.';
 }
 function isConflict(error: unknown) {
+  if (isConflictError(error)) return true;
   return /revision|conflict|changed|stale/i.test(errorMessage(error));
 }
 function sameFiles(a: LearningLabFile[] | null, b: LearningLabFile[]) {

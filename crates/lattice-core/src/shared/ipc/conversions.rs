@@ -296,7 +296,7 @@ impl From<AppError> for ApiError {
                 details: Some(details.clone()),
             },
             AppError::Conflict(ref msg) => ApiError {
-                code: ErrorCode::InternalError,
+                code: ErrorCode::Conflict,
                 message: msg.clone(),
                 details: None,
             },
