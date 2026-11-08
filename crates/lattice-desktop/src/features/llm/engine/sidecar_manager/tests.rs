@@ -1340,8 +1340,9 @@ fn api_tokens_are_unguessable_and_never_repeat() {
     assert_ne!(first, second, "a token is minted per spawn");
 }
 
-use super::config::{footprint_from, hint_for, memory_room, FIT_TARGET_BYTES};
+use super::config::{footprint_from, hint_for, memory_room};
 use crate::features::llm::engine::gguf_metadata::GgufModelInfo;
+use lattice_core::domain::models::fit::{Footprint, ServerBuffers, FIT_TARGET_BYTES};
 use lattice_core::domain::models::fit::{ModelShape, PerLayer};
 
 const GIB: u64 = 1024 * 1024 * 1024;

@@ -71,8 +71,11 @@ passages until lessons are prepared. Everything in a brief is data, never instru
 
 ## 3. Code drills on a lesson
 
-- **Language.** The learner chooses it, and the choice is kept per course. The default is the catalogue language that
-  most of the fenced code in the course's prepared lessons is written in, otherwise the last one the learner used.
+- **Language.** The learner chooses it, and the choice is kept per course: the course offers the language its latest
+  code drill was taken in. Before its first, it offers the catalogue language that most of the fenced code in its
+  prepared lessons is written in; otherwise the one the learner's latest code drill of any course was taken in;
+  otherwise the catalogue's first. The view remembers a language picked for a course, so a pick whose drill is still
+  being built is not lost.
 - **The writer** gets the brief instead of a domain. It writes realistic code in which the lesson's ideas are at work,
   used correctly. `DOMAINS`, `next_domain`, `least_recently_used` and `domain_uses` are removed.
 - **Two kinds of planted issue.** A drill of n issues (3, 4 or 5, by size):
@@ -190,13 +193,19 @@ plant, ⌈n/2⌉ for code and 0 for a passage, is derived from them (`lesson_iss
 ## 8. Commands and the view
 
 - `start_course_drill { programId, lessonId?, material: code{language} | passage, mode, lines, issues }` replaces
-  `start_review_drill`. It answers as today: started, or building.
-- `course_drills(programId)` gives:
-  - the language suggestion;
-  - the next lesson for code and for passages;
-  - each lesson with its standing (due, new, rested, pending, no code ideas) and when it is due;
-  - the course's recent attempts, to continue or open.
-- Submit, result, regrade and `code_review_languages` are unchanged. `review_drill_courses` goes.
+  `start_review_drill`. It answers as today: started, or building. A course that is not there is not found, and a
+  passage drill of a course with no source text is refused unless one is ready.
+- `course_drills(programId, language?)` gives:
+  - the language code drills are offered in: the one asked for, or the course's (§3);
+  - for code in that language and for passages, what a start with no lesson comes to: its lesson, and whether a drill
+    of it is ready, being built or still to build, decided as the start decides it;
+  - whether the course has a source with text, without which no passage drill is built;
+  - each lesson by module, with its standing (due, new, rested, pending), when it is due, and whether it fits code
+    and passages;
+  - the course's ten latest attempts, to continue or open.
+- Submit, result, regrade and `code_review_languages` are unchanged. The drill names its lesson, by the title the
+  lesson has now, and the reveal gives each issue's lesson sentences with their sources. `review_drill_courses` goes,
+  with the passage topic.
 - **The view, Practice › Review drills:**
   - The chooser: the lesson ("Next: …" preselected, grouped by module, each lesson with its standing), what to review
     (code in a language, or an explanation of the lesson's sources), the size and the mode.

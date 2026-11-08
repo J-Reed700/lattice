@@ -38,7 +38,7 @@ pub use grading::{
     FindingOutcome, IssueOutcome, Score, SeverityTally,
 };
 pub use key::{check_key, severity_floor, KeyFault};
-pub use lessons::{next_lessons, LessonStanding};
+pub use lessons::{next_lessons, DrillStanding, LessonStanding};
 pub use schedule::{
     lesson_rating, per_pattern, rating, ratings, targets, IssueRating, PatternDue, PatternRating,
 };

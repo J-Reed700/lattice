@@ -6,7 +6,7 @@ import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore
 import type { CodeReviewSeverity } from '@/lib/bindings';
 
 import { DrillFailure } from './DrillFailure';
-import { kindOf, materialLabel } from './drillMaterial';
+import { drillMeta, kindOf } from './drillMaterial';
 import { describeSpan, lineCount, type DraftFinding } from './findings';
 import { FindingsList } from './FindingsList';
 import { InterviewClock } from './InterviewClock';
@@ -97,15 +97,14 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
   };
 
   const changed = review.changedPaths.length;
-  const mode = session.mode === 'interview' ? 'Interview' : 'Practice';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3 sm:px-6">
         {back}
         <div className="min-w-0">
-          <h1 className="truncate font-serif text-lg text-text-primary">{session.drill.title}</h1>
-          <p className="text-xs text-text-muted">{materialLabel(session.drill)} · {mode}</p>
+          <h2 className="truncate font-serif text-lg text-text-primary">{session.drill.title}</h2>
+          <p className="text-xs text-text-muted">{drillMeta(session.drill, session.mode)}</p>
         </div>
         {session.limitMs !== null && (
           <div className="ml-auto">

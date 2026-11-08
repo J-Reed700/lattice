@@ -130,10 +130,12 @@ pub async fn recommend_chat_models(
 ) -> Result<Vec<RecommendationDto>> {
     let settings = container.get_settings_use_case().execute().await?;
     let probe = container.machine_profile_probe();
-    Ok(
-        super::recommend::recommend_chat_models(probe.as_ref(), &settings.llm.local_model_configs)
-            .await,
+    Ok(super::recommend::recommend_chat_models(
+        probe.as_ref(),
+        &settings.llm.local_model_configs,
+        &super::recommend::ProjectorsOnDisk,
     )
+    .await)
 }
 
 /// Get all the catalog's models across all categories.
@@ -182,6 +184,7 @@ pub async fn read_model_fits(
                 profile,
                 source,
                 false,
+                &super::recommend::ProjectorsOnDisk,
             )
             .await
         })
@@ -215,7 +218,14 @@ impl FitContext {
     }
 
     async fn fit(&self, model: &ModelMetadata) -> Option<FitVerdictDto> {
-        super::recommend::row_fit(model, &self.profile, &self.headers, &self.configs).await
+        super::recommend::row_fit(
+            model,
+            &self.profile,
+            &self.headers,
+            &self.configs,
+            &super::recommend::ProjectorsOnDisk,
+        )
+        .await
     }
 
     async fn rows(&self, models: Vec<DownloadableHfModel>) -> Vec<ModelRecommendationDto> {
@@ -231,11 +241,15 @@ impl FitContext {
     async fn recommended_order(&self) -> Vec<String> {
         let probe =
             crate::features::model_management::recommend::FixedMachineProfile(self.profile.clone());
-        super::recommend::recommend_chat_models(&probe, &self.configs)
-            .await
-            .into_iter()
-            .map(|recommendation| recommendation.model_id)
-            .collect()
+        super::recommend::recommend_chat_models(
+            &probe,
+            &self.configs,
+            &super::recommend::ProjectorsOnDisk,
+        )
+        .await
+        .into_iter()
+        .map(|recommendation| recommendation.model_id)
+        .collect()
     }
 }
 

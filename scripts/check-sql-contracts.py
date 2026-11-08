@@ -9,10 +9,19 @@ import json
 from pathlib import Path
 import sqlite3
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-# The app and the core crate; core holds the job store's SQL.
-SOURCE_ROOTS = ('crates/lattice-desktop/src', 'crates/lattice-core/src')
+sys.path.insert(0, str(ROOT / 'scripts'))
+import sqlx_migrations  # noqa: E402
+# The app, the core crate (the job store's SQL) and the crates split out of the app.
+SOURCE_ROOTS = (
+    'crates/lattice-desktop/src',
+    'crates/lattice-core/src',
+    'crates/lattice-index/src',
+    'crates/lattice-learning/src',
+    'crates/lattice-store/src',
+)
 
 def prepare(connection, sql):
     try:
@@ -35,17 +44,9 @@ def main():
         rows.extend(json.loads(extracted.stdout))
     connection = sqlite3.connect(':memory:')
     connection.execute('PRAGMA foreign_keys = ON')
-    migrations = sorted((ROOT / 'crates/lattice-desktop/migrations').glob('*.sql'))
+    migrations = sqlx_migrations.all_migrations()
     for migration in migrations:
-        connection.executescript('BEGIN;\n' + migration.read_text(encoding="utf-8") + '\nCOMMIT;')
-    # sqlx creates its own bookkeeping table at runtime; the backup feature
-    # reads it to compare schema versions between databases.
-    connection.executescript(
-        "CREATE TABLE IF NOT EXISTS _sqlx_migrations ("
-        " version BIGINT PRIMARY KEY, description TEXT NOT NULL,"
-        " installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-        " success BOOLEAN NOT NULL, checksum BLOB NOT NULL, execution_time BIGINT NOT NULL)"
-    )
+        sqlx_migrations.apply(connection, migration)
     # Some repositories initialize optional cache tables on demand.
     # Use their actual DDL rather than a second hand-written schema.
     for row in rows:

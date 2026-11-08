@@ -17,6 +17,8 @@ use crate::shared::error::{AppError, Result};
 /// its own, so neither collects or writes into the other's files.
 pub const LATTICE_HOME_ENV: &str = "LATTICE_HOME";
 
+// global-state: which home the process has, as `LATTICE_HOME` is; any process
+// the app's entry point does not mark keeps a scratch one.
 static USERS_HOME: AtomicBool = AtomicBool::new(false);
 
 /// Let this process use `~/.lattice` when `LATTICE_HOME` is not set. Only the
@@ -49,6 +51,7 @@ fn lattice_home_override() -> Option<PathBuf> {
 
 /// One per process, under the system temp folder, laid out as a home is.
 fn scratch_home() -> &'static PathBuf {
+    // global-state: the process's scratch home, one per process like `USERS_HOME`.
     static SCRATCH: OnceLock<PathBuf> = OnceLock::new();
     SCRATCH.get_or_init(|| {
         std::env::temp_dir()
@@ -98,6 +101,19 @@ pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
 /// Pictures assistant answers show inline: `~/.lattice/chat-images/<id>.<ext>`.
 pub fn chat_images_root() -> Result<PathBuf> {
     Ok(lattice_home()?.join("chat-images"))
+}
+
+/// The app's log folder: `<LATTICE_HOME>/logs` if that is set, else
+/// `<local data dir>/lattice/logs`. Logs are not library content: no backup
+/// carries them.
+pub fn log_root() -> PathBuf {
+    match lattice_home_override() {
+        Some(home) => home.join("logs"),
+        None => dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("lattice")
+            .join("logs"),
+    }
 }
 
 #[cfg(test)]

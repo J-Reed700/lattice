@@ -354,12 +354,13 @@ fn rtx_4080_ranks_a_whole_on_the_card_12b_above_the_9b() {
 }
 
 #[test]
-fn a_dedicated_card_budget_is_its_total_less_the_fit_target_the_reserve_and_the_companions() {
+fn a_card_alone_leaves_the_companions_to_the_processor() {
     let placement = choose_placement(&rtx_4080(), &companions());
 
+    assert!(companions().bytes() > 0);
     assert_eq!(
         placement.budget_bytes(),
-        16 * GIB - FIT_TARGET_BYTES - DISPLAY_RESERVE_BYTES - companions().bytes()
+        16 * GIB - FIT_TARGET_BYTES - DISPLAY_RESERVE_BYTES
     );
     assert_eq!(placement.device().name, RTX_4080);
     assert_eq!(placement.device().kind, DeviceKind::Dedicated);
@@ -378,23 +379,22 @@ fn companions_are_priced_by_the_one_footprint_at_their_own_window_and_slots() {
 }
 
 #[test]
-fn an_integrated_gpu_takes_the_companions_off_the_card() {
+fn an_integrated_gpu_takes_the_display_off_the_card() {
     let c = companions();
     let alone = choose_placement(&rtx_4080(), &c);
     let beside = choose_placement(&rtx_4080_with_integrated_gpu(), &c);
 
-    assert!(c.bytes() > 0);
     assert_eq!(beside.budget_bytes(), 16 * GIB - FIT_TARGET_BYTES);
     assert_eq!(
         beside.budget_bytes() - alone.budget_bytes(),
-        c.bytes() + DISPLAY_RESERVE_BYTES
+        DISPLAY_RESERVE_BYTES
     );
     assert_eq!(beside.device().name, RTX_4080);
     assert_eq!(beside.device().kind, DeviceKind::Dedicated);
 }
 
 #[test]
-fn a_model_that_needs_exactly_the_companions_share_fits_only_beside_an_integrated_gpu() {
+fn a_model_that_needs_the_display_reserve_too_fits_only_beside_an_integrated_gpu() {
     let c = companions();
     let budget_beside = choose_placement(&rtx_4080_with_integrated_gpu(), &c).budget_bytes();
     let just_fits = plain("just-fits", "Q4_K_M", 4, 12.0, budget_beside, 50);
@@ -791,7 +791,7 @@ fn each_candidate_is_judged_at_the_buffers_it_would_be_launched_with() {
 }
 
 #[test]
-fn a_curated_candidate_is_priced_from_its_pinned_shape_and_cpu_weights() {
+fn a_curated_candidate_is_priced_from_its_pinned_shape_and_cpu_weights_without_its_projector() {
     let model = curated_chat_models()
         .iter()
         .find(|m| m.id == "qwen3.5-9b-q4_k_m")
@@ -800,11 +800,10 @@ fn a_curated_candidate_is_priced_from_its_pinned_shape_and_cpu_weights() {
 
     let candidate = Candidate::from_curated(model);
 
-    let projector = model.vision.as_ref().map_or(0, |v| v.projector_bytes);
-    assert!(projector > 0);
+    assert!(model.vision.is_some());
     assert_eq!(
         candidate.gpu_weight_bytes,
-        model.size_bytes - pinned.cpu_weight_bytes + projector
+        model.size_bytes - pinned.cpu_weight_bytes
     );
     assert_eq!(candidate.shape, Some(pinned.shape));
     assert_eq!(candidate.download_bytes, model.size_bytes);
@@ -1016,27 +1015,43 @@ fn a_card_beside_an_integrated_gpu_holds_no_desktop_so_only_the_fit_target_comes
     assert_eq!(placement.device().kind, DeviceKind::Dedicated);
 }
 
+/// What llama-server allocated on an RTX 4070 Laptop GPU (Vulkan) for the 9B at 65,536 tokens, an
+/// f16 cache and its default four slots, from its memory breakdown (2026-10-30): weights 4,861.28
+/// MiB, KV cache 2,048 MiB, recurrent state 201 MiB, compute 168.02 MiB.
+const NINE_B_ALLOCATED_AT_64K_MIB: f64 = 4_861.28 + 2_048.0 + 201.0 + 168.02;
+
 #[test]
-fn the_9b_is_tight_on_an_8_gib_laptop_card_with_an_f16_cache_and_fits_with_a_quantized_one() {
+fn the_9bs_footprint_is_what_llama_cpp_allocated_for_it_on_the_laptop_card() {
     let nine = curated("qwen3.5-9b-q4_k_m");
-    let on_laptop = |quantized: bool| {
-        let candidate = Candidate {
-            buffers: ServerBuffers::chat(quantized),
-            ..nine.clone()
-        };
-        Recommender::new(Companions::default_pair()).recommend(
-            &laptop_card_beside_an_integrated_gpu(),
-            std::slice::from_ref(&candidate),
-        )
-    };
+    let mib = |bytes: u64| bytes as f64 / f64::from(1u32 << 20);
 
-    let f16 = on_laptop(false);
-    let quantized = on_laptop(true);
+    let estimate = footprint(
+        nine.gpu_weight_bytes,
+        nine.shape.as_ref(),
+        65_536,
+        ServerBuffers::chat(false),
+    );
 
-    assert_eq!(ids(&f16), ["qwen3.5-9b-q4_k_m"]);
-    assert_eq!(f16[0].verdict.kind, FitKind::Tight);
-    assert_eq!(ids(&quantized), ["qwen3.5-9b-q4_k_m"]);
-    assert_eq!(quantized[0].verdict.kind, FitKind::Fits);
+    assert_eq!(mib(estimate.cache), 2_048.0);
+    assert!((mib(estimate.state) - 201.0).abs() < 1.0, "{estimate:?}");
+    let total = mib(estimate.total());
+    assert!(
+        (NINE_B_ALLOCATED_AT_64K_MIB..=NINE_B_ALLOCATED_AT_64K_MIB * 1.02).contains(&total),
+        "estimated {total} MiB against {NINE_B_ALLOCATED_AT_64K_MIB} MiB allocated"
+    );
+}
+
+#[test]
+fn the_9b_fits_an_8_gib_laptop_card_at_32k_tokens_with_an_f16_cache_as_the_evals_ran_it() {
+    let nine = curated("qwen3.5-9b-q4_k_m");
+
+    let list = recommend(
+        &laptop_card_beside_an_integrated_gpu(),
+        std::slice::from_ref(&nine),
+    );
+
+    assert_eq!(ids(&list), ["qwen3.5-9b-q4_k_m"]);
+    assert_eq!(list[0].verdict.kind, FitKind::Fits);
 }
 
 #[test]

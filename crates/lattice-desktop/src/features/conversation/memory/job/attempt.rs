@@ -9,7 +9,7 @@ use lattice_core::domain::conversation::memory::{
     SemanticVerdict, SourceMessage,
 };
 
-use super::super::prompts::{EXTRACTOR_PROMPT_VERSION, VALIDATOR_VERSION};
+use super::super::prompts::{validator_version, EXTRACTOR_PROMPT_VERSION};
 use super::super::selection::{
     adjacent_context, context_room_chars, quotable_messages, render_context, select_boundary,
 };
@@ -451,7 +451,7 @@ impl CompactionJob {
             transcript_revision: snapshot.transcript_revision,
             extractor_model_identity: Some(self.utility_llm.model_name().to_string()),
             extractor_prompt_version: Some(EXTRACTOR_PROMPT_VERSION.to_string()),
-            validator_version: Some(VALIDATOR_VERSION.to_string()),
+            validator_version: Some(validator_version()),
             operation: operation.to_string(),
         };
         let preconditions = MemoryCommitPreconditions {

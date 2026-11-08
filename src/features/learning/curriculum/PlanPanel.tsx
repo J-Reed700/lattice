@@ -80,6 +80,7 @@ const ATTEMPT_OUTCOMES: Record<LearningGenerationJob['status'], string> = {
 
 /** One line for an earlier attempt: how and where it ended, when, and why. */
 function attemptOutcome(job: LearningGenerationJob): string {
+  if (job.endedByUpdate) return `Ended by a Lattice update · ${dateLabel(job.finishedAt ?? job.createdAt)}`;
   const phase = job.kind === 'lesson_preparation' && job.activity ? PREPARATION_PHASES[job.activity.phase].title : null;
   return [
     phase ? `${ATTEMPT_OUTCOMES[job.status]} at ${phase}` : ATTEMPT_OUTCOMES[job.status],
@@ -88,11 +89,11 @@ function attemptOutcome(job: LearningGenerationJob): string {
   ].filter(Boolean).join(' · ');
 }
 
-/** The jobs of the activity list, newest first; a retry supersedes its parent, which is an earlier attempt. */
+/** The jobs of the activity list, newest first; a retry supersedes its parent, and an update ends an attempt, so both are earlier attempts. */
 function jobAttempts(jobs: LearningGenerationJob[]) {
   const superseded = new Set(jobs.map((job) => job.retryOfJobId).filter(Boolean));
   const sorted = jobs.slice().sort((a, b) => b.createdAt - a.createdAt);
-  return { current: sorted.filter((job) => !superseded.has(job.id)), earlier: sorted.filter((job) => superseded.has(job.id)) };
+  return { current: sorted.filter((job) => !superseded.has(job.id) && !job.endedByUpdate), earlier: sorted.filter((job) => superseded.has(job.id) || job.endedByUpdate) };
 }
 
 function EarlierAttempts({ jobs }: { jobs: LearningGenerationJob[] }) {

@@ -91,6 +91,20 @@ describe('Learning Studio Plan editor', () => {
     expect(lines[1]).toMatch(/^Stopped at Verifying factual claims · .* · The model rejected the request\.$/);
   });
 
+  it('lists an attempt an update ended as history, with nothing to resume or retry', async () => {
+    const running = plan().jobs[0];
+    mocks.getPlan.mockResolvedValue(ok(plan({ jobs: [
+      { ...running, id: 'job-ended', status: 'cancelled', retryOfJobId: null, createdAt: 1_790_000_000_000, finishedAt: 1_790_000_001_000, endedByUpdate: true, error: null, activity: null, progressMessage: 'Preparation starts again under the new pipeline' },
+    ] })));
+    renderPlan();
+    const disclosure = (await screen.findByText('Earlier attempts (1)')).closest('details')!;
+    const lines = within(disclosure).getAllByRole('listitem').map((item) => item.textContent);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^Ended by a Lattice update · /);
+    expect(screen.queryByRole('button', { name: /Resume lesson preparation|Retry lesson preparation|Retry/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Paused/)).not.toBeInTheDocument();
+  });
+
   it('composes an add operation, previews semantic changes, and accepts the immutable revision', async () => {
     const user = userEvent.setup();
     renderPlan();

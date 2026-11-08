@@ -5,10 +5,12 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
 import { quizOverview } from '@/features/learning/quizzes/quizTestData';
 import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
+import type { StudyDestination } from '@/lib/studyActivity';
 
 vi.mock('@/features/learning/tangents/ProgramTangents', () => ({
   ProgramTangents: ({ children }: { children: ReactNode }) => children,
@@ -19,6 +21,19 @@ vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   SectionTangentBar: () => null,
 }));
 vi.mock('@/features/learning/curriculum/CourseCoach', () => ({ CourseCoach: () => null }));
+// The drills are tested with their own panel; here it only shows which course it is for and counts its mounts.
+const drills = vi.hoisted(() => ({ mounts: 0 }));
+vi.mock('@/features/learning/drills/CourseDrillsPanel', async () => {
+  const { useEffect } = await import('react');
+  return {
+    CourseDrillsPanel: ({ programId }: { programId: string }) => {
+      useEffect(() => {
+        drills.mounts += 1;
+      }, []);
+      return <p>{`Review drills of ${programId}`}</p>;
+    },
+  };
+});
 // The journey's own markup is tested with it; here it only hands the workspace a module or a lesson to open.
 vi.mock('@/features/learning/curriculum/CourseSyllabus', () => ({
   CourseSyllabus: ({ program, onSelect, onSelectModule }: {
@@ -88,10 +103,9 @@ const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob =
   ...overrides,
 });
 
-function show(course: LearningProgramDto, onReview = vi.fn()) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function show(course: LearningProgramDto, onReview = vi.fn(), destination?: StudyDestination, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   render(<QueryClientProvider client={client}>
-    <ProgramWorkspace program={course} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
+    <ProgramWorkspace program={course} destination={destination} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
       onPrepare={vi.fn()} preparePending={false} onComplete={vi.fn()} completePending={false}
       onReview={onReview} />
   </QueryClientProvider>);
@@ -101,6 +115,7 @@ function show(course: LearningProgramDto, onReview = vi.fn()) {
 describe('Course page', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    drills.mounts = 0;
     // One lesson held for review by a finished attempt, another being prepared now.
     api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [
       job({ id: 'job-2', createdAt: Date.now() }),
@@ -124,14 +139,91 @@ describe('Course page', () => {
     expect(screen.queryByText('Statement number 1.')).not.toBeInTheDocument();
   });
 
+  it('does not show preparation an update ended as the course\'s current preparation', async () => {
+    const plan = { programId: 'program-1', jobs: [
+      job({ status: 'cancelled', endedByUpdate: true, progressMessage: 'Preparation starts again under the new pipeline', createdAt: Date.now() - 600_000, finishedAt: Date.now() - 300_000 }),
+    ] };
+    api.plan.mockResolvedValue({ ok: true, data: plan });
+    api.review.mockResolvedValue({ ok: true, data: null });
+    // Loaded before the first render: with the plan still on its way, any page would pass the checks below.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(learningPlanKey('program-1'), plan);
+    show(program(GOAL), vi.fn(), undefined, client);
+    expect((await screen.findAllByRole('button', { name: 'Prepare lesson' })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('region', { name: 'Lesson preparation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resume lesson preparation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
+  });
+
   it('has Quizzes as a primary tab, and Practice keeps only written practice and code', async () => {
     show(program(GOAL));
     const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Tutor', 'Sources']);
     await userEvent.click(tabs[1]);
     const practice = await screen.findByRole('tablist', { name: 'Practice activities' });
-    expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations']);
+    expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations', 'Review drills']);
     expect(screen.queryByText(/Quick checks/)).not.toBeInTheDocument();
+  });
+
+  describe('Review drills', () => {
+    const primaryTab = (name: string) => within(screen.getByRole('tablist', { name: 'Program workspace' })).getByRole('tab', { name });
+
+    it('shows the drills of this course, and not the module and lesson line a drill picks for itself', async () => {
+      const user = userEvent.setup();
+      show(program(GOAL));
+      await user.click(primaryTab('Practice'));
+      expect(screen.getByText('›')).toBeInTheDocument();
+
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
+      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByText('Review drills of program-1')).toBeVisible();
+      expect(screen.queryByText('›')).not.toBeInTheDocument();
+      expect(screen.getAllByText('Circulation')).toEqual([
+        screen.getByRole('heading', { level: 2, name: 'Circulation' }),
+      ]);
+
+      await user.click(screen.getByRole('tab', { name: 'Written practice' }));
+      expect(screen.getByText('›')).toBeInTheDocument();
+      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
+    });
+
+    it('is mounted once, and stays so while the learner is on Written practice or Lessons and back', async () => {
+      const user = userEvent.setup();
+      show(program(GOAL));
+      expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
+      await user.click(primaryTab('Practice'));
+      expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
+      expect(drills.mounts).toBe(1);
+
+      await user.click(screen.getByRole('tab', { name: 'Written practice' }));
+      await user.click(primaryTab('Lessons'));
+      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
+      await user.click(primaryTab('Practice'));
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
+      expect(screen.getByText('Review drills of program-1')).toBeVisible();
+      expect(drills.mounts).toBe(1);
+    });
+
+    it('opens from a destination on that tab', async () => {
+      show(program(GOAL), vi.fn(), { programId: 'program-1', tab: 'drills' });
+      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
+      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.queryByText('›')).not.toBeInTheDocument();
+    });
+
+    it('is where Practice reopens when it was the last practice view', async () => {
+      const user = userEvent.setup();
+      show(program(GOAL));
+      await user.click(primaryTab('Practice'));
+      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
+      await user.click(primaryTab('Lessons'));
+      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
+
+      await user.click(primaryTab('Practice'));
+      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
+      expect(screen.getByText('Review drills of program-1')).toBeVisible();
+    });
   });
 
   it('shows quizzes passed beside lessons complete in the course header', async () => {
