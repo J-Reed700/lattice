@@ -3,13 +3,9 @@
 //! what it contradicts or leaves unsupported is rewritten. A plan finding is
 //! rewritten. Repair never adds a citation of its own: a rewrite keeps or
 //! drops what it was given, and evidence linking then runs on that module.
-use crate::lessons::content_verification::{
-    judge_for_publication, ranking, shown_of,
-};
+use crate::lessons::content_verification::{judge_for_publication, ranking, shown_of};
 use crate::outline_linking::{self, CitationReceipt, ItemKind};
-use crate::outline_references::{
-    self, GatherPurpose, PlannedSubtopic, ReferencePlan,
-};
+use crate::outline_references::{self, GatherPurpose, PlannedSubtopic, ReferencePlan};
 use crate::outline_review::{item_text, kind_name};
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::references::web_research;
@@ -31,14 +27,11 @@ use std::collections::{BTreeMap, HashSet};
 const CLAIM_POLICY: &str = "outline-claim-v1";
 
 /// Per-kind, per-attempt repair instructions (design section 6.1).
-pub(crate) const CORRECT: &str =
-    "Correct the assertion to what the contradicting passage says.";
-pub(crate) const NARROW: &str =
-    "Narrow or remove the unsupported assertion; do not add citations.";
+pub(crate) const CORRECT: &str = "Correct the assertion to what the contradicting passage says.";
+pub(crate) const NARROW: &str = "Narrow or remove the unsupported assertion; do not add citations.";
 pub(crate) const REMOVE: &str =
     "Remove the assertion or restate it as a learning activity rather than a fact.";
-pub(crate) const PLAN_FIX: &str =
-    "Fix the plan defect described; do not add or change citations.";
+pub(crate) const PLAN_FIX: &str = "Fix the plan defect described; do not add or change citations.";
 pub(crate) const PLAN_SMALLEST: &str =
     "This is the last attempt and the previous rewording did not remove the defect. Rewrite the text at this finding's path so the reason no longer applies: delete or replace every phrase the reason objects to instead of rewording it. If a sentence cannot be fixed, remove it; if the item cannot be fixed, drop it.";
 

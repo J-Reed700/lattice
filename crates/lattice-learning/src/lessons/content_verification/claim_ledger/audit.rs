@@ -6,9 +6,7 @@
 //! still without a receipt.
 
 use super::*;
-use crate::lessons::verifier_audit::lesson::{
-    self, LessonAudit, LessonAuditRequest,
-};
+use crate::lessons::verifier_audit::lesson::{self, LessonAudit, LessonAuditRequest};
 use crate::lessons::verifier_audit::material::AuditMaterial;
 use crate::lessons::verifier_audit::{AuditOutcome, AuditProgress};
 use lattice_core::domain::learning::claim_review::StopReason;
@@ -28,11 +26,7 @@ pub(crate) enum Audited {
 
 impl ClaimLedger {
     /// Audits `raw` (parsed as `candidate`) with the job's Verifier.
-    pub(crate) async fn audit(
-        &self,
-        raw: &str,
-        candidate: &Value,
-    ) -> Result<Audited> {
+    pub(crate) async fn audit(&self, raw: &str, candidate: &Value) -> Result<Audited> {
         let scope = crate::lesson_drafts::scope();
         let (Some(sink), Some(verifier), Some(scope)) = (&self.sink, lesson::verifier(), scope)
         else {

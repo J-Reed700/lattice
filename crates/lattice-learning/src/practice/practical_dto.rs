@@ -87,8 +87,7 @@ pub struct LearningPracticalActivityDto {
     pub rubric: Vec<crate::assessment_engine::LearningRubricCriterion>,
     pub runtime_kind: LearningPracticalRuntimeKind,
     #[serde(default)]
-    pub builtin_runtime:
-        Option<crate::embedded_runtime::LearningBuiltinRuntime>,
+    pub builtin_runtime: Option<crate::embedded_runtime::LearningBuiltinRuntime>,
     pub runtime_profile_id: Option<String>,
     pub runtime_engine: Option<LearningContainerEngine>,
     pub runtime_image_id: Option<String>,
@@ -146,8 +145,7 @@ pub struct LearningPracticalRunDto {
     pub practice_session_id: Option<String>,
     pub status: LearningPracticalRunStatus,
     #[serde(default)]
-    pub builtin_runtime:
-        Option<crate::embedded_runtime::LearningBuiltinRuntime>,
+    pub builtin_runtime: Option<crate::embedded_runtime::LearningBuiltinRuntime>,
     pub engine: Option<LearningContainerEngine>,
     pub image_id: Option<String>,
     pub learner_files: Vec<LearningLabFile>,
@@ -211,8 +209,7 @@ pub struct LearningSimulationSessionDto {
 #[serde(rename_all = "camelCase")]
 pub struct LearningPracticalWorkspaceDto {
     pub program_id: String,
-    pub builtin_runtimes:
-        Vec<crate::embedded_runtime::LearningBuiltinRuntimeCapability>,
+    pub builtin_runtimes: Vec<crate::embedded_runtime::LearningBuiltinRuntimeCapability>,
     pub runtime_capabilities: Vec<LearningLabRuntimeCapability>,
     pub runtime_profiles: Vec<LearningRuntimeProfileDto>,
     pub activities: Vec<LearningPracticalActivityDto>,
@@ -344,8 +341,7 @@ pub struct GenerateLearningPracticalActivityRequestDto {
     pub allowed_aids: Vec<String>,
     pub runtime_profile_id: Option<String>,
     #[serde(default)]
-    pub builtin_runtime:
-        Option<crate::embedded_runtime::LearningBuiltinRuntime>,
+    pub builtin_runtime: Option<crate::embedded_runtime::LearningBuiltinRuntime>,
     #[serde(default)]
     pub interview_target: Option<LearningInterviewTargetDto>,
 }

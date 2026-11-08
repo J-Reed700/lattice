@@ -6,11 +6,9 @@
 use super::manager::CourseIndexes;
 use super::sync::CourseProgress;
 use super::IndexMode;
-use lattice_index::passage_index::{
-    Engine, LiveIndex, PassageStore, PassageTextSearch, WordMatch,
-};
 use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, HybridSearchTrait};
 use lattice_core::shared::Result;
+use lattice_index::passage_index::{Engine, LiveIndex, PassageStore, PassageTextSearch, WordMatch};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

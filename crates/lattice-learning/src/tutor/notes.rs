@@ -3,8 +3,8 @@
 
 use super::course_turn::CourseTurn;
 use crate::repository::{lesson_note_draft, LearningRepository};
-use lattice_store::workspace_notes::DailyNotesRepository;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_store::workspace_notes::DailyNotesRepository;
 
 /// `note` with the learner's summary added after what it holds.
 fn with_summary(note: &str, summary: &str) -> String {

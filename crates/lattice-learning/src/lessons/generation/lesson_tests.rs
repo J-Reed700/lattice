@@ -67,11 +67,9 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
     assert_eq!(prepared.keys.len(), 5);
     assert!(citations.is_empty());
     // The rules come back as findings for the user, not as an error.
-    let findings = crate::teaching::structural_findings(
-        &lesson_schema(1),
-        &off_shape_value(true).to_string(),
-    )
-    .unwrap();
+    let findings =
+        crate::teaching::structural_findings(&lesson_schema(1), &off_shape_value(true).to_string())
+            .unwrap();
     let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
     let expected = [
         "structure:lesson",

@@ -259,10 +259,7 @@ pub(super) async fn append_in(
     Ok(())
 }
 
-pub(crate) async fn load_in(
-    connection: &mut SqliteConnection,
-    lesson_id: &str,
-) -> Result<Ledger> {
+pub(crate) async fn load_in(connection: &mut SqliteConnection, lesson_id: &str) -> Result<Ledger> {
     let review = sqlx::query("SELECT program_id,job_id,state,revision,draft_sha256,checker_model,stop_reason_json FROM learning_lesson_reviews WHERE lesson_id=?")
         .bind(lesson_id)
         .fetch_optional(&mut *connection)

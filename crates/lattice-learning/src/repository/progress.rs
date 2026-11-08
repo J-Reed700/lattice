@@ -47,10 +47,8 @@ impl LearningRepository {
                 "Program changed or is not active; reload and retry.".into(),
             ));
         }
-        crate::content_verification::persist_report(
-            &mut tx, program_id, lesson_id, prepared,
-        )
-        .await?;
+        crate::content_verification::persist_report(&mut tx, program_id, lesson_id, prepared)
+            .await?;
         for (i, b) in prepared.blocks.iter().enumerate() {
             sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(i as i64).bind(block_kind(b.kind.clone())).bind(&b.title).bind(&b.body).bind(json(&b.source_ids)?).bind(json(&b.rubric)?).execute(&mut *tx).await.map_err(db)?;
         }
@@ -60,20 +58,17 @@ impl LearningRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        let outcome_id = crate::quiz_blueprints::ensure_lesson_outcome_in(
-            &mut tx, program_id, lesson_id, None,
-        )
-        .await?;
+        let outcome_id =
+            crate::quiz_blueprints::ensure_lesson_outcome_in(&mut tx, program_id, lesson_id, None)
+                .await?;
         let seeds = crate::quiz_bank_jobs::lesson_seed_items(
             lesson_id,
             &outcome_id,
             &prepared.questions,
             &prepared.keys,
         );
-        crate::assessment_repository::insert_bank_items_in(
-            &mut tx, program_id, &seeds, None,
-        )
-        .await?;
+        crate::assessment_repository::insert_bank_items_in(&mut tx, program_id, &seeds, None)
+            .await?;
         crate::quiz_blueprints::ensure_blueprint_in(
             &mut tx,
             program_id,

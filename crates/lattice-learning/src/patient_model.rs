@@ -14,9 +14,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{Backoff, JobFailure};
 
 /// Where a wait is reported, and how it learns that the work was cancelled.
-pub trait WaitObserver:
-    Send + Sync
-{
+pub trait WaitObserver: Send + Sync {
     /// The next attempt is `seconds` away, after `cause`.
     fn waiting(&self, seconds: u64, cause: &AppError);
     /// An attempt got an answer, so the wait is over.
@@ -85,10 +83,7 @@ pub struct PatientModel<'a> {
 }
 
 impl<'a> PatientModel<'a> {
-    pub fn new(
-        inner: &'a dyn LLMPort,
-        observer: &'a dyn WaitObserver,
-    ) -> Self {
+    pub fn new(inner: &'a dyn LLMPort, observer: &'a dyn WaitObserver) -> Self {
         Self {
             inner,
             observer,

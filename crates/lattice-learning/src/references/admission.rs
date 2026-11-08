@@ -215,11 +215,7 @@ pub(crate) fn admit_address(url: &str, title: &str) -> Result<(), Refusal> {
 }
 
 /// A captured page, by its address, its title and its text.
-pub(crate) fn admit(
-    url: &str,
-    title: &str,
-    text: &str,
-) -> Result<(), Refusal> {
+pub(crate) fn admit(url: &str, title: &str, text: &str) -> Result<(), Refusal> {
     let words = text.split_whitespace().count();
     let refuse = |reason| {
         Err(Refusal {

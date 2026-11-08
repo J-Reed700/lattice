@@ -37,9 +37,7 @@ use super::support_gate::SupportGate;
 use super::*;
 use crate::curriculum::LearningClaimTally;
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::lessons::claim_reviews::repository::{
-    ClaimReviewRepository, ShownPassage,
-};
+use crate::lessons::claim_reviews::repository::{ClaimReviewRepository, ShownPassage};
 use crate::persistence::now;
 use identify::Carried;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
@@ -51,12 +49,8 @@ use lattice_core::domain::learning::claim_review::{
 };
 
 pub(crate) use fields::{field_pointer, field_text, locate, unit_texts};
-pub(crate) use held::{
-    held_for_review, held_lessons, needs_review, review_outcome, HeldForReview,
-};
-pub(crate) use located::{
-    claim_quote, clip, located, located_quote, narrow,
-};
+pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};
+pub(crate) use located::{claim_quote, clip, located, located_quote, narrow};
 
 /// The lesson checkpoint holding repairs awaiting the pass that decides them.
 const PENDING_KEY: &str = "claim-ledger-v1:pending";
@@ -320,11 +314,8 @@ impl ClaimLedger {
     }
 
     pub(super) async fn save_pending(&self) -> Result<()> {
-        crate::lesson_drafts::record_checkpoint(
-            PENDING_KEY,
-            serde_json::to_value(&self.pending)?,
-        )
-        .await
+        crate::lesson_drafts::record_checkpoint(PENDING_KEY, serde_json::to_value(&self.pending)?)
+            .await
     }
 
     fn provenance(&self) -> EventProvenance {

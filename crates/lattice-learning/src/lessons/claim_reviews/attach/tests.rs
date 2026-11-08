@@ -38,9 +38,7 @@ use super::failures::AttachFailureDto;
 use super::report::{ClaimAttachProgressDto, SnapshotNoteDto};
 use super::{attach, attach_to, AttachDeps, AttachRequest, Evidence, Others};
 use crate::lessons::claim_reviews::dto::{AttachOutcomeDto, SourceAddedByDto};
-use crate::lessons::content_verification::tests::{
-    fixture_completion, fixture_prompts,
-};
+use crate::lessons::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::source_library::LearningSourceLibraryRepository;
 use crate::{repository::LearningRepository, tests};
 
@@ -360,13 +358,11 @@ async fn world() -> World {
     let repo = LearningRepository::new(pool.clone());
     let program = tests::fixture();
     repo.create(&program).await.unwrap();
-    repo.accept(
-        &crate::dto::AcceptLearningProgramRequestDto {
-            program_id: program.summary.id.clone(),
-            expected_revision: 0,
-            title: program.summary.title.clone(),
-        },
-    )
+    repo.accept(&crate::dto::AcceptLearningProgramRequestDto {
+        program_id: program.summary.id.clone(),
+        expected_revision: 0,
+        title: program.summary.title.clone(),
+    })
     .await
     .unwrap();
     let program_id = program.summary.id.clone();

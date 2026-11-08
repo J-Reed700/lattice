@@ -24,7 +24,7 @@ use sqlx::{Row, SqlitePool};
 #[path = "generation_recovery.rs"]
 mod generation_recovery;
 pub(crate) use generation_recovery::lesson_failure;
-pub use generation_recovery::{LESSON_PREPARATION, lesson_job_config};
+pub use generation_recovery::{lesson_job_config, LESSON_PREPARATION};
 
 mod diagnostics;
 mod jobs;
@@ -115,10 +115,7 @@ impl LearningCurriculumRepository {
         &self.pool
     }
 
-    pub(crate) async fn seed_accepted(
-        &self,
-        program_id: &str,
-    ) -> Result<()> {
+    pub(crate) async fn seed_accepted(&self, program_id: &str) -> Result<()> {
         let seeded: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
             .bind(program_id).fetch_one(&self.pool).await.map_err(db)?;
         if seeded > 0 {
@@ -440,21 +437,11 @@ impl LearningCurriculumRepository {
         for (ordinal, change) in result.changes.iter().enumerate() {
             let op = match change.kind {
                 crate::curriculum::LearningCurriculumChangeKind::Added => "add",
-                crate::curriculum::LearningCurriculumChangeKind::Edited => {
-                    "edit"
-                }
-                crate::curriculum::LearningCurriculumChangeKind::Moved => {
-                    "move"
-                }
-                crate::curriculum::LearningCurriculumChangeKind::Skipped => {
-                    "skip"
-                }
-                crate::curriculum::LearningCurriculumChangeKind::Replaced => {
-                    "replace"
-                }
-                crate::curriculum::LearningCurriculumChangeKind::Challenged => {
-                    "challenge"
-                }
+                crate::curriculum::LearningCurriculumChangeKind::Edited => "edit",
+                crate::curriculum::LearningCurriculumChangeKind::Moved => "move",
+                crate::curriculum::LearningCurriculumChangeKind::Skipped => "skip",
+                crate::curriculum::LearningCurriculumChangeKind::Replaced => "replace",
+                crate::curriculum::LearningCurriculumChangeKind::Challenged => "challenge",
             };
             sqlx::query("INSERT INTO learning_curriculum_changes(revision_id,ordinal,operation,lesson_id,before_json,after_json,explanation) VALUES(?,?,?,?,?,?,?)")
                 .bind(&result.revision.id).bind(ordinal as i64).bind(op).bind(&change.lesson_id).bind(change.from_module_id.as_deref()).bind(encode(change)?).bind(&change.description).execute(&mut *tx).await.map_err(db)?;

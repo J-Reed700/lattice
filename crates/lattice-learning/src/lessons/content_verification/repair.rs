@@ -395,9 +395,7 @@ async fn apply_or_replace_section(
             content: edit_response.to_owned(),
         },
     ];
-    let _model_call = crate::lesson_progress::model_call(
-        crate::lesson_progress::Term::Rewrite,
-    );
+    let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Rewrite);
     crate::lessons::structured_call::complete_checked_request(
         llm,
         request,
@@ -446,18 +444,16 @@ pub(crate) async fn candidate(
     // What this repair left as it was: the teaching review after it leaves
     // it too (claim sources design §10.3), as the synced ledger has it now.
     let protected = Protected::of_ledger(ledger, &sent);
-    crate::lesson_progress::outside_checks(
-        crate::teaching::review_lesson(
-            llm,
-            crate::teaching::LESSON_REPAIR_SYSTEM,
-            prompt,
-            schema,
-            candidate.to_string(),
-            output_tokens,
-            references,
-            &protected,
-        ),
-    )
+    crate::lesson_progress::outside_checks(crate::teaching::review_lesson(
+        llm,
+        crate::teaching::LESSON_REPAIR_SYSTEM,
+        prompt,
+        schema,
+        candidate.to_string(),
+        output_tokens,
+        references,
+        &protected,
+    ))
     .await
 }
 
@@ -517,11 +513,7 @@ async fn repair_sections(
             // Groups are sized part by part; a request that still does not
             // fit is split again, down to one claim with the passages that fit.
             let mut local = section_context(&context, unit, &group)?;
-            if !crate::model_call::fits(
-                llm,
-                &repair_request(&system, &local, output_tokens),
-            )
-            .await
+            if !crate::model_call::fits(llm, &repair_request(&system, &local, output_tokens)).await
             {
                 if group.len() > 1 {
                     let rest = group.split_off(group.len() / 2);
@@ -653,9 +645,7 @@ async fn repair_group(
     (targets, protected): (&[Protected], &[Protected]),
 ) -> Result<(Value, Vec<PutBack>)> {
     let raw = {
-        let _model_call = crate::lesson_progress::model_call(
-            crate::lesson_progress::Term::Rewrite,
-        );
+        let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Rewrite);
         crate::generation::complete_json(
             llm,
             system,

@@ -14,15 +14,11 @@ use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::dto::{
     LearningBlockDto, LearningBlockKind, LearningPreparation, PreparedLearningLesson,
 };
-use crate::lessons::claim_reviews::attach::{
-    attach, AttachDeps, AttachRequest, Evidence,
-};
+use crate::lessons::claim_reviews::attach::{attach, AttachDeps, AttachRequest, Evidence};
 use crate::lessons::claim_reviews::checker_examples::CheckerExamples;
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
-use crate::lessons::claim_reviews::service::{
-    ClaimReviewService, NOTHING_CHANGED,
-};
+use crate::lessons::claim_reviews::service::{ClaimReviewService, NOTHING_CHANGED};
 use crate::lessons::verifier_audit::lesson;
 use crate::repository::LearningRepository;
 use async_trait::async_trait;
@@ -262,9 +258,7 @@ impl Waiting {
         ClaimReviewService::new(self.pool.clone())
     }
 
-    pub(super) async fn resume(
-        &self,
-    ) -> Result<crate::curriculum::LearningGenerationJob> {
+    pub(super) async fn resume(&self) -> Result<crate::curriculum::LearningGenerationJob> {
         self.service()
             .resume(
                 &self.program_id,

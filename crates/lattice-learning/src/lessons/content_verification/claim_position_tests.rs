@@ -553,19 +553,12 @@ async fn the_ceiling_falls_as_the_ledger_walks_the_plans_claims_to_their_ends_an
             at: PlannedAt::Entry,
             sentence: None,
         };
-        crate::lesson_progress::calls_planned(
-            &policy,
-            &[statement, statement],
-            1,
-        );
+        crate::lesson_progress::calls_planned(&policy, &[statement, statement], 1);
         let report = pass_report(vec![finding(FIRST), finding(SECOND)]);
         identify_findings(&mut ledger, &lesson, &report).await?;
         repair_loop::plan_moved(&policy, &ledger, &lesson);
         let planned = ledger.finding_claims().to_vec();
-        assert_eq!(
-            crate::lesson_progress::plan_claims(),
-            Some(planned.clone())
-        );
+        assert_eq!(crate::lesson_progress::plan_claims(), Some(planned.clone()));
 
         // Each claim, in its turn, is read for consistency and passes the veto.
         let start = at(&policy, Class::Reasoning, (false, false), "r.read");

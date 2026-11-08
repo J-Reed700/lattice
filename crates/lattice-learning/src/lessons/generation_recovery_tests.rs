@@ -270,11 +270,7 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
         "passages":[{"id":"p0","field":"/body","text":"The measured value is 12."}],
         "claims":[{"id":"c0","statement":"The measured value is 12."}]
     }],"mapping":{"p0":{"claimIds":["c0"],"nonFactualReason":"","missingClaims":[]}}});
-    let result = crate::content_verification::live_mapping_fixture(
-        &OfflineModel,
-        &fixture,
-    )
-    .await;
+    let result = crate::content_verification::live_mapping_fixture(&OfflineModel, &fixture).await;
     assert!(matches!(result, Err(AppError::Network(_))));
 }
 
@@ -323,9 +319,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
                     text: format!("Saved reference {index} with complete text."),
                     truncated: false,
                     extraction_version: "fixture".into(),
-                    signals: crate::references::trust::capture::not_extracted(
-                        "test fixture",
-                    ),
+                    signals: crate::references::trust::capture::not_extracted("test fixture"),
                 },
                 format!("capture-{index}"),
             )
@@ -408,9 +402,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
                 text: "The next needed source can be saved after recovery.".into(),
                 truncated: false,
                 extraction_version: "fixture".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
             },
             "new-evidence".into(),
         )
@@ -454,9 +446,7 @@ impl LLMPort for Window {
 }
 
 /// Runs the queued lesson job once with `load_llm`, and returns it settled.
-async fn run_with_model(
-    load_llm: super::ModelLoader,
-) -> crate::curriculum::LearningGenerationJob {
+async fn run_with_model(load_llm: super::ModelLoader) -> crate::curriculum::LearningGenerationJob {
     let pool = crate::tests::pool().await.unwrap();
     let (repo, job) = repository_tests::queued_job(&pool).await;
     let worker = LessonGenerationWorker {
@@ -537,9 +527,7 @@ async fn a_learning_model_refused_for_memory_fails_once_naming_what_holds_it() {
 async fn a_lesson_job_fails_once_when_the_bundled_server_cannot_start() {
     use lattice_core::shared::error::server_cannot_start;
     let settled = run_with_model(Arc::new(|| {
-        Box::pin(async {
-            Err(server_cannot_start("llama-server.exe was not found"))
-        })
+        Box::pin(async { Err(server_cannot_start("llama-server.exe was not found")) })
     }))
     .await;
 

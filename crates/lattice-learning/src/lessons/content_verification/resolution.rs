@@ -110,9 +110,7 @@ mod tests {
     /// The user's resolution is what lets an unsupported claim publish.
     #[test]
     fn publication_accepts_a_claim_the_user_resolved_but_not_an_unsupported_one() {
-        use crate::dto::{
-            LearningBlockDto, LearningBlockKind, PreparedLearningLesson,
-        };
+        use crate::dto::{LearningBlockDto, LearningBlockKind, PreparedLearningLesson};
         let confirmed = Some(Resolution::Confirmed { at: 1, note: None });
         for (body, resolution, publishable) in [
             (
@@ -141,8 +139,7 @@ mod tests {
                 keys: vec![],
                 verification: None,
             };
-            let mut report =
-                crate::content_verification::tests::attest("lesson", &lesson);
+            let mut report = crate::content_verification::tests::attest("lesson", &lesson);
             report.findings[0].verdict = ClaimVerdict::Unsupported;
             report.findings[0].resolution = resolution.clone();
             assert_eq!(

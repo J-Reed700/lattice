@@ -96,9 +96,7 @@ pub(super) fn repack(
     pack: &crate::pack::DecodedLearningPack,
     change: impl FnOnce(&mut crate::pack::LearningPackInput),
 ) -> Result<Vec<u8>> {
-    use crate::pack::{
-        encode_learning_pack, LearningPackEntry, LearningPackInput,
-    };
+    use crate::pack::{encode_learning_pack, LearningPackEntry, LearningPackInput};
     let manifest = &pack.manifest;
     let mut input = LearningPackInput {
         schema_version: manifest.schema_version,
@@ -148,9 +146,7 @@ fn captured(text: &str) -> CapturedLearningSource {
         text: text.into(),
         truncated: false,
         extraction_version: "pack_test_capture_v1".into(),
-        signals: crate::references::trust::capture::not_extracted(
-            "test fixture",
-        ),
+        signals: crate::references::trust::capture::not_extracted("test fixture"),
     }
 }
 
@@ -356,13 +352,11 @@ async fn create_copy_preserves_tombstones_versions_selectors_and_curriculum_link
     );
     assert_eq!(imported_selector.4, Some(quote_start as i64));
     let body = sources
-        .get_version(
-            &crate::dto::GetLearningSourceVersionRequestDto {
-                program_id: copy_id.clone(),
-                source_id: imported_source.id.clone(),
-                version_id: imported_first_version.id.clone(),
-            },
-        )
+        .get_version(&crate::dto::GetLearningSourceVersionRequestDto {
+            program_id: copy_id.clone(),
+            source_id: imported_source.id.clone(),
+            version_id: imported_first_version.id.clone(),
+        })
         .await?;
     assert!(body.full_text.contains("quoted rule"));
 
@@ -718,10 +712,7 @@ async fn create_copy_round_trips_assessment_recall_curriculum_and_practical_hist
         .expect("copied review identifier");
     assert_ne!(copied_review_id, review_id);
 
-    let activities =
-        crate::practical_repository::LearningPracticalRepository::new(
-            pool.clone(),
-        )
+    let activities = crate::practical_repository::LearningPracticalRepository::new(pool.clone())
         .workspace(&copy_id)
         .await?
         .with_capabilities(Vec::new(), Vec::new());

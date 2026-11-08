@@ -81,12 +81,7 @@ fn selection_request(topic: &str, query: &str, gaps: &[Value], shown: &[Value]) 
 
 /// The tokens one reference selection has for candidates in the model's
 /// window, once its instructions, the gaps and its answer are paid for.
-pub(crate) fn selection_room(
-    llm: &dyn LLMPort,
-    topic: &str,
-    query: &str,
-    gaps: &[Value],
-) -> usize {
+pub(crate) fn selection_room(llm: &dyn LLMPort, topic: &str, query: &str, gaps: &[Value]) -> usize {
     model_call::source_room(llm, &selection_request(topic, query, gaps, &[]), usize::MAX)
 }
 
@@ -137,9 +132,7 @@ async fn select_noted(
     if candidates.is_empty() {
         return Ok(Vec::new());
     }
-    crate::lesson_progress::stage(
-        "Choosing relevant, authoritative references",
-    );
+    crate::lesson_progress::stage("Choosing relevant, authoritative references");
     let found = candidates.len();
     let cost = selection_cost(llm, gaps);
     // What the candidates cost, summed in order: a room holds those whose
@@ -600,11 +593,10 @@ async fn research<'a>(
             .to_string()
         )
     );
-    let mut completed_queries: HashSet<String> =
-        crate::lesson_drafts::checkpoint(&search_key)
-            .await?
-            .and_then(|saved| serde_json::from_value(saved).ok())
-            .unwrap_or_default();
+    let mut completed_queries: HashSet<String> = crate::lesson_drafts::checkpoint(&search_key)
+        .await?
+        .and_then(|saved| serde_json::from_value(saved).ok())
+        .unwrap_or_default();
     context
         .searched
         .lock()
@@ -665,11 +657,8 @@ async fn research<'a>(
         }
         return Ok(Expansion::Exhausted(exhausted, Searched::default()));
     }
-    let program_repo =
-        crate::repository::LearningRepository::new(context.pool.clone());
-    let library = crate::source_library::LearningSourceLibraryRepository::new(
-        context.pool.clone(),
-    );
+    let program_repo = crate::repository::LearningRepository::new(context.pool.clone());
+    let library = crate::source_library::LearningSourceLibraryRepository::new(context.pool.clone());
     let mut sources = program_repo
         .verification_sources(&context.program_id)
         .await?;
@@ -755,9 +744,7 @@ async fn research<'a>(
             }
             pages.take(gap, owned);
             searched.fetched += 1;
-            crate::lesson_progress::stage(
-                "Saving an additional reference for lesson verification",
-            );
+            crate::lesson_progress::stage("Saving an additional reference for lesson verification");
             let captured = match web_research::capture(context.web.as_ref(), &result).await {
                 Ok(Some(captured)) => captured,
                 Ok(None) => continue,

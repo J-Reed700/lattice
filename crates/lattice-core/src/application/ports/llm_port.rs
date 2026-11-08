@@ -33,9 +33,9 @@ mod requests;
 mod tools;
 mod window;
 
-pub use grammar::GRAMMAR_REPETITION_LIMIT;
 #[cfg(any(test, feature = "test-support"))]
 pub use grammar::largest_repetition_bound;
+pub use grammar::GRAMMAR_REPETITION_LIMIT;
 pub use multimodal::{ContentPart, ImagePart};
 pub use pace::{Pace, ServedTiming};
 pub use requests::RequestLoad;

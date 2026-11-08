@@ -15,12 +15,12 @@ use crate::source_library::{
     CapturedLearningSource, LearningSourceLibraryRepository, NewLearningSource,
 };
 use crate::tests;
-use lattice_store::workspace_notes::DailyNotesRepository;
 use lattice_core::application::contracts::sources::COURSE_SOURCE_PREFIX;
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::turn_source::{
     SourcePassage, SourcePassages, TurnSourcePort,
 };
+use lattice_store::workspace_notes::DailyNotesRepository;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::sync::atomic::{AtomicUsize, Ordering};

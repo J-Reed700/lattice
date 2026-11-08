@@ -139,7 +139,10 @@ fn text_list(values: &[String], label: &str, minimum: usize, maximum: usize) -> 
     Ok(())
 }
 
-pub fn check_standard(standard: &AnswerStandard, sources: &[LearningSourceVersionDto]) -> Result<()> {
+pub fn check_standard(
+    standard: &AnswerStandard,
+    sources: &[LearningSourceVersionDto],
+) -> Result<()> {
     present(&standard.reference_answer, "Interview reference answer")?;
     if !(2..=6).contains(&standard.key_points.len())
         || !(2..=4).contains(&standard.scoring_criteria.len())

@@ -28,19 +28,15 @@ async fn file_pool(path: &std::path::Path) -> Result<sqlx::SqlitePool> {
         .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))
 }
 
-async fn active_program(
-    pool: &sqlx::SqlitePool,
-) -> Result<crate::dto::LearningProgramDto> {
+async fn active_program(pool: &sqlx::SqlitePool) -> Result<crate::dto::LearningProgramDto> {
     let repo = LearningRepository::new(pool.clone());
     let program = tests::fixture();
     repo.create(&program).await?;
-    repo.accept(
-        &crate::dto::AcceptLearningProgramRequestDto {
-            program_id: program.summary.id.clone(),
-            expected_revision: 0,
-            title: program.summary.title.clone(),
-        },
-    )
+    repo.accept(&crate::dto::AcceptLearningProgramRequestDto {
+        program_id: program.summary.id.clone(),
+        expected_revision: 0,
+        title: program.summary.title.clone(),
+    })
     .await?;
     repo.get(&program.summary.id).await
 }
@@ -118,10 +114,7 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
     assert!(first.interval_days >= 1);
     assert_eq!(
         first.last_reviewed_at,
-        Some(
-            first.due_at
-                - first.interval_days * crate::recall::schedule::DAY_MS
-        )
+        Some(first.due_at - first.interval_days * crate::recall::schedule::DAY_MS)
     );
 
     // The deck view reviews the same card through the same scheduler.
@@ -182,9 +175,7 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
                 text: "A prefix 🦀 repeated rule. A second 🦀 repeated rule. Recall safely.".into(),
                 truncated: false,
                 extraction_version: "test_v1".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
             },
             "first-source".into(),
         )
@@ -599,32 +590,26 @@ fn recall_content_rejects_invalid_keys_and_format_metadata() {
         language: None,
         cloze_deletions: vec![],
     };
-    assert!(
-        crate::recall::recall_content::validate_content(
-            LearningRecallCardFormat::MultipleChoice,
-            &content
-        )
-        .is_err()
-    );
+    assert!(crate::recall::recall_content::validate_content(
+        LearningRecallCardFormat::MultipleChoice,
+        &content
+    )
+    .is_err());
     content.options = vec![];
     content.correct_option_index = None;
     content.cloze_deletions = vec!["deletion".into(), "deletion".into()];
-    assert!(
-        crate::recall::recall_content::validate_content(
-            LearningRecallCardFormat::Cloze,
-            &content
-        )
-        .is_err()
-    );
+    assert!(crate::recall::recall_content::validate_content(
+        LearningRecallCardFormat::Cloze,
+        &content
+    )
+    .is_err());
     content.cloze_deletions = vec![];
     content.language = Some("rust".into());
-    assert!(
-        crate::recall::recall_content::validate_content(
-            LearningRecallCardFormat::QuestionAnswer,
-            &content
-        )
-        .is_err()
-    );
+    assert!(crate::recall::recall_content::validate_content(
+        LearningRecallCardFormat::QuestionAnswer,
+        &content
+    )
+    .is_err());
 }
 
 #[test]

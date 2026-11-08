@@ -3,9 +3,7 @@
 
 use super::capture::{publisher, web_capture};
 use super::repository::SqliteSourceTrustStore;
-use crate::dto::{
-    LearningProgramStatus, LearningSourceKind, LearningSourcePolicy,
-};
+use crate::dto::{LearningProgramStatus, LearningSourceKind, LearningSourcePolicy};
 use crate::repository::LearningRepository;
 use crate::source_library::{
     CapturedLearningSource, LearningSourceLibraryRepository, NewLearningSource,

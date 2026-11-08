@@ -139,11 +139,7 @@ impl LessonVerificationReport {
         })
     }
 
-    pub(crate) fn bind(
-        mut self,
-        lesson_id: &str,
-        lesson: &PreparedLearningLesson,
-    ) -> Result<Self> {
+    pub(crate) fn bind(mut self, lesson_id: &str, lesson: &PreparedLearningLesson) -> Result<Self> {
         self.lesson_id = lesson_id.into();
         self.content_sha256 = content_hash(lesson)?;
         Ok(self)
@@ -154,10 +150,7 @@ impl LessonVerificationReport {
     /// against the sources for them, and the finding says so. `blocks` is the
     /// number of sections, which come before the questions in the audit's
     /// order (claim classes design §3.4).
-    pub(crate) fn coverage_findings(
-        &self,
-        blocks: usize,
-    ) -> Vec<ReviewFinding> {
+    pub(crate) fn coverage_findings(&self, blocks: usize) -> Vec<ReviewFinding> {
         self.coverage_audit
             .iter()
             .filter(|unit| !unit.missing_assertions.is_empty())

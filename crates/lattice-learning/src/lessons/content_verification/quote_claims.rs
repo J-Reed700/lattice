@@ -85,19 +85,15 @@ pub(super) fn settle(
     let mut spans = Vec::new();
     let mut from = 0;
     for part in parts {
-        let Some((start, end)) = crate::outline_citations::caseless_quote_span(
-            &source.excerpt,
-            part,
-            from,
-        ) else {
+        let Some((start, end)) =
+            crate::outline_citations::caseless_quote_span(&source.excerpt, part, from)
+        else {
             return Ok(None);
         };
         let Some(found) = source.excerpt.get(start..end) else {
             return Ok(None);
         };
-        if crate::generation::validate_excerpt_quote(found, &source.excerpt)
-            .is_err()
-        {
+        if crate::generation::validate_excerpt_quote(found, &source.excerpt).is_err() {
             return Ok(None);
         }
         spans.push((start, end));

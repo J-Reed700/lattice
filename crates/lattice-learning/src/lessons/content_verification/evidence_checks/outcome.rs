@@ -95,9 +95,7 @@ pub(crate) struct TwoPass {
 
 /// A claim's finding when no page of the course was read for it: the passages
 /// its section cites decided it alone.
-pub(in crate::lessons::content_verification) fn alone(
-    mut finding: Finding,
-) -> Finding {
+pub(in crate::lessons::content_verification) fn alone(mut finding: Finding) -> Finding {
     if matches!(
         finding.verdict,
         ClaimVerdict::Supported | ClaimVerdict::Contradicted
@@ -117,10 +115,7 @@ fn supporting_passage(finding: &Finding) -> Option<&EvidencePassage> {
 }
 
 /// The same bytes of the same source version.
-pub(crate) fn same_passage(
-    a: &EvidencePassage,
-    b: &EvidencePassage,
-) -> bool {
+pub(crate) fn same_passage(a: &EvidencePassage, b: &EvidencePassage) -> bool {
     a.source_id == b.source_id && a.start_byte == b.start_byte && a.end_byte == b.end_byte
 }
 

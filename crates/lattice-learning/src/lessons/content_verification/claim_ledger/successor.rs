@@ -113,9 +113,7 @@ impl Rewrites {
     }
 
     /// The claims the ledger holds that are not ended.
-    pub(in crate::lessons::content_verification) fn held(
-        &self,
-    ) -> &[ClaimLedgerEntry] {
+    pub(in crate::lessons::content_verification) fn held(&self) -> &[ClaimLedgerEntry] {
         &self.held
     }
 

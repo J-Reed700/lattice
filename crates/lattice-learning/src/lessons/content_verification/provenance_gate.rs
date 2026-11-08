@@ -23,8 +23,8 @@ mod context;
 mod relevel;
 mod strongest;
 pub(super) use context::passage_labels;
-pub(crate) use context::{outline_trust, with_trust};
 pub use context::with_outline_trust;
+pub(crate) use context::{outline_trust, with_trust};
 pub(crate) use relevel::relevel;
 #[cfg(test)]
 pub(super) use strongest::name_strongest;

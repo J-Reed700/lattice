@@ -19,19 +19,11 @@ impl ClaimLedger {
         Ok(())
     }
 
-    pub(in crate::lessons::content_verification) async fn save_cuts(
-        &self,
-    ) -> Result<()> {
-        crate::lesson_drafts::record_checkpoint(
-            CUTS_KEY,
-            serde_json::to_value(&self.cuts)?,
-        )
-        .await
+    pub(in crate::lessons::content_verification) async fn save_cuts(&self) -> Result<()> {
+        crate::lesson_drafts::record_checkpoint(CUTS_KEY, serde_json::to_value(&self.cuts)?).await
     }
 
-    pub(in crate::lessons::content_verification) async fn clear_cuts(
-        &mut self,
-    ) -> Result<()> {
+    pub(in crate::lessons::content_verification) async fn clear_cuts(&mut self) -> Result<()> {
         self.cuts = Default::default();
         self.save_cuts().await
     }
@@ -48,10 +40,7 @@ impl ClaimLedger {
     /// Whether the machine's cuts leave the lesson no statement: it has taken
     /// one out, and every claim is out, is one of `cut` (taken out just now),
     /// or stands in a section that goes.
-    pub(in crate::lessons::content_verification) fn nothing_left(
-        &self,
-        cut: &[ClaimId],
-    ) -> bool {
+    pub(in crate::lessons::content_verification) fn nothing_left(&self, cut: &[ClaimId]) -> bool {
         let took = !cut.is_empty()
             || self.entries.iter().any(|entry| {
                 matches!(
@@ -83,10 +72,7 @@ impl ClaimLedger {
     }
 
     /// The claims still standing in a unit.
-    pub(in crate::lessons::content_verification) fn live_in(
-        &self,
-        unit: usize,
-    ) -> Vec<ClaimId> {
+    pub(in crate::lessons::content_verification) fn live_in(&self, unit: usize) -> Vec<ClaimId> {
         self.entries
             .iter()
             .filter(|entry| !is_gone(entry.state()) && entry.location().unit_index == unit)

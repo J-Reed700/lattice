@@ -101,9 +101,7 @@ pub(crate) fn fixture_completion(
     replies: Vec<String>,
 ) -> CompletionResponse {
     if crate::lessons::structured_call::is_draft_request(request) {
-        return CompletionResponse::from_text(
-            crate::lessons::structured_call::FIXTURE_DRAFT,
-        );
+        return CompletionResponse::from_text(crate::lessons::structured_call::FIXTURE_DRAFT);
     }
     let (system, user) = fixture_messages(request);
     let text = if let Some(batch) = fixture_batch(user) {
@@ -2149,9 +2147,7 @@ pub(crate) async fn install_source(
                 text: text.into(),
                 truncated: false,
                 extraction_version: "test".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
             },
             "fixture".into(),
         )
@@ -2184,10 +2180,9 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     let saved = repo.verification_sources(&program.summary.id).await?;
     let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":digest(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
-    let view =
-        crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
-            .await?
-            .unwrap();
+    let view = crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
+        .await?
+        .unwrap();
     assert!(view.teaching_claims.is_empty());
     assert!(!serde_json::to_string(&view)?.contains("PRIVATE"));
     assert!(view.sources_current);
@@ -2196,10 +2191,9 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .execute(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let view =
-        crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
-            .await?
-            .unwrap();
+    let view = crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
+        .await?
+        .unwrap();
     assert!(!view.sources_current);
 
     // Missing unit identity must not silently become teaching section zero.
@@ -2213,11 +2207,10 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .bind(&lesson.id)
         .execute(&pool)
         .await?;
-    let error =
-        crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
-            .await
-            .unwrap_err()
-            .to_string();
+    let error = crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
+        .await
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("unavailable"));
     assert!(!error.contains("PRIVATE"));
 
@@ -2228,12 +2221,10 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .bind(&lesson.id)
         .execute(&pool)
         .await?;
-    assert!(crate::lesson_evidence::get(
-        &pool,
-        &program.summary.id,
-        &lesson.id
-    )
-    .await
-    .is_err());
+    assert!(
+        crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
+            .await
+            .is_err()
+    );
     Ok(())
 }

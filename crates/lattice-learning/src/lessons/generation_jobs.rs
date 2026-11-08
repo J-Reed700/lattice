@@ -26,9 +26,7 @@ type SourceRefresh = Arc<dyn Fn(String) -> BoxFuture<'static, Result<()>> + Send
 
 /// `llm` pinned as the Learning model, for workers a test builds.
 #[cfg(any(test, feature = "test-support"))]
-pub fn pinned_for_test(
-    llm: Arc<dyn lattice_core::application::ports::LLMPort>,
-) -> PinnedModel {
+pub fn pinned_for_test(llm: Arc<dyn lattice_core::application::ports::LLMPort>) -> PinnedModel {
     use lattice_core::application::ports::llm_port::{ModelOrigin, ResolvedModel};
     use lattice_core::domain::models::model_ref::ModelRef;
     PinnedModel {
@@ -57,8 +55,7 @@ pub struct LessonGenerationWorker {
     pub research_web: Option<Arc<dyn lattice_core::application::ports::WebServiceTrait>>,
     /// The Verifier, for courses that opted into its audit (§14.3); `None`
     /// publishes every lesson without the audit gate.
-    pub verifier:
-        Option<Arc<dyn crate::lessons::verifier_audit::lesson::VerifierAccess>>,
+    pub verifier: Option<Arc<dyn crate::lessons::verifier_audit::lesson::VerifierAccess>>,
 }
 
 #[async_trait::async_trait]
@@ -110,9 +107,7 @@ impl JobHandler for LessonGenerationWorker {
                 // A source a lesson was verified against changed between
                 // verification and publication: verify again (saved checks are
                 // reused) once, and fail as found the second time (§12).
-                Err(error)
-                    if crate::content_verification::sources_changed(&error) =>
-                {
+                Err(error) if crate::content_verification::sources_changed(&error) => {
                     tracing::info!(job_id = context.id(), %error, "Lesson references changed before publication; verifying again");
                     rounds.publishing_failed(error)?;
                 }
@@ -131,16 +126,10 @@ impl JobHandler for LessonGenerationWorker {
 /// wait for the user's review (§6.1).
 struct Prepared {
     revision: i64,
-    staged: Vec<(
-        String,
-        crate::dto::PreparedLearningLesson,
-    )>,
+    staged: Vec<(String, crate::dto::PreparedLearningLesson)>,
     held: Vec<crate::content_verification::HeldForReview>,
     /// Each staged lesson's quiz bank, where its stage wrote one.
-    banks: Vec<(
-        String,
-        crate::quiz_bank_jobs::LessonBank,
-    )>,
+    banks: Vec<(String, crate::quiz_bank_jobs::LessonBank)>,
 }
 
 impl LessonGenerationWorker {
@@ -190,15 +179,11 @@ impl LessonGenerationWorker {
         (self.refresh_sources)(job.program_id.clone()).await?;
         // Pages the admission gate refuses leave retrieval and citation before
         // anything is compared with them (claim classes design §3.6).
-        crate::lesson_progress::stage(
-            "Checking that the course's saved pages are sources",
-        );
+        crate::lesson_progress::stage("Checking that the course's saved pages are sources");
         let refused =
-            crate::source_library::LearningSourceLibraryRepository::new(
-                self.pool.clone(),
-            )
-            .sweep_admission(&job.program_id)
-            .await?;
+            crate::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
+                .sweep_admission(&job.program_id)
+                .await?;
         if !refused.is_empty() {
             tracing::info!(
                 program_id = %job.program_id,
@@ -245,11 +230,9 @@ impl LessonGenerationWorker {
             return Err(AppError::InvalidInput("Add reference material in Sources before preparing a lesson. Lattice checks what it teaches against saved sources.".into()));
         }
         let workspace =
-            crate::source_library::LearningSourceLibraryRepository::new(
-                self.pool.clone(),
-            )
-            .workspace(&job.program_id)
-            .await?;
+            crate::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
+                .workspace(&job.program_id)
+                .await?;
         if workspace
             .sources
             .iter()
@@ -282,8 +265,7 @@ impl LessonGenerationWorker {
         // Own the targets so source snapshots can refresh between lessons.
         let candidates: Vec<_> = candidates.into_iter().cloned().collect();
         let mut staged = Vec::new();
-        let mut held: Vec<crate::content_verification::HeldForReview> =
-            Vec::new();
+        let mut held: Vec<crate::content_verification::HeldForReview> = Vec::new();
         let mut completed_count = job.progress_completed;
         loop {
             staged.clear();
@@ -298,10 +280,7 @@ impl LessonGenerationWorker {
                     .lesson_checkpoint(job_id, &lesson.id, "prepared-v1")
                     .await?
                     .and_then(|value| {
-                        serde_json::from_value::<
-                            crate::dto::PreparedLearningLesson,
-                        >(value)
-                        .ok()
+                        serde_json::from_value::<crate::dto::PreparedLearningLesson>(value).ok()
                     })
                     .filter(|prepared| {
                         prepared.verification.as_ref().is_some_and(|report| {
@@ -309,9 +288,7 @@ impl LessonGenerationWorker {
                         })
                     });
                 let generated = if let Some(saved) = saved {
-                    crate::lesson_progress::stage(
-                        "Resuming from a verified lesson checkpoint",
-                    );
+                    crate::lesson_progress::stage("Resuming from a verified lesson checkpoint");
                     saved
                 } else {
                     // Before every lesson it prepares, so references captured
@@ -319,24 +296,21 @@ impl LessonGenerationWorker {
                     crate::lesson_progress::stage(
                         "Bringing the course's reference index up to date",
                     );
-                    let references =
-                        crate::reference_collection::ReferenceCollection::current(
-                            course.as_ref(),
-                            &program.sources,
-                        )
-                        .await?;
+                    let references = crate::reference_collection::ReferenceCollection::current(
+                        course.as_ref(),
+                        &program.sources,
+                    )
+                    .await?;
                     // Keep the large multi-stage future on the heap. In debug
                     // builds, nesting it inline through task-local scopes can
                     // exhaust a runtime worker's stack before the network call.
-                    let preparation = Box::pin(
-                        crate::generation::prepare_lesson_with_references(
-                            llm.as_ref(),
-                            &self.runtimes,
-                            &program,
-                            lesson,
-                            &references,
-                        ),
-                    );
+                    let preparation = Box::pin(crate::generation::prepare_lesson_with_references(
+                        llm.as_ref(),
+                        &self.runtimes,
+                        &program,
+                        lesson,
+                        &references,
+                    ));
                     let topic = format!("{}: {}", program.summary.goal, lesson.title);
                     let prepared = crate::lesson_drafts::run(
                         repo,
@@ -366,11 +340,10 @@ impl LessonGenerationWorker {
                         Err(error) => {
                             // A lesson whose claims wait for the user is held,
                             // not failed; the others still publish (§6.1).
-                            let hold =
-                                crate::content_verification::held_for_review(
-                                    &self.pool, &lesson.id, job_id,
-                                )
-                                .await?;
+                            let hold = crate::content_verification::held_for_review(
+                                &self.pool, &lesson.id, job_id,
+                            )
+                            .await?;
                             let Some(hold) = hold else {
                                 return Err(error);
                             };
@@ -402,11 +375,10 @@ impl LessonGenerationWorker {
                     .and_then(|(_, lesson)| lesson.verification.as_ref())
                     .map_or(0, |report| report.unverified_count());
                 crate::lesson_progress::stage(
-                    crate::content_verification::not_verified_line(unverified)
-                        .map_or_else(
-                            || "Saving verified lesson".to_owned(),
-                            |line| format!("Lesson ready · {line}"),
-                        ),
+                    crate::content_verification::not_verified_line(unverified).map_or_else(
+                        || "Saving verified lesson".to_owned(),
+                        |line| format!("Lesson ready · {line}"),
+                    ),
                 );
                 if !context
                     .progress(
@@ -441,9 +413,7 @@ impl LessonGenerationWorker {
             };
             let key = format!(
                 "quiz-bank-v1:{}",
-                crate::content_verification::digest(&serde_json::to_string(
-                    &prepared.blocks
-                )?)
+                crate::content_verification::digest(&serde_json::to_string(&prepared.blocks)?)
             );
             if let Some(saved) = repo
                 .lesson_checkpoint(job_id, lesson_id, &key)
@@ -567,26 +537,21 @@ mod repository_tests {
         let references: Vec<_> = program
             .sources
             .iter()
-            .map(
-                |source| crate::sources::InitialReference {
-                    source_id: source.id.clone(),
-                    origin: source.id.clone(),
-                    captured: crate::source_library::CapturedLearningSource {
-                        title: source.title.clone(),
-                        publisher: None,
-                        requested_url: None,
-                        resolved_url: None,
-                        text: source.excerpt.clone(),
-                        truncated: false,
-                        extraction_version: "fixture_complete".into(),
-                        signals:
-                            crate::references::trust::capture::not_extracted(
-                                "test fixture",
-                            ),
-                    },
-                    found: false,
+            .map(|source| crate::sources::InitialReference {
+                source_id: source.id.clone(),
+                origin: source.id.clone(),
+                captured: crate::source_library::CapturedLearningSource {
+                    title: source.title.clone(),
+                    publisher: None,
+                    requested_url: None,
+                    resolved_url: None,
+                    text: source.excerpt.clone(),
+                    truncated: false,
+                    extraction_version: "fixture_complete".into(),
+                    signals: crate::references::trust::capture::not_extracted("test fixture"),
                 },
-            )
+                found: false,
+            })
             .collect();
         program_repo
             .create_with_references(&program, &references)

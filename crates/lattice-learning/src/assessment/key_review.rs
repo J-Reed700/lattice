@@ -3,9 +3,7 @@
 //! prose-step questions while the lesson is written; [`review_bank_items`]
 //! reviews quiz bank items of every keyed format (docs/design/2026-10-23-
 //! quizzes-and-tests.md, section 5.2).
-use crate::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
-};
+use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::{
     application::ports::LLMPort,
@@ -34,10 +32,7 @@ struct AnswerCheck {
 
 /// One finding per question whose authored key an independent solution
 /// disputes, placed at that question.
-pub(crate) async fn check(
-    llm: &dyn LLMPort,
-    candidate: &Value,
-) -> Result<Vec<ReviewFinding>> {
+pub(crate) async fn check(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<ReviewFinding>> {
     let key = format!("answer-review-v2:{}", crate::content_verification::digest(
         &json!({"model":llm.model_name(),"context":llm.max_context_tokens(),"questions":candidate.get("questions")}).to_string()
     ));
@@ -100,8 +95,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
             )
             .await?
         } else {
-            crate::generation::complete_json(llm, SYSTEM, request, schema, 3000)
-                .await?
+            crate::generation::complete_json(llm, SYSTEM, request, schema, 3000).await?
         };
         problems.clear();
         let parsed = crate::generation::parse_json::<Value>(&raw);
@@ -312,9 +306,7 @@ pub(crate) async fn review_bank_items(
                 model_call::TooLarge::Window("one quiz question with its reference passage"),
             )
             .await?;
-            if let Ok(parsed) =
-                crate::generation::parse_json::<Value>(&response.text)
-            {
+            if let Ok(parsed) = crate::generation::parse_json::<Value>(&response.text) {
                 for value in parsed
                     .get("answers")
                     .and_then(Value::as_array)

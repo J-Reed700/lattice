@@ -12,9 +12,7 @@ use serde_json::{json, Value};
 
 use super::grader::{Review, ReviewGrader};
 use super::material::JudgeWording;
-use crate::lessons::structured_call::{
-    complete_checked_request, CallKind, ReasonFirst,
-};
+use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
 use crate::model_call;
 
 mod accept;

@@ -2,10 +2,10 @@
 //! reservation, sampling for the thinking mode, the thinking switch and tools.
 use super::*;
 use crate::features::llm::engine::vision::not_set_up_to_see;
-use lattice_core::application::ports::llm_port::{window_refusal, RequestSize};
 use lattice_core::application::ports::llm_port::{
     tool_specs, ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
 };
+use lattice_core::application::ports::llm_port::{window_refusal, RequestSize};
 use std::borrow::Cow;
 
 /// The characters a tokenizer reads in `input`: each message's role and

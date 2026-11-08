@@ -20,11 +20,9 @@ fn quote_error(sources: &[Value], index: Option<u64>, quote: &str) -> Option<Str
             .then(|| "Topic-based material must not invent source citations.".to_owned());
     }
     match excerpt_of(sources, index) {
-        Some(excerpt) => {
-            crate::generation::validate_excerpt_quote(quote, excerpt)
-                .err()
-                .map(|e| e.to_string())
-        }
+        Some(excerpt) => crate::generation::validate_excerpt_quote(quote, excerpt)
+            .err()
+            .map(|e| e.to_string()),
         None => Some("The citation must select a supplied sourceIndex.".to_owned()),
     }
 }
@@ -80,8 +78,7 @@ fn restored_quote(sources: &[Value], index: Option<u64>, quote: &str) -> Option<
     if crate::generation::validate_excerpt_quote(quote, excerpt).is_ok() {
         return None;
     }
-    crate::outline_citations::exact_source_quote(excerpt, quote)
-        .map(str::to_owned)
+    crate::outline_citations::exact_source_quote(excerpt, quote).map(str::to_owned)
 }
 
 pub(super) fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
@@ -180,8 +177,7 @@ fn nearest_passage_span(excerpt: &str, target: &str) -> Option<(f64, usize, Stri
             if text.chars().count() > crate::generation::MAX_QUOTE_CHARS {
                 break;
             }
-            if crate::generation::validate_excerpt_quote(text, excerpt).is_err()
-            {
+            if crate::generation::validate_excerpt_quote(text, excerpt).is_err() {
                 continue;
             }
             let shared = content_terms(text).intersection(&wanted).count();

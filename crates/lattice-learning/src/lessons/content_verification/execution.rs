@@ -1,7 +1,5 @@
 use super::*;
-use crate::embedded_runtime::{
-    BuiltinLabExecutionSpec, BuiltinRuntimes, LearningBuiltinRuntime,
-};
+use crate::embedded_runtime::{BuiltinLabExecutionSpec, BuiltinRuntimes, LearningBuiltinRuntime};
 use crate::lab_runtime::{
     LearningLabExecutionResult, LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
@@ -22,10 +20,7 @@ const NOT_PROGRAMS: [&str; 5] = ["text", "output", "csv", "json", "mermaid"];
 
 /// Label ambiguous Markdown fences before expensive review. Only the opening
 /// fence label changes: the worked code/data itself remains byte-for-byte exact.
-pub(crate) async fn label_unlabeled(
-    llm: &dyn LLMPort,
-    raw: String,
-) -> Result<String> {
+pub(crate) async fn label_unlabeled(llm: &dyn LLMPort, raw: String) -> Result<String> {
     let mut candidate: Value = crate::generation::parse_json(&raw)?;
     let mut pending = Vec::new();
     let mut locations = Vec::new();

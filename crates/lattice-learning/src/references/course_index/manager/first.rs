@@ -10,8 +10,8 @@
 
 use super::super::COURSE_INDEX;
 use super::CourseIndexes;
-use lattice_index::passage_index::{Claim, Priority};
 use lattice_core::shared::Result;
+use lattice_index::passage_index::{Claim, Priority};
 use tracing::warn;
 
 impl CourseIndexes {
@@ -34,18 +34,12 @@ impl CourseIndexes {
 
     /// A reader is about to bring `program` current and wait for it: its
     /// index goes first while the claim is held.
-    pub(in crate::references::course_index) fn awaited(
-        &self,
-        program: &str,
-    ) -> Result<Claim> {
+    pub(in crate::references::course_index) fn awaited(&self, program: &str) -> Result<Claim> {
         Ok(self.turns.claim(&self.dir_of(program)?, Priority::Awaited))
     }
 
     /// Whether anyone waits on `program`'s index.
-    pub fn is_awaited(
-        &self,
-        program: &str,
-    ) -> bool {
+    pub fn is_awaited(&self, program: &str) -> bool {
         self.dir_of(program)
             .is_ok_and(|dir| self.turns.claimed(&dir) == Some(Priority::Awaited))
     }

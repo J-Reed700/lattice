@@ -4,20 +4,14 @@ use super::{
     practical_operation, uuid, InternalActivityFile, InternalActivitySnapshot,
     LearningPracticalRepository, PracticalWorkspaceSnapshot,
 };
-use crate::embedded_runtime::{
-    BuiltinLabExecutionSpec, LearningBuiltinRuntime,
-};
-use crate::lab_runtime::{
-    self, LearningLabExecutionSpec, LearningLabFile, LearningLabLimits,
-};
+use crate::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
+use crate::lab_runtime::{self, LearningLabExecutionSpec, LearningLabFile, LearningLabLimits};
 use crate::persistence::{db, hash_text, now};
 use crate::practical_dto::*;
 use crate::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
 };
-use crate::practice::interview_answers::{
-    InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH,
-};
+use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, Sqlite, Transaction};
 use std::collections::HashSet;

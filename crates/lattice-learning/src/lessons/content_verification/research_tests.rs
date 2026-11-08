@@ -8,18 +8,15 @@ use super::*;
 use crate::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::repository::LearningRepository;
-use lattice_core::application::ports::MockWebService;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchOutput, WebSearchResult,
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::MockWebService;
 
 pub(crate) const CAPTURE: &str =
     "Random assignment reduces confounding in comparisons between treatment groups. A study that assigns participants to its groups by chance spreads every characteristic it did not measure across the groups in the same way, so the difference it finds afterward is not owed to who was placed where. Researchers give this as the reason a randomised comparison can support a causal claim where an observational one cannot. The method does not remove chance variation, which shrinks as the groups grow, and it does not repair a measurement that was biased or a trial in which many participants left. Those need their own safeguards, such as blinding the people who record the outcome and following up everyone who was assigned. Random assignment is also distinct from random sampling: sampling decides who is studied, assignment decides who receives which treatment, and the two protect different conclusions. Reports of trials state how the sequence of assignments was generated so a reader can judge whether the groups were comparable at the start.";
-pub(crate) struct ResearchWeb(
-    MockWebService,
-    Arc<Mutex<Vec<WebSearchInput>>>,
-);
+pub(crate) struct ResearchWeb(MockWebService, Arc<Mutex<Vec<WebSearchInput>>>);
 #[async_trait::async_trait]
 impl WebServiceTrait for ResearchWeb {
     async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
@@ -134,9 +131,7 @@ fn a_long_reason_for_a_reference_is_read_not_refused() {
 #[test]
 fn the_selection_schema_bounds_no_text_but_a_blank() {
     let ids = [json!("result-0"), json!("result-1")];
-    let bounds = crate::lessons::course_generation_tests::length_bounds(
-        &selection_schema(&ids),
-    );
+    let bounds = crate::lessons::course_generation_tests::length_bounds(&selection_schema(&ids));
     assert!(bounds.is_empty(), "{bounds:?}");
 }
 
@@ -356,9 +351,7 @@ async fn research_can_save_evidence_after_one_hundred_sources() -> Result<()> {
         })
         .collect();
     repo.create(&program).await?;
-    let library = crate::source_library::LearningSourceLibraryRepository::new(
-        pool.clone(),
-    );
+    let library = crate::source_library::LearningSourceLibraryRepository::new(pool.clone());
     library
         .preflight_new_source(
             &program.summary.id,
@@ -655,9 +648,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
     impl Model {
         async fn respond(&self, prompt: &str) -> Result<String> {
             if let Some(reply) =
-                crate::lessons::content_verification::tests::fixture_response(
-                    prompt,
-                )
+                crate::lessons::content_verification::tests::fixture_response(prompt)
             {
                 return Ok(reply);
             }

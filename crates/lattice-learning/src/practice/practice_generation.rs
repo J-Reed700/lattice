@@ -93,12 +93,7 @@ fn window_room(
     prompt: &serde_json::Value,
     output_tokens: usize,
 ) -> usize {
-    crate::reference_collection::snapshot_room(
-        llm,
-        system,
-        prompt,
-        output_tokens,
-    )
+    crate::reference_collection::snapshot_room(llm, system, prompt, output_tokens)
 }
 
 /// `prompt` with the newest whole tutor turns, newest first, while they fit
@@ -147,10 +142,8 @@ async fn with_snapshots(
     output_tokens: usize,
 ) -> Result<String> {
     let room = window_room(llm, system, &prompt, output_tokens);
-    let passages = crate::reference_collection::snapshot_passages(
-        llm, sources, query, room,
-    )
-    .await?;
+    let passages =
+        crate::reference_collection::snapshot_passages(llm, sources, query, room).await?;
     if let Some(fields) = prompt.as_object_mut() {
         fields.insert("sourceSnapshots".into(), passages);
     }
@@ -442,12 +435,8 @@ mod window_tests {
         let turns = turns(1_000);
         let skeleton =
             serde_json::json!({"taskPrompt":"fixed prompt","recentTurns":[],"earlierTurns":""});
-        let window_half = crate::reference_collection::snapshot_room(
-            &Words,
-            TUTOR_SYSTEM,
-            &skeleton,
-            1400,
-        ) / 2;
+        let window_half =
+            crate::reference_collection::snapshot_room(&Words, TUTOR_SYSTEM, &skeleton, 1400) / 2;
         let shown_prompt = with_recent_turns(&Words, skeleton, &turns);
         let kept = shown(&shown_prompt);
         assert!(kept > 0 && kept < turns.len());

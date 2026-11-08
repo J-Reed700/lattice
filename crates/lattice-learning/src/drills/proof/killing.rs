@@ -4,9 +4,7 @@
 
 use super::{unproven, ProofCase, ProofStrategy, ProofVerdict, Tools};
 use crate::drills::budget;
-use crate::drills::build::ask::{
-    ask_request, normalise, refuse, render_files, text_schema,
-};
+use crate::drills::build::ask::{ask_request, normalise, refuse, render_files, text_schema};
 use crate::drills::build::{Trail, Verification};
 use crate::drills::runner::RunOutcome;
 use crate::generation::parse_json;

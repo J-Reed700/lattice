@@ -44,8 +44,7 @@ const REASK: &str = "That answer could not be used:";
 const RESTATE: &str = "An earlier answer to this task could not be used, so avoid this:";
 
 /// What a learning call's window refusal says does not fit.
-pub(crate) const MATERIAL_DOES_NOT_FIT: &str =
-    "The requested learning material does not fit";
+pub(crate) const MATERIAL_DOES_NOT_FIT: &str = "The requested learning material does not fit";
 
 /// Which knob in [`model_call`] decides whether a call reasons first.
 #[derive(Debug, Clone, Copy)]
@@ -455,11 +454,7 @@ pub(crate) fn refusal(error: &AppError) -> Option<&str> {
 /// `request` continued with the answer it drew and a request to answer again.
 /// Learning requests carry their whole user message in `task`, so moving it
 /// into the history keeps every message the first request sent.
-pub(crate) fn reask(
-    mut request: GroundedRequest,
-    rejected: &str,
-    reason: &str,
-) -> GroundedRequest {
+pub(crate) fn reask(mut request: GroundedRequest, rejected: &str, reason: &str) -> GroundedRequest {
     let task = std::mem::replace(
         &mut request.task,
         format!("{REASK} {reason} Answer the same task again, fixing that."),

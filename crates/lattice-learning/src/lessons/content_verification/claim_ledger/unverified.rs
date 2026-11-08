@@ -20,9 +20,7 @@ impl ClaimLedger {
     /// The statements nobody has settled: not verified, not confirmed and not
     /// gone. A code example's claim is none of them: its run is no sentence,
     /// and one that did not complete stays an issue until the user confirms it.
-    pub(in crate::lessons::content_verification) fn unsettled(
-        &self,
-    ) -> Vec<ClaimId> {
+    pub(in crate::lessons::content_verification) fn unsettled(&self) -> Vec<ClaimId> {
         self.entries
             .iter()
             .filter(|entry| !is_example(entry) && !entry.state().is_resolved())

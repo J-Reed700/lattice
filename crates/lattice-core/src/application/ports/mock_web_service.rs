@@ -150,9 +150,7 @@ impl WebServiceTrait for MockWebService {
 
     fn validate_url(&self, url: &str) -> Result<()> {
         if url.contains("localhost") || url.contains("127.0.0.1") {
-            return Err(AppError::InvalidUrl(
-                "localhost not allowed".to_string(),
-            ));
+            return Err(AppError::InvalidUrl("localhost not allowed".to_string()));
         }
         Ok(())
     }

@@ -77,10 +77,7 @@ pub(crate) fn caseless_quote_span(
 
 /// Recover original source bytes for a typography-only mismatch. The copied
 /// span must pass the same quote validator used for publication.
-pub(crate) fn exact_source_quote<'a>(
-    source: &'a str,
-    quote: &str,
-) -> Option<&'a str> {
+pub(crate) fn exact_source_quote<'a>(source: &'a str, quote: &str) -> Option<&'a str> {
     let exact = SourceText::new(source).exact_span(source, quote)?;
     generation::validate_excerpt_quote(exact, source).ok()?;
     Some(exact)
@@ -89,10 +86,7 @@ pub(crate) fn exact_source_quote<'a>(
 /// Fix only typography in the cited source, then require the ordinary strict
 /// quote check to pass on the copied span. Claims and source indices never change;
 /// the full semantic review is still required before acceptance.
-pub(crate) fn restore_source_quotes(
-    candidate: &mut Value,
-    sources: &[LearningSourceDto],
-) -> usize {
+pub(crate) fn restore_source_quotes(candidate: &mut Value, sources: &[LearningSourceDto]) -> usize {
     let failures = outline_evidence::quote_checks(candidate, sources);
     let mut restored = 0;
     for (index, source) in sources.iter().enumerate() {

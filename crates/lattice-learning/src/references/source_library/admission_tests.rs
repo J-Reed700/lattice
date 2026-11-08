@@ -52,9 +52,7 @@ async fn save(
                 text: text.into(),
                 truncated: false,
                 extraction_version: "test_v1".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
             },
             id(),
             by,

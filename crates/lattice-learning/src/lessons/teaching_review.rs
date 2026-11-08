@@ -351,9 +351,9 @@ pub mod test_support;
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::test_support::candidate;
     use super::*;
     use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
-    use super::test_support::candidate;
 
     fn check(index: usize) -> Value {
         json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})
@@ -502,7 +502,8 @@ mod tests {
                 check(2),
             ],
         ] {
-            let bad = json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
+            let bad =
+                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
             let model = model(vec![bad.clone(), bad]);
             let error = review(
                 &model,
@@ -757,9 +758,8 @@ mod tests {
     #[test]
     fn the_review_schema_bounds_no_text_but_a_blank() {
         let (_, passages) = review_candidate(&candidate());
-        let bounds = crate::lessons::course_generation_tests::length_bounds(
-            &schema(&[0, 1, 2], &passages),
-        );
+        let bounds =
+            crate::lessons::course_generation_tests::length_bounds(&schema(&[0, 1, 2], &passages));
         assert!(bounds.is_empty(), "{bounds:?}");
     }
 }

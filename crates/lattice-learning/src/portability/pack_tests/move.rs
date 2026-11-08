@@ -109,8 +109,7 @@ async fn submit(
             id: Some(module.id.clone()),
         },
     };
-    crate::assessment::assessment_tests::take_quiz(pool, program_id, &scope)
-        .await?;
+    crate::assessment::assessment_tests::take_quiz(pool, program_id, &scope).await?;
     Ok(())
 }
 

@@ -4,7 +4,8 @@ use super::runtimes;
 
 #[cfg(feature = "learning-labs")]
 #[tokio::test]
-async fn a_lab_runs_in_a_child_copy_of_this_test_binary() -> lattice_core::shared::error::Result<()> {
+async fn a_lab_runs_in_a_child_copy_of_this_test_binary() -> lattice_core::shared::error::Result<()>
+{
     use lattice_learning::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
     use lattice_learning::lab_runtime::{LearningLabFile, LearningLabLimits, LearningLabRunStatus};
 

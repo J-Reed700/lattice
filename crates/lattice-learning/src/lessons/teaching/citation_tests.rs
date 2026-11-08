@@ -18,16 +18,15 @@ fn approval() -> Value {
 
 #[tokio::test]
 async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
-    let references =
-        crate::reference_collection::ReferenceCollection::lexical(&[
-            crate::dto::LearningSourceDto {
-                id: "saved-reference".into(),
-                title: "Example reference".into(),
-                url: None,
-                acquired_at: 0,
-                excerpt: EXCERPT.into(),
-            },
-        ])?;
+    let references = crate::reference_collection::ReferenceCollection::lexical(&[
+        crate::dto::LearningSourceDto {
+            id: "saved-reference".into(),
+            title: "Example reference".into(),
+            url: None,
+            acquired_at: 0,
+            excerpt: EXCERPT.into(),
+        },
+    ])?;
     for actionable in [false, true] {
         let original = lesson(EXCERPT);
         let mut corrected = original.clone();

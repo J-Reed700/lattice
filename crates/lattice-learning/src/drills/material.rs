@@ -9,8 +9,8 @@ mod code;
 pub(crate) mod passage;
 
 pub(crate) use code::CodeMaterial;
-pub(crate) use passage::{PassageMaterial, SourceCheck};
 pub use passage::ClaimSourceCheck;
+pub(crate) use passage::{PassageMaterial, SourceCheck};
 
 use super::build::{Baseline, CleanCode, CleanReview, Mutation};
 use super::fix_grading::FixStrategy;
@@ -84,9 +84,7 @@ impl JudgeWording {
 
 /// The parts of a drill's build, proofs and grading that depend on what is reviewed.
 #[async_trait]
-pub trait DrillMaterial:
-    Send + Sync
-{
+pub trait DrillMaterial: Send + Sync {
     /// What the proofs and the hidden suite run on, when the material has anything to run.
     fn runner(&self) -> Option<&dyn CodeRunner>;
 

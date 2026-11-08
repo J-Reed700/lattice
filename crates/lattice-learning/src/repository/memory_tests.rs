@@ -485,7 +485,12 @@ async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
         .await
         .map_err(db)?;
     let earlier = tempfile::tempdir().unwrap();
-    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../lattice-desktop/migrations")).unwrap() {
+    for entry in std::fs::read_dir(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../lattice-desktop/migrations"
+    ))
+    .unwrap()
+    {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         if name.as_str() < ICON_FIX {
@@ -508,7 +513,10 @@ async fn the_course_notebooks_made_before_get_the_emoji_too() -> Result<()> {
         sqlx::query(statement).execute(&pool).await.map_err(db)?;
     }
 
-    sqlx::migrate!("../lattice-desktop/migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
 
     let repo = LearningRepository::new(pool.clone());
     let active = accepted_unprepared_program(&repo).await?;

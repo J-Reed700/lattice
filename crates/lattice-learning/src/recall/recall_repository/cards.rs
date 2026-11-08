@@ -11,10 +11,7 @@ impl LearningRecallRepository {
     }
 
     /// [`Self::save_card`] without reading the workspace back.
-    pub(crate) async fn store_card(
-        &self,
-        req: &SaveLearningRecallCardRequestDto,
-    ) -> Result<()> {
+    pub(crate) async fn store_card(&self, req: &SaveLearningRecallCardRequestDto) -> Result<()> {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.card_id, "card")?;

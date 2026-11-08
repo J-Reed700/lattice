@@ -22,10 +22,7 @@ pub(crate) fn lesson_queries(candidate: &Value) -> Vec<String> {
 /// Citations are optional; only a present citation can fail. Field-level
 /// diagnostics let typography restoration copy the real punctuation, and the
 /// evidence linking strips whatever still does not match.
-pub fn quote_checks(
-    candidate: &Value,
-    sources: &[crate::dto::LearningSourceDto],
-) -> Vec<Value> {
+pub fn quote_checks(candidate: &Value, sources: &[crate::dto::LearningSourceDto]) -> Vec<Value> {
     let mut failures = Vec::new();
     for (module_index, module) in candidate["modules"]
         .as_array()
@@ -49,9 +46,7 @@ pub fn quote_checks(
                 .as_u64()
                 .and_then(|i| usize::try_from(i).ok());
             let quote = field["quote"].as_str().unwrap_or_default();
-            if let Err(error) =
-                crate::generation::optional_citation(sources, index, quote)
-            {
+            if let Err(error) = crate::generation::optional_citation(sources, index, quote) {
                 failures.push(json!({"path":format!("modules[{module_index}].{field_name}"),"sourceIndex":index,"quote":quote,"error":error.to_string()}));
             }
         }

@@ -48,11 +48,10 @@ pub(super) async fn load(
     let mut inventories = Vec::new();
     let mut audits = Vec::new();
     for (index, section) in content.iter().enumerate() {
-        if let Some(saved) =
-            crate::lesson_drafts::checkpoint(&key(llm, section, index))
-                .await?
-                .and_then(|value| serde_json::from_value::<SectionCheckpoint>(value).ok())
-                .filter(|saved| saved.valid(section, index))
+        if let Some(saved) = crate::lesson_drafts::checkpoint(&key(llm, section, index))
+            .await?
+            .and_then(|value| serde_json::from_value::<SectionCheckpoint>(value).ok())
+            .filter(|saved| saved.valid(section, index))
         {
             inventories.push(saved.inventory);
             audits.push(saved.coverage);

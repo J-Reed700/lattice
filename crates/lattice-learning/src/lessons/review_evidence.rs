@@ -1,8 +1,6 @@
 //! A reviewer's criticism is a hypothesis, not an authoritative correction.
 //! Ground model findings before they can drive a lesson rewrite.
-use crate::lessons::structured_call::{
-    complete_checked_request, CallKind, ReasonFirst,
-};
+use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
 use crate::review_findings::{FindingSite, ReviewFinding};
 use crate::{generation, reference_collection::ReferenceCollection};
 use lattice_core::application::services::grounded_generation::GroundedRequest;
@@ -227,9 +225,7 @@ pub async fn check(
     if issues.is_empty() {
         return Ok(Vec::new());
     }
-    crate::lesson_progress::stage(
-        "Checking review findings against saved references",
-    );
+    crate::lesson_progress::stage("Checking review findings against saved references");
     let mut requirements = authoring.clone();
     if let Some(object) = requirements.as_object_mut() {
         object.remove("sources");
@@ -266,14 +262,13 @@ pub async fn check(
             .find(|source| source.id == passage.source_id);
         json!({"sourceVersionId":passage.source_id,"title":source.map(|s|&s.title),"url":source.and_then(|s|s.url.as_ref()),"text":passage.text})
     };
-    let part_tokens =
-        |passage: &crate::reference_collection::ReferencePassage| {
-            let mut part = part(passage);
-            if let Some(fields) = part.as_object_mut() {
-                fields.insert("id".into(), json!("reference-0000"));
-            }
-            llm.count_tokens(&part.to_string()) + 1
-        };
+    let part_tokens = |passage: &crate::reference_collection::ReferencePassage| {
+        let mut part = part(passage);
+        if let Some(fields) = part.as_object_mut() {
+            fields.insert("id".into(), json!("reference-0000"));
+        }
+        llm.count_tokens(&part.to_string()) + 1
+    };
     let mut found_for = Vec::new();
     let mut seen = HashSet::new();
     for issue in &notes {
@@ -735,9 +730,7 @@ mod tests {
     fn the_decision_schema_bounds_no_text_but_a_blank() {
         let keys = ["issue-0".to_owned()];
         let ids = ["blocks-0".to_owned(), "requirements".to_owned()];
-        let bounds = crate::lessons::course_generation_tests::length_bounds(
-            &schema(&keys, &ids),
-        );
+        let bounds = crate::lessons::course_generation_tests::length_bounds(&schema(&keys, &ids));
         assert!(bounds.is_empty(), "{bounds:?}");
     }
 }

@@ -1,7 +1,7 @@
 //! The thinking switch, per-mode sampling, tool choice and server timings.
 use super::*;
-use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
+use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::application::ports::llm_port::{
     SamplingOverride, ServedTiming, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
 };

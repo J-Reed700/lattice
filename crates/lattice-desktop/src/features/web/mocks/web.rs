@@ -7,9 +7,9 @@ use crate::features::web::traits::web::{WebIngestionResult, WebIngestionServiceT
 #[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
-use lattice_core::shared::error::Result;
-#[cfg(test)]
 pub use lattice_core::application::ports::MockWebService;
+#[cfg(test)]
+use lattice_core::shared::error::Result;
 #[cfg(test)]
 use std::sync::{Arc, RwLock};
 

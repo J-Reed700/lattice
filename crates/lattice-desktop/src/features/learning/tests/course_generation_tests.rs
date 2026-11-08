@@ -132,8 +132,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
     let drafts = lattice_learning::outline_draft::DraftRunRegistry::new();
     let program = progress
         .run(async {
-            progress
-                .stage(lattice_learning::outline_progress::OutlineStage::ReadingSources);
+            progress.stage(lattice_learning::outline_progress::OutlineStage::ReadingSources);
             let mut sources = Vec::new();
             let mut references = Vec::new();
             for url in &request.source_urls {

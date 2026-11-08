@@ -44,11 +44,7 @@ impl AuditMaterial {
 
     /// The lesson as its review stands: the draft that waits for review, or
     /// the published lesson once it is ready ("Audit this lesson now").
-    pub async fn of_lesson(
-        pool: &SqlitePool,
-        program_id: &str,
-        lesson_id: &str,
-    ) -> Result<Self> {
+    pub async fn of_lesson(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<Self> {
         let review = ClaimReviewRepository::new(pool.clone())
             .load(lesson_id)
             .await?

@@ -197,8 +197,7 @@ pub(super) async fn rewrite_module(
             &json!({"modules":[module.clone()]}),
         ))
         .collect();
-    let passages =
-        crate::outline_evidence::select(llm, &references, &queries).await?;
+    let passages = crate::outline_evidence::select(llm, &references, &queries).await?;
     let sequence: Vec<_> = draft.candidate.get("modules").and_then(Value::as_array).into_iter().flatten().enumerate().map(|(i, m)| json!({"index":i,"title":m["title"],"outcomes":m["outcomes"],"project":m["project"]})).collect();
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -228,10 +227,7 @@ pub(super) async fn rewrite_module(
             repair.module;
         // What the rewrite kept is provisional: restore typography, drop what
         // does not match, then decode what remains under the same rule.
-        crate::outline_citations::restore_source_quotes(
-            &mut candidate,
-            sources,
-        );
+        crate::outline_citations::restore_source_quotes(&mut candidate, sources);
         outline_linking::strip_unmatched(&mut candidate, sources, Some(index));
         if candidate == draft.candidate {
             return Ok(None);

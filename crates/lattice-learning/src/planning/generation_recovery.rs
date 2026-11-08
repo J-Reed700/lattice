@@ -25,10 +25,7 @@ pub fn lesson_job_config() -> JobKindConfig {
 /// minutes. A model's rejection ([`AppError::ModelRejected`]) fails at once,
 /// and the job runtime ends a job whose other failure comes back with nothing
 /// saved in between, so a lesson never retries forever unseen.
-pub(crate) fn lesson_failure(
-    job: &JobRecord,
-    error: &AppError,
-) -> JobFailure {
+pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
     if !JobFailure::is_transient(error) {
         return JobFailure::Fail {
             code: "generation_failed".into(),

@@ -2,9 +2,7 @@
 //! them and its source overrides; a copy gets them under its own ids.
 
 use super::*;
-use crate::dto::{
-    LearningProgramStatus, LearningSourceKind, LearningSourcePolicy,
-};
+use crate::dto::{LearningProgramStatus, LearningSourceKind, LearningSourcePolicy};
 use crate::references::trust::{capture::web_capture, SqliteSourceTrustStore};
 use crate::source_library::NewLearningSource;
 use lattice_core::application::contracts::web::{FetchUrlContentOutput, ReferencePage};

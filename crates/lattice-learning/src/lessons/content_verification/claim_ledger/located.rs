@@ -26,11 +26,7 @@ pub(crate) fn clip(text: &str) -> &str {
 
 /// `location.quote` narrowed to the claim's sentence in `field_text` when the
 /// stored quote is wider than one; the quote itself otherwise.
-pub(crate) fn located_quote(
-    location: &ClaimLocation,
-    statement: &str,
-    field_text: &str,
-) -> String {
+pub(crate) fn located_quote(location: &ClaimLocation, statement: &str, field_text: &str) -> String {
     located(location, statement, field_text).0
 }
 

@@ -2,9 +2,7 @@
 //! domains.
 
 use super::support::{code, files, planted, proved, quiet, review, spec, MODEL, SUITE};
-use crate::drills::bank::{
-    least_recently_used, next_domain, queue_build, take, DOMAINS,
-};
+use crate::drills::bank::{least_recently_used, next_domain, queue_build, take, DOMAINS};
 use crate::drills::build::Evidence;
 use crate::drills::jobs::{spec_of, DRILL_BUILD};
 use crate::drills::repository::{self, DrillStatus, NewDrill};

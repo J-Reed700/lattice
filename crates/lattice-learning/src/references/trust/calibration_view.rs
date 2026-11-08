@@ -8,9 +8,7 @@
 
 use super::calibration;
 use super::dto_map;
-use crate::dto::{
-    LearningSourceTrustCalibrationDto, LearningTrustPolicyParameterDto,
-};
+use crate::dto::{LearningSourceTrustCalibrationDto, LearningTrustPolicyParameterDto};
 use lattice_core::domain::provenance::{Policy, POLICY};
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;

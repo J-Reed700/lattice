@@ -132,9 +132,7 @@ async fn add_version(
                 text: "The Battle of Hastings was fought on 14 October 1066.".into(),
                 truncated: false,
                 extraction_version: "test_v1".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
             },
             id(),
         )

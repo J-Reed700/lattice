@@ -1,8 +1,6 @@
 //! What a recall card of each format may contain. Pure checks, run before
 //! a card version is saved.
-use crate::portability_dto::{
-    LearningRecallCardFormat, LearningRecallContentDto,
-};
+use crate::portability_dto::{LearningRecallCardFormat, LearningRecallContentDto};
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashSet;
 

@@ -1,9 +1,7 @@
 //! Running code for a drill: a suite or a killing test against a set of files. Runners are an Adapter over what
 //! the app can run: the built-in runtimes today, containers later, behind one trait.
 
-use crate::embedded_runtime::{
-    BuiltinLabExecutionSpec, BuiltinRuntimes, LearningBuiltinRuntime,
-};
+use crate::embedded_runtime::{BuiltinLabExecutionSpec, BuiltinRuntimes, LearningBuiltinRuntime};
 use crate::lab_runtime::{
     LearningLabExecutionResult, LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
@@ -45,9 +43,7 @@ impl RunOutcome {
 
 /// Something that can run a test against files.
 #[async_trait]
-pub trait CodeRunner:
-    Send + Sync
-{
+pub trait CodeRunner: Send + Sync {
     /// What the suite and the proofs ran on, as a drill records it: `builtin-python`.
     fn name(&self) -> &str;
 
@@ -82,10 +78,7 @@ pub(crate) struct BuiltinRunner {
 }
 
 impl BuiltinRunner {
-    pub(crate) fn new(
-        runtimes: BuiltinRuntimes,
-        runtime: LearningBuiltinRuntime,
-    ) -> Self {
+    pub(crate) fn new(runtimes: BuiltinRuntimes, runtime: LearningBuiltinRuntime) -> Self {
         Self {
             name: format!("builtin-{}", runtime.as_str()),
             runtimes,
@@ -187,10 +180,7 @@ fn output_of(result: &LearningLabExecutionResult) -> String {
 }
 
 /// A runner for `language`, where the runtime that runs it is available here.
-pub fn runner_for(
-    language: &str,
-    runtimes: &BuiltinRuntimes,
-) -> Option<Box<dyn CodeRunner>> {
+pub fn runner_for(language: &str, runtimes: &BuiltinRuntimes) -> Option<Box<dyn CodeRunner>> {
     let runtime = match language {
         "python" => LearningBuiltinRuntime::Python,
         "javascript" => LearningBuiltinRuntime::Javascript,

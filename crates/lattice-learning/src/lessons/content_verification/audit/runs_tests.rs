@@ -19,7 +19,10 @@ async fn database() -> SqlitePool {
         .connect_with(options)
         .await
         .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await
+        .unwrap();
     for statement in [
         "INSERT INTO learning_programs (id, title, goal, status, revision, prior_knowledge, minutes_per_session, model_name, created_at) \
          VALUES ('p1', 'Thermodynamics', 'Understand phase changes', 'active', 1, 'none', 30, 'qwen3.5-27b', 1000)",

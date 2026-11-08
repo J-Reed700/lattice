@@ -27,8 +27,6 @@ pub(crate) enum Sufficiency {
     },
 }
 
-pub(crate) trait SupportGate:
-    Send + Sync
-{
+pub(crate) trait SupportGate: Send + Sync {
     fn judge(&self, support: &Support<'_>) -> Sufficiency;
 }

@@ -1,9 +1,7 @@
 //! Stage 1 for code: the model writes the clean code, and where the language has a runner, a suite that passes on it.
 
 use super::CodeMaterial;
-use crate::drills::build::ask::{
-    ask_until_suite_passes, normalise, refuse, text_schema,
-};
+use crate::drills::build::ask::{ask_until_suite_passes, normalise, refuse, text_schema};
 use crate::drills::build::{CleanCode, Trail};
 use crate::drills::material::StageCtx;
 use crate::drills::runner::CodeRunner;

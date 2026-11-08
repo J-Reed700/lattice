@@ -19,11 +19,8 @@ async fn save_inventory(
         coverage: coverage.cloned().unwrap_or(Coverage { units: Vec::new() }),
         coverage_policy: coverage.map(|_| coverage::POLICY.into()),
     };
-    crate::lesson_drafts::record_claim_inventory(
-        candidate,
-        serde_json::to_string(&checkpoint)?,
-    )
-    .await
+    crate::lesson_drafts::record_claim_inventory(candidate, serde_json::to_string(&checkpoint)?)
+        .await
 }
 
 pub(super) async fn extract_audited_inventory(

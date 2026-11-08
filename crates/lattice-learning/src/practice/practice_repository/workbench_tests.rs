@@ -106,9 +106,7 @@ async fn add_version(pool: &SqlitePool, program_id: &str) -> Result<(String, Str
                 text: "Gluten forms when flour is hydrated and kneaded.".into(),
                 truncated: false,
                 extraction_version: "test_v1".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
             },
             id(),
         )

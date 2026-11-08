@@ -98,10 +98,7 @@ pub(crate) fn window_too_small(llm: &dyn LLMPort, what: &str) -> AppError {
 
 /// Whether the model's window holds `request` as it stands: counted exactly
 /// where the backend can count, by the planner's estimate where it cannot.
-pub(crate) async fn fits(
-    llm: &dyn LLMPort,
-    request: &GroundedRequest,
-) -> bool {
+pub(crate) async fn fits(llm: &dyn LLMPort, request: &GroundedRequest) -> bool {
     grounded_generation::measure(llm, request)
         .await
         .is_ok_and(|measured| measured.fits())
@@ -110,11 +107,7 @@ pub(crate) async fn fits(
 /// The room the planner leaves for source material once `request` — the
 /// prompt without its sources — and the answer's reservation are paid for,
 /// at most `ceiling`. Zero when the request does not fit at all.
-pub(crate) fn source_room(
-    llm: &dyn LLMPort,
-    request: &GroundedRequest,
-    ceiling: usize,
-) -> usize {
+pub(crate) fn source_room(llm: &dyn LLMPort, request: &GroundedRequest, ceiling: usize) -> usize {
     grounded_generation::evidence_room(llm, request).map_or(0, |room| room.min(ceiling))
 }
 

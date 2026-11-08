@@ -11,14 +11,14 @@ use super::search::{CourseSearch, IndexView};
 use super::sync::{self, CourseProgress};
 use super::{IndexMode, COURSE_INDEX};
 use crate::source_library::LearningSourceLibraryRepository;
-use lattice_index::passage_index::job::build_job_config;
-use lattice_index::passage_index::{
-    registry, Claim, EmbedTurns, EmbedderSource, LiveIndex, LiveIndexes,
-};
 use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, NewJob};
 use lattice_core::shared::{AppError, Result};
+use lattice_index::passage_index::job::build_job_config;
+use lattice_index::passage_index::{
+    registry, Claim, EmbedTurns, EmbedderSource, LiveIndex, LiveIndexes,
+};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -438,10 +438,7 @@ impl CourseIndexes {
     /// Brings `program`'s index current with no one watching: for a test, or
     /// a caller that only needs the mode.
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn ensure_current_quietly(
-        &self,
-        program: &str,
-    ) -> Result<IndexMode> {
+    pub async fn ensure_current_quietly(&self, program: &str) -> Result<IndexMode> {
         self.ensure_current(program, &CancellationToken::new(), &mut sync::Silent)
             .await
     }

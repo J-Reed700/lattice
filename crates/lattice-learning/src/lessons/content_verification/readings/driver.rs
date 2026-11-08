@@ -333,12 +333,8 @@ async fn weighed(
         .enumerate()
         .map(|(ordinal, finding)| (ordinal, String::new(), finding, false))
         .collect();
-    crate::lesson_progress::outside_checks(provenance_gate::weigh(
-        at.llm,
-        &mut results,
-        &left_out,
-    ))
-    .await?;
+    crate::lesson_progress::outside_checks(provenance_gate::weigh(at.llm, &mut results, &left_out))
+        .await?;
     Ok(outcomes
         .into_iter()
         .zip(results)

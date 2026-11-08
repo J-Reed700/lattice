@@ -1,10 +1,12 @@
 //! Stands in for `lattice_learning::lessons::reference_collection::tests`, which declared this test.
 
-use lattice_core::shared::error::Result;
-use lattice_learning::lessons::reference_collection::test_support::{collection_fixture, source_of};
-use lattice_learning::reference_collection::ReferenceCollection;
 use super::course_index::tests::indexes;
 use super::pool;
+use lattice_core::shared::error::Result;
+use lattice_learning::lessons::reference_collection::test_support::{
+    collection_fixture, source_of,
+};
+use lattice_learning::reference_collection::ReferenceCollection;
 
 #[tokio::test]
 #[ignore = "Downloads the public Rust Book through the production safe web reader"]
@@ -29,8 +31,8 @@ async fn live_rust_book_is_captured_beyond_chat_limit() -> Result<()> {
 
 #[tokio::test]
 async fn document_and_web_snapshots_rank_through_the_course_index() -> Result<()> {
-    use lattice_learning::references::course_index::IndexMode;
     use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
+    use lattice_learning::references::course_index::IndexMode;
     let pool = pool().await?;
     let (id, sources) = collection_fixture(&pool, ["doc-ownership", "doc-plants"]).await?;
     // Another course's references live in another index and never rank here.

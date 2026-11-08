@@ -60,19 +60,15 @@ pub(in crate::lessons::content_verification) async fn renumber(
         let Some(now) = after(index).filter(|now| *now != index) else {
             continue;
         };
-        let Some(mut basis) =
-            crate::lesson_drafts::checkpoint(&key(llm, index))
-                .await?
-                .and_then(|v| serde_json::from_value::<Basis>(v).ok())
+        let Some(mut basis) = crate::lesson_drafts::checkpoint(&key(llm, index))
+            .await?
+            .and_then(|v| serde_json::from_value::<Basis>(v).ok())
         else {
             continue;
         };
         basis.inventory.index = now;
-        crate::lesson_drafts::record_checkpoint(
-            &key(llm, now),
-            serde_json::to_value(basis)?,
-        )
-        .await?;
+        crate::lesson_drafts::record_checkpoint(&key(llm, now), serde_json::to_value(basis)?)
+            .await?;
     }
     Ok(())
 }
@@ -229,11 +225,7 @@ pub(in crate::lessons::content_verification) async fn update(
     if updated.claims.is_empty() && updated.non_factual_reason.trim().is_empty() {
         return Ok(None);
     }
-    crate::lesson_drafts::record_checkpoint(
-        &delta_key,
-        serde_json::to_value(&updated)?,
-    )
-    .await?;
+    crate::lesson_drafts::record_checkpoint(&delta_key, serde_json::to_value(&updated)?).await?;
     // The next edit is read against this text, so what this one wrote is read
     // once.
     save(llm, content, &updated).await?;
@@ -318,9 +310,7 @@ mod capacity_tests {
 #[cfg(test)]
 mod revision_tests {
     use super::*;
-    use crate::content_verification::tests::{
-        fixture_completion, fixture_prompts,
-    };
+    use crate::content_verification::tests::{fixture_completion, fixture_prompts};
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use std::sync::Mutex;
 
@@ -357,10 +347,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &claims_of(1, "Bravo stands firm today.")).await?;
 
@@ -388,10 +375,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             for (index, sentence) in [
                 "Alpha holds the line.",
@@ -449,10 +433,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &unit).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
@@ -561,10 +542,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
@@ -622,10 +600,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             update(&model, &once, 0).await?.unwrap();
@@ -659,10 +634,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
@@ -710,10 +682,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &holding(&[(BRAVO, "Bravo is firm.")])).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
@@ -738,10 +707,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             let first = update(&model, &after, 0).await?.unwrap();
@@ -770,10 +736,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             // What the revision of the saved statements kept for this edit: the
@@ -788,11 +751,7 @@ mod revision_tests {
                     &json!({"model":key(&model,0),"basis":basis,"content":after[0]}).to_string()
                 )
             );
-            crate::lesson_drafts::record_checkpoint(
-                &old_key,
-                serde_json::to_value(&kept)?,
-            )
-            .await?;
+            crate::lesson_drafts::record_checkpoint(&old_key, serde_json::to_value(&kept)?).await?;
 
             let updated = update(&model, &after, 0).await?.unwrap();
 
@@ -825,10 +784,7 @@ mod revision_tests {
         };
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             let saved = holding(&[(first, "First is so."), (third, "Third is so.")]);
             save(&model, &before, &saved).await?;

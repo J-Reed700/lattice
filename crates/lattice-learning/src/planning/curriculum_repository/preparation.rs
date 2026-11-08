@@ -1,9 +1,7 @@
 //! Lesson drafts and checkpoints saved while preparing, and publishing the prepared lessons.
 use super::jobs::job_scope;
 use super::LearningCurriculumRepository;
-use crate::curriculum::{
-    self, LearningCurriculumLessonState, LearningCurriculumRevision,
-};
+use crate::curriculum::{self, LearningCurriculumLessonState, LearningCurriculumRevision};
 use crate::persistence::{db, decode, encode, hash_text, now};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
@@ -93,10 +91,7 @@ impl LearningCurriculumRepository {
         &self,
         id: &str,
         expected_revision: i64,
-        lessons: &[(
-            String,
-            crate::dto::PreparedLearningLesson,
-        )],
+        lessons: &[(String, crate::dto::PreparedLearningLesson)],
     ) -> Result<()> {
         self.publish_prepared(id, expected_revision, lessons, &[], &[])
             .await
@@ -109,15 +104,9 @@ impl LearningCurriculumRepository {
         &self,
         id: &str,
         expected_revision: i64,
-        lessons: &[(
-            String,
-            crate::dto::PreparedLearningLesson,
-        )],
+        lessons: &[(String, crate::dto::PreparedLearningLesson)],
         held: &[crate::content_verification::HeldForReview],
-        banks: &[(
-            String,
-            crate::quiz_bank_jobs::LessonBank,
-        )],
+        banks: &[(String, crate::quiz_bank_jobs::LessonBank)],
     ) -> Result<()> {
         if lessons.is_empty() || lessons.len() + held.len() > 3 {
             return Err(AppError::InvalidInput(
@@ -185,13 +174,8 @@ impl LearningCurriculumRepository {
                     "Only outline lessons can be published by this job.".into(),
                 ));
             }
-            crate::content_verification::persist_report(
-                &mut tx,
-                &program_id,
-                lesson_id,
-                prepared,
-            )
-            .await?;
+            crate::content_verification::persist_report(&mut tx, &program_id, lesson_id, prepared)
+                .await?;
             for (ordinal, b) in prepared.blocks.iter().enumerate() {
                 sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(ordinal as i64).bind(crate::repository::block_kind(b.kind.clone())).bind(&b.title).bind(&b.body).bind(encode(&b.source_ids)?).bind(encode(&b.rubric)?).execute(&mut *tx).await.map_err(db)?;
             }
@@ -299,9 +283,7 @@ impl LearningCurriculumRepository {
                 .filter_map(|(_, prepared)| prepared.verification.as_ref())
                 .map(|report| report.unverified_count())
                 .sum();
-            let message = match crate::content_verification::not_verified_line(
-                unverified,
-            ) {
+            let message = match crate::content_verification::not_verified_line(unverified) {
                 Some(line) => format!("Published prepared lessons · {line}"),
                 None => "Published prepared lessons".to_owned(),
             };

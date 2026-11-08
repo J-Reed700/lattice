@@ -1,9 +1,7 @@
 use super::readings_tests::paged;
 use super::*;
 use crate::curriculum_repository::LESSON_PREPARATION;
-use crate::{
-    curriculum_repository::LearningCurriculumRepository, lesson_drafts,
-};
+use crate::{curriculum_repository::LearningCurriculumRepository, lesson_drafts};
 use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 
 #[derive(Default)]

@@ -12,13 +12,9 @@ use crate::dto::{
 };
 use crate::lesson_drafts;
 use crate::lesson_evidence::LearningLessonEvidenceDto;
-use crate::lessons::claim_reviews::checker_examples::{
-    CheckerExamples, Label, LabelSource,
-};
+use crate::lessons::claim_reviews::checker_examples::{CheckerExamples, Label, LabelSource};
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
-use crate::lessons::claim_reviews::repository::{
-    ClaimReviewRepository, ShownPassage,
-};
+use crate::lessons::claim_reviews::repository::{ClaimReviewRepository, ShownPassage};
 use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::repository::LearningRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
@@ -528,16 +524,14 @@ async fn a_lesson_stopped_on_checks_made_under_other_rules_completes_its_job_as_
         .get(&stopped.program_id)
         .await?;
     let again = repo
-        .start_lesson_job(
-            &crate::plan_dto::StartLearningGenerationJobRequestDto {
-                operation_id: uuid::Uuid::new_v4().to_string(),
-                program_id: program.summary.id,
-                expected_revision: program.summary.revision,
-                kind: crate::curriculum::LearningGenerationJobKind::LessonPreparation,
-                request_json: json!({"lessonIds":[lesson_id]}).to_string(),
-                progress_total: 1,
-            },
-        )
+        .start_lesson_job(&crate::plan_dto::StartLearningGenerationJobRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: program.summary.id,
+            expected_revision: program.summary.revision,
+            kind: crate::curriculum::LearningGenerationJobKind::LessonPreparation,
+            request_json: json!({"lessonIds":[lesson_id]}).to_string(),
+            progress_total: 1,
+        })
         .await?;
     assert_ne!(again.id, job);
     assert_eq!(
@@ -2278,13 +2272,9 @@ impl Course {
         if let Some(review) = ledger.review {
             assert_eq!(review.state, LessonReviewState::Ready);
         }
-        let view = crate::lesson_evidence::get(
-            &self.pool,
-            &self.program_id,
-            &self.lesson_id,
-        )
-        .await?
-        .expect("the published lesson has its evidence");
+        let view = crate::lesson_evidence::get(&self.pool, &self.program_id, &self.lesson_id)
+            .await?
+            .expect("the published lesson has its evidence");
         let claims = view
             .teaching_claims
             .iter()

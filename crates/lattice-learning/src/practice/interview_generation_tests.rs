@@ -373,7 +373,11 @@ async fn prompt_only_interview_keeps_private_signals_out_of_public_material() ->
     )
     .contains("PRIVATE_SIGNAL_CANARY_837"));
     assert!(plan_file.content.contains("PRIVATE_SIGNAL_CANARY_837"));
-    let answers = generated.files.iter().find(|file| file.path == crate::practice::interview_answers::INTERVIEW_ANSWERS_FILE_PATH).ok_or_else(|| invalid("Missing hidden answer guides"))?;
+    let answers = generated
+        .files
+        .iter()
+        .find(|file| file.path == crate::practice::interview_answers::INTERVIEW_ANSWERS_FILE_PATH)
+        .ok_or_else(|| invalid("Missing hidden answer guides"))?;
     assert_eq!(answers.role, super::super::PracticalFileRole::Check);
     assert!(!answers.editable);
     Ok(())
@@ -897,10 +901,7 @@ async fn a_transcript_longer_than_the_window_keeps_its_newest_turns() -> Result<
 }
 
 fn simulation_of(
-    turns: Vec<(
-        crate::practical_dto::LearningSimulationSpeaker,
-        String,
-    )>,
+    turns: Vec<(crate::practical_dto::LearningSimulationSpeaker, String)>,
 ) -> crate::practical_dto::LearningSimulationSessionDto {
     use crate::practical_dto::*;
     LearningSimulationSessionDto {
@@ -935,9 +936,7 @@ fn simulation_of(
 #[tokio::test]
 async fn a_learner_turn_larger_than_the_room_is_refused_not_left_out() -> Result<()> {
     use super::super::{generate_simulation_turn, SimulationActivityContext};
-    use crate::practical_dto::LearningSimulationSpeaker::{
-        Counterpart, Learner,
-    };
+    use crate::practical_dto::LearningSimulationSpeaker::{Counterpart, Learner};
     use lattice_core::shared::error::AppError;
     let context = SimulationActivityContext {
         title: "Interview".into(),
@@ -970,9 +969,7 @@ async fn a_learner_turn_larger_than_the_room_is_refused_not_left_out() -> Result
 #[tokio::test]
 async fn an_older_turn_larger_than_the_room_is_still_left_out() -> Result<()> {
     use super::super::{generate_simulation_turn, SimulationActivityContext};
-    use crate::practical_dto::LearningSimulationSpeaker::{
-        Counterpart, Learner,
-    };
+    use crate::practical_dto::LearningSimulationSpeaker::{Counterpart, Learner};
     let context = SimulationActivityContext {
         title: "Interview".into(),
         brief: "Practice reasoning".into(),

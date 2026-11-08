@@ -1,9 +1,7 @@
 //! Acquire immutable, bounded source snapshots for Learning Studio.
 
 use crate::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
-use crate::dto::{
-    LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
-};
+use crate::dto::{LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto};
 use crate::references::trust::capture;
 use lattice_core::application::ports::LibraryPassagesPort;
 use lattice_core::application::ports::WebServiceTrait;
@@ -217,9 +215,7 @@ pub async fn ensure_before_use_sources(
     deps: &SourceDeps,
     program_id: &str,
 ) -> lattice_core::shared::error::Result<()> {
-    let repo = crate::source_library::LearningSourceLibraryRepository::new(
-        deps.pool.clone(),
-    );
+    let repo = crate::source_library::LearningSourceLibraryRepository::new(deps.pool.clone());
     let workspace = repo.workspace(program_id).await?;
     for source in workspace.sources.iter().filter(|s| {
         s.kind == LearningSourceKind::Web && s.freshness_policy == LearningSourcePolicy::BeforeUse

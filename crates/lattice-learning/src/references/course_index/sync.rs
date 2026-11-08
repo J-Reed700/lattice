@@ -7,12 +7,12 @@
 use super::{IndexMode, CHUNK_CHARS, STEP_CHARS};
 use crate::persistence::hash_text;
 use crate::source_library::{ActiveVersion, LearningSourceLibraryRepository};
+use lattice_core::shared::Result;
 use lattice_index::passage_index::build::{self, BATCH_SIZE, SAVE_EVERY};
 use lattice_index::passage_index::chunking::spans::span_chunks;
 use lattice_index::passage_index::{
     embed_pending, EmbedTurns, Embedding, Engine, LiveIndex, Passage, PassageStore, Progress,
 };
-use lattice_core::shared::Result;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;

@@ -13,9 +13,7 @@ use crate::dto::{
     PreparedLearningLesson,
 };
 use crate::embedded_runtime::BuiltinRuntimes;
-use crate::lessons::structured_call::{
-    complete_checked, CallKind, ReasonFirst,
-};
+use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
@@ -244,9 +242,7 @@ fn evidence_room(llm: &dyn LLMPort, skeleton: &str, output_tokens: usize) -> (us
     }
 }
 
-fn source_data(
-    sources: &[crate::dto::LearningSourceDto],
-) -> Vec<serde_json::Value> {
+fn source_data(sources: &[crate::dto::LearningSourceDto]) -> Vec<serde_json::Value> {
     sources
         .iter()
         .enumerate()
@@ -296,18 +292,12 @@ pub async fn prepare_lesson_with_references<'a>(
     // Adding research references must not discard an otherwise identical draft.
     // Retain its original source indices and prompt while all original snapshots
     // remain unchanged. New evidence still participates in factual verification.
-    let scope_hash = crate::content_verification::digest(
-        &serde_json::to_string(&json!({
-            "policy":AUTHORING_POLICY,
-            "request":authoring_scope(&bare_prompt)?,
-            "revision":crate::lesson_drafts::authoring_revision(program.summary.revision),"model":llm.model_name(),
-        }))?,
-    );
-    let reused = crate::lesson_drafts::reusable_authoring(
-        &scope_hash,
-        &references.sources,
-    )
-    .await?;
+    let scope_hash = crate::content_verification::digest(&serde_json::to_string(&json!({
+        "policy":AUTHORING_POLICY,
+        "request":authoring_scope(&bare_prompt)?,
+        "revision":crate::lesson_drafts::authoring_revision(program.summary.revision),"model":llm.model_name(),
+    }))?);
+    let reused = crate::lesson_drafts::reusable_authoring(&scope_hash, &references.sources).await?;
     let mut expanded: Option<ReferenceCollection<'a>> = None;
     let (prompt, sources, reuse_hash) = if let Some((input_hash, authoring)) = reused {
         let found = (authoring.prompt.clone(), authoring.sources.clone());
@@ -376,25 +366,21 @@ pub async fn prepare_lesson_with_references<'a>(
             room,
             "Packed the lesson's evidence"
         );
-        crate::lesson_drafts::authoring(
-            crate::lesson_drafts::AuthoringContext {
-                scope_hash,
-                prompt: prompt.clone(),
-                sources: sources.clone(),
-                reference_hashes: active
-                    .sources
-                    .iter()
-                    .map(|source| {
-                        (
-                            source.id.clone(),
-                            crate::content_verification::digest(
-                                &source.excerpt,
-                            ),
-                        )
-                    })
-                    .collect(),
-            },
-        );
+        crate::lesson_drafts::authoring(crate::lesson_drafts::AuthoringContext {
+            scope_hash,
+            prompt: prompt.clone(),
+            sources: sources.clone(),
+            reference_hashes: active
+                .sources
+                .iter()
+                .map(|source| {
+                    (
+                        source.id.clone(),
+                        crate::content_verification::digest(&source.excerpt),
+                    )
+                })
+                .collect(),
+        });
         expanded = gathered.expanded.take();
         (prompt, sources, None)
     };
@@ -412,48 +398,46 @@ pub async fn prepare_lesson_with_references<'a>(
         use sha2::Digest;
         format!("{:x}", sha2::Sha256::digest(draft_input.as_bytes()))
     });
-    let raw =
-        if let Some(draft) = crate::lesson_drafts::resume(input_hash).await? {
-            crate::lesson_progress::phase(
-                crate::lesson_progress::Phase::Writing,
-                "Reusing the saved lesson draft; continuing verification",
-            );
-            draft
-        } else {
-            crate::lesson_progress::phase(
-                crate::lesson_progress::Phase::Writing,
-                format!("Writing {}", lesson.title),
-            );
-            let brief = format!(
-                "{LESSON_DRAFT_BRIEF}{}",
-                if sources.is_empty() {
-                    ""
-                } else {
-                    CITATION_DRAFT_BRIEF
-                }
-            );
-            // Every later stage reads the draft as a lesson; the lesson's own
-            // rules run once review and verification have finished with it.
-            let raw = complete_checked(
-                llm,
-                &lesson_system(!sources.is_empty()),
-                prompt.clone(),
-                lesson_schema(sources.len()),
-                output_tokens,
-                None,
-                Some(ReasonFirst {
-                    kind: CallKind::Authoring,
-                    subject: "the lesson",
-                    brief: &brief,
-                }),
-                |raw| parse_json::<GeneratedLesson>(raw).map(|_| raw.to_owned()),
-            )
-            .await?;
-            crate::lesson_drafts::save(&raw).await?;
-            raw
-        };
-    let raw =
-        crate::content_verification::normalize_example_fences(llm, raw).await?;
+    let raw = if let Some(draft) = crate::lesson_drafts::resume(input_hash).await? {
+        crate::lesson_progress::phase(
+            crate::lesson_progress::Phase::Writing,
+            "Reusing the saved lesson draft; continuing verification",
+        );
+        draft
+    } else {
+        crate::lesson_progress::phase(
+            crate::lesson_progress::Phase::Writing,
+            format!("Writing {}", lesson.title),
+        );
+        let brief = format!(
+            "{LESSON_DRAFT_BRIEF}{}",
+            if sources.is_empty() {
+                ""
+            } else {
+                CITATION_DRAFT_BRIEF
+            }
+        );
+        // Every later stage reads the draft as a lesson; the lesson's own
+        // rules run once review and verification have finished with it.
+        let raw = complete_checked(
+            llm,
+            &lesson_system(!sources.is_empty()),
+            prompt.clone(),
+            lesson_schema(sources.len()),
+            output_tokens,
+            None,
+            Some(ReasonFirst {
+                kind: CallKind::Authoring,
+                subject: "the lesson",
+                brief: &brief,
+            }),
+            |raw| parse_json::<GeneratedLesson>(raw).map(|_| raw.to_owned()),
+        )
+        .await?;
+        crate::lesson_drafts::save(&raw).await?;
+        raw
+    };
+    let raw = crate::content_verification::normalize_example_fences(llm, raw).await?;
     let raw = crate::content_verification::strip_draft_apparatus(raw);
     // Finish an interrupted section repair before reviewing the assembled
     // lesson. Its checkpoint is scoped to exact inputs and cannot approve it;
@@ -484,17 +468,16 @@ pub async fn prepare_lesson_with_references<'a>(
     // Verification may number a course source the writer was not given, to
     // cite the passage that supports a claim (course evidence index §5.1).
     let mut numbered = sources.clone();
-    let (raw, report, owned) =
-        crate::content_verification::verify_and_repair_with_references(
-            llm,
-            runtimes,
-            &prompt,
-            &lesson_schema(sources.len()),
-            raw,
-            references,
-            (output_tokens, &mut numbered),
-        )
-        .await?;
+    let (raw, report, owned) = crate::content_verification::verify_and_repair_with_references(
+        llm,
+        runtimes,
+        &prompt,
+        &lesson_schema(sources.len()),
+        raw,
+        references,
+        (output_tokens, &mut numbered),
+    )
+    .await?;
     let value: serde_json::Value = parse_json(&raw).map_err(unusable)?;
     let generated: GeneratedLesson = serde_json::from_value(value.clone())
         .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
@@ -515,10 +498,7 @@ pub async fn prepare_lesson_with_references<'a>(
     // The lesson's own rules do not stop it here: what the teaching review could
     // not repair, and any citation that does not match its source, waits for the
     // user while the lesson publishes.
-    let mut findings = crate::teaching::structural_findings(
-        &lesson_schema(sources.len()),
-        &raw,
-    )?;
+    let mut findings = crate::teaching::structural_findings(&lesson_schema(sources.len()), &raw)?;
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
     findings.extend(citations);
@@ -580,8 +560,7 @@ fn assemble(
         )?;
         // Practice with fewer than two criteria is a structural finding;
         // the criteria it has are saved.
-        let rubric =
-            crate::teaching::rubric(block.rubric, false).map_err(unusable)?;
+        let rubric = crate::teaching::rubric(block.rubric, false).map_err(unusable)?;
         blocks.push(LearningBlockDto {
             rubric,
             kind: block.kind,

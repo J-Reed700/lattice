@@ -206,11 +206,7 @@ async fn a_list_ends_at_its_last_passage_on_the_claims_subject() -> Result<()> {
     let references = ReferenceCollection::lexical(&subject_then_shelf())?;
     let subject = references.subject_of(CLAIM).await?;
     let list = references
-        .claim_list(
-            CLAIM,
-            &crate::reference_collection::Scope::All,
-            &[],
-        )
+        .claim_list(CLAIM, &crate::reference_collection::Scope::All, &[])
         .await?;
     assert_eq!(
         list.passages.len(),

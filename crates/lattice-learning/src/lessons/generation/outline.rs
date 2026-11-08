@@ -10,9 +10,7 @@ use crate::dto::{
     GenerateLearningProgramRequestDto, LearningCourseDepth, LearningLessonDto, LearningModuleDto,
     LearningPreparation, LearningSourceDto,
 };
-use crate::lessons::structured_call::{
-    complete_checked_request, CallKind, ReasonFirst,
-};
+use crate::lessons::structured_call::{complete_checked_request, CallKind, ReasonFirst};
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -148,15 +146,13 @@ pub(crate) async fn draft_outline<T>(
         OUTLINE_OUTPUT_RESERVE
     };
     let output_tokens = target;
-    let references =
-        crate::reference_collection::ReferenceCollection::lexical(sources)?;
+    let references = crate::reference_collection::ReferenceCollection::lexical(sources)?;
     let queries: Vec<String> = if subtopics.is_empty() {
         vec![request.goal.clone()]
     } else {
         subtopics.to_vec()
     };
-    let supplied =
-        crate::outline_evidence::select(llm, &references, &queries).await?;
+    let supplied = crate::outline_evidence::select(llm, &references, &queries).await?;
     let catalog = references.catalog(llm);
     let context = |supplied: Vec<Value>, catalog: Value| {
         json!({

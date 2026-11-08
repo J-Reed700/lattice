@@ -298,13 +298,12 @@ pub(crate) async fn plan_needs(
         }
     });
     let accept = |raw: &str| -> Result<Vec<GapNeed>> {
-        let plan: PlannedAnswer =
-            crate::generation::parse_json(raw).map_err(|_| {
-                AppError::InvalidInput(
-                    "The reference search planner's answer could not be read as a list of searches."
-                        .into(),
-                )
-            })?;
+        let plan: PlannedAnswer = crate::generation::parse_json(raw).map_err(|_| {
+            AppError::InvalidInput(
+                "The reference search planner's answer could not be read as a list of searches."
+                    .into(),
+            )
+        })?;
         let mut planned = Vec::new();
         for GapNeed { gap, need } in plan.needs {
             let served = gaps.get(gap).ok_or_else(|| {
@@ -405,10 +404,7 @@ impl Room<'static> {
 /// encyclopedia search for `title` unless it already asked for those kinds.
 /// A plan orders the sources; it never removes the general ones. A subtopic
 /// with no needs stays without searches.
-pub(crate) fn with_breadth(
-    needs: &[PlannedNeed],
-    title: &str,
-) -> Vec<PlannedNeed> {
+pub(crate) fn with_breadth(needs: &[PlannedNeed], title: &str) -> Vec<PlannedNeed> {
     let mut searched = needs.to_vec();
     let Some(first) = needs.first() else {
         return searched;

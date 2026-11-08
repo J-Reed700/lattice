@@ -3,9 +3,7 @@
 use crate::drills::material::JudgeWording;
 
 /// The wording for drills of code in `language`.
-pub(in crate::drills::material) fn judge_wording(
-    language: &str,
-) -> JudgeWording {
+pub(in crate::drills::material) fn judge_wording(language: &str) -> JudgeWording {
     JudgeWording {
         system: SYSTEM,
         brief: BRIEF,

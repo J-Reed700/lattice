@@ -384,10 +384,7 @@ impl LearningCurriculumRepository {
         learning_job(job, scope)
     }
 
-    pub(crate) async fn job_content_is_current(
-        &self,
-        id: &str,
-    ) -> Result<bool> {
+    pub(crate) async fn job_content_is_current(&self, id: &str) -> Result<bool> {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_jobs j JOIN learning_programs p ON p.id=j.program_id WHERE j.job_id=? AND j.content_revision=p.content_revision)")
             .bind(id).fetch_one(&self.pool).await.map_err(db)
     }

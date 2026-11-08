@@ -7,11 +7,7 @@ use serde_json::Value;
 
 /// Where a lesson field is in the lesson, as a JSON pointer: `body`,
 /// `rubric/2/description`, `options/1` of a unit.
-pub(crate) fn field_pointer(
-    candidate: &Value,
-    unit: usize,
-    field: &str,
-) -> Option<String> {
+pub(crate) fn field_pointer(candidate: &Value, unit: usize, field: &str) -> Option<String> {
     let blocks = candidate.get("blocks")?.as_array()?.len();
     Some(if unit < blocks {
         format!("/blocks/{unit}/{field}")
@@ -21,11 +17,7 @@ pub(crate) fn field_pointer(
 }
 
 /// The text of a lesson field: `body`, `rubric/2/description`, `options/1`.
-pub(crate) fn field_text(
-    candidate: &Value,
-    unit: usize,
-    field: &str,
-) -> Option<String> {
+pub(crate) fn field_text(candidate: &Value, unit: usize, field: &str) -> Option<String> {
     candidate
         .pointer(&field_pointer(candidate, unit, field)?)?
         .as_str()

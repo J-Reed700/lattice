@@ -117,13 +117,11 @@ pub async fn runtime_generation_context(
         .unwrap_or_else(|| ("Create editable learner files compatible with the named runtime and custom command. Network access and external dependency installation are unavailable. Independent checks are authored separately.".into(), Vec::new()));
     let contract = preset.map(|preset| preset.entrypoint_contract)
         .unwrap_or_else(|| "Create files compatible with this exact runtime command. Network access and external dependency installation are unavailable.".into());
-    Ok(Some(
-        crate::practical_generation::PracticalRuntimeContext {
-            name: profile.name,
-            command: profile.command,
-            contract,
-            learner_contract,
-            evaluator_paths,
-        },
-    ))
+    Ok(Some(crate::practical_generation::PracticalRuntimeContext {
+        name: profile.name,
+        command: profile.command,
+        contract,
+        learner_contract,
+        evaluator_paths,
+    }))
 }

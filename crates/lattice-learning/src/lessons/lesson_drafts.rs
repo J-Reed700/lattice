@@ -50,8 +50,7 @@ impl AuthoringContext {
             && self.reference_hashes.iter().all(|(id, hash)| {
                 references.iter().any(|source| {
                     &source.id == id
-                        && crate::content_verification::digest(&source.excerpt)
-                            == *hash
+                        && crate::content_verification::digest(&source.excerpt) == *hash
                 })
             })
     }
@@ -100,9 +99,7 @@ pub(crate) fn authoring_revision(current: i64) -> i64 {
 
 /// Receipts are keyed by their caller's exact inputs and policy. Repository
 /// writes merge one key atomically, including when claim checks finish together.
-pub(crate) async fn checkpoint(
-    key: &str,
-) -> Result<Option<serde_json::Value>> {
+pub(crate) async fn checkpoint(key: &str) -> Result<Option<serde_json::Value>> {
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
         return Ok(None);
     };
@@ -112,10 +109,7 @@ pub(crate) async fn checkpoint(
         .await
 }
 
-pub(crate) async fn record_checkpoint(
-    key: &str,
-    value: serde_json::Value,
-) -> Result<()> {
+pub(crate) async fn record_checkpoint(key: &str, value: serde_json::Value) -> Result<()> {
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
         return Ok(());
     };
@@ -191,19 +185,13 @@ pub(crate) async fn save(candidate: &str) -> Result<()> {
     save_checkpoint(candidate, None, None).await
 }
 
-pub(crate) async fn save_repair(
-    candidate: &str,
-    pending: Option<String>,
-) -> Result<()> {
+pub(crate) async fn save_repair(candidate: &str, pending: Option<String>) -> Result<()> {
     save_checkpoint(candidate, Some(pending), None).await
 }
 
 /// The draft and the stopping state of the teaching review repairing it, in
 /// one write.
-pub(crate) async fn save_with_passes(
-    candidate: &str,
-    passes: String,
-) -> Result<()> {
+pub(crate) async fn save_with_passes(candidate: &str, passes: String) -> Result<()> {
     save_checkpoint(candidate, None, Some(passes)).await
 }
 
@@ -291,18 +279,13 @@ async fn current(candidate: &str) -> Result<Option<(Context, Draft)>> {
 
 /// This is the source-independent claim inventory and its coverage audit,
 /// never a factual approval. The verifier validates its policy and content.
-pub(crate) async fn claim_inventory(
-    candidate: &str,
-) -> Result<Option<String>> {
+pub(crate) async fn claim_inventory(candidate: &str) -> Result<Option<String>> {
     Ok(current(candidate)
         .await?
         .and_then(|(_, draft)| draft.claim_inventory))
 }
 
-pub(crate) async fn record_claim_inventory(
-    candidate: &str,
-    inventory: String,
-) -> Result<()> {
+pub(crate) async fn record_claim_inventory(candidate: &str, inventory: String) -> Result<()> {
     if let Some((context, mut draft)) = current(candidate).await? {
         draft.claim_inventory = Some(inventory);
         context
@@ -314,9 +297,7 @@ pub(crate) async fn record_claim_inventory(
     Ok(())
 }
 
-pub(crate) async fn pending_repair(
-    candidate: &str,
-) -> Result<Option<String>> {
+pub(crate) async fn pending_repair(candidate: &str) -> Result<Option<String>> {
     Ok(current(candidate)
         .await?
         .and_then(|(_, draft)| draft.pending_repair))
@@ -324,18 +305,13 @@ pub(crate) async fn pending_repair(
 
 /// The stopping state a teaching review cut short saved with this exact
 /// draft.
-pub(crate) async fn teaching_passes(
-    candidate: &str,
-) -> Result<Option<String>> {
+pub(crate) async fn teaching_passes(candidate: &str) -> Result<Option<String>> {
     Ok(current(candidate)
         .await?
         .and_then(|(_, draft)| draft.teaching_passes))
 }
 
-pub(crate) async fn record_pending_repair(
-    candidate: &str,
-    repair: String,
-) -> Result<()> {
+pub(crate) async fn record_pending_repair(candidate: &str, repair: String) -> Result<()> {
     set_pending_repair(candidate, Some(repair)).await
 }
 
@@ -351,19 +327,13 @@ async fn set_pending_repair(candidate: &str, repair: Option<String>) -> Result<(
     Ok(())
 }
 
-pub(crate) async fn teaching_completed(
-    candidate: &str,
-    receipt: &str,
-) -> Result<bool> {
+pub(crate) async fn teaching_completed(candidate: &str, receipt: &str) -> Result<bool> {
     Ok(current(candidate)
         .await?
         .is_some_and(|(_, draft)| draft.teaching_receipt.as_deref() == Some(receipt)))
 }
 
-pub(crate) async fn record_teaching(
-    candidate: &str,
-    receipt: String,
-) -> Result<()> {
+pub(crate) async fn record_teaching(candidate: &str, receipt: String) -> Result<()> {
     if let Some((context, mut draft)) = current(candidate).await? {
         draft.teaching_receipt = Some(receipt);
         context

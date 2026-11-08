@@ -74,8 +74,7 @@ pub(super) async fn finish(
                 fields.insert("parts".into(), serde_json::to_value(&parts)?);
             }
         }
-        crate::lesson_drafts::record_checkpoint(&pending.receipt_key, receipt)
-            .await?;
+        crate::lesson_drafts::record_checkpoint(&pending.receipt_key, receipt).await?;
     }
     Ok((pending.ordinal, pending.key, finding, false))
 }
@@ -248,9 +247,7 @@ pub(in crate::lessons::content_verification) async fn group(
                     .collect::<Vec<_>>(),
             )?)
         );
-        if crate::lesson_drafts::checkpoint(&split_key).await?
-            == Some(json!(true))
-        {
+        if crate::lesson_drafts::checkpoint(&split_key).await? == Some(json!(true)) {
             let rest = pending.split_off(pending.len() / 2);
             groups.push(rest);
             groups.push(pending);
@@ -263,9 +260,7 @@ pub(in crate::lessons::content_verification) async fn group(
             claims.len(),
             pending.first().map_or(0, |item| item.unit) + 1
         ));
-        let _model_call = crate::lesson_progress::model_call(
-            crate::lesson_progress::Term::Reading,
-        );
+        let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Reading);
         let judgments = match judge_batch_for_publication(llm, &targets).await {
             Ok(answered) => {
                 answers.add(AnswerSize::of(answered.output_tokens, targets.len()));
@@ -277,11 +272,7 @@ pub(in crate::lessons::content_verification) async fn group(
             Err(
                 error @ (AppError::ServiceNotAvailable(_) | AppError::PromptExceedsWindow { .. }),
             ) => {
-                crate::lesson_drafts::record_checkpoint(
-                    &split_key,
-                    json!(true),
-                )
-                .await?;
+                crate::lesson_drafts::record_checkpoint(&split_key, json!(true)).await?;
                 crate::lesson_progress::stage(
                     if matches!(error, AppError::PromptExceedsWindow { .. }) {
                         format!(

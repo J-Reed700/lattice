@@ -85,9 +85,7 @@ impl LearningPracticalRepository {
         })
     }
 
-    pub(crate) async fn profiles(
-        &self,
-    ) -> Result<Vec<LearningRuntimeProfileDto>> {
+    pub(crate) async fn profiles(&self) -> Result<Vec<LearningRuntimeProfileDto>> {
         let mut connection = self.pool.acquire().await.map_err(db)?;
         Self::profiles_on(&mut connection).await
     }
@@ -129,11 +127,18 @@ impl LearningPracticalRepository {
         for file in file_rows {
             let path: String = file.get("path");
             // A pack or older writer may mislabel this reserved private path.
-            if path == crate::practice::interview_answers::INTERVIEW_ANSWERS_FILE_PATH { continue; }
+            if path == crate::practice::interview_answers::INTERVIEW_ANSWERS_FILE_PATH {
+                continue;
+            }
             let content: String = file.get("content");
             if path == crate::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH {
-                interview_plan = Some(serde_json::from_str::<LearningInterviewPlanDto>(&content)
-                    .map_err(|error| AppError::Database(format!("Saved interview plan is invalid: {error}")))?);
+                interview_plan = Some(
+                    serde_json::from_str::<LearningInterviewPlanDto>(&content).map_err(
+                        |error| {
+                            AppError::Database(format!("Saved interview plan is invalid: {error}"))
+                        },
+                    )?,
+                );
                 continue;
             }
             files.push(LearningPracticalFileDto {

@@ -17,14 +17,12 @@ mod review;
 
 #[cfg(test)]
 pub(crate) use check::finding_of;
-pub(crate) use check::{SourceCheck, SourceFinding, SourceSays};
 pub use check::ClaimSourceCheck;
+pub(crate) use check::{SourceCheck, SourceFinding, SourceSays};
 pub(super) use judge::judge_wording;
 
 use super::{DrillMaterial, PlantWording, ReviewerWording, StageCtx};
-use crate::drills::build::{
-    Baseline, CleanCode, CleanReview, Mutation, SourcePassage,
-};
+use crate::drills::build::{Baseline, CleanCode, CleanReview, Mutation, SourcePassage};
 use crate::drills::fix_grading::{self, FixStrategy};
 use crate::drills::proof::{self, ProofStrategy, StrategyKind, Tools};
 use crate::drills::runner::CodeRunner;

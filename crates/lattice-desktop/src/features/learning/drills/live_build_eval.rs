@@ -29,7 +29,6 @@ use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
     BlindReview, DrillBuild, DroppedMutation, Evidence, ModelCall, Stage, Trail,
 };
-use crate::features::learning::tests::grading::live_grading_eval::model;
 use crate::features::learning::drills::grading::JudgeGrader;
 use crate::features::learning::drills::material::{material_for, ClaimSourceCheck};
 use crate::features::learning::drills::repository::{self, StoredDrill};
@@ -37,6 +36,7 @@ use crate::features::learning::drills::runner::{runner_for, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::persistence::{db, now};
+use crate::features::learning::tests::grading::live_grading_eval::model;
 
 /// What a drill's build planted, proved and dropped, and what its blind review added to the key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

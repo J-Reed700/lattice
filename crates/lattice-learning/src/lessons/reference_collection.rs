@@ -8,8 +8,8 @@ use crate::dto::LearningSourceDto;
 use crate::references::course_index::{
     CourseProgress, CourseSearch, IndexMode, IndexView, CHUNK_CHARS,
 };
-use lattice_index::passage_index::PassageStore;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_index::passage_index::PassageStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -99,11 +99,7 @@ fn longest_fitting_prefix(
 /// The bytes verification reads for the passage at `start..end` of `text`:
 /// the passage and up to 1,700 characters either side, cut back to a line
 /// break that falls within 300 bytes of either end.
-pub(crate) fn checked_span(
-    text: &str,
-    start: usize,
-    end: usize,
-) -> (usize, usize) {
+pub(crate) fn checked_span(text: &str, start: usize, end: usize) -> (usize, usize) {
     const SURROUNDING_CHARS: usize = 1700;
     let (Some(before), Some(after)) = (text.get(..start), text.get(end..)) else {
         return (start, end);
@@ -159,9 +155,7 @@ impl CourseProgress for IndexingStages {
 
     fn indexing(&mut self, references: usize) {
         self.references = references;
-        crate::lesson_progress::stage(format!(
-            "Indexing {references} new references"
-        ));
+        crate::lesson_progress::stage(format!("Indexing {references} new references"));
     }
 
     fn embedded(&mut self, done: usize, total: usize) {
@@ -182,9 +176,7 @@ impl CourseProgress for IndexingStages {
         } else {
             "Embedding the course's references".to_string()
         };
-        crate::lesson_progress::stage(format!(
-            "{what} · {done} of {total} passages{pace}"
-        ));
+        crate::lesson_progress::stage(format!("{what} · {done} of {total} passages{pace}"));
     }
 }
 
@@ -267,10 +259,7 @@ impl<'a> ReferenceCollection<'a> {
     /// This collection again over `sources`: a course's brought up to date
     /// first (research may have saved references to it), any other rebuilt
     /// from `sources`.
-    pub(crate) async fn reopen(
-        &self,
-        sources: &[LearningSourceDto],
-    ) -> Result<Self> {
+    pub(crate) async fn reopen(&self, sources: &[LearningSourceDto]) -> Result<Self> {
         match &self.index {
             Index::Course { course, .. } => Self::current(Some(*course), sources).await,
             Index::Memory(_) => Self::lexical(sources),
@@ -429,10 +418,7 @@ impl<'a> ReferenceCollection<'a> {
     /// in the first snapshot that contains it, exactly or apart from
     /// typography and spacing, widened as verification widens a retrieved
     /// passage. A quote no snapshot contains is skipped.
-    pub(crate) fn cited_passages(
-        &self,
-        quotes: &[&str],
-    ) -> Result<Vec<ReferencePassage>> {
+    pub(crate) fn cited_passages(&self, quotes: &[&str]) -> Result<Vec<ReferencePassage>> {
         let span = |source: &LearningSourceDto, start: usize, end: usize| ReferencePassage {
             source_id: source.id.clone(),
             text: source
@@ -457,10 +443,8 @@ impl<'a> ReferenceCollection<'a> {
             });
             let restored = || {
                 self.sources.iter().find_map(|source| {
-                    let copied = crate::outline_citations::exact_source_quote(
-                        &source.excerpt,
-                        quote,
-                    )?;
+                    let copied =
+                        crate::outline_citations::exact_source_quote(&source.excerpt, quote)?;
                     let start = source.excerpt.find(copied)?;
                     Some(span(source, start, start + copied.len()))
                 })

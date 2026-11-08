@@ -344,11 +344,9 @@ pub(super) async fn record_readings(
 /// The finding a statement's latest reading left, restored from the checkpoint
 /// the job saved it in, when it saved one.
 async fn saved_finding(id: &ClaimId) -> Result<Option<Finding>> {
-    Ok(
-        crate::lesson_drafts::checkpoint(&finding_key(id))
-            .await?
-            .and_then(|value| serde_json::from_value::<Finding>(value).ok()),
-    )
+    Ok(crate::lesson_drafts::checkpoint(&finding_key(id))
+        .await?
+        .and_then(|value| serde_json::from_value::<Finding>(value).ok()))
 }
 
 /// What a check's result says of a statement.
@@ -593,11 +591,8 @@ pub(super) async fn record_hinted(
 ) -> Result<()> {
     for (id, read) in answers {
         let finding = read.finding;
-        crate::lesson_drafts::record_checkpoint(
-            &finding_key(&id),
-            serde_json::to_value(&finding)?,
-        )
-        .await?;
+        crate::lesson_drafts::record_checkpoint(&finding_key(&id), serde_json::to_value(&finding)?)
+            .await?;
         checks.latest.insert(id.clone(), finding.clone());
         ledger.record_hint_reading(&id, &finding).await?;
         if !finding.evidence.is_empty() {

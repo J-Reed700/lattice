@@ -154,12 +154,11 @@ impl LearningRecallRepository {
                 .ok(),
             None => None,
         };
-        let collection =
-            crate::reference_collection::ReferenceCollection::searchable_now(
-                course.as_ref(),
-                &sources,
-            )
-            .await?;
+        let collection = crate::reference_collection::ReferenceCollection::searchable_now(
+            course.as_ref(),
+            &sources,
+        )
+        .await?;
         let passages = collection.retrieve(query, req.limit).await?;
         let workspace = snapshots.workspace(&req.program_id).await?;
         let mut results = Vec::new();
@@ -230,9 +229,7 @@ fn parse_selector(row: &sqlx::sqlite::SqliteRow) -> Result<SourceSelectorRecord>
     })
 }
 
-fn selector_status_name(
-    status: &crate::source_selector::LearningQuoteMatchStatus,
-) -> &'static str {
+fn selector_status_name(status: &crate::source_selector::LearningQuoteMatchStatus) -> &'static str {
     match status {
         crate::source_selector::LearningQuoteMatchStatus::Exact => "exact",
         crate::source_selector::LearningQuoteMatchStatus::ContextDisambiguated => "contextual",

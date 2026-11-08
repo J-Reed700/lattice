@@ -4,10 +4,7 @@ use lattice_core::shared::error::Result;
 use std::collections::HashMap;
 
 impl LessonVerificationReport {
-    pub(crate) fn archived_metadata(
-        &self,
-        lesson_id: &str,
-    ) -> Result<(&str, &str, i64)> {
+    pub(crate) fn archived_metadata(&self, lesson_id: &str) -> Result<(&str, &str, i64)> {
         if self.lesson_id != lesson_id
             || self.policy.is_empty()
             || self.checker_model.is_empty()
@@ -24,10 +21,7 @@ impl LessonVerificationReport {
         Ok((&self.policy, &self.content_sha256, self.checked_at))
     }
 
-    pub(crate) fn remap_archived_ids(
-        &mut self,
-        ids: &HashMap<String, String>,
-    ) {
+    pub(crate) fn remap_archived_ids(&mut self, ids: &HashMap<String, String>) {
         let remap = |id: &mut String| {
             if let Some(new) = ids.get(id) {
                 *id = new.clone();

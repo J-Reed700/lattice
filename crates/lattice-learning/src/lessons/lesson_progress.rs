@@ -61,9 +61,7 @@ pub(crate) async fn checks<F: std::future::Future>(future: F) -> F::Output {
 
 /// Runs `future`, a stage inside a check step that checks none of the plan's
 /// statements: its calls count nothing.
-pub(crate) async fn outside_checks<F: std::future::Future>(
-    future: F,
-) -> F::Output {
+pub(crate) async fn outside_checks<F: std::future::Future>(future: F) -> F::Output {
     CHECKS.scope(false, future).await
 }
 
@@ -222,10 +220,7 @@ pub(crate) fn received(text: &str) {
     });
 }
 
-pub(crate) fn phase(
-    phase: LearningGenerationPhase,
-    message: impl Into<String>,
-) {
+pub(crate) fn phase(phase: LearningGenerationPhase, message: impl Into<String>) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         let activity = &mut state.activity;
@@ -347,11 +342,7 @@ pub(crate) fn new_references(count: Option<usize>) {
 /// ceiling (claim classes design §3.12). A later sort changes nothing here: a
 /// statement new to the ledger is taken in when its pass is named
 /// ([`statements_moved`]).
-pub(crate) fn calls_planned(
-    policy: &dyn AcceptancePolicy,
-    statements: &[Planned],
-    sections: u32,
-) {
+pub(crate) fn calls_planned(policy: &dyn AcceptancePolicy, statements: &[Planned], sections: u32) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
         if state.plan.is_none() {
@@ -515,9 +506,7 @@ impl Trace {
 
 /// `future` run with its progress recorded.
 #[cfg(test)]
-pub(crate) async fn traced<T>(
-    future: impl std::future::Future<Output = T>,
-) -> (T, Trace) {
+pub(crate) async fn traced<T>(future: impl std::future::Future<Output = T>) -> (T, Trace) {
     let progress = Progress::default();
     let value = CURRENT.scope(progress.clone(), future).await;
     let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -549,9 +538,7 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
 
 /// Runs `future` with fresh progress and returns every stage it showed.
 #[cfg(test)]
-pub(crate) async fn staged<T>(
-    future: impl std::future::Future<Output = T>,
-) -> (T, Vec<String>) {
+pub(crate) async fn staged<T>(future: impl std::future::Future<Output = T>) -> (T, Vec<String>) {
     let progress = Progress::default();
     let value = CURRENT.scope(progress.clone(), future).await;
     let stages = progress

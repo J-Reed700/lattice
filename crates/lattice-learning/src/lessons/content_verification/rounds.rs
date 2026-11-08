@@ -52,10 +52,7 @@ impl Rounds {
 
     /// A publication found a bound source changed: the job tries once more,
     /// and the second time fails as it found.
-    pub(crate) fn publishing_failed(
-        &mut self,
-        error: AppError,
-    ) -> Result<()> {
+    pub(crate) fn publishing_failed(&mut self, error: AppError) -> Result<()> {
         if std::mem::replace(&mut self.published_again, true) {
             return Err(error);
         }

@@ -17,9 +17,7 @@ impl ClaimLedger {
     /// Read from the ledger, so a job that resumes has them too. A failed
     /// example is none of them, and neither is a statement that passed its
     /// check and went with a sentence another's repair changed.
-    pub(in crate::lessons::content_verification) fn repair_history(
-        &self,
-    ) -> Vec<Value> {
+    pub(in crate::lessons::content_verification) fn repair_history(&self) -> Vec<Value> {
         let mut history: Vec<Value> = Vec::new();
         for entry in self.entries.iter().filter(|entry| !is_example(entry)) {
             let (mut reason, mut failed) = ("", false);

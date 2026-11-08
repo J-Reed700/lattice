@@ -164,15 +164,8 @@ async fn author_group(
         |raw| check(raw).map(|_| raw.to_owned()),
     )
     .await?;
-    let raw = crate::teaching::review_and_repair(
-        llm,
-        SYSTEM,
-        &prompt,
-        &schema,
-        raw,
-        output_tokens,
-    )
-    .await?;
+    let raw = crate::teaching::review_and_repair(llm, SYSTEM, &prompt, &schema, raw, output_tokens)
+        .await?;
     check(&raw)
 }
 

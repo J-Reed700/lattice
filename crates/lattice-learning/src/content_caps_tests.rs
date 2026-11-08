@@ -142,8 +142,7 @@ async fn a_need_search_pages_while_new_results_appear_and_search_need_reads_one_
             })
             .collect(),
     );
-    let need =
-        crate::references::web_research::PlannedNeed::web("query".into());
+    let need = crate::references::web_research::PlannedNeed::web("query".into());
     use crate::references::web_research::{search_need, NeedSearch, Room};
     let first = search_need(&web, &need, Room::for_all()).await?;
     assert_eq!(first.len(), 12, "one page");
@@ -206,10 +205,8 @@ async fn the_starting_point_check_covers_every_module() -> Result<()> {
     let tasks: Vec<_> = outcomes.iter().map(|o| json!({"outcomeId":o.id,"prompt":"Predict the result of this concrete case and explain why.","expectedAnswer":"The result follows from the stated rule applied to the case.","criteria":"Names the rule, applies it, and states the predicted result."})).collect();
     let llm = Model(json!({ "tasks": tasks }).to_string());
     let sources = vec![source("s", "Skill guidance for every module.".into())];
-    let authored = crate::diagnostic_generation::author(
-        &llm, &program, &outcomes, &sources,
-    )
-    .await?;
+    let authored =
+        crate::diagnostic_generation::author(&llm, &program, &outcomes, &sources).await?;
     assert_eq!(authored.len(), 8, "not the former six");
     Ok(())
 }
@@ -224,8 +221,7 @@ struct PerRequirement {
 #[async_trait::async_trait]
 impl LLMPort for PerRequirement {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let (system, user) =
-            crate::lessons::structured_call::task_messages(request);
+        let (system, user) = crate::lessons::structured_call::task_messages(request);
         if !system.starts_with("Write quiz questions") {
             return self.inner.complete(request).await;
         }
@@ -266,12 +262,8 @@ impl LLMPort for PerRequirement {
 
 #[tokio::test]
 async fn quiz_items_are_authored_per_requirement_from_retrieved_passages() -> Result<()> {
-    use crate::assessment_engine::{
-        LearningBlueprintRequirement, LearningItemFormat,
-    };
-    use crate::assessment_generation::{
-        author_items, AuthoringNeed, MaterialPassage,
-    };
+    use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
+    use crate::assessment_generation::{author_items, AuthoringNeed, MaterialPassage};
     let needle = "Partition pruning skips partitions that cannot match the predicate.";
     let need = |title: &str| AuthoringNeed {
         requirement: LearningBlueprintRequirement {
@@ -336,16 +328,11 @@ fn the_tutor_sees_the_newest_whole_turns_that_fit_and_counts_the_rest() {
     let prompt =
         json!({"taskPrompt":"Solve it.","recentTurns":[],"earlierTurns":"","sourceSnapshots":[]});
     // Six turns all fit: not the former four.
-    let shown = crate::practice_generation::with_recent_turns(
-        &llm,
-        prompt.clone(),
-        &few,
-    );
+    let shown = crate::practice_generation::with_recent_turns(&llm, prompt.clone(), &few);
     assert_eq!(shown["recentTurns"].as_array().unwrap().len(), 6);
     assert_eq!(shown["earlierTurns"], "");
     // Four hundred do not: the newest whole turns, then a count of the rest.
-    let shown =
-        crate::practice_generation::with_recent_turns(&llm, prompt, &many);
+    let shown = crate::practice_generation::with_recent_turns(&llm, prompt, &many);
     let turns = shown["recentTurns"].as_array().unwrap();
     assert!(turns.len() > 4 && turns.len() < 400);
     assert!(turns[0]["request"]
@@ -512,10 +499,8 @@ async fn starting_point_tasks_are_read_at_any_length() -> Result<()> {
         let llm = Model(starting_point_tasks(
             &outcomes, &prompt, &expected, &criteria,
         ));
-        let authored = crate::diagnostic_generation::author(
-            &llm, &program, &outcomes, &sources,
-        )
-        .await;
+        let authored =
+            crate::diagnostic_generation::author(&llm, &program, &outcomes, &sources).await;
         assert!(authored.is_ok(), "{what}: {authored:?}");
         let authored = authored?;
         assert_eq!(authored.len(), outcomes.len(), "{what}");
@@ -541,10 +526,7 @@ async fn the_starting_point_tasks_schema_bounds_no_text_but_a_blank_one() -> Res
         "Names the rule, applies it, and states the predicted result.",
     ));
     let recording = Recording::new(&model);
-    crate::diagnostic_generation::author(
-        &recording, &program, &outcomes, &sources,
-    )
-    .await?;
+    crate::diagnostic_generation::author(&recording, &program, &outcomes, &sources).await?;
     let schemas = recording.schemas_naming("expectedAnswer");
     assert!(!schemas.is_empty(), "the tasks schema was sent");
     for schema in &schemas {

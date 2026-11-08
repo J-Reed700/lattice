@@ -1,9 +1,7 @@
 //! Resumable outline drafts. A saved draft is not an approval to teach its content.
 use crate::outline_linking::{CitationReceipts, LinkLog};
 use crate::outline_references::ReferencePlan;
-use crate::{
-    dto::*, outline_progress::OutlineProgress, repository::LearningRepository,
-};
+use crate::{dto::*, outline_progress::OutlineProgress, repository::LearningRepository};
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::{
     application::ports::LLMPort,
@@ -239,8 +237,7 @@ impl OutlineDraft {
     /// the current count of cited items (every surviving citation has a
     /// receipt); removals accumulate over the operation.
     pub fn record_citations(&mut self, log: LinkLog) {
-        self.review.citations_verified =
-            crate::outline_linking::cited_count(&self.candidate);
+        self.review.citations_verified = crate::outline_linking::cited_count(&self.candidate);
         self.review.citations_removed += log.removed();
     }
 
@@ -373,20 +370,13 @@ async fn gather_for_draft(
     let plan = match &draft.reference_plan {
         Some(plan) if plan.query_count() > 0 => plan.clone(),
         _ => {
-            let plan = crate::outline_references::plan(
-                llm,
-                &draft.request,
-                sources,
-                progress,
-            )
-            .await?;
+            let plan =
+                crate::outline_references::plan(llm, &draft.request, sources, progress).await?;
             draft.reference_plan = Some(plan.clone());
             plan
         }
     };
-    let found =
-        crate::outline_references::gather(llm, web, &plan, sources, progress)
-            .await?;
+    let found = crate::outline_references::gather(llm, web, &plan, sources, progress).await?;
     let saved = found.sources.len();
     if saved == 0 {
         draft.review.note = format!("Reference gathering ran {} searches but saved no usable pages ({} searches or pages were unavailable).", found.searches, found.unavailable);
@@ -395,8 +385,7 @@ async fn gather_for_draft(
     }
     for (source, reference) in found.sources.iter().zip(&found.references) {
         draft.source_ids.push(source.id.clone());
-        sources
-            .push(crate::outline_references::authoring_copy(source, reference));
+        sources.push(crate::outline_references::authoring_copy(source, reference));
     }
     draft.review.references_gathered += saved as u32;
     draft.review.status = LearningOutlineReviewStatus::Unchecked;

@@ -33,9 +33,7 @@ impl<'r> Round<'r> {
         self.searches.len()
     }
 
-    pub(crate) fn iter_mut(
-        &mut self,
-    ) -> std::slice::IterMut<'_, &'r mut NeedSearch<'static>> {
+    pub(crate) fn iter_mut(&mut self) -> std::slice::IterMut<'_, &'r mut NeedSearch<'static>> {
         self.searches.iter_mut()
     }
 

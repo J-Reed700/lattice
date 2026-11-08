@@ -28,7 +28,9 @@ use lattice_core::shared::error::{AppError, Result};
 /// against the file, nor quietly replaced by another model.
 fn unusable_sidecar(error: &LLMError) -> Option<AppError> {
     match error {
-        LLMError::SidecarBinaryUnusable(message) => Some(lattice_core::shared::error::server_cannot_start(message)),
+        LLMError::SidecarBinaryUnusable(message) => {
+            Some(lattice_core::shared::error::server_cannot_start(message))
+        }
         _ => None,
     }
 }

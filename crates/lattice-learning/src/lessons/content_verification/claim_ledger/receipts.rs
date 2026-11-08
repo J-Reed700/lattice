@@ -145,10 +145,7 @@ impl LessonVerificationReport {
     /// supported sentence is entailed as written, so only the citation
     /// changes. Called on the assembled lesson, before the report is bound
     /// to it.
-    pub(crate) fn cite_user_evidence(
-        &self,
-        lesson: &mut PreparedLearningLesson,
-    ) {
+    pub(crate) fn cite_user_evidence(&self, lesson: &mut PreparedLearningLesson) {
         let blocks = lesson.blocks.len();
         for finding in self
             .findings

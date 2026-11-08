@@ -140,8 +140,7 @@ impl LLMPort for SmallWindow {
         &self,
         request: &lattice_core::application::ports::llm_port::CompletionRequest,
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
-        let (system, user) =
-            crate::lessons::structured_call::task_messages(request);
+        let (system, user) = crate::lessons::structured_call::task_messages(request);
         let mut requests = self.requests.lock().unwrap();
         let marker = format!("[{}]", requests.len());
         requests.push((system.to_owned(), user.to_owned()));
@@ -705,9 +704,7 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
     let uncited = |lesson: &Value| {
         crate::generation::lesson_rules(lesson)
             .into_iter()
-            .filter(|finding| {
-                finding.kind == crate::review_findings::FindingKind::Quotation
-            })
+            .filter(|finding| finding.kind == crate::review_findings::FindingKind::Quotation)
             .count()
     };
     assert_eq!(uncited(&repaired), 0);

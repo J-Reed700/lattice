@@ -335,21 +335,13 @@ impl LessonVerificationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content_verification::{
-        tests::attest, CheckedPart, Classed, EvidencePassage,
-    };
-    use crate::dto::{
-        LearningBlockDto, LearningBlockKind, PreparedLearningLesson,
-    };
+    use crate::content_verification::{tests::attest, CheckedPart, Classed, EvidencePassage};
+    use crate::dto::{LearningBlockDto, LearningBlockKind, PreparedLearningLesson};
     use lattice_core::domain::learning::claim_review::ClassifiedBy;
     use lattice_core::domain::provenance::Label;
 
     fn fixture() -> (LearningLessonDto, LessonVerificationReport) {
-        let mut lesson = crate::tests::fixture()
-            .modules
-            .remove(0)
-            .lessons
-            .remove(0);
+        let mut lesson = crate::tests::fixture().modules.remove(0).lessons.remove(0);
         lesson.blocks = vec![LearningBlockDto {
             kind: LearningBlockKind::Explanation,
             title: "Title".into(),

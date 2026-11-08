@@ -63,9 +63,7 @@ impl SourceFinding {
 
 /// Checks a sentence against a source passage.
 #[async_trait]
-pub trait SourceCheck:
-    Send + Sync
-{
+pub trait SourceCheck: Send + Sync {
     /// What `passage` says of `sentence`. A check that came to no usable verdict is an unusable finding; an error is
     /// a call that failed.
     async fn check(&self, sentence: &str, passage: &str) -> Result<SourceFinding>;

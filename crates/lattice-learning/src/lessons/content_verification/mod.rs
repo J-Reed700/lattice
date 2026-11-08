@@ -52,8 +52,8 @@ use evidence_checks::{CheckedPart, ContraryPassage, Pass};
 mod evidence_selection;
 mod execution;
 mod judge;
-pub(crate) use judge::{judge_in_order, ranking, shown_of};
 pub use judge::judge_for_publication;
+pub(crate) use judge::{judge_in_order, ranking, shown_of};
 mod inventory;
 mod inventory_checkpoint;
 mod learner_view;
@@ -65,10 +65,7 @@ mod resolution;
 #[cfg(any(test, feature = "test-support"))]
 pub use inventory::revisions::live_revision_fixture;
 #[cfg(any(test, feature = "test-support"))]
-pub async fn live_inventory_fixture(
-    llm: &dyn LLMPort,
-    content: &[Value],
-) -> Result<Value> {
+pub async fn live_inventory_fixture(llm: &dyn LLMPort, content: &[Value]) -> Result<Value> {
     let pool = crate::test_support::pool().await?;
     let (_, job, _) = test_support::setup(&pool).await?;
     crate::lesson_progress::run(
@@ -87,8 +84,8 @@ pub async fn live_inventory_fixture(
 }
 mod passes;
 mod provenance_gate;
-pub(crate) use provenance_gate::{gate_reason, outline_trust, relevel, weigh_claim, with_trust};
 pub use provenance_gate::with_outline_trust;
+pub(crate) use provenance_gate::{gate_reason, outline_trust, relevel, weigh_claim, with_trust};
 mod repair;
 pub(crate) use repair::{confine, Protected};
 mod repair_loop;
@@ -118,9 +115,7 @@ use repair_request::repair_context;
 use repair_request::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
-pub(crate) use report::{
-    not_verified_line, persist_report, sources_changed,
-};
+pub(crate) use report::{not_verified_line, persist_report, sources_changed};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
@@ -135,10 +130,7 @@ pub(crate) fn evidence_policy() -> &'static str {
 // Its exact-content checkpoint contains no factual approvals to inherit.
 const INVENTORY_POLICY: &str = "lesson-evidence-v8";
 
-pub(crate) async fn normalize_example_fences(
-    llm: &dyn LLMPort,
-    raw: String,
-) -> Result<String> {
+pub(crate) async fn normalize_example_fences(llm: &dyn LLMPort, raw: String) -> Result<String> {
     execution::label_unlabeled(llm, raw).await
 }
 
@@ -467,11 +459,7 @@ pub(crate) fn bank_tokens(llm: &dyn LLMPort, text: &str) -> usize {
 /// strict batch call: an equal share of the room the call leaves after its
 /// instructions, the claims and their answers. A claim checked alone is
 /// checked by the single-claim judge, so it gets that judge's whole room.
-pub(crate) fn claim_share(
-    llm: &dyn LLMPort,
-    claim: &str,
-    sharing: usize,
-) -> usize {
+pub(crate) fn claim_share(llm: &dyn LLMPort, claim: &str, sharing: usize) -> usize {
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),

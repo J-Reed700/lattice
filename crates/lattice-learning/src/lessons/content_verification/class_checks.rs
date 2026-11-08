@@ -293,20 +293,14 @@ pub(super) async fn consistency_of(
         .map(|passage| passage.text.clone())
         .collect();
     let judged = {
-        let _model_call = crate::lesson_progress::model_call(
-            crate::lesson_progress::Term::Reading,
-        );
+        let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Reading);
         consistency_checker(llm)
             .check_consistency(statement, &texts)
             .await
     };
     match judged {
         ClassJudgment::Judged(outcome) => {
-            crate::lesson_drafts::record_checkpoint(
-                key,
-                serde_json::to_value(&outcome)?,
-            )
-            .await?;
+            crate::lesson_drafts::record_checkpoint(key, serde_json::to_value(&outcome)?).await?;
             Ok(Some(outcome))
         }
         ClassJudgment::Unusable => Ok(None),
@@ -351,19 +345,13 @@ pub(super) async fn knowledge_of(
         CheckPolicy::Knowledge,
     );
     let judged = {
-        let _model_calls = crate::lesson_progress::model_calls(
-            SAMPLES,
-            crate::lesson_progress::Term::Reading,
-        );
+        let _model_calls =
+            crate::lesson_progress::model_calls(SAMPLES, crate::lesson_progress::Term::Reading);
         checker.check_knowledge(statement).await
     };
     match judged {
         ClassJudgment::Judged(outcome) => {
-            crate::lesson_drafts::record_checkpoint(
-                key,
-                serde_json::to_value(&outcome)?,
-            )
-            .await?;
+            crate::lesson_drafts::record_checkpoint(key, serde_json::to_value(&outcome)?).await?;
             Ok(Some(outcome))
         }
         ClassJudgment::Unusable => Ok(None),
@@ -380,11 +368,9 @@ fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
 
 /// The class the model gave `statement`, when it was asked before.
 async fn saved_class(llm: &dyn LLMPort, statement: &str) -> Result<Option<Class>> {
-    Ok(
-        crate::lesson_drafts::checkpoint(&class_key(llm, statement))
-            .await?
-            .and_then(|value| serde_json::from_value(value).ok()),
-    )
+    Ok(crate::lesson_drafts::checkpoint(&class_key(llm, statement))
+        .await?
+        .and_then(|value| serde_json::from_value(value).ok()))
 }
 
 async fn save_class(llm: &dyn LLMPort, statement: &str, class: Class) -> Result<()> {

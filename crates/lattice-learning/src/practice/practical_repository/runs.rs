@@ -4,9 +4,7 @@ use super::{
     uuid, workspace_owner_token_from_snapshot, LearningPracticalRepository, PreparedExecution,
     PreparedRun,
 };
-use crate::embedded_runtime::{
-    BuiltinLabExecutionSpec, LearningBuiltinRuntime,
-};
+use crate::embedded_runtime::{BuiltinLabExecutionSpec, LearningBuiltinRuntime};
 use crate::lab_runtime::{
     self, LearningContainerEngine, LearningLabExecutionResult, LearningLabExecutionSpec,
     LearningLabFile, LearningLabLimits, LearningLabRunStatus,

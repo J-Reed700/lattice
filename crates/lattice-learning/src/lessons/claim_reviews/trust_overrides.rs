@@ -17,9 +17,7 @@ use crate::dto::{
     LearningTrustImpactsDto, LearningTrustOverrideInputDto, LearningTrustOverrideScopeDto,
     LearningTrustRedecidedDto,
 };
-use crate::references::trust::overrides::{
-    self, preview, CoveredVersion, TrustChange,
-};
+use crate::references::trust::overrides::{self, preview, CoveredVersion, TrustChange};
 use crate::references::trust::repository::unix_seconds;
 use crate::references::trust::{dto_map, source_view, SqliteSourceTrustStore};
 

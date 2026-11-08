@@ -266,8 +266,7 @@ pub(super) fn public_interview_activity(
     let evidence = if company_sources.is_empty() {
         "No company sources were captured. Company context is unverified; treat exercise constraints as hypothetical."
     } else if company_sources.iter().all(|source| {
-        source.version.extraction_version
-            == crate::source_library::PASTED_TEXT_EXTRACTION
+        source.version.extraction_version == crate::source_library::PASTED_TEXT_EXTRACTION
     }) {
         "Company context comes from learner-provided notes and has not been independently verified. Exercise constraints may be hypothetical."
     } else {

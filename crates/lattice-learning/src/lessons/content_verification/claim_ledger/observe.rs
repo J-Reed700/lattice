@@ -268,9 +268,7 @@ impl ClaimLedger {
 
     /// The claims whose user's hint no research round has run with yet, as
     /// statements waiting for a source.
-    pub(in crate::lessons::content_verification) fn hinted_waiting(
-        &self,
-    ) -> Vec<super::Waiting> {
+    pub(in crate::lessons::content_verification) fn hinted_waiting(&self) -> Vec<super::Waiting> {
         self.entries
             .iter()
             .filter(|entry| super::super::review_pass::pending_hint(entry).is_some())

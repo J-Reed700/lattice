@@ -30,9 +30,7 @@ pub const NOTE_COLUMNS: &str = r#"
 
 /// Decodes one `NOTE_COLUMNS` row. The record lives in core, which does not
 /// depend on the database driver, so it cannot derive `sqlx::FromRow`.
-pub fn note_from_row(
-    row: SqliteRow,
-) -> std::result::Result<WorkspaceNoteRecord, sqlx::Error> {
+pub fn note_from_row(row: SqliteRow) -> std::result::Result<WorkspaceNoteRecord, sqlx::Error> {
     Ok(WorkspaceNoteRecord {
         id: row.try_get("id")?,
         revision: row.try_get("revision")?,
@@ -51,9 +49,7 @@ pub fn note_from_row(
 }
 
 /// Decodes an `id, updated_at, created_at` row.
-pub fn timestamp_from_row(
-    row: SqliteRow,
-) -> std::result::Result<NoteTimestampRecord, sqlx::Error> {
+pub fn timestamp_from_row(row: SqliteRow) -> std::result::Result<NoteTimestampRecord, sqlx::Error> {
     Ok(NoteTimestampRecord {
         id: row.try_get("id")?,
         updated_at: row.try_get("updated_at")?,

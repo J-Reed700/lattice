@@ -16,9 +16,7 @@ use sqlx::SqlitePool;
 
 use super::actions::{in_section_body, ONLY_SECTION};
 use super::repository::{append_in, bump_revision, load_in, revision_conflict};
-use crate::content_verification::{
-    located, LessonVerificationReport, WrittenOver,
-};
+use crate::content_verification::{located, LessonVerificationReport, WrittenOver};
 use crate::persistence::db;
 
 pub(super) const CHANGED: &str =

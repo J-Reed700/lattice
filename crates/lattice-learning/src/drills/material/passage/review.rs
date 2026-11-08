@@ -9,9 +9,7 @@ use super::{
 };
 use crate::drills::budget;
 use crate::drills::build::ask::{ask_request, refuse, text_schema};
-use crate::drills::build::{
-    CleanCode, CleanReview, Repair, SourcePassage, Trail,
-};
+use crate::drills::build::{CleanCode, CleanReview, Repair, SourcePassage, Trail};
 use crate::drills::material::StageCtx;
 use crate::drills::spec::DrillSpec;
 use crate::generation::parse_json;

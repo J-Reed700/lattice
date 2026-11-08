@@ -176,11 +176,7 @@ impl Judgements {
     /// course's overrides, relations and bars as they are now: what a trust
     /// change re-decides from. Nothing here calls a model; a judgement the
     /// store lacks is an error (`facts` with no model).
-    pub(crate) async fn cached(
-        pool: SqlitePool,
-        program_id: &str,
-        model: &str,
-    ) -> Result<Self> {
+    pub(crate) async fn cached(pool: SqlitePool, program_id: &str, model: &str) -> Result<Self> {
         let course = Course {
             pool,
             program_id: program_id.to_owned(),
@@ -209,15 +205,11 @@ impl Judgements {
         })
     }
 
-    pub(in crate::lessons::content_verification) fn relations(
-        &self,
-    ) -> &[SourceRelation] {
+    pub(in crate::lessons::content_verification) fn relations(&self) -> &[SourceRelation] {
         &self.relations
     }
 
-    pub(in crate::lessons::content_verification) fn bars(
-        &self,
-    ) -> &EffectiveBars {
+    pub(in crate::lessons::content_verification) fn bars(&self) -> &EffectiveBars {
         &self.bars
     }
 

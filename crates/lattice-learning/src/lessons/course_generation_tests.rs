@@ -37,9 +37,7 @@ impl LLMPort for Model {
 }
 impl Model {
     async fn respond(&self, prompt: &str) -> Result<String> {
-        if let Some(reply) =
-            crate::content_verification::tests::fixture_response(prompt)
-        {
+        if let Some(reply) = crate::content_verification::tests::fixture_response(prompt) {
             return Ok(reply);
         }
         if prompt.starts_with("Source passages:") {
@@ -60,15 +58,16 @@ impl Model {
                 return Ok(json!({"issues":[]}).to_string());
             }
             let checks: Vec<_> = context["candidate"]["blocks"].as_array().into_iter().flatten().enumerate().map(|(index, block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The comparison and measurement task is consistent with the randomized experiment objective.","hasDefect":false})).collect();
-            return Ok(json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string());
+            return Ok(
+                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)})
+                    .to_string(),
+            );
         }
         Ok(self.0.clone())
     }
 }
 
-pub(crate) fn request(
-    depth: LearningCourseDepth,
-) -> GenerateLearningProgramRequestDto {
+pub(crate) fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequestDto {
     GenerateLearningProgramRequestDto {
         goal: "Design experiments and interpret their results".into(),
         prior_knowledge: "Basic algebra".into(),
@@ -163,12 +162,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     // reference shares the lesson's own words ("controlled experiment"): a
     // full-text match counts whole words of two letters or more, as the
     // library's does, so a lone "a" is no match.
-    crate::content_verification::tests::install_source(
-        &pool,
-        &draft.summary.id,
-        REFERENCE,
-    )
-    .await?;
+    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
     let mut lesson_candidate = lesson_response();
     for field in ["blocks", "questions"] {
         for item in lesson_candidate[field].as_array_mut().unwrap() {
@@ -232,8 +226,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     uncertain_session.artifact.text = "I am not sure how to start.".into();
     let uncertain = Model(json!({"status":"uncertain","criteria":frozen.rubric.iter().map(|criterion| json!({"criterion_id":criterion.id,"score":0,"observation":"No assessable reasoning is present. Try identifying the comparison groups first.","evidence_quote":"I am not sure how to start."})).collect::<Vec<_>>()} ).to_string());
     let (status, criteria) =
-        crate::practice_generation::grade(&uncertain, &uncertain_session)
-            .await?;
+        crate::practice_generation::grade(&uncertain, &uncertain_session).await?;
     assert_eq!(status, LearningPracticeGradeStatus::Uncertain);
     assert!(criteria.iter().all(|criterion| criterion.score.is_none()));
 
@@ -249,8 +242,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         outputs: std::sync::Mutex::new(vec![shortened.clone(), exact].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
-    let (_, repaired) =
-        crate::practice_generation::grade(&repair_model, &attempted).await?;
+    let (_, repaired) = crate::practice_generation::grade(&repair_model, &attempted).await?;
     assert!(repaired.iter().all(
         |criterion| criterion.evidence_quote.as_deref() == Some("I assigned groups randomly.")
     ));
@@ -405,12 +397,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     )
     .await?;
     let quote = "A randomized comparison isolates the intervention.";
-    crate::content_verification::tests::install_source(
-        &pool,
-        &draft.summary.id,
-        REFERENCE,
-    )
-    .await?;
+    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
     let mut program = repo.get(&draft.summary.id).await?;
     program.sources = repo.verification_sources(&draft.summary.id).await?;
     let lesson = &program.modules[0].lessons[0];
@@ -558,10 +545,7 @@ impl ScriptedModel {
 }
 
 /// [`ScriptedModel`] with a window of `.1` tokens.
-pub(crate) struct Windowed<'a>(
-    pub(crate) &'a ScriptedModel,
-    pub(crate) usize,
-);
+pub(crate) struct Windowed<'a>(pub(crate) &'a ScriptedModel, pub(crate) usize);
 
 #[async_trait::async_trait]
 impl LLMPort for Windowed<'_> {
@@ -627,9 +611,7 @@ fn link_reply(prompt: &str, sentinel: &str) -> String {
 
 #[tokio::test]
 async fn a_question_may_cite_a_reference_verification_saved_for_the_program() -> Result<()> {
-    use crate::content_verification::research::{
-        self, tests as research_tests,
-    };
+    use crate::content_verification::research::{self, tests as research_tests};
     const CLAIM: &str =
         "Random assignment reduces confounding in comparisons between treatment groups.";
     struct Researching {
@@ -705,12 +687,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
         },
     )
     .await?;
-    crate::content_verification::tests::install_source(
-        &pool,
-        &draft.summary.id,
-        REFERENCE,
-    )
-    .await?;
+    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
     let mut program = repo.get(&draft.summary.id).await?;
     program.sources = repo.verification_sources(&draft.summary.id).await?;
     let lesson = &program.modules[0].lessons[0];
@@ -998,12 +975,7 @@ async fn placement_tasks_keep_keys_private_and_save_answers_with_replay_and_conf
     let mut invented = finding.clone();
     invented.evidence_quote = Some("words never submitted".into());
     assert!(
-        crate::diagnostic_generation::validate_findings(
-            &saved,
-            &[response],
-            &[invented]
-        )
-        .is_err()
+        crate::diagnostic_generation::validate_findings(&saved, &[response], &[invented]).is_err()
     );
     let finish = SubmitLearningDiagnosticRequestDto {
         operation_id: uuid::Uuid::new_v4().to_string(),
@@ -1090,12 +1062,8 @@ async fn a_lesson_that_cannot_be_saved_is_refused_before_persistence() -> Result
 
 #[tokio::test]
 async fn a_written_quiz_item_is_authored_from_lesson_text_without_sources() -> Result<()> {
-    use crate::assessment_engine::{
-        LearningBlueprintRequirement, LearningItemFormat,
-    };
-    use crate::assessment_generation::{
-        author_items, AuthoringNeed, MaterialPassage,
-    };
+    use crate::assessment_engine::{LearningBlueprintRequirement, LearningItemFormat};
+    use crate::assessment_generation::{author_items, AuthoringNeed, MaterialPassage};
     let passage = "A randomized comparison assigns units to conditions by chance, so differences in outcome can be attributed to the condition.";
     let model = Model(json!({"items":[{"prompt":"Explain how you would design a randomized comparison and identify its limitations.","rubric":task_rubric(),"explanation":"The answer should define the comparison, the measurement, the assumptions and the limits.","blockIndex":0,"quote":"assigns units to conditions by chance","difficulty":3}]}).to_string());
     let need = AuthoringNeed {
@@ -1341,9 +1309,7 @@ async fn outline_citations_are_optional_and_unmatched_ones_are_stripped_not_repo
         ),
         truncated: false,
         extraction_version: "test_full_capture".into(),
-        signals: crate::references::trust::capture::not_extracted(
-            "test fixture",
-        ),
+        signals: crate::references::trust::capture::not_extracted("test fixture"),
     };
     let id = uuid::Uuid::new_v4().to_string();
     let preview = crate::sources::preview(&id, &captured);
@@ -1830,12 +1796,7 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
     )
     .await?;
     let quote = "A randomized comparison isolates the intervention.";
-    crate::content_verification::tests::install_source(
-        &pool,
-        &draft.summary.id,
-        REFERENCE,
-    )
-    .await?;
+    crate::content_verification::tests::install_source(&pool, &draft.summary.id, REFERENCE).await?;
     let mut program = repo.get(&draft.summary.id).await?;
     program.sources = repo.verification_sources(&draft.summary.id).await?;
     let lesson = &program.modules[0].lessons[0];

@@ -95,10 +95,9 @@ pub(super) fn item_schema(
             put("extraRight", json!({"type":"string"}));
         }
         LearningItemFormat::Ordering => put("orderedValues", strings(3, 8)),
-        LearningItemFormat::Explanation | LearningItemFormat::Artifact => put(
-            "rubric",
-            crate::teaching::rubric_schema(),
-        ),
+        LearningItemFormat::Explanation | LearningItemFormat::Artifact => {
+            put("rubric", crate::teaching::rubric_schema())
+        }
     }
     put("explanation", json!({"type":"string","minLength":1}));
     put(

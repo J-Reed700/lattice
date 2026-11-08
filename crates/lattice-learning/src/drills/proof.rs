@@ -60,9 +60,7 @@ pub enum ProofVerdict {
 }
 
 #[async_trait]
-pub trait ProofStrategy:
-    Send + Sync
-{
+pub trait ProofStrategy: Send + Sync {
     async fn prove(&self, case: &ProofCase<'_>) -> Result<ProofVerdict>;
 }
 
@@ -117,10 +115,7 @@ pub(crate) fn choose(
 }
 
 /// The strategy of `kind`, on `tools`.
-pub(crate) fn strategy<'a>(
-    kind: StrategyKind,
-    tools: Tools<'a>,
-) -> Box<dyn ProofStrategy + 'a> {
+pub(crate) fn strategy<'a>(kind: StrategyKind, tools: Tools<'a>) -> Box<dyn ProofStrategy + 'a> {
     match kind {
         StrategyKind::Killing => Box::new(KillingTest::new(tools)),
         StrategyKind::Judged => Box::new(Judged { tools }),
@@ -129,10 +124,7 @@ pub(crate) fn strategy<'a>(
     }
 }
 
-pub(crate) fn unproven(
-    why: impl Into<String>,
-    trail: Trail,
-) -> ProofVerdict {
+pub(crate) fn unproven(why: impl Into<String>, trail: Trail) -> ProofVerdict {
     ProofVerdict::Unproven {
         why: why.into(),
         trail,

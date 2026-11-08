@@ -12,8 +12,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 
 /// The code of the stop for statements whose checker answers could not be read.
-pub(in crate::lessons::content_verification) const UNREADABLE: &str =
-    "checker_unreadable";
+pub(in crate::lessons::content_verification) const UNREADABLE: &str = "checker_unreadable";
 
 /// The claims the machine ended whose sentences `candidate` still holds. A
 /// code example's claim ends with its run, and the claims of a section that

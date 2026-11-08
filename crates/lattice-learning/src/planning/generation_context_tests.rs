@@ -25,8 +25,7 @@ fn prepared(lesson: &str) -> PreparedLearningLesson {
         keys: vec![],
         verification: None,
     };
-    result.verification =
-        Some(crate::content_verification::tests::attest(lesson, &result));
+    result.verification = Some(crate::content_verification::tests::attest(lesson, &result));
     result
 }
 

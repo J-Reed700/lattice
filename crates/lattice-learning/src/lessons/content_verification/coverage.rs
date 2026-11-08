@@ -87,8 +87,7 @@ fn fidelity_schema() -> Value {
 }
 
 fn resolve(raw: &str, units: &[Value]) -> Result<Vec<CoverageUnit>> {
-    let checks: BTreeMap<String, PassageCheck> =
-        crate::generation::parse_json(raw)?;
+    let checks: BTreeMap<String, PassageCheck> = crate::generation::parse_json(raw)?;
     let expected: usize = units
         .iter()
         .map(|unit| unit["passages"].as_array().map_or(0, Vec::len))
@@ -239,8 +238,7 @@ async fn check_fidelity(
     units: &[Value],
     coverage: &mut [CoverageUnit],
 ) -> Result<()> {
-    let decisions: BTreeMap<String, PassageCheck> =
-        crate::generation::parse_json(raw)?;
+    let decisions: BTreeMap<String, PassageCheck> = crate::generation::parse_json(raw)?;
     let mut checks = Vec::new();
     for unit in units {
         let index = unit["index"]
@@ -363,8 +361,7 @@ pub(crate) async fn audit(
         // This mapping is unfinished representation work, never factual
         // approval. Save it before fidelity so a disconnect cannot change its
         // inputs and force completed passage comparisons to run again.
-        crate::lesson_drafts::record_checkpoint(&mapping_key, json!(raw))
-            .await?;
+        crate::lesson_drafts::record_checkpoint(&mapping_key, json!(raw)).await?;
         check_fidelity(llm, &raw, batch, &mut checked).await?;
         checkpoints::save(llm, batch, &checked).await?;
         // Persist a finished batch before the next model request. A later
@@ -378,10 +375,7 @@ pub(crate) async fn audit(
 
 #[cfg(any(test, feature = "test-support"))]
 #[allow(clippy::indexing_slicing)]
-pub async fn live_mapping_fixture(
-    llm: &dyn LLMPort,
-    fixture: &Value,
-) -> Result<Value> {
+pub async fn live_mapping_fixture(llm: &dyn LLMPort, fixture: &Value) -> Result<Value> {
     let units = fixture["units"].as_array().ok_or_else(failure)?;
     let raw = fixture["mapping"].to_string();
     let mut coverage = resolve(&raw, units)?;
@@ -393,9 +387,7 @@ pub async fn live_mapping_fixture(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
-    use crate::content_verification::tests::{
-        fixture_completion, fixture_prompts,
-    };
+    use crate::content_verification::tests::{fixture_completion, fixture_prompts};
     use crate::lessons::course_generation_tests::ScriptedModel;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
@@ -571,17 +563,13 @@ mod tests {
         let units = [
             json!({"index":0,"passages":[{"id":"a","text":"A fact."}],"claims":[{"id":"c","statement":"Another fact."}]}),
         ];
-        let bounds = crate::lessons::course_generation_tests::length_bounds(
-            &schema(&units),
-        );
+        let bounds = crate::lessons::course_generation_tests::length_bounds(&schema(&units));
         assert!(bounds.is_empty(), "{bounds:?}");
     }
 
     #[test]
     fn the_fidelity_schema_bounds_no_text_but_a_blank() {
-        let bounds = crate::lessons::course_generation_tests::length_bounds(
-            &fidelity_schema(),
-        );
+        let bounds = crate::lessons::course_generation_tests::length_bounds(&fidelity_schema());
         assert!(bounds.is_empty(), "{bounds:?}");
     }
 

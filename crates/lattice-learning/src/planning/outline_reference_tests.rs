@@ -13,10 +13,10 @@ use crate::{
     repository::LearningRepository,
     service,
 };
-use lattice_core::application::ports::MockWebService;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult,
 };
+use lattice_core::application::ports::MockWebService;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -306,9 +306,7 @@ pub(super) fn original_source() -> LearningSourceDto {
         acquired_at: 0,
     }
 }
-pub(super) fn references(
-    sources: &[LearningSourceDto],
-) -> Vec<crate::sources::InitialReference> {
+pub(super) fn references(sources: &[LearningSourceDto]) -> Vec<crate::sources::InitialReference> {
     sources
         .iter()
         .map(|s| crate::sources::InitialReference {
@@ -322,9 +320,7 @@ pub(super) fn references(
                 text: s.excerpt.clone(),
                 truncated: false,
                 extraction_version: "complete_test_capture".into(),
-                signals: crate::references::trust::capture::not_extracted(
-                    "test fixture",
-                ),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
             },
             found: false,
         })
@@ -1210,11 +1206,9 @@ async fn a_choice_and_a_find() -> Result<(sqlx::SqlitePool, String)> {
 async fn a_short_source_the_user_chose_for_the_course_is_not_swept() -> Result<()> {
     let (pool, program_id) = a_choice_and_a_find().await?;
 
-    let refused = crate::source_library::LearningSourceLibraryRepository::new(
-        pool.clone(),
-    )
-    .sweep_admission(&program_id)
-    .await?;
+    let refused = crate::source_library::LearningSourceLibraryRepository::new(pool.clone())
+        .sweep_admission(&program_id)
+        .await?;
 
     let titles: Vec<&str> = refused.iter().map(|page| page.title.as_str()).collect();
     assert!(!titles.contains(&"Brief reference overview"), "{refused:?}");
@@ -1231,11 +1225,9 @@ async fn a_short_source_the_user_chose_for_the_course_is_not_swept() -> Result<(
 async fn a_short_page_the_outline_research_found_is_still_swept() -> Result<()> {
     let (pool, program_id) = a_choice_and_a_find().await?;
 
-    let refused = crate::source_library::LearningSourceLibraryRepository::new(
-        pool.clone(),
-    )
-    .sweep_admission(&program_id)
-    .await?;
+    let refused = crate::source_library::LearningSourceLibraryRepository::new(pool.clone())
+        .sweep_admission(&program_id)
+        .await?;
 
     let found: Vec<_> = refused
         .iter()

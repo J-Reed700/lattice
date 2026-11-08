@@ -65,10 +65,8 @@ impl LearningRepository {
             created_at: now.clone(),
             updated_at: now,
         };
-        lattice_store::workspace_notes::DailyNotesRepository::insert_in_transaction(
-            &mut tx, &note,
-        )
-        .await?;
+        lattice_store::workspace_notes::DailyNotesRepository::insert_in_transaction(&mut tx, &note)
+            .await?;
         sqlx::query("INSERT INTO learning_lesson_note_links(program_id,lesson_id,note_id,created_at) VALUES(?,?,?,?)")
             .bind(program_id).bind(lesson_id).bind(&note_id).bind(chrono::Utc::now().timestamp_millis())
             .execute(&mut *tx).await.map_err(db)?;

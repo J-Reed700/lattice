@@ -152,11 +152,7 @@ pub(super) async fn review(
                 errors.push(format!("Passage {id} still needs a valid decision."));
             }
         }
-        crate::lesson_drafts::record_checkpoint(
-            &key,
-            Value::Object(accepted.clone()),
-        )
-        .await?;
+        crate::lesson_drafts::record_checkpoint(&key, Value::Object(accepted.clone())).await?;
         let complete = Value::Object(accepted.clone()).to_string();
         if resolve(&complete, units).is_ok() {
             return Ok(complete);
@@ -245,10 +241,7 @@ mod tests {
     async fn retry_keeps_valid_decisions_but_changed_input_does_not_inherit_them() -> Result<()> {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
-            crate::content_verification::tests::batch_scheduler_tests::setup(
-                &pool,
-            )
-            .await?;
+            crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         let first = model(vec![json!({"p0":missing(),"p1":empty()}).to_string()]);
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             assert!(review(&first, &units(), None).await.is_err());

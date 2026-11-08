@@ -5,8 +5,7 @@ use super::*;
 pub(super) struct Saving<'s> {
     pub(super) context: &'s Context,
     pub(super) program_repo: &'s crate::repository::LearningRepository,
-    pub(super) library:
-        &'s crate::source_library::LearningSourceLibraryRepository,
+    pub(super) library: &'s crate::source_library::LearningSourceLibraryRepository,
 }
 
 impl Saving<'_> {

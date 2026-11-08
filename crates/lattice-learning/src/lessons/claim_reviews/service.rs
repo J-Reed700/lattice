@@ -446,12 +446,8 @@ impl ClaimReviewService {
         let candidate: Value = serde_json::from_str(&draft.candidate)
             .map_err(|error| AppError::Serialization(error.to_string()))?;
         let location = entry.location();
-        crate::content_verification::field_text(
-            &candidate,
-            location.unit_index,
-            &location.field,
-        )
-        .ok_or_else(|| AppError::NotFound("The claim's section is not in the draft.".into()))
+        crate::content_verification::field_text(&candidate, location.unit_index, &location.field)
+            .ok_or_else(|| AppError::NotFound("The claim's section is not in the draft.".into()))
     }
 }
 

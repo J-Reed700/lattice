@@ -9,9 +9,7 @@
 use crate::assessment_engine::{
     LearningAssessmentPurpose, LearningBlueprintRequirement, LearningItemFormat,
 };
-use crate::dto::{
-    LearningQuizScopeDto, LearningQuizScopeKind, LearningQuizSettingsDto,
-};
+use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind, LearningQuizSettingsDto};
 use crate::persistence::{db, decode, encode, now};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection};

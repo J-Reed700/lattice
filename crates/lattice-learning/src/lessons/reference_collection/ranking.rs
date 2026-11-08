@@ -5,10 +5,10 @@
 
 use super::*;
 use crate::references::course_index::write_version;
-use lattice_index::passage_index::text_search::{match_words, WordMatch};
 use lattice_core::shared::constants::{
     DEFAULT_KEYWORD_FUSION_WEIGHT, DEFAULT_VECTOR_FUSION_WEIGHT,
 };
+use lattice_index::passage_index::text_search::{match_words, WordMatch};
 use std::collections::HashMap;
 
 /// One passage as a search ranked it: its id, its score, and its best rank

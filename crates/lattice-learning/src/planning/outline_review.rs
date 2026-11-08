@@ -197,15 +197,13 @@ fn placement(candidate: &Value, path: &str, reason: &str) -> Placement {
         return Placement::Keep;
     }
     for phrase in &phrases {
-        let elsewhere: Vec<String> =
-            crate::outline_review_scope::module_paths(candidate, module)
-                .into_iter()
-                .filter(|other| other != path)
-                .filter(|other| {
-                    path_text(candidate, other)
-                        .is_some_and(|text| normalized(&text).contains(phrase))
-                })
-                .collect();
+        let elsewhere: Vec<String> = crate::outline_review_scope::module_paths(candidate, module)
+            .into_iter()
+            .filter(|other| other != path)
+            .filter(|other| {
+                path_text(candidate, other).is_some_and(|text| normalized(&text).contains(phrase))
+            })
+            .collect();
         match elsewhere.len() {
             0 => continue,
             1 => {
@@ -442,12 +440,9 @@ pub(crate) async fn review(
         }
     }
     let references = ReferenceCollection::lexical(sources)?;
-    let mut queries = crate::outline_evidence::lesson_queries(
-        &scope.candidate(&draft.candidate)?,
-    );
+    let mut queries = crate::outline_evidence::lesson_queries(&scope.candidate(&draft.candidate)?);
     queries.extend(draft.open_findings().map(|issue| issue.claim.clone()));
-    let passages =
-        crate::outline_evidence::select(llm, &references, &queries).await?;
+    let passages = crate::outline_evidence::select(llm, &references, &queries).await?;
     let allowed = scope.allowed_paths(&draft.candidate);
     let open: Vec<Value> = draft
         .open_findings()

@@ -204,13 +204,12 @@ impl Review for PreparationReview<'_, '_> {
 
     async fn resume(&mut self, policy: &dyn AcceptancePolicy) -> Result<bool> {
         let active = self.expanded.as_ref().unwrap_or(self.references);
-        let saved =
-            crate::lesson_drafts::pending_repair(&self.candidate.to_string())
-                .await?
-                .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
-                .filter(|saved| {
-                    saved.matches(self.llm, self.prompt, &self.schema, &self.candidate, active)
-                });
+        let saved = crate::lesson_drafts::pending_repair(&self.candidate.to_string())
+            .await?
+            .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
+            .filter(|saved| {
+                saved.matches(self.llm, self.prompt, &self.schema, &self.candidate, active)
+            });
         let left = saved.map(|saved| still_repairable(&self.ledger, policy, saved.context));
         if matches!(left, Some(None)) {
             // Everything the saved repair was for was resolved meanwhile.
@@ -394,9 +393,7 @@ impl Review for PreparationReview<'_, '_> {
             })
             .collect();
         if saved {
-            crate::lesson_progress::new_references(Some(
-                searched.sources_added.len(),
-            ));
+            crate::lesson_progress::new_references(Some(searched.sources_added.len()));
         }
         let read = async {
             let readings = crate::lesson_progress::checks(passes::read_steps(
@@ -493,8 +490,7 @@ impl Review for PreparationReview<'_, '_> {
                 .skip(self.writers)
                 .map(|source| source.id.as_str())
                 .collect();
-            crate::lesson_drafts::record_checkpoint(NUMBERED_KEY, json!(added))
-                .await?;
+            crate::lesson_drafts::record_checkpoint(NUMBERED_KEY, json!(added)).await?;
             repair::number_sources(&mut self.schema, self.numbered.len());
             self.raw = self.candidate.to_string();
             crate::lesson_drafts::save(&self.raw).await?;
@@ -696,10 +692,7 @@ impl Review for PreparationReview<'_, '_> {
 async fn stop(ledger: &mut ClaimLedger, raw: &str, reason: StopReason) -> Result<AppError> {
     crate::lesson_drafts::save(raw).await?;
     let error = ledger.stop(raw, reason).await?;
-    crate::lesson_progress::phase(
-        crate::lesson_progress::Phase::Evidence,
-        error.to_string(),
-    );
+    crate::lesson_progress::phase(crate::lesson_progress::Phase::Evidence, error.to_string());
     Ok(error)
 }
 
@@ -849,10 +842,7 @@ async fn hold(
         ),
     };
     ledger.stop_for_review(raw, stop_reason).await?;
-    crate::lesson_progress::phase(
-        crate::lesson_progress::Phase::Repair,
-        message,
-    );
+    crate::lesson_progress::phase(crate::lesson_progress::Phase::Repair, message);
     Ok(claim_ledger::needs_review(claims))
 }
 

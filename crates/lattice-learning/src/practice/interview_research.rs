@@ -135,9 +135,7 @@ fn is_public(need: &PlannedNeed, private: &[&str]) -> bool {
                                 })
                         })
                 })
-                && !crate::outline_references::copies_private_text(
-                    field, private,
-                )
+                && !crate::outline_references::copies_private_text(field, private)
                 && !copies_private_marker(field, private)
         })
 }
@@ -446,8 +444,7 @@ pub async fn research_interview_answers(
             .map(|question| question.question.as_str()),
     );
     let has_non_behavioral = plan.questions.iter().any(|question| {
-        question.round
-            != crate::practical_dto::LearningInterviewRoundKind::Behavioral
+        question.round != crate::practical_dto::LearningInterviewRoundKind::Behavioral
     });
     let needs = crate::generation::complete_checked(
         llm, &system, payload.to_string(),

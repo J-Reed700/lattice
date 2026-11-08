@@ -56,9 +56,7 @@ impl LearningBuiltinRuntime {
         }
     }
 
-    pub fn context(
-        self,
-    ) -> crate::practical_generation::PracticalRuntimeContext {
+    pub fn context(self) -> crate::practical_generation::PracticalRuntimeContext {
         let (name, contract) = match self {
             Self::Javascript => ("JavaScript", "ECMAScript modules only. Put editable exported functions in solution.mjs. The hidden evaluator must be checks.mjs, importing './solution.mjs' and throwing on failed assertions. console.log/error are available. Node.js, DOM, React, fetch, timers, external packages, filesystem and networking are unavailable. Use relative imports among supplied .js/.mjs files only."),
             Self::Python => ("Python", "CPython with the Python standard library in WASI. Put editable functions in solution.py and hidden assertions in checks.py, which imports solution and must exit nonzero on failure. No pip packages, networking, subprocesses, filesystem writes or host files. Supplied exercise files are read-only during execution."),

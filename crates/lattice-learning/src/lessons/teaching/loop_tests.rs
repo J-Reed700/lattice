@@ -411,13 +411,11 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
     let references = ReferenceCollection::lexical(&sources)?;
     let candidate = lesson(EXCERPT);
     let sentence = "The function returns the number 4 for the sum of two and two.";
-    let protected = [
-        crate::lessons::content_verification::Protected {
-            unit: 0,
-            field: "body".into(),
-            quote: sentence.into(),
-        },
-    ];
+    let protected = [crate::lessons::content_verification::Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: sentence.into(),
+    }];
     let reviewed = review_material(
         &model,
         LESSON_REPAIR_SYSTEM,
@@ -504,13 +502,11 @@ async fn a_lesson_whose_sentences_stand_on_checked_claims_is_never_written_again
     let mut candidate = lesson(EXCERPT);
     candidate["blocks"][0]["kind"] = json!("guided_practice");
     candidate["blocks"][0]["body"] = json!(sentence);
-    let protected = [
-        crate::lessons::content_verification::Protected {
-            unit: 0,
-            field: "body".into(),
-            quote: sentence.into(),
-        },
-    ];
+    let protected = [crate::lessons::content_verification::Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: sentence.into(),
+    }];
     let model = model(vec![review(None)]);
 
     let reviewed = review_protecting(&model, &candidate, &protected).await?;
@@ -712,8 +708,7 @@ fn repairs_asked(llm: &DropsAfterRepair) -> usize {
 async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool)
-            .await?;
+        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let llm = DropsAfterRepair {
         model: model(defect_no_repair_fixes()),
         repaired: AtomicBool::new(false),

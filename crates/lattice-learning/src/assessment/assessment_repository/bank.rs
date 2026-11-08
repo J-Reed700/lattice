@@ -5,9 +5,7 @@ use super::{
     LearningAssessmentRepository, StoredCandidate, CANDIDATE_COLUMNS,
 };
 use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
-use crate::assessment_generation::{
-    AuthoringNeed, MaterialPassage, StoredItem,
-};
+use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;

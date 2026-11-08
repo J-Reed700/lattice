@@ -74,10 +74,7 @@ pub struct StoredDrill {
 
 /// Writes a drill, ready, with a row for each pattern its key holds. The course it names is kept only if it still
 /// exists. Call inside the transaction that completes the build.
-pub(crate) async fn insert_in(
-    connection: &mut SqliteConnection,
-    new: &NewDrill<'_>,
-) -> Result<()> {
+pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<'_>) -> Result<()> {
     let program_id: Option<String> = match &new.spec.program_id {
         Some(id) => sqlx::query_scalar("SELECT id FROM learning_programs WHERE id=?")
             .bind(id)
@@ -196,10 +193,7 @@ pub(crate) async fn drilled_passages(
 }
 
 /// A drill by its id, ready or taken.
-pub async fn find_in(
-    connection: &mut SqliteConnection,
-    id: &str,
-) -> Result<Option<StoredDrill>> {
+pub async fn find_in(connection: &mut SqliteConnection, id: &str) -> Result<Option<StoredDrill>> {
     sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE id=?"))
         .bind(id)
         .fetch_optional(connection)
@@ -229,10 +223,7 @@ pub(crate) async fn mark_taken_in(
 }
 
 /// For each domain used for `language`, when a drill of it was last built.
-pub(crate) async fn domain_uses(
-    pool: &SqlitePool,
-    language: &str,
-) -> Result<Vec<(String, i64)>> {
+pub(crate) async fn domain_uses(pool: &SqlitePool, language: &str) -> Result<Vec<(String, i64)>> {
     sqlx::query_as::<_, (String, i64)>(
         "SELECT domain,max(created_at) FROM learning_drills WHERE language=? GROUP BY domain",
     )

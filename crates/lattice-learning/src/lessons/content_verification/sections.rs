@@ -444,9 +444,8 @@ async fn mend_section(
     };
     let system = format!("{FLOW} {}", text_edits::INSTRUCTIONS);
     let raw = {
-        let _model_call = crate::lesson_progress::model_call(
-            crate::lesson_progress::Term::FlowRepair,
-        );
+        let _model_call =
+            crate::lesson_progress::model_call(crate::lesson_progress::Term::FlowRepair);
         crate::generation::complete_json(
             llm,
             &system,
@@ -609,18 +608,16 @@ pub(super) async fn settle(
                 Some(Protected { unit, ..item })
             })
             .collect();
-        let reviewed = crate::lesson_progress::outside_checks(
-            crate::teaching::review_lesson(
-                llm,
-                crate::teaching::LESSON_REPAIR_SYSTEM,
-                prompt,
-                schema,
-                going.out_of(&edited).to_string(),
-                output_tokens,
-                references,
-                &protected,
-            ),
-        )
+        let reviewed = crate::lesson_progress::outside_checks(crate::teaching::review_lesson(
+            llm,
+            crate::teaching::LESSON_REPAIR_SYSTEM,
+            prompt,
+            schema,
+            going.out_of(&edited).to_string(),
+            output_tokens,
+            references,
+            &protected,
+        ))
         .await?;
         let reviewed: Value = parse_json(&reviewed)?;
         if let Some(merged) = going.back_in(&edited, &reviewed) {

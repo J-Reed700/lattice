@@ -96,9 +96,7 @@ pub(crate) fn choose(issue: &KeyIssue) -> StrategyKind {
 }
 
 #[async_trait]
-pub trait FixStrategy:
-    Send + Sync
-{
+pub trait FixStrategy: Send + Sync {
     /// What the check of the issue at `position` in the key finds in the learner's files.
     async fn grade(
         &self,
@@ -109,10 +107,7 @@ pub trait FixStrategy:
 }
 
 /// The strategy of `kind`, on `tools`.
-pub(crate) fn strategy<'a>(
-    kind: StrategyKind,
-    tools: Tools<'a>,
-) -> Box<dyn FixStrategy + 'a> {
+pub(crate) fn strategy<'a>(kind: StrategyKind, tools: Tools<'a>) -> Box<dyn FixStrategy + 'a> {
     match kind {
         StrategyKind::KillingTest => Box::new(KillingTestFix { tools }),
         StrategyKind::Judged => Box::new(JudgedFix { tools }),

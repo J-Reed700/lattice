@@ -43,10 +43,7 @@ pub(super) async fn settle(candidate: &Value, set_aside: &[SetAside]) -> Result<
 
 /// Findings found once the review is over, on the lesson as it publishes;
 /// the findings already waiting stay.
-pub(crate) async fn record(
-    candidate: &Value,
-    findings: Vec<ReviewFinding>,
-) -> Result<()> {
+pub(crate) async fn record(candidate: &Value, findings: Vec<ReviewFinding>) -> Result<()> {
     let Some((store, lesson_id, job_id)) = repository() else {
         return Ok(());
     };

@@ -371,11 +371,8 @@ pub(super) async fn select(
         selection.reach = reach;
         // Save the plan before model work. An interrupted comparison will use
         // exactly this evidence again, but cannot inherit an older approval.
-        crate::lesson_drafts::record_checkpoint(
-            &selection_key,
-            serde_json::to_value(&selection)?,
-        )
-        .await?;
+        crate::lesson_drafts::record_checkpoint(&selection_key, serde_json::to_value(&selection)?)
+            .await?;
         retained
             .selections
             .lock()

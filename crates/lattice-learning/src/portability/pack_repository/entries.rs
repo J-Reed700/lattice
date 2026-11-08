@@ -392,8 +392,7 @@ impl SectionRows for Practical {
         };
         for activity in &snapshot.activities {
             if activity.files.iter().any(|file| {
-                file.path
-                    == crate::practical_generation::INTERVIEW_PLAN_FILE_PATH
+                file.path == crate::practical_generation::INTERVIEW_PLAN_FILE_PATH
                     || file.path == crate::practice::interview_answers::INTERVIEW_ANSWERS_FILE_PATH
             }) {
                 return Err(invalid(
@@ -426,7 +425,9 @@ impl SectionRows for Practical {
         if executable {
             notices.push("Imported executable activities are restored in review-only mode without hidden evaluator files; regenerate and review the exercise before running it.".into());
         }
-        if snapshot.activities.iter().any(|activity| activity.kind == crate::practical_dto::LearningPracticalActivityKind::Interview) {
+        if snapshot.activities.iter().any(|activity| {
+            activity.kind == crate::practical_dto::LearningPracticalActivityKind::Interview
+        }) {
             notices.push("Private interview reference standards stay on the original device. Regenerate imported interviews to prepare source-backed standards for new attempts.".into());
         }
         Ok(notices)

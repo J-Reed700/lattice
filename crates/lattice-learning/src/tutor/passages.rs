@@ -5,9 +5,7 @@
 use super::course_turn::{place, CourseTurn};
 use crate::dto::{LearningProgramDto, LearningSourceDto};
 use crate::persistence::db;
-use crate::reference_collection::{
-    ReferenceCollection, ReferencePassage, Scope,
-};
+use crate::reference_collection::{ReferenceCollection, ReferencePassage, Scope};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::contracts::sources::{SourceDto, COURSE_SOURCE_PREFIX};
 use lattice_core::application::ports::turn_source::{SourcePassage, SourcePassages};

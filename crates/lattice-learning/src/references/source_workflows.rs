@@ -1,7 +1,5 @@
 //! Web-source ingestion workflow. The command supplies the guarded fetch operation.
-use crate::dto::{
-    AddLearningWebSourceRequestDto, LearningSourceKind, LearningSourceWorkspaceDto,
-};
+use crate::dto::{AddLearningWebSourceRequestDto, LearningSourceKind, LearningSourceWorkspaceDto};
 use crate::references::trust::capture::web_capture;
 use crate::source_identity::{source_request_hash, validate_source_ids};
 use crate::source_library::LearningSourceLibraryRepository;

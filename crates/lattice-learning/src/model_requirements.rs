@@ -5,9 +5,7 @@
 //! can refuse before loading; [`ensure_window`] checks the loaded model before
 //! any research or model call is spent.
 
-use crate::generation::{
-    recall_output_tokens, LESSON_OUTPUT_RESERVE, OUTLINE_OUTPUT_RESERVE,
-};
+use crate::generation::{recall_output_tokens, LESSON_OUTPUT_RESERVE, OUTLINE_OUTPUT_RESERVE};
 use crate::recall::deck_output_tokens;
 use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::application::ports::LLMPort;

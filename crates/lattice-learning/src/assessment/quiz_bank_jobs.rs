@@ -9,9 +9,7 @@ use crate::assessment_generation::{
     self as generation, AuthoredItem, AuthoringNeed, MaterialPassage, RawGrade, ShortAnswer,
     StoredItem, WrittenAnswer,
 };
-use crate::assessment_repository::{
-    BankItem, ItemGrade, LearningAssessmentRepository,
-};
+use crate::assessment_repository::{BankItem, ItemGrade, LearningAssessmentRepository};
 use crate::dto::{
     LearningAssessmentGradeStatus, LearningBlockDto, LearningQuizScopeDto, LearningQuizScopeKind,
     LessonAnswerKey, LessonQuestion, LessonQuestionKind,

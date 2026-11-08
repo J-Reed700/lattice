@@ -21,9 +21,7 @@ const OUTPUT_TOKENS: u32 = 600;
 /// Whether `pending` is read part by part: it is a comparison with the
 /// statement's own citation and a source's passage is among those it cites (an
 /// example's run is no source).
-pub(in crate::lessons::content_verification) fn applies(
-    pending: &PendingClaim,
-) -> bool {
+pub(in crate::lessons::content_verification) fn applies(pending: &PendingClaim) -> bool {
     pending.pass == Pass::Attribution
         && pending
             .evidence
@@ -63,9 +61,7 @@ pub(in crate::lessons::content_verification) async fn part_wise(
 ) -> Result<((Pass, CheckedClaim), AnswerSize)> {
     let texts = labelled(&pending, labels);
     let answered = {
-        let _model_call = crate::lesson_progress::model_call(
-            crate::lesson_progress::Term::Reading,
-        );
+        let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Reading);
         bridge_checker(llm)
             .check_bridge(&pending.checked, &texts)
             .await

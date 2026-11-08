@@ -516,10 +516,7 @@ pub(crate) async fn link(
     progress: &OutlineProgress,
 ) -> Result<LinkLog> {
     progress.stage(OutlineStage::CheckingCitations);
-    crate::outline_citations::restore_source_quotes(
-        &mut draft.candidate,
-        sources,
-    );
+    crate::outline_citations::restore_source_quotes(&mut draft.candidate, sources);
     let mut log = LinkLog {
         removed_unmatched: strip_unmatched(&mut draft.candidate, sources, module),
         ..LinkLog::default()
@@ -539,8 +536,7 @@ pub(crate) async fn link(
     let mut skeleton =
         GroundedRequest::new(LINK_SYSTEM, json!({"passages":[],"items":[]}).to_string());
     skeleton.output_tokens = 200 + 120 * batch;
-    let share =
-        crate::model_call::source_room(llm, &skeleton, usize::MAX) / batch;
+    let share = crate::model_call::source_room(llm, &skeleton, usize::MAX) / batch;
     let mut pending = Vec::new();
     for (path, kind) in items {
         let Some(field) = draft.candidate.pointer(&path) else {

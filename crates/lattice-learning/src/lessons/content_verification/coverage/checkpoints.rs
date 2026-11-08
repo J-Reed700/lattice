@@ -38,8 +38,7 @@ pub(super) async fn load_fidelity(key: &str) -> Result<Option<FidelityFinding>> 
 }
 
 pub(super) async fn save_fidelity(key: &str, finding: &FidelityFinding) -> Result<()> {
-    crate::lesson_drafts::record_checkpoint(key, serde_json::to_value(finding)?)
-        .await
+    crate::lesson_drafts::record_checkpoint(key, serde_json::to_value(finding)?).await
 }
 
 pub(super) async fn load(
@@ -47,21 +46,19 @@ pub(super) async fn load(
     input: &Value,
     content: &[Value],
 ) -> Result<Option<CoverageUnit>> {
-    Ok(
-        crate::lesson_drafts::checkpoint(&key(llm, input))
-            .await?
-            .and_then(|value| serde_json::from_value::<CoverageUnit>(value).ok())
-            .filter(|saved| {
-                input["index"].as_u64() == Some(saved.index as u64)
-                    && !saved.reason.trim().is_empty()
-                    && valid_saved_coverage(
-                        &Coverage {
-                            units: vec![saved.clone()],
-                        },
-                        content,
-                    )
-            }),
-    )
+    Ok(crate::lesson_drafts::checkpoint(&key(llm, input))
+        .await?
+        .and_then(|value| serde_json::from_value::<CoverageUnit>(value).ok())
+        .filter(|saved| {
+            input["index"].as_u64() == Some(saved.index as u64)
+                && !saved.reason.trim().is_empty()
+                && valid_saved_coverage(
+                    &Coverage {
+                        units: vec![saved.clone()],
+                    },
+                    content,
+                )
+        }))
 }
 
 pub(super) async fn save(
@@ -74,11 +71,8 @@ pub(super) async fn save(
             .iter()
             .find(|input| input["index"].as_u64() == Some(checked.index as u64))
             .ok_or_else(failure)?;
-        crate::lesson_drafts::record_checkpoint(
-            &key(llm, input),
-            serde_json::to_value(checked)?,
-        )
-        .await?;
+        crate::lesson_drafts::record_checkpoint(&key(llm, input), serde_json::to_value(checked)?)
+            .await?;
     }
     Ok(())
 }

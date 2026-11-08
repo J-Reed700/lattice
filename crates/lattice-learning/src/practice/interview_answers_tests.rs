@@ -1,5 +1,5 @@
-use super::*;
 use super::test_support::{plan, source, standard};
+use super::*;
 use crate::{
     lessons::course_generation_tests::ScriptedModel, practical_dto::LearningInterviewRoundKind,
 };
@@ -877,8 +877,8 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
         repository::LearningRepository,
         source_library::LearningSourceLibraryRepository,
     };
-    use lattice_core::application::ports::MockWebService;
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
+    use lattice_core::application::ports::MockWebService;
     let pool = crate::tests::pool().await?;
     let program = crate::tests::fixture();
     let program_id = &program.summary.id;

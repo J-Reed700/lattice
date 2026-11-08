@@ -145,16 +145,9 @@ pub(super) async fn with_snapshots(
     query: &str,
     output_tokens: usize,
 ) -> Result<String> {
-    let room = crate::reference_collection::snapshot_room(
-        llm,
-        system,
-        &context,
-        output_tokens,
-    );
-    let passages = crate::reference_collection::snapshot_passages(
-        llm, sources, query, room,
-    )
-    .await?;
+    let room = crate::reference_collection::snapshot_room(llm, system, &context, output_tokens);
+    let passages =
+        crate::reference_collection::snapshot_passages(llm, sources, query, room).await?;
     if let Some(fields) = context.as_object_mut() {
         fields.insert("sourceSnapshots".into(), passages);
     }
@@ -487,12 +480,7 @@ fn with_transcript(
     output_tokens: usize,
     shared: bool,
 ) -> Result<serde_json::Value> {
-    let window = crate::reference_collection::snapshot_room(
-        llm,
-        system,
-        &prompt,
-        output_tokens,
-    );
+    let window = crate::reference_collection::snapshot_room(llm, system, &prompt, output_tokens);
     let room = if shared { window / 2 } else { window };
     let newest_learner_turn = transcript.iter().rposition(|turn| {
         turn.get("speaker").and_then(serde_json::Value::as_str) == Some("learner")

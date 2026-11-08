@@ -160,8 +160,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
             .await?,
         card_id
     );
-    let study =
-        crate::recall::study_repository::StudyRepository::new(pool.clone());
+    let study = crate::recall::study_repository::StudyRepository::new(pool.clone());
     let state = repo.memory_state(&program.summary.id).await?;
     let deck = study
         .get(state.deck_id.as_deref().ok_or_else(|| {
@@ -200,8 +199,7 @@ async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> R
         .await?
         .deck_id
         .is_none());
-    let notes_repo =
-        lattice_store::workspace_notes::DailyNotesRepository::new(pool.clone());
+    let notes_repo = lattice_store::workspace_notes::DailyNotesRepository::new(pool.clone());
     notes_repo.delete(&note_id).await?;
     sqlx::query("DELETE FROM journals WHERE id=?")
         .bind(&original_journal_id)
@@ -416,9 +414,7 @@ fn source_capture(title: &str, text: &str) -> super::source_library::CapturedLea
         text: text.into(),
         truncated: false,
         extraction_version: "test_capture_v1".into(),
-        signals: crate::references::trust::capture::not_extracted(
-            "test fixture",
-        ),
+        signals: crate::references::trust::capture::not_extracted("test fixture"),
     }
 }
 

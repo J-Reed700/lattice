@@ -10,9 +10,7 @@ use super::*;
 /// first support that met the bar, when that is not the one named now. The
 /// support it replaces moves to `also_supported`; the strongest passage joins
 /// the finding's evidence so the check finds it there.
-pub(in crate::lessons::content_verification) fn name_strongest(
-    finding: &mut Finding,
-) {
+pub(in crate::lessons::content_verification) fn name_strongest(finding: &mut Finding) {
     let Some(best) = finding
         .trust
         .as_deref()

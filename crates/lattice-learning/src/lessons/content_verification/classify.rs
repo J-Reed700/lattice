@@ -38,8 +38,7 @@ pub(super) struct ToSort<'a> {
 
 /// The sections that state what is so, where a specific needs a source: a
 /// worked example's, a practice's and a check's cases are hypothetical.
-pub(crate) const CITED_KINDS: [&str; 3] =
-    ["explanation", "contrast", "recap"];
+pub(crate) const CITED_KINDS: [&str; 3] = ["explanation", "contrast", "recap"];
 
 /// The figures of a text: each run of digits, with its decimal or thousands
 /// separators.
@@ -208,9 +207,7 @@ pub(super) async fn classify(
             "Sorting {} statements by what checks them",
             batch.len()
         ));
-        let _model_call = crate::lesson_progress::model_call(
-            crate::lesson_progress::Term::Sort,
-        );
+        let _model_call = crate::lesson_progress::model_call(crate::lesson_progress::Term::Sort);
         let classes = crate::generation::complete_checked(
             llm,
             SYSTEM,

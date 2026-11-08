@@ -6,9 +6,7 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
-use crate::content_verification::{
-    figures, needs_citation, Givens, CITED_KINDS,
-};
+use crate::content_verification::{figures, needs_citation, Givens, CITED_KINDS};
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -626,8 +624,7 @@ mod tests {
     }
 
     fn patch(patch: Value) -> Value {
-        crate::lessons::text_edits::apply(&uncited_lesson(), &patch.to_string())
-            .unwrap()
+        crate::lessons::text_edits::apply(&uncited_lesson(), &patch.to_string()).unwrap()
     }
 
     /// An uncited figure the supplied excerpt states ends cited, its sentence

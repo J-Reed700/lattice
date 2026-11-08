@@ -37,9 +37,9 @@ fn workspace_cleanup_requires_a_matching_invocation_marker() -> Result<()> {
     assert!(!marker.exists());
     Ok(())
 }
+use super::test_support::{fixture, fixture_on_pool, id};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
-use super::test_support::{fixture, fixture_on_pool, id};
 
 use crate::persistence::db;
 
@@ -717,13 +717,11 @@ async fn runtime_profiles_use_cas_and_restart_recovery_marks_runs_interrupted() 
     assert!(frozen.runtime_available);
     let unavailable = snapshot.clone().with_capabilities(
         Vec::new(),
-        vec![
-            crate::lab_runtime::LearningLabRuntimeCapability {
-                available: false,
-                reason: Some("Docker is offline".into()),
-                ..docker.clone()
-            },
-        ],
+        vec![crate::lab_runtime::LearningLabRuntimeCapability {
+            available: false,
+            reason: Some("Docker is offline".into()),
+            ..docker.clone()
+        }],
     );
     assert!(!unavailable.activities[0].runtime_available);
     assert_eq!(
@@ -807,9 +805,7 @@ async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() 
     let research_ids = crate::interview_research::research_interview_target(
         &TestResearchLLM(serde_json::json!({"needs":[]})),
         &lattice_core::application::ports::MockWebService::new(),
-        &crate::source_library::LearningSourceLibraryRepository::new(
-            pool.clone(),
-        ),
+        &crate::source_library::LearningSourceLibraryRepository::new(pool.clone()),
         &program_id,
         &id(),
         "Streaming systems",
@@ -870,8 +866,7 @@ async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() 
     let mut generated_act = generated();
     generated_act.source_version_ids = research_ids.clone();
     generated_act.files = vec![GeneratedPracticalFile {
-        path: crate::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH
-            .into(),
+        path: crate::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH.into(),
         role: PracticalFileRole::Reference,
         content: plan_json,
         editable: false,
@@ -897,8 +892,10 @@ async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() 
     assert_eq!(saved.interview_plan.as_ref(), Some(&plan));
 
     // 2. Verify interview/plan.json is hidden from public files
-    assert!(!saved.files.iter().any(|f| f.path
-        == crate::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH));
+    assert!(!saved
+        .files
+        .iter()
+        .any(|f| f.path == crate::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH));
 
     // 3. Verify interview_plan is provided in simulation_generation_context
     let (sim_context, _sources) = repository
@@ -1034,8 +1031,8 @@ impl lattice_core::application::ports::LLMPort for TestResearchLLM {
 async fn interview_research_ingests_context_and_web_pages_idempotently() -> Result<()> {
     use crate::practice::interview_research;
     use crate::references::source_library::LearningSourceLibraryRepository;
-    use lattice_core::application::ports::MockWebService;
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
+    use lattice_core::application::ports::MockWebService;
 
     let (pool, program_id, _lesson_id, _) = fixture().await?;
     let library = LearningSourceLibraryRepository::new(pool.clone());
@@ -1190,8 +1187,8 @@ async fn interview_research_ingests_context_and_web_pages_idempotently() -> Resu
 async fn interview_research_rejects_redirects_outside_structured_site_scope() -> Result<()> {
     use crate::practice::interview_research;
     use crate::source_library::LearningSourceLibraryRepository;
-    use lattice_core::application::ports::MockWebService;
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
+    use lattice_core::application::ports::MockWebService;
     let (pool, program_id, _, _) = fixture().await?;
     let library = LearningSourceLibraryRepository::new(pool);
     let existing_count = library.workspace(&program_id).await?.sources.len();
@@ -1286,9 +1283,7 @@ async fn interview_research_rejects_redirects_outside_structured_site_scope() ->
     Ok(())
 }
 
-use crate::practice::practice_tests::{
-    passage_source, text_length_rules, Reply,
-};
+use crate::practice::practice_tests::{passage_source, text_length_rules, Reply};
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 
 /// Answers a request for evaluator files with `checks` and any other with
@@ -1413,9 +1408,7 @@ async fn a_long_practical_activity_is_read_not_refused() -> Result<()> {
 
 #[tokio::test]
 async fn a_large_evaluator_reply_is_read_not_refused() -> Result<()> {
-    use crate::practical_generation::{
-        generate_activity, PracticalRuntimeContext,
-    };
+    use crate::practical_generation::{generate_activity, PracticalRuntimeContext};
     let program = crate::tests::fixture();
     let lesson = &program.modules[0].lessons[0];
     let runtime = PracticalRuntimeContext {
@@ -1481,9 +1474,7 @@ fn simulation_session(learner: &str) -> LearningSimulationSessionDto {
 
 #[tokio::test]
 async fn a_long_simulation_turn_is_read_not_refused() -> Result<()> {
-    use crate::practical_generation::{
-        generate_simulation_turn, SimulationActivityContext,
-    };
+    use crate::practical_generation::{generate_simulation_turn, SimulationActivityContext};
     let context = SimulationActivityContext {
         title: "Design review".into(),
         brief: "Role-play a review of the design.".into(),

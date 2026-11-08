@@ -15,9 +15,7 @@ use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
 use crate::persistence::{db, now};
-use crate::review_findings::{
-    site_sha256, unit, FindingKey, FindingKind, FindingSite, SetAside,
-};
+use crate::review_findings::{site_sha256, unit, FindingKey, FindingKind, FindingSite, SetAside};
 
 /// What raised a teaching finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]

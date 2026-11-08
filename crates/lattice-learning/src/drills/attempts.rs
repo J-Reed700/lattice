@@ -276,10 +276,7 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<(Attempt, StoredDrill)> 
 
 /// The attempt, and the drill it is on, when the attempt is submitted and waits for its grade. `None` when it is gone
 /// or in any other state.
-pub(crate) async fn waiting(
-    pool: &SqlitePool,
-    id: &str,
-) -> Result<Option<(Attempt, StoredDrill)>> {
+pub(crate) async fn waiting(pool: &SqlitePool, id: &str) -> Result<Option<(Attempt, StoredDrill)>> {
     match get(pool, id).await {
         Ok((attempt, drill)) if attempt.status == AttemptStatus::Submitted => {
             Ok(Some((attempt, drill)))

@@ -52,11 +52,7 @@ struct Proposals {
 impl DrillBuild<'_> {
     /// Stage 3. One mutation for each target pattern, in the order of the targets, that applies to the baseline and
     /// can be undone.
-    pub(crate) async fn plant(
-        &self,
-        spec: &DrillSpec,
-        baseline: &Baseline,
-    ) -> Result<Planted> {
+    pub(crate) async fn plant(&self, spec: &DrillSpec, baseline: &Baseline) -> Result<Planted> {
         let targets = spec.targets()?;
         let wording = self.material.plant_wording(spec, baseline, &targets);
         let rules = Rules {

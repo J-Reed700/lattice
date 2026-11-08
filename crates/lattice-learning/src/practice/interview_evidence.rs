@@ -43,10 +43,8 @@ impl EvidenceBank {
         if sources.is_empty() || token_room == 0 {
             return Ok(Self::default());
         }
-        let passages = crate::reference_collection::snapshot_passages(
-            llm, sources, query, token_room,
-        )
-        .await?;
+        let passages =
+            crate::reference_collection::snapshot_passages(llm, sources, query, token_room).await?;
         Self::from_passages(llm, sources, &passages, token_room)
     }
 

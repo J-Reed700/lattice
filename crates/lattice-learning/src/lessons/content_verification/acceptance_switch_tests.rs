@@ -1227,10 +1227,7 @@ async fn a_claim_that_ended_at_a_node_of_its_graph_is_planned_as_ended() -> Resu
     // Its rewrite was asked for and it went with its sentence: the plan holds
     // nothing more for it, so the call it made is not counted twice.
     let planned = ledger.planned(&policy, &lesson_of(SENTENCE), std::slice::from_ref(&target));
-    assert_eq!(
-        planned[0].at,
-        crate::lessons::call_plan::PlannedAt::Ended
-    );
+    assert_eq!(planned[0].at, crate::lessons::call_plan::PlannedAt::Ended);
     Ok(())
 }
 
@@ -2119,13 +2116,8 @@ async fn a_statement_counts_as_reused_only_when_every_reading_of_it_was_restored
     // was asked.
     let reader = Says::restoring(&[Outcome::Stands], &[true, true, true, false]);
 
-    let (stopped, trace) = crate::lesson_progress::traced(read_pass(
-        &mut ledger,
-        &reader,
-        &pass,
-        &lesson,
-    ))
-    .await;
+    let (stopped, trace) =
+        crate::lesson_progress::traced(read_pass(&mut ledger, &reader, &pass, &lesson)).await;
 
     assert!(stopped?.is_empty());
     assert_eq!((trace.checked, trace.reused), (2, 1));

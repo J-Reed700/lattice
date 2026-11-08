@@ -22,11 +22,7 @@ pub struct FakeLibrary {
 }
 
 impl FakeLibrary {
-    pub fn with_document(
-        mut self,
-        id: &str,
-        chunks: &[&str],
-    ) -> Self {
+    pub fn with_document(mut self, id: &str, chunks: &[&str]) -> Self {
         let chunks = chunks
             .iter()
             .enumerate()

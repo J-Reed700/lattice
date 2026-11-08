@@ -1,9 +1,7 @@
 //! The runner adapter: what a runtime's result means for a test, the entrypoint that runs a test file, which
 //! languages get a runner, and the real built-in runtimes on small modules.
 
-use crate::drills::runner::{
-    outcome_of, runner_for, BuiltinRunner, CodeRunner, RunOutcome,
-};
+use crate::drills::runner::{outcome_of, runner_for, BuiltinRunner, CodeRunner, RunOutcome};
 use crate::embedded_runtime::{BuiltinRuntimes, LearningBuiltinRuntime};
 use crate::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
 

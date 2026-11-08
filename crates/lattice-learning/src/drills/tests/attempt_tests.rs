@@ -4,9 +4,7 @@
 use super::support::{
     extra_finding, operator_finding, operator_fixed, proved, review_assessment, stock, MODEL,
 };
-use crate::drills::attempts::{
-    self, Attempt, AttemptMode, AttemptStatus, Graded, Submission,
-};
+use crate::drills::attempts::{self, Attempt, AttemptMode, AttemptStatus, Graded, Submission};
 use crate::drills::jobs::{DRILL_BUILD, DRILL_GRADING, GRADING_STEPS};
 use crate::drills::repository::DrillStatus;
 use crate::persistence::db;

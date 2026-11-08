@@ -45,9 +45,7 @@ pub(in crate::lessons::content_verification) async fn compare(
     pending: PendingClaim,
 ) -> Result<Comparison> {
     let (unit, claim, evidence) = (pending.unit, &pending.claim, &pending.evidence);
-    if let Some(value) =
-        crate::lesson_drafts::checkpoint(&pending.receipt_key).await?
-    {
+    if let Some(value) = crate::lesson_drafts::checkpoint(&pending.receipt_key).await? {
         let parts = bridge::saved_parts(&value);
         if let Some(mut finding) = serde_json::from_value::<ClaimReceipt>(value)
             .ok()
@@ -60,11 +58,7 @@ pub(in crate::lessons::content_verification) async fn compare(
     if let Some(receipt) = claim_reuse::legacy_receipt(llm, unit, claim, evidence).await? {
         let saved = serde_json::to_value(&receipt)?;
         if let Some(finding) = receipt.finding(unit, claim, evidence) {
-            crate::lesson_drafts::record_checkpoint(
-                &pending.receipt_key,
-                saved,
-            )
-            .await?;
+            crate::lesson_drafts::record_checkpoint(&pending.receipt_key, saved).await?;
             return Ok(Comparison::Done(Box::new(finding), true));
         }
     }

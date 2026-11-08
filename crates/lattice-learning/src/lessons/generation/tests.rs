@@ -300,9 +300,7 @@ fn recall_parser_rejects_unknown_fields_and_choice_payloads() {
 
 #[test]
 fn course_context_carries_whole_objectives_and_every_earlier_recap() {
-    use crate::dto::{
-        LearningBlockDto, LearningBlockKind, LearningPreparation,
-    };
+    use crate::dto::{LearningBlockDto, LearningBlockKind, LearningPreparation};
     let mut program = crate::tests::fixture();
     let long = "A detailed objective sentence. ".repeat(40);
     let recap = "Recap of what the lesson established. ".repeat(80);

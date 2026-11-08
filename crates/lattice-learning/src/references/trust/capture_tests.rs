@@ -12,9 +12,7 @@ use super::test_support::{
 use crate::dto::{
     LearningSourceDto, LearningSourceKind, LearningSourcePolicy, RefreshLearningSourceRequestDto,
 };
-use crate::portability_dto::{
-    DeleteLearningSourceRequestDto, ReimportLearningSourceRequestDto,
-};
+use crate::portability_dto::{DeleteLearningSourceRequestDto, ReimportLearningSourceRequestDto};
 use crate::repository::LearningRepository;
 use crate::source_library::{CapturedLearningSource, NewLearningSource};
 use crate::sources::InitialReference;

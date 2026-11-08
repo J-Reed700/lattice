@@ -6,9 +6,7 @@
 //! numbered sources, as the writer's are, so the citation can name it.
 use super::super::classify::figures;
 use super::super::*;
-use crate::generation::{
-    validate_excerpt_quote, MAX_CITATIONS, MAX_QUOTE_CHARS,
-};
+use crate::generation::{validate_excerpt_quote, MAX_CITATIONS, MAX_QUOTE_CHARS};
 use crate::reference_collection::{checked_span, shared_terms};
 use lattice_core::domain::learning::claim_review::ClaimEvent;
 use lattice_core::shared::text::{claim_sentence, sentences};
@@ -84,10 +82,7 @@ pub(in crate::lessons::content_verification) fn quotation<'s>(
 
 /// Every `sourceIndex` of a lesson `schema` allows the `count` sources the
 /// lesson numbers, once verification has numbered one more.
-pub(in crate::lessons::content_verification) fn number_sources(
-    schema: &mut Value,
-    count: usize,
-) {
+pub(in crate::lessons::content_verification) fn number_sources(schema: &mut Value, count: usize) {
     fn allow(index: &mut Value, count: usize) {
         if let Some(maximum) = index.get_mut("maximum") {
             *maximum = json!(count.saturating_sub(1));

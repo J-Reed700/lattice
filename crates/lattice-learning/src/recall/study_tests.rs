@@ -6,11 +6,11 @@ use super::{
     study_repository::StudyRepository,
     study_service as service,
 };
+use serde_json::json;
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqlitePoolOptions},
     SqlitePool,
 };
-use serde_json::json;
 
 async fn open(path: std::path::PathBuf) -> lattice_core::shared::error::Result<SqlitePool> {
     let database = |e: sqlx::Error| lattice_core::shared::error::AppError::Database(e.to_string());
@@ -508,7 +508,10 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
     let dir = tempfile::tempdir()?;
     let earlier = dir.path().join("migrations");
     std::fs::create_dir(&earlier)?;
-    for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../lattice-desktop/migrations"))? {
+    for entry in std::fs::read_dir(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../lattice-desktop/migrations"
+    ))? {
         let path = entry?.path();
         let name = path
             .file_name()
@@ -536,7 +539,9 @@ async fn the_consolidation_migration_moves_every_card_onto_fsrs() -> anyhow::Res
     ] {
         sqlx::query(statement).execute(&pool).await?;
     }
-    sqlx::migrate!("../lattice-desktop/migrations").run(&pool).await?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool)
+        .await?;
 
     let card = |id: &'static str| {
         sqlx::query_as::<_, (Option<f64>, Option<f64>, Option<i64>, i64, i64, i64)>(

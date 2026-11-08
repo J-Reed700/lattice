@@ -161,9 +161,7 @@ async fn batched(
             .iter()
             .any(|s| response.finish_reason.to_ascii_lowercase().contains(s));
         let parsed = (!cut_off)
-            .then(|| {
-                crate::generation::parse_json::<Value>(&response.text).ok()
-            })
+            .then(|| crate::generation::parse_json::<Value>(&response.text).ok())
             .flatten();
         let Some(parsed) = parsed else {
             if size > 1 {
@@ -261,34 +259,31 @@ pub async fn judge_short_answers(
         400,
     )
     .await?;
-    Ok(
-        raw.into_iter()
-            .filter_map(|v| serde_json::from_value::<RawJudgeItem>(v).ok())
-            .map(|j| {
-                let equivalent = j.verdict == "equivalent";
-                RawGrade {
-                    item_id: j.item_id,
-                    item: GraderItem {
-                        criteria: vec![GraderCriterion {
-                            criterion_id:
-                                crate::grade_rationale::EQUIVALENCE_CRITERION
-                                    .into(),
-                            your_words: j.your_words,
-                            what_was_missing: j.what_was_missing,
-                            full_credit_includes: j.full_credit_includes,
-                            source_quote: None,
-                            verdict: if equivalent {
-                                GraderVerdict::Met
-                            } else {
-                                GraderVerdict::Missed
-                            },
-                            points: if equivalent { 1.0 } else { 0.0 },
-                        }],
-                        summary: j.summary,
-                    },
-                    response_to_note: j.response_to_note,
-                }
-            })
-            .collect(),
-    )
+    Ok(raw
+        .into_iter()
+        .filter_map(|v| serde_json::from_value::<RawJudgeItem>(v).ok())
+        .map(|j| {
+            let equivalent = j.verdict == "equivalent";
+            RawGrade {
+                item_id: j.item_id,
+                item: GraderItem {
+                    criteria: vec![GraderCriterion {
+                        criterion_id: crate::grade_rationale::EQUIVALENCE_CRITERION.into(),
+                        your_words: j.your_words,
+                        what_was_missing: j.what_was_missing,
+                        full_credit_includes: j.full_credit_includes,
+                        source_quote: None,
+                        verdict: if equivalent {
+                            GraderVerdict::Met
+                        } else {
+                            GraderVerdict::Missed
+                        },
+                        points: if equivalent { 1.0 } else { 0.0 },
+                    }],
+                    summary: j.summary,
+                },
+                response_to_note: j.response_to_note,
+            }
+        })
+        .collect())
 }

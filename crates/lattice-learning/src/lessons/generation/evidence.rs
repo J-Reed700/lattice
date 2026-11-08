@@ -13,13 +13,9 @@ use crate::content_verification::digest;
 use crate::content_verification::research::research_topics;
 use crate::dto::{LearningLessonDto, LearningProgramDto, LearningSourceDto};
 use crate::lesson_drafts::{checkpoint, record_checkpoint};
-use crate::lessons::structured_call::{
-    complete_reasoned_json, CallKind, ReasonFirst,
-};
+use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
 use crate::model_call;
-use crate::reference_collection::{
-    ReferenceCollection, ReferencePassage, PASSAGE_CHARS,
-};
+use crate::reference_collection::{ReferenceCollection, ReferencePassage, PASSAGE_CHARS};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};

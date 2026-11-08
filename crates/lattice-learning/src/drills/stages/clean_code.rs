@@ -8,10 +8,7 @@ use lattice_core::shared::error::Result;
 
 impl DrillBuild<'_> {
     /// Stage 1. The clean files and, where the material has one, what its proofs run against.
-    pub(crate) async fn clean_code(
-        &self,
-        spec: &DrillSpec,
-    ) -> Result<CleanCode> {
+    pub(crate) async fn clean_code(&self, spec: &DrillSpec) -> Result<CleanCode> {
         self.material.clean(spec, &self.context()).await
     }
 }

@@ -11,7 +11,7 @@ pub(crate) mod practical_tests;
 pub mod practical_workspace;
 pub mod practice_generation;
 pub mod practice_repository;
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support;
 #[cfg(test)]
 pub(crate) mod practice_tests;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;

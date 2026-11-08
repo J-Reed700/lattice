@@ -153,11 +153,7 @@ impl<'a> DrillBuild<'a> {
 
     /// Runs the stages in order, resuming at the first without a checkpoint. `Stopped` when the job is cancelled;
     /// `Committed` when the drill is stored and the job completed with it.
-    pub async fn run(
-        &self,
-        context: &JobContext,
-        spec: &DrillSpec,
-    ) -> Result<JobOutcome> {
+    pub async fn run(&self, context: &JobContext, spec: &DrillSpec) -> Result<JobOutcome> {
         let Some(code) = self
             .stage(context, Stage::CleanCode, || self.clean_code(spec))
             .await?

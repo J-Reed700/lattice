@@ -287,7 +287,6 @@ fn a_short_collection_is_measured_per_character_not_as_one_passage() {
 
 #[test]
 fn the_plan_schema_bounds_no_text_but_a_blank() {
-    let bounds =
-        crate::lessons::course_generation_tests::length_bounds(&plan_schema());
+    let bounds = crate::lessons::course_generation_tests::length_bounds(&plan_schema());
     assert!(bounds.is_empty(), "{bounds:?}");
 }

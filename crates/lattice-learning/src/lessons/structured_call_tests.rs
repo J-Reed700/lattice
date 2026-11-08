@@ -122,10 +122,7 @@ async fn parsed(llm: &Recorder) -> Result<String> {
             subject: "the explanation",
             brief: BRIEF,
         }),
-        |text| {
-            crate::generation::parse_json::<Value>(text)
-                .map(|_| text.to_owned())
-        },
+        |text| crate::generation::parse_json::<Value>(text).map(|_| text.to_owned()),
     )
     .await
 }
@@ -640,8 +637,7 @@ async fn a_second_refusal_fails_with_its_own_reason_without_blaming_the_input() 
 async fn a_refused_answer_asked_again_shows_the_learner_only_that_it_is_asking_again() -> Result<()>
 {
     let llm = Recorder::answering_first(32_000, &["{\"answer\":\"Blue.\"}"]);
-    let (value, stages) =
-        crate::lesson_progress::staged(checked(&llm, None)).await;
+    let (value, stages) = crate::lesson_progress::staged(checked(&llm, None)).await;
     assert_eq!(value?, ANSWER);
 
     let asking = "The model's answer could not be used; asking once more.";

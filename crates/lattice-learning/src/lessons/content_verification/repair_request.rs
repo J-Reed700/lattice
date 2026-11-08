@@ -20,12 +20,10 @@ pub(crate) async fn has_pending_repair(
     references: &ReferenceCollection<'_>,
 ) -> Result<bool> {
     let candidate: Value = crate::generation::parse_json(raw)?;
-    Ok(
-        crate::lesson_drafts::pending_repair(raw)
-            .await?
-            .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
-            .is_some_and(|saved| saved.matches(llm, prompt, schema, &candidate, references)),
-    )
+    Ok(crate::lesson_drafts::pending_repair(raw)
+        .await?
+        .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
+        .is_some_and(|saved| saved.matches(llm, prompt, schema, &candidate, references)))
 }
 
 pub(super) fn repair_fingerprint(

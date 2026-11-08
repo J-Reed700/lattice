@@ -41,10 +41,7 @@ pub(crate) async fn snapshot_passages(
         })
         .collect();
     let collection = ReferenceCollection::lexical(&documents)?;
-    let entry = |source: &crate::dto::LearningSourceVersionDto,
-                 passages: &[&str]| {
-        serde_json::json!({"sourceId":source.source_id,"versionId":source.version.id,"title":source.version.title,"passages":passages})
-    };
+    let entry = |source: &crate::dto::LearningSourceVersionDto, passages: &[&str]| serde_json::json!({"sourceId":source.source_id,"versionId":source.version.id,"title":source.version.title,"passages":passages});
     let snapshot = |passage: &ReferencePassage| {
         sources
             .iter()
@@ -68,10 +65,7 @@ pub(crate) async fn snapshot_passages(
                 <= room
         })
         .await?;
-    let mut grouped: Vec<(
-        &crate::dto::LearningSourceVersionDto,
-        Vec<&str>,
-    )> = Vec::new();
+    let mut grouped: Vec<(&crate::dto::LearningSourceVersionDto, Vec<&str>)> = Vec::new();
     for passage in &passages {
         let Some(source) = snapshot(passage) else {
             continue;

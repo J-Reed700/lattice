@@ -6,9 +6,7 @@ use super::support::{
     messages, plant_answer, review_answer, spec, ScriptedModel,
 };
 use crate::drills::bank::queue_build;
-use crate::drills::jobs::{
-    drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD,
-};
+use crate::drills::jobs::{drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD};
 use crate::drills::repository;
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::generation_jobs::pinned_for_test;

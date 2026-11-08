@@ -6,9 +6,7 @@
 
 use crate::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
 pub(crate) use crate::lessons::structured_call::complete_checked;
-pub(crate) use crate::lessons::structured_call::{
-    complete_json, complete_json_with_progress,
-};
+pub(crate) use crate::lessons::structured_call::{complete_json, complete_json_with_progress};
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
@@ -26,9 +24,7 @@ mod recall;
 pub(crate) use lesson::MAX_CITATIONS;
 pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
 pub use lesson_rules::lesson_rule_notes;
-pub(crate) use lesson_rules::{
-    lesson_rules, split_check, teaching_sentences, CHECK_REVEAL,
-};
+pub(crate) use lesson_rules::{lesson_rules, split_check, teaching_sentences, CHECK_REVEAL};
 pub(crate) use outline::{decode_outline, draft_outline, outline_schema};
 pub use outline::{generate_outline, generate_outline_with_progress};
 pub(crate) use recall::recall_output_tokens;
@@ -61,10 +57,7 @@ fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
     validate_excerpt_quote(quote, &source.excerpt)
 }
 
-pub(crate) fn validate_excerpt_quote(
-    quote: &str,
-    excerpt: &str,
-) -> Result<()> {
+pub(crate) fn validate_excerpt_quote(quote: &str, excerpt: &str) -> Result<()> {
     let quote = quote.trim();
     let chars = quote.chars().count();
     let words = quote.split_whitespace().count();

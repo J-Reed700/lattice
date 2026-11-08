@@ -262,9 +262,7 @@ pub(super) async fn insert_practical_snapshot(
     program_id: &str,
     snapshot: &PracticalPackSnapshot,
 ) -> Result<()> {
-    use crate::practical_dto::{
-        LearningPracticalPublicFileRole, LearningPracticalRuntimeKind,
-    };
+    use crate::practical_dto::{LearningPracticalPublicFileRole, LearningPracticalRuntimeKind};
     for activity in &snapshot.activities {
         validate_uuid(&activity.id, "practical activity")?;
         validate_uuid(&activity.lesson_id, "practical lesson")?;

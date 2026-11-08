@@ -8,10 +8,10 @@
 use super::manager::CourseIndexes;
 use super::sync::CourseProgress;
 use super::IndexMode;
-use lattice_index::passage_index::job::ProgressSaver;
 use async_trait::async_trait;
 use lattice_core::shared::runtime::jobs::{JobContext, JobHandler, JobOutcome};
 use lattice_core::shared::Result;
+use lattice_index::passage_index::job::ProgressSaver;
 use serde::{Deserialize, Serialize};
 use std::sync::Weak;
 use std::time::Instant;
