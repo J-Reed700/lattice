@@ -59,4 +59,5 @@ jobs:
 
       - name: The page reader's tests on the tests-first tree
         working-directory: crates/lattice-desktop
-        run: cargo test --locked -p lattice-desktop --features bindings-export --lib --no-fail-fast -- browser_reader::tests::
+        run: |
+          cargo test --locked -p lattice-desktop --features bindings-export --lib --no-fail-fast -- browser_reader::tests::
