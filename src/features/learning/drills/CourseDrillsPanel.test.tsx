@@ -1174,10 +1174,14 @@ describe('handing the review in', () => {
 describe('an attempt from the recent drills', () => {
   it('is read again from the backend and reopens its review with its drill', async () => {
     serve({ recent: [recentAttempt({ attemptId: 'attempt-7' })] });
-    api.codeReviewResult.mockResolvedValue(attempt({ attemptId: 'attempt-7' }));
+    const reading = deferred<CodeReviewResultDto>();
+    api.codeReviewResult.mockReturnValue(reading.promise);
     const { user } = show();
     await openRecent(user);
-    expect(screen.getByText('Opening your review…')).toBeVisible();
+    expect(await screen.findByText('Opening your review…')).toBeVisible();
+    await act(async () => {
+      reading.resolve(attempt({ attemptId: 'attempt-7' }));
+    });
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
     expect(api.codeReviewResult).toHaveBeenCalledWith('attempt-7');
     expect(api.startCourseDrill).not.toHaveBeenCalled();
