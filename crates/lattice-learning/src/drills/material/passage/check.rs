@@ -22,7 +22,7 @@ const NO_VERDICT: &str = "The source check gave no verdict that could be used.";
 
 /// What a source passage says of a sentence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SourceSays {
+pub enum SourceSays {
     Supported,
     Contradicted,
     Unsupported,

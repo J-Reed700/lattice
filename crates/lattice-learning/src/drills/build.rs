@@ -75,7 +75,7 @@ impl Stage {
         Stage::BlindReview,
     ];
 
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::CleanCode => "clean_code",
             Self::CleanReview => "clean_review",
@@ -86,7 +86,7 @@ impl Stage {
     }
 
     /// The key its output is saved under.
-    pub(crate) fn key(self) -> String {
+    pub fn key(self) -> String {
         format!("{CHECKPOINT_PREFIX}:{}", self.name())
     }
 

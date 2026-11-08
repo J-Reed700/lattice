@@ -37,7 +37,7 @@ const LINK_BRIEF: &str = "For each id, say what the item asks a learner to know 
 /// same prefix and the candidate set that was declined, so new references
 /// reopen the question and nothing else does.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct CitationReceipt {
+pub struct CitationReceipt {
     pub covers: bool,
     pub reason: String,
     pub checked_at: i64,
@@ -46,7 +46,7 @@ pub(crate) struct CitationReceipt {
 pub(crate) type CitationReceipts = BTreeMap<String, CitationReceipt>;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct LinkLog {
+pub struct LinkLog {
     /// Items in scope that carry a verified citation after this run.
     pub linked: u32,
     /// Items in scope.

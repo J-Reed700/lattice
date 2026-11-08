@@ -13,7 +13,7 @@ const REVIEW_VERSION: &str = "outline-incremental-review-v2";
 /// Separate from the draft's content hash: checkpoints also occur before review.
 /// Only a successfully parsed, validated semantic review creates this receipt.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct ReviewReceipt {
+pub struct ReviewReceipt {
     context_hash: String,
     structure_hash: String,
     module_hashes: Vec<String>,

@@ -113,7 +113,7 @@ pub(crate) trait AuditRunStore: Send + Sync {
 
 /// The audit tokens a course has spent, for its Plan tab.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct CourseAuditUsage {
+pub struct CourseAuditUsage {
     pub audits: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,

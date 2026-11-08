@@ -40,7 +40,7 @@ pub trait CourseProgress: Send {
 }
 
 /// Tells no one: for a run with nobody watching (a user's command, a test).
-pub(super) struct Silent;
+pub struct Silent;
 
 impl CourseProgress for Silent {}
 

@@ -34,7 +34,7 @@ const INDEPENDENT_SOLUTION: &str = "Independently solve this interview question 
 
 /// Solve once from the question's evidence bank, before an answer exists. The
 /// same independent outline can then challenge every repaired candidate.
-pub(super) async fn independent_solution(
+pub async fn independent_solution(
     llm: &dyn LLMPort,
     question: &Value,
     catalog: &[Value],
@@ -54,7 +54,7 @@ pub(super) async fn independent_solution(
     .await
 }
 
-pub(super) async fn review(
+pub async fn review(
     llm: &dyn LLMPort,
     question: &Value,
     solution: &str,
@@ -225,7 +225,7 @@ fn quote_context_range(text: &str, quote: &str) -> Option<(usize, usize)> {
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct ReviewIssue {
+pub struct ReviewIssue {
     demonstration: String,
     path: String,
     quote: String,
@@ -234,7 +234,7 @@ pub(super) struct ReviewIssue {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct Review {
+pub struct Review {
     pub issues: Vec<ReviewIssue>,
 }
 

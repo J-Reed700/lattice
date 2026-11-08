@@ -149,13 +149,13 @@ pub struct RepairLearningOutlineRequestDto {
     pub expected_revision: i64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct OutlineModuleBinding {
+pub struct OutlineModuleBinding {
     pub module_id: String,
     pub lesson_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct OutlineDraft {
+pub struct OutlineDraft {
     pub request: GenerateLearningProgramRequestDto,
     pub candidate: Value,
     pub source_ids: Vec<String>,
@@ -188,7 +188,7 @@ pub(crate) struct OutlineDraft {
 /// A supported receipt also records where the evidence was attached, so a
 /// later review can be told the assertion is verified rather than re-raise it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct OutlineClaimReceipt {
+pub struct OutlineClaimReceipt {
     pub verdict: lattice_core::application::services::claim_verification::ClaimVerdict,
     pub reason: String,
     pub supporting_quote: Option<String>,

@@ -36,13 +36,13 @@ const COPIED_RUN: usize = 8;
 const FETCH_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub(crate) struct PlannedSubtopic {
+pub struct PlannedSubtopic {
     pub title: String,
     pub needs: Vec<PlannedNeed>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub(crate) struct ReferencePlan {
+pub struct ReferencePlan {
     pub subtopics: Vec<PlannedSubtopic>,
 }
 

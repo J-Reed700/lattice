@@ -31,7 +31,7 @@ pub(crate) use behaviour::{BehaviourKept, WeakenedTests};
 pub(crate) use killing::KillingTest;
 
 /// What a strategy is given to prove one mutation.
-pub(crate) struct ProofCase<'a> {
+pub struct ProofCase<'a> {
     pub language: &'a str,
     /// The baseline every mutation is compared against.
     pub clean: &'a [DrillFile],
@@ -48,7 +48,7 @@ pub(crate) struct ProofCase<'a> {
 }
 
 /// What came of proving one mutation, with the calls and the runs behind it.
-pub(crate) enum ProofVerdict {
+pub enum ProofVerdict {
     /// The mutation stands as `mutation`, which is not the one proven when the strategy asked for a new edit.
     Proven {
         proof: Proof,
