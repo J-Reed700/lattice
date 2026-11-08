@@ -1,10 +1,10 @@
 use std::env;
 use std::path::PathBuf;
 
-#[path = "build_support/sidecar_guard.rs"]
-mod sidecar_guard;
 #[path = "build_support/main_thread_stack.rs"]
 mod main_thread_stack;
+#[path = "build_support/sidecar_guard.rs"]
+mod sidecar_guard;
 
 /// Embed the Windows application manifest into every executable this package
 /// links: the app, `export_bindings`, and each test harness.

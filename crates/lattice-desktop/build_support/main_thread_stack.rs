@@ -3,8 +3,11 @@ pub const MAIN_THREAD_STACK_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Link arguments that reserve `MAIN_THREAD_STACK_BYTES` for the main thread.
 pub fn link_args(target_os: &str, target_env: &str) -> Vec<String> {
-    let _ = (target_os, target_env);
-    Vec::new()
+    match (target_os, target_env) {
+        ("windows", "msvc") => vec![format!("/STACK:{MAIN_THREAD_STACK_BYTES}")],
+        ("macos", _) => vec![format!("-Wl,-stack_size,{MAIN_THREAD_STACK_BYTES:#x}")],
+        _ => Vec::new(),
+    }
 }
 
 #[cfg(test)]

@@ -30,7 +30,5 @@ rustflags = [
     "-A", "clippy::expect_used",
 ]
 
-# Increase stack size for all threads, including Tokio workers.
-# RUST_MIN_STACK only affects main thread - must use BOTH approaches:
-# 1. RUST_MIN_STACK for main thread (already set above)
-# 2. Tokio thread pool config in code (see setup/app.rs)
+# RUST_MIN_STACK reaches only threads std spawns, Tokio workers included.
+# The main thread's stack is set at link time by build_support/main_thread_stack.rs.
