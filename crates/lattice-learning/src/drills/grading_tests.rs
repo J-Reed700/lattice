@@ -6,8 +6,8 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::domain::learning::drills::{
-    overlapping, pattern, Drill, DrillFile, Edit, Finding, FindingOutcome, KeyIssue, LineSpan,
-    Material, Origin, Proof, Severity,
+    overlapping, pattern, Drill, DrillFile, Edit, Finding, FindingOutcome, KeyIssue, LessonLink,
+    LessonSentence, LineSpan, Material, Origin, Proof, Severity,
 };
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -104,6 +104,7 @@ fn key_issue(pattern: &str, severity: Severity, span: LineSpan, consequence: &st
             reason: "The edit introduces it.".into(),
         },
         origin: Origin::Planted,
+        lesson: None,
     }
 }
 
@@ -790,6 +791,48 @@ async fn every_issue_is_shown_with_its_pattern_its_consequence_and_the_lines_it_
     ] {
         assert!(task.contains(&expected), "{expected}\n\nis not in\n\n{task}");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_issue_tied_to_the_lesson_shows_its_sentences_after_its_pattern_and_one_without_a_link_shows_none(
+) -> Result<()> {
+    let mut scene = Scene::new();
+    scene.drill.key[0].lesson = Some(LessonLink {
+        lesson_id: "lesson-1".into(),
+        sentences: vec![
+            LessonSentence {
+                text: "A loop stops at the length of what it walks.".into(),
+                source: None,
+            },
+            LessonSentence {
+                text: "```python\nfor i in range(len(items)):\n    use(items[i])\n```".into(),
+                source: Some("Loop notes".into()),
+            },
+        ],
+    });
+    scene.drill.key[1].lesson = Some(LessonLink {
+        lesson_id: "lesson-1".into(),
+        sentences: Vec::new(),
+    });
+    let llm = ScriptedJudge::answering(vec![valid().to_string()]);
+    grade(&llm, &scene).await?;
+    let (_, task) = the_request(&llm);
+    let definition = pattern("correctness.off_by_one")
+        .map(|known| known.definition)
+        .unwrap_or_default();
+    let expected = format!(
+        "Issue 1: Off-by-one error (critical), orders.py line 3\nPattern: {definition}\nFrom the lesson:\n  A loop stops at the length of what it walks.\n  ```python\n  for i in range(len(items)):\n      use(items[i])\n  ```\nConsequence: The last pass reads past the end of prices and raises IndexError.\nLines:\n"
+    );
+    assert!(
+        task.contains(&expected),
+        "{expected}\n\nis not in\n\n{task}"
+    );
+    assert_eq!(
+        task.matches("From the lesson:").count(),
+        1,
+        "a link with no sentence and an issue with no link show no block: {task}"
+    );
     Ok(())
 }
 

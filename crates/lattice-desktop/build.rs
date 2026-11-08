@@ -610,12 +610,12 @@ fn main() {
                     "create_learning_tangent",
                     "list_learning_tangents",
                     "set_conversation_course",
-                    "start_review_drill",
+                    "start_course_drill",
                     "submit_code_review",
                     "code_review_result",
                     "regrade_code_review",
                     "code_review_languages",
-                    "review_drill_courses",
+                    "course_drills",
                 ]),
             )
             .plugin(

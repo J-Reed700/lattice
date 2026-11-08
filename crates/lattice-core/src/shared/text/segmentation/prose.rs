@@ -60,6 +60,77 @@ impl Boundaries for Prose {
     }
 }
 
+/// `Prose` for hard-wrapped text, where a line break inside a paragraph is a cut only where it ends a sentence or opens
+/// a block.
+pub struct Flowed;
+
+impl Boundaries for Flowed {
+    fn breaks(&self, text: &str) -> Vec<Break> {
+        let layout = Layout::of(text);
+        let mut breaks = Prose.breaks(text);
+        for cut in &mut breaks {
+            if cut.strength == Strength::Line {
+                cut.strength = flowed_strength(text, &layout, cut.at);
+            }
+        }
+        breaks
+    }
+}
+
+/// The strength of the Line break at `at`, which follows a newline and the next line's indentation.
+fn flowed_strength(text: &str, layout: &Layout, at: usize) -> Strength {
+    let before = text.get(..at).unwrap_or_default().trim_end();
+    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    let previous = before.get(line_start..).unwrap_or_default();
+    let next = text
+        .get(at..)
+        .unwrap_or_default()
+        .split('\n')
+        .next()
+        .unwrap_or_default()
+        .trim_end();
+    let opens = is_heading(previous)
+        || is_rule(previous)
+        || is_list_item(next)
+        || is_heading(next)
+        || is_rule(next)
+        || (next.starts_with('>') && !previous.trim_start().starts_with('>'));
+    if opens || layout.in_code(line_start) || layout.in_code(at) {
+        return Strength::Line;
+    }
+    let joined = format!("{previous} {next}");
+    let join = previous.len() + 1;
+    match Prose.breaks(&joined).into_iter().find(|cut| cut.at == join) {
+        Some(cut) if cut.strength >= Strength::Sentence => Strength::Line,
+        Some(cut) => cut.strength,
+        None => Strength::Word,
+    }
+}
+
+/// Whether `line` is a Markdown heading: one to six `#` and a space.
+fn is_heading(line: &str) -> bool {
+    let line = line.trim_start();
+    let hashes = line.bytes().take_while(|&b| b == b'#').count();
+    (1..=6).contains(&hashes) && line.as_bytes().get(hashes) == Some(&b' ')
+}
+
+/// Whether `line` opens a list item: a bullet or an ordered marker, and whitespace after it.
+fn is_list_item(line: &str) -> bool {
+    let line = line.trim_start();
+    let bullet = line.strip_prefix(['-', '*', '+', '•', '◦', '▪', '‣', '–']);
+    bullet.is_some_and(|rest| rest.starts_with([' ', '\t'])) || list_marker_end(line).is_some()
+}
+
+/// Whether `line` is a rule: three or more of one of `-`, `*`, `_` or `=`, with spaces between them.
+fn is_rule(line: &str) -> bool {
+    let mut marks = line.chars().filter(|c| !c.is_whitespace());
+    let Some(first) = marks.next().filter(|c| matches!(c, '-' | '*' | '_' | '=')) else {
+        return false;
+    };
+    let rest = marks.collect::<Vec<_>>();
+    rest.len() >= 2 && rest.iter().all(|&c| c == first)
+}
+
 /// What a text's lines hold that limits where it may be cut.
 struct Layout {
     /// Fenced code blocks and tables, as whole lines.

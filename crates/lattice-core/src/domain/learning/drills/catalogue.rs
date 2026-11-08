@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::drill::Material;
+use super::fences::fenced_blocks;
 
 mod patterns;
 pub use patterns::CATALOGUE;
@@ -163,6 +164,58 @@ pub const LANGUAGES: [&str; 15] = [
     "sql",
     "shell",
 ];
+
+/// The language of `LANGUAGES` most of the fenced code in `texts` is written in, ties going to the one listed first;
+/// `None` when no fence names one. A fenced block's info string's first word names its language.
+pub fn language_of_code(texts: &[&str]) -> Option<&'static str> {
+    let mut counts: Vec<(&'static str, usize)> = LANGUAGES.iter().map(|&name| (name, 0)).collect();
+    for text in texts {
+        for block in fenced_blocks(text) {
+            let word = block
+                .info
+                .trim_start()
+                .split(|c: char| c.is_whitespace() || c == '{')
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches('.')
+                .to_lowercase();
+            if let Some(language) = language_named(&word) {
+                if let Some((_, count)) = counts.iter_mut().find(|(name, _)| *name == language) {
+                    *count += 1;
+                }
+            }
+        }
+    }
+    let mut best: Option<(&'static str, usize)> = None;
+    for &(name, count) in &counts {
+        if count > best.map_or(0, |(_, most)| most) {
+            best = Some((name, count));
+        }
+    }
+    best.map(|(name, _)| name)
+}
+
+/// The language of `LANGUAGES` a fence's first word names, in lower case.
+fn language_named(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "python" | "py" | "python3" | "py3" => "python",
+        "javascript" | "js" | "jsx" | "mjs" | "cjs" | "node" => "javascript",
+        "typescript" | "ts" | "tsx" => "typescript",
+        "rust" | "rs" => "rust",
+        "go" | "golang" => "go",
+        "java" => "java",
+        "csharp" | "cs" | "c#" => "csharp",
+        "cpp" | "c++" | "cc" | "cxx" | "hpp" => "cpp",
+        "c" | "h" => "c",
+        "kotlin" | "kt" | "kts" => "kotlin",
+        "swift" => "swift",
+        "ruby" | "rb" => "ruby",
+        "php" => "php",
+        "sql" | "postgresql" | "postgres" | "mysql" | "sqlite" | "plsql" => "sql",
+        "shell" | "sh" | "bash" | "zsh" | "console" => "shell",
+        _ => return None,
+    })
+}
 
 /// The pattern with this id.
 pub fn pattern(id: &str) -> Option<&'static Pattern> {

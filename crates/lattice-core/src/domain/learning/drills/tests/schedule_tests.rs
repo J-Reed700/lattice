@@ -9,6 +9,7 @@ fn due(pattern: &str, due_at: i64) -> PatternDue {
     PatternDue {
         pattern: pattern.to_owned(),
         due_at: Some(due_at),
+        pending: false,
     }
 }
 
@@ -16,6 +17,7 @@ fn never(pattern: &str) -> PatternDue {
     PatternDue {
         pattern: pattern.to_owned(),
         due_at: None,
+        pending: false,
     }
 }
 
@@ -369,4 +371,93 @@ fn a_code_pattern_state_does_not_change_what_a_passage_drill_plants() {
         ids(&targets(&Material::Passage, &states, 10, 5)),
         ids(&targets(&Material::Passage, &[], 10, 5))
     );
+}
+
+fn pending(pattern: &str, due_at: Option<i64>) -> PatternDue {
+    PatternDue {
+        pattern: pattern.to_owned(),
+        due_at,
+        pending: true,
+    }
+}
+
+fn first_python_pattern() -> &'static str {
+    patterns_for(&Material::code("python"))
+        .next()
+        .map(|pattern| pattern.id)
+        .unwrap()
+}
+
+#[test]
+fn a_pending_pattern_that_is_due_ranks_after_the_rested_ones() {
+    let first = first_python_pattern();
+    let mut states = vec![pending(first, Some(0))];
+    states.extend(
+        patterns_for(&Material::code("python"))
+            .filter(|pattern| pattern.id != first)
+            .map(|pattern| due(pattern.id, 100)),
+    );
+    let chosen = targets(&Material::code("python"), &states, 10, 1);
+    assert_eq!(chosen.len(), 1);
+    assert_ne!(chosen.first().map(|pattern| pattern.id), Some(first));
+}
+
+#[test]
+fn a_pending_pattern_that_is_due_ranks_after_the_new_ones() {
+    let first = first_python_pattern();
+    let chosen = targets(&Material::code("python"), &[pending(first, Some(0))], 10, 1);
+    assert_ne!(chosen.first().map(|pattern| pattern.id), Some(first));
+}
+
+#[test]
+fn a_pending_pattern_never_practised_ranks_after_the_rested_ones() {
+    let first = first_python_pattern();
+    let mut states = vec![pending(first, None)];
+    states.extend(
+        patterns_for(&Material::code("python"))
+            .filter(|pattern| pattern.id != first)
+            .map(|pattern| due(pattern.id, 100)),
+    );
+    let chosen = targets(&Material::code("python"), &states, 10, 1);
+    assert_eq!(chosen.len(), 1);
+    assert_ne!(chosen.first().map(|pattern| pattern.id), Some(first));
+}
+
+#[test]
+fn pending_patterns_are_chosen_only_when_nothing_else_is_left() {
+    let material = Material::Passage;
+    let mut seen = HashSet::new();
+    let held: Vec<&'static str> = patterns_for(&material)
+        .filter(|pattern| seen.insert(pattern.family))
+        .map(|pattern| pattern.id)
+        .collect();
+    let states: Vec<PatternDue> = held.iter().map(|id| pending(id, Some(0))).collect();
+    let chosen = targets(&material, &states, 10, held.len());
+    assert_eq!(chosen.len(), held.len());
+    assert!(
+        ids(&chosen).iter().all(|id| !held.contains(id)),
+        "a family whose only pattern is pending waits: {:?}",
+        ids(&chosen)
+    );
+    let everything = targets(&material, &states, 10, usize::MAX);
+    assert_eq!(everything.len(), patterns_for(&material).count());
+    let rest = everything.len() - held.len();
+    let mut last = ids(&everything).split_off(rest);
+    last.sort_unstable();
+    let mut expected = held.clone();
+    expected.sort_unstable();
+    assert_eq!(last, expected, "the pending patterns come last");
+}
+
+#[test]
+fn a_pending_pattern_is_planted_only_after_every_other_pattern() {
+    let material = Material::code("python");
+    let first = first_python_pattern();
+    let states = [pending(first, Some(0))];
+    let total = patterns_for(&material).count();
+    let all_but_one = targets(&material, &states, 10, total - 1);
+    assert_eq!(all_but_one.len(), total - 1);
+    assert!(!ids(&all_but_one).contains(&first));
+    let all = targets(&material, &states, 10, total);
+    assert_eq!(ids(&all).last(), Some(&first));
 }

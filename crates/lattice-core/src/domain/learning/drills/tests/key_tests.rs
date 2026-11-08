@@ -30,6 +30,7 @@ fn key_issue(id: &str, pattern: &str, origin: Origin, span: LineSpan, fix: Edit)
             reason: "The edit introduces it.".to_owned(),
         },
         origin,
+        lesson: None,
     }
 }
 
@@ -283,6 +284,7 @@ fn note_issue(pattern: &str, severity: Severity, proof: Proof) -> KeyIssue {
         explanation: "The source gives 14 percent, not 40.".to_owned(),
         proof,
         origin: Origin::Planted,
+        lesson: None,
     }
 }
 

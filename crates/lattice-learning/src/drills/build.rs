@@ -12,8 +12,9 @@
 //! 2. clean review (`drill-build-v1:clean_review`)
 //! 3. plant (`drill-build-v1:plant`)
 //! 4. prove (`drill-build-v1:prove`)
-//! 5. blind review (`drill-build-v1:blind_review`)
-//! 6. store: one transaction writes the drill and completes the job, so it has no checkpoint to resume from.
+//! 5. lesson check (`drill-build-v1:lesson_check`)
+//! 6. blind review (`drill-build-v1:blind_review`)
+//! 7. store: one transaction writes the drill and completes the job, so it has no checkpoint to resume from.
 
 use crate::drills::grader::ReviewGrader;
 use crate::drills::material::{DrillMaterial, StageCtx};
@@ -35,6 +36,8 @@ mod blind_review;
 mod clean_code;
 #[path = "stages/clean_review.rs"]
 mod clean_review;
+#[path = "stages/lesson_check.rs"]
+mod lesson_check;
 #[path = "stages/outputs.rs"]
 pub(crate) mod outputs;
 #[path = "stages/plant.rs"]
@@ -51,8 +54,8 @@ pub use outputs::{BlindReview, DroppedMutation, Evidence, ModelCall, SourcePassa
 /// shape.
 pub(crate) const CHECKPOINT_PREFIX: &str = "drill-build-v1";
 
-/// The steps of a build, for the job's progress: the five checkpointed stages and the store.
-pub(crate) const STEPS: u32 = 6;
+/// The steps of a build, for the job's progress: the six checkpointed stages and the store.
+pub(crate) const STEPS: u32 = 7;
 
 /// A checkpointed stage of a build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,17 +64,19 @@ pub enum Stage {
     CleanReview,
     Plant,
     Prove,
+    LessonCheck,
     BlindReview,
 }
 
 impl Stage {
     /// Every stage, in the order they run.
     #[cfg(any(test, feature = "test-support"))]
-    pub const ALL: [Stage; 5] = [
+    pub const ALL: [Stage; 6] = [
         Stage::CleanCode,
         Stage::CleanReview,
         Stage::Plant,
         Stage::Prove,
+        Stage::LessonCheck,
         Stage::BlindReview,
     ];
 
@@ -81,6 +86,7 @@ impl Stage {
             Self::CleanReview => "clean_review",
             Self::Plant => "plant",
             Self::Prove => "prove",
+            Self::LessonCheck => "lesson_check",
             Self::BlindReview => "blind_review",
         }
     }
@@ -96,7 +102,8 @@ impl Stage {
             Self::CleanReview => 1,
             Self::Plant => 2,
             Self::Prove => 3,
-            Self::BlindReview => 4,
+            Self::LessonCheck => 4,
+            Self::BlindReview => 5,
         }
     }
 
@@ -106,13 +113,14 @@ impl Stage {
             Self::CleanReview => "Reviewing the code",
             Self::Plant => "Planting the defects",
             Self::Prove => "Proving the defects",
+            Self::LessonCheck => "Checking the lesson's issues",
             Self::BlindReview => "Reviewing the drill blind",
         }
     }
 }
 
 /// The step after the last stage.
-const STORE_INDEX: u32 = 5;
+const STORE_INDEX: u32 = 6;
 
 /// Builds one drill. The model, the material, the grader and the database are the build's own; the job runtime's
 /// context carries the checkpoints and the cancellation.
@@ -183,9 +191,17 @@ impl<'a> DrillBuild<'a> {
         else {
             return Ok(JobOutcome::Stopped);
         };
+        let Some(checked) = self
+            .stage(context, Stage::LessonCheck, || {
+                self.lesson_check(spec, &baseline, &proved)
+            })
+            .await?
+        else {
+            return Ok(JobOutcome::Stopped);
+        };
         let Some(blind) = self
             .stage(context, Stage::BlindReview, || {
-                self.blind_review(spec, &baseline, &proved)
+                self.blind_review(spec, &baseline, &proved, &checked)
             })
             .await?
         else {
@@ -202,6 +218,7 @@ impl<'a> DrillBuild<'a> {
             review: &review,
             planted: &planted,
             proved: &proved,
+            checked: &checked,
             blind: &blind,
         };
         self.store(context, spec, built).await
