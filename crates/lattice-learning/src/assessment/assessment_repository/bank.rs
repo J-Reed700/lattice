@@ -41,8 +41,11 @@ pub(crate) fn content_hash(item: &StoredItem) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Store items, skipping any the bank already holds (same content, or a
-/// near-duplicate stem for the same outcome). Returns how many were stored.
+/// Store items, skipping any generated item the bank already holds (same
+/// content, or a near-duplicate stem for the same outcome). A lesson's own
+/// question is always stored in its place: one whose content the program
+/// already holds is stored `dropped`, its token salted by its ID. Returns how
+/// many were stored.
 pub(crate) async fn insert_bank_items_in(
     connection: &mut SqliteConnection,
     program_id: &str,
@@ -55,20 +58,35 @@ pub(crate) async fn insert_bank_items_in(
         let Some(outcome) = item.outcome_ids.first() else {
             continue;
         };
-        let hash = content_hash(item);
-        let exists: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND (content_sha256=? OR id=?)",
+        let mut hash = content_hash(item);
+        let mut review_status = entry.review_status;
+        let id_taken: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND id=?",
         )
         .bind(program_id)
-        .bind(&hash)
         .bind(&item.id)
         .fetch_optional(&mut *connection)
         .await
         .map_err(db)?;
-        if exists.is_some() {
+        if id_taken.is_some() {
             continue;
         }
-        let near = entry.review_status == "agreed"
+        let repeated: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND content_sha256=?",
+        )
+        .bind(program_id)
+        .bind(&hash)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(db)?;
+        if repeated.is_some() {
+            if entry.origin != "lesson" {
+                continue;
+            }
+            hash = format!("{:x}", Sha256::digest(format!("{hash}\0{}", item.id)));
+            review_status = "dropped";
+        }
+        let near = entry.origin == "bank"
             && sqlx::query_scalar::<_, String>(
             "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND outcome_id=? AND review_status<>'dropped'",
         )
@@ -95,7 +113,7 @@ pub(crate) async fn insert_bank_items_in(
             .bind(author_model)
             .bind(&hash)
             .bind(now())
-            .bind(entry.review_status)
+            .bind(review_status)
             .bind(entry.origin)
             .bind(&entry.lesson_id)
             .bind(&entry.source_quote)

@@ -151,7 +151,10 @@ pub(super) async fn snapshot_table(
             spec.table
         )));
     }
-    let query = format!("SELECT * FROM {} WHERE {}", spec.table, spec.filter);
+    let query = format!(
+        "SELECT * FROM {} WHERE {} ORDER BY rowid",
+        spec.table, spec.filter
+    );
     let rows = sqlx::query(&query)
         .bind(program_id)
         .fetch_all(&mut *connection)
