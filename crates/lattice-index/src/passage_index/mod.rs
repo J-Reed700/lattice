@@ -53,6 +53,6 @@ pub use build::{embed_pending, EmbedText, Embedded, Embedding, Progress};
 pub use chunking::NewPassage;
 pub use live::{EmbedderSource, Engine, LiveIndex, LiveIndexes};
 pub use store::{Counts, Document, Passage, PassageStore};
-pub use text_search::{indexed_term, PassageTextSearch, WordMatch};
+pub use text_search::{indexed_term, query_terms, PassageTextSearch, WordMatch};
 pub use turns::{Claim, EmbedTurns, Priority, Standing};
 pub use vectors::Vectors;

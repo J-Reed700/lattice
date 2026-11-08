@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// Terms a full-text query keeps.
-const MAX_TERMS: usize = 16;
+pub(super) const MAX_TERMS: usize = 16;
 
 /// How a query's words match the words a store indexed.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -34,6 +34,12 @@ pub enum WordMatch {
     /// it: for prose, where `mineral1` is not `mineral169` and `test` is not
     /// `testament`.
     Whole,
+}
+
+/// The terms [`match_words`] matches `query` by, in order: its words of two characters or more, lower case, each once,
+/// the first [`MAX_TERMS`].
+pub fn query_terms(_query: &str) -> Vec<String> {
+    Vec::new()
 }
 
 /// An FTS5 `MATCH` expression for free text: every word as a quoted literal

@@ -1,3 +1,4 @@
+# Red runs only: trimmed to the Windows Rust test build; the other jobs and slow Rust checks are off and runs no longer cancel each other.
 name: CI
 
 on:
@@ -5,6 +6,10 @@ on:
   push:
     branches: [main]
 
+# Cancel in-flight runs for the same ref when a new commit lands, except on
+# main. A main run waits hours for macOS runners, so the next merge used to
+# cancel it before the Intel desktop job could save main's Rust cache. On main
+# the running run finishes; only a run still waiting its turn is replaced.
 concurrency:
   group: reds-${{ github.sha }}
   cancel-in-progress: false
@@ -18,12 +23,25 @@ env:
   VULKAN_RUNTIME_VERSION: 1.4.363.0
 
 jobs:
+  # Build on each supported platform to catch target-specific dependencies.
   rust-check:
-    name: lattice-desktop lib test executable
-    runs-on: windows-latest
+    name: cargo check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # Intel source checks precede publication of its first sidecar. This
+    # debug-only override cannot produce a release bundle; the package job
+    # below builds and verifies a real sidecar instead.
     env:
-      LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
+      LATTICE_ALLOW_UNPINNED_SIDECAR: ${{ matrix.os == 'macos-15-intel' && '1' || '0' }}
+      # Backtraces keep file and line. Full debug info made the cache too big
+      # to keep and the test build too big for the Ubuntu runner's memory.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    strategy:
+      fail-fast: false
+      # GitHub runs five macOS jobs at a time for the account, and every pull
+      # request used to ask for five, so main's runs waited hours behind them.
+      # Intel Macs, the slowest runners, are checked on pushes to main only.
+      matrix:
+        os: [windows-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -32,41 +50,91 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      # The test executable compiles in CARGO_MANIFEST_DIR, so the tree must
-      # sit at the path it has on the owner's PC.
-      - name: Copy the checkout to the owner's path
-        shell: pwsh
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-24.04'
         run: |
-          $dest = 'C:\Code\lattice-wt\drills-port'
-          New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
-          New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          robocopy $env:GITHUB_WORKSPACE $dest /E /NFL /NDL /NJH /NJS /NP
-          if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
-          $global:LASTEXITCODE = 0
+          sudo apt-get update
+          # Tauri 2 + webkit dependencies on Ubuntu.
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
+      # Two test crates compile at once at about 7.5 GB each, past the
+      # runner's 16 GB and 3 GB of swap; the runner then shuts down (exit 143).
+      - name: Add swap for the test build
+        if: runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 16G /ci-swapfile
+          sudo chmod 600 /ci-swapfile
+          sudo mkswap /ci-swapfile
+          sudo swapon /ci-swapfile
+          free -m
+
+      # Only main saves: each pull request's own cache pushed the repository
+      # past GitHub's 10 GB, which evicted main's, so every job started cold.
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust-check
-          save-if: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
+      # Debug builds accept empty sidecars; the sidecar-binaries job checks
+      # the real ones.
       - name: Create build placeholders for source checks
-        working-directory: C:\Code\lattice-wt\drills-port
         shell: bash
         run: |
           mkdir -p dist
-          touch crates/lattice-desktop/binaries/llama-server-x86_64-pc-windows-msvc.exe \
-                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe
+          case "${{ runner.os }}" in
+            Linux) touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                         crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
+            macOS) triple="$(rustc -vV | awk '/^host:/ {print $2}')"
+                   touch "crates/lattice-desktop/binaries/llama-server-$triple" ;;
+            Windows) touch crates/lattice-desktop/binaries/llama-server-x86_64-pc-windows-msvc.exe \
+                           crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
+          esac
 
-      - name: Build the lattice-desktop lib test executable
-        working-directory: C:\Code\lattice-wt\drills-port\crates\lattice-desktop
+      - name: cargo fmt --check
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+
+      # Clippy checks everything cargo check did, so it runs in its place, first.
+      # The workspace defines additional safety lints in Cargo.toml. Existing
+      # warnings are not promoted to errors yet.
+      - name: cargo clippy
+        if: false
+        working-directory: crates/lattice-desktop
+        run: cargo clippy --workspace --all-targets
+
+      # Prove the manifest is actually in the executables rather than inferring
+      # it from a green run. The first attempt at this fix emitted link args
+      # that Cargo silently dropped for the lib harness, and a passing job
+      # would have looked the same as a working one.
+      - name: Windows manifest is embedded in the test executables
+        if: matrix.os == 'windows-latest'
+        working-directory: crates/lattice-desktop
         shell: pwsh
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}\target
         run: |
+          $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
+                Sort-Object FullName | Select-Object -Last 1
+          if (-not $mt) { throw "mt.exe not found in the Windows SDK" }
+          # The manifest is only valid if mt.exe can parse it, and link.exe
+          # reports a bad one as LNK1327 from inside a 12-minute build. Checking
+          # it as XML first turns that into an immediate, obvious failure.
+          try { [xml](Get-Content -Raw windows-app.manifest) | Out-Null }
+          catch { throw "windows-app.manifest is not well-formed XML: $_" }
           # Keep the JSON in a file: piping it straight into ConvertFrom-Json
-          # eats the compiler diagnostics, which live on the same stream.
+          # eats the compiler diagnostics, which live on the same stream, and
+          # turns a build failure into a misleading "no test executables".
           $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
+          # Two jobs, not four: each test crate that reads the lattice rlib
+          # (about 1 GB) needs several GB while it compiles, and four at once
+          # exceed the runner's commit limit ("The paging file is too small",
+          # os error 1455), which rustc reports as E0786 invalid metadata.
+          # The same selection and features as the test step, which then has
+          # nothing left to build; checked are the desktop crate's executables.
           cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
@@ -75,38 +143,265 @@ jobs:
             }
             throw "building the test executables failed (diagnostics above)"
           }
-          $libs = @(Get-Content $json | ForEach-Object {
+          $exes = Get-Content $json | ForEach-Object {
                     $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
-                    if ($m -and $m.executable -and $m.profile.test -eq $true -and $m.target.kind -contains 'lib' -and $m.target.name -eq 'lattice' -and $m.package_id -match 'crates[/\\]lattice-desktop') { $m.executable }
-                  })
-          if ($libs.Count -ne 1) { throw "expected exactly one lattice lib test executable of lattice-desktop, found $($libs.Count)" }
-          $exe = $libs[0]
-          Write-Host "lib test executable: $exe"
-          $needle = 'C:\Code\lattice-wt\drills-port\crates\lattice-desktop'
-          if (-not (Select-String -Path $exe -SimpleMatch $needle -Quiet)) {
-            throw "$exe does not contain the compiled-in path $needle"
+                    if ($m -and $m.executable -and $m.package_id -match 'crates[/\\]lattice-desktop') { $m.executable }
+                  }
+          if (-not $exes) { throw "cargo reported no test executables" }
+          foreach ($exe in $exes) {
+            $out = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($exe) + ".manifest")
+            & $mt.FullName -nologo -inputresource:"$exe;#1" -out:$out
+            if ($LASTEXITCODE -ne 0) { throw "no RT_MANIFEST #1 resource in $exe" }
+            if (-not (Select-String -Path $out -Pattern 'Microsoft.Windows.Common-Controls' -Quiet)) {
+              throw "$exe has a manifest but no Common-Controls v6 dependency"
+            }
+            Write-Host "OK $exe"
           }
-          Write-Host "compiled-in fixture path found in $exe"
-          Set-Content -Path (Join-Path $env:RUNNER_TEMP 'lib-test-exe.txt') -Value $exe -NoNewline
 
-      - name: Stage the executable and DLLs
+      - name: All desktop Rust unit, command and integration tests
+        working-directory: crates/lattice-desktop
+        run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
+
+      - name: Execute C#, Rust, React and Python container exercises
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: crates/lattice-desktop
+        timeout-minutes: 20
+        run: cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
+
+      - name: Verify container staging and containment
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: crates/lattice-desktop
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          image_id="$(docker image inspect --format '{{.Id}}' python:3.13.16-slim)"
+          LATTICE_LAB_SMOKE_IMAGE_ID="$image_id" \
+            LATTICE_LAB_SMOKE_ENGINE=docker \
+            cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
+
+      - name: generated bindings are current
+        if: false
+        working-directory: crates/lattice-desktop
+        run: cargo run --features bindings-export --bin export_bindings -- --check
+
+  desktop-compatibility:
+    name: Desktop compatibility (${{ matrix.name }})
+    if: false
+    runs-on: ${{ matrix.os }}
+    # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
+    # job cancelled at a cap never saves its Rust cache, so main never got a
+    # warm cache and every Intel run after it started cold and was cancelled
+    # too. GitHub's own six-hour limit still ends a hung job.
+    strategy:
+      fail-fast: false
+      # Intel Macs run on pushes to main only; see rust-check. The list is
+      # built whole because GitHub applies include after exclude, so an
+      # excluded Intel entry would come back as its own job.
+      # Hosted Windows runners use Server, not Windows 11. Keep the actual
+      # runner visible; Windows 11 installation remains a release check.
+      matrix:
+        include: >-
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false},
+          {"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
+          {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false}',
+          github.event_name == 'push'
+          && ', {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libvulkan1 xvfb
+      - name: Windows Vulkan loader
+        if: runner.os == 'Windows'
+        uses: jakoch/install-vulkan-sdk-action@v1.6.0
+        with:
+          vulkan_version: ${{ env.VULKAN_RUNTIME_VERSION }}
+          install_runtime_only: true
+          cache: true
+      - name: Install Windows Vulkan loader
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          key: desktop-compatibility-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - name: Fetch verified published sidecars
+        if: ${{ !matrix.intel }}
+        shell: bash
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
+      - name: Build and execute Intel sidecar candidate
+        if: matrix.intel
+        run: bash crates/lattice-desktop/scripts/build-intel-macos-sidecar.sh
+      - name: Pin verified Intel candidate for this CI bundle only
+        if: matrix.intel
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib
+          from pathlib import Path
+          root = Path('crates/lattice-desktop')
+          binary = root / 'binaries/llama-server-x86_64-apple-darwin'
+          lock = root / 'scripts/llama-server.lock'
+          lines = [line for line in lock.read_text().splitlines()
+                   if not (line.startswith('sha256 ') and line.endswith(' ' + binary.name))]
+          lines.append(f'sha256 {hashlib.sha256(binary.read_bytes()).hexdigest()} {binary.name}')
+          lock.write_text('\n'.join(lines) + '\n')
+          PYCODE
+      - run: npm ci
+      - name: Build and install isolated package candidate
+        run: npm run test:desktop:build -- --release
+      # Windows 11 has both on; the mic test needs them on this Server runner too.
+      - name: Windows audio service and microphone access
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $exe = Get-Content -Raw (Join-Path $env:RUNNER_TEMP 'lib-test-exe.txt')
-          $target = Join-Path $env:GITHUB_WORKSPACE 'target\debug'
-          $stage = Join-Path $env:RUNNER_TEMP 'drills-test-exe'
-          $deps = Join-Path $stage 'debug\deps'
-          New-Item -ItemType Directory -Force -Path $deps | Out-Null
-          Copy-Item $exe $deps
-          Get-ChildItem (Join-Path $target 'deps') -Filter *.dll | Copy-Item -Destination $deps
-          Get-ChildItem $target -Filter *.dll | Copy-Item -Destination (Join-Path $stage 'debug')
-          Get-ChildItem $stage -Recurse -File |
-            Select-Object @{n='Path';e={$_.FullName.Substring($stage.Length)}}, Length |
-            Format-Table -AutoSize | Out-String -Width 300 | Write-Host
-
-      - uses: actions/upload-artifact@v4
+          try {
+            Set-Service AudioEndpointBuilder, Audiosrv -StartupType Automatic
+            Start-Service AudioEndpointBuilder, Audiosrv
+          } catch { Write-Warning "audio service: $_" }
+          $store = 'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+          foreach ($key in "HKLM:\$store", "HKCU:\$store", "HKCU:\$store\NonPackaged") {
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name Value -Value Allow
+          }
+          Get-Service AudioEndpointBuilder, Audiosrv | Format-Table Name, Status, StartType
+      - name: Exercise the native desktop app (macOS and Windows)
+        if: runner.os != 'Linux'
+        run: npm run test:desktop
+      - name: Exercise the native desktop app (Linux display session)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:desktop
+      - name: Generate text with the packaged CPU engine
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --max-time 60 \
+            https://huggingface.co/ggml-org/models-moved/resolve/main/tinyllamas/stories260K.gguf \
+            -o "$RUNNER_TEMP/stories260K.gguf"
+          binary="$(node --input-type=module -e "import fs from 'node:fs'; const m=JSON.parse(fs.readFileSync('e2e-results/desktop/manifest.json')); console.log(m.sidecar)")"
+          python3 crates/lattice-desktop/scripts/smoke_llama_cpu.py "$binary" "$RUNNER_TEMP/stories260K.gguf" | tee e2e-results/desktop/reports/cpu-generation.json
+      - name: Upload results, screenshots and native logs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: drills-test-exe
-          path: ${{ runner.temp }}/drills-test-exe/
-          retention-days: 7
+          name: desktop-compatibility-${{ matrix.name }}
+          path: |
+            e2e-results/desktop/reports/
+            e2e-results/desktop/manifest.json
+            e2e-results/desktop/config.json
+          if-no-files-found: warn
+
+  # Syntax-aware layer checks complement the filesystem-state guard.
+  repository-barrier:
+    name: architecture boundary checks
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
+      - run: bash scripts/check-repository-barrier.sh
+      - run: bash scripts/check-rust-layer-boundaries.sh
+      - run: cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
+      - run: python3 scripts/check-sql-contracts.py
+      - run: python3 -m unittest discover -s scripts/sql_tests -p 'test_*.py'
+      - run: python3 -m unittest scripts/test_tauri_command_inventory.py
+      - run: python3 -m unittest scripts/test_replay_claude.py
+      - run: python3 scripts/check-tauri-command-inventory.py
+
+  dependency-audit:
+    name: Dependency vulnerability audit
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Desktop advisories
+        working-directory: crates/lattice-desktop
+        run: cargo audit --deny yanked --file ../../Cargo.lock
+
+  frontend:
+    name: frontend (type-check, lint, test)
+    if: false
+    # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: npm vulnerability audit
+        run: npm audit --audit-level=high
+
+      - name: Verify bundled Python interpreter and standard library
+        run: npm run learning:runtime:verify
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Type-check browser journeys
+        run: npm run type-check:e2e
+
+      - name: Generated IPC contract consumers
+        run: npm run contracts:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests and enforced coverage floors
+        run: npm run test:coverage
+
+      - name: Upload frontend coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Renderer production build
+        run: npx vite build
+
+      - name: Initial renderer JavaScript budget
+        run: node scripts/check-initial-js-budget.mjs dist
+
+      - name: Install browsers for smoke tests
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Browser smoke tests
+        run: npm run test:e2e
+
+      - name: Upload browser reports and failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-results
+          path: |
+            e2e-results/html/
+            e2e-results/results.json
+            e2e-results/artifacts/
+          if-no-files-found: warn
+          retention-days: 14
