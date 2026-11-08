@@ -63,21 +63,6 @@ impl Lesson<'_> {
         let unit = holding.next().filter(|_| holding.next().is_none())?;
         span_of(&self.text(unit, field)?, text).map(|_| unit)
     }
-
-    /// The sections of the lesson, by index and title.
-    pub(super) fn sections(&self) -> Vec<(usize, String)> {
-        self.units
-            .get("blocks")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .enumerate()
-            .map(|(index, block)| {
-                let title = block.get("title").and_then(Value::as_str);
-                (index, title.unwrap_or_default().to_owned())
-            })
-            .collect()
-    }
 }
 
 /// The sentence that goes back: what the machine cut when it recorded it,

@@ -17,6 +17,7 @@ pub(super) struct Hunk {
 }
 
 /// The hunks between `old` and `new`, sentence by sentence.
+#[cfg(test)]
 pub(super) fn sentence_diff(old: &str, new: &str) -> Vec<Hunk> {
     hunks(
         &compared(old, &sentences(old)),
