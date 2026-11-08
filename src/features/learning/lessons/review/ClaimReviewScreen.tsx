@@ -12,14 +12,14 @@ import { ALL_RESOLVED, NEEDS_NOTE_HINT, cannotHere, tallyLine, teachingNotesForY
 import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
-import { SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
-import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
 import { ReviewSourceReader, type ReaderRequest } from '@/features/learning/lessons/review/ReviewSourceReader';
+import { SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
 import { isTeachingWaiting, TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
 import { useClaimReviewSession } from '@/features/learning/lessons/review/useClaimReviewSession';
 import { useResumeLearningLessonReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useReviewDrop, type DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
+import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import type { ClaimSupportDto } from '@/lib/bindings';
