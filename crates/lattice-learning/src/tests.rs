@@ -1,0 +1,1377 @@
+use super::{dto::*, repository::LearningRepository};
+use crate::test_support::id;
+pub(crate) use crate::test_support::{fixture, pool};
+use lattice_core::shared::error::Result;
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    Row,
+};
+pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
+    let mut questions = Vec::new();
+    let mut keys = Vec::new();
+    for kind in [
+        LessonQuestionKind::Practice,
+        LessonQuestionKind::Quiz,
+        LessonQuestionKind::Test,
+    ] {
+        let qid = id();
+        questions.push(LessonQuestion {
+            id: qid.clone(),
+            kind,
+            prompt: "Which option is supported?".into(),
+            options: vec!["Supported".into(), "Unsupported".into()],
+            source_ids: vec![],
+        });
+        keys.push(LessonAnswerKey {
+            question_id: qid,
+            correct_index: 0,
+            explanation: "The source supports the first option.".into(),
+        });
+    }
+    let mut prepared = PreparedLearningLesson {
+        verification: None,
+        blocks: vec![LearningBlockDto {
+            rubric: vec![],
+            kind: LearningBlockKind::Explanation,
+            title: "Core idea".into(),
+            body: "A concise explanation.".into(),
+            source_ids: vec![],
+        }],
+        questions,
+        keys,
+    };
+    prepared.verification = Some(super::content_verification::tests::attest(
+        lesson_id, &prepared,
+    ));
+    prepared
+}
+
+pub(super) async fn ready_program(repo: &LearningRepository) -> Result<LearningProgramDto> {
+    let mut p = fixture();
+    repo.create(&p).await?;
+    repo.accept(&AcceptLearningProgramRequestDto {
+        program_id: p.summary.id.clone(),
+        expected_revision: 0,
+        title: p.summary.title.clone(),
+    })
+    .await?;
+    p = repo.get(&p.summary.id).await?;
+    for m in &p.modules {
+        for l in &m.lessons {
+            let d = repo.get(&p.summary.id).await?;
+            repo.prepare(&p.summary.id, &l.id, d.summary.revision, &prepared(&l.id))
+                .await?;
+        }
+    }
+    repo.get(&p.summary.id).await
+}
+
+#[tokio::test]
+async fn memory_links_are_canonical_isolated_and_survive_program_deletion() -> Result<()> {
+    let pool = pool().await?;
+    sqlx::query("PRAGMA foreign_keys=ON")
+        .execute(&pool)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let repo = LearningRepository::new(pool.clone());
+    let program = ready_program(&repo).await?;
+    let lesson = &program.modules[0].lessons[0];
+    let source_id = program.sources[0].id.clone();
+    sqlx::query("UPDATE learning_blocks SET source_ids_json=? WHERE lesson_id=? AND ordinal=0")
+        .bind(
+            serde_json::to_string(&vec![source_id.clone()])
+                .map_err(|e| lattice_core::shared::error::AppError::Serialization(e.to_string()))?,
+        )
+        .bind(&lesson.id)
+        .execute(&pool)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let (_, created) = repo
+        .ensure_lesson_note(
+            &program.summary.id,
+            &lesson.id,
+            "Lesson notes",
+            "## Sources\n",
+        )
+        .await?;
+    assert!(created);
+    let (note_id, created_again) = repo
+        .ensure_lesson_note(&program.summary.id, &lesson.id, "Should not replace", "")
+        .await?;
+    assert!(!created_again);
+    let note_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM daily_notes_workspace WHERE id=?")
+            .bind(&note_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(note_count, 1);
+
+    let generated = super::generation::GeneratedLearningCardDraft {
+        question: "What does the source explain?".into(),
+        answer: "A stable record supports later comparison.".into(),
+        explanation: "This is grounded in the selected excerpt.".into(),
+        source_ids: vec![source_id.clone()],
+    };
+    repo.save_generated_drafts(&program.summary.id, &lesson.id, &[generated])
+        .await?;
+    let generated_id: String = sqlx::query_scalar(
+        "SELECT id FROM learning_card_drafts WHERE program_id=? AND origin='generated'",
+    )
+    .bind(&program.summary.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let cleared = SaveLearningCardDraftRequestDto {
+        draft_id: Some(generated_id.clone()),
+        program_id: program.summary.id.clone(),
+        lesson_id: lesson.id.clone(),
+        question: "Edited question".into(),
+        answer: "Edited answer".into(),
+        explanation: "Edited explanation".into(),
+        source_ids: vec![],
+    };
+    assert!(repo.save_manual_draft(&cleared).await.is_err());
+    let other_source = id();
+    sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,NULL,?,1)")
+        .bind(&other_source).bind(&program.summary.id).bind("Different source").bind("Not referenced by this lesson")
+        .execute(&pool).await.map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let swapped = SaveLearningCardDraftRequestDto {
+        source_ids: vec![other_source],
+        ..cleared
+    };
+    assert!(repo.save_manual_draft(&swapped).await.is_err());
+
+    let manual = SaveLearningCardDraftRequestDto {
+        draft_id: None,
+        program_id: program.summary.id.clone(),
+        lesson_id: lesson.id.clone(),
+        question: "My mnemonic?".into(),
+        answer: "A personal reminder.".into(),
+        explanation: "Written by me.".into(),
+        source_ids: vec![],
+    };
+    let manual_id = repo.save_manual_draft(&manual).await?;
+    let card_id = repo
+        .accept_card_draft(&program.summary.id, &manual_id)
+        .await?;
+    assert_eq!(
+        repo.accept_card_draft(&program.summary.id, &manual_id)
+            .await?,
+        card_id
+    );
+    let study = crate::recall::study_repository::StudyRepository::new(pool.clone());
+    let state = repo.memory_state(&program.summary.id).await?;
+    let deck = study
+        .get(state.deck_id.as_deref().ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("missing Learning deck".into())
+        })?)
+        .await?;
+    let card =
+        deck.cards.iter().find(|c| c.id == card_id).ok_or_else(|| {
+            lattice_core::shared::error::AppError::NotFound("accepted card".into())
+        })?;
+    assert_eq!(
+        card.format,
+        crate::recall::study_dto::StudyCardFormat::QuestionAnswer
+    );
+    assert!(card.options.is_empty());
+    let reviewed = study
+        .review(
+            &crate::recall::study_dto::ReviewStudyCardRequestDto {
+                review_id: id(),
+                card_id: card_id.clone(),
+                expected_reviews: 0,
+                selected_option: None,
+                rating: crate::recall::study_dto::StudyRating::Good,
+            },
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await?;
+    assert_eq!(reviewed.review_count, 1);
+
+    let original_journal_id = state.journal_id.ok_or_else(|| {
+        lattice_core::shared::error::AppError::InvalidState("missing Learning notebook".into())
+    })?;
+    study.delete_deck(&deck.id).await?;
+    assert!(repo
+        .memory_state(&program.summary.id)
+        .await?
+        .deck_id
+        .is_none());
+    let notes_repo = lattice_store::workspace_notes::DailyNotesRepository::new(pool.clone());
+    notes_repo.delete(&note_id).await?;
+    sqlx::query("DELETE FROM journals WHERE id=?")
+        .bind(&original_journal_id)
+        .execute(&pool)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let detached = repo.memory_state(&program.summary.id).await?;
+    assert!(detached.journal_id.is_none());
+    assert!(detached.lesson_notes.is_empty());
+    let (_, created_again) = repo
+        .ensure_lesson_note(
+            &program.summary.id,
+            &lesson.id,
+            "Lesson notes",
+            "## Recreated\n",
+        )
+        .await?;
+    assert!(created_again);
+    let preserved_state = repo.memory_state(&program.summary.id).await?;
+    let journal_id = preserved_state.journal_id.ok_or_else(|| {
+        lattice_core::shared::error::AppError::InvalidState("missing recreated notebook".into())
+    })?;
+    let deck_id = preserved_state.deck_id.ok_or_else(|| {
+        lattice_core::shared::error::AppError::InvalidState("missing recreated deck".into())
+    })?;
+    let recreated_note_id = preserved_state
+        .lesson_notes
+        .first()
+        .map(|(_, id)| id.clone())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::InvalidState("missing recreated note".into())
+        })?;
+    repo.delete(&program.summary.id).await?;
+    assert!(study.get(&deck_id).await.is_ok());
+    assert!(
+        lattice_store::workspace_notes::DailyNotesRepository::new(pool.clone())
+            .get(&recreated_note_id)
+            .await
+            .is_ok()
+    );
+    let journal_count: i64 = sqlx::query_scalar("SELECT count(*) FROM journals WHERE id=?")
+        .bind(journal_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(journal_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn notebook_and_lesson_links_survive_database_pool_restart() -> Result<()> {
+    let dir = tempfile::tempdir()
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let path = dir.path().join("learning-memory.db");
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true);
+    let first = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&first)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let repo = LearningRepository::new(first.clone());
+    let mut program = fixture();
+    repo.create(&program).await?;
+    repo.accept(&AcceptLearningProgramRequestDto {
+        program_id: program.summary.id.clone(),
+        expected_revision: 0,
+        title: program.summary.title.clone(),
+    })
+    .await?;
+    program = repo.get(&program.summary.id).await?;
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    let (note_id, _) = repo
+        .ensure_lesson_note(&program.summary.id, &lesson_id, "Notes", "## Reflection\n")
+        .await?;
+    let before = repo.memory_state(&program.summary.id).await?;
+    first.close().await;
+    let second = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let restarted = LearningRepository::new(second.clone())
+        .memory_state(&program.summary.id)
+        .await?;
+    assert_eq!(restarted.journal_id, before.journal_id);
+    assert_eq!(restarted.deck_id, before.deck_id);
+    assert_eq!(restarted.lesson_notes, vec![(lesson_id, note_id)]);
+    second.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn memory_resources_and_lesson_ids_are_isolated_between_programs() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let first = ready_program(&repo).await?;
+    let second = ready_program(&repo).await?;
+    let first_lesson = first.modules[0].lessons[0].id.clone();
+    let other_lesson = second.modules[0].lessons[0].id.clone();
+    assert!(repo
+        .ensure_lesson_note(&first.summary.id, &other_lesson, "Invalid", "")
+        .await
+        .is_err());
+    repo.ensure_lesson_note(&first.summary.id, &first_lesson, "First program", "Notes")
+        .await?;
+    let second_state = repo.memory_state(&second.summary.id).await?;
+    assert!(second_state.journal_id.is_none());
+    assert!(second_state.deck_id.is_none());
+    assert!(second_state.lesson_notes.is_empty());
+    let cross_program = SaveLearningCardDraftRequestDto {
+        draft_id: None,
+        program_id: first.summary.id.clone(),
+        lesson_id: other_lesson,
+        question: "A question".into(),
+        answer: "An answer".into(),
+        explanation: "An explanation".into(),
+        source_ids: vec![],
+    };
+    assert!(repo.save_manual_draft(&cross_program).await.is_err());
+    let drafts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM learning_card_drafts WHERE program_id=?")
+            .bind(&first.summary.id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(drafts, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn normalized_course_survives_pool_restart_and_hides_answer_keys() -> Result<()> {
+    let path = std::env::temp_dir().join(format!("learning-{}.db", id()));
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true);
+    let first = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&first)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let repo = LearningRepository::new(first.clone());
+    let p = ready_program(&repo).await?;
+    first.close().await;
+    let second = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let saved = LearningRepository::new(second.clone())
+        .get(&p.summary.id)
+        .await?;
+    assert_eq!(saved.modules.len(), 2);
+    assert_eq!(
+        saved.modules[0].lessons[0].preparation,
+        LearningPreparation::Ready
+    );
+    let wire = serde_json::to_string(&saved).unwrap();
+    assert!(!wire.contains("correctIndex"));
+    assert!(!wire.contains("explanation\":\"The source supports"));
+    second.close().await;
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[tokio::test]
+async fn completion_advances_resume_to_first_incomplete_lesson() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool);
+    let p = ready_program(&repo).await?;
+    let first = &p.modules[0].lessons[0];
+    let expected_next = p.modules[0].lessons[1].id.clone();
+    repo.complete(&CompleteLearningLessonRequestDto {
+        program_id: p.summary.id.clone(),
+        lesson_id: first.id.clone(),
+        expected_revision: p.summary.revision,
+    })
+    .await?;
+    let completed = repo.get(&p.summary.id).await?;
+    assert_eq!(completed.summary.current_lesson_id, Some(expected_next));
+    assert_eq!(completed.summary.completed_lessons, 1);
+    assert!(repo
+        .complete(&CompleteLearningLessonRequestDto {
+            program_id: p.summary.id.clone(),
+            lesson_id: first.id.clone(),
+            expected_revision: completed.summary.revision,
+        })
+        .await
+        .is_err());
+    assert_eq!(
+        repo.get(&p.summary.id).await?.summary.revision,
+        completed.summary.revision
+    );
+    Ok(())
+}
+
+fn source_capture(title: &str, text: &str) -> super::source_library::CapturedLearningSource {
+    super::source_library::CapturedLearningSource {
+        title: title.into(),
+        publisher: None,
+        requested_url: Some("https://example.org/source".into()),
+        resolved_url: Some("https://example.org/source".into()),
+        text: text.into(),
+        truncated: false,
+        extraction_version: "test_capture_v1".into(),
+        signals: crate::references::trust::capture::not_extracted("test fixture"),
+    }
+}
+
+#[tokio::test]
+async fn deleted_source_snapshot_keeps_tombstone_versions_and_refresh_checks() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let program = ready_program(&repo).await?;
+    let library = super::source_library::LearningSourceLibraryRepository::new(pool);
+    let source_id = id();
+    let initial_version_id = id();
+    library
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &initial_version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/learning-source",
+                requested_url: Some("https://example.org/learning-source"),
+                freshness: LearningSourcePolicy::Manual,
+            },
+            source_capture("Snapshot source", "original immutable text"),
+            "initial-source-payload".into(),
+        )
+        .await?;
+    library
+        .refresh(
+            &RefreshLearningSourceRequestDto {
+                operation_id: id(),
+                program_id: program.summary.id.clone(),
+                source_id: source_id.clone(),
+                expected_revision: 0,
+            },
+            Some(source_capture(
+                "Snapshot source",
+                "refreshed immutable text",
+            )),
+            None,
+        )
+        .await?;
+    let reason = "Removed from the learner's source list";
+    library
+        .delete_source(&super::portability_dto::DeleteLearningSourceRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            source_id: source_id.clone(),
+            expected_revision: 1,
+            reason: reason.into(),
+        })
+        .await?;
+
+    let ordinary = library.workspace(&program.summary.id).await?;
+    assert!(!ordinary.sources.iter().any(|source| source.id == source_id));
+
+    let snapshot = library
+        .workspace_including_deleted(&program.summary.id)
+        .await?;
+    let source = snapshot
+        .sources
+        .iter()
+        .find(|source| source.id == source_id)
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::NotFound(
+                "deleted source missing from snapshot".into(),
+            )
+        })?;
+    assert!(source.deleted_at.is_some());
+    assert_eq!(source.deletion_reason.as_deref(), Some(reason));
+    assert_eq!(source.versions.len(), 2);
+    assert!(source
+        .versions
+        .iter()
+        .any(|version| version.id == initial_version_id));
+    assert_eq!(source.checks.len(), 1);
+    assert_eq!(
+        source.checks[0].status,
+        LearningSourceCheckStatus::UpdateAvailable
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let program = ready_program(&repo).await?;
+    let library = super::source_library::LearningSourceLibraryRepository::new(pool.clone());
+    assert!(
+        super::source_library::LearningSourceLibraryRepository::before_use_allows(
+            &LearningSourceCheckStatus::Unchanged
+        )
+        .is_ok()
+    );
+    assert!(
+        super::source_library::LearningSourceLibraryRepository::before_use_allows(
+            &LearningSourceCheckStatus::UpdateAvailable
+        )
+        .is_err()
+    );
+    assert!(
+        super::source_library::LearningSourceLibraryRepository::before_use_allows(
+            &LearningSourceCheckStatus::Failed
+        )
+        .is_err()
+    );
+    let source_id = id();
+    let version_id = id();
+    let op = id();
+    let add = AddLearningTextSourceRequestDto {
+        operation_id: op.clone(),
+        source_id: source_id.clone(),
+        version_id: version_id.clone(),
+        program_id: program.summary.id.clone(),
+        title: "Reference".into(),
+        publisher: Some("Publisher".into()),
+        text: "  Introductory text.\r\nCafé precedes München, which has a river.  ".into(),
+    };
+    let hash = crate::source_identity::source_request_hash(&add)?;
+    library
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &op,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
+            source_capture("Reference", &add.text),
+            hash.clone(),
+        )
+        .await?;
+    // Repeating the receipt after the response is lost does not create another version.
+    library
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &op,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Reference",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
+            source_capture("Reference", "changed retry text"),
+            hash.clone(),
+        )
+        .await?;
+    assert!(
+        library
+            .preflight_replay(&op, &program.summary.id, &source_id, "add_text", &hash)
+            .await?
+    );
+    assert!(library
+        .preflight_replay(
+            &op,
+            &program.summary.id,
+            &source_id,
+            "add_text",
+            "changed-payload"
+        )
+        .await
+        .is_err());
+    assert_eq!(
+        library
+            .workspace(&program.summary.id)
+            .await?
+            .sources
+            .iter()
+            .filter(|s| s.id == source_id)
+            .count(),
+        1
+    );
+    let search = library
+        .search(&SearchLearningSourcesRequestDto {
+            program_id: program.summary.id.clone(),
+            query: "MÜNCHEN".into(),
+            limit: 10,
+        })
+        .await?;
+    assert_eq!(search.len(), 1);
+    assert!(search[0].excerpt.contains("München"));
+    let version = library
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program.summary.id.clone(),
+            source_id: source_id.clone(),
+            version_id: version_id.clone(),
+        })
+        .await?;
+    assert_eq!(
+        version.full_text,
+        "Introductory text.\nCafé precedes München, which has a river."
+    );
+    assert_eq!(version.version.word_count, 9);
+
+    let document_source_id = id();
+    let document_version_id = id();
+    library
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &document_source_id,
+                version_id: &document_version_id,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Document,
+                operation_kind: "add_document",
+                origin: "fixture-document",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
+            source_capture("Document text", "Indexed document material"),
+            "document-operation".into(),
+        )
+        .await?;
+    let document_version = library
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program.summary.id.clone(),
+            source_id: document_source_id.clone(),
+            version_id: document_version_id,
+        })
+        .await?;
+    assert_eq!(document_version.full_text, "Indexed document material");
+    assert!(library
+        .workspace(&program.summary.id)
+        .await?
+        .sources
+        .iter()
+        .any(|s| s.id == document_source_id && s.kind == LearningSourceKind::Document));
+
+    let web_id = id();
+    let web_version = id();
+    let web_op = id();
+    library
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &web_op,
+                source_id: &web_id,
+                version_id: &web_version,
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/source",
+                requested_url: Some("https://example.org/source"),
+                freshness: LearningSourcePolicy::Manual,
+            },
+            source_capture("Web source", "stable words"),
+            "same-payload".into(),
+        )
+        .await?;
+    let refresh_op = id();
+    let refresh = RefreshLearningSourceRequestDto {
+        operation_id: refresh_op.clone(),
+        program_id: program.summary.id.clone(),
+        source_id: web_id.clone(),
+        expected_revision: 0,
+    };
+    let stale = RefreshLearningSourceRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: web_id.clone(),
+        expected_revision: 9,
+    };
+    assert!(library
+        .refresh(
+            &stale,
+            Some(source_capture("Web source", "stale write")),
+            None
+        )
+        .await
+        .is_err());
+    library
+        .refresh(
+            &refresh,
+            Some(source_capture("Web source", "new captured information")),
+            None,
+        )
+        .await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let item = workspace
+        .sources
+        .iter()
+        .find(|s| s.id == web_id)
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
+    assert_eq!(item.revision, 1);
+    assert_eq!(
+        item.latest_check.as_ref().map(|c| c.status.clone()),
+        Some(LearningSourceCheckStatus::UpdateAvailable)
+    );
+    let pending = item
+        .pending_version_id
+        .clone()
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("pending missing".into()))?;
+    assert!(!repo
+        .get(&program.summary.id)
+        .await?
+        .sources
+        .iter()
+        .any(|s| s.id == pending));
+    // A lost refresh response replays its receipt without another version.
+    library
+        .refresh(
+            &refresh,
+            Some(source_capture(
+                "Changed retry title",
+                "different retry result",
+            )),
+            None,
+        )
+        .await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let item = workspace
+        .sources
+        .iter()
+        .find(|s| s.id == web_id)
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
+    assert_eq!(item.versions.len(), 2);
+    assert_eq!(item.pending_version_id.as_deref(), Some(pending.as_str()));
+    // Matching active content clears a stale update pointer and advances CAS.
+    let unchanged = RefreshLearningSourceRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: web_id.clone(),
+        expected_revision: 1,
+    };
+    library
+        .refresh(
+            &unchanged,
+            Some(source_capture("Web source", "stable words")),
+            None,
+        )
+        .await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let item = workspace
+        .sources
+        .iter()
+        .find(|s| s.id == web_id)
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
+    assert_eq!(item.revision, 2);
+    assert!(item.pending_version_id.is_none());
+    assert_eq!(
+        item.latest_check.as_ref().map(|c| c.status.clone()),
+        Some(LearningSourceCheckStatus::Unchanged)
+    );
+    // Rechecking the prior changed digest reuses its immutable version ID.
+    let changed_again = RefreshLearningSourceRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: web_id.clone(),
+        expected_revision: 2,
+    };
+    library
+        .refresh(
+            &changed_again,
+            Some(source_capture("Web source", "new captured information")),
+            None,
+        )
+        .await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let item = workspace
+        .sources
+        .iter()
+        .find(|s| s.id == web_id)
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
+    assert_eq!(item.revision, 3);
+    assert_eq!(item.versions.len(), 2);
+    assert_eq!(item.pending_version_id.as_deref(), Some(pending.as_str()));
+    let failed = RefreshLearningSourceRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: web_id.clone(),
+        expected_revision: 3,
+    };
+    library
+        .refresh(&failed, None, Some("offline".into()))
+        .await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let item = workspace
+        .sources
+        .iter()
+        .find(|s| s.id == web_id)
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
+    assert_eq!(
+        item.active_version_id.as_deref(),
+        Some(web_version.as_str())
+    );
+    assert_eq!(item.pending_version_id.as_deref(), Some(pending.as_str()));
+    assert_eq!(
+        item.latest_check.as_ref().map(|c| c.status.clone()),
+        Some(LearningSourceCheckStatus::Failed)
+    );
+    let adopt = AdoptLearningSourceVersionRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: web_id.clone(),
+        version_id: pending.clone(),
+        expected_revision: 3,
+    };
+    library.adopt(&adopt).await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let item = workspace
+        .sources
+        .iter()
+        .find(|s| s.id == web_id)
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
+    assert_eq!(item.active_version_id.as_deref(), Some(pending.as_str()));
+    assert!(item.pending_version_id.is_none());
+    assert_eq!(item.versions.len(), 2);
+    assert_eq!(item.revision, 4);
+    assert!(repo
+        .get(&program.summary.id)
+        .await?
+        .sources
+        .iter()
+        .any(|s| s.id == pending));
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_on_delete(
+) -> Result<()> {
+    let directory = tempfile::tempdir()
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let path = directory.path().join("learning-sources.sqlite");
+    let options = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .busy_timeout(std::time::Duration::from_secs(5));
+    let pool1 = SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options.clone())
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool1)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let repo1 = LearningRepository::new(pool1.clone());
+    let program1 = ready_program(&repo1).await?;
+    let program2 = ready_program(&repo1).await?;
+    let library1 = super::source_library::LearningSourceLibraryRepository::new(pool1.clone());
+    let source_id = id();
+    let version_id = id();
+    let operation_id = id();
+    let capture = source_capture("Persisted source", "A durable stored source body.");
+    library1
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &operation_id,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id: &program1.summary.id,
+                kind: LearningSourceKind::Pasted,
+                operation_kind: "add_text",
+                origin: "Persisted",
+                requested_url: None,
+                freshness: LearningSourcePolicy::Fixed,
+            },
+            capture.clone(),
+            "source-payload".into(),
+        )
+        .await?;
+    drop(library1);
+    drop(repo1);
+    pool1.close().await;
+    let pool2 = SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(options)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    sqlx::migrate!("../lattice-desktop/migrations")
+        .run(&pool2)
+        .await
+        .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let library2 = super::source_library::LearningSourceLibraryRepository::new(pool2.clone());
+    let reopened = library2
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program1.summary.id.clone(),
+            source_id: source_id.clone(),
+            version_id: version_id.clone(),
+        })
+        .await?;
+    assert_eq!(reopened.full_text, "A durable stored source body.");
+    assert!(library2
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program2.summary.id.clone(),
+            source_id: source_id.clone(),
+            version_id: version_id.clone()
+        })
+        .await
+        .is_err());
+    assert!(library2
+        .search(&SearchLearningSourcesRequestDto {
+            program_id: program2.summary.id.clone(),
+            query: "durable stored source".into(),
+            limit: 10
+        })
+        .await?
+        .is_empty());
+    let repo2 = LearningRepository::new(pool2.clone());
+    repo2.delete(&program1.summary.id).await?;
+    let logical: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM learning_source_library WHERE program_id=?")
+            .bind(&program1.summary.id)
+            .fetch_one(&pool2)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let versions: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM learning_source_versions WHERE program_id=?")
+            .bind(&program1.summary.id)
+            .fetch_one(&pool2)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(logical, 0);
+    assert_eq!(versions, 0);
+    pool2.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn legacy_migration_metadata_is_backfilled_from_the_captured_text() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let program = ready_program(&repo).await?;
+    let program2 = ready_program(&repo).await?;
+    // Indexed document passage IDs are deterministic and may be shared across programs.
+    let legacy_source = format!("{}:{}", id(), id());
+    for program_id in [&program.summary.id, &program2.summary.id] {
+        sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,NULL,?,7)")
+            .bind(&legacy_source).bind(program_id).bind("Legacy excerpt").bind("migration text has four words")
+            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at) VALUES(?,?, 'document',?,NULL,'fixed',?,NULL,0,7,7)")
+            .bind(&legacy_source).bind(program_id).bind(&legacy_source).bind(&legacy_source)
+            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
+        sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Legacy excerpt',NULL,NULL,NULL,'migration text has four words','migration text has four words','',0,1,'legacy_bounded_extraction_v1',7)")
+            .bind(&legacy_source).bind(program_id).bind(&legacy_source)
+            .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    }
+    let library = super::source_library::LearningSourceLibraryRepository::new(pool.clone());
+    let workspace = library.workspace(&program.summary.id).await?;
+    let version = workspace
+        .sources
+        .iter()
+        .find(|s| s.id == legacy_source)
+        .and_then(|s| s.active_version.as_ref())
+        .ok_or_else(|| {
+            lattice_core::shared::error::AppError::NotFound("legacy version missing".into())
+        })?;
+    assert_eq!(version.content_sha256.len(), 64);
+    assert!(version
+        .content_sha256
+        .chars()
+        .all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(version.word_count, 5);
+    let other_workspace = library.workspace(&program2.summary.id).await?;
+    assert!(other_workspace
+        .sources
+        .iter()
+        .any(|s| s.id == legacy_source));
+    let reopened = library
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program.summary.id,
+            source_id: legacy_source.clone(),
+            version_id: legacy_source,
+        })
+        .await?;
+    assert_eq!(reopened.version.word_count, 5);
+    Ok(())
+}
+
+#[tokio::test]
+async fn initially_generated_sources_are_normalized_and_persisted_as_active_versions() -> Result<()>
+{
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool);
+    let mut program = fixture();
+    let source = program.sources.first_mut().ok_or_else(|| {
+        lattice_core::shared::error::AppError::InvalidInput("missing fixture source".into())
+    })?;
+    source.title = "  Captured title  ".into();
+    source.excerpt = "  First line.\r\nSecond line.  ".into();
+    repo.create(&program).await?;
+    let stored = repo.get(&program.summary.id).await?;
+    let stored_source = stored
+        .sources
+        .first()
+        .ok_or_else(|| lattice_core::shared::error::AppError::NotFound("source missing".into()))?;
+    assert_eq!(stored_source.title, "Captured title");
+    assert_eq!(stored_source.excerpt, "First line.\nSecond line.");
+    let active = repo.active_sources(&program.summary.id).await?;
+    assert_eq!(active.len(), program.sources.len());
+    assert_eq!(
+        active.first().map(|s| s.excerpt.as_str()),
+        Some("First line.\nSecond line.")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let program = ready_program(&repo).await?;
+    let library = super::source_library::LearningSourceLibraryRepository::new(pool);
+    let source_id = id();
+    library
+        .add(
+            crate::source_library::NewLearningSource {
+                operation_id: &id(),
+                source_id: &source_id,
+                version_id: &id(),
+                program_id: &program.summary.id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: "https://example.org/versioned",
+                requested_url: Some("https://example.org/versioned"),
+                freshness: LearningSourcePolicy::Manual,
+            },
+            source_capture("Versioned source", "Initial captured reference."),
+            "initial".into(),
+        )
+        .await?;
+    for revision in 0..101 {
+        library
+            .refresh(
+                &RefreshLearningSourceRequestDto {
+                    operation_id: id(),
+                    program_id: program.summary.id.clone(),
+                    source_id: source_id.clone(),
+                    expected_revision: revision,
+                },
+                Some(source_capture(
+                    "Versioned source",
+                    &format!("Captured reference revision {revision}."),
+                )),
+                None,
+            )
+            .await?;
+    }
+    let text = format!(
+        "{}COMPLETE_SOURCE_TAIL",
+        "large captured text ".repeat(110_000)
+    );
+    assert!(text.len() > 2_000_000);
+    library
+        .delete_source(&super::portability_dto::DeleteLearningSourceRequestDto {
+            operation_id: id(),
+            program_id: program.summary.id.clone(),
+            source_id: source_id.clone(),
+            expected_revision: 101,
+            reason: "Exercise re-import after many saved versions".into(),
+        })
+        .await?;
+    let version_id = id();
+    let request = super::portability_dto::ReimportLearningSourceRequestDto {
+        operation_id: id(),
+        program_id: program.summary.id.clone(),
+        source_id: source_id.clone(),
+        version_id: version_id.clone(),
+        expected_revision: 102,
+        replacement_text: Some(text.clone()),
+    };
+    library.reimport_source(&request).await?;
+    library.reimport_source(&request).await?;
+    let workspace = library.workspace(&program.summary.id).await?;
+    let source = workspace
+        .sources
+        .iter()
+        .find(|source| source.id == source_id)
+        .expect("source");
+    assert_eq!(source.versions.len(), 103);
+    assert!(
+        !source
+            .active_version
+            .as_ref()
+            .expect("active version")
+            .truncated
+    );
+    let saved = library
+        .get_version(&GetLearningSourceVersionRequestDto {
+            program_id: program.summary.id,
+            source_id,
+            version_id,
+        })
+        .await?;
+    assert_eq!(saved.full_text, text);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_learning_tangents_lifecycle() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+
+    // 1. Setup program 1 with modules and lessons
+    let mut program1 = fixture();
+    program1.summary.title = "Rust Systems Programming".into();
+    program1.summary.goal = "Master memory safety and concurrency".into();
+    program1.modules[0].title = "Ownership and Borrowing".into();
+    program1.modules[0].summary = "Deep dive into affine types".into();
+    program1.modules[0].lessons[0].title = "Lifetimes in Practice".into();
+    program1.modules[0].lessons[0].objective = "Understand lifetime elision and bounds".into();
+    repo.create(&program1).await?;
+
+    let p1_id = program1.summary.id.clone();
+    let m1_id = program1.modules[0].id.clone();
+    let l1_id = program1.modules[0].lessons[0].id.clone();
+
+    // Insert a learning block for lesson 1 with ordinal 0
+    sqlx::query(
+        "INSERT INTO learning_blocks (lesson_id, ordinal, kind, title, body, source_ids_json) VALUES (?, 0, 'explanation', 'Invariant Lifetimes', 'Lifetimes are invariant over mutable references.', '[]')"
+    )
+    .bind(&l1_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Insert a candidate document in documents table
+    let doc_id = id();
+    sqlx::query(
+        "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) VALUES (?, '/docs/rust.pdf', 'rust.pdf', 1024, '2026-01-01T00:00:00Z', 'abc123checksum')"
+    )
+    .bind(&doc_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Link document in learning_source_library
+    let src_lib_id = id();
+    sqlx::query(
+        "INSERT INTO learning_source_library (id, program_id, kind, origin, requested_url, freshness_policy, active_version_id, pending_version_id, revision, created_at, updated_at) VALUES (?, ?, 'document', ?, NULL, 'fixed', NULL, NULL, 0, 100, 100)"
+    )
+    .bind(&src_lib_id)
+    .bind(&p1_id)
+    .bind(&doc_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Insert a web source in learning_sources
+    let web_src_id = id();
+    sqlx::query(
+        "INSERT INTO learning_sources (id, program_id, title, url, excerpt, acquired_at) VALUES (?, ?, 'The Rust Nomicon', 'https://doc.rust-lang.org/nomicon/subtyping.html', 'Subtyping and Variance', 100)"
+    )
+    .bind(&web_src_id)
+    .bind(&p1_id)
+    .execute(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+
+    // Test 1: Validation error on empty selection
+    let empty_req = CreateLearningTangentRequestDto {
+        program_id: p1_id.clone(),
+        module_id: m1_id.clone(),
+        lesson_id: l1_id.clone(),
+        section_index: Some(0),
+        section_title: None,
+        selected_text: "   ".into(),
+    };
+    let empty_err = repo.create_tangent(&empty_req).await;
+    assert!(matches!(
+        empty_err,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+
+    // Test 2: Validation error on selection > 8000 chars
+    let huge_req = CreateLearningTangentRequestDto {
+        program_id: p1_id.clone(),
+        module_id: m1_id.clone(),
+        lesson_id: l1_id.clone(),
+        section_index: Some(0),
+        section_title: None,
+        selected_text: "x".repeat(8001),
+    };
+    let huge_err = repo.create_tangent(&huge_req).await;
+    assert!(matches!(
+        huge_err,
+        Err(lattice_core::shared::error::AppError::InvalidInput(_))
+    ));
+
+    // Test 3: Create tangent with section_index = Some(0) and section_title = None (resolves to block title)
+    let selected_text = "Why is &mut T invariant over T while &T is covariant?";
+    let req1 = CreateLearningTangentRequestDto {
+        program_id: p1_id.clone(),
+        module_id: m1_id.clone(),
+        lesson_id: l1_id.clone(),
+        section_index: Some(0),
+        section_title: None,
+        selected_text: selected_text.into(),
+    };
+    let tangent1 = repo.create_tangent(&req1).await?;
+
+    assert_eq!(tangent1.program_id, p1_id);
+    assert_eq!(tangent1.program_title, "Rust Systems Programming");
+    assert_eq!(tangent1.space_id, format!("space_learning_{}", p1_id));
+    assert_eq!(tangent1.module_id, m1_id);
+    assert_eq!(tangent1.module_title, "Ownership and Borrowing");
+    assert_eq!(tangent1.lesson_id, l1_id);
+    assert_eq!(tangent1.lesson_title, "Lifetimes in Practice");
+    assert_eq!(tangent1.section_index, Some(0));
+    assert_eq!(
+        tangent1.section_title.as_deref(),
+        Some("Invariant Lifetimes")
+    );
+    assert_eq!(tangent1.selected_text, selected_text);
+    assert_eq!(tangent1.title, selected_text);
+    assert_eq!(tangent1.message_count, 1);
+    assert_eq!(tangent1.context_message_count, 1);
+    // A learning tangent is a chat of its own: it follows the Settings
+    // default, never the program's model.
+    let model_choice: Option<String> =
+        sqlx::query_scalar("SELECT model_choice FROM conversations WHERE id = ?")
+            .bind(&tangent1.conversation_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(model_choice, None);
+
+    // Verify Course Space creation
+    let space_row =
+        sqlx::query("SELECT id, name, icon, space_prompt FROM conversation_spaces WHERE id = ?")
+            .bind(&tangent1.space_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let space_icon: String = space_row.get("icon");
+    let space_name: String = space_row.get("name");
+    assert_eq!(space_icon, "graduation-cap");
+    assert_eq!(space_name, "Course · Rust Systems Programming");
+
+    // Verify Space membership
+    let member_role: String = sqlx::query_scalar(
+        "SELECT role FROM conversation_space_members WHERE space_id = ? AND member_id = 'member_local_owner'"
+    )
+    .bind(&tangent1.space_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(member_role, "owner");
+
+    // Verify Conversation row
+    let conv_row = sqlx::query(
+        "SELECT id, space_id, tangent_selection, tangent_parent_id, tangent_context_message_count, message_count FROM conversations WHERE id = ?"
+    )
+    .bind(&tangent1.conversation_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let conv_space: String = conv_row.get("space_id");
+    let conv_sel: String = conv_row.get("tangent_selection");
+    let conv_parent: Option<String> = conv_row.get("tangent_parent_id");
+    let conv_msg_count: i64 = conv_row.get("message_count");
+    assert_eq!(conv_space, tangent1.space_id);
+    assert_eq!(conv_sel, selected_text);
+    assert!(conv_parent.is_none());
+    assert_eq!(conv_msg_count, 1);
+
+    // Verify Seeded Message
+    let msg_row = sqlx::query(
+        "SELECT role, sequence, content FROM conversation_messages WHERE conversation_id = ? AND sequence = 1"
+    )
+    .bind(&tangent1.conversation_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    let msg_role: String = msg_row.get("role");
+    let msg_content: String = msg_row.get("content");
+    assert_eq!(msg_role, "assistant");
+    assert!(msg_content.contains("Course: Rust Systems Programming"));
+    assert!(msg_content.contains("Invariant Lifetimes"));
+    assert!(msg_content.contains("> Why is &mut T invariant over T while &T is covariant?"));
+
+    // Verify attached document and space membership
+    let doc_attached: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_documents WHERE conversation_id = ? AND document_id = ?",
+    )
+    .bind(&tangent1.conversation_id)
+    .bind(&doc_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(doc_attached, 1);
+
+    let doc_space_member: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM document_space_memberships WHERE space_id = ? AND document_id = ?",
+    )
+    .bind(&tangent1.space_id)
+    .bind(&doc_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(doc_space_member, 1);
+
+    // Verify web source attached
+    let web_attached: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM conversation_web_sources WHERE conversation_id = ? AND url = 'https://doc.rust-lang.org/nomicon/subtyping.html'"
+    )
+    .bind(&tangent1.conversation_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(web_attached, 1);
+
+    // Verify learning_tangents table entry
+    let lt_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM learning_tangents WHERE conversation_id = ? AND program_id = ?",
+    )
+    .bind(&tangent1.conversation_id)
+    .bind(&p1_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
+    assert_eq!(lt_count, 1);
+
+    // 2. Setup program 2 with a tangent to test list filtering
+    let mut program2 = fixture();
+    program2.summary.title = "Compiler Construction".into();
+    repo.create(&program2).await?;
+    let p2_id = program2.summary.id.clone();
+    let m2_id = program2.modules[0].id.clone();
+    let l2_id = program2.modules[0].lessons[0].id.clone();
+
+    let req2 = CreateLearningTangentRequestDto {
+        program_id: p2_id.clone(),
+        module_id: m2_id.clone(),
+        lesson_id: l2_id.clone(),
+        section_index: None,
+        section_title: Some("Parsing ASTs".into()),
+        selected_text: "How does Pratt parsing handle precedence?".into(),
+    };
+    let tangent2 = repo.create_tangent(&req2).await?;
+    assert_eq!(tangent2.program_id, p2_id);
+    assert_eq!(tangent2.section_title.as_deref(), Some("Parsing ASTs"));
+
+    // Test list_tangents by program_id
+    let p1_list = repo.list_tangents(Some(&p1_id)).await?;
+    assert_eq!(p1_list.len(), 1);
+    assert_eq!(p1_list[0].conversation_id, tangent1.conversation_id);
+
+    let p2_list = repo.list_tangents(Some(&p2_id)).await?;
+    assert_eq!(p2_list.len(), 1);
+    assert_eq!(p2_list[0].conversation_id, tangent2.conversation_id);
+
+    // Test list_tangents without program_id (all tangents)
+    let all_list = repo.list_tangents(None).await?;
+    assert_eq!(all_list.len(), 2);
+    let all_ids: Vec<String> = all_list.iter().map(|t| t.conversation_id.clone()).collect();
+    assert!(all_ids.contains(&tangent1.conversation_id));
+    assert!(all_ids.contains(&tangent2.conversation_id));
+
+    Ok(())
+}
