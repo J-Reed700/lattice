@@ -21,7 +21,6 @@ jobs:
   # Named like main's job, with its env, so main's Rust cache is the one restored.
   rust-check:
     name: rust ${{ matrix.mode }} ${{ matrix.sha }}
-    if: false
     runs-on: ubuntu-24.04
     env:
       LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
@@ -31,18 +30,10 @@ jobs:
       max-parallel: 6
       matrix:
         include:
+          # After the compile fixes, so its tree is built as it is.
           - mode: red
-            sha: ae18b4b9680ad984483c5fa6da27d036552efc4a
-          - mode: red
-            sha: 1aab92ac3ca3271ec98c54d1af5fd73d7af3aa70
-          - mode: red
-            sha: 93261898076363e0e24d5cbc028c41aab09cc671
-          - mode: red
-            sha: b47078081464958dc5cf1957d5aad7edda410c8e
-          - mode: red
-            sha: 886244bfc33b33b56bb98f0f3bf739acde8a2c43
-          - mode: red
-            sha: cf6fee58cf4f6328c377bfa3da4639b33c99a726
+            sha: d2bcbf2c4001e46d409d0c882565f43d4527acde
+            built_as_is: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -77,7 +68,7 @@ jobs:
           save-if: false
 
       - name: Apply the integrated tree's compile fixes
-        if: matrix.mode == 'red'
+        if: matrix.mode == 'red' && !matrix.built_as_is
         run: |
           git fetch -q --depth=1 origin ${{ github.event.pull_request.head.sha }}
           git show FETCH_HEAD:.github/reds/compile_fixups.py > "$RUNNER_TEMP/compile_fixups.py"
@@ -134,6 +125,7 @@ jobs:
   # The generated files for the integrated tree, to commit as they are: nothing is built where they are committed.
   bindings-writer:
     name: write bindings ${{ matrix.sha }}
+    if: false
     runs-on: ubuntu-24.04
     env:
       LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
