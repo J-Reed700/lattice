@@ -125,6 +125,12 @@ jobs:
           maximum-size: 24GB
           disk-root: "C:"
 
+      - name: Time the linker in the Windows test build
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          "RUSTFLAGS=-C link-arg=/TIME -W linker-messages" >> $env:GITHUB_ENV
+
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
       # that Cargo silently dropped for the lib harness, and a passing job
@@ -181,6 +187,32 @@ jobs:
         with:
           name: windows-test-build-timings
           path: target/cargo-timings/cargo-timing.html
+          if-no-files-found: warn
+
+      - name: Print the linker timing messages
+        if: always() && matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
+          $n = 0
+          if (Test-Path $json) {
+            Get-Content $json | ForEach-Object {
+              $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
+              if ($m -and $m.reason -eq 'compiler-message' -and $m.message.rendered -match '(?i)time') {
+                $n++
+                Write-Host ($m.target.name + ' [' + ($m.target.kind -join ',') + ']')
+                Write-Host $m.message.rendered
+              }
+            }
+          }
+          if ($n -eq 0) { Write-Host "no linker timing messages found" } else { Write-Host "$n linker timing messages" }
+
+      - name: Upload the Windows test build's JSON
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-testbuild-json
+          path: ${{ runner.temp }}/testbuild.json
           if-no-files-found: warn
 
       - uses: taiki-e/install-action@v2
