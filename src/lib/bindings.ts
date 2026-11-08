@@ -752,6 +752,19 @@ async attachLearningClaimEvidence(request: AttachLearningClaimEvidenceRequestDto
 }
 },
 /**
+ * Add the user's evidence to the lesson as a whole: save it as a course
+ * source and check every open claim of the lesson against it, reporting each
+ * stage on `on_progress`.
+ */
+async attachLearningLessonSource(request: AttachLearningLessonSourceRequestDto, onProgress: TAURI_CHANNEL<ClaimAttachProgressDto>) : Promise<Result<ClaimAttachReportDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|attach_learning_lesson_source", { request, onProgress }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * "Keep as written": the user settles teaching findings the repairs did
  * not, without changing the lesson, or takes that back. A kept finding stays
  * settled while the part it is about keeps its text. All the findings change
@@ -4564,6 +4577,14 @@ claimId: string;
  */
 expectedRevision: number; evidence: AttachEvidenceDto; scope: AttachScopeDto }
 /**
+ * Evidence the user adds to the lesson as a whole.
+ */
+export type AttachLearningLessonSourceRequestDto = { programId: string; lessonId: string;
+/**
+ * The review's revision the user acted on.
+ */
+expectedRevision: number; evidence: AttachEvidenceDto }
+/**
  * What the card offers after a failure.
  */
 export type AttachNextStepDto =
@@ -4996,7 +5017,8 @@ export type ClaimAttachProgressDto =
  */
 { stage: "checking"; done: number; total: number; statement: string } | { stage: "done" }
 /**
- * What `attach_learning_claim_evidence` returns.
+ * What `attach_learning_claim_evidence` and `attach_learning_lesson_source`
+ * return.
  */
 export type ClaimAttachReportDto = {
 /**
@@ -5013,7 +5035,8 @@ source: SourceRefDto | null;
  */
 alreadySaved: boolean;
 /**
- * The targeted check of the claim; null when nothing was saved.
+ * The targeted check of the claim; null when nothing was saved, and for
+ * a source added to the lesson as a whole.
  */
 outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: SnapshotNoteDto; others: OtherClaimsCheckedDto;
 /**

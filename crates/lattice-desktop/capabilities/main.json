@@ -381,6 +381,7 @@
     "learning:allow-resolve-learning-claim",
     "learning:allow-resolve-learning-claims",
     "learning:allow-attach-learning-claim-evidence",
+    "learning:allow-attach-learning-lesson-source",
     "learning:allow-settle-learning-teaching-findings",
     "learning:allow-edit-learning-lesson-section",
     "learning:allow-resume-learning-lesson-review",

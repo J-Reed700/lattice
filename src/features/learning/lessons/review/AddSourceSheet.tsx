@@ -4,7 +4,7 @@ import { FileText, Globe2, Library, LoaderCircle, Type, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { AddSourceResult } from '@/features/learning/lessons/review/AddSourceResult';
-import { ADD_SOURCE_HINT, addSourceTitle, attachSummary, progressLine, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
+import { ADD_SOURCE_HINT, ADD_SOURCE_LESSON_HINT, addSourceTitle, attachSummary, lessonSourceSummary, progressLine, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
 import { useAddSource } from '@/features/learning/lessons/review/useAddSource';
 import type { DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
@@ -13,10 +13,10 @@ import type { AttachEvidenceDto, AttachNextStepDto, AttachScopeDto, ClaimAttachR
 
 type Mode = 'link' | 'paste' | 'file' | 'saved';
 
-/** Where the sheet was opened: one claim, a group of the queue, or the whole queue. */
+/** Where the sheet was opened: one claim, a group of the queue, the whole queue, or the lesson as a whole. */
 export type AddSourceTarget = {
-  level: 'claim' | 'group' | 'queue';
-  /** The claims to check; the first is the one the attach is recorded on. */
+  level: 'claim' | 'group' | 'queue' | 'lesson';
+  /** The claims to check; the first is the one the attach is recorded on. Empty for the lesson. */
   claimIds: string[];
   /** On one claim: the other waiting claims of its group, checked too when the box is on. */
   others?: string[];
@@ -53,8 +53,9 @@ function SavedSourcePicker({ programId, onPick }: { programId: string; onPick: (
 /**
  * Add a source (§3.6): a link, pasted text, a library file or a saved
  * source becomes a course source and is checked against the claims in
- * scope, with each stage shown as it happens. Opened on a claim, on a group
- * or on the whole queue; also by a drop or paste anywhere on the screen.
+ * scope, with each stage shown as it happens. Opened on a claim, on a group,
+ * on the whole queue or on the lesson as a whole; also by a drop or paste
+ * anywhere on the screen.
  */
 export function AddSourceSheet({ programId, lessonId, revision, target, initial, remaining, onClose, onAdded }: {
   programId: string;
@@ -94,6 +95,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
 
   const ids = target.level === 'claim' && withOthers ? [...target.claimIds, ...(target.others ?? [])] : target.claimIds;
   const scope: AttachScopeDto = ids.length > 1 ? { scope: 'claims', claimIds: ids } : { scope: 'claim' };
+  const lesson = target.level === 'lesson';
   const title = addSourceTitle(target.level, target.claimIds.length);
 
   const evidenceFor = (current: Mode): AttachEvidenceDto | string => {
@@ -108,11 +110,11 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
     setFailed(null);
     setLast(evidence);
     try {
-      const report = await add.mutateAsync({ claimId: ids[0], expectedRevision: revision, evidence, scope });
+      const report = await add.mutateAsync(lesson ? { lesson: true, expectedRevision: revision, evidence } : { claimId: ids[0], expectedRevision: revision, evidence, scope });
       if (!report) return; // cancelled
       const host = evidence.kind === 'attach_link' ? hostOf(evidence.url) : null;
       if (report.failure || !report.source) { setFailed({ report, host }); return; }
-      onAdded(report, attachSummary(report, ids.length, Math.max(0, remaining)), ids);
+      onAdded(report, lesson ? lessonSourceSummary(report) : attachSummary(report, ids.length, Math.max(0, remaining)), ids);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'The source could not be added.');
     }
@@ -147,7 +149,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
         <h3 id={`${id}-title`} className="text-sm font-semibold text-text-primary">{title}</h3>
         <button type="button" aria-label="Close" onClick={() => { add.cancel(); onClose(); }} className="rounded-md p-1 text-text-muted hover:text-text-primary"><X size={16} aria-hidden="true" /></button>
       </div>
-      <p className="mt-1 text-xs leading-5 text-text-secondary">{ADD_SOURCE_HINT}</p>
+      <p className="mt-1 text-xs leading-5 text-text-secondary">{lesson ? ADD_SOURCE_LESSON_HINT : ADD_SOURCE_HINT}</p>
 
       <div role="group" aria-label="Kind of source" className="mt-3 flex flex-wrap gap-2">
         {modes.map(({ id: kind, label, icon: Icon }) => (
