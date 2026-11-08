@@ -512,6 +512,32 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
     voice.steps.push('whisper-heard-it');
     await browser.saveScreenshot(path.join(reports, 'voice-composer.png'));
     await closeNormally();
+  } catch (error) {
+    voice.error = String(error);
+    voice.appExitCode = app?.exitCode ?? null;
+    if (browser) {
+      voice.page = await browser.executeAsync(async done => {
+        const settle = (promise, ms = 10_000) => Promise.race([
+          promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`no answer in ${ms}ms`)), ms)),
+        ]);
+        const report = { text: document.body.innerText.slice(0, 4000) };
+        try {
+          report.devices = (await settle(navigator.mediaDevices.enumerateDevices())).map(d => `${d.kind}:${d.label}`);
+        } catch (e) { report.devices = String(e); }
+        try {
+          (await settle(navigator.mediaDevices.getUserMedia({ audio: true }))).getTracks().forEach(t => t.stop());
+          report.getUserMedia = 'ok';
+        } catch (e) { report.getUserMedia = `${e.name}: ${e.message}`; }
+        try {
+          const context = new AudioContext();
+          report.audioContext = context.state;
+          await context.close();
+        } catch (e) { report.audioContext = `${e.name}: ${e.message}`; }
+        done(report);
+      }).catch(e => ({ probeFailed: String(e) }));
+      await browser.saveScreenshot(path.join(reports, 'voice-failure.png')).catch(() => {});
+    }
+    throw error;
   } finally {
     await stopApp();
     await writeFile(path.join(reports, 'voice-result.json'), JSON.stringify(voice, null, 2));
