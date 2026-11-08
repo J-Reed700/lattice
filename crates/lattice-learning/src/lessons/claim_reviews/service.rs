@@ -628,9 +628,7 @@ impl ClaimReviewService {
                 _ => false,
             };
         if changed_draft {
-            return Err(AppError::InvalidState(
-                "The section changed after this edit; undo it by hand.".into(),
-            ));
+            return Err(AppError::InvalidState(published_edit::UNDO_BLOCKED.into()));
         }
         let forgotten = match &undone.event {
             ClaimEvent::UserAction { action, .. } => match action {

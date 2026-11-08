@@ -13,14 +13,13 @@ use sqlx::SqliteConnection;
 
 use super::actions::{in_section_body, ONLY_SECTION};
 use super::published_edit::{
-    gone, placed, section_body, update_report, write_section_body, CHANGED,
+    gone, placed, section_body, update_report, write_section_body, CHANGED, UNDO_BLOCKED,
 };
 use super::published_remove::Removal;
 use super::put_back::siblings;
 use super::repository::{append_in, load_in};
 use crate::content_verification::{insert_sentence, put_at_junction, remove_sentence, WrittenBack};
 
-const BY_HAND: &str = "The section changed after this; undo it by hand.";
 const AFTER_IT: &str = "This section changed after you removed this sentence, so it can't go back on its own. Edit the section to add it back.";
 const FIRST_UNDO: &str = "First undo the other sentences you removed from this section.";
 const PUT_BACK_REASON: &str = "You put this sentence back; it was not checked against the sources.";
@@ -304,7 +303,7 @@ pub(super) async fn undo_in(
         .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
     let (ordinal, event) = last_user_event(target)
         .ok_or_else(|| AppError::InvalidState("There is nothing to undo on this claim.".into()))?;
-    let by_hand = || AppError::InvalidState(BY_HAND.into());
+    let by_hand = || AppError::InvalidState(UNDO_BLOCKED.into());
     let undoing = match event {
         ClaimEvent::UserAction {
             action: UserAction::PutBack {

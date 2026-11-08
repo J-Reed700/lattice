@@ -22,6 +22,8 @@ use crate::persistence::db;
 
 pub(super) const CHANGED: &str =
     "This statement changed since you opened it; reload and try again.";
+pub(super) const UNDO_BLOCKED: &str =
+    "This section changed after that, so it can't be undone on its own. Edit the section to change it back.";
 pub(super) const BLANK: &str = "Write the sentence you want in its place.";
 
 pub(super) struct PublishedEdit<'a> {
