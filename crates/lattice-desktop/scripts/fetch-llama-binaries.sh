@@ -163,7 +163,7 @@ STAGING="$(mktemp -d "$BINARIES_DIR/.fetch-XXXXXX")"
 trap 'rm -rf "$STAGING"' EXIT
 
 echo "Fetching $RELEASE from $REPO"
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+if command -v gh >/dev/null 2>&1 && { [[ -n "${GH_TOKEN:-}" ]] || gh auth status >/dev/null 2>&1; }; then
   for file in "${FILES[@]}" SHA256SUMS.txt; do
     attempt=1
     until gh release download "$RELEASE" --repo "$REPO" --pattern "$file" --dir "$STAGING" --clobber; do
