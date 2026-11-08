@@ -27,7 +27,6 @@ use super::repository::{
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 
 mod section_edit;
-pub use section_edit::{SectionEdit, SectionEditOutcome};
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
@@ -35,6 +34,7 @@ use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
+pub use section_edit::{SectionEdit, SectionEditOutcome};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §6.2: Resume reruns nothing that has not changed.
@@ -444,19 +444,7 @@ impl ClaimReviewService {
         action: ClaimActionRequestDto,
     ) -> Result<Resolution> {
         let user = |action: UserAction, note: Option<String>, label: Option<LabelSource>| {
-            let trust = match &action {
-                UserAction::Confirm { .. } => Some(TrustVerdict::Confirm),
-                UserAction::Edit { .. } => Some(TrustVerdict::Edit),
-                UserAction::Remove => Some(TrustVerdict::Remove),
-                _ => None,
-            };
-            Ok(Resolution {
-                event: ClaimEvent::UserAction { action, note },
-                label,
-                unlabel: None,
-                trust,
-                forget: None,
-            })
+            Ok(user_resolution(action, note, label))
         };
         match action {
             ClaimActionRequestDto::Confirm {
@@ -640,6 +628,28 @@ impl ClaimReviewService {
         let location = entry.location();
         crate::content_verification::field_text(&candidate, location.unit_index, &location.field)
             .ok_or_else(|| AppError::NotFound("The claim's section is not in the draft.".into()))
+    }
+}
+
+/// The event of a user's `action`, the accuracy label it gives and the
+/// verdict calibration records.
+fn user_resolution(
+    action: UserAction,
+    note: Option<String>,
+    label: Option<LabelSource>,
+) -> Resolution {
+    let trust = match &action {
+        UserAction::Confirm { .. } => Some(TrustVerdict::Confirm),
+        UserAction::Edit { .. } => Some(TrustVerdict::Edit),
+        UserAction::Remove => Some(TrustVerdict::Remove),
+        _ => None,
+    };
+    Resolution {
+        event: ClaimEvent::UserAction { action, note },
+        label,
+        unlabel: None,
+        trust,
+        forget: None,
     }
 }
 

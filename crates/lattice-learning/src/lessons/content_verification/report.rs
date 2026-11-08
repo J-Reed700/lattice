@@ -89,8 +89,57 @@ impl LessonVerificationReport {
             digest(&json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
     }
 
-    /// The report after the user rewrote a section.
-    pub(crate) fn rewritten(&mut self, _rewrite: &Rewritten<'_>) {}
+    /// The report after the user rewrote a section: the findings on the
+    /// claims that ended, and those naming no claim whose text is gone, are
+    /// dropped; the user's sentences stand in the first dropped one's place,
+    /// confirmed by them; every other finding as it was.
+    pub(crate) fn rewritten(&mut self, rewrite: &Rewritten<'_>) {
+        let dropped = |finding: &Finding| {
+            finding.unit == rewrite.unit
+                && match &finding.claim_id {
+                    Some(id) => rewrite.ended.contains(id),
+                    None => lattice_core::domain::learning::claim_review::span_of(
+                        rewrite.new_body,
+                        &finding.quote,
+                    )
+                    .is_none(),
+                }
+        };
+        let first = self.findings.iter().position(dropped);
+        self.findings.retain(|finding| !dropped(finding));
+        let mut at = first.unwrap_or(self.findings.len());
+        for (text, successor) in rewrite.written {
+            let finding = Finding {
+                unit: rewrite.unit,
+                quote: (*text).to_owned(),
+                statement: (*text).to_owned(),
+                verdict: ClaimVerdict::Unverified,
+                reason: "You wrote this sentence; it was not checked against the sources.".into(),
+                evidence: Vec::new(),
+                supporting_quote: None,
+                resolution: Some(Resolution::Confirmed {
+                    at: rewrite.at,
+                    note: None,
+                }),
+                claim_id: Some(successor.0.clone()),
+                trust: None,
+                label: None,
+                class: None,
+                two_pass: Default::default(),
+            };
+            self.findings.insert(at, finding);
+            at += 1;
+        }
+        self.content_sha256 = digest(
+            &json!([
+                self.content_sha256,
+                rewrite.unit,
+                rewrite.new_title,
+                rewrite.new_body
+            ])
+            .to_string(),
+        );
+    }
 
     /// The report after the user's sentence took the place of the text the
     /// findings in `edit.replaced` stood on: one finding for the user's
