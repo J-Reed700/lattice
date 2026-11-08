@@ -142,60 +142,56 @@ fn lesson(second_body: &str) -> Value {
 
 /// The 2026-10-14 live failure's shape: extraction missed a factual premise
 /// embedded in an exercise, the mapper proposed the omission and the judge
-/// named it. With no figure, quotation or attribution in it, the assertion is
-/// reported on its section, as a finding for the teaching review, and is no
-/// claim: no evidence check runs for it, nothing is repaired, the lesson is
-/// not stopped and its text is untouched.
-async fn a_named_assertion_is_a_finding_not_a_claim(
+/// named it. With no figure, quotation or attribution in it the rule layer
+/// leaves it unsorted; it is still a statement the lesson makes, so it joins
+/// the inventory, the model sorts it and its check runs.
+async fn a_named_assertion_becomes_a_checked_claim(
     premise: &'static str,
     statement: &'static str,
+    verdict: ClaimVerdict,
 ) -> Result<()> {
     let model = JudgingModel::new(premise, &[statement], statement);
-    let original = lesson(premise);
 
-    let (raw, report) = verify_and_repair(
-        &model,
-        "{}",
-        &json!({}),
-        original.to_string(),
-        &[source()],
-        3000,
-    )
-    .await?;
+    let report = verify(&model, &lesson(premise), &[source()]).await?;
 
-    assert!(!report.coverage_audit[1].complete);
+    let adopted: Vec<_> = report.coverage[1]
+        .claims
+        .iter()
+        .filter(|claim| claim.statement == statement)
+        .collect();
+    assert_eq!(adopted.len(), 1);
+    assert_eq!(adopted[0].quote, premise);
+    assert!(report.coverage_audit.iter().all(|unit| unit.complete));
+    assert!(model.judged_watched_claim.load(Ordering::Relaxed));
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| finding.statement == statement)
+        .unwrap();
     assert_eq!(
-        report.coverage_audit[1].missing_assertions[0].statement,
-        statement
+        finding.class,
+        Some(Classed {
+            class: Class::Sourced,
+            by: ClassifiedBy::Model
+        })
     );
-    assert!(
-        report.coverage[1].claims.is_empty(),
-        "the audit does not add to the inventory"
-    );
-    assert!(!model.judged_watched_claim.load(Ordering::Relaxed));
-    assert!(report.findings.iter().all(|f| f.statement != statement));
-    assert!(report.issues.is_empty(), "{:?}", report.issues);
-    assert!(!*model.inner.repaired.lock().unwrap());
-    assert_eq!(serde_json::from_str::<Value>(&raw)?, original);
-
-    let findings = report.coverage_findings(2);
-    let [finding] = findings.as_slice() else {
-        panic!("one finding for the section: {findings:?}");
-    };
-    assert_eq!(finding.kind, FindingKind::Teaching);
-    assert_eq!(finding.site, Some(FindingSite::Section(1)));
-    assert!(finding.note.contains(statement), "{}", finding.note);
+    assert_eq!(finding.verdict, verdict);
     Ok(())
 }
 
 #[tokio::test]
-async fn an_assertion_no_source_mentions_is_a_finding_not_a_claim() -> Result<()> {
-    a_named_assertion_is_a_finding_not_a_claim(UNSOURCED_PREMISE, UNSOURCED).await
+async fn an_assertion_no_source_mentions_is_adopted_and_checked() -> Result<()> {
+    a_named_assertion_becomes_a_checked_claim(
+        UNSOURCED_PREMISE,
+        UNSOURCED,
+        ClaimVerdict::Unsupported,
+    )
+    .await
 }
 
 #[tokio::test]
-async fn an_assertion_the_sources_contradict_is_a_finding_not_a_claim() -> Result<()> {
-    a_named_assertion_is_a_finding_not_a_claim(PREMISE, BAD).await
+async fn an_assertion_the_sources_contradict_is_adopted_and_checked() -> Result<()> {
+    a_named_assertion_becomes_a_checked_claim(PREMISE, BAD, ClaimVerdict::Contradicted).await
 }
 
 /// A figure the extractor missed in an exercise is a statement the lesson
@@ -371,6 +367,80 @@ fn a_later_pass_adopts_only_a_gap_in_a_sentence_written_since_the_last() {
     let before = lesson("Exercise: write code that reads a file one row at a time.");
     let rewritten = claim_ledger::Rewrites::new(true, Some(before), Default::default());
     assert_eq!(adopt(&rewritten), (1, 1, true));
+}
+
+/// The one gap, in the exercise of a lesson, adopted or not.
+fn adopt_one(statement: &str, rewrites: &claim_ledger::Rewrites) -> (usize, usize, bool) {
+    let candidate = lesson(FIGURE_PREMISE);
+    let content = units(&candidate).unwrap();
+    let mut inventory = Inventory {
+        units: vec![
+            UnitClaims {
+                index: 0,
+                claims: vec![],
+                non_factual_reason: "A section.".into(),
+            },
+            UnitClaims {
+                index: 1,
+                claims: vec![],
+                non_factual_reason: "An exercise instruction.".into(),
+            },
+        ],
+    };
+    let mut coverage = Coverage {
+        units: vec![CoverageUnit {
+            index: 1,
+            complete: false,
+            reason: statement.into(),
+            missing_assertions: vec![MissingAssertion {
+                passage_id: "unit-1-passage-0".into(),
+                statement: statement.into(),
+            }],
+        }],
+    };
+    let adopted = inventory_checkpoint::adopt_specifics(
+        &mut inventory,
+        &mut coverage,
+        &content,
+        (&candidate, rewrites),
+    );
+    (
+        adopted,
+        inventory.units[1].claims.len(),
+        coverage.units[0].complete,
+    )
+}
+
+/// A plain explanatory sentence the rule layer leaves for the model to sort is
+/// a statement the lesson makes, so the gap is adopted.
+#[test]
+fn a_gap_the_rule_layer_leaves_unsorted_is_adopted() {
+    assert_eq!(
+        adopt_one(UNSOURCED, &claim_ledger::Rewrites::default()),
+        (1, 1, true)
+    );
+}
+
+/// A remark about the lesson's own sources is Internal by rule: it is no claim.
+#[test]
+fn a_gap_the_rule_layer_makes_internal_is_not_adopted() {
+    let remark = "The sources above do not say how many rows it buffers.";
+    assert_eq!(
+        adopt_one(remark, &claim_ledger::Rewrites::default()),
+        (0, 0, false)
+    );
+}
+
+/// The guard holds for an unsorted gap as for a Sourced one: text no pass
+/// has rewritten is not adopted after the first pass.
+#[test]
+fn an_unsorted_gap_in_text_no_pass_rewrote_is_not_adopted_again() {
+    let unchanged =
+        claim_ledger::Rewrites::new(true, Some(lesson(FIGURE_PREMISE)), Default::default());
+    assert_eq!(adopt_one(UNSOURCED, &unchanged), (0, 0, false));
+    let before = lesson("Exercise: write code that reads a file one row at a time.");
+    let rewritten = claim_ledger::Rewrites::new(true, Some(before), Default::default());
+    assert_eq!(adopt_one(UNSOURCED, &rewritten), (1, 1, true));
 }
 
 /// The audit of a section is a receipt: a second pass over it audits nothing
