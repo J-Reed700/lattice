@@ -204,10 +204,7 @@ async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for
 async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_decisions() -> Result<()>
 {
     let dir = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(dir.path().join("incremental.db"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(dir.path().join("incremental.db"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())

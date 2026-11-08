@@ -105,10 +105,7 @@ async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
 #[tokio::test]
 async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("reconnect.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(directory.path().join("reconnect.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
@@ -278,10 +275,8 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
 async fn source_limit_failure_retries_after_restart_without_losing_saved_checks() -> Result<()> {
     use crate::{dto::*, source_library::*};
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("source-recovery.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options =
+        crate::test_support::file_options(directory.path().join("source-recovery.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
