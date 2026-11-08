@@ -158,6 +158,9 @@ pub struct LessonQuestionDto {
     /// The index of the right choice; null for a kind without one.
     pub right: Option<u32>,
     pub explanation: String,
+    /// One reason per choice, the right choice's empty; empty when the
+    /// question has none.
+    pub rationales: Vec<String>,
 }
 
 impl From<QuestionText> for LessonQuestionDto {
@@ -170,6 +173,7 @@ impl From<QuestionText> for LessonQuestionDto {
                 .right
                 .map(|right| u32::try_from(right).unwrap_or(u32::MAX)),
             explanation: question.explanation,
+            rationales: question.rationales,
         }
     }
 }
@@ -184,6 +188,7 @@ impl From<LessonQuestionDto> for QuestionText {
                 .right
                 .map(|right| usize::try_from(right).unwrap_or(usize::MAX)),
             explanation: question.explanation,
+            rationales: question.rationales,
         }
     }
 }

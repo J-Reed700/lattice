@@ -75,6 +75,8 @@ struct GeneratedQuestion {
     prompt: String,
     options: Vec<String>,
     correct_index: usize,
+    #[serde(default)]
+    rationales: Vec<String>,
     explanation: String,
     source_index: Option<usize>,
     quote: String,
@@ -572,6 +574,7 @@ fn assemble(
     let mut questions = Vec::with_capacity(generated.questions.len());
     let mut keys = Vec::with_capacity(generated.questions.len());
     for (index, question) in generated.questions.into_iter().enumerate() {
+        let _ = &question.rationales;
         let mut source_ids = citation(
             sources,
             question.source_index,
@@ -608,6 +611,7 @@ fn assemble(
             question_id,
             correct_index: question.correct_index,
             explanation: question.explanation.trim().to_owned(),
+            rationales: vec![],
         });
     }
     Ok((

@@ -226,6 +226,7 @@ pub struct LessonAnswerKey {
     pub question_id: String,
     pub correct_index: usize,
     pub explanation: String,
+    pub rationales: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreparedLearningLesson {

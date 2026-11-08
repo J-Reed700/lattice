@@ -23,6 +23,7 @@ pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
             question_id: qid,
             correct_index: 0,
             explanation: "The source supports the first option.".into(),
+            rationales: vec![],
         });
     }
     let mut prepared = PreparedLearningLesson {
@@ -68,6 +69,7 @@ pub(crate) fn prepared_with_questions(
             question_id: qid,
             correct_index: *key,
             explanation: format!("Explanation {position}."),
+            rationales: vec![],
         });
     }
     prepared.verification = Some(super::content_verification::tests::attest(
@@ -1396,4 +1398,21 @@ async fn test_learning_tangents_lifecycle() -> Result<()> {
     assert!(all_ids.contains(&tangent2.conversation_id));
 
     Ok(())
+}
+
+#[test]
+fn an_answer_key_without_reasons_keeps_its_form_and_an_old_key_still_parses() {
+    let old = serde_json::json!({"questionId":"q","correctIndex":1,"explanation":"Because."});
+    let key: LessonAnswerKey = serde_json::from_value(old.clone()).unwrap();
+    assert!(key.rationales.is_empty());
+    assert_eq!(serde_json::to_value(&key).unwrap(), old);
+
+    let reasoned = LessonAnswerKey {
+        rationales: vec![String::new(), "Two fails.".into()],
+        ..key
+    };
+    assert_eq!(
+        serde_json::to_value(&reasoned).unwrap()["rationales"],
+        serde_json::json!(["", "Two fails."])
+    );
 }

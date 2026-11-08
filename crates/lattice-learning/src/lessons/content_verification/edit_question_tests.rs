@@ -71,6 +71,7 @@ fn q0() -> QuestionText {
         choices: C0.map(String::from).to_vec(),
         right: Some(0),
         explanation: E0.into(),
+        rationales: Vec::new(),
     }
 }
 
@@ -81,6 +82,7 @@ fn q1() -> QuestionText {
         choices: C1.map(String::from).to_vec(),
         right: Some(0),
         explanation: E1.into(),
+        rationales: Vec::new(),
     }
 }
 
@@ -91,6 +93,7 @@ fn q2() -> QuestionText {
         choices: vec!["True".into(), "False".into()],
         right: Some(1),
         explanation: E2.into(),
+        rationales: Vec::new(),
     }
 }
 
@@ -107,7 +110,7 @@ fn bank_item(outcome: &str, text: &QuestionText) -> BankItem {
         rubric: Vec::new(),
         key: LearningAssessmentKey::Choice(text.right.unwrap()),
         explanation: text.explanation.clone(),
-        distractor_rationales: Vec::new(),
+        distractor_rationales: text.rationales.clone(),
     };
     BankItem {
         item: candidate.into(),
@@ -1404,5 +1407,152 @@ async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_quest
         assert_eq!(refused(result), EDITED_THE_QUESTION);
     }
     assert_eq!(snapshot(&course).await?, written);
+    Ok(())
+}
+
+const R0: [&str; 4] = [
+    "",
+    "Trimming is not done.",
+    "The column stays.",
+    "No error is raised.",
+];
+
+fn reasoned_q0() -> QuestionText {
+    QuestionText {
+        rationales: R0.map(String::from).to_vec(),
+        ..q0()
+    }
+}
+
+async fn give_the_first_question_its_reasons(course: &Course) -> Result<()> {
+    sqlx::query(
+        "UPDATE learning_assessment_answer_keys SET distractor_rationales_json=? \
+         WHERE candidate_id IN (SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND prompt=?)",
+    )
+    .bind(serde_json::to_string(&R0)?)
+    .bind(&course.lesson_id)
+    .bind(P0)
+    .execute(&course.pool)
+    .await?;
+    Ok(())
+}
+
+async fn stored_reasons(course: &Course) -> Result<Vec<String>> {
+    Ok(serde_json::from_str(&rows(course).await?[0].4)?)
+}
+
+#[tokio::test]
+async fn a_questions_reasons_are_read_with_it_and_an_edit_of_one_is_written_in_its_slot(
+) -> Result<()> {
+    let course = published().await?;
+    give_the_first_question_its_reasons(&course).await?;
+    let service = ClaimReviewService::new(course.pool.clone());
+    let read = service
+        .question_text(&course.program_id, &course.lesson_id, 0)
+        .await?;
+    assert_eq!(read, reasoned_q0());
+
+    let mut rationales = reasoned_q0().rationales;
+    rationales[2] = "The column stays, spaces and all.".into();
+    let after = QuestionText {
+        rationales: rationales.clone(),
+        ..reasoned_q0()
+    };
+    let saved = edit(&course, 0, reasoned_q0(), after.clone(), false).await?;
+
+    assert!(saved.changed);
+    assert_eq!(stored_reasons(&course).await?, rationales);
+    let read = service
+        .question_text(&course.program_id, &course.lesson_id, 0)
+        .await?;
+    assert_eq!(read, after);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_choice_removed_or_added_keeps_each_reason_with_its_choice() -> Result<()> {
+    let course = published().await?;
+    give_the_first_question_its_reasons(&course).await?;
+    let removed = QuestionText {
+        choices: vec![C0[0].into(), C0[1].into(), C0[3].into()],
+        rationales: vec![R0[0].into(), R0[1].into(), R0[3].into()],
+        ..reasoned_q0()
+    };
+
+    edit(&course, 0, reasoned_q0(), removed.clone(), false).await?;
+
+    assert_eq!(
+        rows(&course).await?[0].1,
+        serde_json::to_string(&removed.choices)?
+    );
+    assert_eq!(stored_reasons(&course).await?, removed.rationales);
+
+    let mut added = removed.clone();
+    added.choices.push("It ignores them.".into());
+    added
+        .rationales
+        .push("Nothing ignores a header name.".into());
+    edit(&course, 0, removed, added.clone(), false).await?;
+
+    assert_eq!(stored_reasons(&course).await?, added.rationales);
+    Ok(())
+}
+
+#[tokio::test]
+async fn reasons_that_do_not_match_the_choices_are_refused_and_write_nothing() -> Result<()> {
+    let course = published().await?;
+    give_the_first_question_its_reasons(&course).await?;
+    let seen = snapshot(&course).await?;
+    let after = QuestionText {
+        rationales: vec![R0[0].into(), R0[1].into(), R0[2].into()],
+        ..reasoned_q0()
+    };
+
+    let result = edit(&course, 0, reasoned_q0(), after, false).await;
+
+    assert_eq!(
+        refused(result),
+        "The reasons must match the choices, one for each."
+    );
+    assert_eq!(snapshot(&course).await?, seen);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_on_a_choices_reason_ends_when_the_reason_is_rewritten_and_its_replacement_is_the_users(
+) -> Result<()> {
+    let course = published().await?;
+    give_the_first_question_its_reasons(&course).await?;
+    claim(
+        &course,
+        SECTIONS,
+        UnitKind::AnswerKey,
+        "rationales/1",
+        R0[1],
+        R0[1],
+    )
+    .await?;
+    let seen = ledger(&course).await?;
+    let replacement = "Nothing trims a header name.";
+    let mut rationales = reasoned_q0().rationales;
+    rationales[1] = replacement.into();
+    let after = QuestionText {
+        rationales,
+        ..reasoned_q0()
+    };
+
+    let saved = edit(&course, 0, reasoned_q0(), after, false).await?;
+
+    assert_eq!(saved, outcome(6, 1, 0, 1, Some(seen.revision.0 + 1)));
+    let now = ledger(&course).await?;
+    assert_edited_into(&now, R0[1], replacement);
+    assert_confirmed_at(
+        &now,
+        replacement,
+        SECTIONS,
+        UnitKind::AnswerKey,
+        "rationales/1",
+        replacement,
+    );
     Ok(())
 }

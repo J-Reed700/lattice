@@ -57,6 +57,9 @@ pub struct QuestionText {
     /// The index of the right choice; none for a kind without one.
     pub right: Option<usize>,
     pub explanation: String,
+    /// One reason per choice, the right choice's empty; empty when the
+    /// question has none.
+    pub rationales: Vec<String>,
 }
 
 /// A question's new text, with the one the user opened.
@@ -136,6 +139,7 @@ async fn stored_question(
             choices,
             right,
             explanation,
+            rationales: Vec::new(),
         },
     }))
 }
@@ -216,6 +220,7 @@ fn effective(before: &QuestionText, after: QuestionText) -> QuestionText {
             before.right
         },
         explanation: after.explanation,
+        rationales: before.rationales.clone(),
     }
 }
 

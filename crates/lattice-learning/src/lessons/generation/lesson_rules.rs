@@ -466,7 +466,9 @@ mod tests {
     const REVEAL: &str = "The lid bulges: outside pressure falls with altitude while the air inside keeps its pressure. If you said it caves in, you reversed which side lost pressure.";
 
     fn question(kind: &str, prompt: &str) -> Value {
-        json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"explanation":"Because."})
+        json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":0,
+            "rationales":["","Two reverses the order.","Three mistakes the cause for the effect.","Four states it backwards."],
+            "explanation":"Because."})
     }
 
     fn lesson() -> Value {
@@ -865,6 +867,83 @@ mod tests {
             .unwrap()
             .push(json!({"sentence":TIMEOUT,"sourceIndex":0,"quote":SOURCE_SAYS}));
         assert!(lesson_rules(&again).is_empty());
+    }
+
+    #[test]
+    fn a_question_needs_one_reason_per_choice() {
+        for reasons in [
+            json!(["", "Two fails.", "Three fails."]),
+            json!([
+                "",
+                "Two fails.",
+                "Three fails.",
+                "Four fails.",
+                "Five fails."
+            ]),
+            json!([]),
+        ] {
+            let mut candidate = lesson();
+            candidate["questions"][1]["rationales"] = reasons.clone();
+            let findings = lesson_rules(&candidate);
+            assert_eq!(findings.len(), 1, "{reasons}");
+            assert_eq!(findings[0].key().site, FindingSite::Question(1));
+            assert_eq!(findings[0].kind, FindingKind::Structure);
+        }
+        let mut missing = lesson();
+        missing["questions"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("rationales");
+        assert_eq!(lesson_rules(&missing).len(), 1);
+    }
+
+    #[test]
+    fn a_wrong_choice_without_a_reason_is_a_finding_and_the_right_choices_empty_entry_is_not() {
+        let mut candidate = lesson();
+        candidate["questions"][2]["rationales"] = json!(["", "", "Three fails.", "  "]);
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].key().site, FindingSite::Question(2));
+        assert_eq!(findings[0].kind, FindingKind::Structure);
+        assert!(
+            findings[0].summary.contains("choice 2"),
+            "{}",
+            findings[0].summary
+        );
+        assert!(
+            findings[0].summary.contains("choice 4"),
+            "{}",
+            findings[0].summary
+        );
+        assert!(!findings[0].summary.contains("choice 1"));
+
+        let mut moved = lesson();
+        moved["questions"][2]["correctIndex"] = json!(2);
+        moved["questions"][2]["rationales"] =
+            json!(["One fails.", "Two fails.", "", "Four fails."]);
+        assert!(lesson_rules(&moved).is_empty());
+        moved["questions"][2]["rationales"] = json!(["", "Two fails.", "", "Four fails."]);
+        assert_eq!(lesson_rules(&moved).len(), 1);
+    }
+
+    #[test]
+    fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
+        let mut candidate = lesson();
+        candidate["questions"][3]["rationales"] = json!([
+            "",
+            "The cache holds 128 entries.",
+            "Three fails.",
+            "Four fails."
+        ]);
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].key().site, FindingSite::Question(3));
+        assert_eq!(findings[0].kind, FindingKind::Quotation);
+
+        candidate["questions"][3]["citations"] = json!([
+            {"sentence":"The cache holds 128 entries.","sourceIndex":0,"quote":"The cache holds at most 128 entries at a time."}
+        ]);
+        assert!(lesson_rules(&candidate).is_empty());
     }
 
     #[test]

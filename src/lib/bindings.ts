@@ -8769,7 +8769,12 @@ choices: string[];
 /**
  * The index of the right choice; null for a kind without one.
  */
-right: number | null; explanation: string }
+right: number | null; explanation: string;
+/**
+ * One reason per choice, the right choice's empty; empty when the
+ * question has none.
+ */
+rationales: string[] }
 /**
  * What a rewrite of a question does, or did, to the lesson's statements.
  */

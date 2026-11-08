@@ -319,3 +319,54 @@ async fn a_lesson_with_no_reference_material_asks_for_it_in_plain_words() {
     );
     assert!(!error.contains("MVP"), "{error}");
 }
+
+#[test]
+fn the_schema_asks_for_one_reason_per_choice_after_the_right_choice() {
+    let schema = lesson_schema(1);
+    let question = schema.pointer("/properties/questions/items").unwrap();
+    let required: Vec<_> = question["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(required.contains(&"rationales"), "{required:?}");
+    let reasons = &question["properties"]["rationales"];
+    assert_eq!(reasons["type"], "array");
+    assert_eq!(reasons["minItems"], 4);
+    assert_eq!(reasons["maxItems"], 4);
+    assert_eq!(reasons["items"]["type"], "string");
+    let keys: Vec<_> = question["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let at = |name: &str| keys.iter().position(|key| *key == name).unwrap();
+    assert!(at("correctIndex") < at("rationales"), "{keys:?}");
+}
+
+#[test]
+fn a_questions_reasons_are_trimmed_and_kept_with_its_key_in_the_writers_order() {
+    let mut value = off_shape_value(true);
+    value["questions"][0]["rationales"] = json!([
+        "",
+        "  Two is wrong because it reverses the order.  ",
+        "Three confuses the cause with the effect.",
+        "Four is the cause stated backwards."
+    ]);
+    let lesson: GeneratedLesson = serde_json::from_value(value).unwrap();
+
+    let (prepared, _) = assemble(lesson, &[source()], &HashSet::from(["source-a"])).unwrap();
+
+    assert_eq!(
+        prepared.keys[0].rationales,
+        [
+            "",
+            "Two is wrong because it reverses the order.",
+            "Three confuses the cause with the effect.",
+            "Four is the cause stated backwards."
+        ]
+    );
+    assert!(prepared.keys[1].rationales.is_empty());
+}

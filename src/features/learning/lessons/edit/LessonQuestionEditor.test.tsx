@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LessonQuestionEditor } from '@/features/learning/lessons/edit/LessonQuestionEditor';
 
-type Question = { kind: string; prompt: string; choices: string[]; right: number | null; explanation: string };
+type Question = { kind: string; prompt: string; choices: string[]; right: number | null; explanation: string; rationales: string[] };
 
 const api = vi.hoisted(() => ({ get: vi.fn(), edit: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: { getLearningLessonQuestion: api.get, editLearningLessonQuestion: api.edit } }));
@@ -21,10 +21,12 @@ const QUESTION: Question = {
   choices: ['It keeps them.', 'It trims them.', 'It drops the column.', 'It raises an error.'],
   right: 0,
   explanation: 'Header names keep their spaces exactly as written.',
+  rationales: ['', 'Nothing trims a header name.', 'The column stays in the file.', 'No error is raised for spaces.'],
 };
 const TRUE_FALSE: Question = {
-  kind: 'true_false', prompt: 'DictReader reads every row as a list.', choices: ['True', 'False'], right: 1, explanation: 'It reads each row as a dictionary.',
+  kind: 'true_false', prompt: 'DictReader reads every row as a list.', choices: ['True', 'False'], right: 1, explanation: 'It reads each row as a dictionary.', rationales: [],
 };
+const reasonBox = (n: number) => screen.getByRole('textbox', { name: `Why choice ${n} is wrong` }) as HTMLTextAreaElement;
 const REFUSAL = 'This question changed since you opened it. Copy your changes, close the editor and open it again.';
 
 function show(question: Question = QUESTION) {
@@ -94,6 +96,7 @@ describe('LessonQuestionEditor', () => {
       after: {
         kind: 'single_choice', prompt: 'What does DictReader do with a header name that holds spaces?',
         choices: ['It keeps them.', 'It trims them silently.', 'It drops the column.', 'It raises an error.'], right: 2, explanation: 'Trimming is up to you.',
+        rationales: QUESTION.rationales,
       },
     }]);
     expect(onSaved).toHaveBeenCalledTimes(1);
@@ -119,6 +122,67 @@ describe('LessonQuestionEditor', () => {
       before: QUESTION, after: { ...QUESTION, prompt: `${QUESTION.prompt} Why?` },
     }]);
     expect(screen.getByText('Saving changes 2 statements that were checked against the sources. What you write is marked as written by you, not checked.')).toBeVisible();
+  });
+
+  it('shows a reason field under each wrong choice and none under the right one', async () => {
+    show();
+    await loaded();
+    expect(screen.queryByRole('textbox', { name: 'Why choice 1 is wrong' })).not.toBeInTheDocument();
+    [2, 3, 4].forEach((n) => expect(reasonBox(n)).toHaveValue(QUESTION.rationales[n - 1]));
+  });
+
+  it('sends an edited reason with the question, and the others as they were', async () => {
+    show();
+    await loaded();
+    fireEvent.change(reasonBox(3), { target: { value: 'The column stays, spaces and all.' } });
+    await userEvent.click(saveButton());
+    await waitFor(() => expect(api.edit).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false })));
+    const [save] = requests().filter((request) => request.dryRun === false);
+    expect(save.before).toEqual(QUESTION);
+    expect(save.after.rationales).toEqual(['', 'Nothing trims a header name.', 'The column stays, spaces and all.', 'No error is raised for spaces.']);
+  });
+
+  it('keeps each reason with its choice when a choice is removed or added', async () => {
+    show();
+    await loaded();
+    await userEvent.click(removes()[1]);
+    expect(reasonBox(2)).toHaveValue(QUESTION.rationales[2]);
+    expect(reasonBox(3)).toHaveValue(QUESTION.rationales[3]);
+    await userEvent.click(screen.getByRole('button', { name: 'Add a choice' }));
+    await userEvent.type(choiceBox(4), 'It ignores them.');
+    await userEvent.type(reasonBox(4), 'Nothing ignores a header name.');
+    await userEvent.click(saveButton());
+    await waitFor(() => expect(api.edit).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false })));
+    const [save] = requests().filter((request) => request.dryRun === false);
+    expect(save.after.choices).toEqual(['It keeps them.', 'It drops the column.', 'It raises an error.', 'It ignores them.']);
+    expect(save.after.rationales).toEqual(['', 'The column stays in the file.', 'No error is raised for spaces.', 'Nothing ignores a header name.']);
+  });
+
+  it('moves the empty reason to the new right answer when the right answer changes', async () => {
+    show();
+    await loaded();
+    await userEvent.click(radios()[2]);
+    expect(screen.queryByRole('textbox', { name: 'Why choice 3 is wrong' })).not.toBeInTheDocument();
+    expect(reasonBox(1)).toHaveValue('');
+    await userEvent.type(reasonBox(1), 'It does keep them, so this is not wrong.');
+    await userEvent.click(saveButton());
+    await waitFor(() => expect(api.edit).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false })));
+    const [save] = requests().filter((request) => request.dryRun === false);
+    expect(save.after.right).toBe(2);
+    expect(save.after.rationales).toEqual(['It does keep them, so this is not wrong.', 'Nothing trims a header name.', '', 'No error is raised for spaces.']);
+  });
+
+  it('a question stored without reasons shows empty fields and is not changed by showing them', async () => {
+    show({ ...QUESTION, rationales: [] });
+    await loaded();
+    [2, 3, 4].forEach((n) => expect(reasonBox(n)).toHaveValue(''));
+    expect(screen.getByText('No changes yet.')).toBeVisible();
+    expect(saveButton()).toBeDisabled();
+    fireEvent.change(await loaded(), { target: { value: `${QUESTION.prompt} Why?` } });
+    await userEvent.click(saveButton());
+    await waitFor(() => expect(api.edit).toHaveBeenCalledWith(expect.objectContaining({ dryRun: false })));
+    const [save] = requests().filter((request) => request.dryRun === false);
+    expect(save.after.rationales).toEqual([]);
   });
 
   it('cannot remove a choice at two choices', async () => {

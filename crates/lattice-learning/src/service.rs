@@ -475,6 +475,30 @@ mod tests {
     }
 
     #[test]
+    fn a_key_carries_no_reasons_or_one_per_option_and_nothing_else() {
+        let mut program = fixture();
+        program.sources.clear();
+        let lesson_id = program.modules[0].lessons[0].id.clone();
+        let mut lesson = prepared(&lesson_id);
+        for reasons in [vec![], vec![String::new(), "Unsupported fails.".into()]] {
+            lesson.keys[0].rationales = reasons;
+            assert!(validate_prepared(&lesson, &program).is_ok());
+            assert!(validate_generated(&lesson, &program).is_ok());
+        }
+        for reasons in [
+            vec!["Only one.".to_owned()],
+            vec![String::new(), "Two.".into(), "Three.".into()],
+        ] {
+            lesson.keys[0].rationales = reasons;
+            assert!(validate_prepared(&lesson, &program).is_err());
+            assert!(matches!(
+                validate_generated(&lesson, &program),
+                Err(AppError::ModelAnswerUnusable(_))
+            ));
+        }
+    }
+
+    #[test]
     fn a_prepared_lesson_is_checked_for_blank_text_never_for_how_long_it_is() {
         let mut program = fixture();
         program.sources.clear();

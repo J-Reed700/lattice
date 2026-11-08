@@ -464,6 +464,29 @@ mod tests {
     }
 
     #[test]
+    fn a_citation_may_name_a_sentence_of_a_choices_reason() -> Result<()> {
+        let mut original = cited_lesson();
+        original["questions"][0]["explanation"] = json!("The cache is small.");
+        original["questions"][0]["rationales"] = json!([
+            "",
+            "The retry limit is 5 attempts.",
+            "Three fails.",
+            "Four fails."
+        ]);
+        let cite = json!({"sentence":"The retry limit is 5 attempts.","sourceIndex":0,"quote":"Each request is retried at most 5 attempts."});
+
+        let revised = apply(
+            &original,
+            &citing(
+                json!([{"path":"/questions/0","sentence":"The retry limit is 5 attempts.","sourceIndex":0,"quote":"Each request is retried at most 5 attempts."}]),
+            ),
+        )?;
+
+        assert_eq!(revised["questions"][0]["citations"], json!([cite]));
+        Ok(())
+    }
+
+    #[test]
     fn a_citation_the_draft_cannot_hold_is_left_out_and_the_rest_of_the_repair_is_kept(
     ) -> Result<()> {
         let original = cited_lesson();
