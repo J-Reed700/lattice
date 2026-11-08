@@ -19,23 +19,22 @@ export const drillsApi = {
   codeReviewLanguages: (): Promise<string[]> =>
     invokeCommand('code_review_languages'),
 
-  /** The courses a drill on a passage can draw on. */
-  reviewDrillCourses: (): Promise<Wire.ReviewDrillCourseDto[]> =>
-    invokeCommand('review_drill_courses'),
+  /**
+   * A course's drills: the language code drills are offered in, what a start with no lesson comes to, its lessons
+   * by module with their standing, and its latest attempts.
+   */
+  courseDrills: (_programId: string, _language: string | null): Promise<Wire.CourseDrillsDto> =>
+    Promise.resolve({ language: '', nextCode: null, nextPassage: null, hasSources: false, modules: [], recent: [] }),
 
-  /** An attempt on a ready drill, or the build that will make one. */
-  startReviewDrill: (
-    material: Wire.ReviewMaterialDto,
-    mode: Wire.AttemptMode,
-    lines: number,
-    patternsCount: number,
-  ): Promise<Wire.StartedCodeReviewDto> =>
-    invokeCommand('start_review_drill', {
-      material,
-      mode,
-      lines,
-      patternsCount,
-    }),
+  /** An attempt on a ready drill of the lesson, or of the one next up when none is given, or the build that will make one. */
+  startCourseDrill: (
+    _programId: string,
+    _lessonId: string | null,
+    _material: Wire.DrillMaterialDto,
+    _mode: Wire.AttemptMode,
+    _lines: number,
+    _issues: number,
+  ): Promise<Wire.StartedCodeReviewDto> => Promise.resolve({ status: 'building', jobId: '' }),
 
   submitCodeReview: (
     attemptId: string,

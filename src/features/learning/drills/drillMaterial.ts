@@ -1,4 +1,4 @@
-import type { CodeReviewDrillDto } from '@/lib/bindings';
+import type { AttemptMode, CodeReviewDrillDto } from '@/lib/bindings';
 
 import { languageLabel, type ReviewKind } from './drillOptions';
 
@@ -16,4 +16,9 @@ export function materialLabel(drill: CodeReviewDrillDto): string {
   return drill.material.kind === 'code'
     ? languageLabel(drill.material.language)
     : `Explanation of ${drill.material.sourceTitle}`;
+}
+
+/** What a drill is, for the line under its title: the lesson, what it is made of and the mode, as "Spacing · C# · Interview". */
+export function drillMeta(_drill: CodeReviewDrillDto, _mode: AttemptMode): string {
+  return '';
 }

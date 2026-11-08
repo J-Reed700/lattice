@@ -33,6 +33,7 @@ function setup(result: CodeReviewResultDto = gradedResult(), props: Partial<Dril
 }
 
 const TITLE = 'A sliding-window rate limiter';
+const LESSON = { programId: 'course-1', lessonId: 'lesson-2', title: 'Spacing' };
 const CONTRAST = 'The code you reviewed · The code without the issues';
 
 const region = (name: string) => screen.getByRole('region', { name });
@@ -119,12 +120,17 @@ describe('DrillReveal, a graded review', () => {
     });
 
     it.each<[AttemptMode, string]>([
-      ['practice', 'Result · Practice · python'],
-      ['interview', 'Result · Interview · python'],
-      ['rapid', 'Result · Rapid · python'],
-    ])('says the mode it was practised in: %s', (mode, eyebrow) => {
+      ['practice', 'Result · Python · Practice'],
+      ['interview', 'Result · Python · Interview'],
+      ['rapid', 'Result · Python · Rapid'],
+    ])('says the language and the mode it was practised in: %s', (mode, eyebrow) => {
       setup(gradedResult({ mode }));
       expect(within(region(TITLE)).getByText(eyebrow)).toBeInTheDocument();
+    });
+
+    it('names the lesson the drill was built from before the language', () => {
+      setup(gradedResult({ drill: { ...gradedResult().drill, lesson: LESSON } }));
+      expect(within(region(TITLE)).getByText('Result · Spacing · Python · Practice')).toBeInTheDocument();
     });
 
     it('moves focus to the result’s heading', () => {
@@ -175,6 +181,46 @@ describe('DrillReveal, a graded review', () => {
       expect(
         within(card('Stale state')).getByRole('button', { name: 'Show src/limiter.py · line 12 in the code' }),
       ).toHaveTextContent('src/limiter.py · line 12');
+    });
+
+    it('shows what the lesson says about an issue, sentence by sentence, with where each comes from', () => {
+      const lesson = {
+        lessonId: 'lesson-2',
+        sentences: [
+          { text: 'Spacing the study sessions out helps recall.', source: 'Spacing and memory' },
+          { text: 'A guess before the answer makes it stick.', source: null },
+        ],
+      };
+      setup(gradedResult({ reveal: revealOf({ issues: ISSUES.map((issue) => (issue.id === STALE_STATE.id ? { ...issue, lesson } : issue)) }) }));
+      const stale = within(card('Stale state'));
+      expect(stale.getByRole('heading', { level: 4, name: 'From the lesson' })).toBeInTheDocument();
+      expect(stale.getByText('Spacing the study sessions out helps recall.')).toBeInTheDocument();
+      expect(stale.getByText('From Spacing and memory')).toBeInTheDocument();
+      expect(stale.getByText('A guess before the answer makes it stick.')).toBeInTheDocument();
+      expect(stale.getByText('The lesson’s own teaching')).toBeInTheDocument();
+      expect(stale.getByText('Spacing the study sessions out helps recall.').closest('blockquote')).not.toBeNull();
+    });
+
+    it('shows a block of the lesson’s code as code, without its fence', () => {
+      const lesson = {
+        lessonId: 'lesson-2',
+        sentences: [{ text: '```python\nif len(recent) >= limit:\n    refuse()\n```', source: null }],
+      };
+      setup(gradedResult({ reveal: revealOf({ issues: ISSUES.map((issue) => (issue.id === STALE_STATE.id ? { ...issue, lesson } : issue)) }) }));
+      const block = within(card('Stale state')).getByText((_content, element) => element?.tagName === 'PRE');
+      expect(block.textContent).toBe('if len(recent) >= limit:\n    refuse()');
+      expect(within(card('Stale state')).queryByText(/```/)).toBeNull();
+    });
+
+    it('shows nothing from the lesson for an issue that has none', () => {
+      setup();
+      expect(screen.queryByText('From the lesson')).toBeNull();
+    });
+
+    it('shows nothing from the lesson for an issue whose lesson cites no sentence', () => {
+      const lesson = { lessonId: 'lesson-2', sentences: [] };
+      setup(gradedResult({ reveal: revealOf({ issues: ISSUES.map((issue) => ({ ...issue, lesson })) }) }));
+      expect(screen.queryByText('From the lesson')).toBeNull();
     });
 
     it('shows the fix as a diff that marks the lines removed and added and leaves the rest alone', () => {
@@ -538,9 +584,15 @@ describe('DrillReveal, a review that could not be graded', () => {
     setup(ungradedResult());
     expect(screen.getByRole('heading', { name: 'This review could not be graded' })).toHaveFocus();
     expect(screen.getByRole('alert')).toHaveTextContent('The grader did not answer: the model is down.');
+    expect(screen.getByText('Result · Python · Practice')).toBeInTheDocument();
     expect(screen.getByText(MODEL)).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Issues, most severe first' })).toBeNull();
     expect(screen.queryByRole('region', { name: CONTRAST })).toBeNull();
+  });
+
+  it('names the lesson the drill was built from', () => {
+    setup(ungradedResult({ drill: { ...gradedResult().drill, lesson: LESSON } }));
+    expect(screen.getByText('Result · Spacing · Python · Practice')).toBeInTheDocument();
   });
 
   it('says it plainly when the grader said nothing', () => {
