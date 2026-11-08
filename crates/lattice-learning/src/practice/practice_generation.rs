@@ -385,10 +385,33 @@ fn validate_grade(
 /// learner's practice profile details and language target when set.
 pub fn generate_written_practice_prompt(
     objective: &str,
-    _profile: Option<&LearningPracticeProfileDto>,
+    profile: Option<&LearningPracticeProfileDto>,
 ) -> String {
-    // Stage 1 stub: does not feed profile language or details
-    objective.to_string()
+    let base = format!(
+        "{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",
+        objective.trim()
+    );
+    let Some(profile) = profile else {
+        return base;
+    };
+    let mut extras = Vec::new();
+    let details = profile.details.trim();
+    if !details.is_empty() {
+        extras.push(format!("Preparing for: {details}"));
+    }
+    if let Some(language) = profile
+        .language
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        extras.push(format!("Target language: {language}"));
+    }
+    if extras.is_empty() {
+        base
+    } else {
+        format!("{base}\n\n{}", extras.join(" · "))
+    }
 }
 
 #[cfg(test)]
