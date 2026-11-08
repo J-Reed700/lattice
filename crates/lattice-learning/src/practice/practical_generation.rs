@@ -195,6 +195,7 @@ fn activity_schema(sources: &[LearningSourceVersionDto]) -> serde_json::Value {
 fn kind_name(kind: LearningPracticalActivityKind) -> &'static str {
     match kind {
         LearningPracticalActivityKind::CodeLab => "code lab",
+        LearningPracticalActivityKind::CodingProblem => "coding problem",
         LearningPracticalActivityKind::Debugging => "debugging investigation",
         LearningPracticalActivityKind::CodeReview => "code review",
         LearningPracticalActivityKind::Incident => "incident response simulation",

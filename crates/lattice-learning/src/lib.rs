@@ -50,6 +50,8 @@ pub use planning::plan_dto;
 pub use portability::pack;
 pub use portability::pack_repository;
 pub use portability::portability_dto;
+pub use practice::coding;
+pub use practice::simulation_policy;
 pub use practice::interview_research;
 pub use practice::practical_dto;
 pub use practice::practical_generation;

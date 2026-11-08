@@ -1472,6 +1472,30 @@ async codeReviewLanguages() : Promise<string[]> {
  * what a start with no lesson comes to for code and for passages, each lesson's standing by module, and the latest
  * attempts.
  */
+async getLearningPracticeProfile(programId: string) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_profile", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningPracticeProfile(request: SaveLearningPracticeProfileRequestDto) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_practice_profile", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startCodingBuild(request: StartCodingBuildRequestDto) : Promise<Result<StartedCodingBuildDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_coding_build", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async courseDrills(programId: string, language: string | null) : Promise<Result<CourseDrillsDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_drills", { programId, language }) };
@@ -8241,9 +8265,17 @@ export type LearningPlanDto = { programId: string;
 programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
 export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto; exportNotice: LearningPackExportNoticeDto }
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; interviewPlan?: LearningInterviewPlanDto | null; revision: number; createdAt: number; updatedAt: number }
-export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
+export type LearningPracticalActivityKind = "code_lab" | "coding_problem" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
-export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null }
+export type CaseCheckDetail = { category: string; input?: string | null; expected?: string | null; actual?: string | null; printed?: string | null; error?: string | null }
+export type CodingTask = "problem" | "bug_fix" | "project"
+export type Setting = "coached" | "mock" | "watched"
+export type Difficulty = "easy" | "medium" | "hard"
+export type StartCodingBuildRequestDto = { programId: string; lessonId: string | null; task: CodingTask; setting: Setting; language: string; difficulty: Difficulty; focus: string | null }
+export type StartedCodingBuildDto = { jobId: string }
+export type LearningPracticeProfileDto = { programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; revision: number }
+export type SaveLearningPracticeProfileRequestDto = { programId: string; details: string; language?: string | null; interviewAt?: number | null; company?: string | null; role?: string | null; expectedRevision?: number | null }
+export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null; detail?: CaseCheckDetail | null }
 export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"
 /**
  * Learner-owned starter files for one immutable practical activity revision.

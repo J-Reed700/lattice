@@ -635,6 +635,9 @@ fn main() {
                     "regrade_code_review",
                     "code_review_languages",
                     "course_drills",
+                    "get_learning_practice_profile",
+                    "save_learning_practice_profile",
+                    "start_coding_build",
                 ]),
             )
             .plugin(

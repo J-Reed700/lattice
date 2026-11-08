@@ -466,6 +466,9 @@
     "learning:allow-regrade-code-review",
     "learning:allow-code-review-languages",
     "learning:allow-course-drills",
+    "learning:allow-get-learning-practice-profile",
+    "learning:allow-save-learning-practice-profile",
+    "learning:allow-start-coding-build",
     "compare:allow-compare-documents",
     "corpus-shape:allow-cluster-vault-run",
     "corpus-shape:allow-list-clusters"

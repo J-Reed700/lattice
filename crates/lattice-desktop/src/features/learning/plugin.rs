@@ -80,6 +80,8 @@ mod trust;
 pub use trust::*;
 mod code_review;
 pub use code_review::*;
+mod coding;
+pub use coding::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -292,6 +294,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             decide_learning_recall_duplicate,
             review_learning_recall_card,
             get_learning_practice_workspace,
+            get_learning_practice_profile,
+            save_learning_practice_profile,
             get_learning_practice_session,
             start_learning_practice_session,
             save_learning_practice_artifact,
@@ -346,7 +350,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             code_review_result,
             regrade_code_review,
             code_review_languages,
-            course_drills
+            course_drills,
+            start_coding_build
         ])
         .build()
 }
