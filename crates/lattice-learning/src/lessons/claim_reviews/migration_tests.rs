@@ -13,7 +13,7 @@ const CLAIM_REVIEWS: i64 = 20_261_017_150_000;
 /// The migration that gave a teaching finding its summary.
 const TEACHING_SUMMARY: i64 = 20_261_107_010_000;
 /// The migration that told a teaching finding when its part was last changed.
-const PART_CHANGED: i64 = 20_261_107_020_000;
+const PART_CHANGED: i64 = 20_261_107_030_000;
 
 fn migrator() -> Migrator {
     sqlx::migrate!("../lattice-desktop/migrations")

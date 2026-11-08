@@ -90,24 +90,30 @@ impl LessonVerificationReport {
     }
 
     /// The report after the user rewrote a section: the findings on the
-    /// claims that ended, and those naming no claim whose text is gone, are
-    /// dropped; the user's sentences stand in the first dropped one's place,
-    /// confirmed by them; every other finding as it was.
+    /// claims that ended, and those naming no claim whose quote is in neither
+    /// the new text nor the new title, are dropped; the user's sentences stand
+    /// in the first dropped one's place, or after the section's last finding
+    /// (at the end when it has none), confirmed by them; every other finding
+    /// as it was.
     pub(crate) fn rewritten(&mut self, rewrite: &Rewritten<'_>) {
         let dropped = |finding: &Finding| {
             finding.unit == rewrite.unit
                 && match &finding.claim_id {
                     Some(id) => rewrite.ended.contains(id),
-                    None => lattice_core::domain::learning::claim_review::span_of(
-                        rewrite.new_body,
-                        &finding.quote,
-                    )
-                    .is_none(),
+                    None => {
+                        !rewrite.new_body.contains(finding.quote.as_str())
+                            && !rewrite.new_title.contains(finding.quote.as_str())
+                    }
                 }
         };
         let first = self.findings.iter().position(dropped);
         self.findings.retain(|finding| !dropped(finding));
-        let mut at = first.unwrap_or(self.findings.len());
+        let mut at = first.unwrap_or_else(|| {
+            self.findings
+                .iter()
+                .rposition(|finding| finding.unit == rewrite.unit)
+                .map_or(self.findings.len(), |last| last + 1)
+        });
         for (text, successor) in rewrite.written {
             let finding = Finding {
                 unit: rewrite.unit,

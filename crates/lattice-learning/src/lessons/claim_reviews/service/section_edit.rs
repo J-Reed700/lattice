@@ -112,7 +112,8 @@ fn endings<'a>(claims: &'a [ClaimLedgerEntry], plan: &FieldPlan, old: &str) -> V
 
 impl ClaimReviewService {
     /// Writes the section's new title and text, ends the statements that stood
-    /// on what changed, and keeps the rest. A dry run writes nothing.
+    /// on what changed, and keeps the rest. A dry run writes nothing. A new
+    /// title is written as a statement only when it replaces one on the old title.
     pub async fn edit_section(&self, edit: SectionEdit) -> Result<SectionEditOutcome> {
         let SectionEdit {
             program_id,

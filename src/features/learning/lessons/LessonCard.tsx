@@ -194,7 +194,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
                   <div className="flex items-center justify-between gap-2">
                     <div className="studio-section-label">{blockLabels[block.kind]}</div>
-                    <button type="button" aria-label={`Edit section ${index + 1}: ${block.title}`} onClick={() => { setEditNote(''); setEditing(index); }} className={LISTEN_CLASS}><Pencil size={13} aria-hidden="true" />Edit</button>
+                    {!heldRecap && <button type="button" aria-label={`Edit section ${index + 1}: ${block.title}`} onClick={() => { setEditNote(''); setEditing(index); }} className={LISTEN_CLASS}><Pencil size={13} aria-hidden="true" />Edit</button>}
                   </div>
                   <h4>{block.title}</h4>
                   {!heldRecap && <div className="-mx-1.5 mt-1"><ListenButton sourceId={`lesson:${lesson.id}:${index}`} markdown={`# ${block.title}\n\n${check ? check.question : block.body}`} subject={`the section “${block.title}”`} className={LISTEN_CLASS} /></div>}
