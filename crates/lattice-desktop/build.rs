@@ -547,6 +547,8 @@ fn main() {
                     "attach_learning_lesson_source",
                     "settle_learning_teaching_findings",
                     "edit_learning_lesson_section",
+                    "get_learning_lesson_question",
+                    "edit_learning_lesson_question",
                     "resume_learning_lesson_review",
                     "capture_learning_source_snapshot",
                     "get_learning_checker_accuracy",

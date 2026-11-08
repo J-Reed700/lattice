@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { learningClaimReviewKey, learningLessonEvidencePrefix, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import { learningClaimReviewKey, learningLessonEvidencePrefix, learningLessonQuestionKey, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import type {
   ClaimActionRequestDto,
   LearningGenerationJob,
   LessonClaimReviewDto,
+  LessonQuestionDto,
+  LessonQuestionEditDto,
   LessonSectionEditDto,
   ResolveLearningClaimResultDto,
   SnapshotNoteDto,
@@ -112,6 +114,39 @@ export function useEditLearningLessonSection(programId: string, lessonId: string
   return useMutation<LessonSectionEditDto, Error, EditSectionVariables>({
     retry: false,
     mutationFn: async (variables) => unwrap(await api.editLearningLessonSection({ programId, lessonId, ...variables, dryRun: false })),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
+  });
+}
+
+/** A published lesson's question as the editor opens it; read fresh each time the editor opens. */
+export function useLearningLessonQuestion(programId: string, lessonId: string, questionIndex: number) {
+  const api = useApi();
+  return useQuery<LessonQuestionDto>({
+    queryKey: learningLessonQuestionKey(programId, lessonId, questionIndex),
+    queryFn: async () => unwrap(await api.getLearningLessonQuestion(programId, lessonId, questionIndex)),
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+}
+
+export type EditQuestionVariables = {
+  questionIndex: number;
+  before: LessonQuestionDto;
+  after: LessonQuestionDto;
+};
+
+/**
+ * Saves the user's rewrite of one question of a published lesson. The course,
+ * its evidence and the review reload after success and after a refusal, as
+ * for a section.
+ */
+export function useEditLearningLessonQuestion(programId: string, lessonId: string) {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation<LessonQuestionEditDto, Error, EditQuestionVariables>({
+    retry: false,
+    mutationFn: async (variables) => unwrap(await api.editLearningLessonQuestion({ programId, lessonId, ...variables, dryRun: false })),
     onSettled: () => refreshAfterAction(client, programId, lessonId),
   });
 }

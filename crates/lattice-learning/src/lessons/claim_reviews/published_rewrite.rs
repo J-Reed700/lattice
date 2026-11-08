@@ -78,8 +78,19 @@ pub(super) struct Written {
     pub successor: ClaimId,
 }
 
-/// What rewriting `field` of section `unit` from `old` to `new` does to the
-/// claims on it; claims of other sections or fields, and claims that already
+/// The kind of unit a field belongs to: a question's prompt and choices, its
+/// answer key's explanation, else a section's field.
+fn unit_kind_of(field: &str) -> UnitKind {
+    match field {
+        "prompt" => UnitKind::Question,
+        "explanation" => UnitKind::AnswerKey,
+        _ if field.starts_with("options/") => UnitKind::Question,
+        _ => UnitKind::Block,
+    }
+}
+
+/// What rewriting `field` of unit `unit` from `old` to `new` does to the
+/// claims on it; claims of other units or fields, and claims that already
 /// ended, are left out.
 pub(super) fn plan(
     claims: &[ClaimLedgerEntry],
@@ -88,6 +99,7 @@ pub(super) fn plan(
     old: &str,
     new: &str,
 ) -> FieldPlan {
+    let unit_kind = unit_kind_of(field);
     let (old_spans, new_spans) = (sentences(old), sentences(new));
     let found = hunks(&compared(old, &old_spans), &compared(new, &new_spans));
     let mut written = Vec::new();
@@ -114,7 +126,7 @@ pub(super) fn plan(
     let mut plan = FieldPlan::default();
     for entry in claims {
         let location = entry.location();
-        if location.unit_kind != UnitKind::Block
+        if location.unit_kind != unit_kind
             || location.unit_index != unit
             || location.field != field
             || gone(entry)

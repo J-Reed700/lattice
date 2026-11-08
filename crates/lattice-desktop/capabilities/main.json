@@ -384,6 +384,8 @@
     "learning:allow-attach-learning-lesson-source",
     "learning:allow-settle-learning-teaching-findings",
     "learning:allow-edit-learning-lesson-section",
+    "learning:allow-get-learning-lesson-question",
+    "learning:allow-edit-learning-lesson-question",
     "learning:allow-resume-learning-lesson-review",
     "learning:allow-capture-learning-source-snapshot",
     "learning:allow-get-learning-checker-accuracy",

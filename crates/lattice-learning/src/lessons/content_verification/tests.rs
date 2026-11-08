@@ -580,6 +580,9 @@ mod settle_published_tests;
 #[path = "edit_section_tests.rs"]
 mod edit_section_tests;
 
+#[path = "edit_question_tests.rs"]
+mod edit_question_tests;
+
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
 

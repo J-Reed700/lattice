@@ -93,6 +93,9 @@ fn text_key_valid(key: &LearningTextKey) -> bool {
 
 pub const TRUE_FALSE: [&str; 2] = ["True", "False"];
 
+/// How many options a single-choice item may have.
+pub const SINGLE_CHOICE_OPTIONS: std::ops::RangeInclusive<usize> = 2..=8;
+
 pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()> {
     id(&candidate.id, "assessment item")?;
     present(&candidate.prompt, "Assessment prompt")?;
@@ -127,7 +130,9 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
     let no_left = candidate.left.is_empty();
     match (&candidate.format, &candidate.key) {
         (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(key)) => {
-            if !(2..=8).contains(&candidate.options.len()) || *key >= candidate.options.len() {
+            if !SINGLE_CHOICE_OPTIONS.contains(&candidate.options.len())
+                || *key >= candidate.options.len()
+            {
                 return Err(invalid(
                     "Single-choice items need 2–8 options and one valid key.",
                 ));

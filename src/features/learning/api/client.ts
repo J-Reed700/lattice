@@ -156,6 +156,20 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LessonSectionEditDto>> =>
     learningCall('edit_learning_lesson_section', { request }),
 
+  /** A published lesson's question, as the editor opens it. */
+  getLearningLessonQuestion: (
+    programId: string,
+    lessonId: string,
+    questionIndex: number,
+  ): Promise<ApiResult<Wire.LessonQuestionDto>> =>
+    learningCall('get_learning_lesson_question', { programId, lessonId, questionIndex }),
+
+  /** Rewrites a question of a published lesson; with `dryRun` it only answers what saving would do. */
+  editLearningLessonQuestion: (
+    request: Wire.EditLearningLessonQuestionRequestDto,
+  ): Promise<ApiResult<Wire.LessonQuestionEditDto>> =>
+    learningCall('edit_learning_lesson_question', { request }),
+
   resumeLearningLessonReview: (
     request: Wire.ResumeLearningLessonReviewRequestDto,
   ): Promise<ApiResult<Wire.LearningGenerationJob>> =>

@@ -59,7 +59,7 @@ function statusLine(last: Settled) {
  * sentence can also take the sentence out of the lesson, or hand it to Add a
  * source.
  */
-export function TeachingFindings({ programId, lessonId, findings, lessonAnchor = null, published = false, revision, onAddSource, editSection }: {
+export function TeachingFindings({ programId, lessonId, findings, lessonAnchor = null, published = false, revision, onAddSource, editSection, editQuestion }: {
   programId: string;
   lessonId: string;
   findings: TeachingFindingDto[];
@@ -73,6 +73,8 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
   onAddSource?: (claimId: string, findingKey: string) => void;
   /** Opens the editor on the note's section; null when the note has none to edit. */
   editSection?: (finding: TeachingFindingDto) => (() => void) | null;
+  /** Opens the editor on the note's question; null when the note is not about one. */
+  editQuestion?: (finding: TeachingFindingDto) => (() => void) | null;
 }) {
   const settle = useSettleTeachingFindings(programId, lessonId);
   const resolveMany = useResolveLearningClaims(programId, lessonId);
@@ -164,6 +166,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
       <ul role="list" className="space-y-2">
         {findings.map((finding) => {
           const openEditor = editSection?.(finding) ?? null;
+          const openQuestionEditor = editQuestion?.(finding) ?? null;
           return (
           <li key={finding.findingKey}>
             <article id={teachingNoteId(finding.findingKey)} tabIndex={-1} aria-label={`${finding.unitTitle}: ${KIND_LABELS[finding.kind]}`}
@@ -205,6 +208,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
                         disabled={acting !== null} onClick={() => void undoResolved(finding)} className={`${smallButton} border-border text-text-secondary`}>Undo</button>}
                     </>}
                   {openEditor && <Button type="button" variant="ghost" size="sm" disabled={acting !== null} onClick={openEditor}>Edit the section</Button>}
+                  {openQuestionEditor && <Button type="button" variant="ghost" size="sm" disabled={acting !== null} onClick={openQuestionEditor}>Edit the question</Button>}
                   {acting === finding.findingKey && <span role="status" className="inline-flex items-center gap-1 text-xs text-text-muted"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />Saving…</span>}
                 </div>
                 {errors[finding.findingKey] && <p role="alert" className="mt-2 text-xs leading-5 text-rose-700">{errors[finding.findingKey]}</p>}
