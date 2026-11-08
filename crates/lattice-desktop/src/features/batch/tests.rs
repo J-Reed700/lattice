@@ -585,11 +585,15 @@ async fn cancelling_mid_file_releases_its_library_blob_and_nothing_restarts_it(
     );
     harness.embedding.release.notify_one();
     tokio::time::timeout(WAIT, async {
-        while harness.jobs.store().get(&job_id).await.is_ok() && harness.blobs() > 0 {
+        while harness.jobs.store().get(&job_id).await.is_ok()
+            && (harness.blobs() > 0
+                || harness.count("SELECT count(*) FROM file_intents").await? > 0)
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+        anyhow::Ok(())
     })
-    .await?;
+    .await??;
     assert_eq!(
         harness.blobs(),
         0,
