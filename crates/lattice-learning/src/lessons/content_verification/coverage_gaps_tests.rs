@@ -1,14 +1,11 @@
 //! The coverage audit reports what the claim inventory leaves out. An
-//! assertion the fidelity judge names as unrepresented is a finding for the
-//! teaching review, not a claim: it is not checked, repaired or cut, and it
-//! does not stop the lesson. The exception is a specific (a figure, a
-//! quotation, an attribution) in a passage the inventory reads: it joins the
-//! inventory in the first pass and gets the strict check (claim classes design
-//! §3.4).
+//! assertion the fidelity judge names as unrepresented is a statement the
+//! lesson makes, so it joins the inventory in the first pass and is sorted and
+//! checked like any other, unless the rule layer makes it Internal (claim
+//! classes design §3.4).
 use super::*;
 use crate::dto::{LearningBlockDto, LearningBlockKind, PreparedLearningLesson};
 use crate::lesson_drafts;
-use crate::review_findings::{FindingKind, FindingSite};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// An exercise that presupposes the false default without stating it in the
@@ -212,10 +209,6 @@ async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_ch
     assert_eq!(adopted.len(), 1);
     assert_eq!(adopted[0].quote, FIGURE_PREMISE);
     assert!(report.coverage_audit[1].complete);
-    assert!(
-        report.coverage_findings(2).is_empty(),
-        "a claim now, no finding"
-    );
     assert!(model.judged_watched_claim.load(Ordering::Relaxed));
     let finding = report
         .findings
@@ -235,7 +228,7 @@ async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_ch
 }
 
 /// A question's stem and options, and a rubric, are not passages the inventory
-/// reads, so a gap cannot be placed in them; a gap that names one is a finding.
+/// reads, so a gap cannot be placed in them; a gap that names one stays recorded.
 #[test]
 fn a_gap_in_a_question_or_an_option_is_never_adopted() {
     let candidate = json!({"blocks":[{"kind":"explanation","title":"A","body":GOOD,"rubric":[]}],
@@ -274,7 +267,7 @@ fn a_gap_in_a_question_or_an_option_is_never_adopted() {
         }],
     };
 
-    let adopted = inventory_checkpoint::adopt_specifics(
+    let adopted = inventory_checkpoint::adopt_missing(
         &mut inventory,
         &mut coverage,
         &content,
@@ -345,7 +338,7 @@ fn a_later_pass_adopts_only_a_gap_in_a_sentence_written_since_the_last() {
     };
     let adopt = |rewrites: &claim_ledger::Rewrites| {
         let (mut inventory, mut coverage) = fresh();
-        let adopted = inventory_checkpoint::adopt_specifics(
+        let adopted = inventory_checkpoint::adopt_missing(
             &mut inventory,
             &mut coverage,
             &content,
@@ -398,7 +391,7 @@ fn adopt_one(statement: &str, rewrites: &claim_ledger::Rewrites) -> (usize, usiz
             }],
         }],
     };
-    let adopted = inventory_checkpoint::adopt_specifics(
+    let adopted = inventory_checkpoint::adopt_missing(
         &mut inventory,
         &mut coverage,
         &content,
@@ -488,7 +481,6 @@ async fn a_rubric_without_a_missing_assertion_reports_nothing() -> Result<()> {
     assert!(!*model.inner.repaired.lock().unwrap());
     assert_eq!(serde_json::from_str::<Value>(&raw)?, original);
     assert!(report.coverage_audit.iter().all(|unit| unit.complete));
-    assert!(report.coverage_findings(2).is_empty());
     assert_eq!(
         report.coverage[1].claims.len(),
         1,
@@ -527,119 +519,6 @@ fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
 
     assert!(
         report.validate("lesson", &lesson).is_ok(),
-        "a gap is a finding, not a defect of the report"
-    );
-}
-
-#[test]
-fn gaps_in_questions_follow_the_sections_in_the_findings_sites() {
-    let lesson = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "CSV header names".into(),
-            body: GOOD.into(),
-            rubric: vec![],
-            source_ids: vec![],
-        }],
-        questions: vec![],
-        keys: vec![],
-        verification: None,
-    };
-    let mut report = attest("lesson", &lesson);
-    let gap = |index: usize, statement: &str| CoverageUnit {
-        index,
-        complete: false,
-        reason: statement.into(),
-        missing_assertions: vec![MissingAssertion {
-            passage_id: format!("unit-{index}-passage-0"),
-            statement: statement.into(),
-        }],
-    };
-    report.coverage_audit = vec![gap(0, "In a section."), gap(2, "In a question.")];
-
-    let sites: Vec<_> = report
-        .coverage_findings(2)
-        .into_iter()
-        .map(|finding| (finding.site, finding.note))
-        .collect();
-
-    assert_eq!(sites.len(), 2);
-    assert_eq!(sites[0].0, Some(FindingSite::Section(0)));
-    assert!(sites[0].1.ends_with("In a section."));
-    assert_eq!(sites[1].0, Some(FindingSite::Question(0)));
-    assert!(sites[1].1.ends_with("In a question."));
-}
-
-#[test]
-fn a_gap_is_summarised_with_every_statement_whole() {
-    let lesson = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "CSV header names".into(),
-            body: GOOD.into(),
-            rubric: vec![],
-            source_ids: vec![],
-        }],
-        questions: vec![],
-        keys: vec![],
-        verification: None,
-    };
-    let mut report = attest("lesson", &lesson);
-    let long = "DictReader buffers a hundred rows before it parses the first one and keeps every parsed row in memory until the file ends.";
-    report.coverage_audit = vec![CoverageUnit {
-        index: 0,
-        complete: false,
-        reason: "gaps".into(),
-        missing_assertions: vec![
-            MissingAssertion {
-                passage_id: "unit-0-passage-0".into(),
-                statement: long.into(),
-            },
-            MissingAssertion {
-                passage_id: "unit-0-passage-1".into(),
-                statement: "It is slow.".into(),
-            },
-        ],
-    }];
-
-    let findings = report.coverage_findings(1);
-
-    assert_eq!(findings.len(), 1);
-    assert_eq!(
-        findings[0].summary,
-        format!("Some statements here were never checked against a source. The checker read them as: \u{201c}{long}\u{201d}, \u{201c}It is slow.\u{201d}.")
-    );
-}
-
-#[test]
-fn one_gap_says_the_checker_read_it_that_way() {
-    let lesson = PreparedLearningLesson {
-        blocks: vec![LearningBlockDto {
-            kind: LearningBlockKind::Explanation,
-            title: "CSV header names".into(),
-            body: GOOD.into(),
-            rubric: vec![],
-            source_ids: vec![],
-        }],
-        questions: vec![],
-        keys: vec![],
-        verification: None,
-    };
-    let mut report = attest("lesson", &lesson);
-    report.coverage_audit = vec![CoverageUnit {
-        index: 0,
-        complete: false,
-        reason: "gaps".into(),
-        missing_assertions: vec![MissingAssertion {
-            passage_id: "unit-0-passage-0".into(),
-            statement: "It is slow.".into(),
-        }],
-    }];
-
-    let findings = report.coverage_findings(1);
-
-    assert_eq!(
-        findings[0].summary,
-        "A statement here was never checked against a source. The checker read it as: \u{201c}It is slow.\u{201d}."
+        "a gap is not a defect of the report"
     );
 }

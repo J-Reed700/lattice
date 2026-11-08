@@ -1,7 +1,6 @@
 //! Binding, validating and persisting the verification report at publication.
 use super::resolution::Resolution;
 use super::*;
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
 
 pub(super) fn content_hash(lesson: &PreparedLearningLesson) -> Result<String> {
     Ok(digest(&serde_json::to_string(&(
@@ -402,53 +401,6 @@ impl LessonVerificationReport {
         self.content_sha256 = content_hash(lesson)?;
         Ok(self)
     }
-    /// What the audit found the claim inventory leaves out, as findings for
-    /// the teaching review: one for each section or question it names, with
-    /// every assertion it lists. They are not claims: nothing is checked
-    /// against the sources for them, and the finding says so. `blocks` is the
-    /// number of sections, which come before the questions in the audit's
-    /// order (claim classes design §3.4).
-    pub(crate) fn coverage_findings(&self, blocks: usize) -> Vec<ReviewFinding> {
-        self.coverage_audit
-            .iter()
-            .filter(|unit| !unit.missing_assertions.is_empty())
-            .map(|unit| {
-                let site = if unit.index < blocks {
-                    FindingSite::Section(unit.index)
-                } else {
-                    FindingSite::Question(unit.index - blocks)
-                };
-                let statements: Vec<&str> = unit
-                    .missing_assertions
-                    .iter()
-                    .map(|missing| missing.statement.as_str())
-                    .collect();
-                let quoted: Vec<String> = statements
-                    .iter()
-                    .map(|statement| format!("\u{201c}{statement}\u{201d}"))
-                    .collect();
-                let summary = match quoted.as_slice() {
-                    [only] => format!(
-                        "A statement here was never checked against a source. The checker read it as: {only}."
-                    ),
-                    _ => format!(
-                        "Some statements here were never checked against a source. The checker read them as: {}.",
-                        quoted.join(", ")
-                    ),
-                };
-                ReviewFinding::new(
-                    FindingKind::Teaching,
-                    Some(site),
-                    format!(
-                        "The claim audit found assertions here that were not extracted for checking, so no source has confirmed them: {}",
-                        statements.join("; ")
-                    ),
-                )
-                .with_summary(summary)
-            })
-            .collect()
-    }
-
     /// The user confirmed this example although it did not complete (§5.5).
     pub(super) fn example_confirmed(&self, observation_id: &str) -> bool {
         self.confirmed_examples

@@ -502,20 +502,6 @@ pub async fn prepare_lesson_with_references<'a>(
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
     findings.extend(citations);
-    // What the coverage audit found the inventory leaves out waits for the
-    // user too (claim classes design §3.4), unless its part of the lesson
-    // already holds a finding of its own.
-    let held = crate::teaching::held_findings(&value).await?;
-    let blocks = value
-        .get("blocks")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
-    findings.extend(
-        report
-            .coverage_findings(blocks)
-            .into_iter()
-            .filter(|finding| !held.contains(&finding.key())),
-    );
     crate::teaching::record_waiting(&value, findings).await?;
     report.cite_user_evidence(&mut prepared);
     prepared.verification = Some(report.bind(&lesson.id, &prepared)?);

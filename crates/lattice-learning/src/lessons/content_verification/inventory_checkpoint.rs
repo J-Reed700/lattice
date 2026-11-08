@@ -65,15 +65,14 @@ pub(super) fn valid_saved_coverage(coverage: &Coverage, content: &[Value]) -> bo
     })
 }
 
-/// A gap the audit found in a passage the inventory reads that the rule layer
-/// classes Sourced (a figure, a quotation, an attribution) is a statement the
-/// lesson makes, and a source must back it: it joins the inventory here,
-/// before the checks, and is located, sorted and checked like any other. Any
-/// other gap stays on the section's coverage, for the teaching review. After
-/// the first pass only a gap in a sentence written since the last is adopted,
-/// so the audit cannot widen the inventory again and again (claim classes
-/// design §3.4).
-pub(super) fn adopt_specifics(
+/// A gap the audit found in a passage the inventory reads is a statement the
+/// lesson makes, unless the rule layer makes it Internal (a remark about the
+/// lesson's own sources or options): it joins the inventory here, before the
+/// checks, and is located, sorted and checked like any other. A gap that is
+/// Internal by rule stays on the section's coverage. After the first pass only
+/// a gap in a sentence written since the last is adopted, so the audit cannot
+/// widen the inventory again and again (claim classes design §3.4).
+pub(super) fn adopt_missing(
     inventory: &mut Inventory,
     coverage: &mut Coverage,
     content: &[Value],
@@ -104,7 +103,7 @@ pub(super) fn adopt_specifics(
                 .find(|passage| passage["id"] == missing.passage_id)
                 .and_then(|passage| {
                     let (field, quote) = (passage["field"].as_str()?, passage["text"].as_str()?);
-                    (rule_class(&missing.statement, field, &case) == Some(Class::Sourced)).then(
+                    (rule_class(&missing.statement, field, &case) != Some(Class::Internal)).then(
                         || Claim {
                             quote: quote.to_owned(),
                             statement: missing.statement.clone(),
@@ -141,7 +140,7 @@ pub(super) fn adopt_specifics(
             unit.index,
             kept,
             &format!(
-                "Assertions the audit found missing from the inventory in {} were recorded as claims for the evidence check.",
+                "Statements the audit found missing from the inventory in {} were recorded as claims for the checks.",
                 located.join(", ")
             ),
         );
@@ -267,10 +266,10 @@ pub(super) async fn complete_inventory(
         coverage.units.sort_by_key(|unit| unit.index);
     }
     save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;
-    let adopted = adopt_specifics(&mut inventory, &mut coverage, content, (parsed, rewrites));
+    let adopted = adopt_missing(&mut inventory, &mut coverage, content, (parsed, rewrites));
     if adopted > 0 {
         crate::lesson_progress::stage(format!(
-            "Recorded {adopted} specifics the coverage audit found missing; the evidence check decides them"
+            "Recorded {adopted} statements the coverage audit found missing; the checks decide them"
         ));
         validate_inventory(&inventory, content)?;
         save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;

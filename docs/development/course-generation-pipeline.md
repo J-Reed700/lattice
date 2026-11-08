@@ -288,7 +288,7 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 ### L9. Coverage audit
 
-`content_verification/coverage.rs` (policy `passage-coverage-v9`). A mapping review accounts for every passage under its exact ID (`coverage/mapping.rs`). A fidelity judge then lists, per passage, the factual assertions the inventory fails to represent (`missingAssertions`). They are reported as teaching findings, never adopted as claims (claim classes design §3.5, item 2); a specific the audit finds missing (a figure, a quotation, an attribution) joins the inventory in the first pass, so it is checked. A malformed answer gets one correction and is never read as a gap. Phase `Coverage`.
+`content_verification/coverage.rs` (policy `passage-coverage-v9`). A mapping review accounts for every passage under its exact ID (`coverage/mapping.rs`). A fidelity judge then lists, per passage, the factual assertions the inventory fails to represent (`missingAssertions`). Each one the rule layer does not make Internal joins the inventory in the first pass and is sorted and checked like any other statement (claim classes design §3.4); one the rule layer makes Internal stays on the coverage, recorded in the report. A malformed answer gets one correction and is never read as a gap. Phase `Coverage`.
 
 ### L10. Examples
 
