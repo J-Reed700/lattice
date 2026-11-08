@@ -5,6 +5,7 @@
 use super::calibration_tests::{append, claim_entry, waiting_lesson};
 use super::test_support::{add_page, article, course, id, page_signals, Course, Saved};
 use crate::lesson_evidence::LearningClaimResolutionDto;
+use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::portability_dto::DeleteLearningSourceRequestDto;
@@ -371,5 +372,79 @@ async fn a_statement_a_live_source_resolved_stays_verified_beside_a_deleted_pass
         .map(|shown| shown.resolution);
     assert_eq!(shown, Some(LearningClaimResolutionDto::Verified));
     assert_eq!(cause_of(&course.pool, &lesson_id, &kept).await, None);
+    Ok(())
+}
+
+async fn bound_versions(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    claim: &ClaimId,
+) -> Option<Vec<String>> {
+    match claim_entry(pool, lesson_id, claim).await.state() {
+        ClaimState::Confirmed { bound, .. } => Some(bound.source_version_ids.clone()),
+        _ => None,
+    }
+}
+
+/// Deletes the source a claim was resolved by, then confirms the claim as the
+/// review's Confirm does, naming `versions`.
+async fn confirm_after_deletion(
+    versions: impl FnOnce(&Saved, &Saved) -> Vec<String>,
+) -> Result<(Course, String, Saved, Saved, ClaimId)> {
+    let course = course().await?;
+    let lesson_id = waiting_lesson(&course).await?;
+    let doomed = source(&course, "doomed").await?;
+    let live = source(&course, "live").await?;
+    let claim = resolved_by(&course.pool, &lesson_id, &doomed.version_id).await;
+    delete(&course, &doomed).await?;
+    let revision = revision(&course.pool, &lesson_id).await;
+    ClaimReviewService::new(course.pool.clone())
+        .resolve(
+            &lesson_id,
+            &claim.0,
+            ClaimActionRequestDto::Confirm {
+                note: None,
+                source_version_ids: versions(&doomed, &live),
+            },
+            revision,
+        )
+        .await?;
+    Ok((course, lesson_id, doomed, live, claim))
+}
+
+#[tokio::test]
+async fn a_confirmation_made_after_a_deletion_stays_confirmed_on_every_read() -> Result<()> {
+    let (course, lesson_id, doomed, _, claim) =
+        confirm_after_deletion(|doomed, _| vec![doomed.version_id.clone()]).await?;
+    let service = ClaimReviewService::new(course.pool.clone());
+    let mut written = None;
+    for read in 0..2 {
+        service.review(&course.program_id, &lesson_id).await?;
+        let bound = bound_versions(&course.pool, &lesson_id, &claim).await;
+        let bound = bound.unwrap_or_else(|| panic!("read {read}: the claim is not confirmed"));
+        assert!(
+            !bound.contains(&doomed.version_id),
+            "read {read}: the confirmation names the deleted version"
+        );
+        let now = events_written(&course.pool, &lesson_id).await;
+        assert_eq!(*written.get_or_insert(now), now, "read {read} wrote");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_confirmation_drops_the_deleted_versions_and_keeps_the_rest_in_order() -> Result<()> {
+    let (course, lesson_id, _, live, claim) = confirm_after_deletion(|doomed, live| {
+        vec![
+            live.version_id.clone(),
+            doomed.version_id.clone(),
+            "unknown-version".into(),
+        ]
+    })
+    .await?;
+    assert_eq!(
+        bound_versions(&course.pool, &lesson_id, &claim).await,
+        Some(vec![live.version_id.clone(), "unknown-version".into()])
+    );
     Ok(())
 }
