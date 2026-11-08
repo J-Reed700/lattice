@@ -30,9 +30,13 @@ jobs:
       max-parallel: 6
       matrix:
         include:
-          # A refusal carries its sentence alone.
+          # The review says statement, not claim, in everything the learner reads.
           - mode: red
-            sha: 2e239d201be9915b1065a0492c541ebbe5d644c7
+            sha: ef2459ba5f18f1516b008b00816000290580df9b
+            built_as_is: true
+          # The put-back outcome is a field of the attach report, not a line to match.
+          - mode: red
+            sha: f7a794ae17d6dcbf3d359457492e0e5f1678be13
             built_as_is: true
     steps:
       - uses: actions/checkout@v4
@@ -284,7 +288,6 @@ jobs:
 
   vitest:
     name: vitest reds
-    if: false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -318,13 +321,10 @@ jobs:
             echo "::endgroup::"
             echo "red $sha exit $code"
           done <<'LIST'
-          7110e2fa0a27d63b19a56a1744e4833a14c21997 src/features/learning/lessons/edit/LessonQuestionEditor.test.tsx
-          7110e2fa0a27d63b19a56a1744e4833a14c21997 src/features/learning/lessons/review/ClaimReviewScreen.editQuestion.test.tsx
-          e7259067ef3b6b940da6cb3af7a621ddfa2bbf4f src/features/learning/lessons/edit/LessonQuestionEditor.test.tsx
-          2f9c8e0b87b92841e422298622abd63da827ae28 src/lib/errorHandling.refusal.test.ts
-          2f9c8e0b87b92841e422298622abd63da827ae28 src/features/learning/lessons/edit/LessonQuestionEditor.test.tsx
-          2f9c8e0b87b92841e422298622abd63da827ae28 src/features/learning/lessons/edit/LessonSectionEditor.test.tsx
-          2f9c8e0b87b92841e422298622abd63da827ae28 src/features/learning/lessons/review/ClaimReviewScreen.lessonSource.test.tsx
+          ef2459ba5f18f1516b008b00816000290580df9b src/features/learning/curriculum/PlanPanel.test.tsx src/features/learning/curriculum/ProgramWorkspace.test.tsx src/features/learning/lessons/LessonCard.edit.test.tsx src/features/learning/lessons/LessonCard.test.tsx src/features/learning/lessons/LessonEvidencePanel.test.tsx src/features/learning/lessons/LessonEvidencePanel.unverified.test.tsx src/features/learning/lessons/LessonPreparationProgress.test.tsx src/features/learning/lessons/lessonPreparationActivity.test.ts src/features/learning/lessons/review/AddSourceSheet.modes.test.tsx src/features/learning/lessons/review/AddSourceSheet.test.tsx src/features/learning/lessons/review/CheckerAccuracy.test.tsx src/features/learning/lessons/review/ClaimActions.test.tsx src/features/learning/lessons/review/ClaimHistory.test.tsx src/features/learning/lessons/review/ClaimQueue.selection.test.tsx src/features/learning/lessons/review/ClaimQueue.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.editQuestion.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.editSection.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.lessonSource.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.noteActions.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.restore.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.unverified.test.tsx src/features/learning/lessons/review/claimReviewCopy.test.ts src/features/learning/lessons/review/claimReviewPresentation.history.test.ts src/features/learning/lessons/review/claimReviewPresentation.test.ts src/features/learning/model/evidencePresentation.test.ts src/features/learning/sources/SourcesPanel.test.tsx src/features/learning/sources/trust/TrustBadge.test.tsx src/features/learning/sources/trust/TrustOverrideMenu.test.tsx src/features/learning/sources/trust/trustPresentation.test.ts src/features/learning/workspace/LearningStudioPage.test.tsx src/features/learning/workspace/StudyActivityPanel.test.tsx src/features/settings/components/AIModelsTab.test.tsx src/features/settings/components/SourceTrustSettings.test.tsx src/features/settings/components/modelRoles/roleConfig.test.ts
+          8b2a607cb65d927dbf3bd0579b9fb60abe94f057 src/features/learning/lessons/review/claimReviewPresentation.history.test.ts
+          122f394269c5df7f2d4dd2b2890f4e719040e7a9 src/features/learning/lessons/review/AddSourceSheet.test.tsx src/features/learning/lessons/review/claimReviewCopy.test.ts
+          f7a794ae17d6dcbf3d359457492e0e5f1678be13 src/features/learning/lessons/review/AddSourceSheet.modes.test.tsx src/features/learning/lessons/review/AddSourceSheet.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.lessonSource.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.noteActions.test.tsx src/features/learning/lessons/review/claimReviewCopy.test.ts src/features/learning/lessons/review/claimReviewPresentation.test.ts
           LIST
 
       - name: Upload each red's vitest log
