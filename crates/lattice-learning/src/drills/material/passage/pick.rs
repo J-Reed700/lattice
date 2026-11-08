@@ -1,10 +1,10 @@
 //! Which passage a drill explains (docs/design/2026-11-07-drills-in-the-course.md section 4): one the course's sources
 //! hold for the drill's lesson, found by searching them for the lesson's title, objective and module, widened to whole
 //! places (a source's paragraphs, a long one cut into runs of sentences) and sized to hold at least as many sentences
-//! as the explanation, so that each sentence of it has something of its own to say. Within a hit it is the place
-//! carrying the most of the search's term weight. The best-ranked passage no drill of the course was built on comes
-//! first; once every one was, the one whose latest drill is the oldest. A prepared lesson draws only on the sources
-//! its blocks cite.
+//! as the explanation, so that each sentence of it has something of its own to say. Of the places the first page of
+//! hits overlaps, the one no drill of the course was built on that carries the most of the search's term weight
+//! comes first, a tie going to the better-ranked hit; once every one was, the one whose latest drill is the oldest.
+//! A prepared lesson draws only on the sources its blocks cite.
 
 use crate::drills::build::SourcePassage;
 use crate::drills::lesson::LessonContext;
@@ -23,10 +23,10 @@ use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
 /// The passage the next drill of the lesson of `context` explains, sized for an explanation of `wanted` sentences:
-/// the best-ranked passage for the lesson that no drill of the course was built on, or, once every one was, the one
-/// whose latest drill is the oldest. In a hit it is the place carrying the most of the search's term weight. The
-/// ranking is read a page at a time, deeper only while every passage of it was drilled. `None` when the lesson's
-/// sources hold nothing for it.
+/// of the places the page of hits overlaps, the one no drill of the course was built on that carries the most of the
+/// search's term weight, or, once every one was, the one whose latest drill is the oldest. The ranking is read a page
+/// at a time, deeper only while every passage of the page was drilled. `None` when the lesson's sources hold nothing
+/// for it.
 pub(super) async fn pick(
     pool: &SqlitePool,
     context: &LessonContext,
@@ -102,9 +102,9 @@ impl Ord for Heavier {
     }
 }
 
-/// A candidate passage's place in the ranking: when a drill last used it (`None` for never), then its hit's rank, the
-/// term weight its text holds (the heavier the better) and its place's index, the least of which is the best.
-type Key = (Option<usize>, usize, Heavier, usize);
+/// A candidate passage's place in the ranking: when a drill last used it (`None` for never), then the term weight its
+/// text holds (the heavier the better), its hit's rank and its place's index, the least of which is the best.
+type Key = (Option<usize>, Heavier, usize, usize);
 
 /// A place sized into a passage: its byte span in the source and the weight of the search's terms its text holds.
 #[derive(Clone, Copy)]
@@ -114,9 +114,9 @@ struct Candidate {
     weight: f64,
 }
 
-/// The best candidate among the places the ranked `hits` overlap, returned as soon as a hit, weighed whole, has one no
-/// drill used, which is the best of the whole ranking. In a hit the place carrying the most of the search's term weight
-/// comes first. The places of each source are kept in `split`, and each place's candidate in `made`, across pages, so
+/// The best candidate among the places the ranked `hits` overlap, every hit of the page weighed: of the places no drill
+/// used, the one carrying the most of the search's term weight, a tie going to the better-ranked hit and then to the
+/// lower place. The places of each source are kept in `split`, and each place's candidate in `made`, across pages, so
 /// each is made once per pick.
 fn best_on_page<'a>(
     hits: &[ReferencePassage],
@@ -155,7 +155,7 @@ fn best_on_page<'a>(
                 })
                 .map(|(position, _)| position)
                 .max();
-            let key = (latest_use, rank, Heavier(weight), index);
+            let key = (latest_use, Heavier(weight), rank, index);
             if best.as_ref().is_some_and(|(held, _)| *held <= key) {
                 continue;
             }
@@ -172,9 +172,6 @@ fn best_on_page<'a>(
                     text: text.to_owned(),
                 },
             ));
-        }
-        if best.as_ref().is_some_and(|(key, _)| key.0.is_none()) {
-            return best;
         }
     }
     best
