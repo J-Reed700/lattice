@@ -4,9 +4,8 @@ use crate::features::learning::drills::dto::{
     CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, ReviewDrillCourseDto,
     ReviewMaterialDto, StartedCodeReviewDto,
 };
-use crate::features::learning::drills::review::{self, CourseDrill};
-use lattice_core::domain::learning::drills::{Material, LANGUAGES};
-use lattice_core::shared::error::AppError;
+use crate::features::learning::drills::review;
+use lattice_core::domain::learning::drills::LANGUAGES;
 
 // Code review drills (docs/design/2026-11-04-code-review-drills.md, section 1): what the review view calls.
 
@@ -22,19 +21,7 @@ pub async fn start_review_drill(
     patterns_count: u32,
     container: State<'_, Container>,
 ) -> Result<StartedCodeReviewDto, ApiError> {
-    let asked = match material {
-        ReviewMaterialDto::Passage { program_id, .. } => CourseDrill {
-            program_id,
-            lesson_id: None,
-            material: Material::Passage,
-        },
-        ReviewMaterialDto::Code { .. } => {
-            return Err(ApiError::from(AppError::InvalidInput(
-                "A code drill is started from a course.".into(),
-            )))
-        }
-    };
-    let started = review::start(container.db_pool(), &asked, mode, lines, patterns_count)
+    let started = review::start(container.db_pool(), &material, mode, lines, patterns_count)
         .await
         .map_err(ApiError::from)?;
     for job in &started.jobs {

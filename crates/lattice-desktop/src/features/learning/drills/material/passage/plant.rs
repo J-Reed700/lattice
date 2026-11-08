@@ -13,7 +13,6 @@ pub(super) fn wording(baseline: &Baseline, targets: &[&'static Pattern]) -> Plan
         system: SYSTEM.to_owned(),
         prompt: prompt(baseline, targets),
         asks_verification: false,
-        lesson_issues: 0,
     }
 }
 

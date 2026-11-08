@@ -1,19 +1,19 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@/tests/interactionDom';
+import { createMemoryRouter, RouterProvider, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { CodeReviewResultDto, CourseDrillAttemptDto, CourseDrillsDto, DrillLessonDto, DrillModuleDto, JobDto, StartedCodeReviewDto } from '@/lib/bindings';
+import type { CodeReviewResultDto, JobDto, StartedCodeReviewDto } from '@/lib/bindings';
 import { deferred } from '@/tests/deferred';
 import { jobFixture } from '@/tests/fixtures/jobs';
 
-import { CourseDrillsPanel } from './CourseDrillsPanel';
-import { momentOf } from './reveal/revealCopy';
+import { CodeReviewDrillScreen } from './CodeReviewDrillScreen';
 
 const api = vi.hoisted(() => ({
   codeReviewLanguages: vi.fn(),
-  courseDrills: vi.fn(),
-  startCourseDrill: vi.fn(),
+  reviewDrillCourses: vi.fn(),
+  startReviewDrill: vi.fn(),
   submitCodeReview: vi.fn(),
   codeReviewResult: vi.fn(),
   regradeCodeReview: vi.fn(),
@@ -73,19 +73,16 @@ const FILES = [
   { path: 'src/limiter.py', text: 'import time\n\nclass Limiter:\n    def allow(self, key):\n        return True\n' },
   { path: 'src/store.py', text: 'DATA = {}\n' },
 ];
-const DRILL = { title: 'A rate limiter', material: { kind: 'code', language: 'python' } as const, files: FILES, lesson: null };
-const LESSON = { programId: 'course-1', lessonId: 'lesson-2', title: 'Spacing' };
-const LESSON_DRILL = { ...DRILL, lesson: LESSON };
+const DRILL = { title: 'A rate limiter', material: { kind: 'code', language: 'python' } as const, files: FILES };
 
 function started(overrides: Partial<Extract<StartedCodeReviewDto, { status: 'started' }>> = {}): StartedCodeReviewDto {
   return { status: 'started', attemptId: 'attempt-1', mode: 'practice', startedAt: Date.now(), drill: DRILL, ...overrides };
 }
 
-const SCORE = { found: 0, halfFound: 0, missed: 0, validExtras: 0, falsePositives: 0, bySeverity: [], weightedRecall: 0, precision: null, ledWithTheMostSevere: false };
 const REVEAL: CodeReviewResultDto['reveal'] = {
   issues: [],
   findings: [],
-  score: SCORE,
+  score: { found: 0, halfFound: 0, missed: 0, validExtras: 0, falsePositives: 0, bySeverity: [], weightedRecall: 0, precision: null, ledWithTheMostSevere: false },
   ratings: [],
   fix: null,
   cleanFiles: [],
@@ -114,9 +111,7 @@ function attempt(overrides: Partial<CodeReviewResultDto> = {}): CodeReviewResult
 const submitted = (overrides: Partial<CodeReviewResultDto> = {}) => attempt({ status: 'submitted', submittedAt: Date.now(), timeSpentMs: 5_000, ...overrides });
 const graded = (overrides: Partial<CodeReviewResultDto> = {}) => submitted({ status: 'graded', reveal: REVEAL, gradedAt: Date.now(), ...overrides });
 
-const CODE_SHELF = 'drill:course-1:code:python';
-const PASSAGE_SHELF = 'drill:course-1:passage';
-const buildJob = (overrides: Partial<JobDto>) => jobFixture({ id: 'job-9', kind: 'learning.drill_build', subjectId: CODE_SHELF, ...overrides });
+const buildJob = (overrides: Partial<JobDto>) => jobFixture({ id: 'job-9', kind: 'learning.drill_build', subjectId: 'python', ...overrides });
 const gradingJob = (overrides: Partial<JobDto>) => jobFixture({ id: 'job-g', kind: 'learning.drill_grading', subjectId: 'attempt-1', ...overrides });
 function report(job: JobDto) {
   act(() => {
@@ -124,88 +119,28 @@ function report(job: JobDto) {
   });
 }
 
-const DUE_AT = new Date(2026, 10, 20, 9, 0).getTime();
-const DUE_TEXT = new Date(DUE_AT).toLocaleDateString([], { day: 'numeric', month: 'short' });
-
-function lesson(overrides: Partial<DrillLessonDto> & Pick<DrillLessonDto, 'lessonId' | 'title'>): DrillLessonDto {
-  return { standing: 'new', dueAt: null, fitsCode: true, fitsPassage: true, current: false, completed: false, ...overrides };
+function Where() {
+  return <span data-testid="search">{useLocation().search}</span>;
 }
+const search = () => screen.getByTestId('search').textContent;
+const addressIs = (expected: string) => waitFor(() => expect(search()).toBe(expected));
 
-const MODULES: DrillModuleDto[] = [
-  {
-    moduleId: 'module-1',
-    title: 'Memory',
-    lessons: [
-      lesson({ lessonId: 'lesson-1', title: 'Retrieval', standing: 'due', completed: true }),
-      lesson({ lessonId: 'lesson-2', title: 'Spacing', standing: 'new', current: true }),
-      lesson({ lessonId: 'lesson-3', title: 'Sleep', standing: 'rested', dueAt: DUE_AT, fitsCode: false, completed: true }),
-    ],
-  },
-  {
-    moduleId: 'module-2',
-    title: 'Habits',
-    lessons: [lesson({ lessonId: 'lesson-4', title: 'Interleaving', standing: 'pending', fitsPassage: false })],
-  },
-];
-
-function courseDrills(overrides: Partial<CourseDrillsDto> = {}): CourseDrillsDto {
-  return {
-    language: 'python',
-    nextCode: { lessonId: 'lesson-2', status: 'ready' },
-    nextPassage: { lessonId: 'lesson-3', status: 'to_build' },
-    hasSources: true,
-    modules: MODULES,
-    recent: [],
-    ...overrides,
-  };
-}
-
-const STARTED_AT = new Date(2026, 10, 3, 9, 30).getTime();
-const startedText = momentOf(STARTED_AT)?.text;
-
-function recentAttempt(overrides: Partial<CourseDrillAttemptDto> = {}): CourseDrillAttemptDto {
-  return {
-    attemptId: 'attempt-1',
-    status: 'open',
-    mode: 'practice',
-    startedAt: STARTED_AT,
-    title: 'A rate limiter',
-    material: { kind: 'code', language: 'python' },
-    lesson: LESSON,
-    score: null,
-    ...overrides,
-  };
-}
-
-/** What the course's drills say besides the defaults, whatever language is asked for. */
-let served: Partial<CourseDrillsDto> = {};
-const serve = (overrides: Partial<CourseDrillsDto>) => {
-  served = overrides;
-};
-
-function show() {
-  const rendered = render(<CourseDrillsPanel programId="course-1" />);
-  return { ...rendered, user: userEvent.setup() };
+function show(path = '/studio?drills=open') {
+  const onBack = vi.fn();
+  const router = createMemoryRouter(
+    [{ path: '/studio', element: <><CodeReviewDrillScreen onBack={onBack} /><Where /></> }],
+    { initialEntries: [path] },
+  );
+  const rendered = render(<RouterProvider router={router} />);
+  return { ...rendered, router, onBack, user: userEvent.setup() };
 }
 type User = ReturnType<typeof userEvent.setup>;
 
 const COMMENT = 'What is wrong, why it matters and what to do';
 
-/** The Start button once the course's lessons have been read. */
-async function clickStart(user: User) {
-  const button = await screen.findByRole('button', { name: 'Start drill' });
-  await waitFor(() => expect(button).toBeEnabled());
-  await user.click(button);
-}
-
 async function startDrill(user: User) {
-  await clickStart(user);
+  await user.click(await screen.findByRole('button', { name: 'Start drill' }));
   await screen.findByRole('heading', { name: 'A rate limiter' });
-}
-
-/** Opens an attempt from the list of recent drills. */
-async function openRecent(user: User, title = 'A rate limiter') {
-  await user.click(await screen.findByRole('button', { name: new RegExp(title) }));
 }
 
 async function comment(user: User, text: string, severity?: string) {
@@ -221,9 +156,6 @@ beforeEach(() => {
   events.handlers.clear();
   for (const mock of Object.values(api)) mock.mockReset();
   api.codeReviewLanguages.mockResolvedValue(['python', 'csharp', 'sql']);
-  served = {};
-  api.courseDrills.mockImplementation((_programId: string, language: string | null) =>
-    Promise.resolve(courseDrills({ language: language ?? 'python', ...served })));
 });
 
 afterEach(() => {
@@ -231,22 +163,7 @@ afterEach(() => {
 });
 
 describe('choosing a drill', () => {
-  it('has a heading and says what the drills are, and says the lessons are being read until they are', async () => {
-    const reading = deferred<CourseDrillsDto>();
-    api.courseDrills.mockReturnValueOnce(reading.promise);
-    show();
-    expect(screen.getByRole('heading', { name: 'Review drills' })).toBeVisible();
-    expect(screen.getByText(/Review something you did not write, built from a lesson of this course/)).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent('Reading the course’s lessons…');
-    expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
-    await act(async () => {
-      reading.resolve(courseDrills());
-    });
-    await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Start drill' })).toBeEnabled();
-  });
-
-  it('lists the languages the command gives, named for reading, with the course’s own chosen', async () => {
+  it('lists the languages the command gives, named for reading, with Python chosen', async () => {
     api.codeReviewLanguages.mockResolvedValue(['python', 'csharp', 'sql', 'zig']);
     show();
     await screen.findByRole('option', { name: 'C#' });
@@ -257,13 +174,19 @@ describe('choosing a drill', () => {
   });
 
   it('offers the choices last used', async () => {
-    localStorage.setItem('lattice.drills.choices', JSON.stringify({ material: 'code', mode: 'interview', size: 'long', minutes: 25 }));
-    localStorage.setItem('lattice.drills.language.course-1', 'sql');
+    localStorage.setItem('lattice.drills.choices', JSON.stringify({ language: 'sql', mode: 'interview', size: 'long', minutes: 25 }));
     show();
     expect(await screen.findByRole('combobox', { name: 'Language' })).toHaveValue('sql');
     expect(screen.getByRole('radio', { name: /Interview/ })).toBeChecked();
     expect(screen.getByRole('radio', { name: /Long/ })).toBeChecked();
     expect(screen.getByRole('spinbutton', { name: 'Time limit' })).toHaveValue(25);
+  });
+
+  it('moves to Python when the language last used is not one drills are written in', async () => {
+    localStorage.setItem('lattice.drills.choices', JSON.stringify({ language: 'cobol' }));
+    show();
+    const select = await screen.findByRole('combobox', { name: 'Language' });
+    await waitFor(() => expect(select).toHaveValue('python'));
   });
 
   it('says how long each size is', async () => {
@@ -282,7 +205,7 @@ describe('choosing a drill', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Enter a whole number of minutes, at least 1.');
     expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
     fireEvent.change(limit, { target: { value: '15' } });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Start drill' })).toBeEnabled());
+    expect(screen.getByRole('button', { name: 'Start drill' })).toBeEnabled();
   });
 
   it('shows the backend message when the languages cannot be read, and reads them again', async () => {
@@ -293,371 +216,77 @@ describe('choosing a drill', () => {
     expect(await screen.findByRole('option', { name: 'Rust' })).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
-});
 
-describe('choosing a lesson', () => {
-  /** The lesson select, once the course's lessons have been read into it. */
-  const lessonSelect = async () => {
-    const select = await screen.findByRole('combobox', { name: 'Lesson' });
-    await waitFor(() => expect(select).toBeEnabled());
-    return select;
-  };
-  const optionTexts = (select: HTMLElement) => within(select).getAllByRole('option').map((option) => option.textContent);
-
-  it('asks for the course’s drills in no language to begin with, and in the one remembered for the course when there is one', async () => {
-    const first = show();
-    await lessonSelect();
-    expect(api.courseDrills).toHaveBeenCalledWith('course-1', null);
-    first.unmount();
-
-    localStorage.setItem('lattice.drills.language.course-1', 'csharp');
-    show();
-    await waitFor(() => expect(api.courseDrills).toHaveBeenLastCalledWith('course-1', 'csharp'));
-    expect(await screen.findByRole('combobox', { name: 'Language' })).toHaveValue('csharp');
-  });
-
-  it('lists the lessons by module with their standing and the current lesson marked, with the one next up chosen first', async () => {
-    show();
-    const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    expect(select).toHaveValue('');
-    expect(within(select).getAllByRole('group').map((group) => group.getAttribute('label'))).toEqual(['Memory', 'Habits']);
-    expect(optionTexts(select)).toEqual([
-      'Next: Spacing',
-      'Retrieval — Due now',
-      'Spacing — New, current lesson',
-      `Sleep — Due again ${DUE_TEXT} (no code drill fits it)`,
-      'Interleaving — Not yet graded',
-    ]);
-    expect(within(within(select).getAllByRole('group')[1]).getAllByRole('option')).toHaveLength(1);
-  });
-
-  it('says a rested lesson is due again without a date when it has none', async () => {
-    serve({ modules: [{ moduleId: 'module-1', title: 'Memory', lessons: [lesson({ lessonId: 'lesson-1', title: 'Retrieval', standing: 'rested' })] }] });
-    show();
-    await screen.findByRole('option', { name: 'Retrieval — Due again' });
-  });
-
-  it('disables the lessons the material does not fit, with why, and follows the material', async () => {
-    const { user } = show();
-    const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    expect(screen.getByRole('option', { name: /^Sleep — .*no code drill fits it/ })).toBeDisabled();
-    expect(screen.getByRole('option', { name: /^Interleaving/ })).toBeEnabled();
-    expect(screen.getByRole('option', { name: /^Retrieval/ })).toBeEnabled();
-
-    await user.click(screen.getByRole('radio', { name: /An explanation of the lesson’s sources/ }));
-    await screen.findByRole('option', { name: 'Next: Sleep' });
-    expect(select).toHaveValue('');
-    expect(screen.getByRole('option', { name: /^Interleaving — Not yet graded \(no passage in the sources fits it\)/ })).toBeDisabled();
-    expect(screen.getByRole('option', { name: /^Sleep — Due again/ })).toBeEnabled();
-    expect(screen.getByRole('option', { name: /^Sleep — Due again/ })).not.toHaveTextContent('no code drill');
-  });
-
-  it('goes back to the lesson next up when the lesson picked stops fitting the material', async () => {
-    const { user } = show();
-    const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    await user.selectOptions(select, 'lesson-4');
-    expect(select).toHaveValue('lesson-4');
-
-    await user.click(screen.getByRole('radio', { name: /An explanation of the lesson’s sources/ }));
-    await waitFor(() => expect(select).toHaveValue(''));
-    expect(screen.getByRole('option', { name: 'Next: Sleep' })).toBeInTheDocument();
-  });
-
-  it('goes back to the lesson next up when the lesson picked is not in the course’s lessons any more', async () => {
-    api.courseDrills.mockImplementation((_programId: string, language: string | null) =>
-      Promise.resolve(courseDrills({
-        language: language ?? 'python',
-        nextCode: { lessonId: language === 'csharp' ? 'lesson-4' : 'lesson-2', status: 'ready' },
-        modules: language === 'csharp' ? [{ moduleId: 'module-2', title: 'Habits', lessons: [MODULES[1].lessons[0]] }] : MODULES,
-      })));
-    const { user } = show();
-    const select = await lessonSelect();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    await user.selectOptions(select, 'lesson-1');
-    expect(select).toHaveValue('lesson-1');
-
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
-    await waitFor(() => expect(select).toHaveValue(''));
-    expect(optionTexts(select)).toEqual(['Next: Interleaving', 'Interleaving — Not yet graded']);
-  });
-
-  it.each([
-    ['ready', 'A drill of it is ready.'],
-    ['building', 'A drill of it is being written.'],
-    ['to_build', 'A drill of it is written when you start, usually in a minute or two.'],
-  ] as const)('says under the select what starting on the lesson next up does when its drill is %s', async (status, line) => {
-    serve({ nextCode: { lessonId: 'lesson-2', status } });
-    show();
-    expect(await screen.findByText(line)).toBeVisible();
-  });
-
-  it('says under the select that a drill is written when none is ready, once a lesson is picked', async () => {
-    const { user } = show();
-    await user.selectOptions(await lessonSelect(), 'lesson-1');
-    expect(screen.getByText('If no drill of it is ready, one is written when you start, usually in a minute or two.')).toBeVisible();
-    expect(screen.queryByText('A drill of it is ready.')).not.toBeInTheDocument();
-  });
-
-  it('says nothing under the select while the lessons are being read', async () => {
-    api.courseDrills.mockReturnValueOnce(deferred<CourseDrillsDto>().promise);
-    show();
-    expect(screen.queryByText(/A drill of it/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/No lesson of this course can be drilled yet/)).not.toBeInTheDocument();
-  });
-
-  it('starts on the lesson next up with no lesson named, in the material, mode and size chosen', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    const { user } = show();
-    await screen.findByRole('option', { name: 'C#' });
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
-    await user.click(screen.getByRole('radio', { name: /Interview/ }));
-    await user.click(screen.getByRole('radio', { name: /Short/ }));
-    await clickStart(user);
-    await screen.findByRole('heading', { name: 'A rate limiter' });
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'code', language: 'csharp' }, 'interview', 40, 3);
-  });
-
-  it('starts on a lesson picked with its id', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    const { user } = show();
-    await user.selectOptions(await lessonSelect(), 'lesson-1');
-    await user.click(screen.getByRole('radio', { name: /Long/ }));
-    await clickStart(user);
-    await screen.findByRole('heading', { name: 'A rate limiter' });
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', 'lesson-1', { kind: 'code', language: 'python' }, 'practice', 140, 5);
-  });
-
-  it('shows the language the course offers, asks again in the one picked, and starts in it', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    api.courseDrills.mockImplementation((_programId: string, language: string | null) =>
-      Promise.resolve(courseDrills({ language: language ?? 'sql' })));
-    const { user } = show();
-    const language = await screen.findByRole('combobox', { name: 'Language' });
-    await waitFor(() => expect(language).toHaveValue('sql'));
-    expect(within(language).getAllByRole('option').map((option) => option.textContent)).toContain('SQL');
-
-    await user.selectOptions(language, 'csharp');
-    await waitFor(() => expect(api.courseDrills).toHaveBeenLastCalledWith('course-1', 'csharp'));
-    expect(language).toHaveValue('csharp');
-    await clickStart(user);
-    await screen.findByRole('heading', { name: 'A rate limiter' });
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'code', language: 'csharp' }, 'practice', 80, 4);
-    expect(localStorage.getItem('lattice.drills.language.course-1')).toBe('csharp');
-  });
-
-  it('starts in the language the course offers when none is picked', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    api.courseDrills.mockImplementation((_programId: string, language: string | null) =>
-      Promise.resolve(courseDrills({ language: language ?? 'sql' })));
-    const { user } = show();
-    await clickStart(user);
-    await screen.findByRole('heading', { name: 'A rate limiter' });
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'code', language: 'sql' }, 'practice', 80, 4);
-  });
-
-  it('disables the explanation when the course has no source with text, says so, and keeps code chosen', async () => {
-    serve({ nextPassage: null, hasSources: false });
-    show();
-    const passage = await screen.findByRole('radio', { name: /An explanation of the lesson’s sources/ });
-    await waitFor(() => expect(passage).toBeDisabled());
-    expect(screen.getByText('The course has no source with text yet.')).toBeVisible();
-    expect(screen.getByRole('radio', { name: /^Code/ })).toBeChecked();
-  });
-
-  it('disables the explanation when no source holds a passage to explain, and says so', async () => {
-    serve({ nextPassage: null, hasSources: true });
-    show();
-    const passage = await screen.findByRole('radio', { name: /An explanation of the lesson’s sources/ });
-    await waitFor(() => expect(passage).toBeDisabled());
-    expect(screen.getByText('None of the lessons’ sources holds a passage to explain.')).toBeVisible();
-    expect(screen.queryByText('The course has no source with text yet.')).not.toBeInTheDocument();
-  });
-
-  it('disables code when no lesson can be drilled in it, says so, and chooses the explanation', async () => {
-    serve({ nextCode: null });
-    show();
-    const code = await screen.findByRole('radio', { name: /^Code/ });
-    await waitFor(() => expect(code).toBeDisabled());
-    expect(screen.getByText('No lesson of this course can be drilled in code yet.')).toBeVisible();
-    await waitFor(() => expect(screen.getByRole('radio', { name: /An explanation of the lesson’s sources/ })).toBeChecked());
-    expect(screen.queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('option', { name: 'Next: Sleep' })).toBeInTheDocument();
-  });
-
-  it('does not start when no lesson can be drilled, and says so', async () => {
-    serve({ nextCode: null, nextPassage: null, hasSources: false });
-    show();
-    expect(await screen.findByText('No lesson of this course can be drilled yet.')).toBeVisible();
-    expect(screen.getByRole('option', { name: 'No lesson can be drilled' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: /^Code/ })).toBeChecked();
-    expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
-  });
-
-  it('starts on a lesson picked when none is next up', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    serve({ nextCode: null, nextPassage: null });
-    const { user } = show();
-    await screen.findByText('No lesson of this course can be drilled yet.');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Lesson' }), 'lesson-1');
-    await clickStart(user);
-    await screen.findByRole('heading', { name: 'A rate limiter' });
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', 'lesson-1', { kind: 'code', language: 'python' }, 'practice', 80, 4);
-  });
-
-  it('does not start code before it has a language', async () => {
-    api.courseDrills.mockImplementation(() => Promise.resolve(courseDrills({ language: '' })));
-    show();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
-  });
-
-  it('shows the backend message when the lessons cannot be read, and reads them again on request', async () => {
-    api.courseDrills.mockRejectedValueOnce(new Error('The course is not there.'));
-    const { user } = show();
-    expect(await screen.findByRole('alert')).toHaveTextContent('The course is not there.');
-    expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByRole('option', { name: 'Next: Spacing' })).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    expect(api.courseDrills).toHaveBeenCalledTimes(2);
-  });
-
-  it('reads the lessons again when a build of this course finishes, and not for another course’s or another kind of job', async () => {
-    show();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    expect(api.courseDrills).toHaveBeenCalledTimes(1);
-
-    report(buildJob({ id: 'job-other', subjectId: 'drill:course-2:code:python', status: 'completed', finishedAt: 9 }));
-    report(buildJob({ id: 'job-grading', kind: 'learning.drill_grading', status: 'completed', finishedAt: 9 }));
-    report(buildJob({ id: 'job-running', status: 'running' }));
-    expect(api.courseDrills).toHaveBeenCalledTimes(1);
-
-    report(buildJob({ id: 'job-passage', subjectId: PASSAGE_SHELF, status: 'completed', finishedAt: 9 }));
-    await waitFor(() => expect(api.courseDrills).toHaveBeenCalledTimes(2));
-    report(buildJob({ id: 'job-code', status: 'completed', finishedAt: 10 }));
-    await waitFor(() => expect(api.courseDrills).toHaveBeenCalledTimes(3));
-  });
-});
-
-describe('the recent drills', () => {
-  it('lists each with its lesson, material, mode and date, and how it fared', async () => {
-    serve({
-      recent: [
-        recentAttempt({ attemptId: 'a1', title: 'Open one' }),
-        recentAttempt({ attemptId: 'a2', title: 'Handed in', status: 'submitted', mode: 'interview', material: { kind: 'passage' }, lesson: null }),
-        recentAttempt({ attemptId: 'a3', title: 'Graded one', status: 'graded', mode: 'rapid', lesson: { ...LESSON, title: 'Sleep' }, score: { ...SCORE, found: 2, halfFound: 1, missed: 1 } }),
-        recentAttempt({ attemptId: 'a4', title: 'Graded without a score', status: 'graded' }),
-        recentAttempt({ attemptId: 'a5', title: 'Not graded', status: 'couldnt_grade', material: { kind: 'code', language: 'csharp' } }),
-      ],
-    });
-    show();
-    const list = within((await screen.findByRole('heading', { name: 'Recent drills' })).closest('section') as HTMLElement);
-    const items = list.getAllByRole('button');
-    expect(items).toHaveLength(5);
-
-    const open = within(items[0]);
-    expect(open.getByText('Open one')).toBeVisible();
-    expect(open.getByText(`Spacing · Python · Practice · ${startedText}`)).toBeVisible();
-    expect(open.getByText('Continue')).toBeVisible();
-
-    const handedIn = within(items[1]);
-    expect(handedIn.getByText(`Explanation · Interview · ${startedText}`)).toBeVisible();
-    expect(handedIn.getByText('Waiting for its grade')).toBeVisible();
-
-    const scored = within(items[2]);
-    expect(scored.getByText(`Sleep · Python · Rapid · ${startedText}`)).toBeVisible();
-    expect(scored.getByText('Found 2 of 4')).toBeVisible();
-
-    expect(within(items[3]).getByText('Graded')).toBeVisible();
-    expect(within(items[4]).getByText(`Spacing · C# · Practice · ${startedText}`)).toBeVisible();
-    expect(within(items[4]).getByText('Could not be graded')).toBeVisible();
-  });
-
-  it('is not there when there are none', async () => {
-    show();
-    await screen.findByRole('option', { name: 'Next: Spacing' });
-    expect(screen.queryByRole('heading', { name: 'Recent drills' })).not.toBeInTheDocument();
-  });
-
-  it('is read again on coming back to the choices from a drill', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    const { user } = show();
-    await startDrill(user);
-    expect(api.courseDrills).toHaveBeenCalledTimes(1);
-
-    serve({ recent: [recentAttempt()] });
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
-    expect(await screen.findByRole('heading', { name: 'Recent drills' })).toBeVisible();
-    expect(api.courseDrills).toHaveBeenCalledTimes(2);
+  it('goes back to the studio', async () => {
+    const { user, onBack } = show();
+    await user.click(await screen.findByRole('button', { name: 'Studio' }));
+    expect(onBack).toHaveBeenCalledOnce();
   });
 });
 
 describe('starting a drill', () => {
   it('opens the review of a drill that is ready, in the size and mode chosen, and remembers the choices', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     const { user } = show();
     await screen.findByRole('option', { name: 'C#' });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
     await user.click(screen.getByRole('radio', { name: /Short/ }));
-    await clickStart(user);
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
 
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'code', language: 'csharp' }, 'practice', 40, 3);
+    expect(api.startReviewDrill).toHaveBeenCalledWith({ kind: 'code', language: 'csharp' }, 'practice', 40, 3);
     expect(screen.getByRole('tab', { name: 'src/limiter.py' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-path', 'src/limiter.py');
-    expect(JSON.parse(localStorage.getItem('lattice.drills.choices') ?? '{}')).toEqual({ material: 'code', mode: 'practice', size: 'short', minutes: 10 });
-    expect(localStorage.getItem('lattice.drills.language.course-1')).toBe('csharp');
+    await addressIs('?drills=open&attempt=attempt-1');
+    expect(JSON.parse(localStorage.getItem('lattice.drills.choices') ?? '{}')).toMatchObject({ language: 'csharp', mode: 'practice', size: 'short' });
   });
 
   it('says a drill is being written when none is ready, shows the job, and opens the review when the build completes', async () => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
     const { user } = show();
-    await clickStart(user);
+    await user.click(await screen.findByRole('button', { name: 'Start drill' }));
 
     expect(await screen.findByText('Writing a drill for you, usually a minute or two')).toBeVisible();
-    expect(screen.getByText(/keeps the next drill of this kind ready for the course, so later starts are usually instant/)).toBeVisible();
+    expect(screen.getByText(/keeps one drill ready for each language, so later starts are instant/)).toBeVisible();
     report(buildJob({ progressMessage: 'Planting the defects (3 of 6)', progressCurrent: 2, progressTotal: 6 }));
     expect(await screen.findByText('Planting the defects (3 of 6)')).toBeVisible();
     expect(screen.getByRole('progressbar', { name: 'Drill build progress' })).toHaveAttribute('aria-valuenow', '33');
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
     report(buildJob({ status: 'completed', finishedAt: 9 }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
+    await addressIs('?drills=open&attempt=attempt-1');
   });
 
-  it('starts again when any build of the course’s shelf completes, and ignores the builds of other languages, other courses and other jobs', async () => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
+  it('starts again when any build of the language completes, and ignores the builds of other languages', async () => {
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
     const { user } = show();
-    await clickStart(user);
+    await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
 
-    report(buildJob({ id: 'job-rust', subjectId: 'drill:course-1:code:rust', status: 'completed', finishedAt: 9 }));
-    report(buildJob({ id: 'job-course', subjectId: 'drill:course-2:code:python', status: 'completed', finishedAt: 9 }));
+    report(buildJob({ id: 'job-rust', subjectId: 'rust', status: 'completed', finishedAt: 9 }));
     report(buildJob({ id: 'job-other', kind: 'learning.drill_grading', status: 'completed', finishedAt: 9 }));
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
     report(buildJob({ id: 'job-next', status: 'completed', finishedAt: 9 }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
   });
 
-  it('shows a failed build’s error, asks again only when told to, and then opens the drill', async () => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
+  it('shows a failed build\'s error, asks again only when told to, and then opens the drill', async () => {
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started());
     const { user } = show();
-    await clickStart(user);
+    await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
 
     report(buildJob({ status: 'failed', error: 'The model is not loaded.', finishedAt: 9 }));
     expect(await screen.findByRole('alert')).toHaveTextContent('The model is not loaded.');
     expect(screen.queryByText('Writing a drill for you, usually a minute or two')).not.toBeInTheDocument();
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
 
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -665,18 +294,18 @@ describe('starting a drill', () => {
     ['failed', 'The drill could not be built.'],
     ['interrupted', 'The drill could not be built.'],
   ] as const)('says what happened to a build that ends as %s and gives no reason', async (status, message) => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
     const { user } = show();
-    await clickStart(user);
+    await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
     report(buildJob({ status, finishedAt: 9 }));
     expect(await screen.findByRole('alert')).toHaveTextContent(message);
   });
 
   it('shows the error of a build that tries again, and goes on waiting', async () => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
     const { user } = show();
-    await clickStart(user);
+    await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     await screen.findByText('Writing a drill for you, usually a minute or two');
     report(buildJob({ status: 'pending', error: 'The model disconnected.' }));
     expect(await screen.findByText('The model disconnected.')).toBeVisible();
@@ -686,49 +315,49 @@ describe('starting a drill', () => {
   });
 
   it('shows the backend message when a drill cannot be started, and asks again on request', async () => {
-    api.startCourseDrill.mockRejectedValueOnce(new Error('python is not a language drills are written in.')).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockRejectedValueOnce(new Error('python is not a language drills are written in.')).mockResolvedValueOnce(started());
     const { user } = show();
-    await clickStart(user);
+    await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('python is not a language drills are written in.');
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
   });
 
   it('stops waiting for a build and goes back to the choices, which are kept', async () => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
     const { user } = show();
     await user.click(await screen.findByRole('radio', { name: /Long/ }));
-    await clickStart(user);
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
     await user.click(await screen.findByRole('button', { name: 'Stop waiting' }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.getByRole('radio', { name: /Long/ })).toBeChecked();
     report(buildJob({ status: 'completed', finishedAt: 9 }));
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
   });
 
   it('takes one drill, however many reports of a finished build there are while it asks', async () => {
     const first = deferred<StartedCodeReviewDto>();
-    api.startCourseDrill.mockReturnValueOnce(first.promise).mockResolvedValueOnce(started());
+    api.startReviewDrill.mockReturnValueOnce(first.promise).mockResolvedValueOnce(started());
     const { user } = show();
-    await clickStart(user);
+    await user.click(await screen.findByRole('button', { name: 'Start drill' }));
     report(buildJob({ status: 'completed', finishedAt: 9 }));
     report(buildJob({ status: 'completed', finishedAt: 9 }));
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(1);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
     await act(async () => {
       first.resolve({ status: 'building', jobId: 'job-9' });
     });
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
   });
 });
 
 describe('writing the review', () => {
   beforeEach(() => {
-    api.startCourseDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     api.submitCodeReview.mockResolvedValue(submitted());
   });
 
-  it('shows the drill’s files as tabs over a read-only view', async () => {
+  it('shows the drill\'s files as tabs over a read-only view', async () => {
     const { user } = show();
     await startDrill(user);
     const tabs = within(screen.getByRole('tablist', { name: 'Files of the drill' })).getAllByRole('tab');
@@ -932,7 +561,7 @@ describe('writing the review', () => {
 
 describe('writing a fix', () => {
   beforeEach(() => {
-    api.startCourseDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     api.submitCodeReview.mockResolvedValue(submitted());
   });
 
@@ -988,7 +617,7 @@ describe('writing a fix', () => {
 
 describe('handing the review in', () => {
   beforeEach(() => {
-    api.startCourseDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
   });
 
   it('asks before handing in a review with no comments, and hands it in when told to', async () => {
@@ -1011,7 +640,7 @@ describe('handing the review in', () => {
   it('counts the time spent from when the attempt started', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-04T12:10:00Z'));
-    api.startCourseDrill.mockResolvedValue(started({ startedAt: Date.now() - 125_000 }));
+    api.startReviewDrill.mockResolvedValue(started({ startedAt: Date.now() - 125_000 }));
     api.submitCodeReview.mockResolvedValue(submitted());
     const { user } = show();
     await startDrill(user);
@@ -1132,9 +761,7 @@ describe('handing the review in', () => {
     api.codeReviewResult.mockResolvedValue(graded());
     const pending = deferred<CodeReviewResultDto>();
     api.regradeCodeReview.mockReturnValue(pending.promise);
-    serve({ recent: [recentAttempt({ status: 'graded' })] });
-    const { user } = show();
-    await openRecent(user);
+    const { user } = show('/studio?drills=open&attempt=attempt-1');
     await user.click(await screen.findByRole('button', { name: 'Grade again from the reveal' }));
     await waitFor(() => expect(screen.getByTestId('reveal')).toHaveAttribute('data-regrading', 'true'));
     expect(api.regradeCodeReview).toHaveBeenCalledWith('attempt-1');
@@ -1146,18 +773,15 @@ describe('handing the review in', () => {
     expect(screen.getByTestId('reveal')).toHaveAttribute('data-regrading', 'false');
   });
 
-  it('starts the next drill in the same language, mode and size from the reveal, on the lesson next up', async () => {
-    localStorage.setItem('lattice.drills.choices', JSON.stringify({ material: 'code', mode: 'interview', size: 'long', minutes: 20 }));
-    localStorage.setItem('lattice.drills.language.course-1', 'rust');
+  it('starts the next drill in the same language, mode and size from the reveal', async () => {
+    localStorage.setItem('lattice.drills.choices', JSON.stringify({ language: 'rust', mode: 'interview', size: 'long', minutes: 20 }));
     api.codeReviewLanguages.mockResolvedValue(['python', 'rust']);
-    const rust = { ...DRILL, material: { kind: 'code', language: 'rust' } as const };
-    api.startCourseDrill.mockResolvedValueOnce(started({ mode: 'interview', drill: rust })).mockResolvedValueOnce(started({ attemptId: 'attempt-2' }));
-    api.submitCodeReview.mockResolvedValue(submitted({ mode: 'interview', drill: rust }));
-    api.codeReviewResult.mockResolvedValue(graded({ mode: 'interview', drill: rust }));
+    api.startReviewDrill.mockResolvedValueOnce(started({ mode: 'interview', drill: { ...DRILL, material: { kind: 'code', language: 'rust' } } })).mockResolvedValueOnce(started({ attemptId: 'attempt-2' }));
+    api.submitCodeReview.mockResolvedValue(submitted({ mode: 'interview', drill: { ...DRILL, material: { kind: 'code', language: 'rust' } } }));
+    api.codeReviewResult.mockResolvedValue(graded({ mode: 'interview', drill: { ...DRILL, material: { kind: 'code', language: 'rust' } } }));
     const { user } = show();
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Lesson' }), 'lesson-1');
     await startDrill(user);
-    expect(api.startCourseDrill).toHaveBeenLastCalledWith('course-1', 'lesson-1', { kind: 'code', language: 'rust' }, 'interview', 140, 5);
+    expect(api.startReviewDrill).toHaveBeenLastCalledWith({ kind: 'code', language: 'rust' }, 'interview', 140, 5);
     await comment(user, 'Something.');
     await user.click(screen.getByRole('button', { name: 'Submit review' }));
     await screen.findByText('Grading your review…');
@@ -1165,77 +789,80 @@ describe('handing the review in', () => {
     await user.click(await screen.findByRole('button', { name: 'Next drill' }));
 
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(2);
-    expect(api.startCourseDrill).toHaveBeenLastCalledWith('course-1', null, { kind: 'code', language: 'rust' }, 'interview', 140, 5);
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(2);
+    expect(api.startReviewDrill).toHaveBeenLastCalledWith({ kind: 'code', language: 'rust' }, 'interview', 140, 5);
+    await addressIs('?drills=open&attempt=attempt-2');
     expect(screen.queryByText('Revealed attempt-1')).not.toBeInTheDocument();
   });
 });
 
-describe('an attempt from the recent drills', () => {
+describe('an attempt in the address', () => {
   it('is read again from the backend and reopens its review with its drill', async () => {
-    serve({ recent: [recentAttempt({ attemptId: 'attempt-7' })] });
-    const reading = deferred<CodeReviewResultDto>();
-    api.codeReviewResult.mockReturnValue(reading.promise);
-    const { user } = show();
-    await openRecent(user);
-    expect(await screen.findByText('Opening your review…')).toBeVisible();
-    await act(async () => {
-      reading.resolve(attempt({ attemptId: 'attempt-7' }));
-    });
+    api.codeReviewResult.mockResolvedValue(attempt({ attemptId: 'attempt-7' }));
+    show('/studio?drills=open&attempt=attempt-7');
+    expect(screen.getByText('Opening your review…')).toBeVisible();
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
     expect(api.codeReviewResult).toHaveBeenCalledWith('attempt-7');
-    expect(api.startCourseDrill).not.toHaveBeenCalled();
+    expect(api.startReviewDrill).not.toHaveBeenCalled();
     expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-path', 'src/limiter.py');
+    expect(search()).toBe('?drills=open&attempt=attempt-7');
   });
 
   it('is shown waiting for its grade when it was handed in', async () => {
-    serve({ recent: [recentAttempt({ status: 'submitted' })] });
     api.codeReviewResult.mockResolvedValue(submitted());
-    const { user } = show();
-    await openRecent(user);
+    show('/studio?drills=open&attempt=attempt-1');
     expect(await screen.findByText('Grading your review…')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'A rate limiter' })).toBeVisible();
   });
 
   it('is shown as its reveal when it was graded', async () => {
-    serve({ recent: [recentAttempt({ status: 'graded' })] });
     api.codeReviewResult.mockResolvedValue(graded());
-    const { user } = show();
-    await openRecent(user);
+    show('/studio?drills=open&attempt=attempt-1');
     expect(await screen.findByText('Revealed attempt-1')).toBeVisible();
   });
 
   it('is shown with the reason it could not be graded', async () => {
-    serve({ recent: [recentAttempt({ status: 'couldnt_grade' })] });
     api.codeReviewResult.mockResolvedValue(submitted({ status: 'couldnt_grade', error: 'The model was not loaded.' }));
-    const { user } = show();
-    await openRecent(user);
+    show('/studio?drills=open&attempt=attempt-1');
     expect(await screen.findByText('The model was not loaded.')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Grade again' })).toBeEnabled();
   });
 
   it('shows the backend message when it cannot be read, and reads it again on request', async () => {
-    serve({ recent: [recentAttempt()] });
     api.codeReviewResult.mockRejectedValueOnce(new Error('This review is not there.')).mockResolvedValueOnce(attempt());
-    const { user } = show();
-    await openRecent(user);
+    const { user } = show('/studio?drills=open&attempt=attempt-1');
     expect(await screen.findByRole('alert')).toHaveTextContent('This review is not there.');
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
   });
 
   it('can be left for a new drill when it is not there', async () => {
-    serve({ recent: [recentAttempt({ attemptId: 'gone' })] });
     api.codeReviewResult.mockRejectedValue(new Error('This review is not there.'));
-    const { user } = show();
-    await openRecent(user);
+    const { user } = show('/studio?drills=open&attempt=gone');
     await user.click(await screen.findByRole('button', { name: 'Start a new drill' }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Recent drills' })).toBeVisible();
+    await addressIs('?drills=open');
+  });
+
+  it('is left when the address stops naming it, and read again when it names one again', async () => {
+    api.codeReviewResult.mockResolvedValue(attempt());
+    const { router } = show('/studio?drills=open&attempt=attempt-1');
+    await screen.findByRole('heading', { name: 'A rate limiter' });
+
+    await act(async () => {
+      await router.navigate('/studio?drills=open');
+    });
+    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
+
+    await act(async () => {
+      await router.navigate('/studio?drills=open&attempt=attempt-1');
+    });
+    expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
+    expect(api.codeReviewResult).toHaveBeenCalledTimes(2);
   });
 
   it('brings back the comments and the fix written before the learner left', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     const first = show();
     await startDrill(first.user);
     await first.user.click(screen.getByRole('button', { name: 'Pick lines 2 to 3' }));
@@ -1245,11 +872,9 @@ describe('an attempt from the recent drills', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Edit src/limiter.py' }), { target: { value: 'fixed\n' } });
     first.unmount();
 
-    serve({ recent: [recentAttempt()] });
     api.codeReviewResult.mockResolvedValue(attempt());
     api.submitCodeReview.mockResolvedValue(submitted());
-    const second = show();
-    await openRecent(second.user);
+    const second = show('/studio?drills=open&attempt=attempt-1');
     await screen.findByRole('heading', { name: 'A rate limiter' });
     expect(commentTexts()).toEqual(['Not atomic.', 'No tests.']);
     expect(within(screen.getByRole('listitem', { name: 'Comment 1' })).getByText('Major')).toBeVisible();
@@ -1268,7 +893,7 @@ describe('an attempt from the recent drills', () => {
   });
 
   it('forgets what was written once it is handed in', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     api.submitCodeReview.mockResolvedValue(submitted());
     const first = show();
     await startDrill(first.user);
@@ -1280,98 +905,6 @@ describe('an attempt from the recent drills', () => {
   });
 });
 
-describe('naming the lesson and leaving a drill', () => {
-  it('names the lesson, the material and the mode on the review screen', async () => {
-    api.startCourseDrill.mockResolvedValue(started({ drill: LESSON_DRILL }));
-    const { user } = show();
-    await startDrill(user);
-    expect(screen.getByText('Spacing · Python · Practice')).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'A rate limiter', level: 2 })).toBeVisible();
-  });
-
-  it('names the lesson on the grading screen too', async () => {
-    api.startCourseDrill.mockResolvedValue(started({ drill: LESSON_DRILL }));
-    api.submitCodeReview.mockResolvedValue(submitted({ drill: LESSON_DRILL }));
-    const { user } = show();
-    await startDrill(user);
-    await comment(user, 'Something.');
-    await user.click(screen.getByRole('button', { name: 'Submit review' }));
-    await screen.findByText('Grading your review…');
-    expect(screen.getByRole('heading', { name: 'A rate limiter', level: 2 })).toBeVisible();
-    expect(screen.getByText('Spacing · Python · Practice')).toBeVisible();
-  });
-
-  it('goes back to the choices from a drill that is being written', async () => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' });
-    const { user } = show();
-    await clickStart(user);
-    await screen.findByText('Writing a drill for you, usually a minute or two');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
-    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
-    expect(screen.queryByText('Writing a drill for you, usually a minute or two')).not.toBeInTheDocument();
-  });
-
-  it('goes back to the choices from a drill that failed to start', async () => {
-    api.startCourseDrill.mockRejectedValueOnce(new Error('No model is loaded.'));
-    const { user } = show();
-    await clickStart(user);
-    expect(await screen.findByRole('alert')).toHaveTextContent('No model is loaded.');
-    await user.click(screen.getByRole('button', { name: 'Back to the choices' }));
-    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  });
-
-  it('goes back to the choices while an attempt is being opened', async () => {
-    serve({ recent: [recentAttempt()] });
-    api.codeReviewResult.mockReturnValue(deferred<CodeReviewResultDto>().promise);
-    const { user } = show();
-    await openRecent(user);
-    await screen.findByText('Opening your review…');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
-    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
-  });
-
-  it('goes back to the choices from the grading', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    api.submitCodeReview.mockResolvedValue(submitted());
-    const { user } = show();
-    await startDrill(user);
-    await comment(user, 'Something.');
-    await user.click(screen.getByRole('button', { name: 'Submit review' }));
-    await screen.findByText('Grading your review…');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
-    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
-    expect(screen.queryByText('Grading your review…')).not.toBeInTheDocument();
-  });
-
-  it('goes back from the reveal, to the choices', async () => {
-    serve({ recent: [recentAttempt({ status: 'graded' })] });
-    api.codeReviewResult.mockResolvedValue(graded());
-    const { user } = show();
-    await openRecent(user);
-    await screen.findByText('Revealed attempt-1');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
-    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
-    expect(screen.queryByTestId('reveal')).not.toBeInTheDocument();
-  });
-
-  it('lists a review left that way as one to continue, and reopens it with what was written', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
-    const { user } = show();
-    await startDrill(user);
-    await comment(user, 'Not atomic.');
-    serve({ recent: [recentAttempt()] });
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
-
-    const item = await screen.findByRole('button', { name: /A rate limiter/ });
-    expect(within(item).getByText('Continue')).toBeVisible();
-    api.codeReviewResult.mockResolvedValue(attempt());
-    await user.click(item);
-    await screen.findByRole('heading', { name: 'A rate limiter' });
-    expect(commentTexts()).toEqual(['Not atomic.']);
-  });
-});
-
 describe('the interview countdown', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -1379,18 +912,18 @@ describe('the interview countdown', () => {
   });
 
   it('counts down the length the learner chose from the start of the attempt', async () => {
-    api.startCourseDrill.mockResolvedValue(started({ mode: 'interview' }));
+    api.startReviewDrill.mockResolvedValue(started({ mode: 'interview' }));
     const { user } = show();
     await user.click(await screen.findByRole('radio', { name: /Interview/ }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Time limit' }), { target: { value: '15' } });
-    await clickStart(user);
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
 
     expect(await screen.findByRole('timer')).toHaveTextContent('Time left 15:00');
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'code', language: 'python' }, 'interview', 80, 4);
+    expect(api.startReviewDrill).toHaveBeenCalledWith({ kind: 'code', language: 'python' }, 'interview', 80, 4);
   });
 
   it('is not there when practising', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
+    api.startReviewDrill.mockResolvedValue(started());
     const { user } = show();
     await startDrill(user);
     expect(screen.queryByRole('timer')).not.toBeInTheDocument();
@@ -1398,98 +931,153 @@ describe('the interview countdown', () => {
   });
 
   it('keeps counting from the start when the attempt is reopened, in the length chosen for it', async () => {
-    api.startCourseDrill.mockResolvedValue(started({ mode: 'interview' }));
+    api.startReviewDrill.mockResolvedValue(started({ mode: 'interview' }));
     const first = show();
     await first.user.click(await screen.findByRole('radio', { name: /Interview/ }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Time limit' }), { target: { value: '15' } });
-    await clickStart(first.user);
+    await first.user.click(screen.getByRole('button', { name: 'Start drill' }));
     await screen.findByRole('timer');
     first.unmount();
 
     vi.setSystemTime(new Date('2026-11-04T12:14:00Z'));
     api.codeReviewResult.mockResolvedValue(attempt({ mode: 'interview', startedAt: new Date('2026-11-04T12:00:00Z').getTime() }));
-    serve({ recent: [recentAttempt({ mode: 'interview' })] });
-    const second = show();
-    await openRecent(second.user);
+    show('/studio?drills=open&attempt=attempt-1');
     expect(await screen.findByRole('timer')).toHaveTextContent('Time left 1:00');
   });
 
   it('says when time is up and leaves the hand-in to the learner', async () => {
     api.codeReviewResult.mockResolvedValue(attempt({ mode: 'interview', startedAt: Date.now() - 11 * 60_000 }));
-    serve({ recent: [recentAttempt({ mode: 'interview' })] });
-    const { user } = show();
-    await openRecent(user);
+    show('/studio?drills=open&attempt=attempt-1');
     expect((await screen.findByText(/Time is up/)).closest('[role="status"]')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Submit review' })).toBeEnabled();
     expect(api.submitCodeReview).not.toHaveBeenCalled();
   });
 });
 
-describe('an explanation of the lesson’s sources', () => {
+describe('a drill on a passage of a course', () => {
   const SOURCE_TEXT = 'Students who spaced their study recalled 14% more a week later.';
   const EXPLANATION = 'Spacing helps recall.\nIt helped by 40% a week later.\nThe benefit was larger for known material.\n';
   const PASSAGE_DRILL = {
     title: 'Why spacing helps',
     material: { kind: 'passage', sourceTitle: 'Spacing and memory' } as const,
     files: [{ path: 'explanation.md', text: EXPLANATION }],
-    lesson: null,
   };
+  const COURSES = [
+    { programId: 'course-1', title: 'Memory' },
+    { programId: 'course-2', title: 'Sleep' },
+  ];
 
-  async function choosePassage(user: User) {
-    await user.click(await screen.findByRole('radio', { name: /An explanation of the lesson’s sources/ }));
-    await screen.findByRole('option', { name: 'Next: Sleep' });
-  }
-
-  it('offers code and an explanation of the lesson’s sources, with code chosen and a language asked for', async () => {
-    show();
-    expect(await screen.findByRole('radio', { name: /^Code/ })).toBeChecked();
-    expect(screen.getByRole('radio', { name: /An explanation of the lesson’s sources/ })).not.toBeChecked();
-    expect(screen.getByRole('combobox', { name: 'Language' })).toBeVisible();
+  beforeEach(() => {
+    api.reviewDrillCourses.mockResolvedValue(COURSES);
   });
 
-  it('asks for no language, and sizes in sentences', async () => {
+  async function choosePassage(user: User) {
+    await user.click(await screen.findByRole('radio', { name: /A passage from a course/ }));
+    await screen.findByRole('option', { name: 'Memory' });
+  }
+
+  it('offers the code and a passage from a course, with code chosen and no course asked for', async () => {
+    show();
+    expect(await screen.findByRole('radio', { name: /^Code/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /A passage from a course/ })).not.toBeChecked();
+    expect(screen.getByRole('combobox', { name: 'Language' })).toBeVisible();
+    expect(screen.queryByRole('combobox', { name: 'Course' })).not.toBeInTheDocument();
+    expect(api.reviewDrillCourses).not.toHaveBeenCalled();
+  });
+
+  it('asks for a course and a topic instead of a language, and sizes in sentences', async () => {
     const { user } = show();
     await choosePassage(user);
+    const course = screen.getByRole('combobox', { name: 'Course' });
+    expect(within(course).getAllByRole('option').map((option) => option.textContent)).toEqual(['Memory', 'Sleep']);
+    await waitFor(() => expect(course).toHaveValue('course-1'));
+    expect(screen.getByRole('textbox', { name: /Topic/ })).toHaveValue('');
     expect(screen.queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Short.*About 6 sentences, 2 errors/ })).toBeInTheDocument();
     expect(screen.getByRole('radio', { name: /Standard.*About 10 sentences, 3 errors/ })).toBeChecked();
   });
 
-  it('starts on the passage with no language, remembers the material, and leaves the course’s language alone', async () => {
-    api.startCourseDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
+  it('starts a drill on the course chosen, with its topic when one is typed, and remembers the choice', async () => {
+    api.startReviewDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
     const { user } = show();
     await choosePassage(user);
-    await clickStart(user);
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Course' }), 'course-2');
+    await user.type(screen.getByRole('textbox', { name: /Topic/ }), 'sleep and memory');
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
 
     expect(await screen.findByRole('heading', { name: 'Why spacing helps' })).toBeVisible();
-    expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'passage' }, 'practice', 10, 3);
-    expect(JSON.parse(localStorage.getItem('lattice.drills.choices') ?? '{}')).toMatchObject({ material: 'passage' });
-    expect(localStorage.getItem('lattice.drills.language.course-1')).toBeNull();
+    expect(api.startReviewDrill).toHaveBeenCalledWith(
+      { kind: 'passage', programId: 'course-2', topic: 'sleep and memory' },
+      'practice',
+      10,
+      3,
+    );
+    expect(JSON.parse(localStorage.getItem('lattice.drills.choices') ?? '{}')).toMatchObject({
+      material: 'passage',
+      programId: 'course-2',
+      topic: 'sleep and memory',
+    });
   });
 
-  it('waits for the build of the course’s passages, not of a language or another course', async () => {
-    api.startCourseDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started({ drill: PASSAGE_DRILL }));
+  it('sends no topic when none is typed, and the language only when code is chosen', async () => {
+    api.startReviewDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
     const { user } = show();
     await choosePassage(user);
-    await clickStart(user);
-    expect(await screen.findByText(/keeps the next drill of this kind ready for the course/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
+    await screen.findByRole('heading', { name: 'Why spacing helps' });
+    expect(api.startReviewDrill).toHaveBeenCalledWith({ kind: 'passage', programId: 'course-1', topic: null }, 'practice', 10, 3);
+  });
 
-    report(buildJob({ id: 'job-python', subjectId: CODE_SHELF, status: 'completed', finishedAt: 9 }));
-    report(buildJob({ id: 'job-other', subjectId: 'drill:course-2:passage', status: 'completed', finishedAt: 9 }));
-    expect(api.startCourseDrill).toHaveBeenCalledTimes(1);
-    report(buildJob({ id: 'job-next', subjectId: PASSAGE_SHELF, status: 'completed', finishedAt: 9 }));
+  it('offers the course last used, and the first course when it is gone', async () => {
+    localStorage.setItem('lattice.drills.choices', JSON.stringify({ material: 'passage', programId: 'course-2' }));
+    const first = show();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Course' })).toHaveValue('course-2'));
+    first.unmount();
+    localStorage.setItem('lattice.drills.choices', JSON.stringify({ material: 'passage', programId: 'deleted' }));
+    show();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Course' })).toHaveValue('course-1'));
+  });
+
+  it('cannot start while no course has a source, and says so', async () => {
+    api.reviewDrillCourses.mockResolvedValue([]);
+    const { user } = show();
+    await user.click(await screen.findByRole('radio', { name: /A passage from a course/ }));
+    expect(await screen.findByText('None of your courses has a source to take a passage from yet.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Start drill' })).toBeDisabled();
+  });
+
+  it('shows the message and reads the courses again when they cannot be read', async () => {
+    api.reviewDrillCourses.mockRejectedValueOnce(new Error('The library is unavailable.')).mockResolvedValue(COURSES);
+    const { user } = show();
+    await user.click(await screen.findByRole('radio', { name: /A passage from a course/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The library is unavailable.');
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('option', { name: 'Memory' })).toBeInTheDocument();
+  });
+
+  it('waits for the build of the course, not of a language', async () => {
+    api.startReviewDrill.mockResolvedValueOnce({ status: 'building', jobId: 'job-9' }).mockResolvedValueOnce(started({ drill: PASSAGE_DRILL }));
+    const { user } = show();
+    await choosePassage(user);
+    await user.click(screen.getByRole('button', { name: 'Start drill' }));
+    expect(await screen.findByText(/keeps one drill ready for each course/)).toBeVisible();
+
+    report(buildJob({ id: 'job-python', subjectId: 'python', status: 'completed', finishedAt: 9 }));
+    report(buildJob({ id: 'job-other', subjectId: 'passage:course-2', status: 'completed', finishedAt: 9 }));
+    expect(api.startReviewDrill).toHaveBeenCalledTimes(1);
+    report(buildJob({ id: 'job-next', subjectId: 'passage:course-1', status: 'completed', finishedAt: 9 }));
     expect(await screen.findByRole('heading', { name: 'Why spacing helps' })).toBeVisible();
   });
 
   describe('reviewing the explanation', () => {
     beforeEach(() => {
-      api.startCourseDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
+      api.startReviewDrill.mockResolvedValue(started({ drill: PASSAGE_DRILL }));
       api.submitCodeReview.mockResolvedValue(submitted({ drill: PASSAGE_DRILL }));
     });
 
     async function review(user: User) {
       await choosePassage(user);
-      await clickStart(user);
+      await user.click(screen.getByRole('button', { name: 'Start drill' }));
       await screen.findByRole('heading', { name: 'Why spacing helps' });
     }
 
@@ -1552,22 +1140,18 @@ describe('an explanation of the lesson’s sources', () => {
       );
     });
 
-    it('starts the next drill on a passage after the reveal, with no lesson named', async () => {
+    it('starts the next drill on the same course after the reveal', async () => {
       api.codeReviewResult.mockResolvedValue(graded({ drill: PASSAGE_DRILL }));
-      api.startCourseDrill.mockResolvedValueOnce(started({ drill: PASSAGE_DRILL })).mockResolvedValueOnce(started({ attemptId: 'attempt-2', drill: PASSAGE_DRILL }));
+      api.startReviewDrill.mockResolvedValueOnce(started({ drill: PASSAGE_DRILL })).mockResolvedValueOnce(started({ attemptId: 'attempt-2', drill: PASSAGE_DRILL }));
       const { user } = show();
-      await choosePassage(user);
-      await user.selectOptions(screen.getByRole('combobox', { name: 'Lesson' }), 'lesson-1');
-      await clickStart(user);
-      await screen.findByRole('heading', { name: 'Why spacing helps' });
-      expect(api.startCourseDrill).toHaveBeenLastCalledWith('course-1', 'lesson-1', { kind: 'passage' }, 'practice', 10, 3);
+      await review(user);
       await comment(user, 'The figure is wrong.');
       await user.click(screen.getByRole('button', { name: 'Submit review' }));
       await screen.findByText('Grading your review…');
       report(gradingJob({ status: 'completed', finishedAt: 9 }));
       await user.click(await screen.findByRole('button', { name: 'Next drill' }));
-      await waitFor(() => expect(api.startCourseDrill).toHaveBeenCalledTimes(2));
-      expect(api.startCourseDrill).toHaveBeenLastCalledWith('course-1', null, { kind: 'passage' }, 'practice', 10, 3);
+      await waitFor(() => expect(api.startReviewDrill).toHaveBeenCalledTimes(2));
+      expect(api.startReviewDrill).toHaveBeenLastCalledWith({ kind: 'passage', programId: 'course-1', topic: null }, 'practice', 10, 3);
     });
   });
 });

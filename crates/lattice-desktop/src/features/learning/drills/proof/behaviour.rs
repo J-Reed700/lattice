@@ -169,7 +169,6 @@ fn fit(
             consequence: replacement.consequence,
             explanation: replacement.explanation,
             verification: Verification::NotAsked,
-            lesson_sentences: old.lesson_sentences.clone(),
         },
         alone,
     ))

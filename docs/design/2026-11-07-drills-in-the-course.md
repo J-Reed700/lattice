@@ -60,11 +60,7 @@ resumed build and every later stage see the same text:
     is the lesson's title and objective plus the module's title and outcomes, through `ReferenceCollection` as
     `snapshot_passages` does. It takes as much as the lesson's planned minutes take to read
     (`estimated_minutes` × 238 words a minute, the mean silent reading rate for non-fiction, Brysbaert 2019), within
-    what the request's window leaves (`source_room`), and always its first passage.
-
-The room is counted on the planter's request with no code in it, the code and the defects reserved: it is the largest
-request that carries the brief, so a brief that fits it fits the others. A prepared lesson's evidence is a prefix of its
-units. A build whose brief, or whose first unit or passage, does not fit fails with the model's window as the reason.
+    what the request's window leaves (`source_room`).
 
 Both courses in the app today are outlines: 18 lessons, none prepared, sources only. So every brief there is source
 passages until lessons are prepared. Everything in a brief is data, never instructions, as passages already are.
@@ -79,18 +75,15 @@ passages until lessons are prepared. Everything in a brief is data, never instru
   - **Lesson issues:** up to ⌈n/2⌉ defects that each break something the lesson teaches. Each cites the evidence it
     breaks (`lessonSentences`: the evidence numbers) and names a catalogue pattern as its shape: the pattern its defect
     is an instance of, which the key, the proof and grading need. The planter plants as many as the lesson really
-    supports, and none when the lesson teaches nothing code can show. A brief with no evidence asks for none: the
-    planter is told of lesson issues only when there is evidence to cite.
-  - **Catalogue issues:** the other n − i: one for each of the first patterns of the schedule's ranking (§5) that no
-    lesson issue has, in order. A lesson issue may take a pattern of the ranking, and every issue is of a different
-    pattern, so the catalogue issues then take the next pattern instead.
+    supports, and none when the lesson teaches nothing code can show.
+  - **Catalogue issues:** the other n − i, which are exactly the first n − i patterns of the schedule's ranking (§5), as
+    today.
 
   `read()` checks the split. It accepts 0 to ⌈n/2⌉ lesson issues with valid, distinct sentence numbers, and requires
-  the catalogue issues to be exactly those patterns, with every issue of a different pattern. The schema gives
-  `lessonSentences` the range of evidence numbers and gives `pattern` the material's whole pattern list.
+  the catalogue issues to be exactly that prefix of the ranking, with every issue of a different pattern. The schema
+  gives `lessonSentences` the range of evidence numbers and gives `pattern` the material's whole pattern list.
 - **The proof** of every issue is chosen by its pattern's family, unchanged. A proven lesson issue then gets a
-  **lesson check**, a stage of its own between the proof and the blind review, checkpointed like the others (a build
-  has seven stages): a judge is shown the cited sentences, the clean code and the changed code, and answers with
+  **lesson check**: a judge is shown the cited sentences, the clean code and the changed code, and answers with
   reasons first, then whether the change breaks what those sentences say and whether the clean code follows them.
   - It fails the check but passed its proof: it stays in the key as a plain issue with no lesson link.
   - It fails its proof: it is dropped, as today.
@@ -183,9 +176,9 @@ One migration:
     is ignored. So preparing the lesson or changing a source asks the question again, and no retrieval runs to find
     that out.
 
-`DrillSpec` gets `lesson_id`. `patterns` becomes the ranked catalogue targets, n of them. The most lesson issues to
-plant, ⌈n/2⌉ for code and 0 for a passage, is derived from them (`lesson_issues()`), so no spec stores it.
-`validate()` requires a course and a lesson for every new spec.
+`DrillSpec` gets `lesson_id` and `lesson_issues` (the most lesson issues to plant: ⌈n/2⌉ for code, 0 for a passage).
+`patterns` becomes the ranked catalogue targets, n of them. `validate()` requires a course and a lesson for every new
+spec.
 
 ## 8. Commands and the view
 
@@ -226,10 +219,11 @@ Each step is test first, built by an agent and reviewed line by line, and ends w
    of a course's code.
 2. **Schedules:** the migration and repositories. Grading writes both schedules in its transaction, and the bank
    reads them for `targets` and `next_lesson`.
-3. **Builds from the brief,** in two parts:
-   - 3a: the brief, frozen in the first checkpoint; the writer on it; the passage pick by lesson; `DOMAINS` removed;
-   - 3b: the planter's lesson issues and the key's links; the lesson check stage; the judge's task; the fit recorded
-     when a drill is stored.
+3. **Builds from the brief:**
+   - the brief, frozen in the first checkpoint;
+   - the writer and the planter for lesson issues, and the lesson check;
+   - the judge's task, and the passage pick by lesson;
+   - `DOMAINS` removed.
 4. **The bank per course and the commands.**
 5. **The view:**
    - Practice › Review drills, and the reveal's "From the lesson";

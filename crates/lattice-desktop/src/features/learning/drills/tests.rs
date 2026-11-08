@@ -11,7 +11,6 @@ mod clean_review_tests;
 mod fix_grading_tests;
 mod grading_job_tests;
 mod job_tests;
-mod lesson_check_tests;
 mod lesson_tests;
 #[path = "live_build_eval.rs"]
 mod live_build_eval;

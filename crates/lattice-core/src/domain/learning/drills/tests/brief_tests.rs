@@ -249,51 +249,6 @@ fn a_link_needs_a_number_of_the_evidence() {
     assert_eq!(brief(Vec::new()).link(&[1]), None);
 }
 
-// The units an issue cites, as the evidence is shown.
-
-#[test]
-fn cited_units_keep_their_own_numbers_in_the_order_cited_with_a_heading_where_the_source_changes() {
-    let known = brief(vec![
-        unit("One.", None),
-        unit("Two.", Some("A")),
-        unit("Three.", Some("B")),
-        unit("Four.", Some("B")),
-    ]);
-    assert_eq!(
-        known.cited(&[3, 1]).as_deref(),
-        Some("From B:\nL3 Three.\nFrom the lesson:\nL1 One.")
-    );
-    assert_eq!(
-        known.cited(&[3, 4, 2]).as_deref(),
-        Some("From B:\nL3 Three.\nL4 Four.\nFrom A:\nL2 Two.")
-    );
-    assert_eq!(known.cited(&[2]).as_deref(), Some("From A:\nL2 Two."));
-}
-
-#[test]
-fn a_cited_unit_of_several_lines_starts_on_the_line_after_its_number() {
-    let known = brief(vec![
-        unit("One.", None),
-        unit("```python\nschedule(3)\n```", None),
-    ]);
-    assert_eq!(
-        known.cited(&[2, 1]).as_deref(),
-        Some("From the lesson:\nL2\n```python\nschedule(3)\n```\nL1 One.")
-    );
-}
-
-#[test]
-fn nothing_is_cited_exactly_when_the_link_would_be_nothing() {
-    let known = brief(vec![unit("One.", None), unit("Two.", None)]);
-    for numbers in [&[][..], &[0], &[1, 3], &[3]] {
-        assert_eq!(known.cited(numbers), None, "{numbers:?}");
-        assert!(known.link(numbers).is_none(), "{numbers:?}");
-    }
-    assert_eq!(brief(Vec::new()).cited(&[1]), None);
-    assert!(known.link(&[2]).is_some());
-    assert!(known.cited(&[2]).is_some());
-}
-
 // The stored form.
 
 #[test]

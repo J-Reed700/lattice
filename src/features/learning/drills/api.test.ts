@@ -18,47 +18,32 @@ describe('drillsApi', () => {
     expect(sent()).toEqual([{ route: 'plugin:learning|code_review_languages', args: {} }]);
   });
 
-  it('asks the learning plugin for the drills of a course in a language, and for the ones it suggests with none', async () => {
-    const view = { language: 'python', nextCode: null, nextPassage: null, hasSources: true, modules: [], recent: [] };
-    ipc.invoke.mockResolvedValue(view);
-    await expect(drillsApi.courseDrills('course-1', 'python')).resolves.toEqual(view);
-    await drillsApi.courseDrills('course-1', null);
-    expect(sent()).toEqual([
-      { route: 'plugin:learning|course_drills', args: { programId: 'course-1', language: 'python' } },
-      { route: 'plugin:learning|course_drills', args: { programId: 'course-1', language: null } },
-    ]);
-  });
-
-  it('starts a drill on the code of a lesson with the material, the mode, the size and the number of issues', async () => {
+  it('starts a drill on code with the material, the mode, the size and the number of patterns', async () => {
     const started = { status: 'building', jobId: 'job-1' };
     ipc.invoke.mockResolvedValueOnce(started);
-    await expect(
-      drillsApi.startCourseDrill('course-1', 'lesson-2', { kind: 'code', language: 'python' }, 'interview', 80, 4),
-    ).resolves.toEqual(started);
+    await expect(drillsApi.startReviewDrill({ kind: 'code', language: 'python' }, 'interview', 80, 4)).resolves.toEqual(started);
     expect(sent()).toEqual([
       {
-        route: 'plugin:learning|start_course_drill',
-        args: {
-          programId: 'course-1',
-          lessonId: 'lesson-2',
-          material: { kind: 'code', language: 'python' },
-          mode: 'interview',
-          lines: 80,
-          issues: 4,
-        },
+        route: 'plugin:learning|start_review_drill',
+        args: { material: { kind: 'code', language: 'python' }, mode: 'interview', lines: 80, patternsCount: 4 },
       },
     ]);
   });
 
-  it('starts a drill on a passage with no lesson, which is the one next up', async () => {
+  it('starts a drill on a passage of a course with its topic', async () => {
     ipc.invoke.mockResolvedValueOnce({ status: 'building', jobId: 'job-1' });
-    await drillsApi.startCourseDrill('course-1', null, { kind: 'passage' }, 'practice', 10, 3);
+    const material = { kind: 'passage', programId: 'course-1', topic: null } as const;
+    await drillsApi.startReviewDrill(material, 'practice', 10, 3);
     expect(sent()).toEqual([
-      {
-        route: 'plugin:learning|start_course_drill',
-        args: { programId: 'course-1', lessonId: null, material: { kind: 'passage' }, mode: 'practice', lines: 10, issues: 3 },
-      },
+      { route: 'plugin:learning|start_review_drill', args: { material, mode: 'practice', lines: 10, patternsCount: 3 } },
     ]);
+  });
+
+  it('asks the learning plugin for the courses a passage can be taken from', async () => {
+    const courses = [{ programId: 'course-1', title: 'Memory' }];
+    ipc.invoke.mockResolvedValueOnce(courses);
+    await expect(drillsApi.reviewDrillCourses()).resolves.toEqual(courses);
+    expect(sent()).toEqual([{ route: 'plugin:learning|review_drill_courses', args: {} }]);
   });
 
   it('hands in the findings, the fix files (or none) and the time spent, by the names the command takes', async () => {
@@ -84,9 +69,7 @@ describe('drillsApi', () => {
 
   it('throws what the backend said when a command fails', async () => {
     ipc.invoke.mockRejectedValueOnce({ code: 'INVALID_INPUT', message: 'klingon is not a language drills are written in.' });
-    await expect(
-      drillsApi.startCourseDrill('course-1', null, { kind: 'code', language: 'klingon' }, 'practice', 80, 4),
-    ).rejects.toThrow('klingon is not a language drills are written in.');
+    await expect(drillsApi.startReviewDrill({ kind: 'code', language: 'klingon' }, 'practice', 80, 4)).rejects.toThrow('klingon is not a language drills are written in.');
     ipc.invoke.mockRejectedValueOnce('This review is not there.');
     await expect(drillsApi.codeReviewResult('gone')).rejects.toThrow('This review is not there.');
   });

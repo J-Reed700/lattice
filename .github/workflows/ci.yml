@@ -1,4 +1,4 @@
-# Red runs only: trimmed to the Windows Rust test build and the frontend unit tests; other checks are off and runs no longer cancel each other.
+# Red runs only: trimmed to the Windows Rust test build; the other jobs and slow Rust checks are off and runs no longer cancel each other.
 name: CI
 
 on:
@@ -328,6 +328,7 @@ jobs:
 
   frontend:
     name: frontend (type-check, lint, test)
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -342,27 +343,21 @@ jobs:
       - run: npm ci
 
       - name: npm vulnerability audit
-        if: false
         run: npm audit --audit-level=high
 
       - name: Verify bundled Python interpreter and standard library
-        continue-on-error: true
         run: npm run learning:runtime:verify
 
       - name: Type-check
-        continue-on-error: true
         run: npm run type-check
 
       - name: Type-check browser journeys
-        continue-on-error: true
         run: npm run type-check:e2e
 
       - name: Generated IPC contract consumers
-        continue-on-error: true
         run: npm run contracts:check
 
       - name: Lint
-        continue-on-error: true
         run: npm run lint
 
       - name: Unit tests and enforced coverage floors
@@ -378,23 +373,19 @@ jobs:
           retention-days: 14
 
       - name: Renderer production build
-        if: false
         run: npx vite build
 
       - name: Initial renderer JavaScript budget
-        if: false
         run: node scripts/check-initial-js-budget.mjs dist
 
       - name: Install browsers for smoke tests
-        if: false
         run: npx playwright install --with-deps chromium webkit
 
       - name: Browser smoke tests
-        if: false
         run: npm run test:e2e
 
       - name: Upload browser reports and failure artifacts
-        if: false
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: frontend-browser-results

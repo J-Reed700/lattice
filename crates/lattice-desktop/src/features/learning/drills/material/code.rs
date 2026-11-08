@@ -63,12 +63,7 @@ impl DrillMaterial for CodeMaterial<'_> {
         baseline: &Baseline,
         targets: &[&'static Pattern],
     ) -> PlantWording {
-        let evidence = baseline
-            .brief
-            .as_ref()
-            .is_some_and(|brief| !brief.evidence.is_empty());
-        let lesson_issues = if evidence { spec.lesson_issues() } else { 0 };
-        self.code_plant_wording(language_of(spec), baseline, targets, lesson_issues)
+        self.code_plant_wording(language_of(spec), baseline, targets)
     }
 
     fn proof_strategy<'a>(

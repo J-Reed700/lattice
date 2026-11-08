@@ -3,13 +3,11 @@
 //! lesson a drill is built from.
 
 use super::support::{
-    code, course, explanation_files, extra_finding, files, lessons_of, operator_finding,
-    passage_spec, planted, proved, quiet, review, review_assessment, schedule_pattern, set_state,
-    spacing_passage, spec, unchecked, FakeGrader, ScriptedModel, Waiting, LITERALS, MODEL,
-    OPERATOR, SUITE,
+    code, explanation_files, extra_finding, files, operator_finding, passage_spec, planted, proved,
+    quiet, review, review_assessment, schedule_pattern, spacing_passage, spec, FakeGrader,
+    ScriptedModel, Waiting, LITERALS, MODEL, OPERATOR, SUITE,
 };
 use crate::features::learning::drills::attempts::{self, AttemptMode, Graded, Submission};
-use crate::features::learning::drills::bank::Shelf;
 use crate::features::learning::drills::build::Evidence;
 use crate::features::learning::drills::repository::{self, NewDrill, StoredDrill};
 use crate::features::learning::drills::schedules;
@@ -160,7 +158,7 @@ impl<'a> Put<'a> {
     async fn stock(self, pool: &SqlitePool) -> Result<()> {
         let passage = matches!(self.material, Material::Passage);
         let built = proved();
-        let mut key = built.planted_key(&unchecked());
+        let mut key = built.planted_key();
         for (issue, pattern) in key.iter_mut().zip(self.patterns) {
             issue.pattern = pattern.to_owned();
         }
@@ -206,14 +204,7 @@ impl<'a> Put<'a> {
         } else {
             files()
         };
-        let evidence = Evidence::new(
-            &code(),
-            &review(),
-            &planted(),
-            &built,
-            &unchecked(),
-            &quiet(),
-        );
+        let evidence = Evidence::new(&code(), &review(), &planted(), &built, &quiet());
         let mut connection = pool.acquire().await.map_err(db)?;
         repository::insert_in(
             &mut connection,
@@ -264,7 +255,7 @@ async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
     let mut connection = pool.acquire().await.map_err(db)?;
     match state {
         State::Graded => {
-            let key = proved().planted_key(&unchecked());
+            let key = proved().planted_key();
             let assessment = review_assessment();
             let scored = score(&key, &[operator_finding(), extra_finding()], &assessment);
             let rated = ratings(&key, &assessment);
@@ -593,12 +584,7 @@ async fn only_an_issue_with_a_link_to_the_lesson_rates_it_when_a_code_drill_is_g
     }
     .stock(&pool)
     .await?;
-    let python = Material::code("python");
-    let shelf = Shelf {
-        program_id: &course,
-        material: &python,
-    };
-    let begun = attempts::start(&pool, shelf, None, AttemptMode::Practice)
+    let begun = attempts::start(&pool, "python", AttemptMode::Practice)
         .await?
         .expect("a ready drill");
     let queued = attempts::submit(
@@ -637,40 +623,6 @@ async fn only_an_issue_with_a_link_to_the_lesson_rates_it_when_a_code_drill_is_g
     assert!(pattern_schedule(&pool, "code:python", LITERALS)
         .await?
         .is_some());
-    Ok(())
-}
-
-async fn drilled_by(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<bool> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    schedules::drills_lesson_in(&mut connection, program_id, lesson_id).await
-}
-
-#[tokio::test]
-async fn a_course_drills_its_lessons_that_are_not_replaced_or_skipped() -> Result<()> {
-    let pool = pool().await?;
-    let program = course(&pool).await?;
-    let other = course(&pool).await?;
-    let lessons = lessons_of(&pool, &program).await?;
-    let others = lessons_of(&pool, &other).await?;
-    for lesson in &lessons {
-        assert!(drilled_by(&pool, &program, lesson).await?, "{lesson}");
-    }
-    assert!(drilled_by(&pool, &other, &others[0]).await?);
-
-    set_state(&pool, &lessons[0], "skipped").await?;
-    set_state(&pool, &lessons[1], "replaced").await?;
-    assert!(!drilled_by(&pool, &program, &lessons[0]).await?, "skipped");
-    assert!(!drilled_by(&pool, &program, &lessons[1]).await?, "replaced");
-    assert!(drilled_by(&pool, &program, &lessons[2]).await?);
-    assert!(
-        !drilled_by(&pool, &program, &others[0]).await?,
-        "another course's lesson"
-    );
-    assert!(
-        !drilled_by(&pool, &program, "no-such-lesson").await?,
-        "no lesson"
-    );
-    assert!(drilled_by(&pool, &other, &others[0]).await?);
     Ok(())
 }
 

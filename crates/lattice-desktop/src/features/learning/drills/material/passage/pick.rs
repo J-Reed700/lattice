@@ -1,101 +1,132 @@
-//! Which passage a drill explains (docs/design/2026-11-07-drills-in-the-course.md section 4): one the course's sources
-//! hold for the drill's lesson, found by searching them for the lesson's title, objective and module, widened to whole
-//! paragraphs and sized to hold at least as many sentences as the explanation, so that each sentence of it has
-//! something of its own to say. The best-ranked passage no drill of the course was built on comes first; once every
-//! one was, the one whose latest drill is the oldest. A prepared lesson draws only on the sources its blocks cite.
+//! Which passage a drill explains (docs/design/2026-11-05-spot-the-errors-drills.md section 5): one from the course's
+//! source drilled least, that no drill of the course was built on, widened to whole paragraphs and sized to hold at
+//! least as many sentences as the explanation, so that each sentence of it has something of its own to say. A topic
+//! narrows the choice to the passages the course's sources hold about it, best first.
 
 use crate::features::learning::drills::build::SourcePassage;
-use crate::features::learning::drills::lesson::LessonContext;
 use crate::features::learning::drills::repository;
 use crate::features::learning::dto::LearningSourceDto;
 use crate::features::learning::persistence::db;
 use crate::features::learning::reference_collection::ReferenceCollection;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::segmentation::{sentences, units, Prose, Strength};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
-/// The passage the next drill of the lesson of `context` explains, sized for an explanation of `wanted` sentences:
-/// the best-ranked passage for the lesson that no drill of the course was built on, or, once every one was, the one
-/// whose latest drill is the oldest. `None` when the lesson's sources hold nothing for it.
+/// A place in a source a passage may start from.
+struct Candidate<'a> {
+    source: &'a LearningSourceDto,
+    /// How many drills of the course were built on a passage of the same source.
+    uses: usize,
+    /// The place's rank: the search's for a topic, the source's place in the course and then the text's otherwise.
+    order: (usize, usize),
+    start: usize,
+    end: usize,
+}
+
+/// The passage the next drill of the course `program_id` explains, about `topic` when one is given, sized for an
+/// explanation of `wanted` sentences. An error when the course has no source, or no passage of its sources (about
+/// the topic) is left that no drill was built on.
 pub(super) async fn pick(
     pool: &SqlitePool,
-    context: &LessonContext,
+    program_id: &str,
+    topic: Option<&str>,
     wanted: u32,
-) -> Result<Option<SourcePassage>> {
-    let owners = owners(pool, &context.program_id).await?;
+) -> Result<SourcePassage> {
+    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(pool.clone())
+        .verification_sources(program_id)
+        .await?
+        .into_iter()
+        .filter(|source| !source.excerpt.trim().is_empty())
+        .collect();
+    if sources.is_empty() {
+        return Err(AppError::InvalidInput(
+            "The course has no source to take a passage from.".into(),
+        ));
+    }
+    let drilled = repository::drilled_passages(pool, program_id).await?;
+    let owners = owners(pool, program_id).await?;
     let owner = |version: &str| -> String {
         owners
             .get(version)
             .cloned()
             .unwrap_or_else(|| version.to_owned())
     };
-    let cited: Vec<String> = context
-        .cited_versions
-        .iter()
-        .map(|version| owner(version))
-        .collect();
-    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(pool.clone())
-        .verification_sources(&context.program_id)
-        .await?
-        .into_iter()
-        .filter(|source| !source.excerpt.trim().is_empty())
-        .filter(|source| !context.prepared || cited.contains(&owner(&source.id)))
-        .collect();
-    if sources.is_empty() {
-        return Ok(None);
-    }
-    let drilled = repository::drilled_passages(pool, &context.program_id).await?;
-    let wanted = usize::try_from(wanted).unwrap_or(usize::MAX);
-    let collection = ReferenceCollection::lexical(&sources)?;
-    let hits = collection
-        .retrieve_within(&context.query(), |_| true)
-        .await?;
-    let mut best: Option<((Option<usize>, (usize, usize)), SourcePassage)> = None;
-    for (rank, hit) in hits.iter().enumerate() {
-        let Some(source) = sources.iter().find(|source| source.id == hit.source_id) else {
-            continue;
-        };
-        let places = units(&source.excerpt, &Prose, Strength::Paragraph);
-        for (index, paragraph) in places.iter().enumerate() {
-            if paragraph.end <= hit.start_byte || hit.end_byte <= paragraph.start {
-                continue;
+    let uses = |source: &LearningSourceDto| {
+        let owned = owner(&source.id);
+        drilled
+            .iter()
+            .filter(|passage| owner(&passage.version_id) == owned)
+            .count()
+    };
+    let mut candidates: Vec<Candidate<'_>> = Vec::new();
+    match topic {
+        Some(topic) => {
+            let collection = ReferenceCollection::lexical(&sources)?;
+            let hits = collection.retrieve_within(topic, |_| true).await?;
+            for (rank, hit) in hits.iter().enumerate() {
+                if let Some(source) = sources.iter().find(|source| source.id == hit.source_id) {
+                    candidates.push(Candidate {
+                        source,
+                        uses: uses(source),
+                        order: (rank, 0),
+                        start: hit.start_byte,
+                        end: hit.end_byte,
+                    });
+                }
             }
-            let Some((start, end)) = sized(&source.excerpt, paragraph.start, paragraph.end, wanted)
-            else {
-                continue;
-            };
-            let Some(text) = source.excerpt.get(start..end) else {
-                continue;
-            };
-            let latest_use = drilled
-                .iter()
-                .enumerate()
-                .filter(|(_, passage)| {
-                    passage.version_id == source.id
-                        && passage.start_byte < end
-                        && start < passage.end_byte
-                })
-                .map(|(position, _)| position)
-                .max();
-            let key = (latest_use, (rank, index));
-            if best.as_ref().is_some_and(|(held, _)| *held <= key) {
-                continue;
+        }
+        None => {
+            for (position, source) in sources.iter().enumerate() {
+                let used = uses(source);
+                for (index, paragraph) in units(&source.excerpt, &Prose, Strength::Paragraph)
+                    .into_iter()
+                    .enumerate()
+                {
+                    candidates.push(Candidate {
+                        source,
+                        uses: used,
+                        order: (position, index),
+                        start: paragraph.start,
+                        end: paragraph.end,
+                    });
+                }
             }
-            best = Some((
-                key,
-                SourcePassage {
-                    version_id: source.id.clone(),
-                    start_byte: start,
-                    end_byte: end,
-                    title: source.title.clone(),
-                    text: text.to_owned(),
-                },
-            ));
         }
     }
-    Ok(best.map(|(_, passage)| passage))
+    candidates.sort_by_key(|candidate| (candidate.uses, candidate.order));
+    let wanted = usize::try_from(wanted).unwrap_or(usize::MAX);
+    for candidate in candidates {
+        let text = &candidate.source.excerpt;
+        let Some((start, end)) = sized(text, candidate.start, candidate.end, wanted) else {
+            continue;
+        };
+        let taken = drilled.iter().any(|passage| {
+            passage.version_id == candidate.source.id
+                && passage.start_byte < end
+                && start < passage.end_byte
+        });
+        if taken {
+            continue;
+        }
+        let Some(passage) = text.get(start..end) else {
+            continue;
+        };
+        return Ok(SourcePassage {
+            version_id: candidate.source.id.clone(),
+            start_byte: start,
+            end_byte: end,
+            title: candidate.source.title.clone(),
+            text: passage.to_owned(),
+        });
+    }
+    Err(AppError::InvalidInput(match topic {
+        Some(topic) => {
+            format!("No passage of the course's sources about {topic} is left to drill.")
+        }
+        None => "No passage of the course's sources is left to drill.".to_owned(),
+    }))
 }
 
 /// For each version of the course's sources, the source it is a version of.

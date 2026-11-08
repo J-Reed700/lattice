@@ -92,20 +92,6 @@ fn issue_block(
     if let Some(known) = known {
         lines.push(format!("Pattern: {}", known.definition));
     }
-    if let Some(link) = issue
-        .lesson
-        .as_ref()
-        .filter(|link| !link.sentences.is_empty())
-    {
-        let mut block = String::from("From the lesson:");
-        for sentence in &link.sentences {
-            for line in sentence.text.lines() {
-                block.push_str("\n  ");
-                block.push_str(line);
-            }
-        }
-        lines.push(block);
-    }
     lines.push(format!("Consequence: {}", issue.consequence));
     lines.push(quoted(&issue.span, files, wording));
     lines.join("\n")

@@ -1,7 +1,5 @@
 //! Stage 3: one call proposes one mutation for each target pattern, as an exact edit of the clean code. Code applies
-//! the edits, so the key's line spans are read off the result and never stated by the model. When the brief has
-//! evidence, up to half the changes (rounded up) may be lesson issues: each cites the evidence it breaks and is of any
-//! pattern of the catalogue, and the others are for the first targets no lesson issue has.
+//! the edits, so the key's line spans are read off the result and never stated by the model.
 
 use super::ask::{
     ask_request, describe_fault, normalise, path_schema, refuse, severity_schema, text_schema,
@@ -14,7 +12,7 @@ use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::generation::parse_json;
 use crate::features::learning::model_call;
 use lattice_core::domain::learning::drills::{
-    apply, patterns_for, DrillFile, Edit, EditFault, Family, Pattern, Severity,
+    apply, DrillFile, Edit, EditFault, Family, Pattern, Severity,
 };
 use lattice_core::shared::error::Result;
 use serde::Deserialize;
@@ -27,12 +25,6 @@ struct Rules<'a> {
     tests: &'a [String],
     /// Whether each change comes with a test that observes it, or the reason none can.
     asks_verification: bool,
-    /// The most changes that may be lesson issues: 0 when none is asked for.
-    lesson_issues: usize,
-    /// How many units of evidence the brief holds, which a lesson issue cites by number.
-    evidence: usize,
-    /// The patterns of the material, one of which a lesson issue is an instance of.
-    patterns: &'a [&'static Pattern],
 }
 
 #[derive(Deserialize)]
@@ -49,8 +41,6 @@ struct Proposed {
     killing_test: Option<String>,
     #[serde(default)]
     no_test_because: Option<String>,
-    #[serde(default)]
-    lesson_sentences: Vec<usize>,
 }
 
 #[derive(Deserialize)]
@@ -69,24 +59,16 @@ impl DrillBuild<'_> {
     ) -> Result<Planted> {
         let targets = spec.targets()?;
         let wording = self.material.plant_wording(spec, baseline, &targets);
-        let patterns: Vec<&'static Pattern> = patterns_for(&spec.material).collect();
-        let evidence = baseline
-            .brief
-            .as_ref()
-            .map_or(0, |brief| brief.evidence.len());
         let rules = Rules {
             targets: &targets,
             files: &baseline.files,
             tests: &baseline.tests,
             asks_verification: wording.asks_verification,
-            lesson_issues: wording.lesson_issues,
-            evidence,
-            patterns: &patterns,
         };
         let request = model_call::structured(
             &wording.system,
             wording.prompt,
-            schema(&rules),
+            schema(&targets, &baseline.files, rules.asks_verification),
             budget::mutations(targets.len()),
             "low",
         );
@@ -100,16 +82,11 @@ impl DrillBuild<'_> {
     }
 }
 
-fn schema(rules: &Rules<'_>) -> Value {
-    let (targets, asks_verification) = (rules.targets, rules.asks_verification);
-    let lesson = rules.lesson_issues > 0;
-    let ids: Vec<&str> = if lesson { rules.patterns } else { targets }
-        .iter()
-        .map(|pattern| pattern.id)
-        .collect();
+fn schema(targets: &[&Pattern], files: &[DrillFile], asks_verification: bool) -> Value {
+    let ids: Vec<&str> = targets.iter().map(|pattern| pattern.id).collect();
     let mut properties = Map::new();
     properties.insert("pattern".into(), json!({"type": "string", "enum": ids}));
-    properties.insert("path".into(), path_schema(rules.files));
+    properties.insert("path".into(), path_schema(files));
     properties.insert("before".into(), text_schema());
     properties.insert("after".into(), text_schema());
     properties.insert("severity".into(), severity_schema());
@@ -128,16 +105,6 @@ fn schema(rules: &Rules<'_>) -> Value {
         properties.insert("killingTest".into(), json!({"type": "string"}));
         properties.insert("noTestBecause".into(), json!({"type": "string"}));
         required.extend(["killingTest", "noTestBecause"]);
-    }
-    if lesson {
-        properties.insert(
-            "lessonSentences".into(),
-            json!({
-                "type": "array",
-                "items": {"type": "integer", "minimum": 1, "maximum": rules.evidence}
-            }),
-        );
-        required.push("lessonSentences");
     }
     json!({
         "type": "object",
@@ -159,52 +126,25 @@ fn schema(rules: &Rules<'_>) -> Value {
     })
 }
 
-/// Reads the mutations and applies them to the baseline, refusing what cannot stand: a lesson issue not asked for or
-/// citing what the brief does not hold, a pattern missing or given twice, an edit that does not apply (with the
-/// change that fixes it), and a change that cannot be undone.
+/// Reads the mutations and applies them to the baseline, refusing what cannot stand: a pattern missing or given
+/// twice, an edit that does not apply (with the change that fixes it), and a change that cannot be undone.
 fn read(raw: &str, rules: &Rules<'_>) -> Result<Vec<Mutation>> {
-    let (lessons, mut proposals): (Vec<Proposed>, Vec<Proposed>) = parse_json::<Proposals>(raw)?
-        .mutations
-        .into_iter()
-        .partition(|proposal| !proposal.lesson_sentences.is_empty());
-    let taken = lesson_patterns(&lessons, rules)?;
-    let expected: Vec<&'static Pattern> = rules
-        .targets
-        .iter()
-        .filter(|target| !taken.iter().any(|held| held.id == target.id))
-        .take(rules.targets.len().saturating_sub(lessons.len()))
-        .copied()
-        .collect();
-    let note = if lessons.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " With {} lesson {} ({}), the other changes are for: {}.",
-            lessons.len(),
-            if lessons.len() == 1 {
-                "issue"
-            } else {
-                "issues"
-            },
-            ids_of(&taken),
-            ids_of(&expected)
-        )
-    };
-    let mut ordered: Vec<Proposed> = Vec::with_capacity(expected.len());
-    for target in &expected {
+    let mut proposals = parse_json::<Proposals>(raw)?.mutations;
+    let mut ordered: Vec<Proposed> = Vec::with_capacity(rules.targets.len());
+    for target in rules.targets {
         let count = proposals
             .iter()
             .filter(|proposal| proposal.pattern == target.id)
             .count();
         if count == 0 {
             return Err(refuse(format!(
-                "There is no change for {}. Give exactly one change for each pattern asked for.{note}",
+                "There is no change for {}. Give exactly one change for each pattern asked for.",
                 target.id
             )));
         }
         if count > 1 {
             return Err(refuse(format!(
-                "There are {count} changes for {}. Give exactly one change for each pattern.{note}",
+                "There are {count} changes for {}. Give exactly one change for each pattern.",
                 target.id
             )));
         }
@@ -216,17 +156,15 @@ fn read(raw: &str, rules: &Rules<'_>) -> Result<Vec<Mutation>> {
         }
     }
     if let Some(stray) = proposals.first() {
+        let asked: Vec<&str> = rules.targets.iter().map(|target| target.id).collect();
         return Err(refuse(format!(
-            "{} is not a pattern asked for. Give changes only for: {}.{note}",
+            "{} is not a pattern asked for. Give changes only for: {}.",
             stray.pattern,
-            ids_of(&expected)
+            asked.join(", ")
         )));
     }
-    let mut mutations: Vec<Mutation> = Vec::with_capacity(ordered.len() + lessons.len());
-    for (proposal, target) in ordered.into_iter().zip(&expected) {
-        mutations.push(mutation_of(proposal, target, rules)?);
-    }
-    for (proposal, target) in lessons.into_iter().zip(&taken) {
+    let mut mutations: Vec<Mutation> = Vec::with_capacity(ordered.len());
+    for (proposal, target) in ordered.into_iter().zip(rules.targets) {
         mutations.push(mutation_of(proposal, target, rules)?);
     }
     let edits: Vec<Edit> = mutations
@@ -251,75 +189,6 @@ fn read(raw: &str, rules: &Rules<'_>) -> Result<Vec<Mutation>> {
         }
     }
     Ok(mutations)
-}
-
-/// The ids of `patterns`, comma-separated.
-fn ids_of(patterns: &[&Pattern]) -> String {
-    patterns
-        .iter()
-        .map(|pattern| pattern.id)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-/// The patterns of the lesson issues among the proposals, in the order given, when each is one that could stand.
-fn lesson_patterns(lessons: &[Proposed], rules: &Rules<'_>) -> Result<Vec<&'static Pattern>> {
-    if lessons.is_empty() {
-        return Ok(Vec::new());
-    }
-    if rules.lesson_issues == 0 {
-        return Err(refuse(
-            "No lesson issue is asked for: give every change an empty lessonSentences.".to_owned(),
-        ));
-    }
-    if lessons.len() > rules.lesson_issues {
-        return Err(refuse(format!(
-            "There are {} lesson issues. Give at most {}: the other changes are for the patterns asked for.",
-            lessons.len(),
-            rules.lesson_issues
-        )));
-    }
-    let mut taken: Vec<&'static Pattern> = Vec::with_capacity(lessons.len());
-    for lesson in lessons {
-        let Some(known) = rules
-            .patterns
-            .iter()
-            .find(|known| known.id == lesson.pattern)
-            .copied()
-        else {
-            return Err(refuse(format!(
-                "{} is not a pattern of the catalogue for this code.",
-                lesson.pattern
-            )));
-        };
-        for (position, &number) in lesson.lesson_sentences.iter().enumerate() {
-            if number == 0 || number > rules.evidence {
-                return Err(refuse(format!(
-                    "The lesson issue for {} cites L{number}, which is not in the brief's evidence (L1 to L{}).",
-                    known.id, rules.evidence
-                )));
-            }
-            if lesson
-                .lesson_sentences
-                .iter()
-                .take(position)
-                .any(|earlier| *earlier == number)
-            {
-                return Err(refuse(format!(
-                    "The lesson issue for {} cites L{number} twice.",
-                    known.id
-                )));
-            }
-        }
-        if taken.iter().any(|earlier| earlier.id == known.id) {
-            return Err(refuse(format!(
-                "There are 2 lesson issues for {}. Every change is of a different pattern.",
-                known.id
-            )));
-        }
-        taken.push(known);
-    }
-    Ok(taken)
 }
 
 /// The mutation a proposal makes, when it is one that could stand.
@@ -388,7 +257,6 @@ fn mutation_of(proposal: Proposed, target: &Pattern, rules: &Rules<'_>) -> Resul
         consequence: proposal.consequence,
         explanation: proposal.explanation,
         verification,
-        lesson_sentences: proposal.lesson_sentences,
     })
 }
 

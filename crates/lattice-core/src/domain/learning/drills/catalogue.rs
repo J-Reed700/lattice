@@ -6,7 +6,6 @@
 use serde::{Deserialize, Serialize};
 
 use super::drill::Material;
-use super::fences::fenced_blocks;
 
 /// The kind of problem a pattern is. The catalogue lists families in this
 /// order, and a pattern's id begins with its family's slug. The first nine are
@@ -163,13 +162,37 @@ pub const LANGUAGES: [&str; 15] = [
 ];
 
 /// The language of `LANGUAGES` most of the fenced code in `texts` is written in, ties going to the one listed first;
-/// `None` when no fence names one. A fenced block's info string's first word names its language.
+/// `None` when no fence names one. A fence opens on a line of three or more backticks or tildes indented at most three
+/// spaces, its info string's first word names the language, and the next fence of the same mark closes it.
 pub fn language_of_code(texts: &[&str]) -> Option<&'static str> {
     let mut counts: Vec<(&'static str, usize)> = LANGUAGES.iter().map(|&name| (name, 0)).collect();
     for text in texts {
-        for block in fenced_blocks(text) {
-            let word = block
-                .info
+        let mut open: Option<char> = None;
+        for line in text.lines() {
+            let fence = line.trim_start_matches(' ');
+            if line.len() - fence.len() > 3 {
+                continue;
+            }
+            let Some(mark) = fence
+                .chars()
+                .next()
+                .filter(|&mark| mark == '`' || mark == '~')
+            else {
+                continue;
+            };
+            let info = fence.trim_start_matches(mark);
+            if fence.len() - info.len() < 3 {
+                continue;
+            }
+            if open == Some(mark) {
+                open = None;
+                continue;
+            }
+            if open.is_some() {
+                continue;
+            }
+            open = Some(mark);
+            let word = info
                 .trim_start()
                 .split(|c: char| c.is_whitespace() || c == '{')
                 .next()

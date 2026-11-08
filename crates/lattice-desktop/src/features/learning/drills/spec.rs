@@ -1,4 +1,4 @@
-//! What one drill is built for: the material, the lesson of the course it is built from, the size and the patterns to
+//! What one drill is built for: the material, the area of code or the topic of a passage, the size and the patterns to
 //! plant.
 
 use lattice_core::domain::learning::drills::{pattern, Material, Pattern, LANGUAGES};
@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 pub struct DrillSpec {
     /// What is reviewed.
     pub material: Material,
-    /// The topic the learner asked for. No writer reads it: a drill is about its lesson, and the writers take the
-    /// lesson's title as its domain.
+    /// What the code is about, or the topic a passage is about. `None`: the bank picks a domain for code, and a
+    /// passage may be about anything in the course's sources.
     pub domain: Option<String>,
     /// The size the learner chose, a target for the prompt: lines of code, or sentences of an explanation.
     pub lines: u32,
@@ -58,12 +58,6 @@ impl TryFrom<StoredSpec> for DrillSpec {
             lesson_id: stored.lesson_id,
         })
     }
-}
-
-/// Whether a drill of `material` with `lines` and `patterns` patterns can be asked for: code in a language drills are
-/// written in, or a passage; at least one line of code or sentence; and at least one pattern.
-pub fn check_request(_material: &Material, _lines: u32, _patterns: usize) -> Result<()> {
-    Ok(())
 }
 
 impl DrillSpec {
@@ -119,15 +113,6 @@ impl DrillSpec {
             ));
         }
         self.targets().map(drop)
-    }
-
-    /// The most issues of the drill that may come from its lesson: half of them, rounded up, for code; none for a
-    /// passage.
-    pub fn lesson_issues(&self) -> usize {
-        match self.material.language() {
-            Some(_) => self.patterns.len().div_ceil(2),
-            None => 0,
-        }
     }
 
     /// The course a passage is taken from: the spec's course, when it names one that says something.

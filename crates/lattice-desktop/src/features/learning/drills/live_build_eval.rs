@@ -22,8 +22,8 @@ use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 use super::support::{
-    code, literals_mutation, planted, proved, quiet, review, stock, unchecked, KILLING_TEST,
-    LITERALS, MODEL, OPERATOR, SUITE,
+    code, literals_mutation, planted, proved, quiet, review, stock, KILLING_TEST, LITERALS, MODEL,
+    OPERATOR, SUITE,
 };
 use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
@@ -123,7 +123,6 @@ fn models_of(stored: &StoredDrill) -> Vec<ModelCall> {
     ];
     trails.extend(evidence.proofs.iter().map(|proof| &proof.trail));
     trails.extend(evidence.dropped.iter().map(|dropped| &dropped.trail));
-    trails.extend(evidence.lesson_checks.iter().map(|check| &check.trail));
     trails.push(&evidence.blind_review.trail);
     trails
         .into_iter()
@@ -816,15 +815,7 @@ async fn the_markdown_says_why_a_defect_was_dropped_and_what_the_blind_review_ma
     drill.evidence.blind_review = {
         let mut blind: BlindReview = quiet();
         blind.trail.call("blind review", "another-model");
-        Evidence::new(
-            &code(),
-            &review(),
-            &planted(),
-            &proved(),
-            &unchecked(),
-            &blind,
-        )
-        .blind_review
+        Evidence::new(&code(), &review(), &planted(), &proved(), &blind).blind_review
     };
     let counts = counts_of(&drill);
     let text = markdown(&drill, &counts, 1.0);

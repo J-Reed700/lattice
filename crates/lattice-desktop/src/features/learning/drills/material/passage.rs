@@ -1,9 +1,9 @@
 //! An explanation of a passage of a course's source as the material of a drill
 //! (docs/design/2026-11-05-spot-the-errors-drills.md sections 2, 4 and 5). The passage is taken from the course's
-//! sources, for the lesson the drill is built from; the model explains it, one sentence to a line, and every sentence
-//! the source does not support is rewritten from it or dropped. A planted error is proven against the source: the
-//! sentence it replaces is supported with an exact quote, and the planted one is contradicted or unsupported. A
-//! learner's fix of such an error is checked against the source the same way.
+//! least-drilled source; the model explains it, one sentence to a line, and every sentence the source does not
+//! support is rewritten from it or dropped. A planted error is proven against the source: the sentence it replaces is
+//! supported with an exact quote, and the planted one is contradicted or unsupported. A learner's fix of such an error
+//! is checked against the source the same way.
 
 mod blind;
 mod check;
