@@ -30,9 +30,9 @@ jobs:
       max-parallel: 6
       matrix:
         include:
-          # A question edit that repeats another question, and its content token.
+          # A refusal carries its sentence alone.
           - mode: red
-            sha: de5db6813eccb0d1f50c2d0cde5c318f81f953c9
+            sha: 2e239d201be9915b1065a0492c541ebbe5d644c7
             built_as_is: true
     steps:
       - uses: actions/checkout@v4
