@@ -15,7 +15,7 @@ use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::segmentation::{
-    sentences, Boundaries, Break, Prose, Span, Strength,
+    flowed_sentences, Boundaries, Break, Flowed, Span, Strength,
 };
 use lattice_index::passage_index::indexed_term;
 use sqlx::SqlitePool;
@@ -217,8 +217,9 @@ async fn owners(pool: &SqlitePool, program_id: &str) -> Result<HashMap<String, S
 }
 
 /// The places of `text`: its paragraphs, a paragraph of at least twice `wanted` sentences cut into runs of at least
-/// `wanted`. A run is cut only at a break of strength `Sentence`, the end of a sentence inside a line, never at a line
-/// break, so a run starts where a sentence starts; the last run takes the sentences left over. The places tile `text`.
+/// `wanted`. Text is read as flowed: a line break that only wraps a line is no break, so each piece between breaks is a
+/// sentence or a block, and a run starts where a sentence or a block starts; the last run takes the pieces left over.
+/// The places tile `text`.
 fn places(text: &str, wanted: usize) -> Vec<Span> {
     let mut places = Vec::new();
     if text.is_empty() {
@@ -226,7 +227,7 @@ fn places(text: &str, wanted: usize) -> Vec<Span> {
     }
     let mut start = 0;
     let mut inner: Vec<Break> = Vec::new();
-    for cut in Prose
+    for cut in Flowed
         .breaks(text)
         .into_iter()
         .filter(|cut| cut.strength >= Strength::Sentence)
@@ -266,7 +267,7 @@ fn runs_of(text: &str, paragraph: Span, inner: &[Break], wanted: usize, out: &mu
             before += 1;
             left = left.saturating_sub(1);
         }
-        if wanted > 0 && cut.strength == Strength::Sentence && before >= wanted && left >= wanted {
+        if wanted > 0 && before >= wanted && left >= wanted {
             out.push(run..cut.at);
             run = cut.at;
             before = 0;
@@ -295,7 +296,7 @@ fn sized(
     };
     loop {
         let (from, to) = span(first, last)?;
-        if sentences(text.get(from..to)?).len() >= wanted {
+        if flowed_sentences(text.get(from..to)?).len() >= wanted {
             break;
         }
         if last + 1 < places.len() {

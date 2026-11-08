@@ -3,7 +3,7 @@
 
 use super::drill::{LessonLink, LessonSentence};
 use super::fences::fenced_blocks;
-use crate::shared::text::segmentation::sentences;
+use crate::shared::text::segmentation::flowed_sentences;
 use serde::{Deserialize, Serialize};
 
 /// What a drill is told of the lesson it is built from: the course, the module, the lesson, and evidence of what the
@@ -150,7 +150,7 @@ pub fn evidence_units(text: &str) -> Vec<String> {
 
 /// The sentences of `prose`, added to `units`.
 fn prose_units(prose: &str, units: &mut Vec<String>) {
-    for (start, end) in sentences(prose) {
+    for (start, end) in flowed_sentences(prose) {
         if let Some(sentence) = prose.get(start..end).map(str::trim) {
             if !sentence.is_empty() {
                 units.push(sentence.to_owned());

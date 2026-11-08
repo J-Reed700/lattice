@@ -54,8 +54,10 @@ resumed build and every later stage see the same text:
 - **The lesson:** title and objective.
 - **Evidence, numbered L1, L2, ….**
   - *A prepared lesson:* its teaching blocks (explanation, worked example, contrast, recap) cut into sentences with
-    the core segmenter. A fenced code block counts as one unit. The check, practice and reflection blocks are left
-    out because they are questions, not teaching.
+    the core's `Flowed` segmenter: the `Prose` breaks, except that a line break which only wraps a line is not a cut;
+    a sentence end at a line end still is, and so is a line that opens a block (list item, quote, heading, table row,
+    rule). A fenced code block counts as one unit. The check, practice and reflection blocks are left out because they
+    are questions, not teaching.
   - *An outline lesson:* the course's source passages retrieved for the lesson, each under its source title. The query
     is the lesson's title and objective plus the module's title and outcomes, through `ReferenceCollection` as
     `snapshot_passages` does. It takes as much as the lesson's planned minutes take to read
@@ -116,13 +118,16 @@ The passage comes from the lesson:
 - *An outline lesson:* the course's sources.
 
 Either way the passages are ranked by the brief's query. A passage is the hit's paragraph grown to hold the
-explanation's sentences, and a paragraph holding at least twice that many is cut at sentence ends into runs of that
-many, the last taking any left over. Of the places the first page of hits overlaps, the pick is the one no drill has
-used that holds the most of the search's term weight; a tie goes to the better-ranked hit. When the first page holds
-none unused, the next, twice as deep, is read. Once all have been used, it is the one used longest ago, because drilling
-a lesson again on the same passage is the point of relearning. The explanation is written with the lesson's title as its
-topic. Clean review, planting and the source check are unchanged. If the sources hold no passage for the lesson, that
-build fails with the reason, and the lesson is recorded as having nothing to drill from in passages (§7).
+explanation's sentences, and a paragraph holding at least twice that many is cut into runs of that many, the last taking
+any left over. Sentences are counted and cut as flowed text: a line break that only wraps a line is not a sentence end,
+while a list item, table row or heading is a unit of its own, so a hard-wrapped source gives the same runs as an
+unwrapped one. Of the places the first page of hits overlaps, the pick is the one no drill has used that holds the most
+of the search's term weight; a tie goes to the better-ranked hit. When the first page holds none unused, the next, twice
+as deep, is read. Once all have been used, it is the one used longest ago, because drilling a lesson again on the same
+passage is the point of relearning. The explanation is written with the lesson's title as its topic. Clean review,
+planting and the source check are unchanged, except that the source check shows the checker the passage's sentences as
+flowed text too. If the sources hold no passage for the lesson, that build fails with the reason, and the lesson is
+recorded as having nothing to drill from in passages (§7).
 
 ## 5. What comes back when: two schedules
 
