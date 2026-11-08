@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { COMMAND_PLUGINS } from '@/shared/ipc/routes.generated';
 
 import { learningApi } from './client';
+import { lessonReviewApi } from './lessonReview';
 
 type Listener = ((message: unknown) => void) | undefined;
 
@@ -28,6 +29,12 @@ beforeEach(() => {
 });
 
 describe('learningApi', () => {
+  it('carries every lesson review command', () => {
+    for (const [name, call] of Object.entries(lessonReviewApi)) {
+      expect(learningApi[name as keyof typeof learningApi]).toBe(call);
+    }
+  });
+
   it('sends every method to a registered command through the plugin that owns it', async () => {
     const methods = Object.entries(learningApi) as [string, (...args: unknown[]) => Promise<unknown>][];
     expect(methods.length).toBeGreaterThan(100);
