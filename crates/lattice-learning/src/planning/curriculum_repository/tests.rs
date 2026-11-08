@@ -368,7 +368,7 @@ async fn a_job_an_update_ended_says_so_and_another_does_not() -> Result<()> {
         .bind(&ended.id)
         .execute(&pool)
         .await
-        .map_err(crate::features::learning::persistence::db)?;
+        .map_err(crate::persistence::db)?;
     let other = repo
         .start_lesson_job(&start(&program.modules[0].lessons[0].id))
         .await?;
