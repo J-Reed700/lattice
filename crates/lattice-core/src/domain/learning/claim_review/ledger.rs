@@ -580,7 +580,8 @@ impl ClaimLedgerEntry {
             ClaimEvent::Executed { .. }
             | ClaimEvent::Stopped { .. }
             | ClaimEvent::SentenceCut { .. }
-            | ClaimEvent::TextRemoved { .. } => {}
+            | ClaimEvent::TextRemoved { .. }
+            | ClaimEvent::SectionEdited { .. } => {}
             ClaimEvent::PublishedUnverified { reason } => {
                 if !matches!(
                     next.state,

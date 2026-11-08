@@ -8,10 +8,10 @@ import { claimItem, review } from '@/features/learning/lessons/review/claimRevie
 import type { LessonClaimReviewDto } from '@/lib/bindings';
 
 // A statement of a published lesson opens the editor for its section, at its sentence.
-const api = vi.hoisted(() => ({ review: vi.fn(), audit: vi.fn(), plan: vi.fn(), trust: vi.fn(), program: vi.fn(), edit: vi.fn() }));
+const api = vi.hoisted(() => ({ review: vi.fn(), audit: vi.fn(), plan: vi.fn(), trust: vi.fn(), program: vi.fn(), edit: vi.fn(), resolve: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, getLearningLessonAudit: api.audit, getLearningPlan: api.plan, getLearningSourceTrust: api.trust,
-  getLearningProgram: api.program, editLearningLessonSection: api.edit,
+  getLearningProgram: api.program, editLearningLessonSection: api.edit, resolveLearningClaim: api.resolve,
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
 } }));
 vi.mock('@/features/reading/components/viewers/MarkdownViewer', () => ({ MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div> }));
@@ -31,6 +31,11 @@ const statement = claimItem({
   availableActions: ['confirm', 'edit', 'remove', 'attach_evidence'],
   location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null },
   presentation: { statement: SENTENCE, sentence: SENTENCE, contextBefore: 'Boiling is a phase change.', contextAfter: 'Pressure matters.', place: 'Section 1 · Boiling' },
+});
+const neighbour = claimItem({
+  ...statement, claimId: 'claim-3', statement: 'Pressure matters.',
+  location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: 'Pressure matters.', span: null },
+  presentation: { statement: 'Pressure matters.', sentence: 'Pressure matters.', contextBefore: SENTENCE, contextAfter: '', place: 'Section 1 · Boiling' },
 });
 const inAnswerKey = claimItem({
   ...statement, claimId: 'claim-2',
@@ -76,6 +81,19 @@ describe('Claim review screen: editing the section of a statement', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getAllByRole('status').some((node) => node.textContent === 'Section saved.')).toBe(true);
+  });
+
+  it('replaces the Undo of an earlier action with the saved line, so the edit is not undone one statement at a time', async () => {
+    api.resolve.mockResolvedValue(ok({ revision: 45 }));
+    show(review([statement, neighbour], { state: 'ready', counts }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Accept' }));
+    expect(await screen.findByRole('button', { name: 'Undo' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Edit the section' }));
+    await userEvent.type(await screen.findByLabelText('Title'), ' again');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getAllByRole('status').some((node) => node.textContent === 'Section saved.')).toBe(true);
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
   });
 
   it('does not offer it before the lesson is published', async () => {

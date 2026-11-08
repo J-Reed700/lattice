@@ -476,3 +476,65 @@ pub(super) async fn undo_in(
     }
     Ok(done)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lattice_core::domain::learning::claim_review::{ClaimLocation, UnitKind};
+
+    const SENTENCE: &str = "The reader keeps every field name exactly as written.";
+    const BODY: &str = "The reader keeps every field name exactly as written. Another follows.";
+
+    fn provenance(actor: Actor) -> EventProvenance {
+        EventProvenance {
+            actor,
+            at: 1,
+            job_id: None,
+            app_version: "test".into(),
+            checker_model: None,
+        }
+    }
+
+    fn append(entry: &mut ClaimLedgerEntry, actor: Actor, event: ClaimEvent) {
+        entry.append(provenance(actor), event).unwrap();
+    }
+
+    fn remove() -> ClaimEvent {
+        ClaimEvent::UserAction {
+            action: UserAction::Remove,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn a_removal_with_no_record_of_its_own_is_not_undoable_though_an_earlier_one_has_a_record() {
+        let mut entry = ClaimLedgerEntry::extracted(
+            ClaimId("a".into()),
+            provenance(Actor::Machine),
+            ClaimLocation::locate(0, UnitKind::Block, "body", SENTENCE, BODY),
+            SENTENCE.into(),
+        )
+        .unwrap();
+        append(
+            &mut entry,
+            Actor::Machine,
+            ClaimEvent::TextRemoved {
+                text: SENTENCE.into(),
+                follows: None,
+                precedes: Some("Another follows.".into()),
+            },
+        );
+        append(&mut entry, Actor::User, remove());
+        assert!(undoable_in_published(&entry));
+        let removed = entry.undo_target().unwrap();
+        append(
+            &mut entry,
+            Actor::User,
+            ClaimEvent::Undone {
+                event_ordinal: removed,
+            },
+        );
+        append(&mut entry, Actor::User, remove());
+        assert!(!undoable_in_published(&entry));
+    }
+}

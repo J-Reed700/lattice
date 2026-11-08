@@ -138,6 +138,16 @@ mod tests {
     }
 
     fn removed_by_user(mut entry: ClaimLedgerEntry, at: i64) -> (ClaimLedgerEntry, u32) {
+        entry
+            .append(
+                provenance(Actor::Machine, at),
+                ClaimEvent::TextRemoved {
+                    text: SENTENCE.into(),
+                    follows: None,
+                    precedes: Some(NEIGHBOUR.into()),
+                },
+            )
+            .unwrap();
         let ordinal = entry
             .append(
                 provenance(Actor::User, at),
@@ -148,6 +158,35 @@ mod tests {
             )
             .unwrap();
         (entry, ordinal)
+    }
+
+    fn removed_by_section_edit(mut entry: ClaimLedgerEntry, at: i64) -> ClaimLedgerEntry {
+        entry
+            .append(provenance(Actor::Machine, at), ClaimEvent::SectionEdited {})
+            .unwrap();
+        entry
+            .append(
+                provenance(Actor::User, at),
+                ClaimEvent::UserAction {
+                    action: UserAction::Remove,
+                    note: None,
+                },
+            )
+            .unwrap();
+        entry
+    }
+
+    fn removed_without_a_record(mut entry: ClaimLedgerEntry, at: i64) -> ClaimLedgerEntry {
+        entry
+            .append(
+                provenance(Actor::User, at),
+                ClaimEvent::UserAction {
+                    action: UserAction::Remove,
+                    note: None,
+                },
+            )
+            .unwrap();
+        entry
     }
 
     fn undone(mut entry: ClaimLedgerEntry, ordinal: u32, at: i64) -> ClaimLedgerEntry {
@@ -378,6 +417,36 @@ mod tests {
         let mut findings = [waiting(0, "quotation:section-0")];
         name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
         assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
+        assert_eq!(named(&findings), [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn a_sentence_a_section_edit_deleted_shows_removed_with_its_latest_removal_time_and_no_claim_ids(
+    ) {
+        let before = both();
+        let first = removed_by_section_edit(claim("a", 0, SENTENCE, &before), 100);
+        let second = removed_by_section_edit(claim("b", 0, SENTENCE, &before), 250);
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(
+            &ledger(vec![first, second]),
+            &bodies(0, NEIGHBOUR),
+            &mut findings,
+        );
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
+        assert_eq!(findings[0].resolution, Some(TeachingResolutionDto::Removed));
+        assert_eq!(findings[0].resolved_at, Some(250));
+        assert_eq!(named(&findings), [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn a_removal_with_no_recorded_text_shows_removed_with_no_claim_ids() {
+        let before = both();
+        let entry = removed_without_a_record(claim("a", 0, SENTENCE, &before), 100);
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
+        assert_eq!(findings[0].resolution, Some(TeachingResolutionDto::Removed));
+        assert_eq!(findings[0].resolved_at, Some(100));
         assert_eq!(named(&findings), [Vec::<String>::new()]);
     }
 }

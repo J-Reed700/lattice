@@ -231,7 +231,8 @@ impl ClaimEventPayloadDto {
             | ClaimEvent::CitationDropped { .. }
             | ClaimEvent::PublishedUnverified { .. }
             | ClaimEvent::SentenceCut { .. }
-            | ClaimEvent::TextRemoved { .. } => return None,
+            | ClaimEvent::TextRemoved { .. }
+            | ClaimEvent::SectionEdited { .. } => return None,
         })
     }
 }

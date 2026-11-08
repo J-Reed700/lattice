@@ -129,6 +129,13 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
     expect(screen.queryByRole('checkbox', { name: 'Select the note on Section 1: Part 1' })).not.toBeInTheDocument();
   });
 
+  it('shows a removed note that has no claims to undo with no Undo and says the section is where to bring it back', () => {
+    show([note(0, { state: 'resolved', resolution: 'removed', resolvedAt: 5, claimIds: [] }), note(1)]);
+    expect(within(card(0)).getByText('Removed from the lesson')).toBeVisible();
+    expect(within(card(0)).getByText('Edit the section to bring it back.')).toBeVisible();
+    expect(within(card(0)).queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+  });
+
   it('takes a removed note back with one undo call on its claims and the review revision, and settles nothing', async () => {
     show([note(0, { state: 'resolved', resolution: 'removed', resolvedAt: 5, claimIds: ['claim-0a', 'claim-0b'] })]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Undo' }));

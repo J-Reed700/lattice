@@ -864,6 +864,10 @@ pub enum ClaimEvent {
         follows: Option<String>,
         precedes: Option<String>,
     },
+    /// The user's edit of the claim's whole section ended it with the user
+    /// event that follows: editing the section again takes that back, an
+    /// undo of the claim alone does not.
+    SectionEdited {},
 }
 
 impl ClaimEvent {
@@ -890,6 +894,7 @@ impl ClaimEvent {
             Self::PublishedUnverified { .. } => "published_unverified",
             Self::SentenceCut { .. } => "sentence_cut",
             Self::TextRemoved { .. } => "text_removed",
+            Self::SectionEdited { .. } => "section_edited",
         }
     }
 }

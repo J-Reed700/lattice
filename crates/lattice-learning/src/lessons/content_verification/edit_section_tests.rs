@@ -10,6 +10,7 @@
 use super::claim_ledger_tests::{figure, lesson, section, unreadable, Course, Figures};
 use super::GOOD;
 use crate::content_verification::{digest, LessonVerificationReport, Rewritten};
+use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::{ClaimReviewService, SectionEdit, SectionEditOutcome};
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
@@ -871,4 +872,71 @@ async fn a_title_whose_statement_is_edited_is_written_as_a_statement_confirmed_b
         }
     ));
     Ok(())
+}
+
+const EDITED_THE_SECTION: &str =
+    "This changed when you edited the section. Edit the section again to change it back.";
+
+async fn offered_for(course: &Course, claim: &ClaimId) -> Result<Vec<String>> {
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .expect("the published lesson has its review");
+    let review = serde_json::to_value(&review)?;
+    let item = review["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["claimId"] == json!(claim.0))
+        .unwrap_or_else(|| panic!("{}: {review}", claim.0));
+    Ok(item["availableActions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|action| action.as_str().unwrap().to_owned())
+        .collect())
+}
+
+async fn undo(course: &Course, claim: &ClaimId) -> Result<i64> {
+    let revision = ledger(course).await?.revision.0;
+    ClaimReviewService::new(course.pool.clone())
+        .resolve(
+            &course.lesson_id,
+            &claim.0,
+            ClaimActionRequestDto::Undo,
+            revision,
+        )
+        .await
+}
+
+/// A claim a section edit ended offers no Undo, and an Undo on it writes nothing.
+async fn assert_no_undo_after(body: &str, statement: &str) -> Result<()> {
+    let course = unchecked().await?;
+    let old = entry_for(&ledger(&course).await?, statement)
+        .claim_id()
+        .clone();
+    rewrite(&course, 0, "Section 0", body, false).await?;
+    let seen = snapshot(&course).await?;
+
+    let offered = offered_for(&course, &old).await?;
+    assert!(
+        !offered.iter().any(|action| action == "undo"),
+        "{offered:?}"
+    );
+    match undo(&course, &old).await {
+        Err(AppError::InvalidState(message)) => assert_eq!(message, EDITED_THE_SECTION),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(snapshot(&course).await?, seen);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_a_section_edit_changed_offers_no_undo_and_an_undo_is_refused() -> Result<()> {
+    assert_no_undo_after(&written_over(), GOOD).await
+}
+
+#[tokio::test]
+async fn a_statement_a_section_edit_deleted_offers_no_undo_and_an_undo_is_refused() -> Result<()> {
+    assert_no_undo_after(&without_statement(), GOOD).await
 }
