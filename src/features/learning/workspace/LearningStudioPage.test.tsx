@@ -26,7 +26,7 @@ vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCours
 vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({ CourseDrillsPanel: ({ programId }: { programId: string }) => <p>{`Review drills of ${programId}`}</p> }));
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
+  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), prepareModule: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
   documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(), outlineEvidence: vi.fn(), exportAll: vi.fn(),
 }));
 vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
@@ -46,6 +46,7 @@ vi.mock('@/lib/api', () => ({ default: {
   cancelLearningOutline: mocks.cancel,
   acceptLearningProgram: mocks.accept,
   prepareLearningLesson: mocks.prepare,
+  prepareLearningModule: mocks.prepareModule,
   completeLearningLesson: mocks.complete,
   getLearningPlan: mocks.plan,
   getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
@@ -323,6 +324,44 @@ describe('Learning Studio program workflow', () => {
     expect(await screen.findByRole('button', { name: 'Marked complete' })).toBeDisabled();
     expect(within(preparation).getByText('Checking saved evidence for another lesson')).toBeVisible();
     expect(mocks.prepare).not.toHaveBeenCalled();
+  });
+
+  it('prepares every lesson of a module from the module header', async () => {
+    const user = userEvent.setup();
+    const active = program('active');
+    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.prepareModule.mockResolvedValue(ok(active));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
+    await waitFor(() => expect(mocks.prepareModule).toHaveBeenCalledWith({ programId: 'program-1', moduleId: 'module-1', expectedRevision: 1 }));
+    expect(mocks.prepare).not.toHaveBeenCalled();
+  });
+
+  it('lets the learner prepare another lesson while one is being prepared', async () => {
+    const user = userEvent.setup();
+    const active = program('active');
+    const running: LearningGenerationJob = {
+      id: 'running-job', programId: active.summary.id, operationId: 'preparation', kind: 'lesson_preparation',
+      payloadSha256: 'fixture', baseRevisionNumber: 1, status: 'running', progressCompleted: 0,
+      activity: null, progressTotal: 1, progressMessage: 'Checking saved evidence',
+      lessonIds: ['lesson-1'], resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 60_000,
+      startedAt: Date.now() - 60_000, finishedAt: null,
+    };
+    mocks.plan.mockResolvedValue(ok({ jobs: [running] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.prepare.mockResolvedValue(ok(active));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: /^Read a worked example/ }));
+    const card = screen.getByRole('button', { name: /^Read a worked example/ }).closest('article') as HTMLElement;
+    const prepare = await within(card).findByRole('button', { name: 'Prepare lesson' });
+    expect(prepare).toBeEnabled();
+    await user.click(prepare);
+    await waitFor(() => expect(mocks.prepare).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-2', expectedRevision: 1 }));
   });
 
   it('shows preparation as one line on other tabs, with View returning to the status and its Details on Lessons', async () => {

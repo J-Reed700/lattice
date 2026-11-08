@@ -160,6 +160,15 @@ pub struct StartLearningGenerationJobRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct StartLearningModuleJobsRequestDto {
+    pub operation_id: String,
+    pub program_id: String,
+    pub module_id: String,
+    pub expected_revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct LearningGenerationJobActionRequestDto {
     pub operation_id: String,
     pub program_id: String,
