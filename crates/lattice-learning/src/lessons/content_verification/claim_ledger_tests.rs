@@ -2352,7 +2352,6 @@ impl Course {
                 revision,
                 &[(self.lesson_id.clone(), lesson)],
                 &[],
-                &[],
             )
             .await?;
 

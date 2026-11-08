@@ -14,7 +14,7 @@ export const PREPARATION_PHASES: Record<LearningGenerationPhase, PreparationPhas
   research: { title: 'Researching unresolved statements', detail: 'Searching for relevant, authoritative references, saving complete pages and checking whether they resolve the evidence gaps.', next: 'Review newly retrieved evidence and reuse unchanged checks; revise affected sections if needed.', group: 4 },
   repair: { title: 'Repairing the draft', detail: 'Revising affected sections using the recorded problems and evidence. Each repaired section is saved before work continues.', next: 'Review and verify the revised lesson. Unchanged checks can be reused.', group: 4 },
   questions: { title: 'Writing quiz questions', detail: 'Writing practice questions from the verified lesson. Each question and its answer key is checked before it is kept; a question that fails a check is left out.', next: 'Save the lesson and its quiz questions.', group: 5 },
-  publishing: { title: 'Saving the verified lesson', detail: 'Confirming the lesson and sources still match the verification report, then making the finished material available.', next: 'The prepared lesson opens for study.', group: 6 },
+  publishing: { title: 'Saving the verified lesson', detail: 'Confirming the lesson and sources still match the verification report, then making the finished material available.', next: 'The prepared lesson opens for study.', group: 5 },
 };
 
 /**

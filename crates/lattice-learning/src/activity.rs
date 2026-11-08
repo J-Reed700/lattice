@@ -159,8 +159,7 @@ fn progress_step(phase: LearningGenerationPhase) -> u8 {
         LearningGenerationPhase::Evidence
         | LearningGenerationPhase::Research
         | LearningGenerationPhase::Repair => 4,
-        LearningGenerationPhase::Questions => 5,
-        LearningGenerationPhase::Publishing => 6,
+        LearningGenerationPhase::Questions | LearningGenerationPhase::Publishing => 5,
     }
 }
 

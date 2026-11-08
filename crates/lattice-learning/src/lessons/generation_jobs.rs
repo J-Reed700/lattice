@@ -100,7 +100,6 @@ impl JobHandler for LessonGenerationWorker {
                     prepared.revision,
                     &prepared.staged,
                     &prepared.held,
-                    &prepared.banks,
                 )
                 .await
             {
@@ -128,8 +127,6 @@ struct Prepared {
     revision: i64,
     staged: Vec<(String, crate::dto::PreparedLearningLesson)>,
     held: Vec<crate::content_verification::HeldForReview>,
-    /// Each staged lesson's quiz bank, where its stage wrote one.
-    banks: Vec<(String, crate::quiz_bank_jobs::LessonBank)>,
 }
 
 impl LessonGenerationWorker {
@@ -402,55 +399,6 @@ impl LessonGenerationWorker {
                 break;
             }
         }
-        // The quiz bank stage (step 3 of 3): written from the verified
-        // blocks, saved per lesson, and never a reason to hold the lesson
-        // back. A lesson whose bank could not be written is published with its
-        // own reviewed questions and says "Questions not prepared yet".
-        let mut banks = Vec::new();
-        for (lesson_id, prepared) in &staged {
-            let Some(lesson) = candidates.iter().find(|l| &l.id == lesson_id) else {
-                continue;
-            };
-            let key = format!(
-                "quiz-bank-v1:{}",
-                crate::content_verification::digest(&serde_json::to_string(&prepared.blocks)?)
-            );
-            if let Some(saved) = repo
-                .lesson_checkpoint(job_id, lesson_id, &key)
-                .await?
-                .and_then(|v| serde_json::from_value(v).ok())
-            {
-                banks.push((lesson_id.clone(), saved));
-                continue;
-            }
-            match crate::quiz_bank_jobs::lesson_bank_stage(
-                llm.as_ref(),
-                &self.pool,
-                &job.program_id,
-                lesson_id,
-                &lesson.title,
-                &lesson.objective,
-                &prepared.blocks,
-                &prepared.questions,
-                &prepared.keys,
-            )
-            .await
-            {
-                Ok(bank) => {
-                    repo.save_lesson_checkpoint(
-                        job_id,
-                        lesson_id,
-                        &key,
-                        serde_json::to_value(&bank)?,
-                    )
-                    .await?;
-                    banks.push((lesson_id.clone(), bank));
-                }
-                Err(error) => {
-                    tracing::warn!(lesson_id, %error, "The lesson's quiz questions could not be written; publishing the lesson without them");
-                }
-            }
-        }
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Publishing,
             "Publishing verified lesson material",
@@ -459,7 +407,6 @@ impl LessonGenerationWorker {
             revision: program.summary.revision,
             staged,
             held,
-            banks,
         })
     }
 }

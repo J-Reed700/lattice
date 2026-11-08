@@ -2,8 +2,8 @@
 //! `quiz_bank` writes a quiz's question bank, `quiz_grading` grades written
 //! answers and short-answer near-misses, and contests' blind regrades. Both
 //! are stoppable, size every model call to the window, and never time out; a
-//! stopped grading job leaves its items pending, never failed. The lesson
-//! job's own bank stage is [`lesson_bank_stage`].
+//! stopped grading job leaves its items pending, never failed. A lesson's
+//! publication queues a `quiz_bank` job running [`lesson_bank_stage`].
 use crate::assessment_engine::{self as engine, LearningItemFormat};
 use crate::assessment_generation::{
     self as generation, AuthoredItem, AuthoringNeed, MaterialPassage, RawGrade, ShortAnswer,
@@ -11,8 +11,8 @@ use crate::assessment_generation::{
 };
 use crate::assessment_repository::{BankItem, ItemGrade, LearningAssessmentRepository};
 use crate::dto::{
-    LearningAssessmentGradeStatus, LearningBlockDto, LearningQuizScopeDto, LearningQuizScopeKind,
-    LessonAnswerKey, LessonQuestion, LessonQuestionKind,
+    LearningAssessmentGradeStatus, LearningQuizScopeDto, LearningQuizScopeKind, LessonAnswerKey,
+    LessonQuestion, LessonQuestionKind,
 };
 use crate::grade_rationale::{self, Checked, Grader, Reference};
 use crate::persistence::{db, now};
@@ -33,7 +33,7 @@ use std::sync::Arc;
 pub const QUIZ_BANK: &str = "learning.quiz_bank";
 pub const QUIZ_GRADING: &str = "learning.quiz_grading";
 
-#[cfg(test)]
+/// The checkpoint a lesson's quiz job saves its stage's output under.
 pub(crate) const LESSON_BANK_CHECKPOINT: &str = "lesson-bank-v1";
 
 /// The Learning model, pinned for the whole job.
@@ -163,6 +163,30 @@ pub async fn queue_bank(
     Ok(id)
 }
 
+/// Queue writing a published lesson's quiz bank, in the transaction that
+/// publishes the lesson. The caller tells the runtime once it commits.
+pub(crate) async fn queue_lesson_bank_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    lesson_id: &str,
+) -> Result<String> {
+    queue_in(
+        connection,
+        QUIZ_BANK,
+        program_id,
+        uuid::Uuid::new_v4().to_string(),
+        json!({
+            "programId": program_id,
+            "scope": {"kind": "lesson", "id": lesson_id},
+            "topUp": false,
+            "lessonStage": true,
+        }),
+        1,
+        "Waiting to write quiz questions",
+    )
+    .await
+}
+
 /// What writing a bank produced.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BankReport {
@@ -252,6 +276,14 @@ impl JobHandler for QuizBankWorker {
             tx.commit().await.map_err(db)?;
             needs
         };
+        let lesson_stage = job
+            .requested
+            .get("lessonStage")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if lesson_stage && !needs.is_empty() {
+            return self.run_lesson_stage(context, &program_id, &scope).await;
+        }
         if needs.is_empty() {
             return Ok(JobOutcome::Completed {
                 result_ref: "quiz_bank:0".into(),
@@ -317,6 +349,107 @@ impl JobHandler for QuizBankWorker {
 
     fn failure(&self, job: &JobRecord, error: &AppError) -> JobFailure {
         crate::curriculum_repository::lesson_failure(job, error)
+    }
+}
+
+impl QuizBankWorker {
+    /// A published lesson's bank: its stage runs once on the lesson's own
+    /// rows, and its output is saved before it is inserted.
+    async fn run_lesson_stage(
+        &self,
+        context: &JobContext,
+        program_id: &str,
+        scope: &LearningQuizScopeDto,
+    ) -> Result<JobOutcome> {
+        let lesson_id = scope
+            .id
+            .as_deref()
+            .ok_or_else(|| AppError::InvalidInput("The quiz job names no lesson.".into()))?;
+        context
+            .progress(0, "Writing this lesson's quiz questions", None)
+            .await?;
+        let saved: Option<LessonBank> = context
+            .checkpoint(LESSON_BANK_CHECKPOINT)
+            .await?
+            .and_then(|value| serde_json::from_value(value).ok());
+        let bank = match saved {
+            Some(bank) => bank,
+            None => {
+                let (title, objective, material, seeds) = {
+                    let mut tx = self.pool.begin().await.map_err(db)?;
+                    let (title, objective): (String, String) = sqlx::query_as(
+                        "SELECT title,objective FROM learning_lessons WHERE id=? AND program_id=?",
+                    )
+                    .bind(lesson_id)
+                    .bind(program_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db)?
+                    .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
+                    let material =
+                        LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id)
+                            .await?;
+                    let seeds = LearningAssessmentRepository::lesson_seeds_in(
+                        &mut tx, program_id, lesson_id,
+                    )
+                    .await?;
+                    tx.commit().await.map_err(db)?;
+                    (title, objective, material, seeds)
+                };
+                let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
+                    return Ok(JobOutcome::Stopped);
+                };
+                let pin = pin?;
+                let Some(bank) = context
+                    .until_cancelled(lesson_bank_stage(
+                        pin.llm.as_ref(),
+                        &self.pool,
+                        program_id,
+                        lesson_id,
+                        &title,
+                        &objective,
+                        material,
+                        seeds,
+                    ))
+                    .await
+                else {
+                    return Ok(JobOutcome::Stopped);
+                };
+                let bank = bank?;
+                context
+                    .put_checkpoint(LESSON_BANK_CHECKPOINT, &serde_json::to_value(&bank)?)
+                    .await?;
+                bank
+            }
+        };
+        let items: Vec<BankItem> = bank
+            .items
+            .into_iter()
+            .map(|authored| {
+                let mut item = authored.candidate;
+                item.outcome_ids = vec![bank.outcome_id.clone()];
+                BankItem {
+                    item,
+                    source_quote: authored.source_quote,
+                    lesson_id: Some(lesson_id.to_owned()),
+                    origin: "bank",
+                    review_status: "agreed",
+                }
+            })
+            .collect();
+        let mut tx = self.pool.begin().await.map_err(db)?;
+        let written = crate::assessment_repository::insert_bank_items_in(
+            &mut tx,
+            program_id,
+            &items,
+            bank.author_model.as_deref(),
+        )
+        .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(JobOutcome::Completed {
+            result_ref: format!("quiz_bank:{written}"),
+            message: format!("{written} questions written."),
+        })
     }
 }
 

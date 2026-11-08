@@ -93,7 +93,7 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
         lessons: &[(String, crate::dto::PreparedLearningLesson)],
     ) -> Result<()> {
-        self.publish_prepared(id, expected_revision, lessons, &[], &[])
+        self.publish_prepared(id, expected_revision, lessons, &[])
             .await
     }
 
@@ -106,7 +106,6 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
         lessons: &[(String, crate::dto::PreparedLearningLesson)],
         held: &[crate::content_verification::HeldForReview],
-        banks: &[(String, crate::quiz_bank_jobs::LessonBank)],
     ) -> Result<()> {
         if lessons.is_empty() || lessons.len() + held.len() > 3 {
             return Err(AppError::InvalidInput(
@@ -181,39 +180,22 @@ impl LearningCurriculumRepository {
             }
             sqlx::query("UPDATE learning_lessons SET preparation='ready',curriculum_state='ready' WHERE id=? AND program_id=?").bind(lesson_id).bind(&program_id).execute(&mut *tx).await.map_err(db)?;
             // The lesson's quiz (section 5.4): its outcome, its own reviewed
-            // questions and the bank its stage wrote, then its blueprint.
-            let bank = banks.iter().find(|(id, _)| id == lesson_id).map(|(_, b)| b);
+            // questions and its blueprint; a quiz job writes the rest.
             let outcome_id = crate::quiz_blueprints::ensure_lesson_outcome_in(
                 &mut tx,
                 &program_id,
                 lesson_id,
-                bank.map(|b| b.outcome_id.as_str()),
+                None,
             )
             .await?;
-            let mut items = crate::quiz_bank_jobs::lesson_seed_items(
+            let items = crate::quiz_bank_jobs::lesson_seed_items(
                 lesson_id,
                 &outcome_id,
                 &prepared.questions,
                 &prepared.keys,
             );
-            for authored in bank.map(|b| b.items.as_slice()).unwrap_or_default() {
-                let mut item = authored.candidate.clone();
-                item.outcome_ids = vec![outcome_id.clone()];
-                items.push(crate::assessment_repository::BankItem {
-                    item,
-                    source_quote: authored.source_quote.clone(),
-                    lesson_id: Some(lesson_id.clone()),
-                    origin: "bank",
-                    review_status: "agreed",
-                });
-            }
-            crate::assessment_repository::insert_bank_items_in(
-                &mut tx,
-                &program_id,
-                &items,
-                bank.and_then(|b| b.author_model.as_deref()),
-            )
-            .await?;
+            crate::assessment_repository::insert_bank_items_in(&mut tx, &program_id, &items, None)
+                .await?;
             crate::quiz_blueprints::ensure_blueprint_in(
                 &mut tx,
                 &program_id,
@@ -223,6 +205,7 @@ impl LearningCurriculumRepository {
                 },
             )
             .await?;
+            crate::quiz_bank_jobs::queue_lesson_bank_in(&mut tx, &program_id, lesson_id).await?;
         }
         // Publish a new immutable accepted snapshot together with the prepared
         // lesson records and the program revision. The old accepted snapshot
