@@ -1,5 +1,5 @@
-//! Stage 1 for a passage: the passage is picked from the course's sources, and the model explains it the way a
-//! classmate's study note would, one sentence to a line.
+//! Stage 1 for a passage: the passage is picked from the course's sources and checked to teach the lesson, and the
+//! model explains it the way a classmate's study note would, one sentence to a line.
 
 use super::{explanation_text, pick, sentences_needed, PassageMaterial, EXPLANATION_PATH};
 use crate::drills::budget;
@@ -51,7 +51,12 @@ impl PassageMaterial<'_> {
             let mut connection = ctx.pool.acquire().await.map_err(db)?;
             schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?
         };
-        let Some(source) = pick::pick(ctx.pool, &context, spec.lines).await? else {
+        let mut trail = Trail::default();
+        let picked = pick::pick(ctx.pool, ctx.llm, &context, spec.lines).await?;
+        for _ in 0..picked.asked {
+            trail.call("passage check", ctx.llm.model_name());
+        }
+        let Some(source) = picked.passage else {
             let mut connection = ctx.pool.acquire().await.map_err(db)?;
             schedules::record_fit_in(
                 &mut connection,
@@ -64,7 +69,7 @@ impl PassageMaterial<'_> {
             )
             .await?;
             return Err(AppError::InvalidInput(format!(
-                "The course's sources hold no passage for the lesson \"{}\".",
+                "The course's sources hold no passage that teaches the lesson \"{}\".",
                 context.lesson
             )));
         };
@@ -77,7 +82,6 @@ impl PassageMaterial<'_> {
             "low",
         );
         let asked = ask_request(ctx.llm, request, |raw| read(raw, needed, spec.lines)).await?;
-        let mut trail = Trail::default();
         trail.call("clean explanation", ctx.llm.model_name());
         Ok(CleanCode {
             drill_id: uuid::Uuid::new_v4().to_string(),

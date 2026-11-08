@@ -14,6 +14,7 @@ mod pick;
 mod plant;
 mod prove;
 mod review;
+mod teaches;
 
 #[cfg(test)]
 pub(crate) use check::finding_of;
