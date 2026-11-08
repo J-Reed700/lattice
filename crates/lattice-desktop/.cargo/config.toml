@@ -8,15 +8,8 @@ snap-accept = "insta accept"
 snap-reject = "insta reject"
 snap-check = "insta test --check"
 
-# Stack size optimization for macOS
-# Increases stack size from default 2MB to 8MB to prevent overflow during:
-# - ONNX Runtime 2.0 model initialization (heavy ML dependencies)
-# - Deep async call chains in tokio worker threads
-# - Complex HTML parsing (e.g., Reddit pages) with scraper/html5ever
-# - Recursive content extraction algorithms in article extractor
-# Note: Using RUST_MIN_STACK environment variable instead of linker flags
-# to avoid applying -stack_size to library dependencies
-
+# RUST_MIN_STACK sizes the threads std spawns in processes Cargo runs (tests, `cargo run`).
+# The main thread's stack is set at link time by build_support/main_thread_stack.rs.
 [env]
 RUST_MIN_STACK = "33554432"
 # Enable SQLx offline mode - use pre-generated query metadata from .sqlx/ directory
@@ -29,8 +22,3 @@ rustflags = [
     "-A", "clippy::unwrap_used",
     "-A", "clippy::expect_used",
 ]
-
-# Increase stack size for all threads, including Tokio workers.
-# RUST_MIN_STACK only affects main thread - must use BOTH approaches:
-# 1. RUST_MIN_STACK for main thread (already set above)
-# 2. Tokio thread pool config in code (see setup/app.rs)
