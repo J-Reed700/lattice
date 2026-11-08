@@ -7,6 +7,7 @@ import { invalidateLearningSourceDependents } from '@/features/learning/api/lear
 import { learningClaimReviewKey, learningLessonEvidencePrefix } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import type { AttachEvidenceDto, AttachScopeDto, ClaimAttachProgressDto, ClaimAttachReportDto } from '@/lib/bindings';
+import { failureToError } from '@/lib/errorHandling';
 
 export type AddSourceVariables = {
   expectedRevision: number;
@@ -46,7 +47,7 @@ export function useAddSource(programId: string, lessonId: string) {
         ? await api.attachLearningLessonSource({ programId, lessonId, expectedRevision, evidence }, onProgress)
         : await api.attachLearningClaimEvidence({ programId, lessonId, claimId: variables.claimId, expectedRevision, evidence, scope: variables.scope }, onProgress);
       if (run.current !== token) return null;
-      if (!result.ok) throw new Error(result.error);
+      if (!result.ok) throw failureToError(result);
       return result.data;
     },
     onSettled: async () => {

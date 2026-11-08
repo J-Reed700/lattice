@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { useApi } from '@/contexts/ApiContext';
 import { useEditLearningLessonQuestion, useLearningLessonQuestion } from '@/features/learning/lessons/review/useLessonClaimReview';
 import type { LessonQuestionDto } from '@/lib/bindings';
+import { refusalSentence } from '@/lib/errorHandling';
 
 const DRY_RUN_DELAY_MS = 400;
 const MIN_CHOICES = 2;
@@ -69,7 +70,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
           setChecked(result.data.checkedStatementsAffected);
           setDryError(null);
         } else {
-          setDryError(result.error);
+          setDryError(refusalSentence({ message: result.error, code: result.details?.code }));
         }
       })();
     }, DRY_RUN_DELAY_MS);
@@ -156,7 +157,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
             onChange={(event) => setDraft((value) => ({ ...value, explanation: event.target.value }))} className={field} />
         </div>
         <p aria-live="polite" className="min-h-5 text-sm leading-6 text-text-secondary">{line}</p>
-        {save.error && <p role="alert" className="text-sm text-danger-fg">{save.error.message}</p>}
+        {save.error && <p role="alert" className="text-sm text-danger-fg">{refusalSentence(save.error)}</p>}
         {asking ? (
           <div role="group" aria-label="Discard your changes?" className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium text-text-primary">Discard your changes?</p>
@@ -192,7 +193,7 @@ function Loading({ questionIndex, error, onClose }: { questionIndex: number; err
 function QuestionEditorLoader(props: Props) {
   const { programId, lessonId, questionIndex, onClose } = props;
   const question = useLearningLessonQuestion(programId, lessonId, questionIndex);
-  if (!question.data) return <Loading questionIndex={questionIndex} error={question.error?.message ?? null} onClose={onClose} />;
+  if (!question.data) return <Loading questionIndex={questionIndex} error={question.error ? refusalSentence(question.error) : null} onClose={onClose} />;
   return <EditorBody programId={programId} lessonId={lessonId} questionIndex={questionIndex} opened={question.data} onClose={onClose} onSaved={props.onSaved} />;
 }
 

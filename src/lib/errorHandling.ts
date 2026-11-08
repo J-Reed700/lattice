@@ -176,9 +176,16 @@ export function describeFailure(failure: ApiFailure): string {
     : failure.error;
 }
 
+/** What the backend puts before the text of these two refusals. */
+const REFUSAL_PREFIXES: Partial<Record<ErrorCode, string>> = {
+  [ErrorCode.INVALID_INPUT]: 'Invalid input: ',
+  [ErrorCode.INVALID_STATE]: 'Invalid state: ',
+};
+
 /** The sentence a refused call carries, without the category the backend puts before it. */
 export function refusalSentence(error: { message: string; code?: unknown }): string {
-  return error.message;
+  const prefix = REFUSAL_PREFIXES[errorCode(error.code)];
+  return prefix && error.message.startsWith(prefix) ? error.message.slice(prefix.length) : error.message;
 }
 
 /** The error a failed call carries to a component, keeping its code and the backend's own text. */
