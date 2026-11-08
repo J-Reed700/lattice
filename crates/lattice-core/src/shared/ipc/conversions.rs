@@ -139,7 +139,7 @@ impl From<AppError> for ApiError {
 
             AppError::InvalidInput(ref msg) => ApiError {
                 code: ErrorCode::InvalidInput,
-                message: format!("Invalid input: {}", msg),
+                message: msg.clone(),
                 details: None,
             },
             AppError::PromptExceedsWindow { ref message, .. } => ApiError {
@@ -154,7 +154,7 @@ impl From<AppError> for ApiError {
             },
             AppError::InvalidState(ref msg) => ApiError {
                 code: ErrorCode::InvalidState,
-                message: format!("Invalid state: {}", msg),
+                message: msg.clone(),
                 details: None,
             },
 
