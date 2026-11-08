@@ -10,6 +10,7 @@ import type {
   LessonQuestionDto,
   LessonQuestionEditDto,
   LessonSectionEditDto,
+  RemoveLearningTeachingSentencesResultDto,
   ResolveLearningClaimResultDto,
   SnapshotNoteDto,
   TeachingSettleDto,
@@ -76,6 +77,23 @@ export function useResolveLearningClaims(programId: string, lessonId: string) {
     retry: false,
     mutationFn: async ({ claimIds, action, expectedRevision }) => unwrap(await api.resolveLearningClaims({
       programId, lessonId, claimIds, action, expectedRevision, operationId: operationId(),
+    })),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
+  });
+}
+
+/**
+ * Takes the sentences of teaching notes out of a published lesson through
+ * `remove_learning_teaching_sentences`: all of them or none, with one
+ * revision. The review reloads after success and after a refusal.
+ */
+export function useRemoveTeachingSentences(programId: string, lessonId: string) {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation<RemoveLearningTeachingSentencesResultDto, Error, { findingKeys: string[]; expectedRevision: number }>({
+    retry: false,
+    mutationFn: async ({ findingKeys, expectedRevision }) => unwrap(await api.removeLearningTeachingSentences({
+      programId, lessonId, findingKeys, expectedRevision,
     })),
     onSettled: () => refreshAfterAction(client, programId, lessonId),
   });

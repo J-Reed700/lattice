@@ -451,3 +451,12 @@ fn the_writers_lesson_sequence_gives_each_lessons_objective_and_marks_the_curren
     );
     assert_eq!(sequence[1]["current"], json!(false));
 }
+
+#[test]
+fn the_lesson_writers_prompt_says_to_name_a_choice_by_its_words() {
+    let text = writer_requirements();
+
+    assert!(text.contains(
+        "An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them."
+    ));
+}

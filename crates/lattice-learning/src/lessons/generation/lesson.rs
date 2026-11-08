@@ -183,7 +183,7 @@ fn lesson_prompt(
             "For Python or JavaScript code in a worked_example, contrast or check, put each complete independently runnable program in a labeled python or javascript Markdown fence, including imports, inputs and output-producing calls. Use Python's standard library or plain ECMAScript only; no network, host files, input prompts, packages, or browser/Node APIs. Use text, output, csv or json fences only for non-executable data. If demonstrating an exception, catch it and print its type. State the expected observation in the surrounding explanation. Do not silently change versions or language to evade verification.",
             "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.",
             "Use exactly four distinct choices and one correct index per question.",
-            "Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler, and explain the reasoning and which misconception each wrong choice reflects.",
+            "Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler, and explain the reasoning and which misconception each wrong choice reflects. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.",
             "evidenceByTopic lists the lesson's topics in teaching order with the sourceIndexes whose excerpts cover each. Teach every topic; a topic with no covering sourceIndex has no evidence.",
             grounding_instructions(grounded),
             citation_instructions(grounded),
@@ -507,20 +507,6 @@ pub async fn prepare_lesson_with_references<'a>(
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
     findings.extend(citations);
-    // What the coverage audit found the inventory leaves out waits for the
-    // user too (claim classes design §3.4), unless its part of the lesson
-    // already holds a finding of its own.
-    let held = crate::teaching::held_findings(&value).await?;
-    let blocks = value
-        .get("blocks")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
-    findings.extend(
-        report
-            .coverage_findings(blocks)
-            .into_iter()
-            .filter(|finding| !held.contains(&finding.key())),
-    );
     crate::teaching::record_waiting(&value, findings).await?;
     report.cite_user_evidence(&mut prepared);
     prepared.verification = Some(report.bind(&lesson.id, &prepared)?);

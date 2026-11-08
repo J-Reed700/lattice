@@ -4,7 +4,7 @@ import { LoaderCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ReviewCheckbox, SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
-import { useResolveLearningClaims, useSettleTeachingFindings } from '@/features/learning/lessons/review/useLessonClaimReview';
+import { useRemoveTeachingSentences, useResolveLearningClaims, useSettleTeachingFindings } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import type { TeachingFindingDto, TeachingFindingKindDto } from '@/lib/bindings';
 
@@ -32,6 +32,7 @@ function passageLabel(finding: TeachingFindingDto) {
 
 const BATCH = '';
 const NOT_ONE_SENTENCE = 'Some of these notes are not about one sentence, so they can\'t be removed. Unselect them to remove the rest.';
+const NOT_REMOVABLE = 'This note isn\'t about one whole sentence of a section, so there\'s no sentence to remove. Edit the section, or keep it as written.';
 
 /** The id of a note's card, which takes focus when the user comes back to the notes from Add a source. */
 export const teachingNoteId = (findingKey: string) => `teaching-note-${findingKey}`;
@@ -78,6 +79,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
 }) {
   const settle = useSettleTeachingFindings(programId, lessonId);
   const resolveMany = useResolveLearningClaims(programId, lessonId);
+  const removeNotes = useRemoveTeachingSentences(programId, lessonId);
   const waitingKeys = findings.filter(isTeachingWaiting).map((finding) => finding.findingKey);
   const selection = useReviewSelection(waitingKeys);
   const [acting, setActing] = useState<string | null>(null);
@@ -88,8 +90,9 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
   const chosen = [...selection.selected];
   const byKey = new Map(findings.map((finding) => [finding.findingKey, finding]));
   const canAct = published && revision !== undefined;
-  const aboutOneSentence = (finding: TeachingFindingDto | undefined) => Boolean(finding && isTeachingWaiting(finding) && finding.site === 'section' && finding.claimIds.length > 0);
-  const actionable = (finding: TeachingFindingDto) => canAct && aboutOneSentence(finding);
+  const aboutOneSentence = (finding: TeachingFindingDto | undefined) => Boolean(finding && isTeachingWaiting(finding) && finding.removable);
+  const canRemove = (finding: TeachingFindingDto) => canAct && aboutOneSentence(finding);
+  const canAddSource = (finding: TeachingFindingDto) => canAct && isTeachingWaiting(finding) && finding.site === 'section' && finding.claimIds.length > 0;
   const everyChosenHasASentence = chosen.every((key) => aboutOneSentence(byKey.get(key)));
 
   /** Runs one change; what it returns is what the status line says, and null says nothing. */
@@ -112,15 +115,14 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
     return origin === BATCH ? { kind: 'keep', keys } : null;
   });
 
-  /** Takes the claims on the notes' sentences out in one call; the notes show removed once the review is read again. */
+  /** Takes the notes' sentences out in one call; the notes show removed once the review is read again. */
   const removeSentences = (keys: string[], origin: string) => act(origin, async () => {
-    const claimIds = unique(keys.flatMap((key) => byKey.get(key)?.claimIds ?? []));
     const sentences = new Set(keys.map((key) => {
       const finding = byKey.get(key);
       return `${finding?.unitIndex ?? ''}:${finding?.sentence ?? key}`;
     })).size;
-    const result = await resolveMany.mutateAsync({ claimIds, action: { action: 'remove' }, expectedRevision: revision ?? 0 });
-    return { kind: 'removed', sentences, keys, claimIds, revision: result.revision };
+    const result = await removeNotes.mutateAsync({ findingKeys: keys, expectedRevision: revision ?? 0 });
+    return { kind: 'removed', sentences, keys, claimIds: unique(result.claimIds), revision: result.revision };
   });
 
   const undoRemoval = (origin: string, claimIds: string[], expectedRevision: number, keys: string[]) => act(origin, async () => {
@@ -192,12 +194,10 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
                     ? <>
                       <button type="button" disabled={acting !== null} onClick={() => void keep([finding.findingKey], finding.findingKey)}
                         className={`${smallButton} border-accent/50 text-accent`}>Keep as written</button>
-                      {actionable(finding) && <>
-                        <button type="button" disabled={acting !== null} onClick={() => void removeSentences([finding.findingKey], finding.findingKey)}
-                          className={`${smallButton} border-border text-text-secondary`}>Remove this sentence</button>
-                        <button type="button" disabled={acting !== null} onClick={() => onAddSource?.(finding.claimIds[0], finding.findingKey)}
-                          className={`${smallButton} border-border text-text-secondary`}>Add a source</button>
-                      </>}
+                      {canRemove(finding) && <button type="button" disabled={acting !== null} onClick={() => void removeSentences([finding.findingKey], finding.findingKey)}
+                        className={`${smallButton} border-border text-text-secondary`}>Remove this sentence</button>}
+                      {canAddSource(finding) && <button type="button" disabled={acting !== null} onClick={() => onAddSource?.(finding.claimIds[0], finding.findingKey)}
+                        className={`${smallButton} border-border text-text-secondary`}>Add a source</button>}
                     </>
                     : <>
                       <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700">
@@ -221,7 +221,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
       <SelectionBar count={chosen.length} noun={['teaching note', 'teaching notes']} busy={acting !== null} onClear={selection.clear}
         actions={[
           { label: 'Keep as written', onClick: () => void keep(chosen, BATCH) },
-          ...(canAct ? [{ label: 'Remove these sentences', onClick: () => void removeSentences(chosen, BATCH), disabled: !everyChosenHasASentence, hint: NOT_ONE_SENTENCE, tone: 'danger' as const }] : []),
+          ...(canAct ? [{ label: 'Remove these sentences', onClick: () => void removeSentences(chosen, BATCH), disabled: !everyChosenHasASentence, hint: chosen.length === 1 ? NOT_REMOVABLE : NOT_ONE_SENTENCE, tone: 'danger' as const }] : []),
         ]} />
     </section>
   );

@@ -555,3 +555,10 @@ fn the_recall_schema_bounds_no_text_but_the_quotes_floor() {
         .collect();
     assert!(bounds.is_empty(), "{bounds:?}");
 }
+
+#[test]
+fn the_writer_is_told_never_to_name_a_source_in_the_text() {
+    let instructions = citation_instructions(true);
+    assert!(instructions.contains("Never name a source or an excerpt in the lesson's text"));
+    assert!(instructions.contains("cite that sentence in the citations list"));
+}

@@ -269,7 +269,7 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 1. **Quotes (code, `teaching/quotes.rs`):** restore typography; on the second attempt, re-anchor a quote the author could not match to the nearest real passage (`reanchor_lesson_quotes`: the span sharing at least 60% of the quote's terms, else the span sharing the most terms with the item). Citations are provenance; claims are checked separately.
 2. **Answer keys:** `answer_review::check` solves each question blind (reason-first) and compares with the key.
-3. **Section review:** `teaching_review::review` (policy `section-review-v3`). The reviewer is asked for "at most six concise, actionable defects"; more are kept if returned. Findings are bound to app-owned passages by `review_evidence` (policy `review-finding-protocol-v2`): each finding retrieves passages with `ReferenceCollection::retrieve_within` up to its equal share of the binding call's room (output 6,000, reserved twice); the answer lists at most 8 evidence IDs per finding.
+3. **Section review:** `teaching_review::review` (policy `section-review-v3`). The reviewer is asked for "at most six concise, actionable defects"; more are kept if returned. Findings are bound to app-owned passages by `review_evidence` (policy `review-finding-protocol-v3`): each finding retrieves passages with `ReferenceCollection::retrieve_within` up to its equal share of the binding call's room (output 6,000, reserved twice); the answer lists at most 8 evidence IDs per finding, and an actionable decision names the part it changes in `partId` (a candidate ID or `lesson`), which is where a reviewer issue without a site is filed.
 4. **One repair** of listed issues (one `complete_json_with_progress` call, the lesson schema), then a final review.
 - **Receipts:** `teaching-sources:<digest>` and the teaching receipt (policy `lesson-teaching-review`). An unchanged candidate with unchanged sources is not reviewed again.
 - **Error:** "The teaching review still found an issue: ... No material was published. Try again."
@@ -288,7 +288,7 @@ The authoring context (prompt, sources, reference hashes) is saved (`lesson_draf
 
 ### L9. Coverage audit
 
-`content_verification/coverage.rs` (policy `passage-coverage-v9`). A mapping review accounts for every passage under its exact ID (`coverage/mapping.rs`). A fidelity judge then lists, per passage, the factual assertions the inventory fails to represent (`missingAssertions`). They are reported as teaching findings, never adopted as claims (claim classes design §3.5, item 2); a specific the audit finds missing (a figure, a quotation, an attribution) joins the inventory in the first pass, so it is checked. A malformed answer gets one correction and is never read as a gap. Phase `Coverage`.
+`content_verification/coverage.rs` (policy `passage-coverage-v9`). A mapping review accounts for every passage under its exact ID (`coverage/mapping.rs`). A fidelity judge then lists, per passage, the factual assertions the inventory fails to represent (`missingAssertions`). Each one the rule layer does not make Internal joins the inventory in the first pass and is sorted and checked like any other statement (claim classes design §3.4); one the rule layer makes Internal stays on the coverage, recorded in the report. A malformed answer gets one correction and is never read as a gap. Phase `Coverage`.
 
 ### L10. Examples
 
@@ -414,7 +414,7 @@ Values on `lesson/design` (claim classes design).
 | `lesson-topic-evidence` | `lessons/generation/evidence.rs` `POLICY` | Lesson evidence plans and coverage judgements |
 | `lesson-authoring` | `lessons/generation/lesson.rs` `AUTHORING_POLICY` | The reusable authoring context; evidence is gathered again and the lesson rewritten |
 | `lesson-draft` | `lessons/generation/lesson.rs` (draft input hash) | The saved lesson draft |
-| `lesson-teaching-review`, `section-review-v3`, `review-finding-protocol-v2` | `lessons/teaching.rs`, `teaching_review.rs`, `review_evidence.rs` | Teaching review receipts |
+| `lesson-teaching-review`, `section-review-v3`, `review-finding-protocol-v3` | `lessons/teaching.rs`, `teaching_review.rs`, `review_evidence.rs` | Teaching review receipts |
 | `lesson-evidence-v8` (`INVENTORY_POLICY`) | `lessons/content_verification/mod.rs` | Claim inventory checkpoints |
 | `passage-coverage-v9` | `lessons/content_verification/coverage.rs` `POLICY` | The coverage audit (the inventory is kept) |
 | `lesson-evidence-v21` (`POLICY`) | `lessons/content_verification/mod.rs` | Claim receipts (`claim-v1:`), the research query log (`research-v1:`), pending repairs, and every report: `prepared-v1` checkpoints stop being reusable and must be verified again |

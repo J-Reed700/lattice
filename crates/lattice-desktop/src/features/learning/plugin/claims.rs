@@ -73,6 +73,29 @@ pub struct ResolveLearningClaimResultDto {
     pub revision: i64,
 }
 
+/// The teaching notes whose sentences the user takes out of a published
+/// lesson's sections.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveLearningTeachingSentencesRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
+    /// The notes' `findingKey`s from the review.
+    pub finding_keys: Vec<String>,
+    /// The review's revision the user acted on.
+    pub expected_revision: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveLearningTeachingSentencesResultDto {
+    /// The review's revision after the removal.
+    pub revision: i64,
+    /// The claims the removal ended, in the order it ended them: send them to
+    /// `resolve_learning_claims` with `undo` and `revision` to take it back.
+    pub claim_ids: Vec<String>,
+}
+
 /// Evidence the user attaches, and the claims it is checked for (UI design
 /// §5.3).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -322,6 +345,32 @@ pub async fn resolve_learning_claims(
         )
         .await?;
     Ok(ResolveLearningClaimResultDto { revision })
+}
+
+/// Takes the sentence of every chosen teaching note out of its section, all
+/// or nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_learning_teaching_sentences(
+    request: RemoveLearningTeachingSentencesRequestDto,
+    container: State<'_, Container>,
+) -> Result<RemoveLearningTeachingSentencesResultDto, ApiError> {
+    in_course(
+        &claim_ledger(&container).load(&request.lesson_id).await?,
+        &request.program_id,
+    )?;
+    let removed = claim_reviews(&container)
+        .await?
+        .remove_note_sentences(
+            &request.lesson_id,
+            &request.finding_keys,
+            request.expected_revision,
+        )
+        .await?;
+    Ok(RemoveLearningTeachingSentencesResultDto {
+        revision: removed.revision,
+        claim_ids: removed.claim_ids,
+    })
 }
 
 /// The lesson's review belongs to the course the request names.
