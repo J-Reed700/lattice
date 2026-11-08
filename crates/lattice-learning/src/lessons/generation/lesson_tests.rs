@@ -387,7 +387,7 @@ fn the_writer_teaches_the_learners_setup_and_every_step_it_asks_for() {
     let text = writer_requirements();
     assert!(
         text.contains(
-            "Teach for the system and tools that programGoal and priorKnowledge describe."
+            "Teach for the learner's own situation, systems and tools as programGoal and priorKnowledge describe them."
         ),
         "{text}"
     );
@@ -397,7 +397,7 @@ fn the_writer_teaches_the_learners_setup_and_every_step_it_asks_for() {
     );
     assert!(
         text.contains(
-            "Teach every action a practice or check asks the learner to perform within this lesson"
+            "Within this lesson, teach every action a practice or check asks the learner to perform"
         ),
         "{text}"
     );
@@ -413,7 +413,7 @@ fn the_writer_keeps_to_its_own_lesson_and_writes_steps_and_questions_well() {
     assert!(text.contains("at most a one-line pointer"), "{text}");
     assert!(
         text.contains(
-            "Write a worked_example's steps as a numbered Markdown list, one step per item"
+            "Write a worked_example's steps as a numbered Markdown list, one step per item; where a step has the learner type or enter something"
         ),
         "{text}"
     );
