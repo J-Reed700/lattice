@@ -103,3 +103,5 @@ mod found_by_search_tests;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+
+// CI demo commit: this pull request changes lattice-learning only, and never merges.
