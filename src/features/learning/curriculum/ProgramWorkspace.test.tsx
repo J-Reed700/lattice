@@ -5,6 +5,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { review, unsupportedItem } from '@/features/learning/lessons/review/claimReviewTestData';
 import { quizOverview } from '@/features/learning/quizzes/quizTestData';
@@ -102,8 +103,7 @@ const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob =
   ...overrides,
 });
 
-function show(course: LearningProgramDto, onReview = vi.fn(), destination?: StudyDestination) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function show(course: LearningProgramDto, onReview = vi.fn(), destination?: StudyDestination, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   render(<QueryClientProvider client={client}>
     <ProgramWorkspace program={course} destination={destination} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
       onPrepare={vi.fn()} preparePending={false} onComplete={vi.fn()} completePending={false}
@@ -137,6 +137,22 @@ describe('Course page', () => {
     // No internal revision number and no claim text on the course page.
     expect(screen.queryByText(/Revision 9/)).not.toBeInTheDocument();
     expect(screen.queryByText('Statement number 1.')).not.toBeInTheDocument();
+  });
+
+  it('does not show preparation an update ended as the course\'s current preparation', async () => {
+    const plan = { programId: 'program-1', jobs: [
+      job({ status: 'cancelled', endedByUpdate: true, progressMessage: 'Preparation starts again under the new pipeline', createdAt: Date.now() - 600_000, finishedAt: Date.now() - 300_000 }),
+    ] };
+    api.plan.mockResolvedValue({ ok: true, data: plan });
+    api.review.mockResolvedValue({ ok: true, data: null });
+    // Loaded before the first render: with the plan still on its way, any page would pass the checks below.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(learningPlanKey('program-1'), plan);
+    show(program(GOAL), vi.fn(), undefined, client);
+    expect((await screen.findAllByRole('button', { name: 'Prepare lesson' })).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('region', { name: 'Lesson preparation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Resume lesson preparation' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
   });
 
   it('has Quizzes as a primary tab, and Practice keeps only written practice and code', async () => {

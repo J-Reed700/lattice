@@ -1,5 +1,5 @@
 //! Lesson generation jobs: starting, cancelling, retrying and reading them with their scope.
-use super::generation_recovery::LESSON_PREPARATION;
+use super::generation_recovery::{ENDED_BY_UPDATE, LESSON_PREPARATION};
 use super::{
     curriculum_operation, stable_job_operation_id, validate_operation_id, JobScope,
     LearningCurriculumRepository,
@@ -494,6 +494,7 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
         QUIZ_GRADING => LearningGenerationJobKind::QuizGrading,
         _ => return Err(AppError::Database("Invalid generation job kind".into())),
     };
+    let ended_by_update = job.error_code.as_deref() == Some(ENDED_BY_UPDATE);
     let job = LearningGenerationJob {
         id: job.id,
         program_id: scope.program_id,
@@ -522,6 +523,7 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
         error_code: job
             .cause_code
             .and_then(|code| serde_json::from_value(serde_json::Value::String(code)).ok()),
+        ended_by_update,
         retry_of_job_id: job.retry_of_job_id,
         created_at: job.created_at,
         started_at: job.started_at,

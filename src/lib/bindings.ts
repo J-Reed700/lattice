@@ -7743,7 +7743,11 @@ export type LearningGenerationJob = { id: string; programId: string; operationId
  * The code of the error behind `error`, for a job that failed or is
  * waiting out a temporary failure; `None` otherwise.
  */
-errorCode?: ErrorCode | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+errorCode?: ErrorCode | null;
+/**
+ * Ended by an update that replaced how lessons are prepared: history, not an attempt to resume.
+ */
+endedByUpdate?: boolean; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**

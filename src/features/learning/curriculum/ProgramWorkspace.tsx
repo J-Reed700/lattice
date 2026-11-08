@@ -140,7 +140,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   );
   const visibleOutlineEvidence = showCitations && !outlineEvidence.isError ? outlineEvidence.data : null;
   const preparationPlan = useLearningPlan(activeProgram ? program.summary.id : '', preparePending);
-  const preparationJobs = preparationPlan.data?.jobs?.filter((job) => job.kind === 'lesson_preparation').sort((a, b) => b.createdAt - a.createdAt) ?? [];
+  const preparationJobs = preparationPlan.data?.jobs?.filter((job) => job.kind === 'lesson_preparation' && !job.endedByUpdate).sort((a, b) => b.createdAt - a.createdAt) ?? [];
   const preparationJob = preparationJobs.find((job) => job.status === 'running') ?? preparationJobs.find((job) => job.status === 'pending') ?? preparationJobs[0];
   const preparingLesson = preparePending || Boolean(preparationPlan.data?.jobs?.some((job) => ['pending', 'running'].includes(job.status)));
   // A course step that would prepare a lesson only opens it while the course's references index.

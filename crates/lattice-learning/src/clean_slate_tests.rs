@@ -11,6 +11,9 @@ use std::str::FromStr;
 /// The migration under test.
 const CLEAN_SLATE: i64 = 20_261_102_100_000;
 
+/// The migration that ends what the clean slate left as it was.
+const ENDED_BY_UPDATE_MIGRATION: i64 = 20_261_107_000_300;
+
 fn migrator() -> Migrator {
     sqlx::migrate!("../lattice-desktop/migrations")
 }
@@ -213,7 +216,8 @@ async fn the_clean_slate_ends_unfinished_preparation_and_drops_the_old_pipelines
         .await,
         "cancelled:Preparation starts again under the new pipeline"
     );
-    // A job that had finished keeps its status; its checkpoints and staged
+    // A completed job keeps its status, and one that failed under the old
+    // pipeline ends as the clean slate's own did; the checkpoints and staged
     // drafts of lessons that are not ready go, and a ready lesson's stay.
     assert_eq!(
         scalar(&pool, "SELECT status FROM jobs WHERE id = 'j-done'").await,
@@ -221,7 +225,7 @@ async fn the_clean_slate_ends_unfinished_preparation_and_drops_the_old_pipelines
     );
     assert_eq!(
         scalar(&pool, "SELECT status FROM jobs WHERE id = 'j-failed'").await,
-        "failed"
+        "cancelled"
     );
     assert_eq!(
         scalar(
@@ -276,4 +280,201 @@ async fn the_clean_slate_ends_unfinished_preparation_and_drops_the_old_pipelines
         .await
         .unwrap()
         .is_empty());
+}
+
+const ENDED: &str = "Preparation starts again under the new pipeline";
+
+async fn job_state(pool: &SqlitePool, id: &str) -> String {
+    scalar(
+        pool,
+        &format!("SELECT status || '|' || coalesce(error_code, '-') || '|' || coalesce(error_message, '-') || '|' || coalesce(cause_code, '-') || '|' || progress_message || '|' || coalesce(result_ref, '-') || '|' || coalesce(retry_not_before, '-') FROM jobs WHERE id = '{id}'"),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn preparation_that_ended_under_the_old_pipeline_ends_as_history_and_later_attempts_stay() {
+    let pool = memory_pool().await;
+    let migrator = migrator();
+    let mut conn = pool.acquire().await.unwrap();
+    conn.ensure_migrations_table().await.unwrap();
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version < CLEAN_SLATE && !m.migration_type.is_down_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+    drop(conn);
+    exec(&pool, COURSE).await;
+    let old = |id: &str, kind: &str, status: &str, error: &str, message: &str, finished: &str| {
+        format!(
+            "INSERT INTO jobs (id, kind, subject_id, operation_id, payload_hash, status, requested_json, progress_current, progress_total, progress_message, error_code, error_message, result_ref, created_at, finished_at) \
+             VALUES ('{id}', '{kind}', 'p1', 'op-{id}', 'h', '{status}', '{{}}', 0, 1, '{message}', {error}, {finished})"
+        )
+    };
+    let prepare = "learning.lesson_preparation";
+    let seeds = [
+        old(
+            "j-old-failed",
+            prepare,
+            "failed",
+            "'repeated_failure', 'Database error: database is locked', NULL, 1000",
+            "Failed",
+            "2000",
+        ),
+        old(
+            "j-old-paused",
+            prepare,
+            "cancelled",
+            "NULL, NULL, NULL, 1000",
+            "Cancelled",
+            "2000",
+        ),
+        old(
+            "j-old-interrupted",
+            prepare,
+            "interrupted",
+            "'interrupted', 'x', NULL, 1000",
+            "Interrupted",
+            "2000",
+        ),
+        old(
+            "j-old-done",
+            prepare,
+            "completed",
+            "NULL, NULL, 'ref', 1000",
+            "Needs your review",
+            "2000",
+        ),
+        old(
+            "j-old-running",
+            prepare,
+            "running",
+            "NULL, NULL, NULL, 1000",
+            "Checking claims",
+            "NULL",
+        ),
+        old(
+            "j-old-other",
+            "indexing.import",
+            "failed",
+            "'x', 'y', NULL, 1000",
+            "Failed",
+            "2000",
+        ),
+    ];
+    let seeds: Vec<&str> = seeds.iter().map(String::as_str).collect();
+    exec(&pool, &seeds).await;
+    for id in [
+        "j-old-failed",
+        "j-old-paused",
+        "j-old-interrupted",
+        "j-old-running",
+    ] {
+        exec(
+            &pool,
+            &[format!("INSERT INTO job_events (job_id, ordinal, status, progress_current, message, created_at) VALUES ('{id}', 0, 'pending', 0, 'Queued', 1000)").as_str()],
+        )
+        .await;
+    }
+    let mut conn = pool.acquire().await.unwrap();
+    for migration in migrator.iter().filter(|m| {
+        m.version >= CLEAN_SLATE
+            && m.version < ENDED_BY_UPDATE_MIGRATION
+            && !m.migration_type.is_down_migration()
+    }) {
+        conn.apply(migration).await.unwrap();
+    }
+    drop(conn);
+    exec(
+        &pool,
+        &["UPDATE _sqlx_migrations SET installed_on = '2026-11-02 12:00:00' WHERE version = 20261102100000"],
+    )
+    .await;
+    let after = "CAST((julianday('2026-11-03 12:00:00') - 2440587.5) * 86400000 AS INTEGER)";
+    let new_jobs = [
+            format!("INSERT INTO jobs (id, kind, subject_id, operation_id, payload_hash, status, requested_json, progress_current, progress_total, progress_message, error_code, cause_code, error_message, created_at, finished_at) \
+                      VALUES ('j-new-failed', 'learning.lesson_preparation', 'p1', 'op-new-1', 'h', 'failed', '{{}}', 0, 1, 'Failed', 'repeated_failure', 'NETWORK_ERROR', 'z', 1000, {after})"),
+            format!("INSERT INTO jobs (id, kind, subject_id, operation_id, payload_hash, status, requested_json, progress_current, progress_total, progress_message, created_at, finished_at) \
+                      VALUES ('j-new-paused', 'learning.lesson_preparation', 'p1', 'op-new-2', 'h', 'cancelled', '{{}}', 0, 1, 'Cancelled', 1000, {after})"),
+    ];
+    let new_jobs: Vec<&str> = new_jobs.iter().map(String::as_str).collect();
+    exec(&pool, &new_jobs).await;
+
+    migrator.run(&pool).await.unwrap();
+
+    let ended = format!("cancelled|ended_by_update|-|-|{ENDED}|-|-");
+    for id in [
+        "j-old-failed",
+        "j-old-paused",
+        "j-old-interrupted",
+        "j-old-running",
+    ] {
+        assert_eq!(job_state(&pool, id).await, ended, "{id}");
+    }
+    for id in ["j-old-failed", "j-old-paused", "j-old-interrupted"] {
+        assert_eq!(
+            scalar(
+                &pool,
+                &format!("SELECT CAST(finished_at AS TEXT) FROM jobs WHERE id = '{id}'")
+            )
+            .await,
+            "2000",
+            "{id}"
+        );
+        assert_eq!(
+            count(&pool, &format!("job_events WHERE job_id = '{id}'")).await,
+            2,
+            "{id}"
+        );
+        assert_eq!(
+            scalar(
+                &pool,
+                &format!("SELECT status || ':' || message FROM job_events WHERE job_id = '{id}' ORDER BY ordinal DESC LIMIT 1")
+            )
+            .await,
+            format!("cancelled:{ENDED}"),
+            "{id}"
+        );
+    }
+    assert_eq!(
+        count(
+            &pool,
+            &format!("job_events WHERE job_id = 'j-old-running' AND message = '{ENDED}'")
+        )
+        .await,
+        1
+    );
+    assert_eq!(
+        scalar(
+            &pool,
+            "SELECT status || '|' || coalesce(error_code, '-') FROM jobs WHERE id = 'j-old-done'"
+        )
+        .await,
+        "completed|-"
+    );
+    assert_eq!(
+        job_state(&pool, "j-new-failed").await,
+        "failed|repeated_failure|z|NETWORK_ERROR|Failed|-|-"
+    );
+    assert_eq!(
+        scalar(
+            &pool,
+            "SELECT status || '|' || progress_message || '|' || coalesce(error_code, '-') FROM jobs WHERE id = 'j-new-paused'"
+        )
+        .await,
+        "cancelled|Cancelled|-"
+    );
+    assert_eq!(
+        scalar(&pool, "SELECT status FROM jobs WHERE id = 'j-old-other'").await,
+        "failed"
+    );
+    assert!(sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(migrator
+        .iter()
+        .any(|m| m.version == ENDED_BY_UPDATE_MIGRATION));
 }

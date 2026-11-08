@@ -25,7 +25,7 @@ Both modes log to stdout and to a daily-rotated file, keeping the newest 7:
 - Linux: `~/.local/share/lattice/logs/lattice.log.<date>`
 - Windows: `%LOCALAPPDATA%\lattice\logs\lattice.log.<date>`
 
-(`dirs::data_local_dir()/lattice/logs`, separate from the app data directory.)
+(`dirs::data_local_dir()/lattice/logs`, separate from the app data directory.) When `LATTICE_HOME` is set, the logs go to `<LATTICE_HOME>/logs` instead, so a second copy of the app doesn't write into the first one's logs.
 
 `RUST_LOG` sets the filter. When unset, a debug build uses
 `info,lattice=debug,lattice_desktop=debug,tokenizers=error` and a release
