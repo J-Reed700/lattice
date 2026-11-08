@@ -429,6 +429,11 @@ pub(super) fn validate_prepared(
             ));
         }
         not_blank(&k.explanation, "Answer explanation")?;
+        if !k.rationales.is_empty() && k.rationales.len() != q.options.len() {
+            return Err(AppError::InvalidInput(
+                "Answer reasons must be one for each option.".into(),
+            ));
+        }
     }
     if keys.len() != question_ids.len() {
         return Err(AppError::InvalidInput(

@@ -23,7 +23,7 @@ fn block(kind: &str, title: &str, body: &str, cited: bool) -> Value {
 }
 
 fn question(kind: &str, prompt: &str, cited: bool) -> Value {
-    json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":1,"explanation":"Two follows.",
+    json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":1,"rationales":["One fails here.","","Three fails here.","Four fails here."],"explanation":"Two follows.",
         "sourceIndex":if cited { json!(0) } else { Value::Null },
         "quote":if cited { EXCERPT } else { "" },"citations":[]})
 }

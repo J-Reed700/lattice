@@ -145,6 +145,11 @@ pub(crate) fn inputs(content: &[Value]) -> Vec<Value> {
             passages(&unit["body"], "/body", index, &mut text);
         }
         passages(&unit["explanation"], "/explanation", index, &mut text);
+        for (slot, reason) in unit["rationales"].as_array().into_iter().flatten().enumerate() {
+            if reason.as_str().is_some_and(|reason| !reason.trim().is_empty()) {
+                passages(reason, &format!("/rationales/{slot}"), index, &mut text);
+            }
+        }
         let mut input = json!({"index":index,"kind":unit.get("kind"),"correctIndex":unit.get("correctIndex"),"passages":text});
         // A check names misconceptions as wrong below its reveal line
         // (learning science lessons §3.3), as a quiz names wrong options: the

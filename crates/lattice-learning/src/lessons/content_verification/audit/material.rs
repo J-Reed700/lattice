@@ -92,7 +92,7 @@ async fn published(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Resu
         .find(|lesson| lesson.id == lesson_id)
         .ok_or_else(|| AppError::NotFound("This lesson is not in the course.".into()))?;
     // The lesson's own reviewed questions live in its quiz bank.
-    let questions: Vec<Value> = sqlx::query("SELECT c.prompt,c.options_json,k.explanation FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') ORDER BY c.rowid")
+    let questions: Vec<Value> = sqlx::query("SELECT c.prompt,c.options_json,k.explanation,k.distractor_rationales_json FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') ORDER BY c.rowid")
         .bind(program_id)
         .bind(lesson_id)
         .fetch_all(pool)
@@ -105,6 +105,7 @@ async fn published(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Resu
                 "prompt": row.get::<String, _>("prompt"),
                 "options": serde_json::from_str::<Value>(&row.get::<String, _>("options_json")).unwrap_or_default(),
                 "explanation": row.get::<String, _>("explanation"),
+                "rationales": serde_json::from_str::<Value>(&row.get::<String, _>("distractor_rationales_json")).unwrap_or_default(),
             })
         })
         .collect();

@@ -1061,35 +1061,33 @@ async fn the_report_takes_the_questions_new_title_and_text_and_one_confirmed_fin
 }
 
 #[tokio::test]
-async fn the_choices_and_the_right_answer_stored_before_a_change_lose_their_rationales_and_a_prompt_change_keeps_them(
-) -> Result<()> {
+async fn a_prompt_change_keeps_the_reasons_and_the_right_choice_is_left_with_none() -> Result<()> {
     let course = published().await?;
-    sqlx::query(
-        "UPDATE learning_assessment_answer_keys SET distractor_rationales_json=? \
-         WHERE candidate_id IN (SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND prompt=?)",
-    )
-    .bind(r#"["","Trimming is not done.","The column stays.","No error is raised."]"#)
-    .bind(&course.lesson_id)
-    .bind(P0)
-    .execute(&course.pool)
-    .await?;
+    give_the_first_question_its_reasons(&course).await?;
     let kept = rows(&course).await?[0].4.clone();
     let prompt_only = QuestionText {
         prompt: NEW_PROMPT.into(),
-        ..q0()
+        ..reasoned_q0()
     };
-    edit(&course, 0, q0(), prompt_only.clone(), false).await?;
+    edit(&course, 0, reasoned_q0(), prompt_only.clone(), false).await?;
     assert_eq!(rows(&course).await?[0].4, kept);
 
-    let mut choices = C0.map(String::from).to_vec();
-    choices[2] = "It drops the whole column.".into();
-    let changed = QuestionText {
-        choices,
+    let moved = QuestionText {
+        right: Some(2),
+        rationales: vec![
+            "It does keep them.".into(),
+            R0[1].into(),
+            R0[2].into(),
+            R0[3].into(),
+        ],
         ..prompt_only.clone()
     };
-    edit(&course, 0, prompt_only, changed, false).await?;
+    edit(&course, 0, prompt_only, moved, false).await?;
 
-    assert_eq!(rows(&course).await?[0].4, "[]");
+    assert_eq!(
+        stored_reasons(&course).await?,
+        ["It does keep them.", R0[1], "", R0[3]]
+    );
     Ok(())
 }
 

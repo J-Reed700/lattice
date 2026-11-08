@@ -157,7 +157,7 @@ fn grounding_instructions(has_sources: bool) -> &'static str {
 /// citations, with a quote that holds it.
 fn citation_instructions(has_sources: bool) -> &'static str {
     if has_sources {
-        "Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) and an attribution to a source may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps and question explanations state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing."
+        "Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) and an attribution to a source may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing."
     } else {
         "Every citations list is empty: no sources are supplied, so nothing is cited."
     }

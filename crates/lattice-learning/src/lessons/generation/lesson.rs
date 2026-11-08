@@ -111,8 +111,8 @@ pub fn lesson_schema(source_count: usize) -> serde_json::Value {
                 }
             }},
             "questions":{"type":"array","minItems":6,"maxItems":6,"items":{
-                "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","explanation","sourceIndex","quote","citations"],"properties":{
-                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
+                "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","rationales","explanation","sourceIndex","quote","citations"],"properties":{
+                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"rationales":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }}
         }
@@ -179,8 +179,8 @@ fn lesson_prompt(
             "Written practice and tutor feedback review submitted text; they do not execute code or run tests. Do not promise automatic execution, external peer review, or expert certification. A learner may separately run code in a lab after choosing and starting a supported runtime.",
             "For Python or JavaScript code in a worked_example, contrast or check, put each complete independently runnable program in a labeled python or javascript Markdown fence, including imports, inputs and output-producing calls. Use Python's standard library or plain ECMAScript only; no network, host files, input prompts, packages, or browser/Node APIs. Use text, output, csv or json fences only for non-executable data. If demonstrating an exception, catch it and print its type. State the expected observation in the surrounding explanation. Do not silently change versions or language to evade verification.",
             "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.",
-            "Use exactly four distinct choices and one correct index per question.",
-            "Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler, and explain the reasoning and which misconception each wrong choice reflects.",
+            "Use exactly four distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices.",
+            "Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string. The explanation says why the correct answer is right.",
             "evidenceByTopic lists the lesson's topics in teaching order with the sourceIndexes whose excerpts cover each. Teach every topic; a topic with no covering sourceIndex has no evidence.",
             grounding_instructions(grounded),
             citation_instructions(grounded),
@@ -574,7 +574,6 @@ fn assemble(
     let mut questions = Vec::with_capacity(generated.questions.len());
     let mut keys = Vec::with_capacity(generated.questions.len());
     for (index, question) in generated.questions.into_iter().enumerate() {
-        let _ = &question.rationales;
         let mut source_ids = citation(
             sources,
             question.source_index,
@@ -611,7 +610,11 @@ fn assemble(
             question_id,
             correct_index: question.correct_index,
             explanation: question.explanation.trim().to_owned(),
-            rationales: vec![],
+            rationales: question
+                .rationales
+                .iter()
+                .map(|reason| reason.trim().to_owned())
+                .collect(),
         });
     }
     Ok((

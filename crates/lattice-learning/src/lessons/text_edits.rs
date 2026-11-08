@@ -8,7 +8,7 @@ pub(super) const INSTRUCTIONS: &str = "Give edits, never a replacement lesson or
 
 /// What the teaching repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite (claim classes design §3.5).
-const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour, quoted wording or an attribution to a source needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body or explanation, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least 25 characters and five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states.";
+const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour, quoted wording or an attribution to a source needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body, explanation or a choice's reason, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least 25 characters and five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states.";
 
 /// What the claim repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite: its corrected sentence cites the
@@ -126,9 +126,25 @@ struct Cite {
     quote: String,
 }
 
+/// The texts of a block or question a cited sentence may stand in: a block's
+/// body, a question's explanation or any of its choice reasons.
+pub(super) fn citable_texts(part: &Value, question: bool) -> Vec<&str> {
+    let first = part
+        .get(if question { "explanation" } else { "body" })
+        .and_then(Value::as_str);
+    let reasons = part
+        .get("rationales")
+        .and_then(Value::as_array)
+        .filter(|_| question)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    first.into_iter().chain(reasons).collect()
+}
+
 /// Appends `cite` to the citations of the block or question it names. Its
-/// sentence must stand in that part's body or explanation, and the same
-/// citation is not listed twice.
+/// sentence must stand in that part's body, or in a question's explanation
+/// or a choice's reason, and the same citation is not listed twice.
 fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
     let not_a_part = || format!("names {}, which is not a block or a question.", cite.path);
     let (text, index) = if let Some(index) = cite.path.strip_prefix("/blocks/") {
@@ -141,22 +157,30 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
     if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(not_a_part());
     }
+    let sentence = cite.sentence.trim();
+    let target = lesson
+        .pointer(&cite.path)
+        .filter(|part| part.is_object())
+        .ok_or_else(|| format!("names {}, which is not in the draft.", cite.path))?;
+    if sentence.is_empty()
+        || !citable_texts(target, text == "explanation")
+            .iter()
+            .any(|held| held.contains(sentence))
+    {
+        let place = if text == "explanation" {
+            "explanation or choice reasons"
+        } else {
+            text
+        };
+        return Err(format!(
+            "names a sentence that is not in the {place} of {}; copy it exactly.",
+            cite.path
+        ));
+    }
     let part = lesson
         .pointer_mut(&cite.path)
         .and_then(Value::as_object_mut)
         .ok_or_else(|| format!("names {}, which is not in the draft.", cite.path))?;
-    let sentence = cite.sentence.trim();
-    if sentence.is_empty()
-        || !part
-            .get(text)
-            .and_then(Value::as_str)
-            .is_some_and(|held| held.contains(sentence))
-    {
-        return Err(format!(
-            "names a sentence that is not in the {text} of {}; copy it exactly.",
-            cite.path
-        ));
-    }
     let entry = json!({"sentence":sentence,"sourceIndex":cite.source_index,"quote":cite.quote});
     let listed = part
         .entry("citations")

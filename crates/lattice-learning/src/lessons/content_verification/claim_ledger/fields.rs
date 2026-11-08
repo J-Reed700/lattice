@@ -30,7 +30,7 @@ fn unit_fields(item: &Value, block: bool) -> Vec<String> {
     let names: &[&str] = if block {
         &["body", "title", "rubric"]
     } else {
-        &["prompt", "options", "explanation"]
+        &["prompt", "options", "explanation", "rationales"]
     };
     for name in names {
         match item.get(*name) {
@@ -118,7 +118,9 @@ pub(crate) fn locate(
     });
     let kind = match (block, field.as_str()) {
         (true, _) => UnitKind::Block,
-        (false, "explanation") => UnitKind::AnswerKey,
+        (false, field) if field == "explanation" || field.starts_with("rationales/") => {
+            UnitKind::AnswerKey
+        }
         (false, _) => UnitKind::Question,
     };
     let sentence = statement.and_then(|statement| {
