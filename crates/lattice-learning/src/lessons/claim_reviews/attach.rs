@@ -84,6 +84,14 @@ pub struct AttachRequest<'a> {
     pub evidence: Evidence,
 }
 
+/// One source added to a lesson as a whole, as the command received it.
+pub struct LessonSourceRequest<'a> {
+    pub program_id: &'a str,
+    pub lesson_id: &'a str,
+    pub expected_revision: Revision,
+    pub evidence: Evidence,
+}
+
 /// What the attach works with; the command assembles it from the container.
 pub struct AttachDeps<'a> {
     pub pool: &'a SqlitePool,
@@ -284,6 +292,16 @@ pub async fn attach_to(
     let report = attach_reporting(deps, request, others, progress).await;
     progress(ClaimAttachProgressDto::Done);
     report
+}
+
+/// Adds the user's evidence to the lesson as a whole and checks every open
+/// claim of the lesson against it, reporting each stage through `progress`.
+pub async fn attach_to_lesson(
+    _deps: &AttachDeps<'_>,
+    _request: LessonSourceRequest<'_>,
+    _progress: &(dyn Fn(ClaimAttachProgressDto) + Send + Sync),
+) -> Result<ClaimAttachReportDto> {
+    Err(AppError::NotFound("Not built yet".into()))
 }
 
 async fn attach_reporting(
