@@ -226,7 +226,7 @@ export function claimReviewBackend() {
     recount(review);
     progress({ stage: "done" });
     const lines = [stated ? `Verified against ${title}.` : `Nothing in ${title} mentions this statement. It is saved in your sources.`];
-    if (others.tried) lines.push(`Also checked ${others.tried} other open claim${others.tried === 1 ? "" : "s"} against this source: ${others.verified} verified, ${others.noPassage} no passage.`);
+    if (others.tried) lines.push(`Also checked ${others.tried} other open ${others.tried === 1 ? "statement" : "statements"} against this source: ${others.verified} verified, ${others.noPassage} no passage.`);
     return {
       revision: review.revision,
       source: { sourceId, sourceVersionId: versionId, title, url, addedBy: "user" },
