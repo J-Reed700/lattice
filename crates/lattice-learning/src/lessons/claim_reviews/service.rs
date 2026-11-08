@@ -37,18 +37,18 @@ pub const NOTHING_CHANGED: &str =
 pub struct ClaimReviewService {
     pool: SqlitePool,
     store: ClaimReviewRepository,
-    examples: CheckerExamples,
+    pub(super) examples: CheckerExamples,
     drafts: LearningCurriculumRepository,
     checker_model: Option<String>,
 }
 
 /// One claim's event, the accuracy label it gives (§15), and the verdict
 /// calibration records (`trust`) or forgets on Undo (`forget`).
-struct Resolution {
-    event: ClaimEvent,
-    label: Option<LabelSource>,
-    trust: Option<TrustVerdict>,
-    forget: Option<TrustVerdict>,
+pub(super) struct Resolution {
+    pub(super) event: ClaimEvent,
+    pub(super) label: Option<LabelSource>,
+    pub(super) trust: Option<TrustVerdict>,
+    pub(super) forget: Option<TrustVerdict>,
 }
 
 impl ClaimReviewService {
@@ -150,7 +150,26 @@ impl ClaimReviewService {
                 return Err(refusal);
             }
         }
+        if published && matches!(action, ClaimActionRequestDto::Undo) {
+            return self
+                .undone_in_published(&review, lesson_id, entry, ledger.revision)
+                .await;
+        }
         let resolution = self.resolution(&review, lesson_id, entry, action).await?;
+        if published {
+            let restored = self
+                .restored_in_published(
+                    &review,
+                    lesson_id,
+                    entry,
+                    &resolution.event,
+                    ledger.revision,
+                )
+                .await?;
+            if let Some(revision) = restored {
+                return Ok(revision.0);
+            }
+        }
         let rewrite = match &resolution.event {
             ClaimEvent::UserAction {
                 action: UserAction::Edit { before, after },
@@ -331,6 +350,11 @@ impl ClaimReviewService {
                 }
                 user(UserAction::ResearchWithHint { hint }, None, None)
             }
+            ClaimActionRequestDto::PutBack { text, section } => {
+                self.putting_back(review, lesson_id, entry, text, section)
+                    .await
+            }
+            ClaimActionRequestDto::RestoreOriginal => self.restoring_original(entry),
             ClaimActionRequestDto::Undo => self.undo(review, lesson_id, entry).await,
         }
     }
@@ -369,6 +393,13 @@ impl ClaimReviewService {
                 ..
             }
             | ClaimEvent::RepairAttempted { .. } => removal_applied().await?,
+            ClaimEvent::UserAction {
+                action: UserAction::PutBack { .. } | UserAction::RestoreOriginal { .. },
+                ..
+            } => {
+                self.restore_applied(review, lesson_id, entry, &undone.event)
+                    .await?
+            }
             _ => false,
         };
         if changed_draft {
@@ -458,12 +489,14 @@ fn action_kind(action: &ClaimActionRequestDto) -> ClaimActionKind {
         ClaimActionRequestDto::Edit { .. } => ClaimActionKind::Edit,
         ClaimActionRequestDto::Remove => ClaimActionKind::Remove,
         ClaimActionRequestDto::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
+        ClaimActionRequestDto::PutBack { .. } => ClaimActionKind::PutBack,
+        ClaimActionRequestDto::RestoreOriginal => ClaimActionKind::RestoreOriginal,
         ClaimActionRequestDto::Undo => ClaimActionKind::Undo,
     }
 }
 
 /// A user action's provenance (§5.1): no job, the checker the review names.
-fn provenance(review: &LessonReview) -> EventProvenance {
+pub(super) fn provenance(review: &LessonReview) -> EventProvenance {
     EventProvenance {
         actor: Actor::User,
         at: now(),

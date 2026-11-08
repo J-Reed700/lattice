@@ -14,11 +14,12 @@ use std::collections::HashMap;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    AttachOutcome, Check, CheckResult, Checker, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    ClaimLocation, ClaimState, EvidenceSeen, Ledger, LessonReview, LessonReviewState,
-    TrustAssessment,
+    AttachOutcome, Check, CheckResult, Checker, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId,
+    ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceSeen, Ledger, LessonReview,
+    LessonReviewState, TrustAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::plain_text;
 use serde_json::Value;
 
 use self::support::SupportContext;
@@ -26,9 +27,10 @@ use super::actions::offered;
 use super::dto::{
     CheckResultDto, CheckerVerdictDto, ClaimEventDto, ClaimEventPayloadDto,
     ClaimEvidencePassageDto, ClaimLocationDto, ClaimReviewItemDto, HumanVerdictDto,
-    LessonClaimReviewDto, RepairAttemptDto, ResearchAttemptDto, SourceAddedByDto, SourceRefDto,
-    StopReasonDto,
+    LessonClaimReviewDto, PutBackPlaceDto, RepairAttemptDto, ResearchAttemptDto, ReviewSectionDto,
+    RewrittenDto, SourceAddedByDto, SourceRefDto, StopReasonDto,
 };
+use super::put_back::{self, Lesson};
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
 use super::teaching_findings::TeachingFindingsRepository;
@@ -160,7 +162,13 @@ impl ClaimReviewService {
                     sources: &sources,
                     standings: &standings,
                 };
-                item(entry, &context, &units, &titles, published)
+                item(
+                    entry,
+                    &ledger.claims,
+                    &context,
+                    (&units, &titles),
+                    published,
+                )
             })
             .collect();
         Ok(Some(LessonClaimReviewDto {
@@ -173,6 +181,15 @@ impl ClaimReviewService {
             stop_reason: review.stop_reason.as_ref().map(StopReasonDto::from),
             changed_since_stop,
             claims,
+            sections: titles
+                .iter()
+                .take(block_count(&units))
+                .enumerate()
+                .map(|(index, title)| ReviewSectionDto {
+                    index,
+                    title: title.clone(),
+                })
+                .collect(),
             teaching_findings: TeachingFindingsRepository::new(self.pool().clone())
                 .list(lesson_id)
                 .await?,
@@ -274,7 +291,7 @@ impl ClaimReviewService {
 
     /// The lesson's blocks and questions: the draft that waits for review,
     /// else the published lesson; `Null` when neither is found.
-    async fn units(
+    pub(super) async fn units(
         &self,
         review: &LessonReview,
         program_id: &str,
@@ -396,9 +413,9 @@ fn checker_verdict(
 /// One claim card.
 fn item(
     entry: &ClaimLedgerEntry,
+    claims: &[ClaimLedgerEntry],
     context: &SupportContext<'_>,
-    units: &Value,
-    titles: &[String],
+    (units, titles): (&Value, &[String]),
     published: bool,
 ) -> ClaimReviewItemDto {
     let SupportContext {
@@ -473,6 +490,22 @@ fn item(
     };
     let presentation = presentation::presentation(entry, units, &unit_title);
     let (support, also_supported) = support::supports(entry, context);
+    let available = offered(entry, published);
+    let place = available.contains(&ClaimActionKind::PutBack).then(|| {
+        let lesson = Lesson { units, published };
+        match put_back::place(&lesson, claims, entry) {
+            Some(_) => PutBackPlaceDto::Known,
+            None => PutBackPlaceDto::Choose,
+        }
+    });
+    let rewritten = entry
+        .rewrite()
+        .filter(|_| available.contains(&ClaimActionKind::RestoreOriginal))
+        .map(|(original, rewrite)| RewrittenDto {
+            original: plain_text(original),
+            rewrite: plain_text(rewrite),
+            why: failed_reason(entry),
+        });
     ClaimReviewItemDto {
         claim_id: entry.claim_id().0.clone(),
         location: {
@@ -512,10 +545,7 @@ fn item(
         // in the lesson's report, which a waiting lesson does not have yet.
         executions: Vec::new(),
         human,
-        available_actions: offered(entry, published)
-            .into_iter()
-            .map(Into::into)
-            .collect(),
+        available_actions: available.into_iter().map(Into::into).collect(),
         history: entry
             .events()
             .iter()
@@ -543,7 +573,16 @@ fn item(
         support,
         also_supported,
         tried: presentation::tried(entry, sources),
+        place,
+        rewritten,
     }
+}
+
+fn block_count(units: &Value) -> usize {
+    units
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len)
 }
 
 /// The reason of the claim's latest failing check, kept after it closes.

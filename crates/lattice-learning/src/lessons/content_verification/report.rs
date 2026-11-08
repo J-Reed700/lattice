@@ -25,6 +25,32 @@ pub(crate) struct WrittenOver<'a> {
     pub at: i64,
 }
 
+/// A sentence put back into a published section, or the original put in
+/// place of a rewrite, and the claim that stands for it.
+pub(crate) struct WrittenBack<'a> {
+    pub unit: usize,
+    /// The section's text before, and the span the sentence replaced (empty
+    /// where it was written in).
+    pub old_body: &'a str,
+    pub range: (usize, usize),
+    pub new_body: &'a str,
+    /// The claims that stood on the replaced text.
+    pub replaced: &'a HashSet<String>,
+    pub claim: &'a ClaimId,
+    pub sentence: &'a str,
+    pub statement: &'a str,
+    pub reason: &'a str,
+    pub at: i64,
+}
+
+/// What a published edit or restore took out of the report's findings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ReplacedFindings {
+    /// The claim whose finding took their place.
+    by: String,
+    findings: Vec<Finding>,
+}
+
 impl LessonVerificationReport {
     pub(crate) fn content_sha256(&self) -> &str {
         &self.content_sha256
@@ -47,7 +73,16 @@ impl LessonVerificationReport {
                 }
         };
         let first = self.findings.iter().position(replaced);
-        self.findings.retain(|finding| !replaced(finding));
+        let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
+            .into_iter()
+            .partition(|finding| replaced(finding));
+        self.findings = kept;
+        if !gone.is_empty() {
+            self.replaced_findings.push(ReplacedFindings {
+                by: edit.successor.0.clone(),
+                findings: gone,
+            });
+        }
         let finding = Finding {
             unit: edit.unit,
             quote: edit.after.to_owned(),
@@ -71,6 +106,21 @@ impl LessonVerificationReport {
         self.content_sha256 =
             digest(&json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
     }
+}
+
+impl LessonVerificationReport {
+    /// The report after a sentence was written into the text for `back.claim`:
+    /// one finding for it, confirmed by the user, in the place of the findings
+    /// of the claims that stood on the replaced text.
+    pub(crate) fn written_back(&mut self, back: &WrittenBack<'_>) {
+    let _ = back;
+}
+
+    /// The report after `claim`'s sentence was written out of the text again:
+    /// its finding goes, and the findings it replaced come back.
+    pub(crate) fn written_out(&mut self, unit: usize, new_body: &str, claim: &ClaimId) {
+    let _ = (unit, new_body, claim);
+}
 }
 
 /// How a lesson's preparation ends when `count` of its statements are

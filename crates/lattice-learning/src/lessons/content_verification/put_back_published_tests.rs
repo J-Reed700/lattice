@@ -1,0 +1,439 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+//! In a published lesson the user puts back a sentence the machine took out
+//! (where it stood, in their own words, or at the end of a section they
+//! choose), restores the original of a rewrite, and undoes each; the text,
+//! the ledger and the stored report change together.
+use super::claim_ledger_tests::{figure, lesson, unreadable, Course};
+use super::GOOD;
+use crate::lessons::claim_reviews::dto::{
+    ClaimActionKindDto, ClaimActionRequestDto, PutBackPlaceDto,
+};
+use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
+use crate::lessons::claim_reviews::service::ClaimReviewService;
+use lattice_core::application::ports::claim_review::ClaimReviewStore;
+use lattice_core::domain::learning::claim_review::{
+    Actor, Check, CheckResult, Checker, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry,
+    ClaimLocation, ClaimState, CutPlace, EventProvenance, EvidenceFingerprint, Ledger,
+    RepairOutcome, UnitKind, VerdictKind,
+};
+use lattice_core::shared::error::{AppError, Result};
+
+const CUT: &str = "Rows are read lazily from the file.";
+const WRITTEN: &str = "Rows come from the file one at a time.";
+const REWRITE: &str = "Rows are read from the file.";
+const CHOOSE: &str = "Choose the section to put it back in.";
+
+async fn published() -> Result<Course> {
+    let course = Course::new().await?;
+    let prepared = course
+        .prepare(&unreadable(), &lesson(&[GOOD, &figure(7)]))
+        .await
+        .expect("the lesson publishes, its statements not verified");
+    course.publish(prepared).await?;
+    Ok(course)
+}
+
+fn provenance(actor: Actor) -> EventProvenance {
+    EventProvenance {
+        actor,
+        at: chrono::Utc::now().timestamp_millis(),
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: Some("fixture".into()),
+    }
+}
+
+async fn ledger(course: &Course) -> Result<Ledger> {
+    ClaimReviewRepository::new(course.pool.clone())
+        .load(&course.lesson_id)
+        .await
+}
+
+async fn append(course: &Course, id: &ClaimId, event: ClaimEvent) -> Result<()> {
+    let revision = ledger(course).await?.revision;
+    ClaimReviewRepository::new(course.pool.clone())
+        .append(
+            &course.lesson_id,
+            id,
+            provenance(Actor::Machine),
+            event,
+            revision,
+        )
+        .await?;
+    Ok(())
+}
+
+async fn bodies(course: &Course) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT body FROM learning_blocks WHERE lesson_id=? ORDER BY ordinal",
+    )
+    .bind(&course.lesson_id)
+    .fetch_all(&course.pool)
+    .await?)
+}
+
+async fn report(course: &Course) -> Result<String> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT report_json FROM learning_lesson_verifications WHERE program_id=? AND lesson_id=?",
+    )
+    .bind(&course.program_id)
+    .bind(&course.lesson_id)
+    .fetch_one(&course.pool)
+    .await?)
+}
+
+fn failed() -> ClaimEvent {
+    ClaimEvent::Checked(Check {
+        checker: Checker::Local {
+            model: "fixture".into(),
+        },
+        result: CheckResult::Failed {
+            kind: VerdictKind::Unsupported,
+        },
+        reason: "No saved source states it.".into(),
+        fingerprint: EvidenceFingerprint::of("strict", "fixture", &[]),
+        evidence: Vec::new(),
+        window_tokens: 128_000,
+    })
+}
+
+fn repair(before: &str, after: Option<&str>, outcome: RepairOutcome) -> ClaimEvent {
+    ClaimEvent::RepairAttempted {
+        attempt: 1,
+        escalated: false,
+        before: before.into(),
+        after: after.map(str::to_owned),
+        outcome,
+        goal: None,
+    }
+}
+
+/// A claim the machine took out of a section: its sentence is not in the
+/// text, and the cut recorded `cut` when it is given.
+async fn taken_out(
+    course: &Course,
+    id: &str,
+    unit: usize,
+    cut: Option<(Option<&str>, Option<&str>)>,
+) -> Result<ClaimId> {
+    let id = ClaimId(id.into());
+    let body = bodies(course).await?.get(unit).cloned().unwrap_or_default();
+    let with = format!("{body} {CUT}");
+    append(
+        course,
+        &id,
+        ClaimEvent::Extracted {
+            location: ClaimLocation::locate(unit, UnitKind::Block, "body", CUT, &with),
+            statement: CUT.into(),
+        },
+    )
+    .await?;
+    append(course, &id, failed()).await?;
+    append(course, &id, repair(CUT, None, RepairOutcome::Removed)).await?;
+    if let Some((before, after)) = cut {
+        let cut = CutPlace {
+            sentence: CUT.into(),
+            before: before.map(str::to_owned),
+            after: after.map(str::to_owned),
+        };
+        append(course, &id, ClaimEvent::SentenceCut { cut }).await?;
+    }
+    Ok(id)
+}
+
+async fn act(course: &Course, claim: &ClaimId, action: ClaimActionRequestDto) -> Result<i64> {
+    let revision = ledger(course).await?.revision.0;
+    ClaimReviewService::new(course.pool.clone())
+        .resolve(&course.lesson_id, &claim.0, action, revision)
+        .await
+}
+
+fn put_back(text: Option<&str>, section: Option<u32>) -> ClaimActionRequestDto {
+    ClaimActionRequestDto::PutBack {
+        text: text.map(str::to_owned),
+        section,
+    }
+}
+
+async fn claim(course: &Course, id: &ClaimId) -> Result<ClaimLedgerEntry> {
+    Ok(ledger(course)
+        .await?
+        .claims
+        .into_iter()
+        .find(|entry| entry.claim_id() == id)
+        .unwrap())
+}
+
+/// What a refusal left written: the text, the ledger's revision, the report.
+async fn written(course: &Course) -> Result<(Vec<String>, i64, String)> {
+    Ok((
+        bodies(course).await?,
+        ledger(course).await?.revision.0,
+        report(course).await?,
+    ))
+}
+
+#[tokio::test]
+async fn a_sentence_the_machine_cut_from_a_published_section_goes_back_after_the_sentence_it_followed(
+) -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let before = written(&course).await?;
+
+    act(&course, &id, put_back(None, None)).await?;
+
+    let after = written(&course).await?;
+    assert!(
+        after.0[0].starts_with(&format!("{GOOD} {CUT}")),
+        "{:?}",
+        after.0
+    );
+    assert_eq!(after.0[1], before.0[1]);
+    assert_eq!(after.1, before.1 + 1);
+    assert_ne!(after.2, before.2, "the report follows the text");
+    assert!(matches!(
+        claim(&course, &id).await?.state(),
+        ClaimState::Confirmed { .. }
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_put_back_in_the_users_words_goes_in_as_they_wrote_it() -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+
+    act(&course, &id, put_back(Some(&format!("  {WRITTEN} ")), None)).await?;
+
+    let body = bodies(&course).await?[0].clone();
+    assert!(body.contains(&format!("{GOOD} {WRITTEN}")), "{body}");
+    assert!(!body.contains(CUT));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_put_back_with_blank_text_is_refused_and_writes_nothing() -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let before = written(&course).await?;
+
+    let error = act(&course, &id, put_back(Some("   "), None))
+        .await
+        .unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if message == "Write the sentence you want to put back."),
+        "{error:?}"
+    );
+    assert_eq!(written(&course).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_whose_place_is_unknown_is_refused_until_the_user_chooses_a_section(
+) -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "old", 9, None).await?;
+    let before = written(&course).await?;
+
+    let error = act(&course, &id, put_back(None, None)).await.unwrap_err();
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if message == CHOOSE),
+        "{error:?}"
+    );
+    assert_eq!(written(&course).await?, before);
+
+    act(&course, &id, put_back(None, Some(1))).await?;
+
+    let after = bodies(&course).await?;
+    assert!(after[1].ends_with(CUT), "{after:?}");
+    assert_eq!(after[0], before.0[0]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_user_may_choose_a_section_when_the_place_is_known() -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+
+    act(&course, &id, put_back(None, Some(1))).await?;
+
+    let after = bodies(&course).await?;
+    assert!(after[1].ends_with(CUT));
+    assert!(!after[0].contains(CUT));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_section_that_is_not_in_the_lesson_is_refused() -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let before = written(&course).await?;
+
+    let error = act(&course, &id, put_back(None, Some(7)))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AppError::InvalidInput(_)), "{error:?}");
+    assert_eq!(written(&course).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn only_a_sentence_the_machine_took_out_can_be_put_back() -> Result<()> {
+    let course = published().await?;
+    let open = ledger(&course).await?.claims[0].claim_id().clone();
+    let before = written(&course).await?;
+
+    let error = act(&course, &open, put_back(None, Some(0)))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
+    assert_eq!(written(&course).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn undo_takes_a_put_back_out_of_the_published_section_and_leaves_the_sentence_taken_out(
+) -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    let before = bodies(&course).await?;
+    act(&course, &id, put_back(None, None)).await?;
+
+    act(&course, &id, ClaimActionRequestDto::Undo).await?;
+
+    assert_eq!(bodies(&course).await?, before);
+    let entry = claim(&course, &id).await?;
+    assert!(entry.taken_out());
+    assert!(entry.allows(ClaimActionKind::PutBack));
+    Ok(())
+}
+
+/// A claim the machine rewrote in the first section: the lesson now says
+/// `REWRITE` where it said `CUT`.
+async fn rewritten(course: &Course) -> Result<ClaimId> {
+    let id = ClaimId("rewritten".into());
+    let body = bodies(course).await?[0].clone();
+    let now = format!("{body} {REWRITE}");
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(&now)
+        .bind(&course.lesson_id)
+        .execute(&course.pool)
+        .await?;
+    append(
+        course,
+        &id,
+        ClaimEvent::Extracted {
+            location: ClaimLocation::locate(
+                0,
+                UnitKind::Block,
+                "body",
+                CUT,
+                &format!("{body} {CUT}"),
+            ),
+            statement: CUT.into(),
+        },
+    )
+    .await?;
+    append(course, &id, failed()).await?;
+    append(
+        course,
+        &id,
+        repair(CUT, Some(REWRITE), RepairOutcome::Rewritten),
+    )
+    .await?;
+    append(
+        course,
+        &id,
+        ClaimEvent::Superseded {
+            successor: Some(ClaimId("rewrite".into())),
+            by: Actor::Machine,
+        },
+    )
+    .await?;
+    Ok(id)
+}
+
+#[tokio::test]
+async fn restoring_the_original_of_a_rewrite_puts_it_in_place_of_the_rewrite_and_undo_brings_the_rewrite_back(
+) -> Result<()> {
+    let course = published().await?;
+    let id = rewritten(&course).await?;
+    let before = bodies(&course).await?;
+    assert!(claim(&course, &id)
+        .await?
+        .allows(ClaimActionKind::RestoreOriginal));
+
+    act(&course, &id, ClaimActionRequestDto::RestoreOriginal).await?;
+
+    let after = bodies(&course).await?;
+    assert_eq!(after[0], before[0].replace(REWRITE, CUT));
+    assert!(matches!(
+        claim(&course, &id).await?.state(),
+        ClaimState::Confirmed { .. }
+    ));
+
+    act(&course, &id, ClaimActionRequestDto::Undo).await?;
+
+    assert_eq!(bodies(&course).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_review_says_where_a_taken_out_sentence_goes_and_lists_the_sections() -> Result<()> {
+    let course = published().await?;
+    let known = taken_out(&course, "known", 0, Some((Some(GOOD), None))).await?;
+    let unknown = taken_out(&course, "unknown", 9, None).await?;
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .unwrap();
+
+    let item = |id: &ClaimId| {
+        review
+            .claims
+            .iter()
+            .find(|item| item.claim_id == id.0)
+            .unwrap()
+    };
+    assert!(matches!(item(&known).place, Some(PutBackPlaceDto::Known)));
+    assert!(matches!(
+        item(&unknown).place,
+        Some(PutBackPlaceDto::Choose)
+    ));
+    assert!(item(&known)
+        .available_actions
+        .iter()
+        .any(|action| matches!(action, ClaimActionKindDto::PutBack)));
+    let titles: Vec<_> = review.sections.iter().map(|s| s.title.as_str()).collect();
+    assert_eq!(titles, ["Section 0", "Section 1"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_source_that_supports_a_taken_out_sentence_puts_it_back_where_it_stood() -> Result<()> {
+    let course = published().await?;
+    let known = taken_out(&course, "known", 0, Some((Some(GOOD), None))).await?;
+    let unknown = taken_out(&course, "unknown", 9, None).await?;
+    let service = ClaimReviewService::new(course.pool.clone());
+
+    let none = service
+        .put_back_for_source(&course.lesson_id, &unknown)
+        .await?;
+    assert!(none.is_none(), "no place is known: the user chooses it");
+    assert!(!bodies(&course).await?[0].contains(CUT));
+
+    let back = service
+        .put_back_for_source(&course.lesson_id, &known)
+        .await?;
+    assert!(back.is_some());
+    assert!(bodies(&course).await?[0].starts_with(&format!("{GOOD} {CUT}")));
+    Ok(())
+}

@@ -349,6 +349,11 @@ async fn attach_reporting(
         None => check::passages_from(deps.llm, &references, &version_id, &statement).await?,
     };
     let outcome = check::judge(deps.llm, &statement, &passages).await?;
+    let put_back = if entry.taken_out() {
+        Some(put_back_for(deps, request.lesson_id, request.claim_id, &outcome).await?)
+    } else {
+        None
+    };
     let event = ClaimEvent::EvidenceAttached {
         source_version_id: version_id.clone(),
         provenance: source.provenance.clone(),
@@ -416,14 +421,58 @@ async fn attach_reporting(
     {
         revision = deps.store.load(request.lesson_id).await?.revision;
     }
-    Ok(report::checked(
+    let mut report = report::checked(
         revision,
         &source.saved,
         source.already_saved,
         &outcome,
         source.snapshot,
         others,
-    ))
+    );
+    report.lines.extend(put_back.map(PutBack::line));
+    Ok(report)
+}
+
+/// What a source did for a sentence the machine took out.
+enum PutBack {
+    Back,
+    NoPlace,
+    StaysOut,
+}
+
+impl PutBack {
+    fn line(self) -> String {
+        match self {
+            Self::Back => "The source supports it, so it is back in the lesson.".into(),
+            Self::NoPlace => "The source supports it. Choose where it goes and put it back.".into(),
+            Self::StaysOut => {
+                "The source does not support it, so it stays out of the lesson.".into()
+            }
+        }
+    }
+}
+
+/// Puts the claim's taken-out sentence back when `outcome` supports it.
+async fn put_back_for(
+    deps: &AttachDeps<'_>,
+    lesson_id: &str,
+    claim_id: &ClaimId,
+    outcome: &AttachOutcome,
+) -> Result<PutBack> {
+    let supported = matches!(
+        outcome,
+        AttachOutcome::Checked(check) if matches!(check.result, CheckResult::Supported { .. })
+    );
+    if !supported {
+        return Ok(PutBack::StaysOut);
+    }
+    let service = super::service::ClaimReviewService::new(deps.pool.clone());
+    let back = service.put_back_for_source(lesson_id, claim_id).await?;
+    Ok(if back.is_some() {
+        PutBack::Back
+    } else {
+        PutBack::NoPlace
+    })
 }
 
 /// The lesson's other open claims in scope, checked against the new source

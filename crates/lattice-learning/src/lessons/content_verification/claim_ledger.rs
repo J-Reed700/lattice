@@ -44,8 +44,8 @@ use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome, Step, Then};
 use lattice_core::domain::learning::claim_review::{
     end_state, Actor, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
-    ClaimState, EventProvenance, LessonReview, LessonReviewState, RepairOutcome, Revision,
-    StopReason, UserAction, MACHINE_ATTEMPTS,
+    ClaimState, CutPlace, EventProvenance, LessonReview, LessonReviewState, RepairOutcome,
+    Revision, StopReason, UserAction, MACHINE_ATTEMPTS,
 };
 
 pub(crate) use fields::{field_pointer, field_text, locate, unit_texts};
@@ -134,6 +134,10 @@ pub(super) struct Pending {
     /// claim's old place with its new one (§3 `identity`).
     pub(super) previous: Option<Value>,
     pub(super) repairs: Vec<RepairRecord>,
+    /// What each claim's cut took out and stood between, recorded with the
+    /// claim's removal.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(super) cuts: std::collections::BTreeMap<ClaimId, CutPlace>,
 }
 
 /// Where the ledger is written inside a preparation job.
@@ -753,18 +757,24 @@ impl ClaimLedger {
             .collect();
         for record in closed {
             let goal = record.goal();
-            self.append(
-                &record.claim_id,
-                ClaimEvent::RepairAttempted {
-                    attempt: record.attempt,
-                    escalated: record.escalated,
-                    before: record.before,
-                    after: None,
-                    outcome: outcome.clone(),
-                    goal,
-                },
-            )
-            .await?;
+            let cut = self.pending.cuts.remove(&record.claim_id);
+            let taken = self
+                .append(
+                    &record.claim_id,
+                    ClaimEvent::RepairAttempted {
+                        attempt: record.attempt,
+                        escalated: record.escalated,
+                        before: record.before,
+                        after: None,
+                        outcome: outcome.clone(),
+                        goal,
+                    },
+                )
+                .await?;
+            if let (true, true, Some(cut)) = (taken, outcome == RepairOutcome::Removed, cut) {
+                self.append(&record.claim_id, ClaimEvent::SentenceCut { cut })
+                    .await?;
+            }
         }
         self.save_pending().await
     }

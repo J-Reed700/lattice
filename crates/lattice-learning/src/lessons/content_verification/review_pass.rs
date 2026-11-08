@@ -5,9 +5,10 @@
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §5.1, §6.2, §9.
 
 use super::claim_ledger::ClaimLedger;
+use super::insert_sentence;
 use super::*;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, UserAction,
+    Actor, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, UserAction,
 };
 
 /// The user's research hint for a claim waiting for them, until a research
@@ -57,6 +58,25 @@ fn edit_applied(entry: &ClaimLedgerEntry) -> bool {
     })
 }
 
+/// The claim's latest action by the user, when it is the put back or restore
+/// `wanted` names and the user has not taken it back.
+fn live(entry: &ClaimLedgerEntry, wanted: impl Fn(&UserAction) -> bool) -> Option<&UserAction> {
+    let events = entry.events();
+    let (ordinal, action) = events.iter().rev().find_map(|record| match &record.event {
+        ClaimEvent::UserAction { action, .. } if record.provenance.actor == Actor::User => {
+            Some((record.ordinal, action))
+        }
+        _ => None,
+    })?;
+    if !wanted(action) {
+        return None;
+    }
+    let undone = events.iter().any(|record| {
+        matches!(&record.event, ClaimEvent::Undone { event_ordinal } if *event_ordinal == ordinal)
+    });
+    (!undone).then_some(action)
+}
+
 fn pointer(candidate: &Value, unit: usize, field: &str) -> Option<String> {
     let blocks = candidate.get("blocks")?.as_array()?.len();
     Some(if unit < blocks {
@@ -79,6 +99,16 @@ enum Change {
         pointer: String,
         quote: String,
     },
+    PutBack {
+        pointer: String,
+        anchor: Anchor,
+        sentence: String,
+    },
+    Replace {
+        pointer: String,
+        from: String,
+        to: String,
+    },
 }
 
 /// The user's edits and removals, located in the draft.
@@ -86,6 +116,33 @@ fn changes(ledger: &ClaimLedger, candidate: &Value) -> Vec<Change> {
     let mut changes = Vec::new();
     for entry in ledger.entries() {
         let location = entry.location();
+        let put_back = live(entry, |action| matches!(action, UserAction::PutBack { .. }));
+        if let Some(UserAction::PutBack {
+            sentence, place, ..
+        }) = put_back
+        {
+            if let Some(pointer) = pointer(candidate, place.unit_index, &place.field) {
+                changes.push(Change::PutBack {
+                    pointer,
+                    anchor: place.anchor.clone(),
+                    sentence: sentence.clone(),
+                });
+            }
+            continue;
+        }
+        let restore = live(entry, |action| {
+            matches!(action, UserAction::RestoreOriginal { .. })
+        });
+        if let Some(UserAction::RestoreOriginal { original, rewrite }) = restore {
+            if let Some(pointer) = pointer(candidate, location.unit_index, &location.field) {
+                changes.push(Change::Replace {
+                    pointer,
+                    from: rewrite.clone(),
+                    to: original.clone(),
+                });
+            }
+            continue;
+        }
         let Some(pointer) = pointer(candidate, location.unit_index, &location.field) else {
             continue;
         };
@@ -172,6 +229,35 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
                     applied.edited.push(claim);
                 }
             }
+            Change::PutBack {
+                pointer,
+                anchor,
+                sentence,
+            } => {
+                let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
+                    continue;
+                };
+                if text.contains(sentence.as_str()) {
+                    continue;
+                }
+                let put = insert_sentence(text, &anchor, &sentence)
+                    .or_else(|| insert_sentence(text, &Anchor::End, &sentence));
+                if let (Some(put), Some(slot)) = (put, candidate.pointer_mut(&pointer)) {
+                    *slot = Value::String(put);
+                }
+            }
+            Change::Replace { pointer, from, to } => {
+                let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
+                    continue;
+                };
+                if text.matches(from.as_str()).count() != 1 || text.contains(to.as_str()) {
+                    continue;
+                }
+                let replaced = text.replacen(from.as_str(), &to, 1);
+                if let Some(slot) = candidate.pointer_mut(&pointer) {
+                    *slot = Value::String(replaced);
+                }
+            }
             Change::Remove { pointer, quote } => {
                 let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
                     continue;
@@ -233,3 +319,6 @@ pub(super) async fn apply_user_changes(
     ledger.save_pending().await?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod put_back_tests;

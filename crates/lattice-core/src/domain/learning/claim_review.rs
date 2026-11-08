@@ -568,11 +568,60 @@ impl CheckResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UserAction {
-    Confirm { bound: HumanBinding },
+    Confirm {
+        bound: HumanBinding,
+    },
     Unconfirm,
-    Edit { before: String, after: String },
+    Edit {
+        before: String,
+        after: String,
+    },
     Remove,
-    ResearchWithHint { hint: String },
+    ResearchWithHint {
+        hint: String,
+    },
+    /// The user put back a sentence the machine took out, as it was or as
+    /// they wrote it (`edited`), at `place`.
+    PutBack {
+        sentence: String,
+        edited: bool,
+        place: PutPlace,
+    },
+    /// The user put back the sentence a machine rewrite replaced.
+    RestoreOriginal {
+        original: String,
+        rewrite: String,
+    },
+}
+
+/// Where a sentence put back goes: a field of a unit, beside a sentence of it
+/// or at its end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutPlace {
+    pub unit_index: usize,
+    pub field: String,
+    pub anchor: Anchor,
+}
+
+/// What a put-back sentence stands beside.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    /// After this sentence of the field.
+    After(String),
+    /// Before this sentence of the field.
+    Before(String),
+    /// At the end of the field.
+    End,
+}
+
+/// The sentence the machine cut and the sentences it stood between, in the
+/// field it was cut from (either neighbour may be absent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CutPlace {
+    pub sentence: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
 }
 
 /// What came of one machine repair of a claim.
@@ -799,6 +848,11 @@ pub enum ClaimEvent {
     PublishedUnverified {
         reason: UnverifiedReason,
     },
+    /// What the machine's cut took out of the lesson for this claim, and the
+    /// sentences it stood between, so the user can put it back where it was.
+    SentenceCut {
+        cut: CutPlace,
+    },
 }
 
 impl ClaimEvent {
@@ -823,6 +877,7 @@ impl ClaimEvent {
             Self::StandingAssessed { .. } => "standing_assessed",
             Self::Stepped { .. } => "stepped",
             Self::PublishedUnverified { .. } => "published_unverified",
+            Self::SentenceCut { .. } => "sentence_cut",
         }
     }
 }

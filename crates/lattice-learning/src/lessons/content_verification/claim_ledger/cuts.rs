@@ -37,6 +37,16 @@ impl ClaimLedger {
         self.close_records(claims, RepairOutcome::Removed).await
     }
 
+    /// Remembers what the cut of `claim`'s sentence took out and stood
+    /// between, for the record its removal makes.
+    pub(in crate::lessons::content_verification) fn note_cut(
+        &mut self,
+        claim: &ClaimId,
+        cut: CutPlace,
+    ) {
+        self.pending.cuts.insert(claim.clone(), cut);
+    }
+
     /// Whether the machine's cuts leave the lesson no statement: it has taken
     /// one out, and every claim is out, is one of `cut` (taken out just now),
     /// or stands in a section that goes.

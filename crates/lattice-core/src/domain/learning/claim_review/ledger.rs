@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use super::replay::{apply_check, charge, hand_to_user, redecided, reopened, Cursor};
 use super::{
     Actor, AttachOutcome, Checker, ClaimEvent, ClaimId, ClaimLocation, ClaimState, Class,
-    ClassifiedBy, EvidenceFingerprint, ReopenCause, RepairOutcome, TrustAssessment, UserAction,
-    VerdictKind, MACHINE_ATTEMPTS,
+    ClassifiedBy, CutPlace, EvidenceFingerprint, HumanBinding, ReopenCause, RepairOutcome,
+    TrustAssessment, UserAction, VerdictKind, MACHINE_ATTEMPTS,
 };
 use crate::shared::error::AppError;
 
@@ -57,6 +57,8 @@ pub enum ClaimActionKind {
     AttachEvidence,
     ResearchWithHint,
     Unconfirm,
+    PutBack,
+    RestoreOriginal,
     Undo,
 }
 
@@ -398,6 +400,66 @@ impl ClaimLedgerEntry {
         last_user.max(machine_removal)
     }
 
+    /// The machine took the claim's sentence out of the lesson, and did not
+    /// rewrite it: the sentence may be put back.
+    pub fn taken_out(&self) -> bool {
+        matches!(
+            self.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ) && self.rewrite().is_none()
+    }
+
+    /// The sentence the machine's last repair replaced and what it wrote in
+    /// its place, for a claim the machine ended: `(original, rewrite)`.
+    pub fn rewrite(&self) -> Option<(&str, &str)> {
+        let gone_by_machine = matches!(
+            self.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            } | ClaimState::Edited {
+                by: Actor::Machine,
+                ..
+            }
+        );
+        if !gone_by_machine {
+            return None;
+        }
+        let last = self
+            .events
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event {
+                ClaimEvent::RepairAttempted {
+                    before,
+                    after,
+                    outcome: outcome @ (RepairOutcome::Rewritten | RepairOutcome::Removed),
+                    ..
+                } if record.provenance.actor == Actor::Machine => Some((before, after, outcome)),
+                _ => None,
+            })?;
+        match last {
+            (before, Some(after), RepairOutcome::Rewritten) => {
+                Some((before.as_str(), after.as_str()))
+            }
+            _ => None,
+        }
+    }
+
+    /// What the machine's latest cut of the claim's sentence recorded.
+    pub fn cut_place(&self) -> Option<&CutPlace> {
+        self.events
+            .iter()
+            .rev()
+            .find_map(|record| match &record.event {
+                ClaimEvent::SentenceCut { cut } => Some(cut),
+                _ => None,
+            })
+    }
+
     /// The per-claim actions the current state allows, in the card's order.
     pub fn available_actions(&self) -> Vec<ClaimActionKind> {
         [
@@ -407,6 +469,8 @@ impl ClaimLedgerEntry {
             ClaimActionKind::AttachEvidence,
             ClaimActionKind::ResearchWithHint,
             ClaimActionKind::Unconfirm,
+            ClaimActionKind::PutBack,
+            ClaimActionKind::RestoreOriginal,
             ClaimActionKind::Undo,
         ]
         .into_iter()
@@ -425,8 +489,10 @@ impl ClaimLedgerEntry {
                 ClaimState::Removed { .. } | ClaimState::Edited { .. }
             ),
             ClaimActionKind::AttachEvidence => {
-                is_open(state) || matches!(state, ClaimState::Confirmed { .. })
+                is_open(state) || matches!(state, ClaimState::Confirmed { .. }) || self.taken_out()
             }
+            ClaimActionKind::PutBack => self.taken_out(),
+            ClaimActionKind::RestoreOriginal => self.rewrite().is_some(),
             ClaimActionKind::Undo => self.undo_target().is_some(),
         }
     }
@@ -511,7 +577,9 @@ impl ClaimLedgerEntry {
                 next.citation_pending = true
             }
             ClaimEvent::Stepped { .. } => self.apply_step(&mut next, &record.event, at)?,
-            ClaimEvent::Executed { .. } | ClaimEvent::Stopped { .. } => {}
+            ClaimEvent::Executed { .. }
+            | ClaimEvent::Stopped { .. }
+            | ClaimEvent::SentenceCut { .. } => {}
             ClaimEvent::PublishedUnverified { reason } => {
                 if !matches!(
                     next.state,
@@ -555,7 +623,11 @@ impl ClaimLedgerEntry {
                 if !self.allows(ClaimActionKind::AttachEvidence) {
                     return Err(self.refuse(&record.event));
                 }
+                let taken_out = self.taken_out();
                 match result {
+                    // A sentence the machine took out stays out whatever the
+                    // source says; a supporting one is put back first.
+                    _ if taken_out => {}
                     AttachOutcome::Checked(check) => apply_check(&mut next, check, true, at),
                     AttachOutcome::NoPassage => hand_to_user(&mut next.state),
                 }
@@ -713,6 +785,8 @@ impl ClaimLedgerEntry {
             UserAction::Edit { .. } => ClaimActionKind::Edit,
             UserAction::Remove => ClaimActionKind::Remove,
             UserAction::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
+            UserAction::PutBack { .. } => ClaimActionKind::PutBack,
+            UserAction::RestoreOriginal { .. } => ClaimActionKind::RestoreOriginal,
         };
         if !self.allows(kind) {
             return Err(self.refuse(event));
@@ -755,6 +829,20 @@ impl ClaimLedgerEntry {
                 }
             }
             UserAction::ResearchWithHint { .. } => hand_to_user(&mut next.state),
+            UserAction::PutBack { sentence, .. } => {
+                next.state = ClaimState::Confirmed {
+                    at,
+                    note: None,
+                    bound: HumanBinding::new(sentence, Vec::new()),
+                }
+            }
+            UserAction::RestoreOriginal { original, .. } => {
+                next.state = ClaimState::Confirmed {
+                    at,
+                    note: None,
+                    bound: HumanBinding::new(original, Vec::new()),
+                }
+            }
         }
         Ok(())
     }
