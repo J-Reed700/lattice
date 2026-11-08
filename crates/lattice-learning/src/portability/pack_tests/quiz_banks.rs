@@ -15,7 +15,7 @@ use crate::{
         LearningPackConflictPolicy, LearningPackExportOptionsDto,
     },
     repository::LearningRepository,
-    tests::{fixture, pool, prepared},
+    tests::{fixture, pool, prepared, prepared_with_questions},
 };
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
@@ -160,5 +160,79 @@ async fn a_course_exported_without_evidence_keeps_its_quiz_banks() -> Result<()>
     assert_eq!(replaced, program_id);
     assert_eq!(bank_counts(&pool, &program_id).await?, before);
     assert_eq!(start_first_lesson_quiz(&pool, &program_id).await?, asked);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_pack_round_trip_keeps_a_lessons_questions_in_their_order() -> Result<()> {
+    let pool = pool().await?;
+    let program = fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let program_id = program.summary.id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    let prompts = [
+        "Which layer of the atmosphere holds most of its weather?",
+        "What does a barometer record over a day?",
+        "Why do tides rise and fall twice daily?",
+        "Which metal is liquid at room temperature?",
+        "What carries oxygen in human blood?",
+        "How many sides does a hexagon have?",
+    ];
+    let options = [
+        ["Troposphere", "Mesosphere", "Exosphere", "Ionosphere"],
+        ["Air pressure", "Wind speed", "Rainfall", "Heat"],
+        ["Lunar pull", "Solar wind", "Ocean salt", "Glacier melt"],
+        ["Mercury", "Copper", "Tin", "Zinc"],
+        ["Haemoglobin", "Insulin", "Keratin", "Collagen"],
+        ["Six", "Five", "Seven", "Eight"],
+    ];
+    let questions: Vec<(&str, [&str; 4], usize)> = prompts
+        .iter()
+        .zip(options)
+        .map(|(prompt, options)| (*prompt, options, 0))
+        .collect();
+    programs
+        .prepare(
+            &program_id,
+            &lesson_id,
+            1,
+            &prepared_with_questions(&lesson_id, &questions),
+        )
+        .await?;
+    sqlx::query(
+        "UPDATE learning_assessment_candidates SET review_status='reported' WHERE lesson_id=? AND prompt=?",
+    )
+    .bind(&lesson_id)
+    .bind(prompts[2])
+    .execute(&pool)
+    .await
+    .map_err(crate::persistence::db)?;
+    let order = |program: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND origin='lesson' ORDER BY rowid",
+            )
+            .bind(program)
+            .fetch_all(&pool)
+            .await
+            .map_err(crate::persistence::db)
+        }
+    };
+    assert_eq!(order(program_id.clone()).await?, prompts);
+
+    let workspace = tempfile::tempdir().expect("pack workspace");
+    let packs = packs(&pool, workspace.path());
+    let path = export_without_evidence(&packs, &program_id).await?;
+    let copy = import(&packs, &path, LearningPackConflictPolicy::CreateCopy).await?;
+    assert_eq!(order(copy).await?, prompts);
     Ok(())
 }

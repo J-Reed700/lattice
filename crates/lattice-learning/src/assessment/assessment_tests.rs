@@ -1256,3 +1256,111 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
     assert!(form.items.iter().all(|item| item.id != dropped));
     Ok(())
 }
+
+/// A program accepted at revision 1, its lessons not yet published.
+async fn accepted_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
+    let program = crate::tests::fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    Ok(program)
+}
+
+async fn publish_questions(
+    pool: &SqlitePool,
+    program_id: &str,
+    lesson_id: &str,
+    revision: i64,
+    questions: &[(&str, [&str; 4], usize)],
+) -> Result<()> {
+    LearningRepository::new(pool.clone())
+        .prepare(
+            program_id,
+            lesson_id,
+            revision,
+            &crate::tests::prepared_with_questions(lesson_id, questions),
+        )
+        .await
+}
+
+async fn lesson_rows(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(String, String)>> {
+    sqlx::query_as(
+        "SELECT prompt,review_status FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
+    )
+    .bind(lesson_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)
+}
+
+fn rows_of(prompts: &[&str], statuses: &[&str]) -> Vec<(String, String)> {
+    prompts
+        .iter()
+        .zip(statuses)
+        .map(|(prompt, status)| ((*prompt).to_string(), (*status).to_string()))
+        .collect()
+}
+
+#[tokio::test]
+async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Result<()> {
+    let pool = migrated().await?;
+    let program = accepted_program(&pool).await?;
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    let prompts = [
+        "What does the pwd command print?",
+        "Which command shows the permissions of every file in the current directory?",
+        "Which command shows the owner of every file in the current directory?",
+    ];
+    assert!(engine::near_duplicate(prompts[1], prompts[2]));
+    publish_questions(
+        &pool,
+        &program.summary.id,
+        &lesson_id,
+        1,
+        &[
+            (
+                prompts[0],
+                [
+                    "Working directory",
+                    "Home folder",
+                    "Free space",
+                    "Shell name",
+                ],
+                0,
+            ),
+            (prompts[1], ["ls -l", "ls -a", "ls -d", "ls -R"], 0),
+            (prompts[2], ["stat", "ls -n", "id", "who"], 0),
+        ],
+    )
+    .await?;
+    assert_eq!(
+        lesson_rows(&pool, &lesson_id).await?,
+        rows_of(&prompts, &["agreed", "agreed", "agreed"])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropped() -> Result<()> {
+    let pool = migrated().await?;
+    let program = accepted_program(&pool).await?;
+    let program_id = program.summary.id.clone();
+    let earlier = program.modules[0].lessons[1].id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    // The first copy of the biased question is stored unshuffled, so the
+    // second one has the same content.
+    let questions = placed_questions();
+    publish_questions(&pool, &program_id, &earlier, 1, &questions[1..2]).await?;
+    publish_questions(&pool, &program_id, &lesson_id, 2, &questions).await?;
+    assert_eq!(
+        lesson_rows(&pool, &lesson_id).await?,
+        rows_of(&PLACED_PROMPTS, &["agreed", "dropped", "agreed"])
+    );
+    Ok(())
+}
