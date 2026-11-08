@@ -16,13 +16,17 @@ import type {
   LearningProgramDto,
 } from "@/lib/bindings";
 
-const roundOptions: { value: LearningInterviewRoundKind; label: string }[] = [
-  { value: "full_loop", label: "Full interview loop" },
-  { value: "technical_deep_dive", label: "Technical deep-dive" },
-  { value: "system_design", label: "System design & architecture" },
-  { value: "behavioral", label: "Behavioral & engineering culture" },
-  { value: "debugging_and_code", label: "Debugging & code walkthrough" },
-];
+export const INTERVIEW_ROUND_LABELS: Record<LearningInterviewRoundKind, string> = {
+  full_loop: "Full interview loop",
+  technical_deep_dive: "Technical deep-dive",
+  system_design: "System design & architecture",
+  behavioral: "Behavioral & engineering culture",
+  debugging_and_code: "Debugging & code walkthrough",
+};
+
+export const roundOptions: { value: LearningInterviewRoundKind; label: string }[] = (
+  Object.entries(INTERVIEW_ROUND_LABELS) as [LearningInterviewRoundKind, string][]
+).map(([value, label]) => ({ value, label }));
 
 const kinds: {
   id: LearningPracticalActivityKind;
@@ -35,14 +39,9 @@ const kinds: {
     description: "Build and run a small, contained program.",
   },
   {
-    id: "debugging",
-    label: "Debugging",
-    description: "Trace a failure and explain the repair.",
-  },
-  {
-    id: "code_review",
-    label: "Code review",
-    description: "Inspect a change for risk and clarity.",
+    id: "project",
+    label: "Project",
+    description: "Make a small artifact against a brief.",
   },
   {
     id: "incident",
@@ -55,11 +54,6 @@ const kinds: {
     description: "Propose a design and discuss tradeoffs.",
   },
   {
-    id: "project",
-    label: "Project",
-    description: "Make a small artifact against a brief.",
-  },
-  {
     id: "interview",
     label: "Interview",
     description: "Practice a role-based technical conversation.",
@@ -69,12 +63,8 @@ const kinds: {
     label: "Conversation",
     description: "Respond to a realistic counterpart.",
   },
-  {
-    id: "writing_revision",
-    label: "Writing revision",
-    description: "Revise a piece of technical writing.",
-  },
 ];
+
 export const modeCopy: Record<LearningPracticeMode, string> = {
   explore:
     "Explore the idea with sources and tutor help.",
@@ -83,6 +73,7 @@ export const modeCopy: Record<LearningPracticeMode, string> = {
   demonstrate:
     "Try independently, without in-app hints or source assistance.",
 };
+
 function uuid() { return crypto.randomUUID(); }
 function errorText(error: unknown) { return error instanceof Error ? error.message : "The activity could not be prepared."; }
 
@@ -221,7 +212,7 @@ export function ActivityComposer({
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent
-        className="max-h-[90dvh] max-w-xl gap-0 overflow-y-auto rounded-2xl border border-border bg-surface p-5 sm:p-6"
+        className="max-h-[90dvh] max-w-xl gap-0 overflow-y-auto rounded-2xl border border-border-default bg-surface p-5 sm:p-6"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           if (!openingSetup.current) returnFocusRef.current?.focus();
@@ -229,7 +220,7 @@ export function ActivityComposer({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">
+            <div className="text-xxs font-semibold uppercase tracking-[.15em] text-accent">
               New practical activity
             </div>
             <DialogTitle className="mt-1 pr-6 font-serif text-2xl text-text-primary">
@@ -248,7 +239,7 @@ export function ActivityComposer({
             onChange={(event) =>
               setKind(event.target.value as LearningPracticalActivityKind)
             }
-            className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
+            className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm text-text-primary"
           >
             {kinds.map((entry) => (
               <option key={entry.id} value={entry.id}>
@@ -258,7 +249,7 @@ export function ActivityComposer({
           </select>
         </label>
         {kind === "interview" && (
-          <section className="mt-4 rounded-xl border border-border bg-background/50 p-4 space-y-3">
+          <section className="mt-4 rounded-xl border border-border-default bg-surface-sunken p-4 space-y-3">
             <div className="text-xs font-semibold text-text-primary">
               Company &amp; Role Research
             </div>
@@ -270,9 +261,9 @@ export function ActivityComposer({
                   aria-label="Company name"
                   value={companyName}
                   onChange={(event) => setCompanyName(event.target.value)}
-                  placeholder="e.g., Stripe, Cloudflare, Linear"
+                  placeholder="e.g. Example Org"
                   maxLength={160}
-                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-muted"
                 />
               </label>
               <label className="block text-xs font-medium text-text-secondary">
@@ -285,9 +276,9 @@ export function ActivityComposer({
                   autoCorrect="off"
                   value={companyUrl}
                   onChange={(event) => setCompanyUrl(event.target.value)}
-                  placeholder="company.com or https://…"
+                  placeholder="company.example or https://…"
                   maxLength={2048}
-                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-muted"
                 />
               </label>
             </div>
@@ -301,7 +292,7 @@ export function ActivityComposer({
                   onChange={(event) => setTargetRole(event.target.value)}
                   placeholder="e.g., Senior Backend Engineer"
                   maxLength={160}
-                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-sm text-text-primary placeholder:text-text-muted"
                 />
               </label>
               <label className="block text-xs font-medium text-text-secondary">
@@ -314,7 +305,7 @@ export function ActivityComposer({
                       event.target.value as LearningInterviewRoundKind,
                     )
                   }
-                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-sm text-text-primary"
                 >
                   {roundOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -333,7 +324,7 @@ export function ActivityComposer({
                 placeholder="Paste the job description, tech stack, product domain, or specific areas you want the interviewer to probe…"
                 maxLength={LEARNER_TEXT_MAX_CHARS}
                 rows={3}
-                className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-hidden focus:border-accent"
+                className="mt-1.5 w-full rounded-lg border border-border-default bg-surface px-3 py-2 text-sm leading-6 text-text-primary placeholder:text-text-muted outline-hidden focus:border-accent"
               />
             </label>
             <p className="text-xs leading-5 text-text-muted">
@@ -348,7 +339,7 @@ export function ActivityComposer({
               <select
                 value={runtimeSelection}
                 onChange={(event) => setRuntimeSelection(event.target.value)}
-                className="mt-1.5 w-full min-w-0 rounded-lg border border-border bg-background px-3 py-2.5 text-sm"
+                className="mt-1.5 w-full min-w-0 rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm text-text-primary"
               >
                 <option value="">{needsExecution ? "Choose a language to run" : "Review this project without running code"}</option>
                 <optgroup label="Ready inside Lattice">
@@ -372,11 +363,11 @@ export function ActivityComposer({
               {supportedBuiltins.length > 0 && " Python and JavaScript can run inside Lattice."}
             </p>
             <button type="button" onClick={() => { openingSetup.current = true; onRequestRuntimeSetup(); }} className="mt-2 text-xs font-medium text-accent underline underline-offset-4">
-              Set up C#, Rust, or React & TypeScript
+              Set up C#, Rust, or React &amp; TypeScript
             </button>
             {supportedBuiltins.length === 0 &&
             supportedProfiles.length === 0 ? (
-              <p className="mt-2 rounded-lg bg-background p-3 text-[10px] leading-4 text-text-muted">
+              <p className="mt-2 rounded-lg bg-surface-sunken p-3 text-xs leading-4 text-text-muted">
                 No execution environments are ready yet.{" "}
                 <button
                   type="button"
@@ -392,7 +383,7 @@ export function ActivityComposer({
               .map((runtime) => (
                 <p
                   key={runtime.id}
-                  className="mt-2 text-[10px] leading-4 text-text-muted"
+                  className="mt-2 text-xs leading-4 text-text-muted"
                 >
                   {runtime.name} is not ready:{" "}
                   {runtime.reason || "availability is being checked"}.
@@ -408,10 +399,10 @@ export function ActivityComposer({
             maxLength={LEARNER_TEXT_MAX_CHARS}
             rows={3}
             placeholder="What would you like to practice or demonstrate?"
-            className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-hidden focus:border-accent"
+            className="mt-1.5 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2.5 text-sm leading-6 text-text-primary placeholder:text-text-muted outline-hidden focus:border-accent"
           />
         </label>
-        <section className="mt-4 rounded-xl border border-border bg-background/50 p-4">
+        <section className="mt-4 rounded-xl border border-border-default bg-surface-sunken p-4">
           <div className="text-xs font-semibold text-text-primary">
             Help during practice
           </div>
@@ -428,7 +419,7 @@ export function ActivityComposer({
                 type="button"
                 aria-pressed={mode === option}
                 onClick={() => setMode(option)}
-                className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${mode === option ? "border-accent bg-accent text-accent-fg" : "border-border text-text-secondary"}`}
+                className={`rounded-full border px-3 py-2 text-xs font-medium capitalize ${mode === option ? "border-accent bg-accent text-accent-fg" : "border-border-default bg-surface text-text-secondary"}`}
               >
                 {option}
               </button>
@@ -442,7 +433,7 @@ export function ActivityComposer({
               {["Saved sources", "Tutor", "Notes"].map((aid) => (
                 <label
                   key={aid}
-                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs text-text-secondary"
+                  className="inline-flex items-center gap-2 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-secondary"
                 >
                   <input
                     type="checkbox"
@@ -459,7 +450,7 @@ export function ActivityComposer({
         {error && (
           <p
             role="alert"
-            className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
+            className="mt-3 rounded-lg bg-danger-muted p-3 text-xs text-danger-fg"
           >
             {error}
           </p>
@@ -470,12 +461,12 @@ export function ActivityComposer({
             disabled={!canSubmit || submitting}
             aria-busy={submitting}
             onClick={() => void submit()}
-            className="inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-40"
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-40"
           >
             {submitting ? (
               <LoaderCircle size={14} className="animate-spin" />
             ) : (
-              <SparklesIcon />
+              <PlusIcon />
             )}
             {submitting
               ? kind === "interview" && interviewTarget
@@ -491,6 +482,6 @@ export function ActivityComposer({
   );
 }
 
-function SparklesIcon() {
+function PlusIcon() {
   return <Plus size={14} />;
 }
