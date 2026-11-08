@@ -659,7 +659,8 @@ fn cite_sentences(
                         ),
                     )
                     .with_summary(summary)
-                    .with_passage(&cited.quote),
+                    .with_passage(&cited.quote)
+                    .with_sentence(&cited.sentence),
                 );
             }
             Err(other) => return Err(other),

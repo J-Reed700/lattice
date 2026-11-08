@@ -117,6 +117,9 @@ impl Passes {
                         known.summary = format!("{}\n{}", known.summary, finding.summary);
                     }
                     known.passage = known.passage.take().or(finding.passage);
+                    if known.sentence != finding.sentence {
+                        known.sentence = None;
+                    }
                 }
                 None => current.push(finding),
             }
@@ -305,5 +308,27 @@ mod tests {
         };
         assert_eq!(send.len(), 1);
         assert_eq!(send[0].summary, "One problem.\nAnother problem.");
+    }
+
+    /// A note about one sentence lets the user take that sentence out, so a
+    /// note that now stands for more than one has no sentence.
+    #[test]
+    fn a_merged_note_keeps_its_sentence_only_while_every_note_in_it_is_about_that_sentence() {
+        let about = |sentence: &str| section(0, "A note.").with_sentence(sentence);
+        let merged = |findings: Vec<ReviewFinding>| {
+            let mut passes = Passes::default();
+            let Next::Repair { send, .. } = passes.next(findings) else {
+                panic!("expected a repair");
+            };
+            assert_eq!(send.len(), 1);
+            send[0].sentence.clone()
+        };
+        assert_eq!(
+            merged(vec![about("One."), about("One.")]).as_deref(),
+            Some("One.")
+        );
+        assert_eq!(merged(vec![about("One."), about("Two.")]), None);
+        assert_eq!(merged(vec![about("One."), section(0, "Other.")]), None);
+        assert_eq!(merged(vec![section(0, "Other."), about("One.")]), None);
     }
 }

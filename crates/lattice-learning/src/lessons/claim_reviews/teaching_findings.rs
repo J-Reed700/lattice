@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
-use super::teaching_summary::{derive, passage_shown, Stored};
+use super::teaching_summary::{derive, passage_shown, sentence_of, Stored};
 use crate::persistence::{db, now};
 use crate::review_findings::{site_sha256, unit, FindingKey, FindingKind, FindingSite, SetAside};
 
@@ -212,13 +212,16 @@ impl TeachingFindingsRepository {
             let (site, index) = site_columns(finding.key().site);
             sqlx::query(
                 "INSERT INTO learning_lesson_teaching_findings \
-                 (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, repairs, state, job_id, found_at, kept_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, NULL) \
+                 (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, sentence, repairs, state, job_id, found_at, kept_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, NULL) \
                  ON CONFLICT(lesson_id, finding_key) DO UPDATE SET \
                  unit_title=excluded.unit_title, note=excluded.note, summary=excluded.summary, passage=excluded.passage, \
+                 sentence=excluded.sentence, \
                  repairs=max(repairs, excluded.repairs), job_id=excluded.job_id, found_at=excluded.found_at, \
-                 state=CASE WHEN state='kept' AND unit_sha256=excluded.unit_sha256 THEN 'kept' ELSE 'waiting' END, \
+                 state=CASE WHEN state IN ('kept','resolved') AND unit_sha256=excluded.unit_sha256 THEN state ELSE 'waiting' END, \
                  kept_at=CASE WHEN state='kept' AND unit_sha256=excluded.unit_sha256 THEN kept_at ELSE NULL END, \
+                 resolution=CASE WHEN state='resolved' AND unit_sha256=excluded.unit_sha256 THEN resolution ELSE NULL END, \
+                 resolved_at=CASE WHEN state='resolved' AND unit_sha256=excluded.unit_sha256 THEN resolved_at ELSE NULL END, \
                  unit_sha256=excluded.unit_sha256",
             )
             .bind(lesson_id)
@@ -231,6 +234,7 @@ impl TeachingFindingsRepository {
             .bind(finding.note.as_str())
             .bind((!finding.summary.is_empty()).then_some(finding.summary.as_str()))
             .bind(finding.passage.as_deref().or(shown.passage.as_deref()))
+            .bind(finding.sentence.as_deref())
             .bind(i64::from(*repairs))
             .bind(job_id)
             .bind(at)
@@ -244,7 +248,7 @@ impl TeachingFindingsRepository {
     /// The lesson's findings: by place, then kind.
     pub async fn list(&self, lesson_id: &str) -> Result<Vec<TeachingFindingDto>> {
         let rows = sqlx::query(
-            "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, repairs, state \
+            "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, sentence, repairs, state, resolution, resolved_at \
              FROM learning_lesson_teaching_findings WHERE lesson_id=? \
              ORDER BY CASE site WHEN 'lesson' THEN 0 WHEN 'section' THEN 1 ELSE 2 END, unit_index, kind",
         )
@@ -261,6 +265,7 @@ impl TeachingFindingsRepository {
                 let kind =
                     FindingKind::from_column(&row.get::<String, _>("kind")).ok_or_else(corrupt)?;
                 let mut passage: Option<String> = row.get("passage");
+                let mut sentence: Option<String> = row.get("sentence");
                 let summary = match row
                     .get::<Option<String>, _>("summary")
                     .filter(|summary| !summary.is_empty())
@@ -269,7 +274,7 @@ impl TeachingFindingsRepository {
                     None => {
                         let note = row.get::<String, _>("note");
                         passage = passage_shown(kind, &note, passage);
-                        derive(&Stored {
+                        let stored = Stored {
                             kind,
                             site,
                             note: &note,
@@ -279,7 +284,9 @@ impl TeachingFindingsRepository {
                                 }
                                 _ => None,
                             },
-                        })
+                        };
+                        sentence = sentence.or_else(|| sentence_of(&stored));
+                        derive(&stored)
                     }
                 };
                 Ok(TeachingFindingDto {
@@ -294,10 +301,14 @@ impl TeachingFindingsRepository {
                         .get::<Option<i64>, _>("unit_index")
                         .and_then(|index| u32::try_from(index).ok()),
                     unit_title: row.get("unit_title"),
-                    sentence: None,
+                    sentence,
                     claim_ids: Vec::new(),
-                    resolution: None,
-                    resolved_at: None,
+                    resolution: match row.get::<Option<String>, _>("resolution").as_deref() {
+                        Some("removed") => Some(TeachingResolutionDto::Removed),
+                        Some("source_added") => Some(TeachingResolutionDto::SourceAdded),
+                        _ => None,
+                    },
+                    resolved_at: row.get("resolved_at"),
                     summary,
                     passage,
                     passage_role: if kind == FindingKind::Quotation {
@@ -306,10 +317,10 @@ impl TeachingFindingsRepository {
                         TeachingPassageRoleDto::Lesson
                     },
                     repairs: u32::try_from(row.get::<i64, _>("repairs")).unwrap_or_default(),
-                    state: if row.get::<String, _>("state") == "kept" {
-                        TeachingFindingStateDto::Kept
-                    } else {
-                        TeachingFindingStateDto::Waiting
+                    state: match row.get::<String, _>("state").as_str() {
+                        "kept" => TeachingFindingStateDto::Kept,
+                        "resolved" => TeachingFindingStateDto::Resolved,
+                        _ => TeachingFindingStateDto::Waiting,
                     },
                 })
             })
@@ -348,8 +359,8 @@ impl TeachingFindingsRepository {
             .collect())
     }
 
-    /// Keeps or reopens every finding in `finding_keys` in one transaction:
-    /// all or nothing. Refused when the list is empty, the lesson is not in
+    /// Keeps, resolves or reopens every finding in `finding_keys` in one
+    /// transaction: all or nothing. Refused when the list is empty, the lesson is not in
     /// the course, or a finding is not in the state the change needs.
     pub async fn settle(
         &self,
@@ -364,22 +375,37 @@ impl TeachingFindingsRepository {
                 "Select at least one teaching note.".into(),
             ));
         }
-        let (from, to, kept_at) = match settle {
-            TeachingSettleDto::Keep
-            | TeachingSettleDto::Removed
-            | TeachingSettleDto::SourceAdded => ("waiting", "kept", Some(now())),
-            TeachingSettleDto::Reopen => ("kept", "waiting", None),
+        let at = now();
+        let (from, to, kept_at, resolution, resolved_at) = match settle {
+            TeachingSettleDto::Keep => (&["waiting"][..], "kept", Some(at), None, None),
+            TeachingSettleDto::Removed => (
+                &["waiting"][..],
+                "resolved",
+                None,
+                Some("removed"),
+                Some(at),
+            ),
+            TeachingSettleDto::SourceAdded => (
+                &["waiting"][..],
+                "resolved",
+                None,
+                Some("source_added"),
+                Some(at),
+            ),
+            TeachingSettleDto::Reopen => (&["kept", "resolved"][..], "waiting", None, None, None),
         };
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let changed = sqlx::query(
-            "UPDATE learning_lesson_teaching_findings SET state=?, kept_at=? \
-             WHERE lesson_id=? AND state=? AND finding_key IN (SELECT value FROM json_each(?)) \
+            "UPDATE learning_lesson_teaching_findings SET state=?, kept_at=?, resolution=?, resolved_at=? \
+             WHERE lesson_id=? AND state IN (SELECT value FROM json_each(?)) AND finding_key IN (SELECT value FROM json_each(?)) \
              AND EXISTS (SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?)",
         )
         .bind(to)
         .bind(kept_at)
+        .bind(resolution)
+        .bind(resolved_at)
         .bind(lesson_id)
-        .bind(from)
+        .bind(serde_json::to_string(from)?)
         .bind(serde_json::to_string(&distinct)?)
         .bind(lesson_id)
         .bind(program_id)

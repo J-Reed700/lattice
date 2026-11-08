@@ -21,6 +21,7 @@ mod published_remove_tests;
 pub mod recheck;
 pub mod repository;
 pub mod service;
+mod teaching_claims;
 pub mod teaching_findings;
 mod teaching_summary;
 pub mod trust_changed;

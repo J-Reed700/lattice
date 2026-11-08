@@ -73,10 +73,16 @@ fn structure(site: FindingSite, summary: String, note: String) -> ReviewFinding 
 
 /// A citation a part lacks. Not structure: it does not hold up the content
 /// review, and the repair that follows settles it by appending the citation.
-fn citation(site: FindingSite, summary: String, note: String, quote: &str) -> ReviewFinding {
+fn citation(
+    site: FindingSite,
+    summary: String,
+    note: String,
+    (quote, sentence): (&str, &str),
+) -> ReviewFinding {
     ReviewFinding::new(FindingKind::Quotation, Some(site), note)
         .with_summary(summary)
         .with_passage(quote)
+        .with_sentence(sentence)
 }
 
 /// "2 checks", "1 contrast": `count` of `noun`, in the plural unless it is one.
@@ -221,7 +227,7 @@ fn uncited_specifics(
             let note = format!("{label}: the quote cited for \"{shown}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
             (summary, note, quote)
         };
-        findings.push(citation(site, summary, note, quote));
+        findings.push(citation(site, summary, note, (quote, sentence.as_str())));
     }
 }
 
@@ -290,7 +296,7 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         findings.push(structure(
             FindingSite::Lesson,
             format!(
-                "The lesson does not have the sections it is written with. It has {}.",
+                "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has {}.",
                 plain.join(", ")
             ),
             format!("The lesson needs at least two explanations, two worked examples, one contrast and two checks, and exactly one each of guided practice, independent practice, reflection and recap; it has {}.", has.join(", ")),

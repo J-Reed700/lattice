@@ -1389,3 +1389,57 @@ async fn a_note_in_a_draft_lesson_names_no_claims() -> Result<()> {
     assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_note_resolved_by_removing_its_sentence_names_the_claims_that_removal_ended() -> Result<()>
+{
+    use crate::lessons::claim_reviews::teaching_findings::TeachingSettleDto;
+    let course = unchecked().await?;
+    let body = stored(&course).await?.blocks[0].clone();
+    let overlap = extract(
+        &course,
+        "overlap",
+        ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+        "Field-name whitespace is kept.",
+    )
+    .await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    note_about(&course, 0, Some(GOOD)).await?;
+    let ids = claim_ids_of_notes(&course).await?[0].1.clone();
+    assert!(ids.contains(&overlap.0) && ids.contains(&target.0));
+
+    act(&course, &target, ClaimActionRequestDto::Remove).await?;
+    let store = TeachingFindingsRepository::new(course.pool.clone());
+    store
+        .settle(
+            &course.program_id,
+            &course.lesson_id,
+            &["quotation:section-0".to_owned()],
+            TeachingSettleDto::Removed,
+        )
+        .await?;
+
+    let after = claim_ids_of_notes(&course).await?;
+    assert_eq!(after.len(), 1);
+    assert!(after[0].1.contains(&overlap.0), "{after:?}");
+    assert!(after[0].1.iter().all(|id| ids.contains(id)));
+
+    store
+        .settle(
+            &course.program_id,
+            &course.lesson_id,
+            &["quotation:section-0".to_owned()],
+            TeachingSettleDto::Reopen,
+        )
+        .await?;
+    store
+        .settle(
+            &course.program_id,
+            &course.lesson_id,
+            &["quotation:section-0".to_owned()],
+            TeachingSettleDto::SourceAdded,
+        )
+        .await?;
+    assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
+    Ok(())
+}

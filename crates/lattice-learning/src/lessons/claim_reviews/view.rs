@@ -31,6 +31,7 @@ use super::dto::{
 };
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
+use super::teaching_claims::{name_claims, section_bodies};
 use super::teaching_findings::TeachingFindingsRepository;
 use crate::content_verification::{field_text, located};
 use crate::dto::LearningSourceKind;
@@ -163,6 +164,13 @@ impl ClaimReviewService {
                 item(entry, &context, &units, &titles, published)
             })
             .collect();
+        let mut teaching_findings = TeachingFindingsRepository::new(self.pool().clone())
+            .list(lesson_id)
+            .await?;
+        if published {
+            let bodies = section_bodies(self.pool(), lesson_id).await?;
+            name_claims(&ledger, &bodies, &mut teaching_findings);
+        }
         Ok(Some(LessonClaimReviewDto {
             lesson_id: ledger.lesson_id.clone(),
             program_id: review.program_id.clone(),
@@ -173,9 +181,7 @@ impl ClaimReviewService {
             stop_reason: review.stop_reason.as_ref().map(StopReasonDto::from),
             changed_since_stop,
             claims,
-            teaching_findings: TeachingFindingsRepository::new(self.pool().clone())
-                .list(lesson_id)
-                .await?,
+            teaching_findings,
         }))
     }
 

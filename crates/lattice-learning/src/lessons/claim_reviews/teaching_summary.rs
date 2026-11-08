@@ -95,11 +95,13 @@ fn about(lead: &str, sentence: Option<String>) -> String {
     }
 }
 
-fn quotation(row: &Stored) -> Option<String> {
+/// What a sentence-level quotation note says, and the whole sentence it is
+/// about when that is known; none when the note is not about a sentence.
+fn about_a_sentence(row: &Stored) -> Option<(String, Option<String>)> {
     let note = row.note;
     if let Some(shown) = between(note, "states a specific in \"", "\" without citing it.") {
-        return Some(about(
-            "No source is cited for this sentence",
+        return Some((
+            "No source is cited for this sentence".to_owned(),
             whole_sentence(shown, UNCITED_CUT, row),
         ));
     }
@@ -111,20 +113,35 @@ fn quotation(row: &Stored) -> Option<String> {
             ". Cite a quote of a supplied excerpt",
         ),
     ) {
-        return Some(about(
-            &format!("The quotation cited for this sentence does not contain {missing}"),
+        return Some((
+            format!("The quotation cited for this sentence does not contain {missing}"),
             whole_sentence(shown, UNCITED_CUT, row),
         ));
     }
-    if let Some(shown) = between(
+    let shown = between(
         note,
         "The source citation of the sentence \"",
         "\" could not be confirmed: ",
-    ) {
-        return Some(about(
-            "The quotation cited for this sentence could not be found in its source",
-            whole_sentence(shown, CITED_CUT, row),
-        ));
+    )?;
+    Some((
+        "The quotation cited for this sentence could not be found in its source".to_owned(),
+        whole_sentence(shown, CITED_CUT, row),
+    ))
+}
+
+/// The whole sentence a finding with no stored sentence is about, when its
+/// note names one and the text completes it.
+pub(crate) fn sentence_of(row: &Stored) -> Option<String> {
+    match row.kind {
+        FindingKind::Quotation => about_a_sentence(row).and_then(|(_, sentence)| sentence),
+        _ => None,
+    }
+}
+
+fn quotation(row: &Stored) -> Option<String> {
+    let note = row.note;
+    if let Some((lead, sentence)) = about_a_sentence(row) {
+        return Some(about(&lead, sentence));
     }
     names_a_part(note).then(|| {
         format!(
