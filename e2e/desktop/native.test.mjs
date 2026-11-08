@@ -531,8 +531,10 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
         try {
           const context = new AudioContext();
           report.audioContext = context.state;
-          await context.close();
-        } catch (e) { report.audioContext = `${e.name}: ${e.message}`; }
+          await settle(context.resume());
+          report.audioContextResumed = context.state;
+          await settle(context.close());
+        } catch (e) { report.audioContext = `${report.audioContext ?? ''} ${e.name}: ${e.message}`.trim(); }
         done(report);
       }).catch(e => ({ probeFailed: String(e) }));
       await browser.saveScreenshot(path.join(reports, 'voice-failure.png')).catch(() => {});
