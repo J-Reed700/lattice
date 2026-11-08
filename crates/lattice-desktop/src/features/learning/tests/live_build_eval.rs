@@ -785,7 +785,7 @@ async fn build_eval(kind: Kind) -> Result<()> {
                         );
                         (
                             passage_json(&name, &stored, seconds),
-                            passage_markdown(&name, &stored, seconds),
+                            passage_markdown(&name, &course.title, &stored, seconds),
                             json!({"issues": stored.drill.key.len(), "dropped": stored.evidence.dropped.len()}),
                         )
                     }
@@ -928,7 +928,7 @@ fn passage_json(name: &str, stored: &StoredDrill, seconds: f64) -> Value {
 
 /// The passage drill for a person to read: the source, the explanation as the learner reviews it, each planted error
 /// with its proof, what was dropped, the clean review and the models.
-fn passage_markdown(name: &str, stored: &StoredDrill, seconds: f64) -> String {
+fn passage_markdown(name: &str, _course: &str, stored: &StoredDrill, seconds: f64) -> String {
     let evidence = &stored.evidence;
     let mut out = format!("# {} ({name})\n\n", stored.drill.title);
     if let Some(brief) = &evidence.brief {
@@ -1291,6 +1291,7 @@ async fn passage_drill() -> Result<StoredDrill> {
             text: format!("{}\n{}\n", lines[0], lines[1]),
         }]
     };
+    drill.evidence.brief = None;
     drill.drill.material = Material::Passage;
     drill.drill.title = "Why spacing study sessions helps".into();
     drill.drill.files = file(&planted);
@@ -1361,13 +1362,14 @@ async fn passage_drill() -> Result<StoredDrill> {
 async fn the_passage_markdown_shows_the_source_the_explanation_and_each_planted_error_with_its_proof(
 ) -> Result<()> {
     let drill = passage_drill().await?;
-    let text = passage_markdown("passage-03", &drill, 7.6);
+    let text = passage_markdown("passage-03", "Rate limiting in services", &drill, 7.6);
 
     assert!(text.starts_with("# Why spacing study sessions helps (passage-03)\n\n"));
     assert!(text.contains(
         "- Course: Rate limiting in services\n- Lesson: A sliding-window limiter\n- Built by: scripted-drill-model\n- Built in 8 seconds\n"
     ));
-    assert!(text.contains("## The brief\n\n```text\n<brief>"));
+    assert!(text.contains("## The lesson\n\nThe passage was picked by the lesson's title, objective, module and outcomes, and the writer was given the lesson's title as the topic. A passage drill is built without the lesson's brief.\n\n"));
+    assert!(!text.contains("built from no lesson"));
     // The source passage, then the explanation as the learner reviews it, numbered.
     assert!(text.contains(
         "## The source passage\n\n### Spacing and memory\n\n```text\nLearners recalled 14% more.\n```\n"
