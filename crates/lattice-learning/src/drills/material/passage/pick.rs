@@ -1,9 +1,10 @@
 //! Which passage a drill explains (docs/design/2026-11-07-drills-in-the-course.md section 4): one the course's sources
 //! hold for the drill's lesson, found by searching them for the lesson's title, objective and module, widened to whole
-//! paragraphs and sized to hold at least as many sentences as the explanation, so that each sentence of it has
-//! something of its own to say. Within a hit it is the paragraph carrying the most of the search's term weight. The
-//! best-ranked passage no drill of the course was built on comes first; once every one was, the one whose latest
-//! drill is the oldest. A prepared lesson draws only on the sources its blocks cite.
+//! places (a source's paragraphs, a long one cut into runs of sentences) and sized to hold at least as many sentences
+//! as the explanation, so that each sentence of it has something of its own to say. Within a hit it is the place
+//! carrying the most of the search's term weight. The best-ranked passage no drill of the course was built on comes
+//! first; once every one was, the one whose latest drill is the oldest. A prepared lesson draws only on the sources
+//! its blocks cite.
 
 use crate::drills::build::SourcePassage;
 use crate::drills::lesson::LessonContext;
@@ -13,7 +14,9 @@ use crate::persistence::db;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::text::segmentation::{sentences, units, Prose, Span, Strength};
+use lattice_core::shared::text::segmentation::{
+    sentences, Boundaries, Break, Prose, Span, Strength,
+};
 use lattice_index::passage_index::indexed_term;
 use sqlx::SqlitePool;
 use std::cmp::Ordering;
@@ -21,7 +24,7 @@ use std::collections::{BTreeSet, HashMap};
 
 /// The passage the next drill of the lesson of `context` explains, sized for an explanation of `wanted` sentences:
 /// the best-ranked passage for the lesson that no drill of the course was built on, or, once every one was, the one
-/// whose latest drill is the oldest. In a hit it is the paragraph carrying the most of the search's term weight. The
+/// whose latest drill is the oldest. In a hit it is the place carrying the most of the search's term weight. The
 /// ranking is read a page at a time, deeper only while every passage of it was drilled. `None` when the lesson's
 /// sources hold nothing for it.
 pub(super) async fn pick(
@@ -100,10 +103,10 @@ impl Ord for Heavier {
 }
 
 /// A candidate passage's place in the ranking: when a drill last used it (`None` for never), then its hit's rank, the
-/// term weight its text holds (the heavier the better) and its paragraph's index, the least of which is the best.
+/// term weight its text holds (the heavier the better) and its place's index, the least of which is the best.
 type Key = (Option<usize>, usize, Heavier, usize);
 
-/// A paragraph sized into a passage: its byte span in the source and the weight of the search's terms its text holds.
+/// A place sized into a passage: its byte span in the source and the weight of the search's terms its text holds.
 #[derive(Clone, Copy)]
 struct Candidate {
     start: usize,
@@ -111,10 +114,10 @@ struct Candidate {
     weight: f64,
 }
 
-/// The best candidate among the paragraphs the ranked `hits` overlap, returned as soon as a hit, weighed whole, has one
-/// no drill used, which is the best of the whole ranking. In a hit the paragraph carrying the most of the search's term
-/// weight comes first. The paragraphs of each source are kept in `split`, and each paragraph's candidate in `made`,
-/// across pages, so each is made once per pick.
+/// The best candidate among the places the ranked `hits` overlap, returned as soon as a hit, weighed whole, has one no
+/// drill used, which is the best of the whole ranking. In a hit the place carrying the most of the search's term weight
+/// comes first. The places of each source are kept in `split`, and each place's candidate in `made`, across pages, so
+/// each is made once per pick.
 fn best_on_page<'a>(
     hits: &[ReferencePassage],
     sources: &'a [LearningSourceDto],
@@ -129,17 +132,16 @@ fn best_on_page<'a>(
         let Some(source) = sources.iter().find(|source| source.id == hit.source_id) else {
             continue;
         };
-        let places: &[Span] = split
+        let spans: &[Span] = split
             .entry(source.id.as_str())
-            .or_insert_with(|| units(&source.excerpt, &Prose, Strength::Paragraph));
-        for (index, paragraph) in places.iter().enumerate() {
-            if paragraph.end <= hit.start_byte || hit.end_byte <= paragraph.start {
+            .or_insert_with(|| places(&source.excerpt, wanted));
+        for (index, place) in spans.iter().enumerate() {
+            if place.end <= hit.start_byte || hit.end_byte <= place.start {
                 continue;
             }
-            let Some(Candidate { start, end, weight }) =
-                *made.entry((source.id.as_str(), index)).or_insert_with(|| {
-                    candidate_of(&source.excerpt, places, paragraph, wanted, weights)
-                })
+            let Some(Candidate { start, end, weight }) = *made
+                .entry((source.id.as_str(), index))
+                .or_insert_with(|| candidate_of(&source.excerpt, spans, place, wanted, weights))
             else {
                 continue;
             };
@@ -178,16 +180,16 @@ fn best_on_page<'a>(
     best
 }
 
-/// The passage `paragraph` of `text`, whose paragraphs are `places`, is sized into, with the weight of the terms of
-/// `weights` its text holds.
+/// The passage `place` of `text`, whose places are `places`, is sized into, with the weight of the terms of `weights`
+/// its text holds.
 fn candidate_of(
     text: &str,
     places: &[Span],
-    paragraph: &Span,
+    place: &Span,
     wanted: usize,
     weights: &HashMap<String, f64>,
 ) -> Option<Candidate> {
-    let (start, end) = sized(text, places, paragraph.start, paragraph.end, wanted)?;
+    let (start, end) = sized(text, places, place.start, place.end, wanted)?;
     let weight = weight_of(text.get(start..end)?, weights);
     Some(Candidate { start, end, weight })
 }
@@ -217,32 +219,89 @@ async fn owners(pool: &SqlitePool, program_id: &str) -> Result<HashMap<String, S
     Ok(rows.into_iter().collect())
 }
 
-/// The passage of `text`, whose paragraphs are `paragraphs`, around `start..end`: the whole paragraphs it touches,
-/// then the paragraphs after them and, at the end of the text, before them, until the passage holds `wanted`
-/// sentences or the whole text; trimmed of the space at its ends. `None` when there is nothing but space there.
+/// The places of `text`: its paragraphs, a paragraph of at least twice `wanted` sentences cut into runs of at least
+/// `wanted`. A run is cut only at a break of strength `Sentence`, the end of a sentence inside a line, never at a line
+/// break, so a run starts where a sentence starts; the last run takes the sentences left over. The places tile `text`.
+fn places(text: &str, wanted: usize) -> Vec<Span> {
+    let mut places = Vec::new();
+    if text.is_empty() {
+        return places;
+    }
+    let mut start = 0;
+    let mut inner: Vec<Break> = Vec::new();
+    for cut in Prose
+        .breaks(text)
+        .into_iter()
+        .filter(|cut| cut.strength >= Strength::Sentence)
+    {
+        if cut.strength >= Strength::Paragraph {
+            runs_of(text, start..cut.at, &inner, wanted, &mut places);
+            inner.clear();
+            start = cut.at;
+        } else {
+            inner.push(cut);
+        }
+    }
+    runs_of(text, start..text.len(), &inner, wanted, &mut places);
+    places
+}
+
+/// The runs of the paragraph `paragraph` of `text`, whose breaks of at least `Sentence` strength are `inner`, pushed
+/// onto `out`.
+fn runs_of(text: &str, paragraph: Span, inner: &[Break], wanted: usize, out: &mut Vec<Span>) {
+    let ends = inner
+        .iter()
+        .map(|cut| cut.at)
+        .chain(std::iter::once(paragraph.end));
+    let mut from = paragraph.start;
+    let filled: Vec<bool> = ends
+        .map(|to| {
+            let piece = text.get(from..to);
+            from = to;
+            piece.is_some_and(|piece| !piece.trim().is_empty())
+        })
+        .collect();
+    let mut left = filled.iter().filter(|filled| **filled).count();
+    let mut before = 0usize;
+    let mut run = paragraph.start;
+    for (cut, filled) in inner.iter().zip(&filled) {
+        if *filled {
+            before += 1;
+            left = left.saturating_sub(1);
+        }
+        if wanted > 0 && cut.strength == Strength::Sentence && before >= wanted && left >= wanted {
+            out.push(run..cut.at);
+            run = cut.at;
+            before = 0;
+        }
+    }
+    out.push(run..paragraph.end);
+}
+
+/// The passage of `text`, whose places are `places`, around `start..end`: the whole places it touches, then the places
+/// after them and, at the end of the text, before them, until the passage holds `wanted` sentences or the whole text;
+/// trimmed of the space at its ends. `None` when there is nothing but space there.
 fn sized(
     text: &str,
-    paragraphs: &[Span],
+    places: &[Span],
     start: usize,
     end: usize,
     wanted: usize,
 ) -> Option<(usize, usize)> {
-    let mut first = paragraphs
+    let mut first = places.iter().position(|place| place.end > start)?;
+    let mut last = places
         .iter()
-        .position(|paragraph| paragraph.end > start)?;
-    let mut last = paragraphs
-        .iter()
-        .rposition(|paragraph| paragraph.start < end.max(start.saturating_add(1)))?
+        .rposition(|place| place.start < end.max(start.saturating_add(1)))?
         .max(first);
     let span = |first: usize, last: usize| -> Option<(usize, usize)> {
-        Some((paragraphs.get(first)?.start, paragraphs.get(last)?.end))
+        Some((places.get(first)?.start, places.get(last)?.end))
     };
     loop {
         let (from, to) = span(first, last)?;
         if sentences(text.get(from..to)?).len() >= wanted {
             break;
         }
-        if last + 1 < paragraphs.len() {
+        if last + 1 < places.len() {
             last += 1;
         } else if first > 0 {
             first -= 1;

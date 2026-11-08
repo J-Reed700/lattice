@@ -111,8 +111,10 @@ The passage comes from the lesson:
 - *A prepared lesson:* the sources its blocks cite.
 - *An outline lesson:* the course's sources.
 
-Either way the passages are ranked by the brief's query. The pick is the best-ranked passage no drill has used. Once
-all have been used, it is the one used longest ago, because drilling a lesson again on the same passage is the point
+Either way the passages are ranked by the brief's query. A passage is the hit's paragraph grown to hold the
+explanation's sentences, and a paragraph holding at least twice that many is cut at sentence ends into runs of that
+many, the last taking any left over. The pick is the best-ranked passage no drill has used. Once all have been used,
+it is the one used longest ago, because drilling a lesson again on the same passage is the point
 of relearning. The explanation is written with the lesson's title as its topic. Clean review, planting and the source
 check are unchanged. If the sources hold no passage for the lesson, that build fails with the reason, and the lesson
 is recorded as having nothing to drill from in passages (§7).

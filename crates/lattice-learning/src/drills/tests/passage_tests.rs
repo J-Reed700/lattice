@@ -471,6 +471,114 @@ fn run_of<'a>(line: &'a str, spans: &[(usize, usize)], first: usize, last: usize
     &line[start..end]
 }
 
+/// A paragraph of `total` sentences: `lead` if there is one, then sentences taken from `filler`.
+fn paragraph_of(
+    lead: Option<String>,
+    filler: &mut std::vec::IntoIter<String>,
+    total: usize,
+) -> String {
+    let mut held: Vec<String> = lead.into_iter().collect();
+    while held.len() < total {
+        match filler.next() {
+            Some(sentence) => held.push(sentence),
+            None => break,
+        }
+    }
+    held.join(" ")
+}
+
+#[tokio::test]
+async fn the_unrelated_paragraph_beside_a_drilled_one_gives_way_to_a_lower_hit_about_the_lesson(
+) -> Result<()> {
+    let pool = pool().await?;
+    let mut fill = filler_sentences(60).into_iter();
+    let own = (0..4).map(lesson_sentence).collect::<Vec<_>>().join(" ");
+    let unrelated = paragraph_of(None, &mut fill, 4);
+    let about = paragraph_of(Some(touched_sentence(9)), &mut fill, 4);
+    let tail = paragraph_of(None, &mut fill, 4);
+    for paragraph in [&own, &unrelated, &about] {
+        assert_eq!(sentences(paragraph).len(), 4, "{paragraph}");
+    }
+    let first_source = [own.as_str(), unrelated.as_str()].join("\n\n");
+    let second_source = [about.as_str(), tail.as_str()].join("\n\n");
+    assert!(
+        first_source.len() < 1200 && second_source.len() < 1200,
+        "one window each"
+    );
+    let plain: Vec<(String, String)> = (0..6)
+        .map(|number| (format!("Plain {number}"), paragraph_of(None, &mut fill, 4)))
+        .collect();
+    let mut sources: Vec<(&str, &str)> = vec![
+        ("Lesson notes", first_source.as_str()),
+        ("Side notes", second_source.as_str()),
+    ];
+    sources.extend(
+        plain
+            .iter()
+            .map(|(title, body)| (title.as_str(), body.as_str())),
+    );
+    let program = course_of(&pool, &sources).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    let (side, _) = source_titled(&pool, &program, "Side notes").await?;
+
+    let first = next_passage(&pool, &spec).await?;
+    assert_eq!(first.text, own);
+    drilled(&pool, "first", &program, &lesson, &first).await?;
+
+    let second = next_passage(&pool, &spec).await?;
+    assert_eq!(second.version_id, side);
+    assert_eq!(second.text, about);
+    assert!(!second.text.contains(&unrelated), "{}", second.text);
+    Ok(())
+}
+
+#[tokio::test]
+async fn of_the_places_the_hits_overlap_the_heaviest_comes_first_and_not_the_best_ranked_hits(
+) -> Result<()> {
+    let pool = pool().await?;
+    let mut fill = filler_sentences(120).into_iter();
+    let repeated = "The spacing log said spacing was kept, spacing was logged, spacing was seen and spacing was shown.";
+    let two_terms =
+        "At the harbour the baker number 1 told of spacing and recall onto the grey cart.";
+    let rank_first = paragraph_of(Some(repeated.to_owned()), &mut fill, 4);
+    let heavier = paragraph_of(Some(two_terms.to_owned()), &mut fill, 4);
+    for paragraph in [&rank_first, &heavier] {
+        assert_eq!(sentences(paragraph).len(), 4, "{paragraph}");
+        assert!(paragraph.len() < 1200);
+    }
+    let common: Vec<(String, String)> = (0..5)
+        .map(|number| {
+            (
+                format!("Common {number}"),
+                paragraph_of(Some(touched_sentence(number)), &mut fill, 4),
+            )
+        })
+        .collect();
+    let plain: Vec<(String, String)> = (0..15)
+        .map(|number| (format!("Plain {number}"), paragraph_of(None, &mut fill, 4)))
+        .collect();
+    let mut sources: Vec<(&str, &str)> = vec![
+        ("Notes X", rank_first.as_str()),
+        ("Notes Y", heavier.as_str()),
+    ];
+    sources.extend(
+        common
+            .iter()
+            .chain(plain.iter())
+            .map(|(title, body)| (title.as_str(), body.as_str())),
+    );
+    let program = course_of(&pool, &sources).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (version, _) = source_titled(&pool, &program, "Notes Y").await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.version_id, version);
+    assert_eq!(picked.text, heavier);
+    assert!(!picked.text.contains("spacing log"), "{}", picked.text);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_long_paragraph_gives_a_run_of_as_many_sentences_as_the_explanation() -> Result<()> {
     let pool = pool().await?;
@@ -536,7 +644,8 @@ async fn a_second_drill_of_a_long_paragraph_takes_another_run_of_it() -> Result<
 }
 
 #[tokio::test]
-async fn a_hard_wrapped_paragraph_is_cut_only_at_the_end_of_a_sentence() -> Result<()> {
+async fn a_hard_wrapped_paragraph_is_cut_at_sentence_ends_into_runs_as_long_as_the_explanation(
+) -> Result<()> {
     let pool = pool().await?;
     let mut words = String::new();
     for (number, filler) in filler_sentences(16).into_iter().enumerate() {
@@ -572,7 +681,8 @@ async fn a_hard_wrapped_paragraph_is_cut_only_at_the_end_of_a_sentence() -> Resu
 
     let picked = next_passage(&pool, &spec).await?;
     assert!(picked.text.len() < text.trim().len(), "{picked:?}");
-    assert!(sentences(&picked.text).len() >= 4, "{}", picked.text);
+    let ends = picked.text.matches('.').count();
+    assert!((4..=7).contains(&ends), "{ends} sentences: {}", picked.text);
     assert!(picked.text.ends_with('.'), "{}", picked.text);
     let before = text.get(..picked.start_byte).unwrap_or("x").trim();
     assert!(before.is_empty() || before.ends_with('.'), "{before}");
@@ -1712,6 +1822,31 @@ async fn a_hard_wrapped_source_with_irregular_space_still_gives_exact_quotes() -
         "a wrapped line does not end a sentence: {asked}"
     );
     assert!(asked.contains("[passage-2]\nA new paragraph."), "{asked}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_items_of_a_list_in_a_passage_go_to_the_checker_apart() -> Result<()> {
+    let passage = "Study habits that help:\n- Space sessions apart\n- Test yourself often\n- Sleep after studying\n\nTogether they improve recall.";
+    let model = ScriptedModel::new([
+        "Reason: The list names it.\nSource passage: passage-2\nVerdict: supported".to_owned(),
+    ]);
+    let found = ClaimSourceCheck::new(&model)
+        .check("Testing oneself often helps.", passage)
+        .await?;
+    assert_eq!(found.says, SourceSays::Supported);
+    assert_eq!(found.quote.as_deref(), Some("- Test yourself often"));
+    let asked = last(&model.requests()[0]);
+    for shown in [
+        "[passage-0]\nStudy habits that help:",
+        "[passage-1]\n- Space sessions apart",
+        "[passage-2]\n- Test yourself often",
+        "[passage-3]\n- Sleep after studying",
+        "[passage-4]\nTogether they improve recall.",
+    ] {
+        assert!(asked.contains(shown), "{shown:?} in {asked}");
+    }
+    assert!(!asked.contains("[passage-5]"), "{asked}");
     Ok(())
 }
 
