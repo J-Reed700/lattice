@@ -3,8 +3,8 @@
 
 use crate::features::learning::drills::runner::RunOutcome;
 use lattice_core::domain::learning::drills::{
-    Assessment, DrillFile, Edit, IssueOutcome, KeyIssue, LessonBrief, LineSpan, Origin, Proof,
-    Severity,
+    Assessment, DrillFile, Edit, IssueOutcome, KeyIssue, LessonBrief, LessonLink, LineSpan, Origin,
+    Proof, Severity,
 };
 use serde::{Deserialize, Serialize};
 
@@ -149,6 +149,9 @@ pub struct Mutation {
     pub consequence: String,
     pub explanation: String,
     pub verification: Verification,
+    /// The numbers of the brief's evidence a lesson issue breaks (1 for L1); empty for a catalogue issue.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lesson_sentences: Vec<usize>,
 }
 
 impl Mutation {
@@ -195,9 +198,38 @@ pub struct Proved {
     pub spans: Vec<LineSpan>,
 }
 
+/// Stage 5: what the lesson check made of each proven lesson issue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonChecked {
+    /// For each proven mutation, in the order of `Proved::proven`, what the key ties it to in the lesson: `None`
+    /// for a catalogue issue and for a lesson issue that failed its check.
+    pub links: Vec<Option<LessonLink>>,
+    /// One for each proven lesson issue, in the order of `Proved::proven`.
+    pub checks: Vec<LessonCheck>,
+}
+
+/// How one lesson issue was checked against the sentences it cites.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonCheck {
+    /// The issue's id in the key: `planted-{n}`, as `planted_key` numbers it.
+    pub issue: String,
+    pub pattern: String,
+    pub sentences: Vec<usize>,
+    /// Whether the change makes the code go against what the sentences teach.
+    pub breaks: bool,
+    /// Whether the clean code does what they teach there.
+    pub follows: bool,
+    pub reason: String,
+    pub trail: Trail,
+}
+
 impl Proved {
-    /// The planted issues of the key, in the order of the targets.
-    pub fn planted_key(&self) -> Vec<KeyIssue> {
+    /// The planted issues of the key, in the order of the targets, each with what `checked` ties it to in the
+    /// lesson.
+    pub fn planted_key(&self, checked: &LessonChecked) -> Vec<KeyIssue> {
+        let _ = checked;
         self.proven
             .iter()
             .zip(&self.spans)
@@ -285,6 +317,9 @@ pub struct Evidence {
     pub plant: Trail,
     pub proofs: Vec<ProofEvidence>,
     pub dropped: Vec<DroppedMutation>,
+    /// How each proven lesson issue was checked against the lesson.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lesson_checks: Vec<LessonCheck>,
     pub blind_review: BlindReviewEvidence,
     /// The brief of the lesson the drill was built from, when it was built from one for the writer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -298,8 +333,10 @@ impl Evidence {
         review: &CleanReview,
         planted: &Planted,
         proved: &Proved,
+        checked: &LessonChecked,
         blind: &BlindReview,
     ) -> Self {
+        let _ = checked;
         let proofs = proved
             .proven
             .iter()
@@ -320,6 +357,7 @@ impl Evidence {
             plant: planted.trail.clone(),
             proofs,
             dropped: proved.dropped.clone(),
+            lesson_checks: Vec::new(),
             blind_review: BlindReviewEvidence {
                 findings: blind.findings.clone(),
                 assessment: blind.assessment.clone(),

@@ -4,8 +4,8 @@
 
 use super::support::{
     code, explanation_files, extra_finding, files, operator_finding, passage_spec, planted, proved,
-    quiet, review, review_assessment, schedule_pattern, spacing_passage, spec, FakeGrader,
-    ScriptedModel, Waiting, LITERALS, MODEL, OPERATOR, SUITE,
+    quiet, review, review_assessment, schedule_pattern, spacing_passage, spec, unchecked,
+    FakeGrader, ScriptedModel, Waiting, LITERALS, MODEL, OPERATOR, SUITE,
 };
 use crate::features::learning::drills::attempts::{self, AttemptMode, Graded, Submission};
 use crate::features::learning::drills::build::Evidence;
@@ -158,7 +158,7 @@ impl<'a> Put<'a> {
     async fn stock(self, pool: &SqlitePool) -> Result<()> {
         let passage = matches!(self.material, Material::Passage);
         let built = proved();
-        let mut key = built.planted_key();
+        let mut key = built.planted_key(&unchecked());
         for (issue, pattern) in key.iter_mut().zip(self.patterns) {
             issue.pattern = pattern.to_owned();
         }
@@ -204,7 +204,14 @@ impl<'a> Put<'a> {
         } else {
             files()
         };
-        let evidence = Evidence::new(&code(), &review(), &planted(), &built, &quiet());
+        let evidence = Evidence::new(
+            &code(),
+            &review(),
+            &planted(),
+            &built,
+            &unchecked(),
+            &quiet(),
+        );
         let mut connection = pool.acquire().await.map_err(db)?;
         repository::insert_in(
             &mut connection,
@@ -255,7 +262,7 @@ async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
     let mut connection = pool.acquire().await.map_err(db)?;
     match state {
         State::Graded => {
-            let key = proved().planted_key();
+            let key = proved().planted_key(&unchecked());
             let assessment = review_assessment();
             let scored = score(&key, &[operator_finding(), extra_finding()], &assessment);
             let rated = ratings(&key, &assessment);

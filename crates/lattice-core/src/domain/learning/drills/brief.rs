@@ -80,6 +80,13 @@ impl LessonBrief {
         shown
     }
 
+    /// The evidence units `numbers` cite (1-based, in the order given), written as `render` writes its evidence and
+    /// joined with `\n`. `None` exactly when `link` is `None`.
+    pub fn cited(&self, numbers: &[usize]) -> Option<String> {
+        let _ = numbers;
+        None
+    }
+
     /// The link of an issue that cites the evidence `numbers` (1-based): the cited units, cloned, in the order of
     /// `numbers`. `None` when `numbers` is empty or any number is 0 or beyond the evidence.
     pub fn link(&self, numbers: &[usize]) -> Option<LessonLink> {

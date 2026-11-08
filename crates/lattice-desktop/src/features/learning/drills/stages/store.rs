@@ -1,7 +1,9 @@
 //! Stage 6: the drill's key is checked against its material, and one transaction writes the drill and completes the job,
 //! so a cancelled job stores nothing and a stored drill never leaves its job running.
 
-use super::outputs::{Baseline, BlindReview, CleanCode, CleanReview, Evidence, Planted, Proved};
+use super::outputs::{
+    Baseline, BlindReview, CleanCode, CleanReview, Evidence, LessonChecked, Planted, Proved,
+};
 use super::DrillBuild;
 use crate::features::learning::drills::repository::{self, NewDrill};
 use crate::features::learning::drills::spec::DrillSpec;
@@ -17,6 +19,7 @@ pub(in crate::features::learning) struct Built<'a> {
     pub review: &'a CleanReview,
     pub planted: &'a Planted,
     pub proved: &'a Proved,
+    pub checked: &'a LessonChecked,
     pub blind: &'a BlindReview,
 }
 
@@ -30,7 +33,7 @@ impl DrillBuild<'_> {
         spec: &DrillSpec,
         built: Built<'_>,
     ) -> Result<JobOutcome> {
-        let mut key = built.proved.planted_key();
+        let mut key = built.proved.planted_key(built.checked);
         key.extend(built.blind.extras.iter().cloned());
         let drill = Drill {
             id: built.baseline.drill_id.clone(),
@@ -47,6 +50,7 @@ impl DrillBuild<'_> {
             built.review,
             built.planted,
             built.proved,
+            built.checked,
             built.blind,
         );
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;

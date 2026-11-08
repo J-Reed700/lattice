@@ -6,7 +6,9 @@ use super::ask::{
     ask_request, describe_fault, normalise, path_schema, refuse, render_files, severity_schema,
     text_schema,
 };
-use super::outputs::{Baseline, BlindReview, Findability, Proved, ReviewedFinding, Trail};
+use super::outputs::{
+    Baseline, BlindReview, Findability, LessonChecked, Proved, ReviewedFinding, Trail,
+};
 use super::DrillBuild;
 use crate::features::learning::drills::budget;
 use crate::features::learning::drills::grader::Review;
@@ -76,8 +78,9 @@ impl DrillBuild<'_> {
         spec: &DrillSpec,
         baseline: &Baseline,
         proved: &Proved,
+        checked: &LessonChecked,
     ) -> Result<BlindReview> {
-        let planted = proved.planted_key();
+        let planted = proved.planted_key(checked);
         let mut trail = Trail::default();
         if planted.is_empty() {
             return Ok(BlindReview {

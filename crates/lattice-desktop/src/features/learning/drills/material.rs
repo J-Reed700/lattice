@@ -38,6 +38,8 @@ pub(in crate::features::learning) struct PlantWording {
     pub prompt: String,
     /// Whether each change comes with a test that observes it, or the reason none can.
     pub asks_verification: bool,
+    /// The most lesson issues the planter may plant: 0 when it is told of none.
+    pub lesson_issues: usize,
 }
 
 /// What the blind reviewer and the describer of a problem it found are told.

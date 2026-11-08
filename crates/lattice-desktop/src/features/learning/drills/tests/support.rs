@@ -6,8 +6,8 @@ use crate::features::learning::drills::attempt_grading::AttemptGrading;
 use crate::features::learning::drills::attempts::{self, Attempt, AttemptMode, Submission};
 use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
-    Baseline, BlindReview, CleanCode, CleanReview, DrillBuild, Evidence, Mutation, Planted, Proved,
-    ProvenMutation, SourcePassage, Trail, Verification,
+    Baseline, BlindReview, CleanCode, CleanReview, DrillBuild, Evidence, LessonChecked, Mutation,
+    Planted, Proved, ProvenMutation, SourcePassage, Trail, Verification,
 };
 use crate::features::learning::drills::grader::{Review, ReviewGrader};
 use crate::features::learning::drills::material::passage::{SourceFinding, SourceSays};
@@ -22,8 +22,8 @@ use lattice_core::application::ports::llm_port::{
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, LineSpan,
-    Material, PatternDue, Proof, Severity,
+    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, KeyIssue,
+    LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
@@ -107,6 +107,10 @@ pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
             "new edit",
         ),
         ("You judge a code review exercise", "judge"),
+        (
+            "You check one defect planted in code for a code review exercise on a lesson",
+            "lesson check",
+        ),
         ("You write a test that shows a defect", "killing test"),
         ("Report every problem you would raise", "blind review"),
         ("A reviewer commented on code", "key entry"),
@@ -274,6 +278,7 @@ impl CodeRunner for FakeRunner {
 /// What the grader was asked to judge.
 pub(super) struct Seen {
     pub issues: Vec<String>,
+    pub key: Vec<KeyIssue>,
     pub files: Vec<DrillFile>,
     pub clean: Vec<DrillFile>,
     pub findings: Vec<Finding>,
@@ -307,6 +312,7 @@ impl FakeGrader {
                 seen.iter()
                     .map(|one| Seen {
                         issues: one.issues.clone(),
+                        key: one.key.clone(),
                         files: one.files.clone(),
                         clean: one.clean.clone(),
                         findings: one.findings.clone(),
@@ -328,6 +334,7 @@ impl ReviewGrader for FakeGrader {
                     .iter()
                     .map(|issue| issue.id.clone())
                     .collect(),
+                key: review.drill.key.clone(),
                 files: review.drill.files.clone(),
                 clean: review.clean.to_vec(),
                 findings: review.findings.to_vec(),
@@ -458,6 +465,7 @@ pub(super) fn operator_mutation() -> Mutation {
         explanation:
             "The comparison lets one call too many through. It should refuse at the limit.".into(),
         verification: Verification::KillingTest(KILLING_TEST.into()),
+        lesson_sentences: vec![],
     }
 }
 
@@ -470,6 +478,7 @@ pub(super) fn literals_mutation() -> Mutation {
         explanation:
             "The constants are no longer used. Use them so the defaults change in one place.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     }
 }
 
@@ -510,6 +519,76 @@ pub(super) fn plant_answer() -> String {
             "killingTest": "", "noTestBecause": ""
         }
     ]})
+    .to_string()
+}
+
+/// The lesson the code of the fixtures is written for: two units of its own teaching and one from a source. The
+/// operator change breaks the first, the literals change the second.
+pub(super) fn lesson_brief() -> LessonBrief {
+    let unit = |text: &str, source: Option<&str>| LessonSentence {
+        text: text.into(),
+        source: source.map(str::to_owned),
+    };
+    LessonBrief {
+        lesson_id: "lesson-1".into(),
+        course: "Rate limiting in services".into(),
+        goal: "Protect a service from callers that send too much".into(),
+        prior_knowledge: "Basic Python".into(),
+        module: "Limiters".into(),
+        module_summary: "How a limiter counts and refuses calls".into(),
+        outcomes: vec!["Write a sliding-window limiter".into()],
+        lesson: "A sliding-window limiter".into(),
+        objective: "Refuse calls past the limit inside a window".into(),
+        evidence: vec![
+            unit(
+                "A limiter refuses a call once the calls in its window reach the limit.",
+                None,
+            ),
+            unit(
+                "A limiter's defaults are named once, so they change in one place.",
+                None,
+            ),
+            unit(
+                "A sliding window forgets the calls older than its length.",
+                Some("Rate limiting notes"),
+            ),
+        ],
+    }
+}
+
+/// [`baseline`] with the brief of [`lesson_brief`], as the clean stage leaves it for a lesson.
+pub(super) fn baseline_with_brief() -> Baseline {
+    Baseline {
+        brief: Some(lesson_brief()),
+        ..baseline()
+    }
+}
+
+/// What the lesson check has made of a drill none of whose issues is a lesson issue.
+pub(super) fn unchecked() -> LessonChecked {
+    LessonChecked {
+        links: Vec::new(),
+        checks: Vec::new(),
+    }
+}
+
+/// [`proved`] with the operator change a lesson issue citing `operator` and the literals change one citing
+/// `literals` (an empty list for a catalogue issue).
+pub(super) fn lesson_proved(operator: &[usize], literals: &[usize]) -> Proved {
+    let mut proved = proved();
+    for (item, sentences) in proved.proven.iter_mut().zip([operator, literals]) {
+        item.mutation.lesson_sentences = sentences.to_vec();
+    }
+    proved
+}
+
+/// What the model answers to the lesson check.
+pub(super) fn lesson_check_answer(breaks: bool, follows: bool) -> String {
+    json!({
+        "reason": "The sentences say a limiter refuses at its limit, and the edit lets one call more through.",
+        "breaksIt": breaks,
+        "cleanFollowsIt": follows
+    })
     .to_string()
 }
 
@@ -691,7 +770,8 @@ impl Harness {
         Ok((Self::on(pool, &spec).await?, spec))
     }
 
-    async fn on(pool: SqlitePool, spec: &DrillSpec) -> Result<Self> {
+    /// A harness over `pool`, with a build job queued for `spec` and claimed.
+    pub(super) async fn on(pool: SqlitePool, spec: &DrillSpec) -> Result<Self> {
         let job = bank::queue_build(&pool, spec, "test").await?;
         let store = JobStore::new(pool.clone());
         store
@@ -1183,6 +1263,7 @@ pub(super) fn figure_mutation() -> Mutation {
             .into(),
         explanation: "The study found 14% better recall, not 40%.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     }
 }
 
@@ -1198,6 +1279,7 @@ pub(super) fn reversed_mutation() -> Mutation {
         consequence: "A reader would space their review of what they already know best.".into(),
         explanation: "The benefit was smaller for well known material, not larger.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     }
 }
 

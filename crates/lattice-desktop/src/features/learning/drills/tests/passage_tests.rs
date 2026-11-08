@@ -8,7 +8,7 @@ use super::support::{
     figure_mutation, fix_answer, held_back, idle_grader, last, lesson_titled, no_verdict,
     passage_baseline, passage_build, passage_code, passage_lesson_spec, passage_plant_answer,
     passage_spec, prepare_lesson, quiet, raised_all, reversed_mutation, spacing_check,
-    spacing_passage, supported, system, unsupported, unsure, FakeGrader, ScriptedCheck,
+    spacing_passage, supported, system, unchecked, unsupported, unsure, FakeGrader, ScriptedCheck,
     ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH,
     MODEL, REVERSED, SECOND, SLEEP, SLEEP_LESSON, SMALLER_QUOTE, SPACING, SPACING_LESSON, THIRD,
     THIRD_PLANTED,
@@ -154,6 +154,7 @@ pub(super) async fn drilled(
         &clean_review(),
         &planted,
         &no_proofs(),
+        &unchecked(),
         &quiet(),
     );
     let mut connection = pool.acquire().await.map_err(db)?;
@@ -991,6 +992,7 @@ async fn a_contradiction_within_the_explanation_is_judged_on_the_explanation() -
         consequence: "A reader cannot tell who the benefit was found in.".into(),
         explanation: "Sentence 4 contradicts sentence 2 about who was studied.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     };
     let proved = passage_build(&pool, &model, &check, &grader)
         .prove(&spec, &passage_baseline(), &planted_of(vec![contradiction]))
@@ -1078,7 +1080,12 @@ async fn the_blind_reviewer_reads_the_explanation_with_its_source_and_an_extra_i
     });
     let proved = proved_figure();
     let reviewed = passage_build(&pool, &model, &check, &grader)
-        .blind_review(&passage_spec("course"), &passage_baseline(), &proved)
+        .blind_review(
+            &passage_spec("course"),
+            &passage_baseline(),
+            &proved,
+            &unchecked(),
+        )
         .await?;
     assert_eq!(model.purposes(), ["blind review", "key entry"]);
 
@@ -1579,6 +1586,7 @@ async fn a_passage_drill_without_its_source_is_not_stored() -> Result<()> {
         &clean_review(),
         &planted,
         &no_proofs(),
+        &unchecked(),
         &quiet(),
     );
     let mut connection = pool.acquire().await.map_err(db)?;
@@ -1674,12 +1682,19 @@ async fn a_code_drill_stored_before_passages_still_reads() -> Result<()> {
     use super::support::{code, files, planted, proved, review, OPERATOR};
     let pool = pool().await?;
     let spec = json!({"language": "python", "domain": "rate limiting", "lines": 40, "patterns": [OPERATOR], "programId": null});
-    let evidence = Evidence::new(&code(), &review(), &planted(), &proved(), &quiet());
+    let evidence = Evidence::new(
+        &code(),
+        &review(),
+        &planted(),
+        &proved(),
+        &unchecked(),
+        &quiet(),
+    );
     sqlx::query("INSERT INTO learning_drills(id,language,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at) VALUES('old','python','A limiter','rate limiting',NULL,?,?,?,?,?,NULL,NULL,'m','ready',1,NULL)")
         .bind(spec.to_string())
         .bind(encode(&files())?)
         .bind(encode(&proved().files)?)
-        .bind(encode(&proved().planted_key())?)
+        .bind(encode(&proved().planted_key(&unchecked()))?)
         .bind(encode(&evidence)?)
         .execute(&pool)
         .await
@@ -2043,13 +2058,21 @@ fn a_baseline_and_the_evidence_keep_the_brief_the_clean_code_was_written_from() 
         mutations: Vec::new(),
         trail: Trail::default(),
     };
-    let evidence = Evidence::new(&code, &clean_review(), &planted, &no_proofs(), &quiet());
+    let evidence = Evidence::new(
+        &code,
+        &clean_review(),
+        &planted,
+        &no_proofs(),
+        &unchecked(),
+        &quiet(),
+    );
     assert_eq!(evidence.brief, Some(brief));
     let without = Evidence::new(
         &passage_code(),
         &clean_review(),
         &planted,
         &no_proofs(),
+        &unchecked(),
         &quiet(),
     );
     assert_eq!(without.brief, None);
@@ -2057,4 +2080,53 @@ fn a_baseline_and_the_evidence_keep_the_brief_the_clean_code_was_written_from() 
         .unwrap()
         .get("brief")
         .is_none());
+}
+
+// The lesson a stored passage drill fits.
+
+#[tokio::test]
+async fn a_stored_passage_drill_records_that_the_lesson_fits_passages() -> Result<()> {
+    use super::support::Harness;
+    use crate::features::learning::drills::build::store::Built;
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let harness = Harness::on(pool, &spec).await?;
+    let (model, grader) = (ScriptedModel::new([]), FakeGrader::failing("unused"));
+    let code = CleanCode {
+        basis: Some("basis-1".into()),
+        ..passage_code()
+    };
+    let planted = Planted {
+        mutations: vec![figure_mutation()],
+        trail: Trail::default(),
+    };
+    let (proved, review, baseline, blind) =
+        (proved_figure(), clean_review(), passage_baseline(), quiet());
+    let context = harness.context().await?;
+    let outcome = harness
+        .build(&model, None, &grader)
+        .store(
+            &context,
+            &spec,
+            Built {
+                baseline: &baseline,
+                code: &code,
+                review: &review,
+                planted: &planted,
+                proved: &proved,
+                checked: &unchecked(),
+                blind: &blind,
+            },
+        )
+        .await?;
+    assert_eq!(outcome, JobOutcome::Committed);
+    let fits: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT fits,basis FROM learning_drill_lesson_fits WHERE material='passage'",
+    )
+    .fetch_all(&harness.pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(fits, [(1, "basis-1".to_owned())]);
+    Ok(())
 }

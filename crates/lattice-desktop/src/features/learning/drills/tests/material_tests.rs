@@ -1,7 +1,7 @@
 //! Code as a drill's material: every text that reaches a model for a code drill is, byte for byte, the text the
 //! stages carried before the material was a Strategy. The texts of that time are kept in `tests/golden`, taken from
-//! the stages as they were, except the clean code's system text, which is the one the writer has had since drills
-//! were built from a lesson; a spec stored before passages is still read.
+//! the stages as they were, except the clean code's system text and the judge's, which are the ones they have had
+//! since drills were built from a lesson; a spec stored before passages is still read.
 
 use super::support::{
     baseline, build, code, code_spec, idle_grader, last, review_answer, spec, system, FakeRunner,
@@ -208,6 +208,28 @@ fn the_plant_request_with_a_runner_shows_the_suite_and_the_test_files() {
         ));
     }
     assert_eq!(wording.prompt, expected);
+}
+
+#[test]
+fn a_code_drill_takes_half_its_issues_rounded_up_from_its_lesson_and_a_passage_none() {
+    let patterns = |count: usize| -> Vec<String> {
+        (0..count)
+            .map(|number| format!("pattern.{number}"))
+            .collect()
+    };
+    for (size, most) in [(1, 1), (2, 1), (3, 2), (4, 2), (5, 3)] {
+        let code = DrillSpec {
+            patterns: patterns(size),
+            ..spec()
+        };
+        assert_eq!(code.lesson_issues(), most, "{size} patterns of code");
+    }
+    let passage = DrillSpec {
+        material: Material::Passage,
+        patterns: patterns(3),
+        ..spec()
+    };
+    assert_eq!(passage.lesson_issues(), 0);
 }
 
 #[test]

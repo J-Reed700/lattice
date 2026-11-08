@@ -74,7 +74,7 @@ async fn a_job_names_the_drill_it_builds() -> Result<()> {
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 payload_hash: "h".into(),
                 requested,
-                progress_total: 6,
+                progress_total: 7,
                 message: "Waiting".into(),
             })
             .await?;

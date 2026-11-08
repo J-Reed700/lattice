@@ -63,7 +63,7 @@ impl DrillMaterial for CodeMaterial<'_> {
         baseline: &Baseline,
         targets: &[&'static Pattern],
     ) -> PlantWording {
-        self.code_plant_wording(language_of(spec), baseline, targets)
+        self.code_plant_wording(language_of(spec), baseline, targets, spec.lesson_issues())
     }
 
     fn proof_strategy<'a>(

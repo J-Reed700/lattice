@@ -2,7 +2,8 @@
 //! again, what a submission is refused for, and that asking twice finds the same job.
 
 use super::support::{
-    extra_finding, operator_finding, operator_fixed, proved, review_assessment, stock, MODEL,
+    extra_finding, operator_finding, operator_fixed, proved, review_assessment, stock, unchecked,
+    MODEL,
 };
 use crate::features::learning::drills::attempts::{
     self, Attempt, AttemptMode, AttemptStatus, Graded, Submission,
@@ -563,7 +564,7 @@ async fn only_a_submitted_attempt_is_waiting_for_its_grade() -> Result<()> {
 
 /// What a grade writes for the key of the stocked drill and the two findings of [`review_assessment`].
 fn grade_of_the_review() -> (Assessment, Score, Vec<IssueRating>) {
-    let key = proved().planted_key();
+    let key = proved().planted_key(&unchecked());
     let assessment = review_assessment();
     let scored = score(&key, &[operator_finding(), extra_finding()], &assessment);
     let rated = ratings(&key, &assessment);
@@ -738,6 +739,6 @@ async fn an_open_or_graded_attempt_is_not_regraded() -> Result<()> {
 fn the_findings_of_these_tests_are_on_the_lines_the_stocked_drill_has() {
     assert_eq!(
         operator_finding().span,
-        Some(proved().planted_key()[0].span.clone())
+        Some(proved().planted_key(&unchecked())[0].span.clone())
     );
 }

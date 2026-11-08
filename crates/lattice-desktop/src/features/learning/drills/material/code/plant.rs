@@ -14,11 +14,14 @@ impl CodeMaterial<'_> {
         language: &str,
         baseline: &Baseline,
         targets: &[&'static Pattern],
+        lesson_issues: usize,
     ) -> PlantWording {
+        let _ = lesson_issues;
         PlantWording {
             system: system(self.runner, targets),
             prompt: prompt(language, baseline, targets),
             asks_verification: self.runner.is_some(),
+            lesson_issues: 0,
         }
     }
 }

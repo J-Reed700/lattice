@@ -41,6 +41,8 @@ struct Proposed {
     killing_test: Option<String>,
     #[serde(default)]
     no_test_because: Option<String>,
+    #[serde(default)]
+    lesson_sentences: Vec<usize>,
 }
 
 #[derive(Deserialize)]
@@ -257,6 +259,7 @@ fn mutation_of(proposal: Proposed, target: &Pattern, rules: &Rules<'_>) -> Resul
         consequence: proposal.consequence,
         explanation: proposal.explanation,
         verification,
+        lesson_sentences: Vec::new(),
     })
 }
 

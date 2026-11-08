@@ -35,6 +35,8 @@ mod blind_review;
 mod clean_code;
 #[path = "stages/clean_review.rs"]
 mod clean_review;
+#[path = "stages/lesson_check.rs"]
+mod lesson_check;
 #[path = "stages/outputs.rs"]
 pub(in crate::features::learning) mod outputs;
 #[path = "stages/plant.rs"]
@@ -60,17 +62,19 @@ pub(in crate::features::learning) enum Stage {
     CleanReview,
     Plant,
     Prove,
+    LessonCheck,
     BlindReview,
 }
 
 impl Stage {
     /// Every stage, in the order they run.
     #[cfg(test)]
-    pub(in crate::features::learning) const ALL: [Stage; 5] = [
+    pub(in crate::features::learning) const ALL: [Stage; 6] = [
         Stage::CleanCode,
         Stage::CleanReview,
         Stage::Plant,
         Stage::Prove,
+        Stage::LessonCheck,
         Stage::BlindReview,
     ];
 
@@ -80,6 +84,7 @@ impl Stage {
             Self::CleanReview => "clean_review",
             Self::Plant => "plant",
             Self::Prove => "prove",
+            Self::LessonCheck => "lesson_check",
             Self::BlindReview => "blind_review",
         }
     }
@@ -95,6 +100,7 @@ impl Stage {
             Self::CleanReview => 1,
             Self::Plant => 2,
             Self::Prove => 3,
+            Self::LessonCheck => 4,
             Self::BlindReview => 4,
         }
     }
@@ -105,6 +111,7 @@ impl Stage {
             Self::CleanReview => "Reviewing the code",
             Self::Plant => "Planting the defects",
             Self::Prove => "Proving the defects",
+            Self::LessonCheck => "Checking the lesson's issues",
             Self::BlindReview => "Reviewing the drill blind",
         }
     }
@@ -186,9 +193,13 @@ impl<'a> DrillBuild<'a> {
         else {
             return Ok(JobOutcome::Stopped);
         };
+        let checked = LessonChecked {
+            links: Vec::new(),
+            checks: Vec::new(),
+        };
         let Some(blind) = self
             .stage(context, Stage::BlindReview, || {
-                self.blind_review(spec, &baseline, &proved)
+                self.blind_review(spec, &baseline, &proved, &checked)
             })
             .await?
         else {
@@ -205,6 +216,7 @@ impl<'a> DrillBuild<'a> {
             review: &review,
             planted: &planted,
             proved: &proved,
+            checked: &checked,
             blind: &blind,
         };
         self.store(context, spec, built).await

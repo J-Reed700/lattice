@@ -1,7 +1,8 @@
 //! The bank: one drill ready per language, and the build of the next queued when one is taken.
 
 use super::support::{
-    code, files, held_back, planted, proved, quiet, review, schedule_pattern, spec, MODEL, SUITE,
+    code, files, held_back, planted, proved, quiet, review, schedule_pattern, spec, unchecked,
+    MODEL, SUITE,
 };
 use crate::features::learning::drills::bank::{queue_build, take};
 use crate::features::learning::drills::build::Evidence;
@@ -32,7 +33,7 @@ async fn insert(
         material: Material::code(language),
         title: "A limiter".into(),
         files: proved.files.clone(),
-        key: proved.planted_key(),
+        key: proved.planted_key(&unchecked()),
     };
     let mut spec = spec();
     spec.material = Material::code(language);
@@ -41,7 +42,14 @@ async fn insert(
         .iter()
         .map(|pattern| (*pattern).to_owned())
         .collect();
-    let evidence = Evidence::new(&code(), &review(), &planted(), &proved, &quiet());
+    let evidence = Evidence::new(
+        &code(),
+        &review(),
+        &planted(),
+        &proved,
+        &unchecked(),
+        &quiet(),
+    );
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::insert_in(
         &mut connection,
@@ -269,7 +277,7 @@ async fn queueing_a_build_twice_with_one_seed_finds_the_same_job() -> Result<()>
         "{error:?}"
     );
     let job = JobStore::new(pool.clone()).get(&first).await?;
-    assert_eq!(job.progress_total, 6);
+    assert_eq!(job.progress_total, 7);
     assert_eq!(spec_of(&job)?, spec());
     Ok(())
 }

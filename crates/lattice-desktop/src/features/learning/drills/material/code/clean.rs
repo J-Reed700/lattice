@@ -164,7 +164,7 @@ impl CodeMaterial<'_> {
             source: None,
             brief: None,
         };
-        let wording = self.code_plant_wording(language, &empty, targets);
+        let wording = self.code_plant_wording(language, &empty, targets, spec.lesson_issues());
         let mut request = GroundedRequest::new(&wording.system, wording.prompt);
         request.output_tokens = budget::code(spec.lines, self.runner.is_some())
             .saturating_add(budget::mutations(targets.len()));

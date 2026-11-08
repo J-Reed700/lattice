@@ -1,12 +1,15 @@
-//! Stage 6: the key is checked against the code, then one transaction writes the drill and completes the job.
+//! Stage 7: the key is checked against the code, then one transaction writes the drill and completes the job.
 
 use super::support::{
-    baseline, code, files, literals_mutation, planted, proved, quiet, review, spec, FakeGrader,
-    FakeRunner, Harness, ScriptedModel, LITERALS, MODEL, OPERATOR, SUITE,
+    baseline, code, files, lesson_brief, lesson_proved, literals_mutation, planted, proved, quiet,
+    review, spec, unchecked, FakeGrader, FakeRunner, Harness, ScriptedModel, LITERALS, MODEL,
+    OPERATOR, SUITE,
 };
 use crate::features::learning::drills::build::store::Built;
-use crate::features::learning::drills::build::{DroppedMutation, Proved, Trail};
-use crate::features::learning::drills::repository::{self, DrillStatus};
+use crate::features::learning::drills::build::{
+    CleanCode, DroppedMutation, LessonCheck, LessonChecked, Proved, Trail,
+};
+use crate::features::learning::drills::repository::{self, DrillStatus, StoredDrill};
 use crate::features::learning::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobOutcome, JobStatus};
@@ -41,6 +44,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
                 review: &review,
                 planted: &planted,
                 proved: &proved,
+                checked: &unchecked(),
                 blind: &blind,
             },
         )
@@ -58,7 +62,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
     assert_eq!(stored.drill.id, code.drill_id);
     assert_eq!(stored.drill.title, code.title);
     assert_eq!(stored.drill.files, proved.files);
-    assert_eq!(stored.drill.key, proved.planted_key());
+    assert_eq!(stored.drill.key, proved.planted_key(&unchecked()));
     assert_eq!(stored.clean_files, files());
     assert_eq!(stored.spec, spec());
     assert_eq!(stored.domain, "rate limiting");
@@ -101,6 +105,7 @@ async fn without_a_runner_no_suite_or_runner_is_stored() -> Result<()> {
                 review: &review,
                 planted: &planted,
                 proved: &proved,
+                checked: &unchecked(),
                 blind: &blind,
             },
         )
@@ -146,6 +151,7 @@ async fn a_key_that_ends_empty_stores_nothing_and_fails_the_job_with_the_reason(
                 review: &review,
                 planted: &planted,
                 proved: &nothing,
+                checked: &unchecked(),
                 blind: &blind,
             },
         )
@@ -199,6 +205,7 @@ async fn a_key_that_does_not_agree_with_its_code_is_refused_before_anything_is_s
                 review: &review,
                 planted: &planted,
                 proved: &shifted,
+                checked: &unchecked(),
                 blind: &blind,
             },
         )
@@ -235,6 +242,7 @@ async fn a_job_cancelled_meanwhile_stores_nothing() -> Result<()> {
                 review: &review,
                 planted: &planted,
                 proved: &proved,
+                checked: &unchecked(),
                 blind: &blind,
             },
         )
@@ -245,5 +253,138 @@ async fn a_job_cancelled_meanwhile_stores_nothing() -> Result<()> {
         harness.store.get(&harness.job).await?.status,
         JobStatus::Cancelled
     );
+    Ok(())
+}
+
+// What the stored drill says of its lesson.
+
+/// A check of the issue `issue`, which cites `sentences`, that `breaks` the sentences.
+fn check_of(issue: &str, sentences: &[usize], breaks: bool) -> LessonCheck {
+    LessonCheck {
+        issue: issue.into(),
+        pattern: OPERATOR.into(),
+        sentences: sentences.to_vec(),
+        breaks,
+        follows: true,
+        reason: "The edit lets one call more through.".into(),
+        trail: Trail::default(),
+    }
+}
+
+/// What the lesson was recorded as fitting `material` (`code`, `passage`), with the basis it was recorded on.
+async fn fits_of(harness: &Harness, material: &str) -> Result<Vec<(i64, String)>> {
+    sqlx::query_as("SELECT fits,basis FROM learning_drill_lesson_fits WHERE material=?")
+        .bind(material)
+        .fetch_all(&harness.pool)
+        .await
+        .map_err(db)
+}
+
+/// Stores the drill of `proved` with `checked` and the clean stage `code` on a new course's lesson, and returns the
+/// harness it was stored in.
+async fn stored_with(
+    code: CleanCode,
+    proved: Proved,
+    checked: LessonChecked,
+) -> Result<(Harness, StoredDrill)> {
+    let (harness, spec) = Harness::lesson().await?;
+    let (model, grader, runner) = (
+        ScriptedModel::new([]),
+        FakeGrader::failing("unused"),
+        FakeRunner::passing(),
+    );
+    let (review, planted, baseline, blind) = (review(), planted(), baseline(), quiet());
+    let context = harness.context().await?;
+    let outcome = harness
+        .build(&model, Some(&runner), &grader)
+        .store(
+            &context,
+            &spec,
+            Built {
+                baseline: &baseline,
+                code: &code,
+                review: &review,
+                planted: &planted,
+                proved: &proved,
+                checked: &checked,
+                blind: &blind,
+            },
+        )
+        .await?;
+    assert_eq!(outcome, JobOutcome::Committed);
+    let mut connection = harness.pool.acquire().await.map_err(db)?;
+    let stored = repository::oldest_ready_in(&mut connection, "python")
+        .await?
+        .expect("the drill is in the bank");
+    drop(connection);
+    Ok((harness, stored))
+}
+
+fn with_basis() -> CleanCode {
+    CleanCode {
+        basis: Some("basis-1".into()),
+        ..code()
+    }
+}
+
+#[tokio::test]
+async fn a_stored_drill_keeps_the_lesson_link_in_its_key_and_the_checks_in_its_evidence_and_the_lesson_fits_code(
+) -> Result<()> {
+    let link = lesson_brief().link(&[1]);
+    let checked = LessonChecked {
+        links: vec![link.clone(), None],
+        checks: vec![check_of("planted-1", &[1], true)],
+    };
+    let (harness, stored) =
+        stored_with(with_basis(), lesson_proved(&[1], &[]), checked.clone()).await?;
+    assert_eq!(stored.drill.key[0].lesson, link);
+    assert_eq!(stored.drill.key[1].lesson, None);
+    assert_eq!(stored.evidence.lesson_checks, checked.checks);
+    assert_eq!(
+        fits_of(&harness, "code").await?,
+        [(1, "basis-1".to_owned())]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_drill_with_no_linked_issue_records_that_the_lesson_does_not_fit_code() -> Result<()> {
+    let failed = LessonChecked {
+        links: vec![None, None],
+        checks: vec![check_of("planted-1", &[1], false)],
+    };
+    let (harness, stored) =
+        stored_with(with_basis(), lesson_proved(&[1], &[]), failed.clone()).await?;
+    assert_eq!(stored.drill.key[0].lesson, None);
+    assert_eq!(stored.evidence.lesson_checks, failed.checks);
+    assert_eq!(
+        fits_of(&harness, "code").await?,
+        [(0, "basis-1".to_owned())]
+    );
+
+    let (harness, stored) = stored_with(with_basis(), proved(), unchecked()).await?;
+    assert!(stored.evidence.lesson_checks.is_empty());
+    assert_eq!(
+        fits_of(&harness, "code").await?,
+        [(0, "basis-1".to_owned())]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_drill_whose_clean_stage_has_no_basis_records_nothing() -> Result<()> {
+    let checked = LessonChecked {
+        links: vec![lesson_brief().link(&[1]), None],
+        checks: vec![check_of("planted-1", &[1], true)],
+    };
+    let (harness, _) = stored_with(with_basis(), lesson_proved(&[1], &[]), checked.clone()).await?;
+    assert_eq!(
+        fits_of(&harness, "code").await?.len(),
+        1,
+        "with a basis it is recorded"
+    );
+    let (harness, stored) = stored_with(code(), lesson_proved(&[1], &[]), checked).await?;
+    assert!(stored.drill.key[0].lesson.is_some());
+    assert!(fits_of(&harness, "code").await?.is_empty());
     Ok(())
 }

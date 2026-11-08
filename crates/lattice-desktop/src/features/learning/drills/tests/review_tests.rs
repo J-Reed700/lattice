@@ -3,8 +3,8 @@
 
 use super::support::{
     extra_finding, files, fix_answer, operator_finding, operator_fixed, proved, review_assessment,
-    schedule_pattern, stock, FakeGrader, FakeRunner, ScriptedModel, Waiting, KILLING_TEST,
-    LITERALS, MODEL, OPERATOR, SUITE,
+    schedule_pattern, stock, unchecked, FakeGrader, FakeRunner, ScriptedModel, Waiting,
+    KILLING_TEST, LITERALS, MODEL, OPERATOR, SUITE,
 };
 use crate::features::learning::drills::attempts::{self, AttemptMode, AttemptStatus};
 use crate::features::learning::drills::dto::{
@@ -39,7 +39,7 @@ fn escaped(text: &str) -> String {
 /// Every text of the stocked drill that a learner must not read before the grade, and some not at all.
 fn secrets() -> Vec<(String, String)> {
     let mut secrets = Vec::new();
-    for issue in proved().planted_key() {
+    for issue in proved().planted_key(&unchecked()) {
         let which = |what: &str| format!("{} {what}", issue.id);
         secrets.push((which("id"), issue.id.clone()));
         secrets.push((which("pattern"), issue.pattern.clone()));
@@ -208,7 +208,7 @@ async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
 #[test]
 fn the_check_for_the_key_finds_it_where_it_is() {
     // The scan is only worth something if it finds what it looks for.
-    let key = proved().planted_key();
+    let key = proved().planted_key(&unchecked());
     let text = json!({"note": key[0].explanation});
     assert!(!leaks(&text).is_empty(), "an explanation");
     let fix = json!({"more": [key[1].fix.after.trim()]});
