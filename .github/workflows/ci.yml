@@ -232,7 +232,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
-      - uses: Swatinem/rust-cache@v2
+      # Elsewhere the release build's time is the workspace crates, which the
+      # cache never holds, so their caches only crowded out rust-check's.
+      - if: matrix.intel
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
           key: desktop-compatibility-${{ matrix.name }}
