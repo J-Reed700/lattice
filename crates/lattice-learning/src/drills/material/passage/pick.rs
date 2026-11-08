@@ -9,16 +9,17 @@ use crate::drills::lesson::LessonContext;
 use crate::drills::repository;
 use crate::dto::LearningSourceDto;
 use crate::persistence::db;
-use crate::reference_collection::ReferenceCollection;
+use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::text::segmentation::{sentences, units, Prose, Strength};
+use lattice_core::shared::text::segmentation::{sentences, units, Prose, Span, Strength};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 /// The passage the next drill of the lesson of `context` explains, sized for an explanation of `wanted` sentences:
 /// the best-ranked passage for the lesson that no drill of the course was built on, or, once every one was, the one
-/// whose latest drill is the oldest. `None` when the lesson's sources hold nothing for it.
+/// whose latest drill is the oldest. The ranking is read a page at a time, deeper only while every passage of it was
+/// drilled. `None` when the lesson's sources hold nothing for it.
 pub(super) async fn pick(
     pool: &SqlitePool,
     context: &LessonContext,
@@ -49,21 +50,56 @@ pub(super) async fn pick(
     let drilled = repository::drilled_passages(pool, &context.program_id).await?;
     let wanted = usize::try_from(wanted).unwrap_or(usize::MAX);
     let collection = ReferenceCollection::lexical(&sources)?;
-    let hits = collection
-        .retrieve_within(&context.query(), |_| true)
-        .await?;
-    let mut best: Option<((Option<usize>, (usize, usize)), SourcePassage)> = None;
+    let query = context.query();
+    let mut split: HashMap<&str, Vec<Span>> = HashMap::new();
+    let mut depth = FIRST_PAGE;
+    loop {
+        let hits = collection.retrieve(&query, depth).await?;
+        let best = best_on_page(&hits, &sources, &mut split, &drilled, wanted);
+        let unused = best.as_ref().is_some_and(|(key, _)| key.0.is_none());
+        if unused || hits.len() < depth {
+            return Ok(best.map(|(_, passage)| passage));
+        }
+        depth = depth.saturating_mul(2);
+    }
+}
+
+/// How many passages of the ranking the first page holds; each further page doubles it.
+const FIRST_PAGE: usize = 16;
+
+/// A candidate passage's place in the ranking: when a drill last used it (`None` for never), then its hit's rank and
+/// its paragraph's index, the least of which is the best.
+type Key = (Option<usize>, (usize, usize));
+
+/// The best candidate among the paragraphs the ranked `hits` overlap, or the first one no drill used, which is the
+/// best of the whole ranking. The paragraphs of each source are kept in `split` across pages, so each source is split
+/// once per pick.
+fn best_on_page<'a>(
+    hits: &[ReferencePassage],
+    sources: &'a [LearningSourceDto],
+    split: &mut HashMap<&'a str, Vec<Span>>,
+    drilled: &[SourcePassage],
+    wanted: usize,
+) -> Option<(Key, SourcePassage)> {
+    let mut best: Option<(Key, SourcePassage)> = None;
     for (rank, hit) in hits.iter().enumerate() {
         let Some(source) = sources.iter().find(|source| source.id == hit.source_id) else {
             continue;
         };
-        let places = units(&source.excerpt, &Prose, Strength::Paragraph);
+        let places: &[Span] = split
+            .entry(source.id.as_str())
+            .or_insert_with(|| units(&source.excerpt, &Prose, Strength::Paragraph));
         for (index, paragraph) in places.iter().enumerate() {
             if paragraph.end <= hit.start_byte || hit.end_byte <= paragraph.start {
                 continue;
             }
-            let Some((start, end)) = sized(&source.excerpt, paragraph.start, paragraph.end, wanted)
-            else {
+            let Some((start, end)) = sized(
+                &source.excerpt,
+                places,
+                paragraph.start,
+                paragraph.end,
+                wanted,
+            ) else {
                 continue;
             };
             let Some(text) = source.excerpt.get(start..end) else {
@@ -83,7 +119,7 @@ pub(super) async fn pick(
             if best.as_ref().is_some_and(|(held, _)| *held <= key) {
                 continue;
             }
-            best = Some((
+            let found = (
                 key,
                 SourcePassage {
                     version_id: source.id.clone(),
@@ -92,10 +128,14 @@ pub(super) async fn pick(
                     title: source.title.clone(),
                     text: text.to_owned(),
                 },
-            ));
+            );
+            if latest_use.is_none() {
+                return Some(found);
+            }
+            best = Some(found);
         }
     }
-    Ok(best.map(|(_, passage)| passage))
+    best
 }
 
 /// For each version of the course's sources, the source it is a version of.
@@ -109,11 +149,16 @@ async fn owners(pool: &SqlitePool, program_id: &str) -> Result<HashMap<String, S
     Ok(rows.into_iter().collect())
 }
 
-/// The passage of `text` around `start..end`: the whole paragraphs it touches, then the paragraphs after them and,
-/// at the end of the text, before them, until the passage holds `wanted` sentences or the whole text; trimmed of the
-/// space at its ends. `None` when there is nothing but space there.
-fn sized(text: &str, start: usize, end: usize, wanted: usize) -> Option<(usize, usize)> {
-    let paragraphs = units(text, &Prose, Strength::Paragraph);
+/// The passage of `text`, whose paragraphs are `paragraphs`, around `start..end`: the whole paragraphs it touches,
+/// then the paragraphs after them and, at the end of the text, before them, until the passage holds `wanted`
+/// sentences or the whole text; trimmed of the space at its ends. `None` when there is nothing but space there.
+fn sized(
+    text: &str,
+    paragraphs: &[Span],
+    start: usize,
+    end: usize,
+    wanted: usize,
+) -> Option<(usize, usize)> {
     let mut first = paragraphs
         .iter()
         .position(|paragraph| paragraph.end > start)?;
