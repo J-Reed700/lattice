@@ -19,7 +19,7 @@ use crate::features::learning::lessons::claim_reviews::dto::{
 };
 use crate::features::learning::lessons::claim_reviews::recheck::running_job;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
-use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
+use crate::features::learning::lessons::claim_reviews::service::{ClaimReviewService, SectionEdit};
 use crate::features::learning::lessons::claim_reviews::teaching_findings::{
     TeachingFindingsRepository, TeachingSettleDto,
 };
@@ -94,6 +94,43 @@ pub struct SettleLearningTeachingFindingsRequestDto {
     /// The findings' `findingKey`s from the review.
     pub finding_keys: Vec<String>,
     pub settle: TeachingSettleDto,
+}
+
+/// A published lesson's section as the user rewrote it, with the title and
+/// text they opened it with.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EditLearningLessonSectionRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
+    /// Zero-based.
+    pub section_index: u32,
+    pub before_title: String,
+    pub before_body: String,
+    pub title: String,
+    pub body: String,
+    /// Answer what saving would do and write nothing.
+    pub dry_run: bool,
+}
+
+/// What a rewrite of a section does, or did, to the lesson's statements.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonSectionEditDto {
+    pub changed: bool,
+    /// Statements on text the user left as it was.
+    pub statements_kept: u32,
+    /// Statements on text the user changed.
+    pub statements_changed: u32,
+    /// Statements on text the user deleted.
+    pub statements_removed: u32,
+    /// Sentences the user wrote.
+    pub sentences_written: u32,
+    /// Changed or removed statements that were checked against the sources.
+    pub checked_statements_affected: u32,
+    /// The review's revision after a save; null for a dry run, no change, or
+    /// a lesson without a review.
+    pub revision: Option<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -285,6 +322,40 @@ pub async fn settle_learning_teaching_findings(
             request.settle,
         )
         .await?)
+}
+
+/// Rewrites a section of a published lesson, its title and its text. The
+/// statements on text the user changed end, the others keep their state, and
+/// each sentence the user wrote becomes a statement they confirmed. With
+/// `dry_run` it only answers what saving would do.
+#[tauri::command]
+#[specta::specta]
+pub async fn edit_learning_lesson_section(
+    request: EditLearningLessonSectionRequestDto,
+    container: State<'_, Container>,
+) -> Result<LessonSectionEditDto, ApiError> {
+    let outcome = claim_reviews(&container)
+        .await?
+        .edit_section(SectionEdit {
+            program_id: request.program_id,
+            lesson_id: request.lesson_id,
+            section_index: usize::try_from(request.section_index).unwrap_or(usize::MAX),
+            before_title: request.before_title,
+            before_body: request.before_body,
+            title: request.title,
+            body: request.body,
+            dry_run: request.dry_run,
+        })
+        .await?;
+    Ok(LessonSectionEditDto {
+        changed: outcome.changed,
+        statements_kept: outcome.statements_kept,
+        statements_changed: outcome.statements_changed,
+        statements_removed: outcome.statements_removed,
+        sentences_written: outcome.sentences_written,
+        checked_statements_affected: outcome.checked_statements_affected,
+        revision: outcome.revision,
+    })
 }
 
 /// Resume verification (§6.2): a lesson waiting for review continues its

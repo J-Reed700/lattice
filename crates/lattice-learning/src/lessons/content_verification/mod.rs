@@ -96,7 +96,7 @@ mod repair_loop;
 mod repair_request;
 mod repair_work;
 mod report;
-pub(crate) use report::{TakenOut, WrittenBack, WrittenOver};
+pub(crate) use report::{Rewritten, TakenOut, WrittenBack, WrittenOver};
 pub mod research;
 mod review_pass;
 pub(crate) use review_pass::with_pending_put_backs;

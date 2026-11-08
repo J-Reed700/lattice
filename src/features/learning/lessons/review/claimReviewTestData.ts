@@ -115,6 +115,7 @@ export function teachingFinding(overrides: Partial<TeachingFindingDto> = {}): Te
     resolvedAt: null,
     repairs: 2,
     state: 'waiting',
+    partChanged: false,
     ...overrides,
   };
 }

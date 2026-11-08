@@ -85,11 +85,13 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
   sheet?: ReactNode;
   /** The lesson is published. */
   published?: boolean;
+  /** Opens the editor on this statement's section; null where the statement is not in a section's text of a published lesson. */
+  onEditSection?: (() => void) | null;
   /** A back link for the stacked narrow layout. */
   back?: ReactNode;
   /** The action row is a sticky bar at narrow widths. */
   stickyActions?: boolean;
-}>(({ programId, item, position, total, onPrevious, onNext, sharing, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest, onOpenSource, onOpenRelevant, sheet, back, stickyActions = false, published = false }, statementRef) => {
+}>(({ programId, item, position, total, onPrevious, onNext, sharing, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest, onOpenSource, onOpenRelevant, sheet, back, onEditSection = null, stickyActions = false, published = false }, statementRef) => {
   const waiting = isWaitingForYou(item);
   const why = whyItWaits(item);
   const support = item.support;
@@ -131,6 +133,7 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
       <div className={stickyActions ? 'sticky bottom-0 -mx-4 border-t border-border bg-surface px-4 pb-3 pt-3' : undefined}>
         <ClaimActions item={item} sharing={sharing} suggested={why.fixes[0] ?? 'accept'} busy={busy} error={error} form={form}
           onFormChange={onFormChange} onAct={onAct} onAcceptSource={onAcceptSource} onAddSource={onAddSource} closest={Boolean(closest)} published={published} />
+        {onEditSection && <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={onEditSection}>Edit the section</Button>}
       </div>
 
       <p aria-hidden="true" className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted [@media(pointer:coarse)]:hidden">

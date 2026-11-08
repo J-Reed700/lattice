@@ -116,6 +116,8 @@ pub struct TeachingFindingDto {
     /// Repairs that tried to settle it.
     pub repairs: u32,
     pub state: TeachingFindingStateDto,
+    /// Whether the user changed this section after the note was written.
+    pub part_changed: bool,
 }
 
 fn kind_dto(kind: FindingKind) -> TeachingFindingKindDto {
@@ -248,7 +250,8 @@ impl TeachingFindingsRepository {
     /// The lesson's findings: by place, then kind.
     pub async fn list(&self, lesson_id: &str) -> Result<Vec<TeachingFindingDto>> {
         let rows = sqlx::query(
-            "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, sentence, repairs, state, resolution, resolved_at \
+            "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, sentence, repairs, state, resolution, resolved_at, \
+             part_changed_at IS NOT NULL AND part_changed_at >= found_at AS part_changed \
              FROM learning_lesson_teaching_findings WHERE lesson_id=? \
              ORDER BY CASE site WHEN 'lesson' THEN 0 WHEN 'section' THEN 1 ELSE 2 END, unit_index, kind",
         )
@@ -321,6 +324,7 @@ impl TeachingFindingsRepository {
                         "resolved" => TeachingFindingStateDto::Resolved,
                         _ => TeachingFindingStateDto::Waiting,
                     },
+                    part_changed: row.get::<i64, _>("part_changed") != 0,
                 })
             })
             .collect()

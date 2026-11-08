@@ -19,6 +19,9 @@ mod published_remove;
 #[cfg(test)]
 mod published_remove_tests;
 mod published_restore;
+mod published_rewrite;
+#[cfg(test)]
+mod published_rewrite_tests;
 mod put_back;
 #[cfg(test)]
 mod put_back_tests;

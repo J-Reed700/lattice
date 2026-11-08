@@ -4,6 +4,7 @@ import { ArrowLeft, LoaderCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
+import { LessonSectionEditor } from '@/features/learning/lessons/edit/LessonSectionEditor';
 import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSourceDialog';
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
@@ -21,8 +22,9 @@ import { useResumeLearningLessonReview, useSettleTeachingFindings } from '@/feat
 import { useReviewDrop, type DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
+import { useLearningProgram } from '@/features/learning/workspace/useLearningStudio';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import type { ClaimSupportDto } from '@/lib/bindings';
+import type { ClaimReviewItemDto, ClaimSupportDto } from '@/lib/bindings';
 
 const NARROW = '(max-width: 767px)';
 
@@ -72,10 +74,24 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const [sheet, setSheet] = useState<{ target: AddSourceTarget; initial: DroppedSource | null; /** The teaching note the sheet was opened from. */ findingKey?: string } | null>(null);
   const [trusting, setTrusting] = useState<{ support: ClaimSupportDto; sharing: number } | null>(null);
   const [reader, setReader] = useState<ReaderRequest | null>(null);
+  const [editing, setEditing] = useState<{ sectionIndex: number; title: string; body: string; focusText: string } | null>(null);
   const [legend, setLegend] = useState(false);
   const [narrowView, setNarrowView] = useState<'queue' | 'claim'>('queue');
 
   const { review, active, ordered, waiting, groups } = session;
+  // A published lesson's section text comes from the course the page already loads for the lesson card.
+  const published = review?.state === 'ready';
+  const course = useLearningProgram(published ? programId : null);
+  const sectionOf = (claim: ClaimReviewItemDto | null) => {
+    const place = claim?.location;
+    if (!claim || !place || !published || place.unitKind !== 'block' || place.field !== 'body') return null;
+    const lesson = course.data?.modules.flatMap((entry) => entry.lessons).find((candidate) => candidate.id === lessonId);
+    const block = lesson?.blocks[place.unitIndex];
+    if (!block) return null;
+    const focusText = block.body.includes(place.quote) ? place.quote : claim.presentation.sentence;
+    return { sectionIndex: place.unitIndex, title: block.title, body: block.body, focusText };
+  };
+  const editable = sectionOf(active);
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
   const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
@@ -103,7 +119,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
 
   const drop = useReviewDrop(rootRef, (source) => openSheet(sheet?.target ?? claimTarget() ?? (ordered.length ? { level: 'queue', claimIds: ordered.map((claim) => claim.claimId) } : null), source));
 
-  const anyOpen = Boolean(session.form || sheet || trusting || reader);
+  const anyOpen = Boolean(session.form || sheet || trusting || reader || editing);
   const click = (keys: string) => rootRef.current?.querySelector<HTMLButtonElement>(`[aria-keyshortcuts="${keys}"]:not(:disabled)`)?.click();
   const shortcuts = useMemo(() => [
     { id: 'review-next', keys: 'J', description: 'Next claim', handler: () => session.step(1) },
@@ -120,13 +136,13 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   ], [session]);
   useKeyboardShortcuts(shortcuts, { context: 'review', enabled: !anyOpen && !session.acting });
   const escape = useMemo(() => [{ id: 'review-escape', keys: 'Escape', description: 'Close a form, then the screen', global: Boolean(sheet) && !session.form, handler: () => {
-    if (reader || trusting) return; // the dialog closes itself
+    if (reader || trusting || editing) return; // the dialog closes itself
     if (session.form) session.setForm(null);
     else if (sheet) setSheet(null);
     else if (legend) setLegend(false);
     else if (narrow && narrowView === 'claim') setNarrowView('queue');
     else onBack();
-  } }], [reader, trusting, session, sheet, legend, narrow, narrowView, onBack]);
+  } }], [reader, trusting, editing, session, sheet, legend, narrow, narrowView, onBack]);
   useKeyboardShortcuts(escape, { context: 'review' });
 
   const header = (
@@ -209,7 +225,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       closest={session.closestSupport} onOpenSource={(support) => setReader({ source: support.source, passage: support.passage, quote: support.quote })}
       onOpenRelevant={(source) => setReader({ source, passage: null, quote: null })} sheet={sheetNode}
       back={narrow ? <Button type="button" size="icon" variant="ghost" aria-label="Back to the queue" onClick={() => setNarrowView('queue')}><ArrowLeft aria-hidden="true" /></Button> : undefined}
-      stickyActions={narrow} published={review.state === 'ready'} />;
+      stickyActions={narrow} published={review.state === 'ready'} onEditSection={editable ? () => setEditing(editable) : null} />;
     if (review.state === 'needs_review' && (hold === 'audit' || hold === 'audit_stop')) return <AuditHold reason={auditStop} />;
     if (sheetNode) return sheetNode;
     const takenOut = removedCount > 0
@@ -277,6 +293,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       <AcceptSourceDialog programId={programId} support={trusting?.support ?? null} sharing={trusting?.sharing ?? 0}
         onClose={() => setTrusting(null)} onTrusted={(result, support) => { setTrusting(null); session.trusted(result, support); }} />
       <ReviewSourceReader programId={programId} request={reader} onClose={() => setReader(null)} />
+      {editing && <LessonSectionEditor programId={programId} lessonId={lessonId} {...editing} open onClose={() => setEditing(null)} onSaved={() => session.setMessage('Section saved.')} />}
     </div>
   );
 }

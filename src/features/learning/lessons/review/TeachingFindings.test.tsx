@@ -64,6 +64,15 @@ describe('TeachingFindings', () => {
     expect(within(bare).queryByText('The quotation it cites')).not.toBeInTheDocument();
   });
 
+  it('says the part changed after a note was written, and still lets the note wait', () => {
+    show([note(0, { partChanged: true }), note(1)]);
+    const changed = screen.getByRole('article', { name: 'Section 1: Part 1: Teaching review' });
+    expect(within(changed).getByText('You changed this part after this note was written.')).toBeVisible();
+    expect(within(changed).getByRole('button', { name: 'Keep as written' })).toBeEnabled();
+    const untouched = screen.getByRole('article', { name: 'Section 2: Part 2: Teaching review' });
+    expect(within(untouched).queryByText('You changed this part after this note was written.')).not.toBeInTheDocument();
+  });
+
   it('never shows a note written for the model that repairs the lesson', () => {
     const finding = { ...note(0), note: 'Fix blocks[2]: add an entry to the citations of blocks[2] with the sourceIndex.' } as TeachingFindingDto;
     show([finding]);

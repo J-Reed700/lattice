@@ -68,6 +68,19 @@ pub(crate) struct TakenOut<'a> {
     pub claim: &'a ClaimId,
 }
 
+/// The user's rewrite of one section of a published lesson: the claims that
+/// ended, and a claim for each sentence they wrote.
+pub(crate) struct Rewritten<'a> {
+    pub unit: usize,
+    pub new_title: &'a str,
+    pub new_body: &'a str,
+    /// The claims on text the user changed or deleted.
+    pub ended: &'a HashSet<String>,
+    /// Each sentence the user wrote, in text order, with its claim.
+    pub written: &'a [(&'a str, &'a ClaimId)],
+    pub at: i64,
+}
+
 /// Whether `finding` stood on the text at `range` of `old_body` in `unit`:
 /// its claim is in `claims`, or it names no claim and quotes that text.
 fn stood_on(
@@ -117,6 +130,64 @@ impl LessonVerificationReport {
         }
         self.content_sha256 =
             digest(&json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
+    }
+
+    /// The report after the user rewrote a section: the findings on the
+    /// claims that ended, and those naming no claim whose quote is in neither
+    /// the new text nor the new title, are dropped; the user's sentences stand
+    /// in the first dropped one's place, or after the section's last finding
+    /// (at the end when it has none), confirmed by them; every other finding
+    /// as it was.
+    pub(crate) fn rewritten(&mut self, rewrite: &Rewritten<'_>) {
+        let dropped = |finding: &Finding| {
+            finding.unit == rewrite.unit
+                && match &finding.claim_id {
+                    Some(id) => rewrite.ended.contains(id),
+                    None => {
+                        !rewrite.new_body.contains(finding.quote.as_str())
+                            && !rewrite.new_title.contains(finding.quote.as_str())
+                    }
+                }
+        };
+        let first = self.findings.iter().position(dropped);
+        self.findings.retain(|finding| !dropped(finding));
+        let mut at = first.unwrap_or_else(|| {
+            self.findings
+                .iter()
+                .rposition(|finding| finding.unit == rewrite.unit)
+                .map_or(self.findings.len(), |last| last + 1)
+        });
+        for (text, successor) in rewrite.written {
+            let finding = Finding {
+                unit: rewrite.unit,
+                quote: (*text).to_owned(),
+                statement: (*text).to_owned(),
+                verdict: ClaimVerdict::Unverified,
+                reason: "You wrote this sentence; it was not checked against the sources.".into(),
+                evidence: Vec::new(),
+                supporting_quote: None,
+                resolution: Some(Resolution::Confirmed {
+                    at: rewrite.at,
+                    note: None,
+                }),
+                claim_id: Some(successor.0.clone()),
+                trust: None,
+                label: None,
+                class: None,
+                two_pass: Default::default(),
+            };
+            self.findings.insert(at, finding);
+            at += 1;
+        }
+        self.content_sha256 = digest(
+            &json!([
+                self.content_sha256,
+                rewrite.unit,
+                rewrite.new_title,
+                rewrite.new_body
+            ])
+            .to_string(),
+        );
     }
 
     /// The report after the user's sentence took the place of the text the
