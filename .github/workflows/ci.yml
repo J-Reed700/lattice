@@ -1,58 +1,46 @@
 name: CI
 
+# Never merges. Each tests-first commit of the web-failures fix runs on its own
+# tree: its new and changed tests must fail on their assertions, and every
+# other test must pass. The jobs check out those commits by hash, so this
+# branch's own tree is never built.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
 
-# Cancel in-flight runs for the same ref when a new commit lands, except on
-# main. A main run waits hours for macOS runners, so the next merge used to
-# cancel it before the Intel desktop job could save main's Rust cache. On main
-# the running run finishes; only a run still waiting its turn is replaced.
-# A branch named *-reds (Linux) or *-reds-windows proves new tests fail before
-# their fix: each commit runs to the end, and only the tests run.
 concurrency:
-  group: ci-${{ (endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+  group: reds-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # LunarG no longer serves 1.3.290.0. Keep both Windows checks on the
-  # same available runtime, including the path used after extraction.
-  # sidecar-binaries.yml pins the same version.
-  VULKAN_RUNTIME_VERSION: 1.4.363.0
-  REDS: ${{ (endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
 
 jobs:
-  # Build on each supported platform to catch target-specific dependencies.
+  # Named like main's job, with its env, so main's Rust cache is the one restored.
   rust-check:
-    name: cargo check (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    # Intel source checks precede publication of its first sidecar. This
-    # debug-only override cannot produce a release bundle; the package job
-    # below builds and verifies a real sidecar instead.
+    name: rust ${{ matrix.mode }} ${{ matrix.sha }}
+    runs-on: ubuntu-24.04
     env:
-      LATTICE_ALLOW_UNPINNED_SIDECAR: ${{ matrix.os == 'macos-15-intel' && '1' || '0' }}
-      # Backtraces keep file and line. Full debug info made the cache too big
-      # to keep and the test build too big for the Ubuntu runner's memory.
+      LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
       fail-fast: false
-      # GitHub runs five macOS jobs at a time for the account, and every pull
-      # request used to ask for five, so main's runs waited hours behind them.
-      # Intel Macs, the slowest runners, are checked on pushes to main only,
-      # and a draft pull request gets its macOS jobs when it is marked ready.
+      max-parallel: 6
       matrix:
-        os: >-
-          ${{ fromJSON((endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows'))
-          && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest"]' || '["ubuntu-24.04"]')
-          || format('["ubuntu-24.04", "windows-latest"{0}{1}]',
-          github.event.pull_request.draft != true && ', "macos-latest"' || '',
-          github.event_name == 'push' && ', "macos-15-intel"' || '')) }}
+        include:
+          # A web failure says what happened: the tests-first tree, with the
+          # lesson's busy-website test added.
+          - mode: red
+            sha: cf68c699460d83ee5acbba5abcf64be8846f5aba
+            built_as_is: true
+          # A status line names the code and reason once.
+          - mode: red
+            sha: e148b7e83d7f269d6434fc146eedd818b094bd95
+            built_as_is: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -60,10 +48,8 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install Linux system deps
-        if: matrix.os == 'ubuntu-24.04'
         run: |
           sudo apt-get update
-          # Tauri 2 + webkit dependencies on Ubuntu.
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libgtk-3-dev \
@@ -71,10 +57,7 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      # Two test crates compile at once at about 7.5 GB each, past the
-      # runner's 16 GB and 3 GB of swap; the runner then shuts down (exit 143).
       - name: Add swap for the test build
-        if: runner.os == 'Linux'
         run: |
           sudo fallocate -l 16G /ci-swapfile
           sudo chmod 600 /ci-swapfile
@@ -82,277 +65,149 @@ jobs:
           sudo swapon /ci-swapfile
           free -m
 
-      # Only main saves: each pull request's own cache pushed the repository
-      # past GitHub's 10 GB, which evicted main's, so every job started cold.
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust-check
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
+          save-if: false
 
-      # Debug builds accept empty sidecars; the sidecar-binaries job checks
-      # the real ones.
-      - name: Create build placeholders for source checks
-        shell: bash
+      - name: Apply the integrated tree's compile fixes
+        if: matrix.mode == 'red' && !matrix.built_as_is
+        run: |
+          git fetch -q --depth=1 origin ${{ github.event.pull_request.head.sha }}
+          git show FETCH_HEAD:.github/reds/compile_fixups.py > "$RUNNER_TEMP/compile_fixups.py"
+          python3 "$RUNNER_TEMP/compile_fixups.py"
+          git diff --stat
+
+      - name: Create build placeholders for the desktop tests
+        if: matrix.mode == 'red'
         run: |
           mkdir -p dist
-          case "${{ runner.os }}" in
-            Linux) touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
-                         crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
-            macOS) triple="$(rustc -vV | awk '/^host:/ {print $2}')"
-                   touch "crates/lattice-desktop/binaries/llama-server-$triple" ;;
-            Windows) touch crates/lattice-desktop/binaries/llama-server-x86_64-pc-windows-msvc.exe \
-                           crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
-          esac
+          touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
+
+      - name: Core, learning and desktop tests on this tree
+        if: matrix.mode == 'red'
+        run: cargo test --locked -p lattice-core -p lattice-learning -p lattice-desktop --lib --no-fail-fast
+
+      - name: Create build placeholders for source checks
+        if: matrix.mode == 'integration'
+        run: |
+          mkdir -p dist
+          touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
 
       - name: cargo fmt --check
-        if: runner.os == 'Linux' && env.REDS != 'true'
+        id: fmt
+        if: matrix.mode == 'integration'
+        continue-on-error: true
         run: cargo fmt --all -- --check
 
-      # Clippy checks everything cargo check did, so it runs in its place, first.
-      # The workspace defines additional safety lints in Cargo.toml. Existing
-      # warnings are not promoted to errors yet.
       - name: cargo clippy
-        if: env.REDS != 'true'
+        id: clippy
+        if: matrix.mode == 'integration'
+        continue-on-error: true
         working-directory: crates/lattice-desktop
         run: cargo clippy --workspace --all-targets
 
-      # Prove the manifest is actually in the executables rather than inferring
-      # it from a green run. The first attempt at this fix emitted link args
-      # that Cargo silently dropped for the lib harness, and a passing job
-      # would have looked the same as a working one.
-      - name: Windows manifest is embedded in the test executables
-        if: matrix.os == 'windows-latest'
-        working-directory: crates/lattice-desktop
-        shell: pwsh
-        run: |
-          $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
-                Sort-Object FullName | Select-Object -Last 1
-          if (-not $mt) { throw "mt.exe not found in the Windows SDK" }
-          # The manifest is only valid if mt.exe can parse it, and link.exe
-          # reports a bad one as LNK1327 from inside a 12-minute build. Checking
-          # it as XML first turns that into an immediate, obvious failure.
-          try { [xml](Get-Content -Raw windows-app.manifest) | Out-Null }
-          catch { throw "windows-app.manifest is not well-formed XML: $_" }
-          # Keep the JSON in a file: piping it straight into ConvertFrom-Json
-          # eats the compiler diagnostics, which live on the same stream, and
-          # turns a build failure into a misleading "no test executables".
-          $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          # Two jobs, not four: each test crate that reads the lattice rlib
-          # (about 1 GB) needs several GB while it compiles, and four at once
-          # exceed the runner's commit limit ("The paging file is too small",
-          # os error 1455), which rustc reports as E0786 invalid metadata.
-          # The same selection and features as the test step, which then has
-          # nothing left to build; checked are the desktop crate's executables.
-          cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
-          if ($LASTEXITCODE -ne 0) {
-            Get-Content $json | ForEach-Object {
-              $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
-              if ($m -and $m.reason -eq 'compiler-message' -and $m.message.rendered) { Write-Host $m.message.rendered }
-            }
-            throw "building the test executables failed (diagnostics above)"
-          }
-          $exes = Get-Content $json | ForEach-Object {
-                    $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
-                    if ($m -and $m.executable -and $m.package_id -match 'crates[/\\]lattice-desktop') { $m.executable }
-                  }
-          if (-not $exes) { throw "cargo reported no test executables" }
-          foreach ($exe in $exes) {
-            $out = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($exe) + ".manifest")
-            & $mt.FullName -nologo -inputresource:"$exe;#1" -out:$out
-            if ($LASTEXITCODE -ne 0) { throw "no RT_MANIFEST #1 resource in $exe" }
-            if (-not (Select-String -Path $out -Pattern 'Microsoft.Windows.Common-Controls' -Quiet)) {
-              throw "$exe has a manifest but no Common-Controls v6 dependency"
-            }
-            Write-Host "OK $exe"
-          }
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
       - name: All desktop Rust unit, command and integration tests
+        id: tests
+        if: matrix.mode == 'integration'
+        continue-on-error: true
         working-directory: crates/lattice-desktop
-        run: cargo nextest run --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
-
-      - name: Upload the test timings
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: rust-test-timings-${{ matrix.os }}
-          path: target/nextest/ci/junit.xml
-          if-no-files-found: warn
-
-      - name: Execute C#, Rust, React and Python container exercises
-        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
-        working-directory: crates/lattice-desktop
-        timeout-minutes: 20
-        run: cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
-
-      - name: Verify container staging and containment
-        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
-        working-directory: crates/lattice-desktop
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          image_id="$(docker image inspect --format '{{.Id}}' python:3.13.16-slim)"
-          LATTICE_LAB_SMOKE_IMAGE_ID="$image_id" \
-            LATTICE_LAB_SMOKE_ENGINE=docker \
-            cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
+        run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
 
       - name: generated bindings are current
-        if: env.REDS != 'true'
+        id: bindings
+        if: matrix.mode == 'integration'
+        continue-on-error: true
         working-directory: crates/lattice-desktop
         shell: bash
         run: ../../target/debug/export_bindings --check
 
-  desktop-compatibility:
-    name: Desktop compatibility (${{ matrix.name }})
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
-    runs-on: ${{ matrix.os }}
-    # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
-    # job cancelled at a cap never saves its Rust cache, so main never got a
-    # warm cache and every Intel run after it started cold and was cancelled
-    # too. GitHub's own six-hour limit still ends a hung job.
+      - name: Outcomes
+        if: always() && matrix.mode == 'integration'
+        shell: bash
+        run: |
+          printf '%s\n' "fmt ${{ steps.fmt.outcome }}" "clippy ${{ steps.clippy.outcome }}" \
+            "tests ${{ steps.tests.outcome }}" "bindings ${{ steps.bindings.outcome }}"
+          [ "${{ steps.fmt.outcome }} ${{ steps.clippy.outcome }} ${{ steps.tests.outcome }} ${{ steps.bindings.outcome }}" = "success success success success" ]
+
+  # The generated files for the integrated tree, to commit as they are: nothing is built where they are committed.
+  bindings-writer:
+    name: write bindings ${{ matrix.sha }}
+    if: false
+    runs-on: ubuntu-24.04
+    env:
+      LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
-      fail-fast: false
-      # Macs run as in rust-check: Apple Silicon unless the pull request is a
-      # draft, Intel on pushes to main only. The list is
-      # built whole because GitHub applies include after exclude, so an
-      # excluded Intel entry would come back as its own job.
-      # Hosted Windows runners use Server, not Windows 11. Keep the actual
-      # runner visible; Windows 11 installation remains a release check.
       matrix:
-        include: >-
-          ${{ fromJSON(format('[{0}{1}{2}]',
-          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
-          {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false}',
-          github.event.pull_request.draft != true
-          && ', {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false}' || '',
-          github.event_name == 'push'
-          && ', {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
+        sha:
+          - 802a2b5d8df575a1041ead8cd25afb528a3bd258
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: npm
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - name: Linux desktop dependencies
-        if: runner.os == 'Linux'
+          ref: ${{ matrix.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libvulkan1 xvfb
-      - name: Windows Vulkan loader
-        if: runner.os == 'Windows'
-        uses: jakoch/install-vulkan-sdk-action@v1.6.0
-        with:
-          vulkan_version: ${{ env.VULKAN_RUNTIME_VERSION }}
-          install_runtime_only: true
-          cache: true
-      - name: Install Windows Vulkan loader
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
-      # Elsewhere the release build's time is the workspace crates, which the
-      # cache never holds, so their caches only crowded out rust-check's.
-      - if: matrix.intel
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-          key: desktop-compatibility-${{ matrix.name }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-on-failure: true
-      - name: Fetch verified published sidecars
-        if: ${{ !matrix.intel }}
-        shell: bash
-        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
-      - name: Build and execute Intel sidecar candidate
-        if: matrix.intel
-        run: bash crates/lattice-desktop/scripts/build-intel-macos-sidecar.sh
-      - name: Pin verified Intel candidate for this CI bundle only
-        if: matrix.intel
-        shell: bash
-        run: |
-          python3 - <<'PYCODE'
-          import hashlib
-          from pathlib import Path
-          root = Path('crates/lattice-desktop')
-          binary = root / 'binaries/llama-server-x86_64-apple-darwin'
-          lock = root / 'scripts/llama-server.lock'
-          lines = [line for line in lock.read_text().splitlines()
-                   if not (line.startswith('sha256 ') and line.endswith(' ' + binary.name))]
-          lines.append(f'sha256 {hashlib.sha256(binary.read_bytes()).hexdigest()} {binary.name}')
-          lock.write_text('\n'.join(lines) + '\n')
-          PYCODE
-      - run: npm ci
-      - name: Build and install isolated package candidate
-        run: npm run test:desktop:build -- --release
-      - name: Exercise the native desktop app (macOS and Windows)
-        if: runner.os != 'Linux'
-        run: npm run test:desktop
-      - name: Exercise the native desktop app (Linux display session)
-        if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum npm run test:desktop
-      - name: Generate text with the packaged CPU engine
-        shell: bash
-        run: |
-          curl --fail --location --retry 3 --max-time 60 \
-            https://huggingface.co/ggml-org/models-moved/resolve/main/tinyllamas/stories260K.gguf \
-            -o "$RUNNER_TEMP/stories260K.gguf"
-          binary="$(node --input-type=module -e "import fs from 'node:fs'; const m=JSON.parse(fs.readFileSync('e2e-results/desktop/manifest.json')); console.log(m.sidecar)")"
-          python3 crates/lattice-desktop/scripts/smoke_llama_cpu.py "$binary" "$RUNNER_TEMP/stories260K.gguf" | tee e2e-results/desktop/reports/cpu-generation.json
-      - name: Upload results, screenshots and native logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-compatibility-${{ matrix.name }}
-          path: |
-            e2e-results/desktop/reports/
-            e2e-results/desktop/manifest.json
-            e2e-results/desktop/config.json
-          if-no-files-found: warn
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
-  # Syntax-aware layer checks complement the filesystem-state guard.
-  repository-barrier:
-    name: architecture boundary checks
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
-      - run: bash scripts/check-repository-barrier.sh
-      - run: bash scripts/check-rust-layer-boundaries.sh
-      - run: cargo test --locked --manifest-path scripts/data-contract-check/Cargo.toml
-      - run: python3 scripts/check-sql-contracts.py
-      - run: python3 -m unittest discover -s scripts/sql_tests -p 'test_*.py'
-      - run: python3 -m unittest scripts/test_tauri_command_inventory.py
-      - run: python3 -m unittest scripts/test_replay_claude.py
-      - run: python3 scripts/check-tauri-command-inventory.py
+      - name: Add swap for the build
+        run: |
+          sudo fallocate -l 16G /ci-swapfile
+          sudo chmod 600 /ci-swapfile
+          sudo mkswap /ci-swapfile
+          sudo swapon /ci-swapfile
 
-  dependency-audit:
-    name: Dependency vulnerability audit
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: Desktop advisories
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-check
+          save-if: false
+
+      - name: Create build placeholders
+        run: |
+          mkdir -p dist
+          touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
+
+      - name: Write the bindings
         working-directory: crates/lattice-desktop
-        run: cargo audit --deny yanked --file ../../Cargo.lock
+        run: cargo run --locked --features bindings-export --bin export_bindings
 
-  frontend:
-    name: frontend (type-check, lint, test)
-    # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
+      - name: What the generator changed
+        run: git diff --stat -- src/lib/bindings.ts src/shared/ipc/routes.generated.ts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.sha }}
+          path: |
+            src/lib/bindings.ts
+            src/shared/ipc/routes.generated.ts
+          if-no-files-found: error
+
+  integration-frontend:
+    name: integration frontend ${{ matrix.sha }}
+    if: false
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sha:
+          - 802a2b5d8df575a1041ead8cd25afb528a3bd258
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -364,65 +219,121 @@ jobs:
       - run: npm ci
 
       - name: npm vulnerability audit
-        if: env.REDS != 'true'
+        id: audit
+        continue-on-error: true
         run: npm audit --audit-level=high
 
       - name: Verify bundled Python interpreter and standard library
-        continue-on-error: ${{ env.REDS == 'true' }}
+        id: runtime
+        continue-on-error: true
         run: npm run learning:runtime:verify
 
       - name: Type-check
-        continue-on-error: ${{ env.REDS == 'true' }}
+        id: types
+        continue-on-error: true
         run: npm run type-check
 
       - name: Type-check browser journeys
-        continue-on-error: ${{ env.REDS == 'true' }}
+        id: types_e2e
+        continue-on-error: true
         run: npm run type-check:e2e
 
       - name: Generated IPC contract consumers
-        continue-on-error: ${{ env.REDS == 'true' }}
+        id: contracts
+        continue-on-error: true
         run: npm run contracts:check
 
       - name: Lint
-        continue-on-error: ${{ env.REDS == 'true' }}
+        id: lint
+        continue-on-error: true
         run: npm run lint
 
       - name: Unit tests and enforced coverage floors
+        id: unit
+        continue-on-error: true
         run: npm run test:coverage
 
-      - name: Upload frontend coverage report
-        if: always() && env.REDS != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-coverage
-          path: coverage/
-          if-no-files-found: error
-          retention-days: 14
-
       - name: Renderer production build
-        if: env.REDS != 'true'
+        id: build
+        continue-on-error: true
         run: npx vite build
 
       - name: Initial renderer JavaScript budget
-        if: env.REDS != 'true'
+        id: budget
+        continue-on-error: true
         run: node scripts/check-initial-js-budget.mjs dist
 
       - name: Install browsers for smoke tests
-        if: env.REDS != 'true'
         run: npx playwright install --with-deps chromium webkit
 
       - name: Browser smoke tests
-        if: env.REDS != 'true'
+        id: e2e
+        continue-on-error: true
         run: npm run test:e2e
 
       - name: Upload browser reports and failure artifacts
-        if: always() && env.REDS != 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-browser-results
+          name: integration-browser-results-${{ matrix.sha }}
           path: |
             e2e-results/html/
             e2e-results/results.json
             e2e-results/artifacts/
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Outcomes
+        if: always()
+        shell: bash
+        run: |
+          outcomes="audit=${{ steps.audit.outcome }} runtime=${{ steps.runtime.outcome }} types=${{ steps.types.outcome }} types_e2e=${{ steps.types_e2e.outcome }} contracts=${{ steps.contracts.outcome }} lint=${{ steps.lint.outcome }} unit=${{ steps.unit.outcome }} build=${{ steps.build.outcome }} budget=${{ steps.budget.outcome }} e2e=${{ steps.e2e.outcome }}"
+          failed=0
+          for o in $outcomes; do echo "$o"; case "$o" in *=success) ;; *) failed=1 ;; esac; done
+          exit $failed
+
+  vitest:
+    name: vitest reds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Each tests-first commit's changed test files on its own tree
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/reds"
+          last_lock=""
+          while read -r sha files; do
+            [ -n "$sha" ] || continue
+            git checkout -q --force "$sha"
+            lock="$(git rev-parse "$sha:package-lock.json")"
+            if [ "$lock" != "$last_lock" ]; then
+              npm ci --no-audit --no-fund > "$RUNNER_TEMP/reds/npm-$sha.log" 2>&1 || { echo "npm ci failed at $sha"; tail -40 "$RUNNER_TEMP/reds/npm-$sha.log"; exit 1; }
+              last_lock="$lock"
+            fi
+            echo "::group::red $sha"
+            if npx vitest run $files > "$RUNNER_TEMP/reds/$sha.log" 2>&1; then code=0; else code=$?; fi
+            cat "$RUNNER_TEMP/reds/$sha.log"
+            echo "::endgroup::"
+            echo "red $sha exit $code"
+          done <<'LIST'
+          99b2da3ef4d0724befa910779a32df540648eeef src/lib/errorHandling.test.ts
+          LIST
+
+      - name: Upload each red's vitest log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-reds
+          path: ${{ runner.temp }}/reds/
           retention-days: 14
