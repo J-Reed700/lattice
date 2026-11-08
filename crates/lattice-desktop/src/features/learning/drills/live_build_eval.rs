@@ -123,6 +123,7 @@ fn models_of(stored: &StoredDrill) -> Vec<ModelCall> {
     ];
     trails.extend(evidence.proofs.iter().map(|proof| &proof.trail));
     trails.extend(evidence.dropped.iter().map(|dropped| &dropped.trail));
+    trails.extend(evidence.lesson_checks.iter().map(|check| &check.trail));
     trails.push(&evidence.blind_review.trail);
     trails
         .into_iter()

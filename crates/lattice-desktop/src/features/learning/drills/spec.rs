@@ -118,7 +118,10 @@ impl DrillSpec {
     /// The most issues of the drill that may come from its lesson: half of them, rounded up, for code; none for a
     /// passage.
     pub fn lesson_issues(&self) -> usize {
-        0
+        match self.material.language() {
+            Some(_) => self.patterns.len().div_ceil(2),
+            None => 0,
+        }
     }
 
     /// The course a passage is taken from: the spec's course, when it names one that says something.
