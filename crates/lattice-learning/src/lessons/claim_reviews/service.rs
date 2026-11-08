@@ -16,7 +16,7 @@ use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-use super::actions::{in_section_body, refusal, ONLY_SECTION};
+use super::actions::{in_section_body, refusal, whole_sentence, ONLY_SECTION};
 use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
 use super::published_edit::{self, PublishedEdit};
@@ -27,6 +27,8 @@ use super::repository::{
     append_in, bump_revision, check_revision, revision_conflict, ClaimReviewRepository,
 };
 use super::source_deleted::deleted_versions;
+use super::teaching_claims::{name_claims, removable_span, section_bodies};
+use super::teaching_findings::{TeachingFindingDto, TeachingFindingsRepository};
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 
 mod question_edit;
@@ -52,6 +54,10 @@ const NO_STATEMENTS: &str = "Choose the statements first.";
 /// Why an Undo of a batch is refused once anything else was done.
 const MOVED: &str = "Something changed since then. Undo them one at a time.";
 const NEEDS_NOTE: &str = "It needs a note before it can be accepted.";
+const NO_NOTES: &str = "Choose the teaching notes first.";
+const ONLY_PUBLISHED: &str = "Only a published lesson's sentences can be taken out this way.";
+const NOT_A_SENTENCE: &str =
+    "This note isn't about one whole sentence of a section, so there's no sentence to remove.";
 
 #[derive(Clone)]
 pub struct ClaimReviewService {
@@ -299,15 +305,12 @@ impl ClaimReviewService {
                 ClaimActionKind::PutBack => "put back",
                 _ => "undone",
             };
-            let message = plain(first);
-            return Err(AppError::InvalidState(if refused.len() == chosen.len() {
-                format!("None of these can be {verb}: {message}")
-            } else {
-                format!(
-                    "{} of these can't be {verb}: {message} Nothing was changed.",
-                    refused.len()
-                )
-            }));
+            return Err(batch_refusal(
+                verb,
+                refused.len(),
+                chosen.len(),
+                &plain(first),
+            ));
         }
         self.carry_out(&review, lesson_id, ledger.revision, planned)
             .await
@@ -323,10 +326,117 @@ impl ClaimReviewService {
         finding_keys: &[String],
         expected_revision: i64,
     ) -> Result<NoteSentencesRemoved> {
-        let _ = (lesson_id, finding_keys, expected_revision);
-        Err(AppError::InvalidState(
-            "Removing a note's sentence is not built yet.".into(),
-        ))
+        let ledger = self.store.load(lesson_id).await?;
+        let review = ledger
+            .review
+            .clone()
+            .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
+        if ledger.revision != Revision(expected_revision) {
+            return Err(revision_conflict());
+        }
+        if review.state != LessonReviewState::Ready {
+            return Err(AppError::InvalidState(ONLY_PUBLISHED.into()));
+        }
+        let mut findings = TeachingFindingsRepository::new(self.pool.clone())
+            .list(lesson_id)
+            .await?;
+        let bodies = section_bodies(&self.pool, lesson_id).await?;
+        name_claims(&ledger, &bodies, &mut findings);
+        let mut chosen: Vec<&TeachingFindingDto> = Vec::new();
+        for key in finding_keys {
+            let finding = findings
+                .iter()
+                .find(|finding| finding.finding_key == *key)
+                .ok_or_else(|| {
+                    AppError::NotFound("No teaching note with that key in this lesson.".into())
+                })?;
+            if !chosen
+                .iter()
+                .any(|seen| seen.finding_key == finding.finding_key)
+            {
+                chosen.push(finding);
+            }
+        }
+        if chosen.is_empty() {
+            return Err(AppError::InvalidInput(NO_NOTES.into()));
+        }
+        let refused = chosen.iter().filter(|finding| !finding.removable).count();
+        if refused > 0 {
+            return Err(batch_refusal(
+                "removed",
+                refused,
+                chosen.len(),
+                NOT_A_SENTENCE,
+            ));
+        }
+
+        let user = provenance(&review);
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        check_revision(&mut tx, lesson_id, ledger.revision).await?;
+        let mut ended: Vec<ClaimId> = Vec::new();
+        let mut through_claims: Vec<ClaimId> = Vec::new();
+        let mut taken: HashSet<(u32, String)> = HashSet::new();
+        for finding in chosen {
+            let (Some(unit), Some(sentence)) = (finding.unit_index, finding.sentence.as_deref())
+            else {
+                continue;
+            };
+            let sentence = sentence.trim();
+            if !taken.insert((unit, sentence.to_owned())) {
+                continue;
+            }
+            let unit = usize::try_from(unit).unwrap_or(usize::MAX);
+            let body = published_edit::section_body(&mut tx, lesson_id, unit).await?;
+            if removable_span(finding, &body).is_none() {
+                return Err(AppError::InvalidInput(published_edit::CHANGED.into()));
+            }
+            let target = finding
+                .claim_ids
+                .iter()
+                .map(|id| ClaimId(id.clone()))
+                .find(|id| !ended.contains(id));
+            let (target, others) = match target {
+                Some(id) => {
+                    let others =
+                        published_remove::remove_in(&mut tx, lesson_id, &id, &user).await?;
+                    through_claims.push(id.clone());
+                    (id, others)
+                }
+                None if finding.claim_ids.is_empty() => {
+                    published_remove::remove_sentence_in(&mut tx, lesson_id, unit, sentence, &user)
+                        .await?
+                }
+                None => continue,
+            };
+            let mut others: Vec<ClaimId> = others.into_iter().collect();
+            others.sort_by_key(|id| id.0.clone());
+            for id in std::iter::once(target).chain(others) {
+                if !ended.contains(&id) {
+                    ended.push(id);
+                }
+            }
+        }
+        bump_revision(&mut tx, lesson_id).await?;
+        tx.commit().await.map_err(db)?;
+
+        let mut revision = Revision(expected_revision + 1);
+        let mut redecided = false;
+        for id in &through_claims {
+            if let Some(entry) = ledger.claims.iter().find(|entry| entry.claim_id() == id) {
+                let resolution =
+                    user_resolution(UserAction::Remove, None, Some(LabelSource::UserRemove));
+                redecided |= self
+                    .settle(&review, lesson_id, Planned { entry, resolution })
+                    .await?;
+            }
+        }
+        if redecided {
+            revision = self.store.load(lesson_id).await?.revision;
+        }
+        Ok(NoteSentencesRemoved {
+            revision: revision.0,
+            claim_ids: ended.into_iter().map(|id| id.0).collect(),
+        })
     }
 
     /// One claim's action checked against the claim and, in a published
@@ -833,19 +943,12 @@ pub fn changed_since(ledger: &Ledger, at: i64) -> bool {
     })
 }
 
-/// Whether `quote` is a whole sentence of `text`: it ends a sentence and
-/// starts where one starts, so removing it leaves the rest intact (§5.1).
-fn whole_sentence(text: &str, quote: &str) -> bool {
-    let quote = quote.trim();
-    let Some(start) = text.find(quote).filter(|_| !quote.is_empty()) else {
-        return false;
-    };
-    let ends = quote
-        .trim_end_matches(['"', '\'', ')', '”', '’'])
-        .ends_with(['.', '!', '?']);
-    let starts = text
-        .get(..start)
-        .map(str::trim_end)
-        .is_some_and(|before| before.is_empty() || before.ends_with(['.', '!', '?', ':', '\n']));
-    ends && starts
+/// The refusal of a batch of which `refused` of its `chosen` items cannot be
+/// `verb`ed: nothing is written.
+fn batch_refusal(verb: &str, refused: usize, chosen: usize, message: &str) -> AppError {
+    AppError::InvalidState(if refused == chosen {
+        format!("None of these can be {verb}: {message}")
+    } else {
+        format!("{refused} of these can't be {verb}: {message} Nothing was changed.")
+    })
 }

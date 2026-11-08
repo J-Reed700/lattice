@@ -8,11 +8,13 @@
 
 use std::collections::HashMap;
 
-use lattice_core::domain::learning::claim_review::{Actor, ClaimLedgerEntry, ClaimState, Ledger};
+use lattice_core::domain::learning::claim_review::{
+    span_of, Actor, ClaimLedgerEntry, ClaimState, Ledger,
+};
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqlitePool};
 
-use super::actions::in_section_body;
+use super::actions::{in_section_body, whole_sentence};
 use super::published_edit::{gone, placed};
 use super::published_restore::undoable_in_published;
 use super::teaching_findings::{
@@ -42,14 +44,36 @@ pub(super) async fn section_bodies(
         .collect())
 }
 
-/// Fills in the claim ids of each section note that is about a sentence, and
-/// shows a note removed while the user's removal of its sentence stands.
+/// Where the sentence of a waiting section note is in `body` when "Remove this
+/// sentence" can take it out: it occurs once and is a whole sentence.
+pub(super) fn removable_span(finding: &TeachingFindingDto, body: &str) -> Option<(usize, usize)> {
+    if finding.state != TeachingFindingStateDto::Waiting
+        || finding.site != TeachingFindingSiteDto::Section
+        || finding.unit_index.is_none()
+    {
+        return None;
+    }
+    let sentence = finding.sentence.as_deref()?.trim();
+    let span = span_of(body, sentence)?;
+    whole_sentence(body, sentence).then_some(span)
+}
+
+/// Fills in the claim ids of each section note that is about a sentence, says
+/// whether its sentence can be removed, and shows a note removed while the
+/// user's removal of its sentence stands.
 pub(super) fn name_claims(
     ledger: &Ledger,
     bodies: &HashMap<usize, String>,
     findings: &mut [TeachingFindingDto],
 ) {
     for finding in findings {
+        if let Some(body) = finding
+            .unit_index
+            .and_then(|unit| usize::try_from(unit).ok())
+            .and_then(|unit| bodies.get(&unit))
+        {
+            finding.removable = removable_span(finding, body).is_some();
+        }
         let (Some(sentence), Some(unit), TeachingFindingSiteDto::Section) = (
             finding.sentence.as_deref().map(str::trim),
             finding
