@@ -110,12 +110,12 @@ jobs:
         run: cargo fmt --all -- --check
 
       # Clippy checks everything cargo check did, so it runs in its place, first.
-      # The workspace defines additional safety lints in Cargo.toml. Existing
-      # warnings are not promoted to errors yet.
+      # The workspace defines additional safety lints in Cargo.toml. Any
+      # warning fails the build.
       - name: cargo clippy
         if: env.REDS != 'true'
         working-directory: crates/lattice-desktop
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
@@ -341,8 +341,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: Desktop advisories
         working-directory: crates/lattice-desktop
         run: cargo audit --deny yanked --file ../../Cargo.lock
