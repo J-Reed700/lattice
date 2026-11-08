@@ -159,10 +159,10 @@ pub(crate) async fn lesson_bank_stage(
         if count == 0 {
             continue;
         }
-        crate::lesson_progress::stage(format!(
-            "Writing quiz questions (step 3 of 3): {} of {total}",
-            index + 1
-        ));
+        crate::lesson_progress::phase(
+            crate::lesson_progress::Phase::Questions,
+            format!("Writing quiz questions · set {} of {total}", index + 1),
+        );
         let need = AuthoringNeed {
             requirement: requirement.clone(),
             outcome_title: title.into(),

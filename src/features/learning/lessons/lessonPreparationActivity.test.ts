@@ -63,4 +63,14 @@ describe('The row of a lesson being prepared', () => {
     expect(preparingLine({ ...activity, phase: 'evidence' })).toBe('Preparing · Verifying factual statements');
     expect(preparingLine({ ...activity, phase: 'repair', checksCompleted: 44, checksTotal: 44 })).toBe('Preparing · Repairing the draft');
   });
+
+  it('stays at the furthest step while the repaired draft goes back through earlier checks', () => {
+    const activity = job().activity!;
+    expect(preparingLine({ ...activity, phase: 'review', reached: 'repair' })).toBe('Preparing · Checking the repaired draft again');
+    expect(preparingLine({ ...activity, phase: 'coverage', reached: 'repair' })).toBe('Preparing · Checking the repaired draft again');
+    expect(preparingLine({ ...activity, phase: 'evidence', reached: 'repair', checksCompleted: 3, checksTotal: 7 })).toBe('Preparing · 3 of 7 checked');
+    expect(preparingLine({ ...activity, phase: 'repair', reached: 'repair' })).toBe('Preparing · Repairing the draft');
+    expect(preparingLine({ ...activity, phase: 'review', reached: 'review' })).toBe('Preparing · Reviewing teaching and assessments');
+    expect(line(job({ activity: { ...activity, phase: 'coverage', reached: 'repair' } }))).toBe('Preparing lesson: Boiling · Checking the repaired draft again');
+  });
 });
