@@ -377,6 +377,7 @@ pub(crate) async fn audit(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::indexing_slicing)]
 pub async fn live_mapping_fixture(
     llm: &dyn LLMPort,
     fixture: &Value,

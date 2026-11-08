@@ -1,6 +1,6 @@
 //! A library holding fixed documents, shared with lattice-desktop's tests.
 
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::indexing_slicing, clippy::unwrap_used)]
 
 use super::{invalid, ReferencePassage};
 use crate::dto::LearningSourceDto;

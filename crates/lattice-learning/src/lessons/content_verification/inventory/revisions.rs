@@ -241,6 +241,7 @@ pub(in crate::lessons::content_verification) async fn update(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::indexing_slicing)]
 pub async fn live_revision_fixture(
     llm: &dyn LLMPort,
     basis: Value,

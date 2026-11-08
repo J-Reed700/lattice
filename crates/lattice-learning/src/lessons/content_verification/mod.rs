@@ -644,6 +644,7 @@ pub async fn judge_batch_for_publication(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[allow(clippy::indexing_slicing)]
 pub async fn live_coverage_fixture(
     llm: &dyn LLMPort,
     data: &Value,
