@@ -336,11 +336,29 @@ pub(in crate::features::learning) async fn record_ungraded_in(
 
 /// The latest attempts on drills of the course, newest first, at most `limit`, each with the drill it is on.
 pub(in crate::features::learning) async fn recent_in(
-    _connection: &mut SqliteConnection,
-    _program_id: &str,
-    _limit: u32,
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    limit: u32,
 ) -> Result<Vec<(Attempt, StoredDrill)>> {
-    Ok(Vec::new())
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT a.id FROM learning_drill_attempts a JOIN learning_drills d ON d.id=a.drill_id WHERE d.program_id=? ORDER BY a.started_at DESC,a.rowid DESC LIMIT ?",
+    )
+    .bind(program_id)
+    .bind(i64::from(limit))
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    let mut recent = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(attempt) = find_in(connection, &id).await? else {
+            continue;
+        };
+        let Some(drill) = repository::find_in(connection, &attempt.drill_id).await? else {
+            continue;
+        };
+        recent.push((attempt, drill));
+    }
+    Ok(recent)
 }
 
 /// The attempt with this id.

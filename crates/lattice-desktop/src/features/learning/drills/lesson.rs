@@ -140,8 +140,14 @@ impl LessonContext {
 
 /// The bodies of every block of the course's prepared lessons, other than replaced or skipped ones.
 pub(in crate::features::learning) async fn prepared_bodies_in(
-    _connection: &mut SqliteConnection,
-    _program_id: &str,
+    connection: &mut SqliteConnection,
+    program_id: &str,
 ) -> Result<Vec<String>> {
-    Ok(Vec::new())
+    sqlx::query_scalar(
+        "SELECT b.body FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? AND l.preparation='ready' AND l.curriculum_state NOT IN ('replaced','skipped') ORDER BY l.id,b.ordinal",
+    )
+    .bind(program_id)
+    .fetch_all(connection)
+    .await
+    .map_err(db)
 }

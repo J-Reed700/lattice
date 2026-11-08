@@ -287,12 +287,12 @@ pub(in crate::features::learning) async fn drills_lesson_in(
 
 /// Whether the lesson can be drilled in `material`, as `lesson_states_in` says it.
 pub(in crate::features::learning) async fn lesson_fits_in(
-    _connection: &mut SqliteConnection,
-    _program_id: &str,
-    _lesson_id: &str,
-    _material: &Material,
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    lesson_id: &str,
+    material: &Material,
 ) -> Result<bool> {
-    Ok(false)
+    fits_in(connection, program_id, lesson_id, fit_material(material)).await
 }
 
 /// Whether the lesson can be drilled in `material` (`code` or `passage`): unless it is recorded as not fitting on the

@@ -7,7 +7,7 @@ use super::dto::{
     CodeReviewDrillDto, CodeReviewFileDto, CodeReviewFindingDto, CodeReviewMaterialDto,
     CodeReviewResultDto, CodeReviewRevealDto, CodeReviewScoreDto, DrillLessonRefDto,
     FindingResultKind, FixDiffDto, IssueResultKind, RatedPatternDto, RevealedFindingDto,
-    RevealedIssueDto, RevealedSourceDto,
+    RevealedIssueDto, RevealedLessonLinkDto, RevealedLessonSentenceDto, RevealedSourceDto,
 };
 use super::repository::StoredDrill;
 use lattice_core::domain::learning::drills::{
@@ -16,8 +16,12 @@ use lattice_core::domain::learning::drills::{
 use lattice_core::shared::error::{AppError, Result};
 
 /// The lesson the drill was built from, while it exists.
-pub(super) fn lesson_of(_stored: &StoredDrill) -> Option<DrillLessonRefDto> {
-    None
+pub(super) fn lesson_of(stored: &StoredDrill) -> Option<DrillLessonRefDto> {
+    Some(DrillLessonRefDto {
+        program_id: stored.program_id.clone()?,
+        lesson_id: stored.lesson_id.clone()?,
+        title: stored.lesson_title.clone()?,
+    })
 }
 
 /// The drill as the learner may see it: its title, what it is made of, its files and its lesson.
@@ -181,7 +185,17 @@ fn revealed_issue(issue: &KeyIssue, outcome: IssueOutcome, reason: String) -> Re
         finding,
         reason,
         also_valid: issue.origin == Origin::FoundInReview,
-        lesson: None,
+        lesson: issue.lesson.as_ref().map(|link| RevealedLessonLinkDto {
+            lesson_id: link.lesson_id.clone(),
+            sentences: link
+                .sentences
+                .iter()
+                .map(|sentence| RevealedLessonSentenceDto {
+                    text: sentence.text.clone(),
+                    source: sentence.source.clone(),
+                })
+                .collect(),
+        }),
     }
 }
 

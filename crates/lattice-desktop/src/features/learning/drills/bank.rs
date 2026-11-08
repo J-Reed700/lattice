@@ -214,11 +214,31 @@ pub(in crate::features::learning) enum NextStatus {
 /// oldest ready drill of the shelf, then the build under way, then the lesson next up. `None` when no lesson of the
 /// course can be drilled on the shelf's material.
 pub(in crate::features::learning) async fn next_up_in(
-    _connection: &mut SqliteConnection,
-    _shelf: Shelf<'_>,
-    _now: i64,
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
+    now: i64,
 ) -> Result<Option<NextUp>> {
-    Ok(None)
+    if let Some(lesson_id) = repository::oldest_ready_on(connection, shelf, None)
+        .await?
+        .and_then(|drill| drill.lesson_id)
+    {
+        return Ok(Some(NextUp {
+            lesson_id,
+            status: NextStatus::Ready,
+        }));
+    }
+    if let Some(found) = under_way_in(connection, shelf, None).await? {
+        return Ok(Some(NextUp {
+            lesson_id: found.lesson_id,
+            status: NextStatus::Building,
+        }));
+    }
+    Ok(next_lesson_in(connection, shelf, None, now)
+        .await?
+        .map(|lesson_id| NextUp {
+            lesson_id,
+            status: NextStatus::ToBuild,
+        }))
 }
 
 /// A drill given to a learner, and the build queued to follow it, if one was.

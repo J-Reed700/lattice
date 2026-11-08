@@ -156,7 +156,7 @@ pub(in crate::features::learning) async fn insert_in(
 }
 
 /// The columns `read` reads.
-const COLUMNS: &str = "id,material,language,source_json,title,domain,program_id,lesson_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at";
+const COLUMNS: &str = "id,material,language,source_json,title,domain,program_id,lesson_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at,(SELECT l.title FROM learning_lessons l WHERE l.id=learning_drills.lesson_id AND l.program_id=learning_drills.program_id) AS lesson_title";
 
 /// The name a material is stored under.
 fn material_name(material: &Material) -> &'static str {
@@ -279,7 +279,7 @@ fn read(row: &SqliteRow) -> Result<StoredDrill> {
         domain: row.get("domain"),
         program_id: row.get("program_id"),
         lesson_id: row.get("lesson_id"),
-        lesson_title: None,
+        lesson_title: row.get("lesson_title"),
         suite: row.get("suite"),
         source,
         runner: row.get("runner"),

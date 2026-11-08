@@ -56,19 +56,20 @@ impl TryFrom<StoredSpec> for DrillSpec {
 }
 
 /// Whether `language` is one drills are written in.
-pub fn check_language(_language: &str) -> Result<()> {
-    Ok(())
+pub fn check_language(language: &str) -> Result<()> {
+    if LANGUAGES.contains(&language) {
+        return Ok(());
+    }
+    Err(AppError::InvalidInput(format!(
+        "{language} is not a language drills are written in."
+    )))
 }
 
 /// Whether a drill of `material` with `lines` and `patterns` patterns can be asked for: code in a language drills are
 /// written in, or a passage; at least one line of code or sentence; and at least one pattern.
 pub fn check_request(material: &Material, lines: u32, patterns: usize) -> Result<()> {
     if let Material::Code { language } = material {
-        if !LANGUAGES.contains(&language.as_str()) {
-            return Err(AppError::InvalidInput(format!(
-                "{language} is not a language drills are written in."
-            )));
-        }
+        check_language(language)?;
     }
     if lines == 0 {
         return Err(AppError::InvalidInput(match material {
