@@ -598,8 +598,8 @@ pub(super) fn lesson_proved(operator: &[usize], literals: &[usize]) -> Proved {
 pub(super) fn lesson_check_answer(breaks: bool, follows: bool) -> String {
     json!({
         "reason": "The sentences say a limiter refuses at its limit, and the edit lets one call more through.",
-        "breaksIt": breaks,
-        "cleanFollowsIt": follows
+        "editBreaksTheSentences": breaks,
+        "codeBeforeTheEditFollowsTheSentences": follows
     })
     .to_string()
 }
