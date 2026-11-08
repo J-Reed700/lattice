@@ -33,6 +33,9 @@ use std::sync::Arc;
 pub const QUIZ_BANK: &str = "learning.quiz_bank";
 pub const QUIZ_GRADING: &str = "learning.quiz_grading";
 
+#[cfg(test)]
+pub(crate) const LESSON_BANK_CHECKPOINT: &str = "lesson-bank-v1";
+
 /// The Learning model, pinned for the whole job.
 pub type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<PinnedModel>> + Send + Sync>;
 

@@ -709,3 +709,7 @@ mod repository_tests {
 #[cfg(test)]
 #[path = "generation_recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(test)]
+#[path = "generation_overlap_tests.rs"]
+pub(crate) mod overlap_tests;
