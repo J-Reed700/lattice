@@ -5,7 +5,7 @@
 use super::outline_reference_tests::*;
 use crate::{
     dto::*,
-    lessons::course_generation_tests::request,
+    lessons::course_generation_tests::{repair_answer, repair_answer_with, request},
     outline_draft::{
         repair_saved, DraftRunRegistry, LearningOutlineIssueKind, LearningOutlineReviewStatus,
         RepairLearningOutlineRequestDto,
@@ -29,7 +29,7 @@ fn with_summary(text: &str) -> Value {
 fn module_with_summary(candidate: &Value, text: &str) -> Value {
     let mut module = candidate["modules"][0].clone();
     module["summary"]["text"] = json!(text);
-    json!({"module":module})
+    repair_answer(module.clone())
 }
 
 fn module_with_objective(candidate: &Value, lesson: usize, objective: &str) -> Value {
@@ -262,7 +262,7 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
             objective,
             "Name the measurement for this lesson.",
         )]),
-        json!({"module":first}),
+        repair_answer(first.clone()),
         verdicts(
             &[("finding-1", "resolved")],
             vec![plan_finding(
@@ -271,7 +271,7 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
                 "Name the measurement for this lesson too.",
             )],
         ),
-        json!({"module":second}),
+        repair_answer(second.clone()),
         verdicts(
             &[("finding-2", "resolved")],
             vec![plan_finding(
@@ -280,7 +280,7 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
                 "And for this lesson.",
             )],
         ),
-        json!({"module":third}),
+        repair_answer(third.clone()),
         verdicts(
             &[("finding-3", "resolved")],
             vec![plan_finding(
@@ -332,7 +332,7 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
         initial,
         no_links(),
         issue(0),
-        json!({"module":fixed}),
+        repair_answer(fixed.clone()),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
@@ -382,9 +382,17 @@ async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
     let llm = model(vec![
         initial.clone(),
         issue(0),
-        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the first comparison.",
+        )),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The project brief still names no measurement."}],"newFindings":[]}),
-        json!({"module":module_with_objective(&initial, 0, "Measure the comparison with a stated outcome.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the comparison with a stated outcome.",
+        )),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = service::generate(
@@ -431,7 +439,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         json!({"needs":[{"gap":0,"query":"random assignment confounding primary source","kind":"web"}]}),
         select_all(1),
         judged("unsupported", None),
-        json!({"module":initial["modules"][0]}),
+        repair_answer(initial["modules"][0].clone()),
     ]);
     let sources = vec![original_source()];
     let drafts = DraftRunRegistry::new();
@@ -566,10 +574,10 @@ async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_pass
     let llm = model(vec![
         initial.clone(),
         issue(0),
-        json!({"module":first.clone()}),
+        repair_answer(first.clone()),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The project brief still names no measurement."}],"newFindings":[]}),
         // The last attempt returns the module unchanged.
-        json!({"module":first}),
+        repair_answer(first.clone()),
     ]);
     let program = service::generate(
         &repo,
@@ -604,7 +612,7 @@ async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advis
         initial.clone(),
         issue(0),
         // The first attempt returns the module unchanged.
-        json!({"module":initial["modules"][0].clone()}),
+        repair_answer(initial["modules"][0].clone()),
     ]);
     let program = service::generate(
         &repo,
@@ -631,7 +639,7 @@ async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advis
 fn clashing_correction(initial: &Value) -> Value {
     let mut clashing = module_with_objective(initial, 0, "Measure the first comparison.");
     clashing["title"] = initial["modules"][1]["title"].clone();
-    json!({"module":clashing})
+    repair_answer(clashing.clone())
 }
 
 #[tokio::test]
@@ -643,7 +651,11 @@ async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_save
         issue(0),
         clashing_correction(&initial),
         // Asked again with the clash named, the model keeps its own title.
-        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the first comparison.",
+        )),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = service::generate(
@@ -691,13 +703,17 @@ async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Re
         clashing_correction(&initial),
         clashing_correction(&initial),
         // Module 2 is still repaired in the same pass.
-        json!({"module":second}),
+        repair_answer(second.clone()),
         verdicts(
             &[("finding-1", "unresolved"), ("finding-2", "resolved")],
             vec![],
         ),
         // The next pass takes module 1 up again, and its correction is saved.
-        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the first comparison.",
+        )),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = service::generate(
@@ -773,5 +789,300 @@ async fn a_pass_whose_only_correction_is_unusable_says_why_and_keeps_the_finding
     assert!(!review.issues[0].exhausted, "the finding waits for Repair");
     assert_eq!(program.modules[0].title, initial["modules"][0]["title"]);
     assert_eq!(llm.prompts.lock().unwrap().len(), 4);
+    Ok(())
+}
+
+/// Module 1 with a lesson on measurement inserted at `at`.
+fn module_with_added_lesson(initial: &Value, at: usize) -> Value {
+    let mut module = initial["modules"][0].clone();
+    if let Some(lessons) = module["lessons"].as_array_mut() {
+        lessons.insert(
+            at,
+            json!({"title":"Choose a measurement","objective":"Choose the observable measurement the comparison reports.","estimatedMinutes":30,"sourceIndex":null,"quote":""}),
+        );
+    }
+    module
+}
+
+fn lesson_ids(program: &LearningProgramDto, module: usize) -> Vec<String> {
+    program.modules[module]
+        .lessons
+        .iter()
+        .map(|lesson| lesson.id.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let initial = candidate();
+    let drafts = DraftRunRegistry::new();
+    // Both answers in the first run are unusable, so the finding stays open.
+    let mut clashing = initial["modules"][0].clone();
+    clashing["title"] = initial["modules"][1]["title"].clone();
+    let llm = model(vec![
+        initial.clone(),
+        findings(vec![plan_finding(
+            "/modules/0/lessons/1",
+            "Design a controlled experiment and explain its limitations.",
+            "The learner needs a lesson on measurement before this one.",
+        )]),
+        repair_answer(clashing.clone()),
+        repair_answer(clashing.clone()),
+    ]);
+    let drafted = service::generate(
+        &repo,
+        &drafts,
+        &llm,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let before: Vec<Vec<String>> = (0..4).map(|m| lesson_ids(&drafted, m)).collect();
+    let llm = model(vec![
+        verdicts(&[("finding-1", "unresolved")], vec![]),
+        repair_answer_with(
+            module_with_added_lesson(&initial, 1),
+            &[Some(0), None, Some(1), Some(2)],
+        ),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let repaired = repair_saved(
+        &repo,
+        &drafts,
+        &llm,
+        &RepairLearningOutlineRequestDto {
+            program_id: drafted.summary.id.clone(),
+            expected_revision: drafted.summary.revision,
+        },
+        &OutlineProgress::default(),
+        None,
+    )
+    .await?;
+    let review = repaired.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
+    let after = lesson_ids(&repaired, 0);
+    assert_eq!(after.len(), 4);
+    assert_eq!(
+        [&after[0], &after[2], &after[3]],
+        [&before[0][0], &before[0][1], &before[0][2]]
+    );
+    assert!(!before[0].contains(&after[1]));
+    assert_eq!(repaired.modules[0].lessons[1].title, "Choose a measurement");
+    for (module, ids) in before.iter().enumerate().take(4).skip(1) {
+        assert_eq!(lesson_ids(&repaired, module), *ids);
+    }
+    let rows: Vec<(String, i64, String)> = sqlx::query_as(
+        "SELECT id,ordinal,preparation FROM learning_lessons WHERE module_id=? ORDER BY ordinal",
+    )
+    .bind(&repaired.modules[0].id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        rows.iter().map(|row| row.0.clone()).collect::<Vec<_>>(),
+        after
+    );
+    assert_eq!(
+        rows.iter().map(|row| row.1).collect::<Vec<_>>(),
+        [0, 1, 2, 3]
+    );
+    assert!(rows.iter().all(|row| row.2 == "outline"));
+    let saved = repo.outline_draft(&repaired.summary.id).await?.unwrap();
+    assert_eq!(saved.bindings.as_ref().unwrap()[0].lesson_ids, after);
+    assert_eq!(
+        saved.candidate["modules"][0]["lessons"][1]["title"],
+        "Choose a measurement"
+    );
+    assert!(saved.candidate["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|module| module["lessons"].as_array().unwrap())
+        .all(|lesson| lesson.get("from").is_none()));
+    assert_eq!(
+        repo.get(&repaired.summary.id).await?.summary.lesson_count,
+        13
+    );
+    // The finding on the second lesson follows that lesson to its new place.
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(
+        payload(&prompts[2])["openFindings"][0]["path"],
+        "/modules/0/lessons/2"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_answer_that_drops_a_lesson_is_asked_again() -> Result<()> {
+    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let initial = candidate();
+    let mut dropped = initial["modules"][0].clone();
+    if let Some(lessons) = dropped["lessons"].as_array_mut() {
+        lessons.pop();
+    }
+    let llm = model(vec![
+        initial.clone(),
+        issue(0),
+        repair_answer(dropped),
+        repair_answer_with(
+            module_with_added_lesson(&initial, 3),
+            &[Some(0), Some(1), Some(2), None],
+        ),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let program = service::generate(
+        &repo,
+        &DraftRunRegistry::new(),
+        &llm,
+        request(LearningCourseDepth::Course),
+        vec![],
+    )
+    .await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
+    assert_eq!(llm.prompts.lock().unwrap().len(), 5);
+    assert_eq!(program.modules[0].lessons.len(), 4);
+    assert_eq!(program.modules[0].lessons[3].title, "Choose a measurement");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_kept_lesson_after_an_inserted_one_keeps_its_citation_and_the_new_lesson_is_linked(
+) -> Result<()> {
+    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let mut initial = candidate();
+    initial["modules"][0]["lessons"][1]["objective"] = json!(ORIGINAL);
+    cite_at(&mut initial, "/modules/0/lessons/1", 0, ORIGINAL);
+    let mut module = module_with_added_lesson(&initial, 1);
+    module["lessons"][1]["objective"] =
+        json!("Explain how a randomized comparison isolates the intervention.");
+    // The model drops the kept lesson's citation and cites the new one.
+    module["lessons"][2]["sourceIndex"] = Value::Null;
+    module["lessons"][2]["quote"] = json!("");
+    module["lessons"][1]["sourceIndex"] = json!(0);
+    module["lessons"][1]["quote"] = json!(ORIGINAL);
+    let sources = vec![original_source()];
+    let llm = model(vec![
+        initial.clone(),
+        links(&[("/modules/0/lessons/1", ORIGINAL)]),
+        issue(0),
+        repair_answer_with(module, &[Some(0), None, Some(1), Some(2)]),
+        links(&[("/modules/0/lessons/1", ORIGINAL)]),
+        verdicts(&[("finding-1", "resolved")], vec![]),
+    ]);
+    let program = generate_with(&repo, &llm, sources).await?;
+    let review = program.outline_review.as_ref().unwrap();
+    assert_eq!(
+        review.status,
+        LearningOutlineReviewStatus::Passed,
+        "{}",
+        review.note
+    );
+    let saved = repo.outline_draft(&program.summary.id).await?.unwrap();
+    let lessons = &saved.candidate["modules"][0]["lessons"];
+    assert_eq!(lessons[2]["sourceIndex"], 0);
+    assert_eq!(lessons[2]["quote"], ORIGINAL);
+    assert_eq!(lessons[1]["sourceIndex"], 0);
+    // Only the new lesson was offered for linking after the repair.
+    let offered = linking_prompts(&llm);
+    let last = offered.last().unwrap();
+    assert!(last.contains("/modules/0/lessons/1"));
+    assert!(!last.contains("/modules/0/lessons/2"));
+    // Each citation is shown on its own lesson.
+    let evidence = crate::outline_evidence_view::project(&program, &saved);
+    let kept = evidence
+        .citations
+        .iter()
+        .find(|citation| citation.path == "/modules/0/lessons/2/objective")
+        .unwrap();
+    assert_eq!(
+        kept.lesson_id.as_deref(),
+        Some(program.modules[0].lessons[2].id.as_str())
+    );
+    assert_eq!(kept.quote, ORIGINAL);
+    let added = evidence
+        .citations
+        .iter()
+        .find(|citation| citation.path == "/modules/0/lessons/1/objective")
+        .unwrap();
+    assert_eq!(
+        added.lesson_id.as_deref(),
+        Some(program.modules[0].lessons[1].id.as_str())
+    );
+    Ok(())
+}
+
+async fn saved_fixture(
+    repo: &LearningRepository,
+) -> Result<(LearningProgramDto, crate::outline_draft::OutlineDraft)> {
+    let program = crate::tests::fixture();
+    let candidate = json!({"modules":program.modules.iter().map(|module| json!({
+        "title":module.title, "lessons":module.lessons.iter().map(|lesson| json!({"title":lesson.title})).collect::<Vec<_>>()
+    })).collect::<Vec<_>>()});
+    let mut draft = crate::outline_draft::OutlineDraft::new(
+        request(LearningCourseDepth::Course),
+        candidate,
+        &[],
+    );
+    draft.bind_program(&program)?;
+    repo.create_outline_draft(&program, &[], Some(&draft))
+        .await?;
+    Ok((program, draft))
+}
+
+#[tokio::test]
+async fn saving_an_outline_with_an_added_lesson_inserts_it_and_renumbers_the_module() -> Result<()>
+{
+    let pool = crate::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let (mut program, mut draft) = saved_fixture(&repo).await?;
+    let saved_ids = lesson_ids(&program, 0);
+    let mut added = program.modules[0].lessons[0].clone();
+    added.id = uuid::Uuid::new_v4().to_string();
+    added.title = "An added lesson".into();
+    program.modules[0].lessons.insert(1, added.clone());
+    repo.checkpoint_outline(&mut program, &mut draft, &[], &[])
+        .await?;
+    let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
+        "SELECT id,ordinal,preparation,title FROM learning_lessons WHERE module_id=? ORDER BY ordinal",
+    )
+    .bind(&program.modules[0].id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(
+        rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
+        [
+            saved_ids[0].as_str(),
+            added.id.as_str(),
+            saved_ids[1].as_str()
+        ]
+    );
+    assert_eq!(rows.iter().map(|row| row.1).collect::<Vec<_>>(), [0, 1, 2]);
+    assert!(rows.iter().all(|row| row.2 == "outline"));
+    assert_eq!(rows[1].3, "An added lesson");
+    assert_eq!(repo.get(&program.summary.id).await?.summary.lesson_count, 5);
+    Ok(())
+}
+
+#[tokio::test]
+async fn saving_an_outline_that_loses_a_saved_lesson_is_refused() -> Result<()> {
+    let repo = LearningRepository::new(crate::tests::pool().await?);
+    let (mut program, mut draft) = saved_fixture(&repo).await?;
+    program.modules[0].lessons.remove(0);
+    assert!(repo
+        .checkpoint_outline(&mut program, &mut draft, &[], &[])
+        .await
+        .is_err());
     Ok(())
 }
