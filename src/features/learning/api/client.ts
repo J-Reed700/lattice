@@ -126,11 +126,11 @@ export const learningApi = {
       onProgress: new Channel<Wire.ClaimAttachProgressDto>(onProgress),
     }),
 
-  /** "Keep as written" on a teaching finding the repairs did not settle. */
-  keepLearningTeachingFinding: (
-    request: Wire.KeepLearningTeachingFindingRequestDto,
+  /** "Keep as written" on teaching findings the repairs did not settle, or taking that back. */
+  settleLearningTeachingFindings: (
+    request: Wire.SettleLearningTeachingFindingsRequestDto,
   ): Promise<ApiResult<void>> =>
-    learningCall('keep_learning_teaching_finding', { request }),
+    learningCall('settle_learning_teaching_findings', { request }),
 
   resumeLearningLessonReview: (
     request: Wire.ResumeLearningLessonReviewRequestDto,

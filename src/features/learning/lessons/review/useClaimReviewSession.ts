@@ -24,6 +24,7 @@ const SETTLE_MS = 1200;
 type Undo = { kind: 'claim'; claimId: string } | { kind: 'trust'; scope: LearningTrustOverrideScopeDto } | null;
 
 const waitingIn = (review: LessonClaimReviewDto | null | undefined) => review?.claims.filter(isWaitingForYou).length ?? 0;
+const teachingIn = (review: LessonClaimReviewDto | null | undefined) => review?.teachingFindings.filter((finding) => finding.state === 'waiting').length ?? 0;
 
 const hostOf = (url: string | null) => { try { return url ? new URL(url).host : null; } catch { return null; } };
 
@@ -123,7 +124,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
       await resolve.mutateAsync({ claimId: item.claimId, action: request, expectedRevision: review.revision });
       // The mutation reloads the review before it settles: count from the fresh one.
       const after = fresh();
-      setMessage(announcement(kind, waitingIn(after)));
+      setMessage(announcement(kind, waitingIn(after), teachingIn(after)));
       setUndo(kind === 'undo' ? null : { kind: 'claim', claimId: item.claimId });
       const stillWaiting = after?.claims.find((claim) => claim.claimId === item.claimId);
       if (kind !== 'undo' && (!stillWaiting || !isWaitingForYou(stillWaiting))) settle(item, next);
@@ -178,7 +179,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
     try {
       await clearTrust.mutateAsync(undo.scope);
       await client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) });
-      setMessage(announcement('undo', waitingIn(fresh())));
+      setMessage(announcement('undo', waitingIn(fresh()), teachingIn(fresh())));
       setUndo(null);
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'The change could not be undone.');

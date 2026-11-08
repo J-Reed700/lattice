@@ -9,6 +9,7 @@ import type {
   LessonClaimReviewDto,
   ResolveLearningClaimResultDto,
   SnapshotNoteDto,
+  TeachingSettleDto,
 } from '@/lib/bindings';
 import { failureToError } from '@/lib/errorHandling';
 import type { ApiResult } from '@/types';
@@ -59,15 +60,15 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
 }
 
 /**
- * "Keep as written" on a teaching finding: it stops waiting for the user;
- * the review reloads either way.
+ * "Keep as written" on teaching findings, or taking that back: all the
+ * findings change or none; the review reloads either way.
  */
-export function useKeepTeachingFinding(programId: string, lessonId: string) {
+export function useSettleTeachingFindings(programId: string, lessonId: string) {
   const api = useApi();
   const client = useQueryClient();
-  return useMutation<void, Error, { findingKey: string }>({
+  return useMutation<void, Error, { findingKeys: string[]; settle: TeachingSettleDto }>({
     retry: false,
-    mutationFn: async ({ findingKey }) => unwrap(await api.keepLearningTeachingFinding({ programId, lessonId, findingKey })),
+    mutationFn: async ({ findingKeys, settle }) => unwrap(await api.settleLearningTeachingFindings({ programId, lessonId, findingKeys, settle })),
     onSettled: () => client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
   });
 }

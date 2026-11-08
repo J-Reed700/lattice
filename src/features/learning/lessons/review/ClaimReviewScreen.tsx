@@ -8,7 +8,7 @@ import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSou
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
-import { ALL_RESOLVED, tallyLine, teachingNotesForYou, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
+import { ALL_RESOLVED, tallyLine, teachingNotesWait, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
@@ -76,6 +76,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
   const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
   const teachingWaiting = review?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
+  const removedCount = session.removed.reduce((sum, entry) => sum + entry.statements.length, 0);
   const notVerified = review?.state === 'ready' ? review.claims.filter((claim) => claim.state.state === 'unverified').length : 0;
 
   // After an action, focus moves to the statement of the claim now in focus.
@@ -147,7 +148,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       </div>
       {review && <p data-testid="review-tally" className="mt-1 text-sm text-text-secondary">
         {jobActive && <span className="font-medium text-text-primary">Checking your changes · </span>}
-        {tallyLine(review.counts) || (teachingWaiting ? teachingNotesForYou(teachingWaiting) : 'Nothing to check yet')}
+        {tallyLine(review.counts, teachingWaiting) || 'Nothing to check yet'}
       </p>}
       {notVerified > 0 && <p className="mt-1 text-sm text-text-secondary">{unverifiedReviewLine(notVerified)}</p>}
       {review?.state === 'needs_review' && waiting.length === 0 && !review.changedSinceStop && <LessonAuditLine programId={programId} lessonId={lessonId} />}
@@ -180,8 +181,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s claims have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
     if (session.removedActive) return <RemovedStatements sentences={session.removed} />;
-    if (session.teachingActive) return <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
-      onKept={(remaining) => session.setMessage(`Kept as written. ${remaining > 0 ? teachingNotesForYou(remaining) : 'No teaching notes left.'}`)} />;
+    if (session.teachingActive) return <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings} />;
     if (active) return <ClaimInFocus ref={statementRef} programId={programId} item={active} position={position || 1} total={Math.max(ordered.length, 1)}
       onPrevious={session.activeIndex > 0 ? () => session.step(-1) : null} onNext={session.activeIndex >= 0 && session.activeIndex < ordered.length - 1 ? () => session.step(1) : null}
       sharing={sharingOf(active.support)} busy={session.acting} error={session.error} form={session.form} onFormChange={session.setForm}
@@ -192,8 +192,16 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       stickyActions={narrow} published={review.state === 'ready'} />;
     if (review.state === 'needs_review' && (hold === 'audit' || hold === 'audit_stop')) return <AuditHold reason={auditStop} />;
     if (sheetNode) return sheetNode;
+    const takenOut = removedCount > 0
+      ? <p>{removedCount === 1 ? '1 statement was taken out of the lesson. It is' : `${removedCount} statements were taken out of the lesson. They are`} listed under Taken out of the lesson.</p> : null;
+    if (teachingWaiting > 0) return <FocusMessage title={teachingNotesWait(teachingWaiting)}>
+      <p>Every statement is verified, confirmed by you, removed or edited.</p>
+      {takenOut}
+      <Button type="button" variant="outline" className="mt-3" onClick={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}>Open the teaching notes</Button>
+    </FocusMessage>;
     return <FocusMessage title="Everything is resolved">
       <p>{review.state === 'ready' ? 'Every claim is verified, confirmed by you, removed or edited.' : `Every claim is verified, confirmed by you, removed or edited. ${ALL_RESOLVED.replace('Everything is resolved. ', '')}`}</p>
+      {takenOut}
     </FocusMessage>;
   })();
 
@@ -203,7 +211,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     onAcceptSource={(group) => acceptSource(group.claims[0]?.support ?? null)} onAddSource={openGroupSheet}
     resolved={session.resolved}
     teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}
-    removedCount={session.removed.reduce((sum, entry) => sum + entry.statements.length, 0)} removedActive={session.removedActive}
+    removedCount={removedCount} removedActive={session.removedActive}
     onOpenRemoved={() => { session.openRemoved(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
 
   return (

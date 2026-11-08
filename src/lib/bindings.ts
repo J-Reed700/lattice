@@ -741,13 +741,14 @@ async attachLearningClaimEvidence(request: AttachLearningClaimEvidenceRequestDto
 }
 },
 /**
- * "Keep as written": the user settles a teaching finding the repairs did
- * not, without changing the lesson. It stays settled while the part it is
- * about keeps its text.
+ * "Keep as written": the user settles teaching findings the repairs did
+ * not, without changing the lesson, or takes that back. A kept finding stays
+ * settled while the part it is about keeps its text. All the findings change
+ * or none.
  */
-async keepLearningTeachingFinding(request: KeepLearningTeachingFindingRequestDto) : Promise<Result<null, ApiError>> {
+async settleLearningTeachingFindings(request: SettleLearningTeachingFindingsRequestDto) : Promise<Result<null, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|keep_learning_teaching_finding", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|settle_learning_teaching_findings", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6897,11 +6898,6 @@ export type JournalSynthesisDto = { job: JobDto; title: string; heading: string;
  */
 activity: SynthesisActivityDto | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
-export type KeepLearningTeachingFindingRequestDto = { programId: string; lessonId: string;
-/**
- * The finding's `findingKey` from the review.
- */
-findingKey: string }
 /**
  * A service whose key lives in the keyring, as the panel and the key
  * commands name it.
@@ -9804,6 +9800,11 @@ sourcing: SourcingSettingsDto }
 /**
  * The key's issues of one severity and how many of them were found.
  */
+export type SettleLearningTeachingFindingsRequestDto = { programId: string; lessonId: string;
+/**
+ * The findings' `findingKey`s from the review.
+ */
+findingKeys: string[]; settle: TeachingSettleDto }
 export type SeverityTallyDto = { severity: CodeReviewSeverity; found: number; halfFound: number; total: number }
 /**
  * One neighbour of a document, collapsed from its chunk hits.
@@ -10344,7 +10345,7 @@ document_count: number }
  */
 export type TeachingFindingDto = {
 /**
- * Names the finding in `keep_learning_teaching_finding`.
+ * Names the finding in `settle_learning_teaching_findings`.
  */
 findingKey: string; kind: TeachingFindingKindDto; site: TeachingFindingSiteDto;
 /**
@@ -10356,13 +10357,17 @@ unitIndex: number | null;
  */
 unitTitle: string;
 /**
- * The reviewer's note.
+ * What is wrong, in plain words.
  */
-note: string;
+summary: string;
 /**
  * The passage the finding is about, when one was chosen.
  */
 passage: string | null;
+/**
+ * Whether the passage is the lesson's own text or a quotation it cites.
+ */
+passageRole: TeachingPassageRoleDto;
 /**
  * Repairs that tried to settle it.
  */
@@ -10401,6 +10406,30 @@ export type TeachingFindingStateDto =
  * The user kept the text as written.
  */
 "kept"
+/**
+ * What the passage under a finding is.
+ */
+export type TeachingPassageRoleDto =
+/**
+ * Text of the lesson, or a question's prompt.
+ */
+"lesson" |
+/**
+ * The quotation of a source that a sentence or a part cites.
+ */
+"quotation"
+/**
+ * What the user does with waiting or kept teaching findings.
+ */
+export type TeachingSettleDto =
+/**
+ * Keep the text as written: waiting becomes kept.
+ */
+"keep" |
+/**
+ * Take a kept finding back: kept becomes waiting.
+ */
+"reopen"
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
