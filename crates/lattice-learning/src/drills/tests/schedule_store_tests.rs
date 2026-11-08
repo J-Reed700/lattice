@@ -1229,3 +1229,171 @@ async fn the_schedule_tables_refuse_what_is_not_a_schedule_or_a_lesson_of_the_co
     assert!(wrong.is_err(), "no such material");
     Ok(())
 }
+
+/// The ids of the source versions of the course `program_id`, in id order.
+async fn versions_of(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
+    sqlx::query_scalar("SELECT id FROM learning_source_versions WHERE program_id=? ORDER BY id")
+        .bind(program_id)
+        .fetch_all(pool)
+        .await
+        .map_err(db)
+}
+
+/// Stores a verdict of the passage check on the bytes `start..end` of the version `version`.
+async fn insert_check(
+    pool: &SqlitePool,
+    program: &str,
+    lesson: &str,
+    version: &str,
+    (start, end): (i64, i64),
+    teaches: i64,
+) -> std::result::Result<sqlx::sqlite::SqliteQueryResult, sqlx::Error> {
+    sqlx::query("INSERT INTO learning_drill_passage_checks(program_id,lesson_id,version_id,start_byte,end_byte,basis,teaches,reason,model,checked_at) VALUES(?,?,?,?,?,'b',?,'r','m',1)")
+        .bind(program)
+        .bind(lesson)
+        .bind(version)
+        .bind(start)
+        .bind(end)
+        .bind(teaches)
+        .execute(pool)
+        .await
+}
+
+const CHECKS: &str = "SELECT count(*) FROM learning_drill_passage_checks";
+
+#[tokio::test]
+async fn deleting_a_lesson_removes_its_passage_checks() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let lessons = lessons_of(&pool, &program).await?;
+    let versions = versions_of(&pool, &program).await?;
+    for lesson in lessons.iter().take(2) {
+        insert_check(&pool, &program, lesson, &versions[0], (0, 10), 1)
+            .await
+            .map_err(db)?;
+    }
+    assert_eq!(count(&pool, CHECKS).await?, 2);
+
+    sqlx::query("DELETE FROM learning_lessons WHERE id=?")
+        .bind(&lessons[1])
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(count(&pool, CHECKS).await?, 1);
+    let kept: String = sqlx::query_scalar("SELECT lesson_id FROM learning_drill_passage_checks")
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(kept, lessons[0]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_a_course_removes_its_passage_checks() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let other = course(&pool).await?;
+    for owner in [&program, &other] {
+        let lesson = lessons_of(&pool, owner).await?[0].clone();
+        let version = versions_of(&pool, owner).await?[0].clone();
+        insert_check(&pool, owner, &lesson, &version, (0, 10), 0)
+            .await
+            .map_err(db)?;
+    }
+    assert_eq!(count(&pool, CHECKS).await?, 2);
+
+    sqlx::query("DELETE FROM learning_programs WHERE id=?")
+        .bind(&program)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(count(&pool, CHECKS).await?, 1);
+    let kept: String = sqlx::query_scalar("SELECT program_id FROM learning_drill_passage_checks")
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(kept, other);
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_a_source_version_removes_its_passage_checks() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let lesson = lessons_of(&pool, &program).await?[0].clone();
+    let versions = versions_of(&pool, &program).await?;
+    assert!(versions.len() >= 2, "{versions:?}");
+    for version in versions.iter().take(2) {
+        insert_check(&pool, &program, &lesson, version, (0, 10), 1)
+            .await
+            .map_err(db)?;
+    }
+    assert_eq!(count(&pool, CHECKS).await?, 2);
+
+    sqlx::query("DELETE FROM learning_source_versions WHERE id=?")
+        .bind(&versions[0])
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(count(&pool, CHECKS).await?, 1);
+    let kept: String = sqlx::query_scalar("SELECT version_id FROM learning_drill_passage_checks")
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(kept, versions[1]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_passage_check_table_refuses_a_lesson_or_version_of_another_course_and_what_is_not_a_verdict_or_a_span(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let other = course(&pool).await?;
+    let lesson = lessons_of(&pool, &program).await?[0].clone();
+    let version = versions_of(&pool, &program).await?[0].clone();
+    let elsewhere_lesson = lessons_of(&pool, &other).await?[0].clone();
+    let elsewhere_version = versions_of(&pool, &other).await?[0].clone();
+
+    assert!(
+        insert_check(&pool, &program, &elsewhere_lesson, &version, (0, 10), 1)
+            .await
+            .is_err(),
+        "a lesson of another course"
+    );
+    assert!(
+        insert_check(&pool, &program, &lesson, &elsewhere_version, (0, 10), 1)
+            .await
+            .is_err(),
+        "a version of another course"
+    );
+    assert!(
+        insert_check(&pool, &program, &lesson, &version, (0, 10), 2)
+            .await
+            .is_err(),
+        "teaches is 0 or 1"
+    );
+    assert!(
+        insert_check(&pool, &program, &lesson, &version, (10, 10), 1)
+            .await
+            .is_err(),
+        "an empty span"
+    );
+    assert!(
+        insert_check(&pool, &program, &lesson, &version, (10, 5), 1)
+            .await
+            .is_err(),
+        "a span that ends before it starts"
+    );
+    assert!(
+        insert_check(&pool, &program, &lesson, &version, (-1, 5), 1)
+            .await
+            .is_err(),
+        "a span that starts before the text"
+    );
+    assert_eq!(count(&pool, CHECKS).await?, 0);
+    assert!(insert_check(&pool, &program, &lesson, &version, (0, 10), 1)
+        .await
+        .is_ok());
+    Ok(())
+}
