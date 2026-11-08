@@ -15,12 +15,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/crates/lattice-desktop/src/features"
+# The app's features, and the learning feature split out of them into its own crate.
+SOURCES=("$ROOT/crates/lattice-desktop/src/features" "$ROOT/crates/lattice-learning/src")
 
-if [[ ! -d "$SRC" ]]; then
-  echo "error: features dir not found at $SRC" >&2
-  exit 2
-fi
+for src in "${SOURCES[@]}"; do
+  if [[ ! -d "$src" ]]; then
+    echo "error: source dir not found at $src" >&2
+    exit 2
+  fi
+done
 
 FS_PATTERN='((tokio::fs|std::fs)::(read_dir|metadata|try_exists)|\.(exists|is_file|is_dir|try_exists)\(\))'
 SQL_PATTERN='sqlx::(query|query_as|query_scalar|raw_sql|QueryBuilder)'
@@ -104,7 +107,7 @@ while IFS= read -r -d '' file; do
   if owns_no_sql "$file"; then
     check_matches "$file" "raw SQL outside repository" "$SQL_PATTERN"
   fi
-done < <(find "$SRC" -type f -name '*.rs' -print0)
+done < <(find "${SOURCES[@]}" -type f -name '*.rs' -print0)
 
 if ((violations > 0)); then
   echo

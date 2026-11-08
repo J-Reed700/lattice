@@ -1,8 +1,7 @@
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
-/// Upper bound on a chat message, in characters: room for a long pasted article.
-pub const MAX_CHAT_MESSAGE_CHARS: usize = 200_000;
+pub use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 
 /// SECURITY FIX: Comprehensive input validation (CWE-20)
 /// Validates and sanitizes all user inputs

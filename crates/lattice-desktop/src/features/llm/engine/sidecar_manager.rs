@@ -100,8 +100,8 @@ mod startup;
 
 pub(crate) use config::{memory_hint, resident_bytes_of};
 pub use config::{
-    Footprint, MemoryHint, MemoryRoom, MemorySource, PoolingDevice, PoolingServing, PoolingTask,
-    ServerBuffers, SidecarBinary, SidecarConfig, SpeculativeDecoding,
+    MemoryHint, MemoryRoom, MemorySource, PoolingDevice, PoolingServing, PoolingTask,
+    SidecarBinary, SidecarConfig, SpeculativeDecoding,
 };
 pub use preflight::spawn_binary_preflight;
 pub use process::SidecarHandle;

@@ -1430,29 +1430,6 @@ async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
 }
 },
 /**
- * The chat models recommended for this computer, best first.
- */
-async recommendChatModels() : Promise<Result<RecommendationDto[], ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:model|recommend_chat_models") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * The verdict for each listed model file, in the order asked; `null` when a
- * file's header could not be read.
- */
-async readModelFits(files: ModelFileRefDto[]) : Promise<Result<(FitVerdictDto | null)[], ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:model|read_model_fits", { files }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Start downloading the default embedding model used during first run.
  *
  * Returns a JSON string for compatibility with existing first-run flow.
@@ -1685,10 +1662,34 @@ async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, Ap
 }
 },
 /**
- * Get compatible models for a specific category.
- *
- * Returns models ranked by compatibility score, with detailed
- * compatibility analysis for each model.
+ * The chat models recommended for this computer, best first, each with its fit, the device it was
+ * judged against and the labels it earned.
+ */
+async recommendChatModels() : Promise<Result<RecommendationDto[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|recommend_chat_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Whether each GGUF file fits this computer, in the order asked. A file whose header is not yet
+ * known is read (by range request, once: the answer is kept on disk); `null` means the header
+ * could not be read.
+ */
+async readModelFits(files: ModelFileRefDto[]) : Promise<Result<(FitVerdictDto | null)[], AppError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|read_model_fits", { files }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Get the catalog's models for a specific category, with the popularity the provider reports and,
+ * for chat models, whether each fits this computer. Chat models come in the recommender's order,
+ * the others in the catalog's.
  */
 async getCompatibleModels(category: string) : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
@@ -1699,9 +1700,7 @@ async getCompatibleModels(category: string) : Promise<Result<ModelRecommendation
 }
 },
 /**
- * Get all recommended models across all categories.
- *
- * Returns models ranked by compatibility, grouped by category.
+ * Get all the catalog's models across all categories.
  */
 async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
@@ -1734,7 +1733,7 @@ async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<Mo
 },
 /**
  * List the actual standalone GGUF files published in a Hugging Face repository.
- * Sizes come from the repository, while memory requirements are estimates.
+ * Sizes come from the repository; each file carries its fit once its header is known.
  */
 async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppError>> {
     try {
@@ -4202,6 +4201,16 @@ export type AppError =
  */
 { InvalidConfig: string } |
 /**
+ * No Learning model is set; the text says where to choose one
+ */
+{ LearningModelNotSet: string } |
+/**
+ * The bundled model server cannot run at all (binary missing or blocked,
+ * a library missing, exiting at once); reinstalling or another model fixes
+ * it, waiting does not. The text is what the learner reads.
+ */
+{ ModelServerCannotStart: string } |
+/**
  * Resource not found
  */
 { NotFound: string } |
@@ -5835,6 +5844,10 @@ export type DeleteConversationResponseDto = {
 status: string }
 export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
+/**
+ * What kind of device a model was judged against. An integrated GPU alone is the processor, so no
+ * verdict is judged against one.
+ */
 export type DeviceKindDto = "dedicated" | "unified" | "processor"
 /**
  * What a diff does with one line.
@@ -6210,7 +6223,7 @@ export type ErrorCode =
  */
 "MODEL_LOAD_ERROR" |
 /**
- * The prompt is larger than the model's context window
+ * A request's prompt alone fills the model's context window
  */
 "PROMPT_EXCEEDS_WINDOW" |
 /**
@@ -6277,6 +6290,9 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
+/**
+ * What Lattice knows about a model's quality: the suites it was measured in, or nothing.
+ */
 export type EvidenceDto = { kind: "measured"; suites: string[] } | { kind: "untested" }
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
 /**
@@ -6481,7 +6497,11 @@ export type FinderGateDto =
 /**
  * The user turned it off (or, for the archive, the archive fallback).
  */
-"disabled" | "noKey" | "noInstance" | "noContact" | "noEmail"
+"disabled" | "noKey" | "noInstance" | "noContact" |
+/**
+ * A contact is set but is not an email address.
+ */
+"noEmail"
 /**
  * A finder's health since the app started.
  */
@@ -6563,8 +6583,17 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+/**
+ * The device a verdict was judged against.
+ */
 export type FitDeviceDto = { name: string; kind: DeviceKindDto; totalBytes: number }
+/**
+ * How well a model fits a device.
+ */
 export type FitKindDto = "fits" | "tight" | "too_large"
+/**
+ * Whether a model fits this computer, and what it would use.
+ */
 export type FitVerdictDto = { kind: FitKindDto; needsBytes: number; budgetBytes: number; device: FitDeviceDto }
 /**
  * The fix of an issue as the lines it removes and the lines it adds, in the file the issue is in.
@@ -7711,7 +7740,8 @@ modelCallsCeilingRises?: number;
 claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
 export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null;
 /**
- * The code of the error the job recorded; null on older jobs.
+ * The code of the error behind `error`, for a job that failed or is
+ * waiting out a temporary failure; `None` otherwise.
  */
 errorCode?: ErrorCode | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
@@ -7907,9 +7937,9 @@ export type LearningOutlineProgressDto = { programId?: string | null; stage: Out
  */
 detail?: string | null;
 /**
- * Present while the outline waits out a model outage between attempts.
+ * Set while the run waits out a temporary failure of the model server.
  */
-waiting?: ModelWaitDto; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+waiting?: ModelWaitDto | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
 export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
 /**
  * Outline items whose citation is verified: chosen by evidence linking or
@@ -8507,7 +8537,7 @@ consentAt: number | null;
  */
 consentProvider: string | null;
 /**
- * The Verifier set in Settings → Models; null when none is.
+ * The Verifier set in Settings → Downloaded; null when none is.
  */
 verifier: ModelRef | null;
 /**
@@ -8801,6 +8831,10 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
+/**
+ * A GGUF file on Hugging Face: the repository, the file in it and the revision to read, the
+ * default branch when absent.
+ */
 export type ModelFileRefDto = { repo: string; file: string; revision: string | null }
 export type ModelInfo = {
 /**
@@ -8886,6 +8920,11 @@ embedding_dimensions: number | null;
  * users don't waste a 1GB+ download on a model that won't load.
  */
 embedding_compatibility: EmbeddingCompatibilityDto | null;
+/**
+ * Whether this model fits this computer, judged by the backend. Null
+ * while the file's header is unread, and for models that are not chat
+ * models.
+ */
 fit?: FitVerdictDto | null }
 /**
  * Why a turn or job runs on the model it runs on.
@@ -8912,7 +8951,7 @@ export type ModelOrigin =
  */
 "verifier_role"
 /**
- * Model recommendation DTO for frontend.
+ * A catalog row, with whether it fits this computer.
  */
 export type ModelRecommendationDto = {
 /**
@@ -8927,7 +8966,10 @@ popularity_downloads?: number | null;
  * Popularity metric from upstream provider (likes)
  */
 popularity_likes?: number | null;
-fit: FitVerdictDto | null }
+/**
+ * Whether this model fits this computer; null until its header is read.
+ */
+fit?: FitVerdictDto | null }
 /**
  * A model a chat or a role can name.
  *
@@ -8936,7 +8978,6 @@ fit: FitVerdictDto | null }
  * Settings when the model is loaded, so moving a server moves every chat
  * that names it.
  */
-export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 export type ModelRef =
 /**
  * A downloaded GGUF row in `models` (`DownloadedModel::model_id`).
@@ -8990,6 +9031,11 @@ export type ModelSourceDto =
  * External API (Hugging Face)
  */
 "External"
+/**
+ * A wait for the model server: when the next attempt is, and the code of
+ * the failure being waited out.
+ */
+export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 /**
  * A model's context window and output ceiling, in tokens. As a choice, an
  * empty field follows the provider; as a report, it is a limit the provider
@@ -9185,7 +9231,14 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
-export type RecommendationDto = { modelId: string; name: string; description: string; useFor: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
+/**
+ * One entry of the recommended list.
+ */
+export type RecommendationDto = { modelId: string; name: string; description: string;
+/**
+ * One plain sentence on what the model is for.
+ */
+useFor: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
 export type RecommendationLabelDto = "best" | "fastest" | "smallest_download"
 export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**
@@ -10078,7 +10131,7 @@ export type SourcesStatusDto = { finders: FinderStatusDto[]; keys: KeyStatusDto[
 export type SourcingSettingsDto = {
 /**
  * Per-finder switches by finder id; a finder left out is on (its `Auth`
- * still gates it).
+ * still gates it). A switch for a retired finder is dropped on load.
  */
 finders: { [key in string]: FinderSettingDto };
 /**
@@ -10180,6 +10233,9 @@ modelId: string; modelName: string;
  * Total bytes of the download.
  */
 downloadBytes: number }
+/**
+ * How quickly a model answers, from its active parameters.
+ */
 export type SpeedClassDto = "fast" | "balanced" | "thorough"
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its

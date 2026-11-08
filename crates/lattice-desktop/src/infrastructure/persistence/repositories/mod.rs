@@ -7,7 +7,7 @@ pub mod chunk_repository;
 pub mod document_scope;
 pub mod file_library;
 pub mod mentions;
-pub mod workspace_notes;
+pub use lattice_store::workspace_notes;
 
 // Transaction-aware repository implementations (Tx modules)
 pub mod chunk;

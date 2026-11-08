@@ -29,7 +29,6 @@ use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
     BlindReview, DrillBuild, DroppedMutation, Evidence, ModelCall, Stage, Trail,
 };
-use crate::features::learning::drills::grading::live_grading_eval::model;
 use crate::features::learning::drills::grading::JudgeGrader;
 use crate::features::learning::drills::material::{material_for, ClaimSourceCheck};
 use crate::features::learning::drills::repository::{self, StoredDrill};
@@ -37,6 +36,7 @@ use crate::features::learning::drills::runner::{runner_for, RunOutcome};
 use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::persistence::{db, now};
+use crate::features::learning::tests::grading::live_grading_eval::model;
 
 /// What a drill's build planted, proved and dropped, and what its blind review added to the key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -472,7 +472,7 @@ async fn live_build_eval() -> Result<()> {
         "provider": llm.provider_name(),
         "context_window": llm.max_context_tokens(),
     });
-    let runtimes = BuiltinRuntimes::for_tests();
+    let runtimes = crate::features::learning::tests::runtimes();
     let pool = crate::features::learning::tests::pool().await?;
     let program = crate::features::learning::tests::fixture();
     crate::features::learning::repository::LearningRepository::new(pool.clone())
@@ -660,7 +660,7 @@ async fn live_passage_build_eval() -> Result<()> {
         "provider": llm.provider_name(),
         "context_window": llm.max_context_tokens(),
     });
-    let runtimes = BuiltinRuntimes::for_tests();
+    let runtimes = crate::features::learning::tests::runtimes();
     let pool = copied_database(&database).await?;
     let lesson_id: Option<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal LIMIT 1")
         .bind(&course)

@@ -1,0 +1,22 @@
+[package]
+name = "lattice-store"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+lattice-core = { path = "../lattice-core" }
+async-trait = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+lattice-core = { path = "../lattice-core", features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
