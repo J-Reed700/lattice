@@ -28,8 +28,8 @@ pub use ledger::{
     CheckBasis, ClaimActionKind, ClaimLedgerEntry, EventProvenance, LedgerError, RecordedEvent,
 };
 pub use rules::{
-    end_state, identities, new_information, relitigate, reopen_cause, ClaimCounts, ExtractedClaim,
-    Identities, NewInformation, Observation, SourceChange,
+    cited_source_versions, end_state, identities, new_information, relitigate, reopen_cause,
+    ClaimCounts, ExtractedClaim, Identities, NewInformation, Observation, SourceChange,
 };
 pub use trust::{
     trust_outcomes, CalibrationOutcome, GateVerdict, SupportedBy, TrustAssessment, TrustCause,

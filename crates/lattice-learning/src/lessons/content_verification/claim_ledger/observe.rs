@@ -11,8 +11,9 @@ use lattice_core::application::services::claim_verification::{
 };
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
-    text_sha256, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
-    EvidenceFingerprint, EvidenceSeen, SourceChange, TrustAssessment, VerdictKind,
+    cited_source_versions, text_sha256, Check, CheckResult, Checker, ClaimEvent, ClaimId,
+    ClaimLedgerEntry, EvidenceFingerprint, EvidenceSeen, SourceChange, TrustAssessment,
+    VerdictKind,
 };
 
 /// The ledger's record of the gate's weighing, after the check it decided.
@@ -207,29 +208,10 @@ impl ClaimLedger {
         entry: &ClaimLedgerEntry,
         active: &HashSet<&str>,
     ) -> Vec<SourceChange> {
-        let mut cited: Vec<String> = entry
-            .basis()
-            .map(|basis| basis.source_version_ids.iter().cloned().collect())
-            .unwrap_or_default();
-        let mut state = entry.state();
-        if let ClaimState::Reopened { previous, .. } = state {
-            state = previous;
-        }
-        match state {
-            ClaimState::ResolvedByEvidence {
-                source_version_id, ..
-            } => cited.push(source_version_id.clone()),
-            ClaimState::Confirmed { bound, .. } => {
-                cited.extend(bound.source_version_ids.iter().cloned())
-            }
-            _ => {}
-        }
-        cited.sort();
-        cited.dedup();
-        cited
+        cited_source_versions(entry)
             .into_iter()
-            .filter(|id| !id.starts_with("execution:") && !active.contains(id.as_str()))
-            .map(SourceChange::Deleted)
+            .filter(|id| !id.starts_with("execution:") && !active.contains(id))
+            .map(|id| SourceChange::Deleted(id.to_owned()))
             .collect()
     }
 

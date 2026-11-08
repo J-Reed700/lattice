@@ -33,6 +33,7 @@ use super::dto::{
 use super::put_back::{self, Lesson};
 use super::repository::ShownPassage;
 use super::service::ClaimReviewService;
+use super::source_deleted;
 use super::teaching_claims::{name_claims, section_bodies};
 use super::teaching_findings::TeachingFindingsRepository;
 use crate::content_verification::{field_text, located};
@@ -129,7 +130,10 @@ impl ClaimReviewService {
         program_id: &str,
         lesson_id: &str,
     ) -> Result<Option<LessonClaimReviewDto>> {
-        let ledger = self.store().load(lesson_id).await?;
+        let mut ledger = self.store().load(lesson_id).await?;
+        if source_deleted::reopen_lost(self.pool(), program_id, &ledger).await? {
+            ledger = self.store().load(lesson_id).await?;
+        }
         let Some(review) = ledger
             .review
             .clone()

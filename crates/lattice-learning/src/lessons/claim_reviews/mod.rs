@@ -29,6 +29,7 @@ pub mod recheck;
 pub mod repository;
 mod restore;
 pub mod service;
+pub(crate) mod source_deleted;
 mod teaching_claims;
 pub mod teaching_findings;
 mod teaching_summary;
