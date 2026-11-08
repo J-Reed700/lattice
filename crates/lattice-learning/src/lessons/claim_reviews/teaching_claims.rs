@@ -250,6 +250,7 @@ mod tests {
             passage_role: TeachingPassageRoleDto::Lesson,
             sentence: Some(SENTENCE.into()),
             claim_ids: Vec::new(),
+            removable: false,
             resolution,
             resolved_at,
             part_changed: false,
@@ -458,5 +459,101 @@ mod tests {
         assert_eq!(findings[0].resolution, Some(TeachingResolutionDto::Removed));
         assert_eq!(findings[0].resolved_at, Some(100));
         assert_eq!(named(&findings), [Vec::<String>::new()]);
+    }
+
+    fn about(mut finding: TeachingFindingDto, sentence: &str) -> TeachingFindingDto {
+        finding.sentence = Some(sentence.into());
+        finding
+    }
+
+    fn removable_after(
+        finding: TeachingFindingDto,
+        claims: Vec<ClaimLedgerEntry>,
+        body: &str,
+    ) -> bool {
+        let mut findings = [finding];
+        name_claims(&ledger(claims), &bodies(0, body), &mut findings);
+        findings[0].removable
+    }
+
+    #[test]
+    fn a_whole_sentence_no_claim_stands_on_is_removable_and_names_no_claim() {
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(&ledger(Vec::new()), &bodies(0, &both()), &mut findings);
+        assert!(findings[0].removable);
+        assert_eq!(named(&findings), [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn a_sentence_with_an_exact_claim_is_removable_and_still_names_that_claim() {
+        let before = both();
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(
+            &ledger(vec![claim("a", 0, SENTENCE, &before)]),
+            &bodies(0, &before),
+            &mut findings,
+        );
+        assert!(findings[0].removable);
+        assert_eq!(named(&findings), [vec!["a".to_owned()]]);
+    }
+
+    #[test]
+    fn a_fragment_of_a_sentence_is_not_removable() {
+        let fragment = about(
+            waiting(0, "quotation:section-0"),
+            "keeps every field name exactly",
+        );
+        assert!(!removable_after(fragment, Vec::new(), &both()));
+    }
+
+    #[test]
+    fn a_sentence_that_occurs_twice_in_the_section_is_not_removable() {
+        let twice = format!("{SENTENCE} {NEIGHBOUR} {SENTENCE}");
+        assert!(!removable_after(
+            waiting(0, "quotation:section-0"),
+            Vec::new(),
+            &twice
+        ));
+    }
+
+    #[test]
+    fn a_sentence_the_section_does_not_hold_is_not_removable() {
+        assert!(!removable_after(
+            waiting(0, "quotation:section-0"),
+            Vec::new(),
+            NEIGHBOUR
+        ));
+    }
+
+    #[test]
+    fn a_note_with_no_sentence_or_a_blank_one_is_not_removable() {
+        let mut none = waiting(0, "teaching:section-0");
+        none.sentence = None;
+        assert!(!removable_after(none, Vec::new(), &both()));
+        let blank = about(waiting(0, "teaching:section-0"), "  ");
+        assert!(!removable_after(blank, Vec::new(), &both()));
+    }
+
+    #[test]
+    fn a_question_note_and_a_lesson_note_are_not_removable() {
+        let mut question = waiting(0, "teaching:question-0");
+        question.site = TeachingFindingSiteDto::Question;
+        assert!(!removable_after(question, Vec::new(), &both()));
+        let mut lesson = waiting(0, "structure:lesson");
+        lesson.site = TeachingFindingSiteDto::Lesson;
+        lesson.unit_index = None;
+        assert!(!removable_after(lesson, Vec::new(), &both()));
+    }
+
+    #[test]
+    fn a_kept_note_is_not_removable() {
+        let kept = note(
+            0,
+            "quotation:section-0",
+            TeachingFindingStateDto::Kept,
+            None,
+            None,
+        );
+        assert!(!removable_after(kept, Vec::new(), &both()));
     }
 }

@@ -739,6 +739,18 @@ async resolveLearningClaims(request: ResolveLearningClaimsRequestDto) : Promise<
 }
 },
 /**
+ * Takes the sentence of every chosen teaching note out of its section, all
+ * or nothing.
+ */
+async removeLearningTeachingSentences(request: RemoveLearningTeachingSentencesRequestDto) : Promise<Result<RemoveLearningTeachingSentencesResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|remove_learning_teaching_sentences", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Attach the user's evidence to a claim (§5.4): save it as a course
  * source, check the claim against it, then the other open claims in scope,
  * reporting each stage on `on_progress`.
@@ -9479,6 +9491,29 @@ export type ReimportLearningSourceRequestDto = { operationId: string; programId:
 export type RemoveConversationFromJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type RemoveConversationSpaceMemberRequestDto = { spaceId: string; memberId: string }
 /**
+ * The teaching notes whose sentences the user takes out of a published
+ * lesson's sections.
+ */
+export type RemoveLearningTeachingSentencesRequestDto = { programId: string; lessonId: string;
+/**
+ * The notes' `findingKey`s from the review.
+ */
+findingKeys: string[];
+/**
+ * The review's revision the user acted on.
+ */
+expectedRevision: number }
+export type RemoveLearningTeachingSentencesResultDto = {
+/**
+ * The review's revision after the removal.
+ */
+revision: number;
+/**
+ * The claims the removal ended, in the order it ended them: send them to
+ * `resolve_learning_claims` with `undo` and `revision` to take it back.
+ */
+claimIds: string[] }
+/**
  * Request to remove a tag from a document.
  */
 export type RemoveTagRequestDto = {
@@ -10775,6 +10810,11 @@ sentence: string | null;
  * none when that removal came with an edit of the whole section.
  */
 claimIds: string[];
+/**
+ * Whether "Remove this sentence" can take the note's sentence out of its
+ * published section.
+ */
+removable: boolean;
 /**
  * How a resolved finding was resolved.
  */

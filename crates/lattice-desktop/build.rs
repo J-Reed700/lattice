@@ -556,6 +556,7 @@ fn main() {
                     "get_learning_lesson_claim_review",
                     "resolve_learning_claim",
                     "resolve_learning_claims",
+                    "remove_learning_teaching_sentences",
                     "attach_learning_claim_evidence",
                     "attach_learning_lesson_source",
                     "settle_learning_teaching_findings",

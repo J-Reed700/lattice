@@ -73,6 +73,14 @@ pub(super) struct Resolution {
     pub(super) forget: Option<TrustVerdict>,
 }
 
+/// What `remove_note_sentences` did.
+pub struct NoteSentencesRemoved {
+    /// The review's revision after the removal.
+    pub revision: i64,
+    /// The claims the removal ended, in the order it ended them.
+    pub claim_ids: Vec<String>,
+}
+
 /// A claim and the action checked for it, ready to write.
 struct Planned<'a> {
     entry: &'a ClaimLedgerEntry,
@@ -303,6 +311,22 @@ impl ClaimReviewService {
         }
         self.carry_out(&review, lesson_id, ledger.revision, planned)
             .await
+    }
+
+    /// Takes the sentence of every teaching note in `finding_keys` out of its
+    /// published section, all or nothing, under one revision. Returns the
+    /// revision after and the claims the removals ended, in the order they
+    /// ended: an Undo of them through `resolve_many` puts everything back.
+    pub async fn remove_note_sentences(
+        &self,
+        lesson_id: &str,
+        finding_keys: &[String],
+        expected_revision: i64,
+    ) -> Result<NoteSentencesRemoved> {
+        let _ = (lesson_id, finding_keys, expected_revision);
+        Err(AppError::InvalidState(
+            "Removing a note's sentence is not built yet.".into(),
+        ))
     }
 
     /// One claim's action checked against the claim and, in a published

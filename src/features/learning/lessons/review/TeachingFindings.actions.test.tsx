@@ -7,16 +7,18 @@ import { teachingFinding } from '@/features/learning/lessons/review/claimReviewT
 import { TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
 import type { TeachingFindingDto } from '@/lib/bindings';
 
-const api = vi.hoisted(() => ({ settle: vi.fn(), resolveMany: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: { settleLearningTeachingFindings: api.settle, resolveLearningClaims: api.resolveMany } }));
+const api = vi.hoisted(() => ({ settle: vi.fn(), resolveMany: vi.fn(), removeSentences: vi.fn() }));
+vi.mock('@/lib/api', () => ({ default: {
+  settleLearningTeachingFindings: api.settle, resolveLearningClaims: api.resolveMany, removeLearningTeachingSentences: api.removeSentences,
+} }));
 
 const ok = <T,>(data: T) => ({ ok: true, data });
 const REVISION = 7;
 
-/** A waiting note about one sentence, with the live claims on it. */
+/** A waiting note about one sentence the review says can be removed, with the live claims on it. */
 const note = (index: number, overrides: Partial<TeachingFindingDto> = {}) => teachingFinding({
   findingKey: `quotation:section-${index}`, kind: 'quotation', passageRole: 'quotation', unitIndex: index, unitTitle: `Section ${index + 1}: Part ${index + 1}`,
-  summary: `No source is cited for this sentence: “Sentence ${index + 1}.”`, passage: null, sentence: `Sentence ${index + 1}.`, claimIds: [`claim-${index}a`, `claim-${index}b`], ...overrides,
+  summary: `No source is cited for this sentence: “Sentence ${index + 1}.”`, passage: null, sentence: `Sentence ${index + 1}.`, claimIds: [`claim-${index}a`, `claim-${index}b`], removable: true, ...overrides,
 });
 
 function show(findings: TeachingFindingDto[], props: { published?: boolean; onAddSource?: (claimId: string, findingKey: string) => void } = {}) {
@@ -28,8 +30,8 @@ function show(findings: TeachingFindingDto[], props: { published?: boolean; onAd
 
 const card = (index: number) => screen.getByRole('article', { name: `Section ${index + 1}: Part ${index + 1}: Source quotation` });
 const box = (index: number) => screen.getByRole('checkbox', { name: `Select the note on Section ${index + 1}: Part ${index + 1}` });
-const remove = (claimIds: string[], revision = REVISION) => ({
-  programId: 'program-1', lessonId: 'lesson-1', claimIds, action: { action: 'remove' }, expectedRevision: revision, operationId: expect.any(String),
+const removal = (findingKeys: string[], revision = REVISION) => ({
+  programId: 'program-1', lessonId: 'lesson-1', findingKeys, expectedRevision: revision,
 });
 const undo = (claimIds: string[], revision: number) => ({
   programId: 'program-1', lessonId: 'lesson-1', claimIds, action: { action: 'undo' }, expectedRevision: revision, operationId: expect.any(String),
@@ -41,16 +43,20 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
     vi.resetAllMocks();
     api.settle.mockResolvedValue(ok(null));
     api.resolveMany.mockResolvedValue(ok({ revision: 9 }));
+    api.removeSentences.mockResolvedValue(ok({ revision: 9, claimIds: ['claim-0a', 'created-0'] }));
   });
 
-  it('offers Remove this sentence and Add a source on a published lesson, only for a note with claim ids', () => {
-    show([note(0), note(1, { claimIds: [] })]);
+  it('offers Remove this sentence on a published lesson for a removable note, and Add a source only for a note with claim ids', () => {
+    show([note(0), note(1, { claimIds: [] }), note(2, { removable: false })]);
     expect(within(card(0)).getByRole('button', { name: 'Keep as written' })).toBeVisible();
     expect(within(card(0)).getByRole('button', { name: 'Remove this sentence' })).toBeVisible();
     expect(within(card(0)).getByRole('button', { name: 'Add a source' })).toBeVisible();
     expect(within(card(1)).getByRole('button', { name: 'Keep as written' })).toBeVisible();
-    expect(within(card(1)).queryByRole('button', { name: 'Remove this sentence' })).not.toBeInTheDocument();
+    expect(within(card(1)).getByRole('button', { name: 'Remove this sentence' })).toBeVisible();
     expect(within(card(1)).queryByRole('button', { name: 'Add a source' })).not.toBeInTheDocument();
+    expect(within(card(2)).getByRole('button', { name: 'Keep as written' })).toBeVisible();
+    expect(within(card(2)).queryByRole('button', { name: 'Remove this sentence' })).not.toBeInTheDocument();
+    expect(within(card(2)).getByRole('button', { name: 'Add a source' })).toBeVisible();
   });
 
   it('offers only Keep as written on a draft lesson, even for a note with claim ids', () => {
@@ -68,30 +74,30 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
     expect(within(question).queryByRole('button', { name: 'Add a source' })).not.toBeInTheDocument();
   });
 
-  it('removes the sentence with one call on all its claims and the review revision, and settles nothing', async () => {
-    show([note(0), note(1)]);
+  it('removes the sentence of a note with no claims with one call on its key and the review revision, and settles nothing', async () => {
+    show([note(0, { claimIds: [] }), note(1)]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Remove this sentence' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Removed the sentence from the lesson.');
-    expect(api.resolveMany).toHaveBeenCalledTimes(1);
-    expect(api.resolveMany).toHaveBeenCalledWith(remove(['claim-0a', 'claim-0b']));
+    expect(api.removeSentences).toHaveBeenCalledTimes(1);
+    expect(api.removeSentences).toHaveBeenCalledWith(removal(['quotation:section-0']));
+    expect(api.resolveMany).not.toHaveBeenCalled();
     expect(api.settle).not.toHaveBeenCalled();
   });
 
-  it('says the sentence was removed, and Undo is one undo call on the same claims with the returned revision and no settle', async () => {
-    show([note(0)]);
+  it('says the sentence was removed, and Undo is one undo call on the claims the removal returned and its revision, with no settle', async () => {
+    show([note(0, { claimIds: [] })]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Remove this sentence' }));
     const status = await screen.findByRole('status');
     expect(status).toHaveTextContent('Removed the sentence from the lesson.');
-    api.resolveMany.mockClear();
     await userEvent.click(within(status).getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(api.resolveMany).toHaveBeenCalledTimes(1));
-    expect(api.resolveMany).toHaveBeenCalledWith(undo(['claim-0a', 'claim-0b'], 9));
+    expect(api.resolveMany).toHaveBeenCalledWith(undo(['claim-0a', 'created-0'], 9));
     expect(await screen.findByText('1 teaching note waits for you again.')).toBeVisible();
     expect(api.settle).not.toHaveBeenCalled();
   });
 
   it('shows a refusal of the removal as the card alert and settles nothing', async () => {
-    api.resolveMany.mockResolvedValue({ ok: false, error: 'This statement changed since you opened it; reload and try again.' });
+    api.removeSentences.mockResolvedValue({ ok: false, error: 'This statement changed since you opened it; reload and try again.' });
     show([note(0), note(1)]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Remove this sentence' }));
     expect(await within(card(0)).findByRole('alert')).toHaveTextContent('This statement changed since you opened it; reload and try again.');
@@ -101,7 +107,7 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
   });
 
   it('shows the backend refusal of an Undo as an alert and keeps the removal status', async () => {
-    show([note(0)]);
+    show([note(0, { claimIds: [] })]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Remove this sentence' }));
     const status = await screen.findByRole('status');
     api.resolveMany.mockResolvedValue({ ok: false, error: 'This removal cannot be undone yet.' });
@@ -174,19 +180,21 @@ describe('TeachingFindings, removing many sentences at once', () => {
     vi.resetAllMocks();
     api.settle.mockResolvedValue(ok(null));
     api.resolveMany.mockResolvedValue(ok({ revision: 9 }));
+    api.removeSentences.mockResolvedValue(ok({ revision: 9, claimIds: ['claim-0a', 'created-0'] }));
   });
 
   const selectAll = async () => userEvent.click(screen.getByRole('button', { name: /^Select all \d+$/ }));
 
-  it('removes every selected note\'s claims with one call, settles nothing, and counts the sentences', async () => {
-    show([note(0), note(1), note(2)]);
+  it('removes every selected note\'s sentence with one call on their keys, settles nothing, and counts the sentences', async () => {
+    show([note(0), note(1, { claimIds: [] }), note(2)]);
     fireEvent.click(box(0));
     fireEvent.click(box(2));
     const bar = screen.getByRole('toolbar', { name: '2 teaching notes selected' });
     await userEvent.click(within(bar).getByRole('button', { name: 'Remove these sentences' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Removed 2 sentences from the lesson.');
-    expect(api.resolveMany).toHaveBeenCalledTimes(1);
-    expect(api.resolveMany).toHaveBeenCalledWith(remove(['claim-0a', 'claim-0b', 'claim-2a', 'claim-2b']));
+    expect(api.removeSentences).toHaveBeenCalledTimes(1);
+    expect(api.removeSentences).toHaveBeenCalledWith(removal(['quotation:section-0', 'quotation:section-2']));
+    expect(api.resolveMany).not.toHaveBeenCalled();
     expect(api.settle).not.toHaveBeenCalled();
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
   });
@@ -196,7 +204,7 @@ describe('TeachingFindings, removing many sentences at once', () => {
     await selectAll();
     await userEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Removed the sentence from the lesson.');
-    expect(api.resolveMany).toHaveBeenCalledWith(remove(['claim-0a', 'claim-0b']));
+    expect(api.removeSentences).toHaveBeenCalledWith(removal(['quotation:section-0', 'teaching:section-0']));
   });
 
   it('counts three notes on two sentences as two sentences', async () => {
@@ -206,29 +214,23 @@ describe('TeachingFindings, removing many sentences at once', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Removed 2 sentences from the lesson.');
   });
 
-  it('names a claim shared by two notes once', async () => {
-    show([note(0, { claimIds: ['shared', 'claim-0'] }), note(1, { claimIds: ['shared', 'claim-1'] })]);
-    await selectAll();
-    await userEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' }));
-    await waitFor(() => expect(api.resolveMany).toHaveBeenCalledWith(remove(['shared', 'claim-0', 'claim-1'])));
-  });
-
-  it('takes the whole batch back with one undo call on the same claims in the same order', async () => {
-    show([note(0), note(1)]);
+  it('takes the whole batch back with one undo call on the claims the removal returned, in the order it returned them', async () => {
+    api.removeSentences.mockResolvedValue(ok({ revision: 9, claimIds: ['claim-0a', 'created-1', 'claim-0b'] }));
+    show([note(0), note(1, { claimIds: [] })]);
     await selectAll();
     await userEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' }));
     const status = await screen.findByRole('status');
     api.resolveMany.mockClear();
     await userEvent.click(within(status).getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(api.resolveMany).toHaveBeenCalledTimes(1));
-    expect(api.resolveMany).toHaveBeenCalledWith(undo(['claim-0a', 'claim-0b', 'claim-1a', 'claim-1b'], 9));
+    expect(api.resolveMany).toHaveBeenCalledWith(undo(['claim-0a', 'created-1', 'claim-0b'], 9));
     expect(await screen.findByText('2 teaching notes wait for you again.')).toBeVisible();
     expect(api.settle).not.toHaveBeenCalled();
   });
 
   it('is disabled with its hint while a selected note is not about one sentence, and the hint goes with the selection', async () => {
     const hint = 'Some of these notes are not about one sentence, so they can\'t be removed. Unselect them to remove the rest.';
-    show([note(0), note(1, { claimIds: [] })]);
+    show([note(0), note(1, { removable: false })]);
     await selectAll();
     const bar = screen.getByRole('toolbar');
     expect(within(bar).getByRole('button', { name: 'Remove these sentences' })).toBeDisabled();
@@ -239,6 +241,22 @@ describe('TeachingFindings, removing many sentences at once', () => {
     expect(screen.queryByText(hint)).not.toBeInTheDocument();
   });
 
+  it('enables Remove these sentences for one removable note that holds no claim', async () => {
+    show([note(0, { claimIds: [] }), note(1)]);
+    fireEvent.click(box(0));
+    expect(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' })).toBeEnabled();
+  });
+
+  it('says the one chosen note is not about one whole sentence when it cannot be removed', async () => {
+    const hint = 'This note isn\'t about one whole sentence of a section, so there\'s no sentence to remove. Edit the section, or keep it as written.';
+    show([note(0), note(1, { removable: false })]);
+    fireEvent.click(box(1));
+    const bar = screen.getByRole('toolbar', { name: '1 teaching note selected' });
+    expect(within(bar).getByRole('button', { name: 'Remove these sentences' })).toBeDisabled();
+    expect(within(bar).getByText(hint)).toBeVisible();
+    expect(screen.queryByText('Some of these notes are not about one sentence, so they can\'t be removed. Unselect them to remove the rest.')).not.toBeInTheDocument();
+  });
+
   it('has no Remove these sentences on a draft lesson', async () => {
     show([note(0), note(1)], { published: false });
     await selectAll();
@@ -247,7 +265,7 @@ describe('TeachingFindings, removing many sentences at once', () => {
   });
 
   it('shows a refusal of the batch as an alert, keeps the selection and settles nothing', async () => {
-    api.resolveMany.mockResolvedValue({ ok: false, error: 'This statement changed since you opened it; reload and try again.' });
+    api.removeSentences.mockResolvedValue({ ok: false, error: 'This statement changed since you opened it; reload and try again.' });
     show([note(0), note(1)]);
     await selectAll();
     await userEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' }));

@@ -1811,3 +1811,353 @@ async fn a_removal_between_neighbours_that_occur_twice_undoes_byte_for_byte() ->
     assert_eq!(stored(&course).await?.blocks[0], body);
     Ok(())
 }
+
+use crate::lessons::claim_reviews::service::NoteSentencesRemoved;
+use crate::lessons::claim_reviews::teaching_findings as findings;
+
+const NOT_A_SENTENCE: &str =
+    "This note isn't about one whole sentence of a section, so there's no sentence to remove.";
+
+/// Waiting teaching notes as a pass left them, one for each `(section, kind,
+/// sentence)`.
+async fn notes_about(course: &Course, notes: &[(usize, FindingKind, &str)]) -> Result<()> {
+    let candidate = json!({"blocks":[
+        {"title":"One","body":"Body."},{"title":"Two","body":"Body."}
+    ],"questions":[]});
+    let set_aside: Vec<SetAside> = notes
+        .iter()
+        .map(|(section, kind, sentence)| {
+            let mut finding =
+                ReviewFinding::new(*kind, Some(FindingSite::Section(*section)), "A note.")
+                    .with_summary("No source is cited for this sentence.");
+            finding.sentence = Some((*sentence).to_owned());
+            SetAside {
+                finding,
+                repairs: 0,
+            }
+        })
+        .collect();
+    TeachingFindingsRepository::new(course.pool.clone())
+        .record(&course.lesson_id, "job", &candidate, &set_aside, true)
+        .await
+}
+
+async fn notes_of(course: &Course) -> Result<Vec<findings::TeachingFindingDto>> {
+    Ok(ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .expect("the lesson has its review")
+        .teaching_findings)
+}
+
+async fn remove_notes(
+    course: &Course,
+    keys: &[&str],
+    revision: i64,
+) -> Result<NoteSentencesRemoved> {
+    let keys: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
+    ClaimReviewService::new(course.pool.clone())
+        .remove_note_sentences(&course.lesson_id, &keys, revision)
+        .await
+}
+
+/// The refusal of a removal of notes' sentences, with what it left written.
+async fn note_removal_refused(course: &Course, keys: &[&str], revision: i64) -> AppError {
+    let before = stored(course).await.unwrap();
+    let error = remove_notes(course, keys, revision).await.err().unwrap();
+    assert_eq!(stored(course).await.unwrap(), before, "{error}");
+    error
+}
+
+#[tokio::test]
+async fn a_notes_sentence_no_claim_stands_on_is_removed_in_one_step_and_the_undo_of_the_returned_claims_puts_it_back_byte_for_byte(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let body = format!("{ALPHA} {BRAVO} {CHARLIE}");
+    set_body(&course, 0, &body).await?;
+    notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
+    let note = notes_of(&course).await?.remove(0);
+    assert!(note.removable);
+    assert!(note.claim_ids.is_empty());
+    let before = stored(&course).await?;
+    let claims_before = ledger(&course).await?.claims.len();
+
+    let removed = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await?;
+
+    let after = stored(&course).await?;
+    assert_eq!(after.blocks[0], format!("{ALPHA} {CHARLIE}"));
+    assert_eq!(after.blocks[1], before.blocks[1]);
+    assert_eq!(after.content_revision, before.content_revision);
+    assert_eq!(removed.revision, before.ledger_revision + 1);
+    assert_eq!(after.ledger_revision, removed.revision);
+    assert_eq!(removed.claim_ids.len(), 1);
+    let now = ledger(&course).await?;
+    assert_eq!(now.claims.len(), claims_before + 1);
+    assert!(matches!(
+        state_of(&now, &removed.claim_ids[0]),
+        ClaimState::Removed {
+            by: Actor::User,
+            ..
+        }
+    ));
+    let gone = notes_of(&course).await?.remove(0);
+    assert_eq!(gone.state, findings::TeachingFindingStateDto::Resolved);
+    assert_eq!(
+        gone.resolution,
+        Some(findings::TeachingResolutionDto::Removed)
+    );
+    assert!(!gone.removable);
+
+    let undone = act_many(
+        &course,
+        &removed.claim_ids,
+        ClaimActionRequestDto::Undo,
+        removed.revision,
+    )
+    .await?;
+
+    assert_eq!(undone, removed.revision + 1);
+    assert_eq!(stored(&course).await?.blocks, before.blocks);
+    let back = notes_of(&course).await?.remove(0);
+    assert_eq!(back.state, findings::TeachingFindingStateDto::Waiting);
+    assert_eq!(back.resolution, None);
+    assert!(back.removable);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_note_with_an_exact_claim_removes_through_that_claim_and_creates_none() -> Result<()> {
+    let course = unchecked().await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    notes_about(&course, &[(0, FindingKind::Quotation, GOOD)]).await?;
+    let note = notes_of(&course).await?.remove(0);
+    assert!(note.removable);
+    assert_eq!(note.claim_ids, [target.0.clone()]);
+    let before = stored(&course).await?;
+    let claims_before = ledger(&course).await?.claims.len();
+
+    let removed = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await?;
+
+    assert_eq!(removed.claim_ids, [target.0.clone()]);
+    assert_eq!(removed.revision, before.ledger_revision + 1);
+    let after = stored(&course).await?;
+    assert_eq!(
+        after.blocks[0],
+        before.blocks[0].replacen(&format!("{GOOD} "), "", 1)
+    );
+    let now = ledger(&course).await?;
+    assert_eq!(now.claims.len(), claims_before);
+    assert!(matches!(
+        state_of(&now, &target.0),
+        ClaimState::Removed {
+            by: Actor::User,
+            ..
+        }
+    ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_with_one_note_that_is_not_one_whole_sentence_changes_nothing_and_says_so(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let body = format!("{ALPHA} {BRAVO} {CHARLIE}");
+    set_body(&course, 0, &body).await?;
+    notes_about(
+        &course,
+        &[
+            (0, FindingKind::Quotation, BRAVO),
+            (0, FindingKind::Teaching, "Bravo comes"),
+        ],
+    )
+    .await?;
+    let revision = ledger(&course).await?.revision.0;
+
+    let error = note_removal_refused(
+        &course,
+        &["quotation:section-0", "teaching:section-0"],
+        revision,
+    )
+    .await;
+    let text = error.to_string();
+    assert!(text.contains("1 of these can't be removed"), "{text}");
+    assert!(text.contains(NOT_A_SENTENCE), "{text}");
+    assert!(text.contains("Nothing was changed."), "{text}");
+
+    let error = note_removal_refused(&course, &["teaching:section-0"], revision).await;
+    let text = error.to_string();
+    assert!(text.contains("None of these can be removed"), "{text}");
+    assert!(text.contains(NOT_A_SENTENCE), "{text}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_notes_sentences_with_an_old_revision_writes_nothing() -> Result<()> {
+    let course = unchecked().await?;
+    let body = format!("{ALPHA} {BRAVO} {CHARLIE}");
+    set_body(&course, 0, &body).await?;
+    notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
+    let revision = ledger(&course).await?.revision.0;
+
+    let error = note_removal_refused(&course, &["quotation:section-0"], revision + 1).await;
+
+    assert!(error.to_string().contains("changed"), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_key_naming_no_note_is_refused_and_writes_nothing() -> Result<()> {
+    let course = unchecked().await?;
+    let body = format!("{ALPHA} {BRAVO} {CHARLIE}");
+    set_body(&course, 0, &body).await?;
+    notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
+    let revision = ledger(&course).await?.revision.0;
+
+    let error = note_removal_refused(
+        &course,
+        &["quotation:section-0", "quotation:section-9"],
+        revision,
+    )
+    .await;
+
+    assert!(matches!(error, AppError::NotFound(_)), "{error:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_draft_lessons_notes_cannot_have_their_sentences_removed() -> Result<()> {
+    let course = unchecked().await?;
+    let body = format!("{ALPHA} {BRAVO} {CHARLIE}");
+    set_body(&course, 0, &body).await?;
+    notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
+    sqlx::query("UPDATE learning_lesson_reviews SET state='needs_review' WHERE lesson_id=?")
+        .bind(&course.lesson_id)
+        .execute(&course.pool)
+        .await?;
+    let revision = ledger(&course).await?.revision.0;
+
+    let error = note_removal_refused(&course, &["quotation:section-0"], revision).await;
+
+    assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_same_key_twice_removes_its_sentence_once() -> Result<()> {
+    let course = unchecked().await?;
+    let body = format!("{ALPHA} {BRAVO} {CHARLIE}");
+    set_body(&course, 0, &body).await?;
+    notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
+    let revision = ledger(&course).await?.revision.0;
+
+    let removed = remove_notes(
+        &course,
+        &["quotation:section-0", "quotation:section-0"],
+        revision,
+    )
+    .await?;
+
+    assert_eq!(removed.claim_ids.len(), 1);
+    assert_eq!(removed.revision, revision + 1);
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        format!("{ALPHA} {CHARLIE}")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_notes_in_one_section_go_in_one_call_with_one_revision_and_one_undo_restores_both(
+) -> Result<()> {
+    let course = unchecked().await?;
+    set_body(&course, 0, &five()).await?;
+    notes_about(
+        &course,
+        &[
+            (0, FindingKind::Quotation, BRAVO),
+            (0, FindingKind::Teaching, CHARLIE),
+        ],
+    )
+    .await?;
+    let before = stored(&course).await?;
+
+    let removed = remove_notes(
+        &course,
+        &["quotation:section-0", "teaching:section-0"],
+        before.ledger_revision,
+    )
+    .await?;
+
+    let after = stored(&course).await?;
+    assert_eq!(after.blocks[0], [ALPHA, DELTA, ECHO].join(" "));
+    assert_eq!(removed.revision, before.ledger_revision + 1);
+    assert_eq!(after.ledger_revision, before.ledger_revision + 1);
+    assert_eq!(removed.claim_ids.len(), 2);
+
+    let undone = act_many(
+        &course,
+        &removed.claim_ids,
+        ClaimActionRequestDto::Undo,
+        removed.revision,
+    )
+    .await?;
+
+    assert_eq!(undone, removed.revision + 1);
+    assert_eq!(stored(&course).await?.blocks, before.blocks);
+    for note in notes_of(&course).await? {
+        assert_eq!(note.state, findings::TeachingFindingStateDto::Waiting);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_holding_a_smaller_claim_ends_that_claim_and_the_undo_brings_it_back(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let body = format!("{ALPHA} {BRAVO} {CHARLIE}");
+    set_body(&course, 0, &body).await?;
+    let small = extract(
+        &course,
+        "small",
+        ClaimLocation::locate(0, UnitKind::Block, "body", "Bravo comes", &body),
+        "Bravo comes second.",
+    )
+    .await?;
+    let was = format!("{:?}", state_of(&ledger(&course).await?, &small.0));
+    notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
+    let note = notes_of(&course).await?.remove(0);
+    assert!(note.removable);
+    assert!(note.claim_ids.is_empty());
+    let before = stored(&course).await?;
+
+    let removed = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await?;
+
+    assert_eq!(removed.claim_ids.len(), 2);
+    assert!(removed.claim_ids.contains(&small.0));
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        format!("{ALPHA} {CHARLIE}")
+    );
+    assert!(matches!(
+        state_of(&ledger(&course).await?, &small.0),
+        ClaimState::Removed {
+            by: Actor::User,
+            ..
+        }
+    ));
+
+    act_many(
+        &course,
+        &removed.claim_ids,
+        ClaimActionRequestDto::Undo,
+        removed.revision,
+    )
+    .await?;
+
+    assert_eq!(stored(&course).await?.blocks, before.blocks);
+    assert_eq!(
+        format!("{:?}", state_of(&ledger(&course).await?, &small.0)),
+        was
+    );
+    Ok(())
+}

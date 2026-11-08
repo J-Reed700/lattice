@@ -5,14 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
-import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
+import { claimItem, review, teachingFinding } from '@/features/learning/lessons/review/claimReviewTestData';
+import type { ClaimReviewItemDto, LessonClaimReviewDto, TeachingFindingDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
-  review: vi.fn(), resolve: vi.fn(), resolveMany: vi.fn(), audit: vi.fn(), trust: vi.fn(), plan: vi.fn(),
+  review: vi.fn(), resolve: vi.fn(), resolveMany: vi.fn(), removeSentences: vi.fn(), audit: vi.fn(), trust: vi.fn(), plan: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, resolveLearningClaims: api.resolveMany,
+  removeLearningTeachingSentences: api.removeSentences,
   getLearningLessonAudit: api.audit, getLearningSourceTrust: api.trust, getLearningPlan: api.plan,
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
 } }));
@@ -143,5 +144,61 @@ describe('Claim review screen, many statements at once', () => {
     show(review(claims, { state: 'ready' }));
     expect(await screen.findByRole('button', { name: 'Remove it' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Accept' })).not.toBeInTheDocument();
+  });
+});
+
+const publishedCounts = { verified: 12, confirmed: 0, queued: 0, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 };
+const sentenceNote = (index: number, overrides: Partial<TeachingFindingDto> = {}) => teachingFinding({
+  findingKey: `quotation:section-${index}`, kind: 'quotation', passageRole: 'quotation', unitIndex: index, unitTitle: `Section ${index + 1}: Part ${index + 1}`,
+  summary: `No source is cited for this sentence: “Sentence ${index + 1}.”`, passage: null, sentence: `Sentence ${index + 1}.`, claimIds: [], removable: true, ...overrides,
+});
+const noteBox = (index: number) => screen.getByRole('checkbox', { name: `Select the note on Section ${index + 1}: Part ${index + 1}` });
+
+async function showNotes(findings: TeachingFindingDto[]) {
+  show(review([], { state: 'ready', revision: 7, teachingFindings: findings, counts: publishedCounts }));
+  await userEvent.click(await screen.findByRole('button', { name: /^Teaching notes/ }));
+  expect(await screen.findByRole('region', { name: 'Teaching review' })).toBeVisible();
+}
+
+describe('Claim review screen, removing the sentences of teaching notes', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    api.audit.mockResolvedValue(ok(null));
+    api.plan.mockResolvedValue(ok({ jobs: [] }));
+    api.trust.mockResolvedValue(ok({ sources: [], claim: null }));
+    api.removeSentences.mockResolvedValue(ok({ revision: 8, claimIds: ['created-0'] }));
+  });
+
+  it('removes the sentence of one chosen note that holds no claim, with its key and the review revision', async () => {
+    await showNotes([sentenceNote(0), sentenceNote(1, { removable: false })]);
+    fireEvent.click(noteBox(0));
+    const toolbar = screen.getByRole('toolbar', { name: '1 teaching note selected' });
+    const action = within(toolbar).getByRole('button', { name: 'Remove these sentences' });
+    expect(action).toBeEnabled();
+    await userEvent.click(action);
+    await waitFor(() => expect(api.removeSentences).toHaveBeenCalledWith({
+      programId: 'program-1', lessonId: 'lesson-1', findingKeys: ['quotation:section-0'], expectedRevision: 7,
+    }));
+    expect(api.resolveMany).not.toHaveBeenCalled();
+    expect(await screen.findByText('Removed the sentence from the lesson.')).toBeVisible();
+  });
+
+  it('disables Remove these sentences for one chosen note that is not about one whole sentence, and says why', async () => {
+    await showNotes([sentenceNote(0), sentenceNote(1, { removable: false })]);
+    fireEvent.click(noteBox(1));
+    const toolbar = screen.getByRole('toolbar', { name: '1 teaching note selected' });
+    expect(within(toolbar).getByRole('button', { name: 'Remove these sentences' })).toBeDisabled();
+    expect(toolbar).toHaveTextContent('This note isn\'t about one whole sentence of a section, so there\'s no sentence to remove. Edit the section, or keep it as written.');
+    expect(api.removeSentences).not.toHaveBeenCalled();
+  });
+
+  it('disables Remove these sentences for a mix of removable and unremovable notes, and says some are not about one sentence', async () => {
+    await showNotes([sentenceNote(0), sentenceNote(1, { removable: false })]);
+    fireEvent.click(noteBox(0));
+    fireEvent.click(noteBox(1));
+    const toolbar = screen.getByRole('toolbar', { name: '2 teaching notes selected' });
+    expect(within(toolbar).getByRole('button', { name: 'Remove these sentences' })).toBeDisabled();
+    expect(toolbar).toHaveTextContent('Some of these notes are not about one sentence, so they can\'t be removed. Unselect them to remove the rest.');
+    expect(api.removeSentences).not.toHaveBeenCalled();
   });
 });
