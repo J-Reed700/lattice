@@ -28,6 +28,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
+use sha2::{Digest, Sha384};
 use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
@@ -1029,6 +1030,66 @@ async fn copied_database(path: &str) -> Result<SqlitePool> {
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
     Ok(pool)
+}
+
+#[tokio::test]
+async fn a_copy_migrated_with_the_other_line_endings_still_opens() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("app.sqlite");
+    let path = path
+        .to_str()
+        .ok_or_else(|| AppError::InternalError("The path is not UTF-8.".into()))?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(db)?;
+    crate::infrastructure::persistence::database::run_migrations(&pool).await?;
+    pool.close().await;
+
+    let migrator = sqlx::migrate!("./migrations");
+    let migration = migrator
+        .iter()
+        .filter(|migration| !migration.migration_type.is_down_migration())
+        .max_by_key(|migration| migration.version)
+        .ok_or_else(|| AppError::InternalError("There is no migration.".into()))?;
+    let lf = migration.sql.replace("\r\n", "\n");
+    let crlf = lf.replace('\n', "\r\n");
+    let other = [lf, crlf]
+        .into_iter()
+        .map(|sql| Sha384::digest(sql.as_bytes()).to_vec())
+        .find(|checksum| checksum.as_slice() != &*migration.checksum)
+        .ok_or_else(|| AppError::InternalError("Both line endings hash alike.".into()))?;
+    assert_ne!(other.as_slice(), &*migration.checksum);
+
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(path);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await
+        .map_err(db)?;
+    let changed = sqlx::query("UPDATE _sqlx_migrations SET checksum = ? WHERE version = ?")
+        .bind(other)
+        .bind(migration.version)
+        .execute(&pool)
+        .await
+        .map_err(db)?
+        .rows_affected();
+    assert_eq!(changed, 1);
+    pool.close().await;
+
+    let pool = copied_database(path).await?;
+    let stored: Vec<u8> =
+        sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = ?")
+            .bind(migration.version)
+            .fetch_one(&pool)
+            .await
+            .map_err(db)?;
+    assert_eq!(stored.as_slice(), &*migration.checksum);
+    Ok(())
 }
 
 async fn stored() -> Result<StoredDrill> {
