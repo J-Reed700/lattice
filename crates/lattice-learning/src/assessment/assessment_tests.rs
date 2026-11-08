@@ -1211,13 +1211,13 @@ async fn start_lesson_quiz(
     })
 }
 
-/// Answer the quiz's single-choice question with the option at `shown`, submit,
-/// and return that question's result.
-async fn answer_and_submit(
+/// Answer the quiz's single-choice question with the option at `shown` and
+/// submit; returns the submitted form.
+async fn submit_with_answer(
     repo: &LearningAssessmentRepository,
     quiz: &OpenQuiz,
     shown: usize,
-) -> Result<LearningAssessmentItemResultDto> {
+) -> Result<LearningAssessmentFormDto> {
     let mut answer = engine::LearningAssessmentResponse::empty(quiz.keyed.clone());
     answer.selected_indices = vec![shown];
     let saved = repo
@@ -1244,6 +1244,16 @@ async fn answer_and_submit(
             "submit",
         )
         .await?;
+    Ok(form)
+}
+
+/// As [`submit_with_answer`], returning that question's result.
+async fn answer_and_submit(
+    repo: &LearningAssessmentRepository,
+    quiz: &OpenQuiz,
+    shown: usize,
+) -> Result<LearningAssessmentItemResultDto> {
+    let form = submit_with_answer(repo, quiz, shown).await?;
     Ok(form
         .submission
         .unwrap()
@@ -1327,5 +1337,84 @@ async fn a_quiz_drawn_after_a_change_uses_the_changed_question() -> Result<()> {
     assert!(!quiz.shown.iter().any(|o| o == "Delta"));
     let result = answer_and_submit(&repo, &quiz, quiz.position("Bravo")).await?;
     assert_eq!(result.correct, Some(true), "{}", result.detail);
+    Ok(())
+}
+
+fn reveal_of(form: &LearningAssessmentFormDto, item_id: &str) -> LearningKeyRevealDto {
+    form.items
+        .iter()
+        .find(|i| i.id == item_id)
+        .unwrap()
+        .key_reveal
+        .clone()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_submitted_quiz_reveals_the_explanation_it_was_drawn_with() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, scope) = lesson_program(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    sqlx::query(
+        "UPDATE learning_assessment_answer_keys SET key_json=?,explanation=? WHERE candidate_id=?",
+    )
+    .bind(r#"{"kind":"choice","value":1}"#)
+    .bind("Bravo is right because the edited lesson says so.")
+    .bind(&quiz.keyed)
+    .execute(&pool)
+    .await
+    .map_err(db)?;
+    let form = submit_with_answer(&repo, &quiz, quiz.position("Alpha")).await?;
+    let reveal = reveal_of(&form, &quiz.keyed);
+    assert_eq!(reveal.explanation, "Because the lesson says so.");
+    assert_eq!(reveal.correct_indices, vec![quiz.position("Alpha")]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, scope) = lesson_program(&pool).await?;
+    let repo = LearningAssessmentRepository::new(pool.clone());
+    let reasons = [
+        "",
+        "Bravo fails here.",
+        "Charlie fails here.",
+        "Delta fails here.",
+    ];
+    let candidates: Vec<String> = sqlx::query_scalar(
+        "SELECT c.id FROM learning_assessment_candidates c WHERE c.program_id=? AND c.format='single_choice'",
+    )
+    .bind(&program_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    for candidate in &candidates {
+        sqlx::query(
+            "UPDATE learning_assessment_answer_keys SET distractor_rationales_json=? WHERE candidate_id=?",
+        )
+        .bind(serde_json::to_string(&reasons).unwrap())
+        .bind(candidate)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    }
+    let quiz = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    sqlx::query(
+        "UPDATE learning_assessment_answer_keys SET distractor_rationales_json='[]' WHERE candidate_id=?",
+    )
+    .bind(&quiz.keyed)
+    .execute(&pool)
+    .await
+    .map_err(db)?;
+    let form = submit_with_answer(&repo, &quiz, quiz.position("Bravo")).await?;
+    let reveal = reveal_of(&form, &quiz.keyed);
+    assert_eq!(reveal.distractor_rationales.len(), 4);
+    assert_eq!(
+        reveal.distractor_rationales[quiz.position("Bravo")],
+        "Bravo fails here."
+    );
+    assert_eq!(reveal.distractor_rationales[quiz.position("Alpha")], "");
     Ok(())
 }
