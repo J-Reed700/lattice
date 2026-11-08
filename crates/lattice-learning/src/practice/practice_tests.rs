@@ -695,3 +695,6 @@ async fn a_learners_long_artifact_is_held_to_the_chat_limit() -> Result<()> {
     assert!(over.is_err());
     Ok(())
 }
+
+
+mod profiles_tests;

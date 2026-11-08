@@ -315,3 +315,28 @@ pub struct DecideLearningPracticeProposalRequestDto {
     pub expected_revision: i64,
     pub proposal_id: String,
 }
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningPracticeProfileDto {
+    pub program_id: String,
+    pub details: String,
+    pub language: Option<String>,
+    pub interview_at: Option<i64>,
+    pub company: Option<String>,
+    pub role: Option<String>,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLearningPracticeProfileRequestDto {
+    pub program_id: String,
+    pub details: String,
+    pub language: Option<String>,
+    pub interview_at: Option<i64>,
+    pub company: Option<String>,
+    pub role: Option<String>,
+    pub expected_revision: Option<i64>,
+}

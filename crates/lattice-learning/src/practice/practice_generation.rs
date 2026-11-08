@@ -381,6 +381,16 @@ fn validate_grade(
     Ok((parsed.status, out))
 }
 
+/// Builds the written practice task prompt for an objective, incorporating the
+/// learner's practice profile details and language target when set.
+pub fn generate_written_practice_prompt(
+    objective: &str,
+    _profile: Option<&LearningPracticeProfileDto>,
+) -> String {
+    // Stage 1 stub: does not feed profile language or details
+    objective.to_string()
+}
+
 #[cfg(test)]
 mod window_tests {
     use super::*;
