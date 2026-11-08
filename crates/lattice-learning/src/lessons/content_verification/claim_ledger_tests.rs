@@ -1608,6 +1608,90 @@ async fn remove_and_edit_act_on_the_located_sentence() -> Result<()> {
     Ok(())
 }
 
+const CHANGED_AFTER: &str = "This section changed after that, so it can't be undone on its own. Edit the section to change it back.";
+
+#[tokio::test]
+async fn the_undo_of_an_edit_a_pass_already_carried_into_the_draft_says_to_edit_the_section(
+) -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let program_id = repo.job(&job).await?.program_id;
+    let draft = cell_lesson(CELL).to_string();
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&draft).await
+    })
+    .await?;
+    let store = ClaimReviewRepository::new(pool.clone());
+    let revision = store
+        .set_lesson_review(
+            &lesson_id,
+            LessonReview {
+                program_id,
+                job_id: job.clone(),
+                state: LessonReviewState::NeedsReview,
+                draft_sha256: digest(&draft),
+                checker_model: "figures-fixture".into(),
+                stop_reason: None,
+            },
+        )
+        .await?;
+    let provenance = |actor| EventProvenance {
+        actor,
+        at: 1,
+        job_id: Some(job.clone()),
+        app_version: "fixture".into(),
+        checker_model: Some("figures-fixture".into()),
+    };
+    let id = ClaimId("atp".into());
+    let revision = store
+        .append(
+            &lesson_id,
+            &id,
+            provenance(Actor::Machine),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", ATP_SENTENCE, CELL),
+                statement: ATP.into(),
+            },
+            revision,
+        )
+        .await?;
+    let service = ClaimReviewService::new(pool.clone());
+    let revision = service
+        .resolve(
+            &lesson_id,
+            "atp",
+            ClaimActionRequestDto::Edit {
+                before: ATP_SENTENCE.into(),
+                after: "Mitochondria make most of a cell's ATP.".into(),
+            },
+            revision.0,
+        )
+        .await?;
+    let revision = store
+        .append(
+            &lesson_id,
+            &id,
+            provenance(Actor::Machine),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::User,
+            },
+            Revision(revision),
+        )
+        .await?;
+
+    let result = service
+        .resolve(&lesson_id, "atp", ClaimActionRequestDto::Undo, revision.0)
+        .await;
+
+    match result {
+        Err(error) => assert!(error.to_string().contains(CHANGED_AFTER), "{error}"),
+        Ok(_) => panic!("the undo was carried out"),
+    }
+    Ok(())
+}
+
 // ── The calls the checks make, against the ceiling the panel shows (claim
 // classes design §3.2, §3.11): the code makes only the calls the plan counts,
 // and the plan counts every call the code makes ───────────────────────────

@@ -29,6 +29,7 @@ const CUT: &str = "Rows are read lazily from the file.";
 const WRITTEN: &str = "Rows come from the file one at a time.";
 const REWRITE: &str = "Rows are read from the file.";
 const CHOOSE: &str = "Choose the section to put it back in.";
+const CHANGED_AFTER: &str = "This section changed after that, so it can't be undone on its own. Edit the section to change it back.";
 
 async fn published() -> Result<Course> {
     let course = Course::new().await?;
@@ -328,6 +329,28 @@ async fn undo_takes_a_put_back_out_of_the_published_section_and_leaves_the_sente
     let entry = claim(&course, &id).await?;
     assert!(entry.taken_out());
     assert!(entry.allows(ClaimActionKind::PutBack));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_put_back_is_refused_with_what_to_do_when_the_section_changed_after_it(
+) -> Result<()> {
+    let course = published().await?;
+    let id = taken_out(&course, "cut", 0, Some((Some(GOOD), None))).await?;
+    act(&course, &id, put_back(None, None)).await?;
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind("The section was rewritten by hand.")
+        .bind(&course.lesson_id)
+        .execute(&course.pool)
+        .await?;
+    let before = written(&course).await?;
+
+    let error = act(&course, &id, ClaimActionRequestDto::Undo)
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains(CHANGED_AFTER), "{error}");
+    assert_eq!(written(&course).await?, before);
     Ok(())
 }
 
