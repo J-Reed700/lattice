@@ -131,6 +131,19 @@ export const learningApi = {
       onProgress: new Channel<Wire.ClaimAttachProgressDto>(onProgress),
     }),
 
+  /**
+   * Add a link, file, pasted text or saved passage as a course source and
+   * check every open claim of the lesson against it, reporting each stage.
+   */
+  attachLearningLessonSource: (
+    request: Wire.AttachLearningLessonSourceRequestDto,
+    onProgress: (update: Wire.ClaimAttachProgressDto) => void,
+  ): Promise<ApiResult<Wire.ClaimAttachReportDto>> =>
+    learningCall('attach_learning_lesson_source', {
+      request,
+      onProgress: new Channel<Wire.ClaimAttachProgressDto>(onProgress),
+    }),
+
   /** "Keep as written" on teaching findings the repairs did not settle, or taking that back. */
   settleLearningTeachingFindings: (
     request: Wire.SettleLearningTeachingFindingsRequestDto,

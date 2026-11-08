@@ -269,6 +269,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             resolve_learning_claim,
             resolve_learning_claims,
             attach_learning_claim_evidence,
+            attach_learning_lesson_source,
             settle_learning_teaching_findings,
             edit_learning_lesson_section,
             resume_learning_lesson_review,

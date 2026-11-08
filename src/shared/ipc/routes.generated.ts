@@ -27,6 +27,7 @@ export const COMMAND_PLUGINS = {
   archive_conversation_space: 'conversation',
   archive_journal: 'conversation',
   attach_learning_claim_evidence: 'learning',
+  attach_learning_lesson_source: 'learning',
   attach_message_images: 'conversation',
   audit_learning_lesson_now: 'learning',
   batch_import_files: 'batch',

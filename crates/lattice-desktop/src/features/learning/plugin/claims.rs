@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::features::learning::lessons::claim_reviews::attach::{
     self, report::ClaimAttachProgressDto, report::ClaimAttachReportDto, report::SnapshotNoteDto,
-    AttachDeps, AttachRequest, Others,
+    AttachDeps, AttachRequest, LessonSourceRequest, Others,
 };
 use crate::features::learning::lessons::claim_reviews::checker_examples::{
     export_file_name, CheckerAccuracyDto, CheckerExamples,
@@ -84,6 +84,17 @@ pub struct AttachLearningClaimEvidenceRequestDto {
     pub expected_revision: i64,
     pub evidence: AttachEvidenceDto,
     pub scope: AttachScopeDto,
+}
+
+/// Evidence the user adds to the lesson as a whole.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachLearningLessonSourceRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
+    /// The review's revision the user acted on.
+    pub expected_revision: i64,
+    pub evidence: AttachEvidenceDto,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -298,6 +309,55 @@ pub async fn attach_learning_claim_evidence(
             evidence: request.evidence.into(),
         },
         Others::Only(&scoped),
+        &progress,
+    )
+    .await?;
+    Ok(report)
+}
+
+/// Add the user's evidence to the lesson as a whole: save it as a course
+/// source and check every open claim of the lesson against it, reporting each
+/// stage on `on_progress`.
+#[tauri::command]
+#[specta::specta]
+pub async fn attach_learning_lesson_source(
+    request: AttachLearningLessonSourceRequestDto,
+    on_progress: tauri::ipc::Channel<ClaimAttachProgressDto>,
+    container: State<'_, Container>,
+) -> Result<ClaimAttachReportDto, ApiError> {
+    let store = claim_ledger(&container);
+    let ledger = store.load(&request.lesson_id).await?;
+    in_course(&ledger, &request.program_id)?;
+    let job_id = running_job(container.db_pool(), &ledger).await;
+    let pin = learning_model(
+        &container,
+        ModelRequirements::default(),
+        "Checking a lesson's claims against the source you added",
+    )
+    .await?;
+    let web = container.web_service();
+    let snapshots = container.reference_snapshots();
+    let library = container.library_passages();
+    let progress = move |stage: ClaimAttachProgressDto| {
+        let _ = on_progress.send(stage);
+    };
+    let report = attach::attach_to_lesson(
+        &AttachDeps {
+            pool: container.db_pool(),
+            store: store.as_ref(),
+            web: web.as_ref(),
+            snapshots: snapshots.as_ref(),
+            documents: library.as_ref(),
+            courses: container.course_indexes(),
+            llm: pin.llm.as_ref(),
+            job_id,
+        },
+        LessonSourceRequest {
+            program_id: &request.program_id,
+            lesson_id: &request.lesson_id,
+            expected_revision: Revision(request.expected_revision),
+            evidence: request.evidence.into(),
+        },
         &progress,
     )
     .await?;

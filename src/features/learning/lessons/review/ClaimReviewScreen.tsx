@@ -128,7 +128,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     const others = (groupOf(active.claimId)?.claims ?? []).filter((claim) => claim.claimId !== active.claimId && !session.settling.has(claim.claimId)).map((claim) => claim.claimId);
     return { level: 'claim', claimIds: [active.claimId], others };
   };
-  const openSheet = (target: AddSourceTarget | null, initial: DroppedSource | null = null) => { if (target?.claimIds.length) setSheet({ target, initial }); };
+  const openSheet = (target: AddSourceTarget | null, initial: DroppedSource | null = null) => { if (target && (target.level === 'lesson' || target.claimIds.length)) setSheet({ target, initial }); };
   const openNoteSheet = (claimId: string, findingKey: string) => setSheet({ target: { level: 'claim', claimIds: [claimId] }, initial: null, findingKey });
   const openGroupSheet = (group: ClaimGroup) => openSheet({ level: group.key === 'queue' ? 'queue' : 'group', claimIds: group.claims.map((claim) => claim.claimId) }, null);
   const acceptSource = (support: ClaimSupportDto | null) => { if (support?.role === 'supports') setTrusting({ support, sharing: sharingOf(support) }); };
@@ -167,7 +167,9 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
         <button type="button" onClick={onBack} className="inline-flex min-h-10 min-w-0 items-center gap-2 text-left font-serif text-lg text-text-primary hover:text-accent">
           <ArrowLeft size={16} aria-hidden="true" className="shrink-0" /><span className="truncate">{lessonTitle}</span>
         </button>
-        {review && (review.state === 'needs_review' || review.state === 'stopped') && (() => {
+        {review && <div className="flex flex-wrap items-center justify-end gap-3">
+          <Button type="button" variant="outline" disabled={session.acting || Boolean(sheet)} onClick={() => openSheet({ level: 'lesson', claimIds: [] })}>Add a source to the lesson</Button>
+          {(review.state === 'needs_review' || review.state === 'stopped') && (() => {
           const hold = reviewHold(review, waiting.length);
           const blocked = jobActive ? 'Verification is running; it takes your changes into account at its next step.'
             : review.state === 'needs_review' && hold === 'claims' && !review.changedSinceStop ? NOTHING_CHANGED
@@ -182,6 +184,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
             </Button>
           </div>;
         })()}
+        </div>}
       </div>
       {review && <p data-testid="review-tally" className="mt-1 text-sm text-text-secondary">
         {jobActive && <span className="font-medium text-text-primary">Checking your changes · </span>}
@@ -223,27 +226,31 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       if (summary.stated) void settleNote(findingKey); else session.say(summary.line);
     }} />;
 
+  // A source for the whole lesson opens above both columns, whatever the focus shows.
+  const lessonSheet = sheet?.target.level === 'lesson' ? sheetNode : null;
+  const focusSheet = lessonSheet ? null : sheetNode;
+
   const focus = (() => {
     if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s claims have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
-    if (session.removedActive && sheetNode) return sheetNode;
+    if (session.removedActive && focusSheet) return focusSheet;
     if (session.removedActive) return <RemovedStatements sentences={session.removed} rewritten={session.rewritten} sections={review.sections}
       busy={session.acting} error={session.error} editSection={takenOutEditor}
       onPutBack={(claimIds, text, section) => void session.restore(claimIds, { action: 'put_back', text, section }, 'put_back')}
       onRestore={(claimId) => void session.restore([claimId], { action: 'restore_original' }, 'restore_original')}
       onAddSource={(claimId) => openSheet({ level: 'claim', claimIds: [claimId], others: [] })} />;
-    if (session.teachingActive) return sheetNode || <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
+    if (session.teachingActive) return focusSheet || <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
       published={review.state === 'ready'} revision={review.revision} onAddSource={openNoteSheet} editSection={noteEditor} />;
     if (active) return <ClaimInFocus ref={statementRef} programId={programId} item={active} position={position || 1} total={Math.max(ordered.length, 1)}
       onPrevious={session.activeIndex > 0 ? () => session.step(-1) : null} onNext={session.activeIndex >= 0 && session.activeIndex < ordered.length - 1 ? () => session.step(1) : null}
       sharing={sharingOf(active.support)} busy={session.acting} error={session.error} form={session.form} onFormChange={session.setForm}
       onAct={(request, kind) => session.run(active, request, kind)} onAcceptSource={() => acceptSource(active.support)} onAddSource={() => openSheet(claimTarget())}
       closest={session.closestSupport} onOpenSource={(support) => setReader({ source: support.source, passage: support.passage, quote: support.quote })}
-      onOpenRelevant={(source) => setReader({ source, passage: null, quote: null })} sheet={sheetNode}
+      onOpenRelevant={(source) => setReader({ source, passage: null, quote: null })} sheet={focusSheet}
       back={narrow ? <Button type="button" size="icon" variant="ghost" aria-label="Back to the queue" onClick={() => setNarrowView('queue')}><ArrowLeft aria-hidden="true" /></Button> : undefined}
       stickyActions={narrow} published={review.state === 'ready'} onEditSection={editable ? () => setEditing(editable) : null} />;
     if (review.state === 'needs_review' && (hold === 'audit' || hold === 'audit_stop')) return <AuditHold reason={auditStop} />;
-    if (sheetNode) return sheetNode;
+    if (focusSheet) return focusSheet;
     const takenOut = removedCount > 0
       ? <p>{removedCount === 1 ? '1 statement was taken out of the lesson. It is' : `${removedCount} statements were taken out of the lesson. They are`} listed under Taken out of the lesson.</p> : null;
     if (teachingWaiting > 0) return <FocusMessage title={teachingNotesWait(teachingWaiting)}>
@@ -294,6 +301,8 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
         </ul>
         <p className="mt-2 text-xs text-text-muted">Keys do nothing while you type in a field.</p>
       </section>}
+
+      {lessonSheet && <div className="max-h-[60vh] shrink-0 overflow-y-auto border-b border-border px-4 py-3 sm:px-6">{lessonSheet}</div>}
 
       {narrow ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">

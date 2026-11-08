@@ -347,12 +347,15 @@ export const batchUndone = (count: number) => (count === 1 ? 'Undone. 1 statemen
 
 // ── Adding a source (§4.6) ──────────────────────────────────────────────────
 
-export function addSourceTitle(scope: 'claim' | 'group' | 'queue', count: number): string {
+export function addSourceTitle(scope: 'claim' | 'group' | 'queue' | 'lesson', count: number): string {
+  if (scope === 'lesson') return 'Add a source to the lesson';
   if (scope === 'claim' || count <= 1) return 'Add a source for this claim';
   return scope === 'queue' ? `Add a source for all ${count} claims` : `Add a source for these ${count} claims`;
 }
 
 export const ADD_SOURCE_HINT = 'Drop a file or a link here, paste an address or text, or choose a file. A page you add is read as it is; if it says this, that settles it.';
+
+export const ADD_SOURCE_LESSON_HINT = 'Lattice checks every open statement in this lesson against it.';
 
 export function progressLine(stage: { stage: 'fetching'; host: string | null } | { stage: 'saving' } | { stage: 'checking'; done: number; total: number; statement: string } | { stage: 'done' }): string {
   switch (stage.stage) {
@@ -413,23 +416,40 @@ function attachSummaryOf(report: ClaimAttachReportDto, scopeSize: number, remain
   const noPassage = outcome?.outcome === 'no_passage';
   const others = report.others;
   if (scopeSize > 1) {
-    const verified = (stated ? 1 : 0) + others.verified;
-    const mismatched = (notStated ? 1 : 0) + others.notVerified;
-    const unmentioned = (noPassage ? 1 : 0) + others.noPassage;
     const total = Math.max(scopeSize, 1 + others.tried);
-    const done = verified + mismatched + unmentioned;
-    const parts = [
-      `Verified ${verified} of ${total} claims`,
-      mismatched ? `${mismatched} ${mismatched === 1 ? 'does' : 'do'} not match what it says` : null,
-      unmentioned ? `${unmentioned} ${unmentioned === 1 ? 'is' : 'are'} not mentioned by it` : null,
-    ].filter(Boolean).join('; ');
-    const head = report.alreadySaved ? `${title} was already one of your sources; the claims were checked against it.` : `Added ${title}.`;
-    const stopped = others.stopped ? ` Checked ${done} of ${total}; the rest were not checked: ${others.stopped}. Add and check again to continue.` : '';
-    return { stated, notStated, line: `${head} ${parts}.${stopped}` };
+    const tally = { verified: (stated ? 1 : 0) + others.verified, mismatched: (notStated ? 1 : 0) + others.notVerified, unmentioned: (noPassage ? 1 : 0) + others.noPassage };
+    return { stated, notStated, line: claimsLine(report, title, tally, total) };
   }
   if (stated) return { stated, notStated, line: `Added ${title}; it states this. ${left(remaining)}` };
   if (notStated) return { stated, notStated, line: `Added ${title}; it does not say this. The closest passage is shown: edit the sentence to match it, or add another source.` };
   return { stated, notStated, line: `Nothing in ${title} mentions this claim. It is saved in your sources.` };
+}
+
+/** The sentence that sums up a source checked against several claims. `total` is null when the claims in scope are only those that were tried. */
+function claimsLine(report: ClaimAttachReportDto, title: string, tally: { verified: number; mismatched: number; unmentioned: number }, total: number | null): string {
+  const { verified, mismatched, unmentioned } = tally;
+  const done = verified + mismatched + unmentioned;
+  const checked = total ?? done;
+  const parts = [
+    `Verified ${verified} of ${checked} ${checked === 1 ? 'claim' : 'claims'}`,
+    mismatched ? `${mismatched} ${mismatched === 1 ? 'does' : 'do'} not match what it says` : null,
+    unmentioned ? `${unmentioned} ${unmentioned === 1 ? 'is' : 'are'} not mentioned by it` : null,
+  ].filter(Boolean).join('; ');
+  const head = report.alreadySaved ? `${title} was already one of your sources; the claims were checked against it.` : `Added ${title}.`;
+  const stopped = report.others.stopped ? ` Checked ${total === null ? done : `${done} of ${total}`}; the rest were not checked: ${report.others.stopped}. Add and check again to continue.` : '';
+  return `${head} ${parts}.${stopped}`;
+}
+
+/** The result line for a source added to the lesson as a whole: every open claim was checked, none is in focus. */
+export function lessonSourceSummary(report: ClaimAttachReportDto): AttachSummary {
+  const title = report.source?.title ?? 'the source';
+  const { others } = report;
+  if (others.tried === 0 && !others.stopped) {
+    const head = report.alreadySaved ? `${title} was already one of your sources.` : `Added ${title}.`;
+    return { stated: false, notStated: false, line: `${head} No open claims in this lesson to check against it.` };
+  }
+  const tally = { verified: others.verified, mismatched: others.notVerified, unmentioned: others.noPassage };
+  return { stated: false, notStated: false, line: claimsLine(report, title, tally, null) };
 }
 
 /** The Sources tab's line after adding a source (§4.6); null when nothing waited. */
