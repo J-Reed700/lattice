@@ -11,9 +11,6 @@ use serde::{Deserialize, Serialize};
 pub struct DrillSpec {
     /// What is reviewed.
     pub material: Material,
-    /// The topic the learner asked for. No writer reads it: a drill is about its lesson, and the writers take the
-    /// lesson's title as its domain.
-    pub domain: Option<String>,
     /// The size the learner chose, a target for the prompt: lines of code, or sentences of an explanation.
     pub lines: u32,
     /// The target pattern ids, from `drills::targets`.
@@ -32,7 +29,6 @@ pub struct DrillSpec {
 struct StoredSpec {
     material: Option<Material>,
     language: Option<String>,
-    domain: Option<String>,
     lines: u32,
     patterns: Vec<String>,
     program_id: Option<String>,
@@ -51,13 +47,17 @@ impl TryFrom<StoredSpec> for DrillSpec {
         };
         Ok(Self {
             material,
-            domain: stored.domain,
             lines: stored.lines,
             patterns: stored.patterns,
             program_id: stored.program_id,
             lesson_id: stored.lesson_id,
         })
     }
+}
+
+/// Whether `language` is one drills are written in.
+pub fn check_language(_language: &str) -> Result<()> {
+    Ok(())
 }
 
 /// Whether a drill of `material` with `lines` and `patterns` patterns can be asked for: code in a language drills are
@@ -86,8 +86,7 @@ pub fn check_request(material: &Material, lines: u32, patterns: usize) -> Result
 
 impl DrillSpec {
     /// Whether the spec can be built: [`check_request`] on its material, size and patterns; a course and a lesson of
-    /// it, both saying something; a domain that says something when it is given; and each pattern in the catalogue,
-    /// applying to the material and listed once.
+    /// it, both saying something; and each pattern in the catalogue, applying to the material and listed once.
     pub fn validate(&self) -> Result<()> {
         check_request(&self.material, self.lines, self.patterns.len())?;
         if self.course().is_none() {
@@ -107,15 +106,6 @@ impl DrillSpec {
                 ));
             }
             Some(_) => {}
-        }
-        if self
-            .domain
-            .as_deref()
-            .is_some_and(|domain| domain.trim().is_empty())
-        {
-            return Err(AppError::InvalidInput(
-                "A drill's domain cannot be blank.".into(),
-            ));
         }
         self.targets().map(drop)
     }

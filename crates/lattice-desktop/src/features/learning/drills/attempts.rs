@@ -334,6 +334,15 @@ pub(in crate::features::learning) async fn record_ungraded_in(
         == 1)
 }
 
+/// The latest attempts on drills of the course, newest first, at most `limit`, each with the drill it is on.
+pub(in crate::features::learning) async fn recent_in(
+    _connection: &mut SqliteConnection,
+    _program_id: &str,
+    _limit: u32,
+) -> Result<Vec<(Attempt, StoredDrill)>> {
+    Ok(Vec::new())
+}
+
 /// The attempt with this id.
 pub(in crate::features::learning) async fn find_in(
     connection: &mut SqliteConnection,

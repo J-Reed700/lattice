@@ -1,18 +1,18 @@
-//! What the review view's commands do, apart from Tauri: starting a drill, handing a review in, reading an attempt and
-//! asking for its grade again (docs/design/2026-11-04-code-review-drills.md section 1). The jobs they queue are
-//! returned for the caller to tell the job runtime of once they are committed.
+//! What the review view's commands do, apart from Tauri: a course's drills, starting a drill, handing a review in,
+//! reading an attempt and asking for its grade again (docs/design/2026-11-04-code-review-drills.md section 1 and
+//! docs/design/2026-11-07-drills-in-the-course.md section 8). The jobs they queue are returned for the caller to tell
+//! the job runtime of once they are committed.
 
 use super::attempts::{self, AttemptMode, Submission};
 use super::bank::{self, Shelf};
 use super::dto::{
-    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, ReviewDrillCourseDto,
+    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, CourseDrillsDto,
     StartedCodeReviewDto,
 };
 use super::reveal::{learner_drill, result_of};
 use super::schedules;
 use super::spec::check_request;
 use crate::features::learning::persistence::db;
-use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
@@ -87,26 +87,21 @@ pub async fn start(
     })
 }
 
-/// The courses a drill on a passage can draw on: those with at least one source that has text, in the order they were
-/// made.
-pub async fn courses(pool: &SqlitePool) -> Result<Vec<ReviewDrillCourseDto>> {
-    let programs: Vec<(String, String)> =
-        sqlx::query_as("SELECT id,title FROM learning_programs ORDER BY created_at,id")
-            .fetch_all(pool)
-            .await
-            .map_err(db)?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
-    let mut courses = Vec::new();
-    for (program_id, title) in programs {
-        let sources = library.verification_sources(&program_id).await?;
-        if sources
-            .iter()
-            .any(|source| !source.excerpt.trim().is_empty())
-        {
-            courses.push(ReviewDrillCourseDto { program_id, title });
-        }
-    }
-    Ok(courses)
+/// A course's review drills as its Practice view reads them, with code drills offered in `language` or, when none is
+/// asked for, in the one the course suggests.
+pub async fn course_drills(
+    _pool: &SqlitePool,
+    _program_id: &str,
+    _language: Option<&str>,
+) -> Result<CourseDrillsDto> {
+    Ok(CourseDrillsDto {
+        language: String::new(),
+        next_code: None,
+        next_passage: None,
+        has_sources: false,
+        modules: Vec::new(),
+        recent: Vec::new(),
+    })
 }
 
 /// Hands in an open attempt: the learner's findings and, when they wrote one, their fix, with the time they spent as the

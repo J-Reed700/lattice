@@ -433,7 +433,6 @@ pub(super) const LITERALS: &str = "readability.magic_number";
 pub(super) fn spec() -> DrillSpec {
     DrillSpec {
         material: Material::code("python"),
-        domain: Some("rate limiting".into()),
         lines: 40,
         patterns: vec![OPERATOR.into(), LITERALS.into()],
         program_id: None,
@@ -1283,7 +1282,6 @@ pub(super) fn spacing_check() -> ScriptedCheck {
 pub(super) fn passage_spec(program_id: &str) -> DrillSpec {
     DrillSpec {
         material: Material::Passage,
-        domain: None,
         lines: 4,
         patterns: vec![FIGURE.into(), REVERSED.into()],
         program_id: Some(program_id.into()),

@@ -1815,7 +1815,6 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
         spec_of(&job)?,
         DrillSpec {
             material: Material::Passage,
-            domain: None,
             lines: 4,
             patterns: expected,
             program_id: Some(second.clone()),

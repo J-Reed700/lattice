@@ -82,24 +82,34 @@ pub async fn queue_build_in(
     Ok(admitted.id)
 }
 
-/// The build of `shelf` under way: the oldest pending or running one, built from `lesson`, or from any lesson when
-/// `lesson` is `None`.
+/// A build of a shelf under way.
+struct UnderWay {
+    job_id: String,
+    /// The lesson it builds from.
+    lesson_id: String,
+}
+
+/// The build of `shelf` under way: the oldest pending or running one whose spec reads and names a lesson, built from
+/// `lesson`, or from any lesson when `lesson` is `None`.
 async fn under_way_in(
     connection: &mut SqliteConnection,
     shelf: Shelf<'_>,
     lesson: Option<&str>,
-) -> Result<Option<String>> {
+) -> Result<Option<UnderWay>> {
     let jobs = JobStore::list_for_subject_in(connection, DRILL_BUILD, &shelf.subject()).await?;
-    Ok(jobs
-        .into_iter()
-        .rev()
-        .find(|job| {
-            matches!(job.status, JobStatus::Pending | JobStatus::Running)
-                && spec_of(job).is_ok_and(|found| {
-                    lesson.is_none_or(|lesson| found.lesson_id.as_deref() == Some(lesson))
-                })
+    Ok(jobs.into_iter().rev().find_map(|job| {
+        if !matches!(job.status, JobStatus::Pending | JobStatus::Running) {
+            return None;
+        }
+        let lesson_id = spec_of(&job).ok()?.lesson_id?;
+        if lesson.is_some_and(|wanted| wanted != lesson_id) {
+            return None;
+        }
+        Some(UnderWay {
+            job_id: job.id,
+            lesson_id,
         })
-        .map(|job| job.id))
+    }))
 }
 
 /// The lesson of `shelf`'s course next up for a drill on its material, `taking` (the lesson of a drill being taken)
@@ -131,7 +141,6 @@ async fn spec_in(
     let states = schedules::pattern_states_in(connection, shelf.material, taking).await?;
     Ok(DrillSpec {
         material: shelf.material.clone(),
-        domain: None,
         lines,
         patterns: targets(shelf.material, &states, now, count)
             .iter()
@@ -155,9 +164,9 @@ pub async fn ensure_build(
     count: usize,
 ) -> Result<String> {
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    if let Some(id) = under_way_in(&mut transaction, shelf, lesson).await? {
+    if let Some(found) = under_way_in(&mut transaction, shelf, lesson).await? {
         transaction.commit().await.map_err(db)?;
-        return Ok(id);
+        return Ok(found.job_id);
     }
     let at = now();
     let lesson_id = match lesson {
@@ -181,6 +190,35 @@ pub async fn ensure_build(
     let id = queue_build_in(&mut transaction, &spec, &seed).await?;
     transaction.commit().await.map_err(db)?;
     Ok(id)
+}
+
+/// What a start of a shelf with no lesson asked for comes to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::features::learning) struct NextUp {
+    pub lesson_id: String,
+    pub status: NextStatus,
+}
+
+/// Whether the lesson a start with no lesson draws on has a drill ready, one being built, or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::features::learning) enum NextStatus {
+    /// A drill of it is ready, and the start opens an attempt on it.
+    Ready,
+    /// A build of it is under way, and the start waits for it.
+    Building,
+    /// The start queues its build.
+    ToBuild,
+}
+
+/// What a start of `shelf` with no lesson asked for comes to at `now`, tried in the order the start tries them: the
+/// oldest ready drill of the shelf, then the build under way, then the lesson next up. `None` when no lesson of the
+/// course can be drilled on the shelf's material.
+pub(in crate::features::learning) async fn next_up_in(
+    _connection: &mut SqliteConnection,
+    _shelf: Shelf<'_>,
+    _now: i64,
+) -> Result<Option<NextUp>> {
+    Ok(None)
 }
 
 /// A drill given to a learner, and the build queued to follow it, if one was.

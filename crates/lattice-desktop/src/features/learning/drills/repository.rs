@@ -59,11 +59,15 @@ pub struct StoredDrill {
     /// The material before any issue was planted.
     pub clean_files: Vec<DrillFile>,
     pub spec: DrillSpec,
+    /// The title of the lesson the drill was built from, as it was then; for a drill from before lessons, the domain
+    /// its code was set in.
     pub domain: String,
     /// The course the drill was built for, while it exists.
     pub program_id: Option<String>,
     /// The lesson the drill was built from, while it exists.
     pub lesson_id: Option<String>,
+    /// The title the drill's lesson has now, while the lesson exists.
+    pub lesson_title: Option<String>,
     pub suite: Option<String>,
     /// The passage an explanation was written from: `None` for code.
     pub source: Option<SourcePassage>,
@@ -275,6 +279,7 @@ fn read(row: &SqliteRow) -> Result<StoredDrill> {
         domain: row.get("domain"),
         program_id: row.get("program_id"),
         lesson_id: row.get("lesson_id"),
+        lesson_title: None,
         suite: row.get("suite"),
         source,
         runner: row.get("runner"),

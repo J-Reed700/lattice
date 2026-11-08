@@ -16,6 +16,26 @@ pub struct LessonStanding {
     pub fits: bool,
 }
 
+/// Where a lesson's drills stand, in the order the next drill prefers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DrillStanding {
+    /// Rated, and due again.
+    Due,
+    /// No drill of it has been rated.
+    New,
+    /// Rated, and not due yet.
+    Rested,
+    /// A drill of it is out and not yet graded, or ready to be taken.
+    Pending,
+}
+
+impl LessonStanding {
+    /// Where the lesson's drills stand at `now`.
+    pub fn standing(&self, _now: i64) -> DrillStanding {
+        DrillStanding::New
+    }
+}
+
 /// The ids of `lessons`, given in course order, in the order the next drill prefers them: lessons due, earliest first;
 /// then those never rated, the current lesson first, then completed lessons, then the rest; then those not yet due,
 /// soonest first; and last those pending. A lesson that does not fit is left out, and ties keep the course's order.

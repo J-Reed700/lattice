@@ -105,7 +105,6 @@ fn build_spec(program: &str, lesson: &str, material: Material) -> DrillSpec {
             .map(|pattern| pattern.id.to_owned())
             .collect(),
         material,
-        domain: None,
         lines: 40,
         program_id: Some(program.to_owned()),
         lesson_id: Some(lesson.to_owned()),
@@ -336,7 +335,6 @@ async fn taking_the_last_ready_drill_queues_the_build_of_the_lesson_next_up() ->
         queued,
         DrillSpec {
             material: python.clone(),
-            domain: None,
             lines: 70,
             patterns: pattern_ids(&python, &held_back(&taken.drill.drill), 0, 3),
             program_id: Some(program.clone()),
@@ -818,7 +816,6 @@ async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Resul
         spec_of(&job)?,
         DrillSpec {
             material: python.clone(),
-            domain: None,
             lines: 40,
             patterns: pattern_ids(&python, &[], now(), 2),
             program_id: Some(program.clone()),

@@ -2,15 +2,16 @@
 //! handing a review in, and the reveal of a graded review, which holds everything the design lists.
 
 use super::support::{
-    code_spec, course, extra_finding, files, fix_answer, lessons_of, operator_finding,
+    code_spec, course, extra_finding, files, fix_answer, lessons_of, opened, operator_finding,
     operator_fixed, proved, record_unfit, review_assessment, schedule_pattern, set_state, spec,
     stock, stock_on, unchecked, FakeGrader, FakeRunner, ScriptedModel, Waiting, KILLING_TEST,
-    LITERALS, MODEL, OPERATOR, SUITE,
+    LITERALS, MODEL, OPERATOR, SLEEP_LESSON, SPACING_LESSON, SUITE,
 };
 use crate::features::learning::drills::attempts::{self, AttemptMode, AttemptStatus};
 use crate::features::learning::drills::dto::{
     CodeReviewFileDto, CodeReviewFindingDto, CodeReviewMaterialDto, CodeReviewSeverity,
-    CodeReviewSpanDto, FindingResultKind, IssueResultKind, StartedCodeReviewDto,
+    CodeReviewSpanDto, DrillLessonRefDto, FindingResultKind, IssueResultKind,
+    RevealedLessonLinkDto, RevealedLessonSentenceDto, StartedCodeReviewDto,
 };
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD, DRILL_GRADING};
 use crate::features::learning::drills::reveal;
@@ -20,8 +21,8 @@ use crate::features::learning::persistence::db;
 use crate::features::learning::plugin::code_review_languages;
 use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
-    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, IssueRating, Material, Origin,
-    PatternRating, Proof, LANGUAGES,
+    line_diff, pattern, targets, DecidedBy, DiffKind, FixOutcome, IssueRating, LessonLink,
+    LessonSentence, Material, Origin, PatternRating, Proof, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobStore;
@@ -240,11 +241,77 @@ async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
         .map(String::as_str)
         .collect();
     drill_keys.sort_unstable();
-    assert_eq!(drill_keys, ["files", "material", "title"]);
+    assert_eq!(drill_keys, ["files", "lesson", "material", "title"]);
     assert_eq!(
         object["drill"]["material"],
         json!({"kind": "code", "language": "python"})
     );
+    assert_eq!(object["drill"]["lesson"]["title"], SPACING_LESSON);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_drill_names_the_lesson_it_was_built_from_while_the_lesson_is_there() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let lessons = lessons_of(&pool, &program).await?;
+    let second = DrillSpec {
+        program_id: Some(program.clone()),
+        lesson_id: Some(lessons[1].clone()),
+        ..spec()
+    };
+    stock_on(&pool, "drill", &second).await?;
+    let started = review::start(
+        &pool,
+        &lesson_of(&program, &lessons[1]),
+        AttemptMode::Practice,
+        40,
+        2,
+    )
+    .await?;
+    let StartedCodeReviewDto::Started {
+        attempt_id, drill, ..
+    } = started.dto
+    else {
+        panic!("a drill of the second lesson was ready");
+    };
+    let named = |title: &str| {
+        Some(DrillLessonRefDto {
+            program_id: program.clone(),
+            lesson_id: lessons[1].clone(),
+            title: title.to_owned(),
+        })
+    };
+    assert_eq!(drill.lesson, named(SLEEP_LESSON));
+
+    sqlx::query("UPDATE learning_lessons SET title='Sleep, renamed' WHERE id=?")
+        .bind(&lessons[1])
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(
+        review::result(&pool, &attempt_id).await?.drill.lesson,
+        named("Sleep, renamed")
+    );
+
+    sqlx::query("DELETE FROM learning_lessons WHERE program_id=? AND id=?")
+        .bind(&program)
+        .bind(&lessons[1])
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(review::result(&pool, &attempt_id).await?.drill.lesson, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_drill_with_no_course_names_no_lesson() -> Result<()> {
+    let pool = pool().await?;
+    stock(&pool, "drill").await?;
+    let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
+    let shown = review::result(&pool, &attempt.id).await?;
+    assert_eq!(shown.drill.lesson, None);
+    assert!(serde_json::to_value(&shown).expect("a DTO is JSON")["drill"]["lesson"].is_null());
     Ok(())
 }
 
@@ -772,6 +839,65 @@ async fn a_graded_review_reveals_every_issue_every_finding_the_score_the_ratings
     Ok(())
 }
 
+/// What the first key issue of the drill "drill" breaks of its lesson: a sentence of a source and one of the lesson's own.
+fn lesson_link() -> LessonLink {
+    LessonLink {
+        lesson_id: "lesson".into(),
+        sentences: vec![
+            LessonSentence {
+                text: "Spreading study over sessions helps recall.".into(),
+                source: Some("A source".into()),
+            },
+            LessonSentence {
+                text: "Space the sessions out.".into(),
+                source: None,
+            },
+        ],
+    }
+}
+
+/// Gives the first key issue of the drill "drill" [`lesson_link`].
+async fn link_the_first_issue(pool: &SqlitePool) -> Result<()> {
+    sqlx::query("UPDATE learning_drills SET key_json=json_set(key_json,'$[0].lesson',json(?)) WHERE id='drill'")
+        .bind(serde_json::to_string(&lesson_link()).expect("a link is JSON"))
+        .execute(pool)
+        .await
+        .map(drop)
+        .map_err(db)
+}
+
+#[tokio::test]
+async fn a_revealed_issue_carries_the_lesson_s_words_it_breaks() -> Result<()> {
+    let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
+    link_the_first_issue(&waiting.pool).await?;
+    let model = ScriptedModel::new(Vec::<String>::new());
+    let grader = FakeGrader::new(review_assessment());
+    waiting.grade(&model, None, &grader).await?;
+
+    let revealed = review::result(&waiting.pool, &waiting.attempt)
+        .await?
+        .reveal
+        .expect("a graded review is revealed");
+    assert_eq!(
+        revealed.issues[0].lesson,
+        Some(RevealedLessonLinkDto {
+            lesson_id: "lesson".into(),
+            sentences: vec![
+                RevealedLessonSentenceDto {
+                    text: "Spreading study over sessions helps recall.".into(),
+                    source: Some("A source".into()),
+                },
+                RevealedLessonSentenceDto {
+                    text: "Space the sessions out.".into(),
+                    source: None,
+                },
+            ],
+        })
+    );
+    assert_eq!(revealed.issues[1].lesson, None);
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
     let waiting = Waiting::new(
@@ -779,6 +905,7 @@ async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
         Some(operator_fixed()),
     )
     .await?;
+    link_the_first_issue(&waiting.pool).await?;
     let model = ScriptedModel::new([fix_answer("not", "The literals are still written out.")]);
     let runner = FakeRunner::killing_the_operator();
     let grader = FakeGrader::new(review_assessment());
@@ -803,6 +930,15 @@ async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
     assert!(reveal["issues"][0]["sourceQuote"].is_null());
     assert_eq!(reveal["issues"][0]["fix"]["lines"][0]["kind"], "removed");
     assert_eq!(reveal["issues"][1]["outcome"], "missed");
+    let lesson = &reveal["issues"][0]["lesson"];
+    assert_eq!(lesson["lessonId"], "lesson");
+    assert_eq!(
+        lesson["sentences"][0]["text"],
+        "Spreading study over sessions helps recall."
+    );
+    assert_eq!(lesson["sentences"][0]["source"], "A source");
+    assert!(lesson["sentences"][1]["source"].is_null());
+    assert!(reveal["issues"][1]["lesson"].is_null());
     assert_eq!(reveal["findings"][1]["outcome"], "valid_extra");
     assert_eq!(reveal["ratings"][0]["rating"], "easy");
     assert_eq!(reveal["score"]["halfFound"], 0);

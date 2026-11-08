@@ -1,6 +1,6 @@
 //! What the review view's commands do for a drill on a passage of a course: asking for one, the drill as the learner
-//! may see it, which holds none of the source, the reveal, which holds the source and the quote behind each error, and
-//! the courses a passage drill can draw on.
+//! may see it, which holds none of the source, and the reveal, which holds the source and the quote behind each
+//! error.
 
 use super::passage_tests::drilled;
 use super::support::{
@@ -11,12 +11,12 @@ use crate::features::learning::drills::attempt_grading::AttemptGrading;
 use crate::features::learning::drills::attempts::{self, AttemptMode, AttemptStatus};
 use crate::features::learning::drills::dto::{
     CodeReviewFindingDto, CodeReviewMaterialDto, CodeReviewSpanDto, IssueResultKind,
-    ReviewDrillCourseDto, StartedCodeReviewDto,
+    StartedCodeReviewDto,
 };
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD};
 use crate::features::learning::drills::material::PassageMaterial;
 use crate::features::learning::drills::review::{self, CourseDrill};
-use crate::features::learning::tests::{fixture, pool};
+use crate::features::learning::tests::pool;
 use lattice_core::domain::learning::drills::{
     targets, Assessment, FindingOutcome, IssueOutcome, Material,
 };
@@ -85,7 +85,6 @@ async fn asking_for_a_passage_with_none_ready_queues_a_build_on_the_course() -> 
     assert_eq!(spec.material, Material::Passage);
     assert_eq!(spec.program_id.as_deref(), Some(program.as_str()));
     assert_eq!(spec.lesson_id.as_deref(), Some(lessons[0].as_str()));
-    assert_eq!(spec.domain, None);
     assert_eq!(spec.lines, 6);
     let wanted: Vec<String> = targets(&Material::Passage, &[], 0, 2)
         .iter()
@@ -99,11 +98,7 @@ async fn asking_for_a_passage_with_none_ready_queues_a_build_on_the_course() -> 
 async fn a_passage_request_that_cannot_make_a_build_is_refused() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
-    for (material, lines, count) in [
-        (passage("  "), 4, 2),
-        (passage(&program), 0, 2),
-        (passage(&program), 4, 0),
-    ] {
+    for (material, lines, count) in [(passage(&program), 0, 2), (passage(&program), 4, 0)] {
         let result = review::start(&pool, &material, AttemptMode::Practice, lines, count).await;
         assert!(
             matches!(result, Err(AppError::InvalidInput(_))),
@@ -247,33 +242,5 @@ async fn the_reveal_of_a_passage_drill_holds_the_source_and_the_quote_behind_eac
     let shown = serde_json::to_value(&reveal).expect("a DTO is JSON");
     assert_eq!(shown["source"]["versionId"], expected.version_id);
     assert_eq!(shown["issues"][0]["sourceQuote"], FIGURE_QUOTE);
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_courses_a_passage_drill_can_draw_on_are_the_ones_with_a_source() -> Result<()> {
-    let pool = pool().await?;
-    assert_eq!(review::courses(&pool).await?, []);
-    let with_sources = course(&pool).await?;
-    let mut bare = fixture();
-    bare.sources = Vec::new();
-    bare.summary.title = "A course with no source".into();
-    crate::features::learning::repository::LearningRepository::new(pool.clone())
-        .create(&bare)
-        .await?;
-    let listed = review::courses(&pool).await?;
-    assert_eq!(
-        listed,
-        [ReviewDrillCourseDto {
-            program_id: with_sources,
-            title: "A generic learning program".into()
-        }]
-    );
-    assert_eq!(
-        serde_json::to_value(&listed).expect("a DTO is JSON")[0]
-            .as_object()
-            .map(|object| object.len()),
-        Some(2)
-    );
     Ok(())
 }

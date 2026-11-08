@@ -1,40 +1,35 @@
 use super::*;
 use crate::features::learning::drills::attempts::AttemptMode;
 use crate::features::learning::drills::dto::{
-    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, ReviewDrillCourseDto,
-    ReviewMaterialDto, StartedCodeReviewDto,
+    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, CourseDrillsDto,
+    DrillMaterialDto, StartedCodeReviewDto,
 };
 use crate::features::learning::drills::review::{self, CourseDrill};
-use lattice_core::domain::learning::drills::{Material, LANGUAGES};
-use lattice_core::shared::error::AppError;
+use lattice_core::domain::learning::drills::LANGUAGES;
 
-// Code review drills (docs/design/2026-11-04-code-review-drills.md, section 1): what the review view calls.
+// Code review drills (docs/design/2026-11-04-code-review-drills.md, section 1, and
+// docs/design/2026-11-07-drills-in-the-course.md, section 8): what the review view calls.
 
-/// Starts a drill on `material`, code in a language or a passage of a course: an attempt on a ready one, or, when none
-/// is ready, the build that will make one. `lines` (lines of code, or sentences) and `patterns_count` size that build.
-/// The drill comes back as the learner may see it, never with its key or its source.
+/// Starts a drill of the course on `material`, from the lesson asked for or, with none, the one next up: an attempt
+/// on a ready drill of it or, when none is ready, the build that will make one. `lines` (lines of code, or sentences)
+/// and `issues` size that build. The drill comes back as the learner may see it, never with its key or its source.
 #[tauri::command]
 #[specta::specta]
-pub async fn start_review_drill(
-    material: ReviewMaterialDto,
+pub async fn start_course_drill(
+    program_id: String,
+    lesson_id: Option<String>,
+    material: DrillMaterialDto,
     mode: AttemptMode,
     lines: u32,
-    patterns_count: u32,
+    issues: u32,
     container: State<'_, Container>,
 ) -> Result<StartedCodeReviewDto, ApiError> {
-    let asked = match material {
-        ReviewMaterialDto::Passage { program_id, .. } => CourseDrill {
-            program_id,
-            lesson_id: None,
-            material: Material::Passage,
-        },
-        ReviewMaterialDto::Code { .. } => {
-            return Err(ApiError::from(AppError::InvalidInput(
-                "A code drill is started from a course.".into(),
-            )))
-        }
+    let asked = CourseDrill {
+        program_id,
+        lesson_id,
+        material: material.into(),
     };
-    let started = review::start(container.db_pool(), &asked, mode, lines, patterns_count)
+    let started = review::start(container.db_pool(), &asked, mode, lines, issues)
         .await
         .map_err(ApiError::from)?;
     for job in &started.jobs {
@@ -104,13 +99,17 @@ pub fn code_review_languages() -> Vec<String> {
     LANGUAGES.iter().map(|id| (*id).to_owned()).collect()
 }
 
-/// The courses a drill on a passage can draw on: those with at least one source.
+/// A course's review drills: the language code drills are offered in (`language`, or the one the course suggests),
+/// what a start with no lesson comes to for code and for passages, each lesson's standing by module, and the latest
+/// attempts.
 #[tauri::command]
 #[specta::specta]
-pub async fn review_drill_courses(
+pub async fn course_drills(
+    program_id: String,
+    language: Option<String>,
     container: State<'_, Container>,
-) -> Result<Vec<ReviewDrillCourseDto>, ApiError> {
-    review::courses(container.db_pool())
+) -> Result<CourseDrillsDto, ApiError> {
+    review::course_drills(container.db_pool(), &program_id, language.as_deref())
         .await
         .map_err(ApiError::from)
 }

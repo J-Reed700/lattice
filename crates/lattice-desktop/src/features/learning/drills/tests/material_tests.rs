@@ -11,10 +11,10 @@ use crate::features::learning::drills::build::ask::render_files;
 use crate::features::learning::drills::build::Baseline;
 use crate::features::learning::drills::material::{CodeMaterial, DrillMaterial, JudgeWording};
 use crate::features::learning::drills::runner::CodeRunner;
-use crate::features::learning::drills::spec::DrillSpec;
+use crate::features::learning::drills::spec::{check_language, DrillSpec};
 use crate::features::learning::tests::pool;
-use lattice_core::domain::learning::drills::{Material, Pattern};
-use lattice_core::shared::error::Result;
+use lattice_core::domain::learning::drills::{Material, Pattern, LANGUAGES};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::json;
 
 const CLEAN_SYSTEM: &str = include_str!("golden/clean_system.txt");
@@ -306,9 +306,19 @@ fn a_spec_stored_with_a_language_is_read_as_code_in_it() {
     });
     let read: DrillSpec = serde_json::from_value(stored).unwrap();
     assert_eq!(read.material, Material::code("python"));
-    assert_eq!(read.domain.as_deref(), Some("rate limiting"));
     assert_eq!(read.lines, 40);
     assert_eq!(read.patterns, [OPERATOR]);
+}
+
+#[test]
+fn a_language_is_one_drills_are_written_in_when_the_catalogue_holds_it() {
+    for language in LANGUAGES {
+        assert!(check_language(language).is_ok(), "{language}");
+    }
+    assert!(matches!(
+        check_language("klingon"),
+        Err(AppError::InvalidInput(message)) if message == "klingon is not a language drills are written in."
+    ));
 }
 
 #[test]

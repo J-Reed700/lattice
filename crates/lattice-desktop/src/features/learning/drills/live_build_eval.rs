@@ -491,7 +491,6 @@ async fn live_build_eval() -> Result<()> {
             let name = format!("{language}-{index:02}");
             let material = Material::code(language.clone());
             let spec = DrillSpec {
-                domain: None,
                 lines,
                 patterns: targets(&material, &tried, now(), patterns)
                     .iter()
@@ -675,7 +674,6 @@ async fn live_passage_build_eval() -> Result<()> {
         let name = format!("passage-{index:02}");
         let material = Material::Passage;
         let spec = DrillSpec {
-            domain: None,
             lines,
             patterns: targets(&material, &tried, now(), patterns)
                 .iter()

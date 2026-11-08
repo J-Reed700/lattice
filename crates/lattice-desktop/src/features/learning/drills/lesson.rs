@@ -3,7 +3,7 @@
 use crate::features::learning::persistence::{db, decode};
 use lattice_core::domain::learning::drills::{LessonBrief, LessonSentence};
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 /// The kinds of block that teach: the ones a prepared lesson's evidence is cut from.
 const TEACHING: [&str; 4] = ["explanation", "worked_example", "contrast", "recap"];
@@ -136,4 +136,12 @@ impl LessonContext {
             evidence,
         }
     }
+}
+
+/// The bodies of every block of the course's prepared lessons, other than replaced or skipped ones.
+pub(in crate::features::learning) async fn prepared_bodies_in(
+    _connection: &mut SqliteConnection,
+    _program_id: &str,
+) -> Result<Vec<String>> {
+    Ok(Vec::new())
 }
