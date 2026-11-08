@@ -1214,6 +1214,136 @@ async fn a_dry_run_leaves_a_dropped_question_dropped() -> Result<()> {
     Ok(())
 }
 
+const SAME_QUESTION: &str = "Another question in this course has the same prompt and choices.";
+
+type Held = (String, String, String, String, String, String);
+
+/// Each lesson question's text, key, content token and status, in order.
+async fn held(course: &Course) -> Result<Vec<Held>> {
+    Ok(sqlx::query_as::<_, Held>(
+        "SELECT c.prompt, c.options_json, k.key_json, k.explanation, c.content_sha256, c.review_status \
+         FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id \
+         WHERE c.lesson_id=? ORDER BY c.rowid",
+    )
+    .bind(&course.lesson_id)
+    .fetch_all(&course.pool)
+    .await?)
+}
+
+/// Stores `text` as one more question of the lesson, as the bank does.
+async fn add_question(course: &Course, text: &QuestionText) -> Result<()> {
+    let outcome: String = sqlx::query_scalar(
+        "SELECT id FROM learning_outcome_definitions WHERE program_id=? AND lesson_id=?",
+    )
+    .bind(&course.program_id)
+    .bind(&course.lesson_id)
+    .fetch_one(&course.pool)
+    .await?;
+    let mut entry = bank_item(&outcome, text);
+    entry.lesson_id = Some(course.lesson_id.clone());
+    let mut connection = course.pool.acquire().await?;
+    let stored = insert_bank_items_in(&mut connection, &course.program_id, &[entry], None).await?;
+    assert_eq!(stored, 1);
+    Ok(())
+}
+
+/// The second question with the first one's prompt and choices.
+fn q1_as_q0() -> QuestionText {
+    QuestionText {
+        prompt: P0.into(),
+        choices: C0.map(String::from).to_vec(),
+        ..q1()
+    }
+}
+
+#[tokio::test]
+async fn an_edit_that_matches_another_question_is_refused_and_writes_nothing() -> Result<()> {
+    let course = published().await?;
+    let seen = held(&course).await?;
+    let report = snapshot(&course).await?;
+
+    let result = edit(&course, 1, q1(), q1_as_q0(), false).await;
+
+    assert_eq!(refused(result), SAME_QUESTION);
+    assert_eq!(held(&course).await?, seen);
+    assert_eq!(snapshot(&course).await?, report);
+    Ok(())
+}
+
+#[tokio::test]
+async fn saving_a_dropped_repeat_as_it_stands_is_refused_and_it_stays_dropped() -> Result<()> {
+    let course = published().await?;
+    add_question(&course, &q0()).await?;
+    assert_eq!(
+        statuses(&course).await?,
+        ["agreed", "agreed", "agreed", "dropped"]
+    );
+    let seen = held(&course).await?;
+    let after = QuestionText {
+        explanation: NEW_EXPLANATION.into(),
+        ..q0()
+    };
+
+    let result = edit(&course, 3, q0(), after, false).await;
+
+    assert_eq!(refused(result), SAME_QUESTION);
+    assert_eq!(held(&course).await?, seen);
+    assert_eq!(
+        statuses(&course).await?,
+        ["agreed", "agreed", "agreed", "dropped"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_saved_question_keeps_the_token_of_its_new_content() -> Result<()> {
+    let course = published().await?;
+    let after = QuestionText {
+        prompt: NEW_PROMPT.into(),
+        ..q0()
+    };
+    edit(&course, 0, q0(), after.clone(), false).await?;
+
+    add_question(&course, &q0()).await?;
+    add_question(&course, &after).await?;
+
+    assert_eq!(
+        statuses(&course).await?,
+        ["agreed", "agreed", "agreed", "agreed", "dropped"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_dry_run_refuses_an_edit_that_matches_another_question() -> Result<()> {
+    let course = published().await?;
+    let seen = held(&course).await?;
+
+    let result = edit(&course, 1, q1(), q1_as_q0(), true).await;
+
+    assert_eq!(refused(result), SAME_QUESTION);
+    assert_eq!(held(&course).await?, seen);
+    Ok(())
+}
+
+/// A guard that passes before and after the fix: a question's own token is
+/// not another question's.
+#[tokio::test]
+async fn a_new_explanation_on_a_question_that_repeats_nothing_is_saved() -> Result<()> {
+    let course = published().await?;
+    let after = QuestionText {
+        explanation: NEW_EXPLANATION.into(),
+        ..q0()
+    };
+
+    let saved = edit(&course, 0, q0(), after, false).await?;
+
+    assert!(saved.changed);
+    assert_eq!(statuses(&course).await?, ["agreed", "agreed", "agreed"]);
+    assert_eq!(held(&course).await?[0].3, NEW_EXPLANATION);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_save_leaves_a_reported_question_reported() -> Result<()> {
     let course = published().await?;
