@@ -195,9 +195,9 @@ mod tests {
 
         std::fs::File::create(&db_path).unwrap();
 
-        let db_url = format!("sqlite:{}", db_path.display());
-
-        let pool = sqlx::SqlitePool::connect(&db_url).await.unwrap();
+        let pool = sqlx::SqlitePool::connect_with(crate::tests::sqlite::file_options(&db_path))
+            .await
+            .unwrap();
 
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
