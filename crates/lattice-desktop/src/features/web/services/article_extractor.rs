@@ -4,6 +4,7 @@
 //! date, word count, reading time (200 WPM) and an excerpt.
 
 use crate::features::web::services::identity;
+use crate::features::web::services::status_error::status_error;
 use crate::features::web::services::web::{build_public_client, validate_url_resolved};
 use crate::features::web::traits::ArticleExtractorServiceTrait;
 use async_trait::async_trait;
@@ -259,20 +260,7 @@ impl ArticleExtractorService {
             let status = response.status();
             warn!(status = %status, url = %fetch_url, "YouTube URL fetch failed");
 
-            return Err(match status {
-                reqwest::StatusCode::FORBIDDEN
-                | reqwest::StatusCode::TOO_MANY_REQUESTS
-                | reqwest::StatusCode::SERVICE_UNAVAILABLE => AppError::Network(format!(
-                    "HTTP {} {}: Site blocked automated access. Try importing the PDF or local file version.",
-                    status.as_u16(),
-                    status.canonical_reason().unwrap_or("Unknown"),
-                )),
-                _ => AppError::Network(format!(
-                    "HTTP {}: {}",
-                    status,
-                    status.canonical_reason().unwrap_or("Unknown")
-                )),
-            });
+            return Err(status_error(status));
         }
 
         let final_url = response.url().to_string();
@@ -452,20 +440,7 @@ impl ArticleExtractorServiceTrait for ArticleExtractorService {
         if !response.status().is_success() {
             let status = response.status();
             warn!(status = %status, url = %fetch_url, "URL fetch failed");
-            return Err(match status {
-                reqwest::StatusCode::FORBIDDEN
-                | reqwest::StatusCode::TOO_MANY_REQUESTS
-                | reqwest::StatusCode::SERVICE_UNAVAILABLE => AppError::Network(format!(
-                    "HTTP {} {}: Site blocked automated access. Try importing the PDF or local file version.",
-                    status.as_u16(),
-                    status.canonical_reason().unwrap_or("Unknown"),
-                )),
-                _ => AppError::Network(format!(
-                    "HTTP {}: {}",
-                    status,
-                    status.canonical_reason().unwrap_or("Unknown")
-                )),
-            });
+            return Err(status_error(status));
         }
 
         // Get final URL (after redirects)

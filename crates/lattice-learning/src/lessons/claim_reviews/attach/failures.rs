@@ -83,14 +83,6 @@ fn host_of(url: &str) -> String {
         .unwrap_or_else(|| url.to_owned())
 }
 
-/// The status of an `HTTP <status>…` network error, as the page reader and
-/// its refusal cache word them.
-fn http_status(message: &str) -> Option<u16> {
-    let rest = message.strip_prefix("HTTP ")?;
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
-}
-
 impl AttachFailureDto {
     fn new(kind: AttachFailureKindDto, message: String, url: &str) -> Self {
         let paste = AttachNextStepDto::PasteText {
@@ -116,20 +108,18 @@ impl AttachFailureDto {
     pub fn from_fetch_error(url: &str, error: &AppError) -> Self {
         let host = host_of(url);
         let (kind, message) = match error {
-            AppError::Network(message) => match http_status(message) {
-                Some(status) if REFUSING_STATUSES.contains(&status) => (
-                    AttachFailureKindDto::Refused,
-                    format!("{host} refused the request (HTTP {status})."),
-                ),
-                Some(status) => (
-                    AttachFailureKindDto::Unreachable,
-                    format!("{host} answered HTTP {status}; the page could not be read."),
-                ),
-                None => (
-                    AttachFailureKindDto::Unreachable,
-                    format!("{host} could not be read: {message}"),
-                ),
-            },
+            AppError::HttpStatus { status, .. } if REFUSING_STATUSES.contains(status) => (
+                AttachFailureKindDto::Refused,
+                format!("{host} refused the request (HTTP {status})."),
+            ),
+            AppError::HttpStatus { status, .. } => (
+                AttachFailureKindDto::Unreachable,
+                format!("{host} answered HTTP {status}; the page could not be read."),
+            ),
+            AppError::Network(message) => (
+                AttachFailureKindDto::Unreachable,
+                format!("{host} could not be read: {message}"),
+            ),
             AppError::InvalidInput(message)
                 if message.starts_with(THIN_PAGE_REFUSAL)
                     || message.starts_with(UNUSABLE_PAGE_REFUSAL) =>

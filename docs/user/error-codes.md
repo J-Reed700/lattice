@@ -98,6 +98,7 @@ Two restore messages arrive with a different code:
 | Code | What it means | What to try |
 |------|---------------|-------------|
 | `NETWORK_ERROR` | A request to another server failed. This happens with model downloads, URL imports, web search, a remote model server or a cloud provider. | Check your connection. For a remote server, check its URL in **Settings > AI > Chat**. |
+| `HTTP_STATUS` | A website answered with an error, such as refusing automated access or a page that is gone. The connection worked. | Open the page in your browser. If it opens there, import the PDF or paste the text instead. For a busy website, Lattice tries again shortly. |
 | `TIMEOUT` | An operation took too long. | Retry. For a slow remote model server, check that it's running and reachable. |
 
 ## Everything else

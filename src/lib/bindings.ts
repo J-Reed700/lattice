@@ -6216,6 +6216,10 @@ export type ErrorCode =
  */
 "NETWORK_ERROR" |
 /**
+ * A web server answered with an error status
+ */
+"HTTP_STATUS" |
+/**
  * Request timeout
  */
 "TIMEOUT" |

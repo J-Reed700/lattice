@@ -1089,6 +1089,44 @@ async fn a_research_round_that_fails_leaves_the_claims_held_and_the_lesson_going
     .await
 }
 
+/// Searches the engines answered with nothing found reached an engine: the
+/// round is not "unreached", so it counts as the claim's research round.
+#[tokio::test]
+async fn a_round_whose_searches_found_nothing_did_reach_a_search_engine() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+    let empty = web(false);
+    empty.0.set_search_results(Vec::new());
+    run(
+        pool,
+        program.summary.id.clone(),
+        program.summary.goal.clone(),
+        Some(empty),
+        async {
+            let outcome = expand(
+                &model(),
+                &references,
+                &[gap()],
+                &[],
+                &ClaimChecks::default(),
+            )
+            .await?;
+            let Expansion::Unchanged(searched) = outcome else {
+                panic!("a search that found nothing adds nothing");
+            };
+            assert!(!searched.queries.is_empty(), "the search ran");
+            assert!(!searched.unreached, "an answer of nothing was an answer");
+            Ok(())
+        },
+    )
+    .await
+}
+
 /// The pages `serving` offers, each a long page of its own.
 fn serving(pages: &[(&str, &str)]) -> Arc<ResearchWeb> {
     let web = web_capture(false, pages[0].0, CAPTURE);

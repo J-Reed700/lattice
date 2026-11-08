@@ -111,8 +111,9 @@ pub(in crate::features::web) enum CachedFetch {
     /// The page, still inside its TTL.
     Page(CachedPage),
     /// The site refused this URL recently, and said so in a way that a retry
-    /// now would not change. `reason` is the live path's own wording.
-    Refusal { reason: String },
+    /// now would not change. `status` is what it answered; `reason` is the
+    /// live path's own wording.
+    Refusal { status: u16, reason: String },
 }
 
 /// One cache file.
@@ -121,6 +122,7 @@ pub(in crate::features::web) enum CachedFetch {
 enum Entry {
     Page(CachedPage),
     Refusal {
+        status: u16,
         reason: String,
         failed_at: DateTime<Utc>,
     },
@@ -185,7 +187,7 @@ impl PageCache {
 
         match entry {
             Entry::Page(page) => Some(CachedFetch::Page(page)),
-            Entry::Refusal { reason, .. } => Some(CachedFetch::Refusal { reason }),
+            Entry::Refusal { status, reason, .. } => Some(CachedFetch::Refusal { status, reason }),
             Entry::Archived(_) | Entry::ArchiveLookup { .. } => None,
         }
     }
@@ -280,6 +282,7 @@ impl PageCache {
             return;
         }
         let entry = Entry::Refusal {
+            status: status.as_u16(),
             reason: reason.to_string(),
             failed_at: (self.now)(),
         };
