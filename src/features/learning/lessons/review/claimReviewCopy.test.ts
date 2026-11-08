@@ -252,6 +252,29 @@ describe('announcements', () => {
     expect(announcement('edit', 0, 2)).toBe('Sentence edited. It is checked when you resume.');
   });
 
+  it('says everything is resolved, and never to resume, once nothing is left on a published lesson', () => {
+    expect(announcement('confirm', 0, 0, true)).toBe('Accepted. Everything is resolved.');
+    expect(announcement('remove', 0, 0, true)).toBe('Removed. Everything is resolved.');
+    expect(announcement('unconfirm', 0, 0, true)).toBe('Acceptance withdrawn. Everything is resolved.');
+    expect(announcement('undo', 0, 0, true)).toBe('Undone. Everything is resolved.');
+    for (const action of ['confirm', 'remove', 'unconfirm', 'undo'] as const) {
+      expect(announcement(action, 0, 0, true)).not.toMatch(/Resume verification/);
+    }
+  });
+
+  it('on a published lesson still counts what is left, and still names the teaching notes that wait', () => {
+    expect(announcement('confirm', 4, 0, true)).toBe('Accepted. 4 left.');
+    expect(announcement('remove', 0, 2, true)).toBe('Removed. No statements are left. 2 teaching notes wait for you.');
+    expect(announcement('undo', 0, 1, true)).toBe('Undone. No statements are left. 1 teaching note waits for you.');
+  });
+
+  it('on a draft lesson keeps telling the user to resume verification', () => {
+    for (const action of ['confirm', 'remove', 'unconfirm', 'undo'] as const) {
+      expect(announcement(action, 0, 0, false)).toContain(ALL_RESOLVED);
+      expect(announcement(action, 0)).toContain(ALL_RESOLVED);
+    }
+  });
+
   it('announces a trusted source with the claims it settled', () => {
     expect(trustedAnnouncement('Monarch Watch', 3, 1)).toBe('Trusted Monarch Watch for this course: 3 claims verified, 1 still needs you.');
     expect(trustedAnnouncement('Monarch Watch', 1, 2)).toBe('Trusted Monarch Watch for this course: 1 claim verified, 2 still need you.');

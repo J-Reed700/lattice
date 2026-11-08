@@ -41,6 +41,13 @@ describe('TeachingFindings', () => {
     expect(within(card).getByText('2 repairs tried and did not settle it.')).toBeVisible();
   });
 
+  it('says no repair was tried when none was', () => {
+    show([note(0, { repairs: 0 }), note(1, { repairs: 1 })]);
+    expect(screen.getByText('No repair was tried on it.')).toBeVisible();
+    expect(screen.queryByText(/The repairs stopped before reaching it/)).not.toBeInTheDocument();
+    expect(screen.getByText('One repair tried and did not settle it.')).toBeVisible();
+  });
+
   it('says what the passage under a note is: the lesson, the quotation it cites or the question', () => {
     show([
       note(0),

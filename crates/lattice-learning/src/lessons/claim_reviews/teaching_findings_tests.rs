@@ -895,3 +895,304 @@ async fn an_old_sentence_level_quotation_row_shows_no_passage_and_a_part_level_o
     );
     assert_eq!(critique.passage_role, TeachingPassageRoleDto::Lesson);
 }
+
+fn with_sentence(mut finding: SetAside, sentence: &str) -> SetAside {
+    finding.finding.sentence = Some(sentence.into());
+    finding
+}
+
+#[tokio::test]
+async fn a_sentence_recorded_with_a_finding_is_listed_and_the_next_pass_replaces_it() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    let finding = |sentence: Option<&str>| {
+        let mut finding = set_aside(
+            FindingKind::Quotation,
+            FindingSite::Section(0),
+            "Section 1 cites nothing.",
+            0,
+        );
+        finding.finding.sentence = sentence.map(str::to_owned);
+        finding
+    };
+    store
+        .record(
+            "l1",
+            "j1",
+            &lesson(),
+            &[finding(Some("The function returns the number 4."))],
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        dto_of(&store, "quotation:section-0")
+            .await
+            .sentence
+            .as_deref(),
+        Some("The function returns the number 4.")
+    );
+    store
+        .record(
+            "l1",
+            "j2",
+            &lesson(),
+            &[finding(Some("Another sentence."))],
+            true,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        dto_of(&store, "quotation:section-0")
+            .await
+            .sentence
+            .as_deref(),
+        Some("Another sentence.")
+    );
+    store
+        .record("l1", "j3", &lesson(), &[finding(None)], true)
+        .await
+        .unwrap();
+    assert_eq!(dto_of(&store, "quotation:section-0").await.sentence, None);
+}
+
+#[tokio::test]
+async fn an_old_row_s_sentence_is_the_one_its_note_completes_and_none_otherwise() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    let cut: String = LONG.chars().take(90).collect();
+    let short = old_row(
+        &store,
+        ("quotation", "section", Some(0)),
+        &uncited("The default timeout is 30 seconds."),
+        None,
+    )
+    .await;
+    section_text(&store, 1, &format!("Before it. {LONG} After it.")).await;
+    let completed = old_row(
+        &store,
+        ("quotation", "section", Some(1)),
+        &uncited(&cut),
+        None,
+    )
+    .await;
+    let unknown = old_row(
+        &store,
+        ("quotation", "section", Some(2)),
+        &uncited(&cut),
+        None,
+    )
+    .await;
+    let cited_cut: String = LONG.chars().take(80).collect();
+    section_text(&store, 5, &format!("Before it. {LONG} After it.")).await;
+    let cited = old_row(
+        &store,
+        ("quotation", "section", Some(5)),
+        &format!("The source citation of the sentence \"{cited_cut}\" could not be confirmed: it was not found."),
+        Some("A quotation of the source."),
+    )
+    .await;
+    let part = old_row(
+        &store,
+        ("quotation", "section", Some(3)),
+        "The source citation at blocks[3] could not be confirmed: it was not found.",
+        None,
+    )
+    .await;
+    let critique = old_row(
+        &store,
+        ("teaching", "section", Some(4)),
+        "Section 5 (candidate blocks-4): The example is wrong.",
+        None,
+    )
+    .await;
+    let sentence = |key: String| {
+        let store = &store;
+        async move { dto_of(store, &key).await.sentence }
+    };
+    assert_eq!(
+        sentence(short).await.as_deref(),
+        Some("The default timeout is 30 seconds.")
+    );
+    assert_eq!(sentence(completed).await.as_deref(), Some(LONG));
+    assert_eq!(sentence(cited).await.as_deref(), Some(LONG));
+    assert_eq!(sentence(unknown).await, None);
+    assert_eq!(sentence(part).await, None);
+    assert_eq!(sentence(critique).await, None);
+}
+
+async fn dto_states(store: &TeachingFindingsRepository) -> Vec<TeachingFindingStateDto> {
+    states(store)
+        .await
+        .into_iter()
+        .map(|(_, state)| state)
+        .collect()
+}
+
+#[tokio::test]
+async fn settling_removed_or_source_added_resolves_waiting_notes_with_that_resolution() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    three_waiting(&store).await;
+    store
+        .settle(
+            "p1",
+            "l1",
+            &keys(&["teaching:section-0"]),
+            TeachingSettleDto::Removed,
+        )
+        .await
+        .unwrap();
+    store
+        .settle(
+            "p1",
+            "l1",
+            &keys(&["structure:section-1"]),
+            TeachingSettleDto::SourceAdded,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        dto_states(&store).await,
+        [
+            TeachingFindingStateDto::Resolved,
+            TeachingFindingStateDto::Resolved,
+            TeachingFindingStateDto::Waiting
+        ]
+    );
+    let removed = dto_of(&store, "teaching:section-0").await;
+    assert_eq!(removed.resolution, Some(TeachingResolutionDto::Removed));
+    assert!(removed.resolved_at.is_some());
+    let added = dto_of(&store, "structure:section-1").await;
+    assert_eq!(added.resolution, Some(TeachingResolutionDto::SourceAdded));
+    let waiting = dto_of(&store, "answer_key:question-0").await;
+    assert_eq!((waiting.resolution, waiting.resolved_at), (None, None));
+    let kept_at: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_lesson_teaching_findings WHERE kept_at IS NOT NULL",
+    )
+    .fetch_one(&store.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept_at, 0);
+}
+
+#[tokio::test]
+async fn a_resolved_note_cannot_be_kept_or_resolved_again_and_one_stale_key_refuses_all() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    three_waiting(&store).await;
+    store
+        .settle(
+            "p1",
+            "l1",
+            &keys(&["teaching:section-0"]),
+            TeachingSettleDto::Removed,
+        )
+        .await
+        .unwrap();
+    for settle in [
+        TeachingSettleDto::Keep,
+        TeachingSettleDto::Removed,
+        TeachingSettleDto::SourceAdded,
+    ] {
+        assert!(store
+            .settle("p1", "l1", &keys(&["teaching:section-0"]), settle)
+            .await
+            .is_err());
+        let refused = store
+            .settle(
+                "p1",
+                "l1",
+                &keys(&["structure:section-1", "teaching:section-0"]),
+                settle,
+            )
+            .await
+            .unwrap_err();
+        assert!(refused
+            .to_string()
+            .contains("Some of these notes changed since you opened them. Reload the lesson."));
+    }
+    assert_eq!(
+        dto_states(&store).await,
+        [
+            TeachingFindingStateDto::Resolved,
+            TeachingFindingStateDto::Waiting,
+            TeachingFindingStateDto::Waiting
+        ]
+    );
+}
+
+#[tokio::test]
+async fn reopening_takes_kept_and_resolved_notes_back_and_clears_the_resolution() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    three_waiting(&store).await;
+    store
+        .settle(
+            "p1",
+            "l1",
+            &keys(&["teaching:section-0"]),
+            TeachingSettleDto::Removed,
+        )
+        .await
+        .unwrap();
+    store
+        .settle(
+            "p1",
+            "l1",
+            &keys(&["structure:section-1"]),
+            TeachingSettleDto::Keep,
+        )
+        .await
+        .unwrap();
+    store
+        .settle(
+            "p1",
+            "l1",
+            &keys(&["teaching:section-0", "structure:section-1"]),
+            TeachingSettleDto::Reopen,
+        )
+        .await
+        .unwrap();
+    assert!(dto_states(&store)
+        .await
+        .iter()
+        .all(|state| *state == TeachingFindingStateDto::Waiting));
+    let reopened = dto_of(&store, "teaching:section-0").await;
+    assert_eq!((reopened.resolution, reopened.resolved_at), (None, None));
+}
+
+#[tokio::test]
+async fn a_resolved_note_stays_resolved_while_its_text_is_unchanged() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    store
+        .record("l1", "j1", &lesson(), &[example_finding()], true)
+        .await
+        .unwrap();
+    store
+        .settle(
+            "p1",
+            "l1",
+            &keys(&["teaching:section-0"]),
+            TeachingSettleDto::SourceAdded,
+        )
+        .await
+        .unwrap();
+    store
+        .record("l1", "j2", &lesson(), &[example_finding()], true)
+        .await
+        .unwrap();
+    let same = dto_of(&store, "teaching:section-0").await;
+    assert_eq!(same.state, TeachingFindingStateDto::Resolved);
+    assert_eq!(same.resolution, Some(TeachingResolutionDto::SourceAdded));
+    let mut changed = lesson();
+    changed["blocks"][0]["body"] = json!("The function returns the string \"4\".");
+    store
+        .record(
+            "l1",
+            "j3",
+            &changed,
+            &[with_sentence(example_finding(), "x")],
+            true,
+        )
+        .await
+        .unwrap();
+    let again = dto_of(&store, "teaching:section-0").await;
+    assert_eq!(again.state, TeachingFindingStateDto::Waiting);
+    assert_eq!((again.resolution, again.resolved_at), (None, None));
+}

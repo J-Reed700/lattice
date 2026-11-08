@@ -95,6 +95,9 @@ pub struct ReviewFinding {
     pub summary: String,
     /// The passage the reviewer chose, when it chose one.
     pub passage: Option<String>,
+    /// The whole sentence a sentence-level quotation finding is about.
+    #[serde(default)]
+    pub sentence: Option<String>,
 }
 
 impl ReviewFinding {
@@ -105,7 +108,14 @@ impl ReviewFinding {
             note: note.into(),
             summary: String::new(),
             passage: None,
+            sentence: None,
         }
+    }
+
+    /// This finding with the whole `sentence` it is about; none when blank.
+    pub fn with_sentence(mut self, sentence: &str) -> Self {
+        self.sentence = (!sentence.trim().is_empty()).then(|| sentence.trim().to_owned());
+        self
     }
 
     /// This finding with the plain-words `summary` the user is shown.

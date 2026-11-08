@@ -10394,6 +10394,22 @@ passage: string | null;
  */
 passageRole: TeachingPassageRoleDto;
 /**
+ * The whole sentence a quotation finding is about, when it is about one.
+ */
+sentence: string | null;
+/**
+ * The live claims on exactly that sentence in the published section.
+ */
+claimIds: string[];
+/**
+ * How a resolved finding was resolved.
+ */
+resolution: TeachingResolutionDto | null;
+/**
+ * When it was resolved.
+ */
+resolvedAt: number | null;
+/**
  * Repairs that tried to settle it.
  */
 repairs: number; state: TeachingFindingStateDto }
@@ -10430,7 +10446,11 @@ export type TeachingFindingStateDto =
 /**
  * The user kept the text as written.
  */
-"kept"
+"kept" |
+/**
+ * The user took the sentence out or added a source for it.
+ */
+"resolved"
 /**
  * What the passage under a finding is.
  */
@@ -10444,6 +10464,18 @@ export type TeachingPassageRoleDto =
  */
 "quotation"
 /**
+ * How a resolved teaching finding was resolved.
+ */
+export type TeachingResolutionDto =
+/**
+ * The sentence was removed from the lesson.
+ */
+"removed" |
+/**
+ * A source that supports the sentence was added.
+ */
+"source_added"
+/**
  * What the user does with waiting or kept teaching findings.
  */
 export type TeachingSettleDto =
@@ -10452,9 +10484,17 @@ export type TeachingSettleDto =
  */
 "keep" |
 /**
- * Take a kept finding back: kept becomes waiting.
+ * Take a kept or resolved finding back: it becomes waiting.
  */
-"reopen"
+"reopen" |
+/**
+ * The sentence was removed: waiting becomes resolved.
+ */
+"removed" |
+/**
+ * A source was added for the sentence: waiting becomes resolved.
+ */
+"source_added"
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }

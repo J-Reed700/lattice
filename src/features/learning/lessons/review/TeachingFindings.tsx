@@ -45,6 +45,12 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
   findings: TeachingFindingDto[];
   /** `lesson-<id>-section-` when the lesson's sections are on the page. */
   lessonAnchor?: string | null;
+  /** The lesson is published: a note about a sentence can take the sentence out or add a source for it. */
+  published?: boolean;
+  /** The review's revision, which taking claims out or back checks. */
+  revision?: number;
+  /** Opens Add a source for the note's first claim. */
+  onAddSource?: (claimId: string, findingKey: string) => void;
 }) {
   const settle = useSettleTeachingFindings(programId, lessonId);
   const waitingKeys = findings.filter(isTeachingWaiting).map((finding) => finding.findingKey);

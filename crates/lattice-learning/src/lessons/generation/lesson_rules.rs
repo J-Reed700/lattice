@@ -612,6 +612,7 @@ mod tests {
             format!("No source is cited for this sentence: \u{201c}{LONG_SENTENCE}\u{201d}")
         );
         assert_eq!(findings[0].passage, None);
+        assert_eq!(findings[0].sentence.as_deref(), Some(LONG_SENTENCE));
     }
 
     #[test]
@@ -633,6 +634,16 @@ mod tests {
             findings[0].passage.as_deref(),
             Some("A timeout applies to each request, in seconds.")
         );
+        assert_eq!(findings[0].sentence.as_deref(), Some(LONG_SENTENCE));
+    }
+
+    #[test]
+    fn only_a_sentence_level_quotation_finding_has_a_sentence() {
+        let mut candidate = lesson();
+        candidate["blocks"][4]["title"] = json!("first  IDEA");
+        let findings = lesson_rules(&candidate);
+        assert!(!findings.is_empty());
+        assert!(findings.iter().all(|finding| finding.sentence.is_none()));
     }
 
     #[test]
@@ -652,7 +663,7 @@ mod tests {
             summaries,
             [
                 "Section 5 has the same title as section 1.",
-                "The lesson does not have the sections it is written with. It has 3 explanations, 2 worked examples, 1 contrast, 2 checks, 1 guided practice, 1 independent practice, 1 reflection, 0 recaps.",
+                "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has 3 explanations, 2 worked examples, 1 contrast, 2 checks, 1 guided practice, 1 independent practice, 1 reflection, 0 recaps.",
                 "Question 4 asks the same thing as question 3.",
                 "Question 5 needs four distinct answer choices.",
             ]

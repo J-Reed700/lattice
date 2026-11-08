@@ -100,6 +100,7 @@ fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
         citations[0].passage.as_deref(),
         Some("Water boils at exactly one hundred degrees in every kitchen.")
     );
+    assert_eq!(citations[0].sentence, None);
 }
 
 #[test]
@@ -141,6 +142,10 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
     assert_eq!(
         findings[0].passage.as_deref(),
         Some("Water boils at exactly fifty degrees in every kitchen.")
+    );
+    assert_eq!(
+        findings[0].sentence.as_deref(),
+        Some("Water boils at 50 degrees Celsius.")
     );
 }
 

@@ -49,6 +49,18 @@ pub enum TeachingFindingStateDto {
     Waiting,
     /// The user kept the text as written.
     Kept,
+    /// The user took the sentence out or added a source for it.
+    Resolved,
+}
+
+/// How a resolved teaching finding was resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum TeachingResolutionDto {
+    /// The sentence was removed from the lesson.
+    Removed,
+    /// A source that supports the sentence was added.
+    SourceAdded,
 }
 
 /// What the user does with waiting or kept teaching findings.
@@ -57,8 +69,12 @@ pub enum TeachingFindingStateDto {
 pub enum TeachingSettleDto {
     /// Keep the text as written: waiting becomes kept.
     Keep,
-    /// Take a kept finding back: kept becomes waiting.
+    /// Take a kept or resolved finding back: it becomes waiting.
     Reopen,
+    /// The sentence was removed: waiting becomes resolved.
+    Removed,
+    /// A source was added for the sentence: waiting becomes resolved.
+    SourceAdded,
 }
 
 /// What the passage under a finding is.
@@ -89,6 +105,14 @@ pub struct TeachingFindingDto {
     pub passage: Option<String>,
     /// Whether the passage is the lesson's own text or a quotation it cites.
     pub passage_role: TeachingPassageRoleDto,
+    /// The whole sentence a quotation finding is about, when it is about one.
+    pub sentence: Option<String>,
+    /// The live claims on exactly that sentence in the published section.
+    pub claim_ids: Vec<String>,
+    /// How a resolved finding was resolved.
+    pub resolution: Option<TeachingResolutionDto>,
+    /// When it was resolved.
+    pub resolved_at: Option<i64>,
     /// Repairs that tried to settle it.
     pub repairs: u32,
     pub state: TeachingFindingStateDto,
@@ -270,6 +294,10 @@ impl TeachingFindingsRepository {
                         .get::<Option<i64>, _>("unit_index")
                         .and_then(|index| u32::try_from(index).ok()),
                     unit_title: row.get("unit_title"),
+                    sentence: None,
+                    claim_ids: Vec::new(),
+                    resolution: None,
+                    resolved_at: None,
                     summary,
                     passage,
                     passage_role: if kind == FindingKind::Quotation {
@@ -337,7 +365,9 @@ impl TeachingFindingsRepository {
             ));
         }
         let (from, to, kept_at) = match settle {
-            TeachingSettleDto::Keep => ("waiting", "kept", Some(now())),
+            TeachingSettleDto::Keep
+            | TeachingSettleDto::Removed
+            | TeachingSettleDto::SourceAdded => ("waiting", "kept", Some(now())),
             TeachingSettleDto::Reopen => ("kept", "waiting", None),
         };
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
