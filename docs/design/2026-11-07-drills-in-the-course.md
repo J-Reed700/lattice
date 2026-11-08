@@ -54,8 +54,10 @@ resumed build and every later stage see the same text:
 - **The lesson:** title and objective.
 - **Evidence, numbered L1, L2, ….**
   - *A prepared lesson:* its teaching blocks (explanation, worked example, contrast, recap) cut into sentences with
-    the core segmenter. A fenced code block counts as one unit. The check, practice and reflection blocks are left
-    out because they are questions, not teaching.
+    the core's `Flowed` segmenter: the `Prose` breaks, except that a line break which only wraps a line is not a cut;
+    a sentence end at a line end still is, and so is a line that opens a block (list item, quote, heading, table row,
+    rule). A fenced code block counts as one unit. The check, practice and reflection blocks are left out because they
+    are questions, not teaching.
   - *An outline lesson:* the course's source passages retrieved for the lesson, each under its source title. The query
     is the lesson's title and objective plus the module's title and outcomes, through `ReferenceCollection` as
     `snapshot_passages` does. It takes as much as the lesson's planned minutes take to read
@@ -79,11 +81,15 @@ passages until lessons are prepared. Everything in a brief is data, never instru
 - **The writer** gets the brief instead of a domain. It writes realistic code in which the lesson's ideas are at work,
   used correctly. `DOMAINS`, `next_domain`, `least_recently_used` and `domain_uses` are removed.
 - **Two kinds of planted issue.** A drill of n issues (3, 4 or 5, by size):
-  - **Lesson issues:** up to ⌈n/2⌉ defects that each break something the lesson teaches. Each cites the evidence it
-    breaks (`lessonSentences`: the evidence numbers) and names a catalogue pattern as its shape: the pattern its defect
-    is an instance of, which the key, the proof and grading need. The planter plants as many as the lesson really
-    supports, and none when the lesson teaches nothing code can show. A brief with no evidence asks for none: the
-    planter is told of lesson issues only when there is evidence to cite.
+  - **Lesson issues:** up to ⌈n/2⌉ defects that each break something the lesson teaches, so that a reviewer who knows
+    only the cited evidence can tell from it that the changed code is wrong. Each cites the evidence it breaks
+    (`lessonSentences`: the evidence numbers) and names a catalogue pattern as its shape: the pattern its defect is an
+    instance of, which the key, the proof and grading need. The code was written so the lesson is at work in it.
+    Before its changes, the planter says in `lessonUse` where the code does what the evidence teaches, with the
+    evidence numbers. It plants the lesson issues first, one at each such place, up to ⌈n/2⌉: fewer only when the code
+    does fewer of those things, none only when it does none. `lessonSentences` comes first in each change, and
+    `lessonUse` before the changes. A brief with no evidence asks for none: the planter is told of lesson issues only
+    when there is evidence to cite.
   - **Catalogue issues:** the other n − i: one for each of the first patterns of the schedule's ranking (§5) that no
     lesson issue has, in order. A lesson issue may take a pattern of the ranking, and every issue is of a different
     pattern, so the catalogue issues then take the next pattern instead.
@@ -112,12 +118,16 @@ The passage comes from the lesson:
 - *An outline lesson:* the course's sources.
 
 Either way the passages are ranked by the brief's query. A passage is the hit's paragraph grown to hold the
-explanation's sentences, and a paragraph holding at least twice that many is cut at sentence ends into runs of that
-many, the last taking any left over. The pick is the best-ranked passage no drill has used. Once all have been used,
-it is the one used longest ago, because drilling a lesson again on the same passage is the point
-of relearning. The explanation is written with the lesson's title as its topic. Clean review, planting and the source
-check are unchanged. If the sources hold no passage for the lesson, that build fails with the reason, and the lesson
-is recorded as having nothing to drill from in passages (§7).
+explanation's sentences, and a paragraph holding at least twice that many is cut into runs of that many, the last taking
+any left over. Sentences are counted and cut as flowed text: a line break that only wraps a line is not a sentence end,
+while a list item, table row or heading is a unit of its own, so a hard-wrapped source gives the same runs as an
+unwrapped one. Of the places the first page of hits overlaps, the pick is the one no drill has used that holds the most
+of the search's term weight; a tie goes to the better-ranked hit. When the first page holds none unused, the next, twice
+as deep, is read. Once all have been used, it is the one used longest ago, because drilling a lesson again on the same
+passage is the point of relearning. The explanation is written with the lesson's title as its topic. Clean review,
+planting and the source check are unchanged, except that the source check shows the checker the passage's sentences as
+flowed text too. If the sources hold no passage for the lesson, that build fails with the reason, and the lesson is
+recorded as having nothing to drill from in passages (§7).
 
 ## 5. What comes back when: two schedules
 

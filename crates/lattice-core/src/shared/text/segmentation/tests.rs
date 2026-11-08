@@ -15,6 +15,24 @@ fn pieces(text: &str) -> Vec<&str> {
 }
 
 #[test]
+fn flowed_sentences_are_exact_slices_when_a_sentence_wraps_over_a_crlf() {
+    let text = "Thresholds with\r\nabstention for anything uncertain. Watch for drift\r\nas new types arrive.\r\n";
+    let spans = flowed_sentences(text);
+    let found: Vec<&str> = spans
+        .iter()
+        .map(|&(start, end)| &text[start..end])
+        .collect();
+    assert_eq!(
+        found,
+        [
+            "Thresholds with\r\nabstention for anything uncertain.",
+            "Watch for drift\r\nas new types arrive."
+        ]
+    );
+    assert_eq!(spans.first(), Some(&(0, 51)));
+}
+
+#[test]
 fn every_row_of_the_boundary_table() {
     let misses: Vec<_> = GOLDEN_RULES
         .iter()
@@ -542,6 +560,7 @@ proptest! {
     #[test]
     fn breaks_ascend_without_repeats_strictly_inside_on_char_boundaries(text in texts()) {
         check_breaks(&text, &Prose.breaks(&text))?;
+        check_breaks(&text, &Flowed.breaks(&text))?;
         check_breaks(&text, &Code.breaks(&text))?;
     }
 
@@ -557,6 +576,12 @@ proptest! {
         for (name, measure) in MEASURES {
             check_windows(&text, name, measure, &shape)?;
         }
+    }
+
+    #[test]
+    fn flowed_breaks_keep_the_offsets_of_prose(text in texts()) {
+        let offsets = |breaks: Vec<Break>| breaks.into_iter().map(|cut| cut.at).collect::<Vec<_>>();
+        prop_assert_eq!(offsets(Flowed.breaks(&text)), offsets(Prose.breaks(&text)));
     }
 
     #[test]

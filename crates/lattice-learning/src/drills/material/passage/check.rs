@@ -15,7 +15,7 @@ use lattice_core::application::services::claim_verification::{
     MIN_VERDICT_CONFIDENCE,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::text::segmentation::sentences;
+use lattice_core::shared::text::segmentation::flowed_sentences;
 
 /// Why a finding of nothing says nothing.
 const NO_VERDICT: &str = "The source check gave no verdict that could be used.";
@@ -105,11 +105,11 @@ impl SourceCheck for ClaimSourceCheck<'_> {
     }
 }
 
-/// The sentences of `passage`, each the exact bytes of the passage it spans. A line break with text on both sides,
-/// as a hard-wrapped source has, does not end a sentence; a blank line does. A passage with no sentence is one.
+/// The sentences of `passage`, each the exact bytes of the passage it spans, read as flowed text: a line break that
+/// only wraps a line does not end a sentence, and a list item, table row or heading is a sentence of its own. A passage
+/// with no sentence is one.
 fn source_sentences(passage: &str) -> Vec<String> {
-    let flowed = flowed(passage);
-    let found: Vec<String> = sentences(&flowed)
+    let found: Vec<String> = flowed_sentences(passage)
         .into_iter()
         .filter_map(|(start, end)| passage.get(start..end))
         .map(str::to_owned)
@@ -119,33 +119,6 @@ fn source_sentences(passage: &str) -> Vec<String> {
     } else {
         found
     }
-}
-
-/// `text` with each line break inside a paragraph, and the carriage return before it, turned into a space: the same
-/// number of bytes in the same places, so a span of it is a span of `text`.
-fn flowed(text: &str) -> String {
-    let lines: Vec<&str> = text.split('\n').collect();
-    let mut flowed = String::with_capacity(text.len());
-    for (index, line) in lines.iter().enumerate() {
-        let Some(next) = lines.get(index + 1) else {
-            flowed.push_str(line);
-            break;
-        };
-        if line.trim().is_empty() || next.trim().is_empty() {
-            flowed.push_str(line);
-            flowed.push('\n');
-            continue;
-        }
-        match line.strip_suffix('\r') {
-            Some(bare) => {
-                flowed.push_str(bare);
-                flowed.push(' ');
-            }
-            None => flowed.push_str(line),
-        }
-        flowed.push(' ');
-    }
-    flowed
 }
 
 /// What a check that gave no usable verdict comes to.
