@@ -5,7 +5,7 @@
 //!
 //! `CodeMaterial` is code; `PassageMaterial` is an explanation of a passage of a course's source.
 
-mod code;
+pub(crate) mod code;
 pub(crate) mod passage;
 
 pub(crate) use code::CodeMaterial;

@@ -1,18 +1,18 @@
 //! Stage 1 for code: the model writes the clean code, and where the language has a runner, a suite that passes on it.
 
-use super::CodeMaterial;
+use super::{teaches, CodeMaterial};
 use crate::drills::brief::lesson_brief;
+use crate::drills::budget;
 use crate::drills::build::ask::{ask_until_suite_passes, normalise, refuse, text_schema};
 use crate::drills::build::{Baseline, CleanCode, Trail};
 use crate::drills::lesson::LessonContext;
 use crate::drills::material::StageCtx;
 use crate::drills::runner::CodeRunner;
 use crate::drills::spec::DrillSpec;
-use crate::drills::{budget, schedules};
 use crate::generation::parse_json;
 use crate::lab_runtime::validate_lab_path;
 use crate::model_call;
-use crate::persistence::db;
+use crate::persistence::now;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::domain::learning::drills::{DrillFile, Family, LessonBrief, Pattern};
 use lattice_core::shared::error::{AppError, Result};
@@ -92,10 +92,31 @@ impl CodeMaterial<'_> {
             ));
         };
         let context = LessonContext::load(ctx.pool, program_id, lesson_id).await?;
-        let basis = {
-            let mut connection = ctx.pool.acquire().await.map_err(db)?;
-            schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?
+        let mut trail = Trail::default();
+        let check = teaches::basis(&context)?;
+        let fits = match teaches::stored(ctx.pool, &context, &check).await? {
+            Some(fits) => fits,
+            None => {
+                let taught = teaches::ask(ctx.llm, &context).await?;
+                trail.call("code fit check", ctx.llm.model_name());
+                teaches::record(
+                    ctx.pool,
+                    &context,
+                    &check,
+                    &taught,
+                    ctx.llm.model_name(),
+                    now(),
+                )
+                .await?;
+                taught.teaches
+            }
         };
+        if !fits {
+            return Err(AppError::InvalidInput(format!(
+                "The lesson \"{}\" teaches nothing a code drill can show.",
+                context.lesson
+            )));
+        }
         let room = self.brief_room(language, spec, &targets, ctx);
         let brief = lesson_brief(ctx.llm, ctx.pool, &context, room).await?;
         let rules = Rules {
@@ -111,7 +132,6 @@ impl CodeMaterial<'_> {
             budget::code(spec.lines, self.runner.is_some()),
             "low",
         );
-        let mut trail = Trail::default();
         let answer = ask_until_suite_passes(
             ctx.llm,
             self.runner,
@@ -138,7 +158,7 @@ impl CodeMaterial<'_> {
             suite: answer.suite,
             source: None,
             brief: Some(brief),
-            basis: Some(basis),
+            basis: None,
             trail,
         })
     }

@@ -7,8 +7,10 @@ mod clean;
 mod judge;
 mod plant;
 mod review;
+mod teaches;
 
 pub(super) use judge::judge_wording;
+pub(crate) use teaches::basis_of;
 
 use super::{DrillMaterial, PlantWording, ReviewerWording, StageCtx};
 use crate::drills::build::{Baseline, CleanCode, CleanReview, Mutation};

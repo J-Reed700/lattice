@@ -2,6 +2,7 @@
 //! of a material and each lesson of a course comes back, and which material a lesson fits. Grading writes the
 //! schedules in the transaction that records the grade, and the bank reads them.
 
+use super::material::code;
 use super::repository::StoredDrill;
 use crate::persistence::{db, hash};
 use crate::recall::schedule::CardSchedule;
@@ -296,13 +297,16 @@ pub(crate) async fn lesson_fits_in(
 }
 
 /// Whether the lesson can be drilled in `material` (`code` or `passage`): unless it is recorded as not fitting on the
-/// basis it has now.
+/// basis it has now, a passage by the fit table and code by the code fit check.
 async fn fits_in(
     connection: &mut SqliteConnection,
     program_id: &str,
     lesson_id: &str,
     material: &str,
 ) -> Result<bool> {
+    if material == "code" {
+        return code_fits_in(connection, program_id, lesson_id).await;
+    }
     let recorded: Option<(i64, String)> = sqlx::query_as(
         "SELECT fits,basis FROM learning_drill_lesson_fits WHERE program_id=? AND lesson_id=? AND material=?",
     )
@@ -316,6 +320,36 @@ async fn fits_in(
         Some((0, basis)) => Ok(basis != fit_basis_in(connection, program_id, lesson_id).await?),
         _ => Ok(true),
     }
+}
+
+/// Whether the lesson can be drilled in code: unless the code fit check turned it down on the basis it has now.
+async fn code_fits_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    lesson_id: &str,
+) -> Result<bool> {
+    let facts: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT m.title,l.title,l.objective FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.id=? AND l.program_id=?",
+    )
+    .bind(lesson_id)
+    .bind(program_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(db)?;
+    let Some((module, lesson, objective)) = facts else {
+        return Ok(true);
+    };
+    let basis = code::basis_of(&module, &lesson, &objective)?;
+    let turned_down: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM learning_drill_code_checks WHERE program_id=? AND lesson_id=? AND basis=? AND teaches=0)",
+    )
+    .bind(program_id)
+    .bind(lesson_id)
+    .bind(&basis)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(!turned_down)
 }
 
 /// What a decision that the lesson fits a material rests on: a hash of the lesson's blocks and of the course's active

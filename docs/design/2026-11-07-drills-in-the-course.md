@@ -78,6 +78,16 @@ passages until lessons are prepared. Everything in a brief is data, never instru
   prepared lessons is written in; otherwise the one the learner's latest code drill of any course was taken in;
   otherwise the catalogue's first. The view remembers a language picked for a course, so a pick whose drill is still
   being built is not lost.
+- **The code fit check.** Before the brief is built, the model is asked whether the lesson teaches something code can
+  show: whether a program can follow or break what it teaches (rules, techniques, designs, algorithms, checks, limits,
+  the order of steps, or ways of handling data, failures, security or privacy). A lesson that has the learner draw,
+  explain or defend a design teaches that design. One whose whole content is done by people (how to speak, present,
+  rehearse, negotiate or study; terms to remember or say aloud; facts no program acts on) does not. The model gives its
+  reason first. The verdict is stored for the lesson with its basis, the check's text and the lesson's module, title
+  and objective, so a lesson is asked about once until one of them changes. A lesson turned down gives no code drill:
+  the build fails with the reason, and the lesson is not offered next for code (§5). It stays offered for
+  explanations. A built drill's outcome does not decide this: a drill can keep no lesson issue on a lesson that
+  teaches code, because the planter found no place for one or the lesson check failed it.
 - **The writer** gets the brief instead of a domain. It writes realistic code in which the lesson's ideas are at work,
   used correctly. `DOMAINS`, `next_domain`, `least_recently_used` and `domain_uses` are removed.
 - **Two kinds of planted issue.** A drill of n issues (3, 4 or 5, by size):
@@ -146,11 +156,11 @@ graded), so no review log is needed. SQLite's `BEGIN IMMEDIATE` serialises concu
 
 - **Patterns:** one schedule per material (`code:python`, `passage`) and pattern. Every rated issue rates its pattern,
   as `ratings()` does today. `targets()` reads these states.
-- **Lessons:** one schedule per course and lesson. The issues tied to the lesson rate it: in code, those with a lesson
-  link; in a passage drill, every rated issue. The rating is the floor of their mean, counting Again as 0 up to Easy as
-  3. For example, found, found and missed gives Hard. A code drill with no lesson issue rates no lesson. The lesson is
-  then recorded as having no code ideas (§7) and is not offered next for code. It stays offered for explanations and
-  can still be picked. Without that record the lesson would stay "never drilled" and come first again every time.
+- **Lessons:** one schedule per course and lesson. The issues tied to the lesson rate it: in a passage drill, every
+  rated issue; in code, those with a lesson link, or every rated issue when none has one, because the code was written
+  on the lesson's subject. Without a rating the lesson would stay "never drilled" and come first again every time. The
+  rating is the floor of their mean, counting Again as 0 up to Easy as 3. For example, found, found and missed gives
+  Hard.
 - **Pending.** The next build is queued the moment a drill is taken, before it is graded. Without a pending state the
   next drill would repeat the same lesson and the same new patterns. A lesson or pattern is pending in three cases:
   a drill of it is submitted and waiting for its grade, it is ready on a shelf (any shelf of the course, for a lesson;
@@ -167,8 +177,9 @@ graded), so no review log is needed. SQLite's `BEGIN IMMEDIATE` serialises concu
   | 4 | pending | pending |
 
   Pending is ranked last rather than left out, so a one-lesson course still gets drills. A pending pattern is planted
-  only once every other pattern is, even when its family has not been picked in the round. A lesson recorded as not
-  fitting the material is left out.
+  only once every other pattern is, even when its family has not been picked in the round. A lesson that does not fit
+  the material is left out: for code, one the code fit check turned down (§3); for passages, one whose sources hold no
+  passage that teaches it (§4).
 
 FSRS never schedules a lesson sooner than a day. For a course studied in a day, that means each lesson is drilled once
 and then the weakest come back first. A course has no interview date today. When it has one, the lesson schedule
@@ -187,7 +198,7 @@ al., 2008).
 
 ## 7. Persistence
 
-Two migrations. The first:
+Three migrations. The first:
 - `learning_drills.lesson_id TEXT REFERENCES learning_lessons(id) ON DELETE SET NULL`, with an index for the shelf:
   `(program_id, material, language, status, created_at)`. It replaces the bank's older indexes by language, by course
   and by program. The domain-use index goes with `DOMAINS`, and an index on `lesson_id` serves deleting a lesson.
@@ -197,11 +208,9 @@ Two migrations. The first:
   The pair references the lesson within its course, so a lesson of another course cannot be recorded, and the row
   cascades with the course and the lesson.
 - `learning_drill_lesson_fits(program_id, lesson_id, material, fits, basis, decided_at)` records whether a lesson can
-  be drilled in code or passages.
-  - It is written when a drill of the lesson is stored: code fits when it kept a lesson issue, and a passage always
-    fits.
-  - It is also written when a passage pick finds nothing for the lesson. A code brief with no evidence needs no
-    record of its own: its drill is stored with no lesson issue, and that records that code does not fit.
+  be drilled in passages. Whether it can be drilled in code is the code fit check's verdict (the third migration).
+  - It is written when a passage drill of the lesson is stored (it fits) and when a passage pick finds nothing that
+    teaches the lesson (it does not).
   - `basis` hashes the evidence the decision rested on: the lesson's blocks when it is prepared, and the course's
     active source versions, which a prepared lesson's passages come from too. A record whose basis no longer matches
     is ignored. So preparing the lesson or changing a source asks the question again, and no retrieval runs to find
@@ -210,6 +219,10 @@ Two migrations. The first:
 The second adds `learning_drill_passage_checks(program_id, lesson_id, version_id, start_byte, end_byte, basis, teaches,
 reason, model, checked_at)`: the passage check's verdict on a passage for a lesson (§4), one per lesson and passage,
 replaced by a new verdict, and gone with the course, the lesson or the source version.
+
+The third adds `learning_drill_code_checks(program_id, lesson_id, basis, teaches, reason, model, checked_at)`: the code
+fit check's verdict on a lesson (§3), one per lesson, replaced by a new verdict, and gone with the course or the lesson.
+A lesson fits code unless its verdict on the basis it has now says it does not.
 
 `DrillSpec` gets `lesson_id`. `patterns` becomes the ranked catalogue targets, n of them. The most lesson issues to
 plant, ⌈n/2⌉ for code and 0 for a passage, is derived from them (`lesson_issues()`), so no spec stores it.

@@ -87,15 +87,18 @@ fn mean(ratings: impl Iterator<Item = PatternRating>) -> Option<PatternRating> {
 }
 
 /// The rating a review gives the lesson its drill was built from: the mean of the ratings of the issues tied to it.
-/// Every rated issue of a passage is tied to it; of code, those with a lesson link. `None` when none is tied.
+/// Every rated issue of a passage is tied to it; of code, those with a lesson link, or every rated issue when none
+/// has one. `None` when nothing is rated.
 pub fn lesson_rating(
     material: &Material,
     key: &[KeyIssue],
     assessment: &Assessment,
 ) -> Option<PatternRating> {
+    let only_linked = !matches!(material, Material::Passage)
+        && rated(key, assessment).any(|(issue, _)| issue.lesson.is_some());
     mean(
         rated(key, assessment)
-            .filter(|(issue, _)| matches!(material, Material::Passage) || issue.lesson.is_some())
+            .filter(|(issue, _)| !only_linked || issue.lesson.is_some())
             .map(|(_, rating)| rating),
     )
 }

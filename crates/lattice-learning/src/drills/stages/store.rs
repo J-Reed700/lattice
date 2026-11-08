@@ -75,18 +75,18 @@ impl DrillBuild<'_> {
             spec.lesson_id.as_deref(),
             built.code.basis.as_deref(),
         ) {
-            let fits = spec.material.language().is_none()
-                || drill.key.iter().any(|issue| issue.lesson.is_some());
-            schedules::record_fit_in(
-                &mut transaction,
-                program_id,
-                lesson_id,
-                &spec.material,
-                fits,
-                basis,
-                now(),
-            )
-            .await?;
+            if spec.material.language().is_none() {
+                schedules::record_fit_in(
+                    &mut transaction,
+                    program_id,
+                    lesson_id,
+                    &spec.material,
+                    true,
+                    basis,
+                    now(),
+                )
+                .await?;
+            }
         }
         let completed = JobStore::complete_in(
             &mut transaction,
