@@ -113,16 +113,36 @@ pub(crate) fn put_place<'a>(text: &str, sentence: &'a str, cuts: &[&'a CutPlace]
     }
 }
 
-/// Every cut the machine recorded in `field` among `claims`.
+/// Every cut the machine recorded in `field` of section `unit_index` among
+/// `claims`.
 pub(crate) fn cuts_in<'a>(
     claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>,
+    unit_index: usize,
     field: &str,
 ) -> Vec<CutPlace> {
     claims
         .into_iter()
-        .filter(|claim| claim.location().field == field)
+        .filter(|claim| {
+            let location = claim.location();
+            location.unit_index == unit_index && location.field == field
+        })
         .filter_map(|claim| claim.cut_place().cloned())
         .collect()
+}
+
+/// The cuts in that section, and `entry`'s own even when its recorded section
+/// is not the one the text was found in.
+pub(crate) fn cuts_for<'a>(
+    claims: impl IntoIterator<Item = &'a ClaimLedgerEntry>,
+    entry: &ClaimLedgerEntry,
+    unit_index: usize,
+    field: &str,
+) -> Vec<CutPlace> {
+    let mut cuts = cuts_in(claims, unit_index, field);
+    if entry.location().unit_index != unit_index {
+        cuts.extend(entry.cut_place().cloned());
+    }
+    cuts
 }
 
 /// `text` with `sentence` written in where the `cuts` put it; where they

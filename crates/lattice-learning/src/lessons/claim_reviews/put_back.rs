@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use super::repository::{append_in, load_in};
 
 use crate::content_verification::{
-    cuts_in, field_pointer, field_text, insert_sentence, located_quote, put_place, put_sentence,
+    cuts_for, field_pointer, field_text, insert_sentence, located_quote, put_place, put_sentence,
     Placing,
 };
 
@@ -151,9 +151,20 @@ fn surviving_unit(claims: &[ClaimLedgerEntry], entry: &ClaimLedgerEntry) -> Opti
     units.all(|other| other == unit).then_some(unit)
 }
 
-/// Every cut the machine recorded in `field`, the claim's own included.
-fn cuts_with(claims: &[ClaimLedgerEntry], entry: &ClaimLedgerEntry, field: &str) -> Vec<CutPlace> {
-    cuts_in(claims.iter().chain(std::iter::once(entry)), field)
+/// Every cut the machine recorded in the section's `field`, the claim's own
+/// included.
+fn cuts_with(
+    claims: &[ClaimLedgerEntry],
+    entry: &ClaimLedgerEntry,
+    unit_index: usize,
+    field: &str,
+) -> Vec<CutPlace> {
+    cuts_for(
+        claims.iter().chain(std::iter::once(entry)),
+        entry,
+        unit_index,
+        field,
+    )
 }
 
 /// Where the claim's taken-out sentence goes back, when the ledger and the
@@ -174,7 +185,7 @@ pub(super) fn place(
             .find_map(|text| lesson.unit_holding(&field, text));
         if let Some(unit_index) = unit {
             let text = lesson.text(unit_index, &field)?;
-            let cuts = cuts_with(claims, entry, &field);
+            let cuts = cuts_with(claims, entry, unit_index, &field);
             let refs: Vec<&CutPlace> = cuts.iter().collect();
             match put_place(&text, &cut.sentence, &refs) {
                 Placing::At(anchor) => {
@@ -353,7 +364,7 @@ pub(super) fn stage(
     let put = if published {
         insert_sentence(text, &place.anchor, sentence)
     } else {
-        let cuts = cuts_with(claims, entry, &place.field);
+        let cuts = cuts_with(claims, entry, place.unit_index, &place.field);
         put_sentence(text, sentence, &cuts, &place.anchor)
     };
     if let (Some(put), Some(slot)) = (put, units.pointer_mut(&pointer)) {

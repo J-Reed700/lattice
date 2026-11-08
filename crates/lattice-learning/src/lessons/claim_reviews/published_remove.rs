@@ -10,6 +10,7 @@ use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::segmentation::sentences;
 use sqlx::SqliteConnection;
 
 use super::actions::{in_section_body, ONLY_SECTION};
@@ -58,15 +59,15 @@ pub(super) fn without_sentence(body: &str, range: (usize, usize)) -> String {
     format!("{kept_before}{separator}{kept_after}")
 }
 
-/// What a removal took out: the text, and the shortest texts that end
+/// What a removal took out: the text, and the whole sentences that end
 /// (`follows`) and start (`precedes`) where it was taken from.
 pub(super) type Removal = (String, Option<String>, Option<String>);
 
 /// What `without_sentence` took out of `old` to leave `new`, and where: the
-/// text itself, and the shortest texts in `new` that occur once and end and
-/// start at the junction (`None` when it was taken from the start or the end).
-/// `None` when the two do not differ by one deletion, or no text beside the
-/// junction names its place.
+/// text itself, and the sentence-aligned text of `new` before and after the
+/// junction (`None` when it was taken from the start or the end), widened by a
+/// sentence each way until the two together occur once. `None` when the two do
+/// not differ by one deletion.
 pub(super) fn removal_text(old: &str, new: &str) -> Option<Removal> {
     let at = old
         .chars()
@@ -80,27 +81,29 @@ pub(super) fn removal_text(old: &str, new: &str) -> Option<Removal> {
     if format!("{}{}{}", new.get(..at)?, text, new.get(at..)?) != old || text.is_empty() {
         return None;
     }
-    let once = |context: &&str| span_of(new, context).is_some();
-    let before = new.get(..at)?;
-    let follows = if before.is_empty() {
-        None
-    } else {
-        let mut suffixes = before
-            .char_indices()
-            .rev()
-            .filter_map(|(start, _)| before.get(start..));
-        Some(suffixes.find(once)?.to_owned())
-    };
-    let after = new.get(at..)?;
-    let precedes = if after.is_empty() {
-        None
-    } else {
-        let mut prefixes = after
-            .char_indices()
-            .filter_map(|(start, c)| after.get(..start + c.len_utf8()));
-        Some(prefixes.find(once)?.to_owned())
-    };
-    Some((text.to_owned(), follows, precedes))
+    let spans = sentences(new);
+    let mut before = spans.iter().rposition(|&(_, end)| end <= at);
+    let mut after = spans
+        .iter()
+        .position(|&(start, _)| start >= at)
+        .unwrap_or(spans.len());
+    loop {
+        let start = before.and_then(|i| spans.get(i)).map_or(0, |span| span.0);
+        let stop = spans.get(after).map_or(new.len(), |span| span.1);
+        let follows = new.get(start..at).filter(|context| !context.is_empty());
+        let precedes = new.get(at..stop).filter(|context| !context.is_empty());
+        let joined = format!("{}{}", follows.unwrap_or(""), precedes.unwrap_or(""));
+        let alone = follows.is_none() || precedes.is_none();
+        if alone || span_of(new, &joined).is_some() {
+            return Some((
+                text.to_owned(),
+                follows.map(str::to_owned),
+                precedes.map(str::to_owned),
+            ));
+        }
+        before = before.and_then(|i| i.checked_sub(1));
+        after = (after + 1).min(spans.len());
+    }
 }
 
 /// Whether a line's text before the sentence is only the marker of a list

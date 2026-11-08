@@ -126,7 +126,7 @@ fn changes(entries: &[ClaimLedgerEntry], candidate: &Value) -> Vec<Change> {
                     pointer,
                     anchor: place.anchor.clone(),
                     sentence: sentence.clone(),
-                    cuts: cuts_in(entries, &place.field),
+                    cuts: cuts_for(entries, entry, place.unit_index, &place.field),
                 });
             }
             continue;
