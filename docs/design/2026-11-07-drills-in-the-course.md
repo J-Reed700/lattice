@@ -100,7 +100,8 @@ passages until lessons are prepared. Everything in a brief is data, never instru
 - **The proof** of every issue is chosen by its pattern's family, unchanged. A proven lesson issue then gets a
   **lesson check**, a stage of its own between the proof and the blind review, checkpointed like the others (a build
   has seven stages): a judge is shown the cited sentences, the clean code and the changed code, and answers with
-  reasons first, then whether the change breaks what those sentences say and whether the clean code follows them.
+  reasons first, then whether the changed code fails to do something those sentences say, so that a reviewer who
+  knows only them could tell it is wrong, and whether the clean code does what they say.
   - It fails the check but passed its proof: it stays in the key as a plain issue with no lesson link.
   - It fails its proof: it is dropped, as today.
 - **The key.** `KeyIssue` gets `lesson: Option<LessonLink { lesson_id, sentences }>`, a serde default, so old keys
