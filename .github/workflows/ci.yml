@@ -47,7 +47,7 @@ jobs:
         run: |
           fail_safe() { echo rust=true >> "$GITHUB_OUTPUT"; echo web=true >> "$GITHUB_OUTPUT"; echo all=true >> "$GITHUB_OUTPUT"; }
           if [ "$EVENT" != "pull_request" ]; then fail_safe; exit 0; fi
-          if ! gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename' > files.txt; then
+          if ! gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt; then
             fail_safe; exit 0
           fi
           python3 - <<'PYCODE' || fail_safe
