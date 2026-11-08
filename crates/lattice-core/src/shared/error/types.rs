@@ -52,8 +52,12 @@ pub enum AppError {
     /// Invalid input from user
     InvalidInput(String),
 
-    /// Network errors
+    /// The request got no answer: DNS, connect, TLS, a reset or a timeout.
     Network(String),
+
+    /// A web server answered with an error status instead of what was asked
+    /// for; the connection worked. `message` says what it answered.
+    HttpStatus { status: u16, message: String },
 
     /// File too large to process
     FileTooLarge {
@@ -272,7 +276,7 @@ impl AppError {
             AppError::NotFound(_) => "NOT_FOUND",
             AppError::PermissionDenied(_) => "PERMISSION_DENIED",
             AppError::InvalidInput(_) => "INVALID_INPUT",
-            AppError::Network(_) => "NETWORK_ERROR",
+            AppError::Network(_) | AppError::HttpStatus { .. } => "NETWORK_ERROR",
             AppError::FileTooLarge { .. } => "FILE_TOO_LARGE",
             AppError::FileStorage(_) => "FILE_STORAGE_ERROR",
             AppError::FileNotFound { .. } => "FILE_NOT_FOUND",
@@ -359,6 +363,7 @@ impl AppError {
         match self {
             AppError::QueueFull
             | AppError::Network(_)
+            | AppError::HttpStatus { .. }
             | AppError::Io { .. }
             | AppError::RateLimitExceeded(_)
             | AppError::ConcurrentModification { .. } => true,
@@ -546,6 +551,11 @@ impl fmt::Display for AppError {
                 f,
                 "Network error: {}. Please check your connection.",
                 e
+            ),
+            AppError::HttpStatus { message, .. } => write!(
+                f,
+                "Network error: {}. Please check your connection.",
+                message
             ),
             AppError::FileTooLarge { path, size_bytes, max_size_bytes } => write!(
                 f,

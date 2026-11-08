@@ -44,6 +44,7 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
 
   // Network Errors
   [ErrorCode.NETWORK_ERROR]: "Lattice couldn't reach the model server.",
+  [ErrorCode.HTTP_STATUS]: "Lattice couldn't reach the model server.",
   [ErrorCode.TIMEOUT]: 'Operation timed out. Please try again.',
   [ErrorCode.RATE_LIMIT_EXCEEDED]: 'The model is getting too many requests. Wait a minute and try again.',
 
@@ -81,6 +82,7 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
 
 const WAITING_MESSAGES: Partial<Record<ErrorCode, string>> = {
   [ErrorCode.NETWORK_ERROR]: "Can't reach the model server. Lattice keeps trying.",
+  [ErrorCode.HTTP_STATUS]: "Can't reach the model server. Lattice keeps trying.",
   [ErrorCode.RATE_LIMIT_EXCEEDED]: 'The model is getting too many requests. Lattice keeps trying.',
   [ErrorCode.SERVICE_NOT_AVAILABLE]: 'The model server is busy or starting. Lattice keeps trying.',
 };

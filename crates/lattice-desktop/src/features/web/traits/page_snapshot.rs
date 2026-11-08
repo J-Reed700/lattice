@@ -10,6 +10,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use lattice_core::shared::error::AppError;
 use tokio_util::sync::CancellationToken;
 
 /// What to capture. `snapshot_id` is allocated by the store before capture so
@@ -127,6 +128,12 @@ impl CaptureError {
         matches!(self, Self::Network(_) | Self::Timeout)
     }
 
+    /// The error a job raises to be retried later, saying what the capture hit
+    /// once.
+    pub fn outage(&self) -> AppError {
+        AppError::Network(self.to_string())
+    }
+
     /// A stable code for the snapshot row and the viewer.
     pub fn code(&self) -> &'static str {
         match self {
@@ -160,5 +167,38 @@ pub trait PageCapturePort: Send + Sync {
         &self,
         _browser: Arc<crate::features::web::services::browser_reader::BrowserReader>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_retried_capture_names_its_failure_once() {
+        let error = CaptureError::Network("connection reset".into()).outage();
+
+        assert!(matches!(&error, AppError::Network(detail) if detail == "connection reset"));
+        assert_eq!(error.to_string(), "Network error: connection reset");
+    }
+
+    #[test]
+    fn a_capture_that_ran_out_of_time_is_retried_as_a_lost_connection() {
+        let error = CaptureError::Timeout.outage();
+
+        assert!(
+            matches!(&error, AppError::Network(detail) if detail == "the capture ran out of time")
+        );
+    }
+
+    #[test]
+    fn a_status_the_site_answered_is_retried_as_that_status() {
+        let error = CaptureError::Blocked { status: 429 }.outage();
+
+        assert!(
+            matches!(&error, AppError::HttpStatus { status: 429, .. }),
+            "{error:?}"
+        );
+        assert_eq!(error.to_string(), "The site answered 429");
     }
 }

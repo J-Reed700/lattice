@@ -12,7 +12,7 @@ use super::{to_dto, Shared};
 use crate::features::web::traits::page_snapshot::{
     CaptureError, CaptureProgress, CaptureRequest, ProgressSink,
 };
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy,
 };
@@ -215,7 +215,7 @@ impl JobHandler for WebPageSnapshotJob {
                 // The runtime defers an outage and redelivers after the backoff;
                 // the row stays pending.
                 if error.is_transient() {
-                    Err(AppError::Network(error.to_string()))
+                    Err(error.outage())
                 } else {
                     self.fail(&id, error.code(), &error.to_string()).await
                 }

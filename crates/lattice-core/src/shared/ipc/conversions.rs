@@ -216,6 +216,11 @@ impl From<AppError> for ApiError {
                 message: "Network error".to_string(),
                 details: Some(msg.clone()),
             },
+            AppError::HttpStatus { ref message, .. } => ApiError {
+                code: ErrorCode::NetworkError,
+                message: "Network error".to_string(),
+                details: Some(message.clone()),
+            },
             AppError::InvalidUrl(ref msg) => ApiError {
                 code: ErrorCode::InvalidInput,
                 message: "Invalid URL".to_string(),

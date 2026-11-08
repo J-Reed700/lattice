@@ -15,7 +15,7 @@ use lattice_core::shared::error::{AppError, Result};
 use serde_json::json;
 
 use super::web_research::{
-    need_schema, plan_needs, search_need, with_breadth, Candidate, GapNeed, NeedSearch,
+    capture, need_schema, plan_needs, search_need, with_breadth, Candidate, GapNeed, NeedSearch,
     PlannedNeed, Room,
 };
 use crate::lessons::course_generation_tests::ScriptedModel;
@@ -724,5 +724,70 @@ async fn no_gaps_plan_no_searches_without_asking_the_model() -> Result<()> {
         .await?
         .is_empty());
     assert!(llm.prompts.lock().unwrap().is_empty());
+    Ok(())
+}
+
+/// A web service whose every page read fails with one error.
+struct Refusing(AppError);
+
+#[async_trait::async_trait]
+impl WebServiceTrait for Refusing {
+    async fn search_web(&self, _: &WebSearchInput) -> Result<WebSearchOutput> {
+        Err(AppError::ServiceNotAvailable("no search".into()))
+    }
+    async fn fetch_url_content(&self, _: &str) -> Result<FetchUrlContentOutput> {
+        Err(self.0.clone())
+    }
+    fn validate_url(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// The error of a page that cannot be read is said once, as it came: a
+/// thin page stays a refusal, a status stays a status, and nothing is
+/// wrapped as a lost connection.
+#[tokio::test]
+async fn a_page_that_cannot_be_read_gives_its_own_error_unchanged() {
+    let result = WebSearchResult {
+        title: "Page".into(),
+        url: "https://example.org/page".into(),
+        snippet: String::new(),
+        published_date: None,
+        source: None,
+    };
+    for error in [
+        AppError::InvalidInput("This page did not provide enough static reference text.".into()),
+        AppError::HttpStatus {
+            status: 404,
+            message: "HTTP 404 Not Found: Not Found".into(),
+        },
+        AppError::Network("Failed to fetch URL: connection refused".into()),
+    ] {
+        let got = capture(&Refusing(error.clone()), &result)
+            .await
+            .map(|_| ())
+            .unwrap_err();
+
+        assert_eq!(got.error_code(), error.error_code(), "{got:?}");
+        assert_eq!(got.to_string(), error.to_string());
+    }
+}
+
+/// A search that answered with no results is one that was reached: it ends
+/// the need's search with nothing found, and raises nothing.
+#[tokio::test]
+async fn a_search_that_found_nothing_is_reached_and_ends_the_need() -> Result<()> {
+    let web = Recording {
+        web: MockWebService::new(),
+        searches: Mutex::new(Vec::new()),
+    };
+    web.web.set_search_results(Vec::new());
+    let tonal = need("tonal centre", NeedKind::Web);
+    let mut search = NeedSearch::new(&tonal);
+
+    assert!(search.next_page(&web, Room::for_all()).await?.is_empty());
+
+    assert!(search.is_done());
+    assert_eq!(web.searches.lock().unwrap().len(), 1);
     Ok(())
 }

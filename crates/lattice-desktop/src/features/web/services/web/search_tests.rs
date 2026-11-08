@@ -115,6 +115,26 @@ async fn web_search_returns_every_finders_outcome() {
     );
 }
 
+/// A search the engines answered with nothing found is an answer: no results,
+/// and each engine's outcome, not an error.
+#[tokio::test]
+async fn a_search_every_engine_answered_with_nothing_is_an_empty_answer() {
+    let first = Arc::new(ScriptedFinder::answering(second_web_engine(), 0));
+    let service = web_service(&[(&first, 10)]);
+
+    let output = service
+        .search_web(&input("no such thing", 5, 1))
+        .await
+        .expect("an empty answer is not an error");
+
+    assert_eq!(output.result_count, 0);
+    assert!(output.results.is_empty());
+    assert_eq!(output.total_results, 0);
+    assert_eq!(output.outcomes.len(), 1);
+    assert_eq!(output.outcomes[0].result, "empty");
+    assert!(output.providers_used.is_empty());
+}
+
 /// When the pool already holds page 2 of a search, no provider is asked
 /// anything.
 #[tokio::test]
