@@ -1,8 +1,9 @@
 name: CI
 
-# Never merges. Builds two Windows installers of #366's head, each a separate app with
-# its own identifier, exe name and home folder: Lattice Preview for a click-through,
-# and Lattice Test, built with the e2e build's WebDriver plugin for scripted runs.
+# Never merges. Builds Windows installers of #366's head, each a separate app with
+# its own identifier, exe name and home folder. Lattice Test has the e2e build's
+# WebDriver plugin for scripted runs. Lattice Preview, for a click-through, was built
+# from the same commit by run 42471542610.
 on:
   pull_request:
 
@@ -22,13 +23,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - product: Lattice Preview
-            identifier: tech.lattice.preview
-            exe: lattice-preview
-            home: .lattice-preview
-            features: ''
           - product: Lattice Test
-            identifier: tech.lattice.test
+            identifier: tech.lattice.compatibility.test
             exe: lattice-test
             home: .lattice-test
             features: desktop-e2e
