@@ -875,8 +875,8 @@ async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> 
     );
     assert!(!before[0].contains(&after[1]));
     assert_eq!(repaired.modules[0].lessons[1].title, "Choose a measurement");
-    for module in 1..4 {
-        assert_eq!(lesson_ids(&repaired, module), before[module]);
+    for (module, ids) in before.iter().enumerate().take(4).skip(1) {
+        assert_eq!(lesson_ids(&repaired, module), *ids);
     }
     let rows: Vec<(String, i64, String)> = sqlx::query_as(
         "SELECT id,ordinal,preparation FROM learning_lessons WHERE module_id=? ORDER BY ordinal",
