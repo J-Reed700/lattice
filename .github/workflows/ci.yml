@@ -2,7 +2,9 @@ name: CI
 
 # Never merges. Each tests-first commit of the review module runs on its own
 # tree: its new and changed tests must fail on their assertions, and every
-# other test must pass. The jobs check out those commits by hash, so this
+# other test must pass. The integration entries run every step of main's checks
+# on the integrated review tree, each step even when one before it fails, so one
+# round shows every problem. The jobs check out those commits by hash, so this
 # branch's own tree is never built.
 on:
   pull_request:
@@ -18,17 +20,18 @@ env:
 jobs:
   # Named like main's job, with its env, so main's Rust cache is the one restored.
   rust-check:
-    name: rust red ${{ matrix.sha }}
-    if: false
+    name: rust ${{ matrix.mode }} ${{ matrix.sha }}
     runs-on: ubuntu-24.04
     env:
+      LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
       fail-fast: false
       max-parallel: 6
       matrix:
-        sha:
-          - 886244bfc33b33b56bb98f0f3bf739acde8a2c43
+        include:
+          - mode: integration
+            sha: 5e1c685c8f33e930a12c6d497b1debf89054b143
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,10 +66,52 @@ jobs:
           save-if: false
 
       - name: Core and learning tests on this tree
+        if: matrix.mode == 'red'
         run: cargo test --locked -p lattice-core -p lattice-learning --lib --no-fail-fast
 
-  # Every frontend step of main's job on the integration tree, each one run even when one before it fails,
-  # so one round shows every problem.
+      - name: Create build placeholders for source checks
+        if: matrix.mode == 'integration'
+        run: |
+          mkdir -p dist
+          touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
+
+      - name: cargo fmt --check
+        id: fmt
+        if: matrix.mode == 'integration'
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        id: clippy
+        if: matrix.mode == 'integration'
+        continue-on-error: true
+        working-directory: crates/lattice-desktop
+        run: cargo clippy --workspace --all-targets
+
+      - name: All desktop Rust unit, command and integration tests
+        id: tests
+        if: matrix.mode == 'integration'
+        continue-on-error: true
+        working-directory: crates/lattice-desktop
+        run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
+
+      - name: generated bindings are current
+        id: bindings
+        if: matrix.mode == 'integration'
+        continue-on-error: true
+        working-directory: crates/lattice-desktop
+        shell: bash
+        run: ../../target/debug/export_bindings --check
+
+      - name: Outcomes
+        if: always() && matrix.mode == 'integration'
+        shell: bash
+        run: |
+          printf '%s\n' "fmt ${{ steps.fmt.outcome }}" "clippy ${{ steps.clippy.outcome }}" \
+            "tests ${{ steps.tests.outcome }}" "bindings ${{ steps.bindings.outcome }}"
+          [ "${{ steps.fmt.outcome }} ${{ steps.clippy.outcome }} ${{ steps.tests.outcome }} ${{ steps.bindings.outcome }}" = "success success success success" ]
+
   integration-frontend:
     name: integration frontend ${{ matrix.sha }}
     runs-on: ubuntu-24.04
@@ -74,7 +119,7 @@ jobs:
       fail-fast: false
       matrix:
         sha:
-          - 92b4a5b36cffc47f438611e50fb5edbb7f013758
+          - 5e1c685c8f33e930a12c6d497b1debf89054b143
     steps:
       - uses: actions/checkout@v4
         with:
@@ -89,31 +134,48 @@ jobs:
 
       - run: npm ci
 
+      - name: npm vulnerability audit
+        id: audit
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+      - name: Verify bundled Python interpreter and standard library
+        id: runtime
+        continue-on-error: true
+        run: npm run learning:runtime:verify
+
       - name: Type-check
+        id: types
         continue-on-error: true
         run: npm run type-check
 
       - name: Type-check browser journeys
+        id: types_e2e
         continue-on-error: true
         run: npm run type-check:e2e
 
       - name: Generated IPC contract consumers
+        id: contracts
         continue-on-error: true
         run: npm run contracts:check
 
       - name: Lint
+        id: lint
         continue-on-error: true
         run: npm run lint
 
       - name: Unit tests and enforced coverage floors
+        id: unit
         continue-on-error: true
         run: npm run test:coverage
 
       - name: Renderer production build
+        id: build
         continue-on-error: true
         run: npx vite build
 
       - name: Initial renderer JavaScript budget
+        id: budget
         continue-on-error: true
         run: node scripts/check-initial-js-budget.mjs dist
 
@@ -121,6 +183,7 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
 
       - name: Browser smoke tests
+        id: e2e
         continue-on-error: true
         run: npm run test:e2e
 
@@ -136,9 +199,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Outcomes
+        if: always()
+        shell: bash
+        run: |
+          outcomes="audit=${{ steps.audit.outcome }} runtime=${{ steps.runtime.outcome }} types=${{ steps.types.outcome }} types_e2e=${{ steps.types_e2e.outcome }} contracts=${{ steps.contracts.outcome }} lint=${{ steps.lint.outcome }} unit=${{ steps.unit.outcome }} build=${{ steps.build.outcome }} budget=${{ steps.budget.outcome }} e2e=${{ steps.e2e.outcome }}"
+          failed=0
+          for o in $outcomes; do echo "$o"; case "$o" in *=success) ;; *) failed=1 ;; esac; done
+          exit $failed
+
   vitest:
     name: vitest reds
-    if: false
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -172,7 +243,7 @@ jobs:
             echo "::endgroup::"
             echo "red $sha exit $code"
           done <<'LIST'
-          886244bfc33b33b56bb98f0f3bf739acde8a2c43 src/features/learning/lessons/review/ClaimReviewScreen.editSection.test.tsx src/features/learning/lessons/review/TeachingFindings.actions.test.tsx
+          e45919d124f151935c2c97b06980a86e0dacad43 src/features/learning/lessons/review/claimReviewPresentation.history.test.ts
           LIST
 
       - name: Upload each red's vitest log
