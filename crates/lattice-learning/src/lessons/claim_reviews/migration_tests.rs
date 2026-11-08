@@ -10,6 +10,10 @@ use sqlx::SqlitePool;
 
 /// The migration under test.
 const CLAIM_REVIEWS: i64 = 20_261_017_150_000;
+/// The migration that gave a teaching finding its summary.
+const TEACHING_SUMMARY: i64 = 20_261_107_010_000;
+/// The migration that gave it its sentence and a way to be resolved.
+const TEACHING_RESOLUTION: i64 = 20_261_107_020_000;
 
 fn migrator() -> Migrator {
     sqlx::migrate!("../lattice-desktop/migrations")
@@ -214,4 +218,150 @@ async fn the_migration_keeps_a_populated_database_and_adds_the_defaults() {
         .unwrap();
     assert_eq!(revision_before, revision_after);
     exec(&pool, LEDGER).await;
+}
+
+#[tokio::test]
+async fn a_teaching_finding_gets_a_summary_column_and_an_old_one_keeps_its_data() {
+    let migrator = migrator();
+    assert!(migrator.iter().any(|m| m.version == TEACHING_SUMMARY));
+    let pool = memory_pool().await;
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        for migration in migrator
+            .iter()
+            .filter(|m| m.version < TEACHING_SUMMARY && !m.migration_type.is_down_migration())
+        {
+            conn.apply(migration).await.unwrap();
+        }
+    }
+    exec(&pool, COURSE).await;
+    exec(
+        &pool,
+        &["INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, passage, repairs, state, job_id, found_at, kept_at) \
+           VALUES ('l1', 'teaching:section-0', 'teaching', 'section', 0, 'Section 1: Boiling', 'sha', 'A note.', 'A passage.', 2, 'waiting', NULL, 1000, NULL)"],
+    )
+    .await;
+    let columns = "SELECT name FROM pragma_table_info('learning_lesson_teaching_findings')";
+    let before: Vec<String> = sqlx::query_scalar(columns).fetch_all(&pool).await.unwrap();
+    assert!(!before.contains(&"summary".to_owned()));
+
+    migrator.run(&pool).await.unwrap();
+
+    let after: Vec<String> = sqlx::query_scalar(columns).fetch_all(&pool).await.unwrap();
+    assert!(after.contains(&"summary".to_owned()), "{after:?}");
+    let kept: (String, Option<String>, i64, Option<String>) = sqlx::query_as(
+        "SELECT note, passage, repairs, summary FROM learning_lesson_teaching_findings WHERE finding_key = 'teaching:section-0'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ("A note.".into(), Some("A passage.".into()), 2, None));
+}
+
+#[tokio::test]
+async fn a_teaching_finding_gets_a_sentence_and_a_resolution_and_an_old_one_keeps_its_data() {
+    let migrator = migrator();
+    assert!(migrator.iter().any(|m| m.version == TEACHING_RESOLUTION));
+    let pool = memory_pool().await;
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        for migration in migrator
+            .iter()
+            .filter(|m| m.version < TEACHING_RESOLUTION && !m.migration_type.is_down_migration())
+        {
+            conn.apply(migration).await.unwrap();
+        }
+    }
+    exec(&pool, COURSE).await;
+    exec(
+        &pool,
+        &["INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, repairs, state, job_id, found_at, kept_at) \
+           VALUES ('l1', 'teaching:section-0', 'teaching', 'section', 0, 'Section 1: Boiling', 'sha', 'A note.', 'A summary.', 'A passage.', 2, 'kept', NULL, 1000, 2000)"],
+    )
+    .await;
+
+    migrator.run(&pool).await.unwrap();
+
+    let columns: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM pragma_table_info('learning_lesson_teaching_findings')",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    for column in ["sentence", "resolution", "resolved_at", "summary"] {
+        assert!(columns.contains(&column.to_owned()), "{columns:?}");
+    }
+    let row: (String, String, String, i64, String, i64) = sqlx::query_as(
+        "SELECT note, summary, passage, repairs, state, kept_at FROM learning_lesson_teaching_findings WHERE finding_key='teaching:section-0'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        row,
+        (
+            "A note.".into(),
+            "A summary.".into(),
+            "A passage.".into(),
+            2,
+            "kept".into(),
+            2000
+        )
+    );
+    let insert = |key: &str,
+                  state: &str,
+                  kept_at: Option<i64>,
+                  resolution: Option<&str>,
+                  resolved_at: Option<i64>| {
+        sqlx::query(
+            "INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, repairs, state, found_at, kept_at, resolution, resolved_at) \
+             VALUES ('l1', ?, 'quotation', 'section', 1, 'T', 'sha', 'n', 0, ?, 1, ?, ?, ?)",
+        )
+        .bind(key.to_owned())
+        .bind(state.to_owned())
+        .bind(kept_at)
+        .bind(resolution.map(str::to_owned))
+        .bind(resolved_at)
+    };
+    insert("a", "resolved", None, Some("source_added"), Some(5))
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(insert("b", "resolved", None, Some("removed"), Some(5))
+        .execute(&pool)
+        .await
+        .is_err());
+    assert!(insert("c", "resolved", None, None, None)
+        .execute(&pool)
+        .await
+        .is_err());
+    assert!(insert("d", "resolved", None, Some("kept"), Some(5))
+        .execute(&pool)
+        .await
+        .is_err());
+    assert!(insert("e", "waiting", None, Some("source_added"), Some(5))
+        .execute(&pool)
+        .await
+        .is_err());
+    assert!(
+        insert("f", "resolved", Some(3), Some("source_added"), Some(5))
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(insert("g", "resolved", None, Some("source_added"), None)
+        .execute(&pool)
+        .await
+        .is_err());
+    sqlx::query("DELETE FROM learning_lessons WHERE id='l1'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_lesson_teaching_findings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }

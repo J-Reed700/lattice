@@ -10,11 +10,11 @@ import { review, teachingFinding, unsupportedItem } from '@/features/learning/le
 import type { ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
-  review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn(), keep: vi.fn(), trust: vi.fn(), setTrust: vi.fn(), clearTrust: vi.fn(), version: vi.fn(), plan: vi.fn(),
+  review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn(), settle: vi.fn(), trust: vi.fn(), setTrust: vi.fn(), clearTrust: vi.fn(), version: vi.fn(), plan: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, resumeLearningLessonReview: api.resume,
-  keepLearningTeachingFinding: api.keep, getLearningLessonAudit: api.audit, getLearningSourceTrust: api.trust,
+  settleLearningTeachingFindings: api.settle, getLearningLessonAudit: api.audit, getLearningSourceTrust: api.trust,
   setSourceTrustOverride: api.setTrust, clearSourceTrustOverride: api.clearTrust, getLearningSourceVersion: api.version,
   getLearningPlan: api.plan, courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
 } }));
@@ -244,12 +244,12 @@ describe('Claim review screen', () => {
   });
 
   it('lists a published lesson’s teaching notes as the queue’s last group and keeps one as written', async () => {
-    api.keep.mockResolvedValue(ok(null));
+    api.settle.mockResolvedValue(ok(null));
     show(review([], { state: 'ready', teachingFindings: [teachingFinding()], counts: { ...counts(0), rewritten: 0, verified: 40 } }));
     await userEvent.click(await screen.findByRole('button', { name: /Teaching notes/ }));
-    expect(screen.getByText(/the example shows "result": "4"/)).toBeVisible();
+    expect(screen.getByText(/The example shows "4" in quotation marks/)).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Keep as written' }));
-    await waitFor(() => expect(api.keep).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-1', findingKey: 'teaching:section-2' }));
+    await waitFor(() => expect(api.settle).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-1', findingKeys: ['teaching:section-2'], settle: 'keep' }));
   });
 
   it('renders the empty state: everything resolved, Resume enabled, the resolved claims one toggle away', async () => {

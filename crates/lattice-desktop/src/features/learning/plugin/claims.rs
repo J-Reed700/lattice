@@ -1,6 +1,6 @@
 //! Lesson claim review commands (§7.4): read a lesson's review, act on a
-//! claim, attach evidence to claims, keep a teaching finding as written,
-//! resume the review, and capture an attached page's frozen copy again.
+//! claim, attach evidence to claims, keep teaching findings as written or
+//! take that back, resume the review, and capture an attached page's frozen copy again.
 //! Attaching evidence runs here, in the command's own task, through the
 //! scheduler like any model call (§9).
 
@@ -20,7 +20,9 @@ use crate::features::learning::lessons::claim_reviews::dto::{
 use crate::features::learning::lessons::claim_reviews::recheck::running_job;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::features::learning::lessons::claim_reviews::service::ClaimReviewService;
-use crate::features::learning::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
+use crate::features::learning::lessons::claim_reviews::teaching_findings::{
+    TeachingFindingsRepository, TeachingSettleDto,
+};
 use lattice_core::application::ports::llm_port::ModelRequirements;
 use lattice_core::application::ports::{ClaimReviewStore, ReferenceSnapshot};
 use lattice_core::domain::learning::claim_review::{ClaimId, Ledger, Revision};
@@ -84,11 +86,12 @@ pub struct AttachLearningClaimEvidenceRequestDto {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct KeepLearningTeachingFindingRequestDto {
+pub struct SettleLearningTeachingFindingsRequestDto {
     pub program_id: String,
     pub lesson_id: String,
-    /// The finding's `findingKey` from the review.
-    pub finding_key: String,
+    /// The findings' `findingKey`s from the review.
+    pub finding_keys: Vec<String>,
+    pub settle: TeachingSettleDto,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
@@ -262,20 +265,22 @@ pub async fn attach_learning_claim_evidence(
     Ok(report)
 }
 
-/// "Keep as written": the user settles a teaching finding the repairs did
-/// not, without changing the lesson. It stays settled while the part it is
-/// about keeps its text.
+/// "Keep as written": the user settles teaching findings the repairs did
+/// not, without changing the lesson, or takes that back. A kept finding stays
+/// settled while the part it is about keeps its text. All the findings change
+/// or none.
 #[tauri::command]
 #[specta::specta]
-pub async fn keep_learning_teaching_finding(
-    request: KeepLearningTeachingFindingRequestDto,
+pub async fn settle_learning_teaching_findings(
+    request: SettleLearningTeachingFindingsRequestDto,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
     Ok(TeachingFindingsRepository::new(container.db_pool().clone())
-        .keep(
+        .settle(
             &request.program_id,
             &request.lesson_id,
-            &request.finding_key,
+            &request.finding_keys,
+            request.settle,
         )
         .await?)
 }

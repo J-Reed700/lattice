@@ -4,6 +4,7 @@ import { Check, ChevronRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { claimsCount, resolvedChip, SELECT_NONE, SELECT_STATEMENT, selectAll, statementsCount, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { teachingNotesNoun } from '@/features/learning/lessons/review/TeachingFindings';
 import { GROUP_MODE_LABELS, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { ReviewCheckbox } from '@/features/learning/lessons/review/SelectionBar';
 import type { ClaimReviewItemDto } from '@/lib/bindings';
@@ -137,7 +138,9 @@ export function ClaimQueue({
       </div>
 
       <div ref={listRef} onKeyDown={onKeyDown} className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {total === 0 && <p className="px-2 py-3 text-sm text-text-secondary">Everything is resolved.</p>}
+        {total === 0 && <p className="px-2 py-3 text-sm text-text-secondary">
+          {teachingWaiting > 0 ? `No statements wait for you. ${teachingNotesNoun(teachingWaiting)} ${teachingWaiting === 1 ? 'does' : 'do'}.` : 'Everything is resolved.'}
+        </p>}
         {groups.map((group) => {
           const open = !collapsed.has(group.key);
           const bodyId = `${id}-${group.key}`;

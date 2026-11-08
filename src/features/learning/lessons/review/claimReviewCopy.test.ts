@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addSourceTitle, announcement, attachSummary, claimsNeedYou, countsAs, failureLine, fixGroupOf, jobTallyLine, kindWithArticle,
-  progressLine, recheckLine, resolvedChip, sourceLine, tallyLine, triedLine, trustedAnnouncement, verifiedLabel, whyItWaits, ALL_RESOLVED,
+  progressLine, recheckLine, resolvedChip, sourceLine, tallyLine, teachingNotesWait, triedLine, trustedAnnouncement, verifiedLabel, whyItWaits, ALL_RESOLVED,
 } from '@/features/learning/lessons/review/claimReviewCopy';
 import { support, sufficiency, tried } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { claimItem, fieldGuideSupport } from '@/features/learning/lessons/review/claimReviewTestData';
@@ -211,6 +211,20 @@ describe('tallies', () => {
     expect(jobTallyLine({ ...tally, waiting: 2, rewritten: undefined, unchecked: 0, searching: 0, repairing: 0 })).toBe('2 claims need you · 10 verified · 2 resolved by you');
   });
 
+  it('begins with the teaching notes that wait, in the singular and the plural', () => {
+    const counts = { verified: 12, confirmed: 0, queued: 1, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 };
+    expect(tallyLine(counts, 2)).toBe('2 teaching notes wait for you · 1 claim needs you · 12 verified');
+    expect(tallyLine(counts, 1)).toBe('1 teaching note waits for you · 1 claim needs you · 12 verified');
+    expect(tallyLine({ ...counts, queued: 0, verified: 0 }, 3)).toBe('3 teaching notes wait for you');
+    expect(tallyLine(counts, 0)).toBe('1 claim needs you · 12 verified');
+    expect(tallyLine(counts)).toBe('1 claim needs you · 12 verified');
+  });
+
+  it('says the teaching notes wait in the singular and the plural', () => {
+    expect(teachingNotesWait(1)).toBe('1 teaching note waits for you');
+    expect(teachingNotesWait(2)).toBe('2 teaching notes wait for you');
+  });
+
   it('agrees in number for the counts the queue shows', () => {
     expect(claimsNeedYou(1)).toBe('1 claim needs you');
     expect(claimsNeedYou(3)).toBe('3 claims need you');
@@ -226,6 +240,39 @@ describe('announcements', () => {
     expect(announcement('research_with_hint', 2)).toBe('Hint saved. It is searched when you resume.');
     expect(announcement('unconfirm', 5)).toBe('Acceptance withdrawn. 5 left.');
     expect(announcement('undo', 5)).toBe('Undone. 5 left.');
+  });
+
+  it('never says everything is resolved while a teaching note waits', () => {
+    expect(announcement('confirm', 0, 2)).toBe('Accepted. No statements are left. 2 teaching notes wait for you.');
+    expect(announcement('remove', 0, 1)).toBe('Removed. No statements are left. 1 teaching note waits for you.');
+    expect(announcement('unconfirm', 0, 3)).toBe('Acceptance withdrawn. No statements are left. 3 teaching notes wait for you.');
+    expect(announcement('undo', 0, 2)).toBe('Undone. No statements are left. 2 teaching notes wait for you.');
+    expect(announcement('confirm', 4, 2)).toBe('Accepted. 4 left.');
+    expect(announcement('confirm', 0, 0)).toBe(`Accepted. ${ALL_RESOLVED}`);
+    expect(announcement('edit', 0, 2)).toBe('Sentence edited. It is checked when you resume.');
+  });
+
+  it('says everything is resolved, and never to resume, once nothing is left on a published lesson', () => {
+    expect(announcement('confirm', 0, 0, true)).toBe('Accepted. Everything is resolved.');
+    expect(announcement('remove', 0, 0, true)).toBe('Removed. Everything is resolved.');
+    expect(announcement('unconfirm', 0, 0, true)).toBe('Acceptance withdrawn. Everything is resolved.');
+    expect(announcement('undo', 0, 0, true)).toBe('Undone. Everything is resolved.');
+    for (const action of ['confirm', 'remove', 'unconfirm', 'undo'] as const) {
+      expect(announcement(action, 0, 0, true)).not.toMatch(/Resume verification/);
+    }
+  });
+
+  it('on a published lesson still counts what is left, and still names the teaching notes that wait', () => {
+    expect(announcement('confirm', 4, 0, true)).toBe('Accepted. 4 left.');
+    expect(announcement('remove', 0, 2, true)).toBe('Removed. No statements are left. 2 teaching notes wait for you.');
+    expect(announcement('undo', 0, 1, true)).toBe('Undone. No statements are left. 1 teaching note waits for you.');
+  });
+
+  it('on a draft lesson keeps telling the user to resume verification', () => {
+    for (const action of ['confirm', 'remove', 'unconfirm', 'undo'] as const) {
+      expect(announcement(action, 0, 0, false)).toContain(ALL_RESOLVED);
+      expect(announcement(action, 0)).toContain(ALL_RESOLVED);
+    }
   });
 
   it('announces a trusted source with the claims it settled', () => {
