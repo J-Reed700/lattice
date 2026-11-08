@@ -24,6 +24,11 @@ export const lessonReviewApi = {
   ): Promise<ApiResult<Wire.ResolveLearningClaimResultDto>> =>
     learningCall('resolve_learning_claims', { request }),
 
+  removeLearningTeachingSentences: (
+    request: Wire.RemoveLearningTeachingSentencesRequestDto,
+  ): Promise<ApiResult<Wire.RemoveLearningTeachingSentencesResultDto>> =>
+    learningCall('remove_learning_teaching_sentences', { request }),
+
   /**
    * Add a link, file, pasted text or saved passage as a course source and
    * check the claims in scope against it, reporting each stage (§5.3).

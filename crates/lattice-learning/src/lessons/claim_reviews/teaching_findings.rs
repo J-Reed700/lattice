@@ -110,6 +110,9 @@ pub struct TeachingFindingDto {
     /// note shown removed, the claims an undo of the user's removal takes back,
     /// none when that removal came with an edit of the whole section.
     pub claim_ids: Vec<String>,
+    /// Whether "Remove this sentence" can take the note's sentence out of its
+    /// published section.
+    pub removable: bool,
     /// How a resolved finding was resolved.
     pub resolution: Option<TeachingResolutionDto>,
     /// When it was resolved.
@@ -307,6 +310,7 @@ impl TeachingFindingsRepository {
                     unit_title: row.get("unit_title"),
                     sentence,
                     claim_ids: Vec::new(),
+                    removable: false,
                     resolution: match row.get::<Option<String>, _>("resolution").as_deref() {
                         Some("source_added") => Some(TeachingResolutionDto::SourceAdded),
                         _ => None,

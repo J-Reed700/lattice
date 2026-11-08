@@ -330,6 +330,7 @@ export const COMMAND_PLUGINS = {
   remove_download: 'download',
   remove_favorite: 'favorites',
   remove_indexed_file: 'file',
+  remove_learning_teaching_sentences: 'learning',
   remove_leftover_embedding_files: 'model',
   remove_source_key: 'web',
   remove_tag_from_document: 'tags',
