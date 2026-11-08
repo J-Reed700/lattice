@@ -319,3 +319,134 @@ async fn a_lesson_with_no_reference_material_asks_for_it_in_plain_words() {
     );
     assert!(!error.contains("MVP"), "{error}");
 }
+
+fn writer_prompt(program: &LearningProgramDto, lesson: &LearningLessonDto) -> Value {
+    use crate::lessons::course_generation_tests::outline;
+    let references = ReferenceCollection::lexical(&[]).unwrap();
+    let prompt = lesson_prompt(
+        &outline(1, 1),
+        program,
+        lesson,
+        &references,
+        Vec::new(),
+        Vec::new(),
+        true,
+    )
+    .unwrap();
+    serde_json::from_str(&prompt).unwrap()
+}
+
+fn writer_requirements() -> String {
+    let program = crate::tests::fixture();
+    let lesson = program.modules[0].lessons[0].clone();
+    writer_prompt(&program, &lesson)["requirements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn the_writer_writes_a_cases_own_values_plainly_and_is_not_asked_for_hypotheticals() {
+    for text in [writer_requirements(), lesson_system(true)] {
+        assert!(!text.contains("explicit hypotheticals"), "{text}");
+        assert!(!text.contains("Suppose…"), "{text}");
+        assert!(
+            text.contains("own names, paths and values are made up for its case"),
+            "{text}"
+        );
+        assert!(text.contains("write them plainly"), "{text}");
+    }
+}
+
+#[test]
+fn the_writer_is_not_told_how_practice_is_reviewed_but_may_not_promise_execution() {
+    let text = writer_requirements();
+    assert!(!text.contains("review submitted text"), "{text}");
+    assert!(!text.contains("do not execute code"), "{text}");
+    assert!(
+        text.contains("Do not describe how practice is reviewed."),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "Never promise automatic code execution, external peer review or expert certification."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("A learner may run code in a lab after starting a supported runtime."),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writer_teaches_the_learners_setup_and_every_step_it_asks_for() {
+    let text = writer_requirements();
+    assert!(
+        text.contains(
+            "Teach for the system and tools that programGoal and priorKnowledge describe."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("say which one it describes instead of presenting it as the learner's"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "Teach every action a practice or check asks the learner to perform within this lesson"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writer_keeps_to_its_own_lesson_and_writes_steps_and_questions_well() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("Teach this lesson's objective. What another lesson's objective"),
+        "{text}"
+    );
+    assert!(text.contains("at most a one-line pointer"), "{text}");
+    assert!(
+        text.contains(
+            "Write a worked_example's steps as a numbered Markdown list, one step per item"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("Spread the questions across the lesson's ideas; no two test the same fact."),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writers_lesson_sequence_gives_each_lessons_objective_and_marks_the_current_one() {
+    let mut program = crate::tests::fixture();
+    let template = program.modules[0].lessons[0].clone();
+    let mut other = template.clone();
+    other.id = "other-lesson".into();
+    other.title = "Paths and cd".into();
+    other.objective = "Move between directories with cd.".into();
+    program.modules[0].lessons.push(other);
+    let lesson = program.modules[0].lessons[0].clone();
+
+    let prompt = writer_prompt(&program, &lesson);
+    let sequence = prompt["currentModule"]["lessonSequence"]
+        .as_array()
+        .unwrap();
+
+    assert_eq!(sequence.len(), 2);
+    assert_eq!(sequence[0]["title"], json!(template.title));
+    assert_eq!(sequence[0]["objective"], json!(template.objective));
+    assert_eq!(sequence[0]["current"], json!(true));
+    assert_eq!(sequence[1]["title"], json!("Paths and cd"));
+    assert_eq!(
+        sequence[1]["objective"],
+        json!("Move between directories with cd.")
+    );
+    assert_eq!(sequence[1]["current"], json!(false));
+}
