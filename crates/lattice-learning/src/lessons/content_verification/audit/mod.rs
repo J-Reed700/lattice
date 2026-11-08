@@ -308,7 +308,7 @@ pub(crate) async fn run(
     let loaded = deps.store.load(request.lesson_id).await?;
     if loaded.review.is_none() {
         return Err(AppError::InvalidState(
-            "The lesson has no claim review to audit yet".into(),
+            "The lesson has no statement review to audit yet".into(),
         ));
     }
     let mut writer = LedgerWriter::new(deps, request, &model, llm.max_context_tokens(), &loaded);
@@ -339,7 +339,7 @@ pub(crate) async fn run(
     for oversize in &planned.oversize {
         if let Some(claim) = claims.get(oversize.claim) {
             let reason = format!(
-                "The Verifier's window of {} tokens cannot hold this claim's section and \
+                "The Verifier's window of {} tokens cannot hold this statement's section and \
                  passages ({} tokens).",
                 llm.max_context_tokens(),
                 oversize.needed_tokens
@@ -518,7 +518,7 @@ impl<'a> Judge<'a> {
                         return self
                             .halves(items, judged, || {
                                 format!(
-                                    "The Verifier's window of {} tokens cannot hold this claim's \
+                                    "The Verifier's window of {} tokens cannot hold this statement's \
                                      section and passages with its answer.",
                                     self.sizer.llm.max_context_tokens()
                                 )

@@ -123,7 +123,7 @@ pub async fn reprofile_claim(
     .await
     .map_err(db)?
     .ok_or_else(|| {
-        AppError::NotFound("This claim is not in any of the course's lesson reviews.".into())
+        AppError::NotFound("This statement is not in any of the course's lesson reviews.".into())
     })?;
     let statement: String = row.try_get("statement").map_err(db)?;
     let unit_index: i64 = row.try_get("unit_index").map_err(db)?;

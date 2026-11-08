@@ -82,7 +82,7 @@ pub(crate) async fn judge_in_order(
     reading: &[usize],
 ) -> Judged {
     const TOO_LONG: &str =
-        "The claim and its first passage do not fit the claim check in this model's context window.";
+        "The statement and its first passage do not fit the statement check in this model's context window.";
     let checker = ClaimChecker::new(
         llm,
         SamplingOverride::deterministic(),

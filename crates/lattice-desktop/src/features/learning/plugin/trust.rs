@@ -128,7 +128,7 @@ pub async fn reprofile_learning_claim(
     let pin = learning_model(
         &container,
         ModelRequirements::default(),
-        "Profiling a claim",
+        "Profiling a statement",
     )
     .await?;
     Ok(judgements::reprofile_claim(

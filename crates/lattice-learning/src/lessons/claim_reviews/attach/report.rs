@@ -97,7 +97,7 @@ pub(super) fn source_ref(saved: &SavedSource) -> SourceRefDto {
 pub(super) fn outcome_line(title: &str, outcome: &AttachOutcome) -> String {
     match outcome {
         AttachOutcome::NoPassage => format!(
-            "No passage in {title} mentions this claim's terms. The source is in your references; the claim is unchanged."
+            "No passage in {title} mentions this statement's terms. The source is in your references; the statement is unchanged."
         ),
         AttachOutcome::Checked(check) => match &check.result {
             CheckResult::Supported { .. }
@@ -111,7 +111,7 @@ pub(super) fn outcome_line(title: &str, outcome: &AttachOutcome) -> String {
                 let verdict = match kind {
                     VerdictKind::Contradicted => "says otherwise",
                     VerdictKind::CouldNotJudge => "could not be judged",
-                    _ => "does not support this claim",
+                    _ => "does not support this statement",
                 };
                 let reason = check.reason.trim();
                 if reason.is_empty() {
@@ -126,9 +126,9 @@ pub(super) fn outcome_line(title: &str, outcome: &AttachOutcome) -> String {
 
 fn claims_noun(count: usize) -> &'static str {
     if count == 1 {
-        "claim"
+        "statement"
     } else {
-        "claims"
+        "statements"
     }
 }
 
@@ -160,7 +160,7 @@ fn others_line(others: &OtherClaimsCheckedDto) -> Option<String> {
 
 fn lesson_line(others: &OtherClaimsCheckedDto) -> String {
     if others.tried == 0 && others.stopped.is_none() {
-        return "No open claims in this lesson to check against it.".into();
+        return "No open statements in this lesson to check against it.".into();
     }
     let intro = format!(
         "Checked {} open {}",

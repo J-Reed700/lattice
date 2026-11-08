@@ -163,7 +163,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
           {lesson.preparation === 'outline' ? needsReview ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 p-4">
-                <p className="max-w-xl text-sm leading-6 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. The review shows it and lets you retry.' : hold === 'claims' ? 'Some claims could not be verified. The review shows each one with its evidence, one at a time.' : hold === 'resolved' ? 'Every claim is resolved. Resume verification from the review to publish the lesson.' : 'No claim needs you; the independent check has not finished. The review shows why.'}</p>
+                <p className="max-w-xl text-sm leading-6 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. The review shows it and lets you retry.' : hold === 'claims' ? 'Some statements could not be verified. The review shows each one with its evidence, one at a time.' : hold === 'resolved' ? 'Every statement is resolved. Resume verification from the review to publish the lesson.' : 'No statement needs you; the independent check has not finished. The review shows why.'}</p>
                 {onReview && <Button variant="outline" type="button" onClick={openReview} className="studio-button studio-button-primary">{hold === 'claims' && waiting ? `Review ${claimsCount(waiting)}` : 'Open the review'}</Button>}
               </div>
               {lesson.blocks.length > 0 && <div aria-label="Draft sections" className="studio-lesson-sections">

@@ -125,7 +125,7 @@ export function ClaimQueue({
 
   const total = groups.reduce((sum, group) => sum + group.claims.length, 0);
   return (
-    <nav aria-label="Claims waiting for you" className="flex min-h-0 flex-col">
+    <nav aria-label="Statements waiting for you" className="flex min-h-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
         <label htmlFor={`${id}-mode`} className="flex items-center gap-2 text-xs text-text-secondary">
           Group by
@@ -210,7 +210,7 @@ export function ClaimQueue({
           <Button type="button" size="sm" variant="ghost" aria-expanded={showResolved} onClick={() => setShowResolved((value) => !value)}>
             {showResolved ? 'Hide resolved' : `Show resolved (${resolved.length})`}
           </Button>
-          {showResolved && <ul role="list" aria-label="Resolved claims" className="mt-1 space-y-0.5">
+          {showResolved && <ul role="list" aria-label="Resolved statements" className="mt-1 space-y-0.5">
             {resolved.map((item) => (
               <li key={item.claimId}>
                 <button type="button" data-queue-row="" tabIndex={-1} id={queueRowId(item.claimId)} aria-current={item.claimId === activeId ? 'true' : undefined} onClick={() => onSelect(item.claimId)}

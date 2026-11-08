@@ -385,7 +385,7 @@ function checkVerdict(result: CheckResultDto): string {
 /** One history row in words. */
 export function describeEvent(payload: ClaimEventPayloadDto): string {
   switch (payload.kind) {
-    case 'extracted': return `Claim found in ${payload.field}: “${payload.statement}”`;
+    case 'extracted': return `Statement found in ${payload.field}: “${payload.statement}”`;
     case 'checked': {
       const who = payload.check.checker.role === 'verifier' ? 'Independent check' : 'Checker';
       const verdict = checkVerdict(payload.check.result).toLowerCase();
@@ -400,12 +400,12 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     case 'user_action': return describeUserAction(payload.action, payload.note);
     case 'evidence_attached': {
       const input = { saved_passage: 'a saved passage', link: 'a link', document: 'a file', pasted_text: 'pasted text' }[payload.provenance.input];
-      const result = payload.result.outcome === 'no_passage' ? 'it does not mention the claim'
-        : payload.result.check.result.verdict === 'failed' ? verdictWords(payload.result.check.result.kind).toLowerCase() : 'it states the claim';
+      const result = payload.result.outcome === 'no_passage' ? 'it does not mention the statement'
+        : payload.result.check.result.verdict === 'failed' ? verdictWords(payload.result.check.result.kind).toLowerCase() : 'it supports the statement';
       return `Added ${input}: ${result}`;
     }
     case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
-    case 'born_of_repair': return 'Added while repairing another claim';
+    case 'born_of_repair': return 'Added while repairing another statement';
     case 'classified': return `Sorted as ${CLASSES[payload.class]}, ${CLASSIFIERS[payload.by]}`;
     case 'reopened': return REOPEN_CAUSES[payload.cause.cause];
     case 'undone': return `Undid step ${payload.eventOrdinal}`;
@@ -461,7 +461,7 @@ export function reviewHold(review: LessonClaimReviewDto, waiting: number): Revie
   return review.changedSinceStop ? 'resolved' : 'audit';
 }
 
-export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a claim or add a source first.';
+export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a statement or add a source first.';
 
 /** Lessons a completed job held for review, from its result reference. */
 export function heldLessonIds(job: Pick<LearningGenerationJob, 'status' | 'resultId'> | null | undefined): string[] {

@@ -21,7 +21,7 @@ import type {
  */
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-export const claimsCount = (count: number) => plural(count, 'claim', 'claims');
+export const claimsCount = (count: number) => plural(count, 'statement', 'statements');
 export const statementsCount = (count: number) => plural(count, 'statement', 'statements');
 
 // ── Sources: kind, standing, "counts as" (§4.3) ─────────────────────────────
@@ -73,7 +73,7 @@ export function countsAs(support: ClaimSupportDto, sufficiency: LearningSufficie
   const who = support.standing ? standingWords(support.standing) : `${kindWithArticle(support.kind)} not yet weighed`;
   switch (support.counts.outcome) {
     case 'enough': return `${who} · enough`;
-    case 'not_enough': return `${who} · not enough on its own for this claim`;
+    case 'not_enough': return `${who} · not enough on its own for this statement`;
     case 'not_counted': return `${who} · not counted: ${support.counts.reason}`;
   }
 }
@@ -189,7 +189,7 @@ function verdictCopy(item: ClaimReviewItemDto): WhyItWaits {
       chip: 'Disputed', reason: 'An independent check disagrees with the first one.',
       detail: item.verifierCheck?.reason || null, fixes: ['accept', 'edit'],
     };
-    default: return { chip: 'Waiting for you', reason: 'This claim is waiting for you.', detail: null, fixes: ['accept', 'edit'] };
+    default: return { chip: 'Waiting for you', reason: 'This statement is waiting for you.', detail: null, fixes: ['accept', 'edit'] };
   }
 }
 
@@ -259,10 +259,10 @@ export function triedLine(tried: ResearchSummaryDto): string | null {
 
 export const teachingNotesWait = (count: number) => `${plural(count, 'teaching note', 'teaching notes')} ${count === 1 ? 'waits' : 'wait'} for you`;
 
-/** "2 teaching notes wait for you · 33 claims need you · 12 verified". Zero counts are left out. */
+/** "2 teaching notes wait for you · 33 statements need you · 12 verified". Zero counts are left out. */
 export function tallyLine(counts: ClaimCountsDto, teachingWaiting = 0): string {
   const parts: Array<[number, string]> = [
-    [counts.queued, counts.queued === 1 ? 'claim needs you' : 'claims need you'],
+    [counts.queued, counts.queued === 1 ? 'statement needs you' : 'statements need you'],
     [counts.verified, 'verified'],
     [counts.confirmed, 'confirmed by you'],
     [counts.rewritten, 'rewritten by the machine'],
@@ -278,7 +278,7 @@ export function tallyLine(counts: ClaimCountsDto, teachingWaiting = 0): string {
 export function jobTallyLine(tally: LearningClaimTally): string {
   const checking = tally.unchecked + tally.searching + tally.repairing;
   const parts: Array<[number, string]> = [
-    [tally.waiting, tally.waiting === 1 ? 'claim needs you' : 'claims need you'],
+    [tally.waiting, tally.waiting === 1 ? 'statement needs you' : 'statements need you'],
     [tally.verified, 'verified'],
     [tally.resolvedByYou, 'resolved by you'],
     [tally.rewritten ?? 0, 'rewritten by the machine'],
@@ -332,7 +332,7 @@ export const putBackMany = (count: number) => (count === 1 ? 'Put back in the le
 export const putBackUndone = (count: number) => (count === 1 ? 'Undone. It is out of the lesson again.' : `Undone. ${count} sentences are out of the lesson again.`);
 
 export function trustedAnnouncement(title: string, verified: number, stillWaiting: number): string {
-  return `Trusted ${title} for this course: ${plural(verified, 'claim', 'claims')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;
+  return `Trusted ${title} for this course: ${plural(verified, 'statement', 'statements')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;
 }
 
 // ── Many statements at once ─────────────────────────────────────────────────
@@ -349,8 +349,8 @@ export const batchUndone = (count: number) => (count === 1 ? 'Undone. 1 statemen
 
 export function addSourceTitle(scope: 'claim' | 'group' | 'queue' | 'lesson', count: number): string {
   if (scope === 'lesson') return 'Add a source to the lesson';
-  if (scope === 'claim' || count <= 1) return 'Add a source for this claim';
-  return scope === 'queue' ? `Add a source for all ${count} claims` : `Add a source for these ${count} claims`;
+  if (scope === 'claim' || count <= 1) return 'Add a source for this statement';
+  return scope === 'queue' ? `Add a source for all ${count} statements` : `Add a source for these ${count} statements`;
 }
 
 export const ADD_SOURCE_HINT = 'Drop a file or a link here, paste an address or text, or choose a file. A page you add is read as it is; if it says this, that settles it.';
@@ -363,7 +363,7 @@ export function progressLine(stage: { stage: 'fetching'; host: string | null } |
     case 'saving': return 'Saving it to your sources';
     case 'checking': {
       const statement = stage.statement.length > 80 ? `${stage.statement.slice(0, 79)}…` : stage.statement;
-      return `Checking claim ${Math.min(stage.done + 1, stage.total)} of ${stage.total}: ${statement}`;
+      return `Checking statement ${Math.min(stage.done + 1, stage.total)} of ${stage.total}: ${statement}`;
     }
     case 'done': return 'Done';
   }
@@ -422,7 +422,7 @@ function attachSummaryOf(report: ClaimAttachReportDto, scopeSize: number, remain
   }
   if (stated) return { stated, notStated, line: `Added ${title}; it states this. ${left(remaining)}` };
   if (notStated) return { stated, notStated, line: `Added ${title}; it does not say this. The closest passage is shown: edit the sentence to match it, or add another source.` };
-  return { stated, notStated, line: `Nothing in ${title} mentions this claim. It is saved in your sources.` };
+  return { stated, notStated, line: `Nothing in ${title} mentions this statement. It is saved in your sources.` };
 }
 
 /** The sentence that sums up a source checked against several claims. `total` is null when the claims in scope are only those that were tried. */
@@ -431,11 +431,11 @@ function claimsLine(report: ClaimAttachReportDto, title: string, tally: { verifi
   const done = verified + mismatched + unmentioned;
   const checked = total ?? done;
   const parts = [
-    `Verified ${verified} of ${checked} ${checked === 1 ? 'claim' : 'claims'}`,
+    `Verified ${verified} of ${checked} ${checked === 1 ? 'statement' : 'statements'}`,
     mismatched ? `${mismatched} ${mismatched === 1 ? 'does' : 'do'} not match what it says` : null,
     unmentioned ? `${unmentioned} ${unmentioned === 1 ? 'is' : 'are'} not mentioned by it` : null,
   ].filter(Boolean).join('; ');
-  const head = report.alreadySaved ? `${title} was already one of your sources; the claims were checked against it.` : `Added ${title}.`;
+  const head = report.alreadySaved ? `${title} was already one of your sources; the statements were checked against it.` : `Added ${title}.`;
   const stopped = report.others.stopped ? ` Checked ${total === null ? done : `${done} of ${total}`}; the rest were not checked: ${report.others.stopped}. Add and check again to continue.` : '';
   return `${head} ${parts}.${stopped}`;
 }
@@ -446,7 +446,7 @@ export function lessonSourceSummary(report: ClaimAttachReportDto): AttachSummary
   const { others } = report;
   if (others.tried === 0 && !others.stopped) {
     const head = report.alreadySaved ? `${title} was already one of your sources.` : `Added ${title}.`;
-    return { stated: false, notStated: false, line: `${head} No open claims in this lesson to check against it.` };
+    return { stated: false, notStated: false, line: `${head} No open statements in this lesson to check against it.` };
   }
   const tally = { verified: others.verified, mismatched: others.notVerified, unmentioned: others.noPassage };
   return { stated: false, notStated: false, line: claimsLine(report, title, tally, null) };
@@ -456,5 +456,5 @@ export function lessonSourceSummary(report: ClaimAttachReportDto): AttachSummary
 export function recheckLine(recheck: WaitingClaimsRecheckDto | null | undefined): string | null {
   if (!recheck || recheck.tried === 0) return null;
   const stopped = recheck.stopped ? ` The rest were not checked: ${recheck.stopped}.` : '';
-  return `Checked ${recheck.tried} waiting ${recheck.tried === 1 ? 'claim' : 'claims'} against it: ${recheck.verified} verified.${stopped}`;
+  return `Checked ${recheck.tried} waiting ${recheck.tried === 1 ? 'statement' : 'statements'} against it: ${recheck.verified} verified.${stopped}`;
 }

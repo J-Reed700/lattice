@@ -99,7 +99,7 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
   const support = item.support;
   const label = waiting ? null : verifiedLabel(item.sufficiency);
   return (
-    <article aria-label="Claim in focus" className="space-y-5">
+    <article aria-label="Statement in focus" className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           {back}
@@ -107,8 +107,8 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
         </div>
         <div className="flex items-center gap-1 text-xs tabular-nums text-text-muted">
           <span aria-live="off">{position} of {total}</span>
-          <Button type="button" size="icon" variant="ghost" aria-label="Previous claim" disabled={!onPrevious} onClick={() => onPrevious?.()}><ChevronLeft aria-hidden="true" /></Button>
-          <Button type="button" size="icon" variant="ghost" aria-label="Next claim" disabled={!onNext} onClick={() => onNext?.()}><ChevronRight aria-hidden="true" /></Button>
+          <Button type="button" size="icon" variant="ghost" aria-label="Previous statement" disabled={!onPrevious} onClick={() => onPrevious?.()}><ChevronLeft aria-hidden="true" /></Button>
+          <Button type="button" size="icon" variant="ghost" aria-label="Next statement" disabled={!onNext} onClick={() => onNext?.()}><ChevronRight aria-hidden="true" /></Button>
         </div>
       </header>
 

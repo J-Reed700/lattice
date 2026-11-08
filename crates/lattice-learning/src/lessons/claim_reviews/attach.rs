@@ -412,10 +412,10 @@ async fn attach_reporting(
     )
     .await?;
     let entry = claim(&ledger.claims, request.claim_id)
-        .ok_or_else(|| AppError::NotFound("Claim not found in this lesson".into()))?;
+        .ok_or_else(|| AppError::NotFound("Statement not found in this lesson".into()))?;
     if !entry.allows(ClaimActionKind::AttachEvidence) {
         return Err(AppError::InvalidState(
-            "Evidence can be added to an open or confirmed claim only.".into(),
+            "Evidence can be added to an open or confirmed statement only.".into(),
         ));
     }
     let statement = entry.statement().to_owned();
@@ -469,7 +469,7 @@ async fn attach_reporting(
     .await?
     .ok_or_else(|| {
         AppError::InvalidState(
-            "The claim changed while the evidence was being checked; reload it. The source is saved in your references."
+            "The statement changed while the evidence was being checked; reload it. The source is saved in your references."
                 .into(),
         )
     })?;

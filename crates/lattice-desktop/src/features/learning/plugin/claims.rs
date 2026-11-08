@@ -355,7 +355,7 @@ pub async fn attach_learning_claim_evidence(
     let pin = learning_model(
         &container,
         ModelRequirements::default(),
-        "Checking a claim against the evidence you added",
+        "Checking a statement against the evidence you added",
     )
     .await?;
     let web = container.web_service();
@@ -411,7 +411,7 @@ pub async fn attach_learning_lesson_source(
     let pin = learning_model(
         &container,
         ModelRequirements::default(),
-        "Checking a lesson's claims against the source you added",
+        "Checking a lesson's statements against the source you added",
     )
     .await?;
     let web = container.web_service();

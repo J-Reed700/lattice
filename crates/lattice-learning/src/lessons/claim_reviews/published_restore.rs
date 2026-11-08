@@ -39,12 +39,12 @@ pub(super) async fn apply_in(
     let review = ledger
         .review
         .as_ref()
-        .ok_or_else(|| AppError::NotFound("This lesson has no claim review.".into()))?;
+        .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
     let target = ledger
         .claims
         .iter()
         .find(|entry| entry.claim_id() == claim_id)
-        .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
+        .ok_or_else(|| AppError::NotFound("No statement with that id in this lesson.".into()))?;
     let (unit, new_body, old_body, range, replaced, sentence, reason) = match event {
         ClaimEvent::UserAction {
             action: UserAction::PutBack {
@@ -295,14 +295,15 @@ pub(super) async fn undo_in(
     let review = ledger
         .review
         .as_ref()
-        .ok_or_else(|| AppError::NotFound("This lesson has no claim review.".into()))?;
+        .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
     let target = ledger
         .claims
         .iter()
         .find(|entry| entry.claim_id() == claim_id)
-        .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
-    let (ordinal, event) = last_user_event(target)
-        .ok_or_else(|| AppError::InvalidState("There is nothing to undo on this claim.".into()))?;
+        .ok_or_else(|| AppError::NotFound("No statement with that id in this lesson.".into()))?;
+    let (ordinal, event) = last_user_event(target).ok_or_else(|| {
+        AppError::InvalidState("There is nothing to undo on this statement.".into())
+    })?;
     let by_hand = || AppError::InvalidState(UNDO_BLOCKED.into());
     let undoing = match event {
         ClaimEvent::UserAction {

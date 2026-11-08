@@ -102,7 +102,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
     if (current === 'link') return url.trim() ? { kind: 'attach_link', url: url.trim() } : 'Enter the address of the page.';
     if (current === 'file') return documents[0] ? { kind: 'attach_document', documentId: documents[0].id } : 'Choose a file.';
     if (current === 'saved') return saved ?? 'Choose one of your sources.';
-    return text.trim() ? { kind: 'attach_text', title: origin.trim() || 'Pasted text', text } : 'Paste the text that states the claim.';
+    return text.trim() ? { kind: 'attach_text', title: origin.trim() || 'Pasted text', text } : "Paste the source's text.";
   };
 
   const run = async (evidence: AttachEvidenceDto) => {
@@ -182,12 +182,12 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
 
       {target.level === 'claim' && (target.others?.length ?? 0) > 0 && <label className="mt-3 flex items-center gap-2 text-sm text-text-secondary">
         <input type="checkbox" checked={withOthers} disabled={busy} onChange={(event) => setWithOthers(event.target.checked)} />
-        Also check the {target.others!.length} other {target.others!.length === 1 ? 'claim that waits' : 'claims that wait'} on this source’s subject
+        Also check the {target.others!.length} other {target.others!.length === 1 ? 'statement that waits' : 'statements that wait'} on this source’s subject
       </label>}
 
       {busy && <div role="status" className="mt-3 space-y-1.5">
         <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />{progress ? progressLine(progress) : 'Starting…'}</p>
-        {checking && <div role="progressbar" aria-label="Claims checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
+        {checking && <div role="progressbar" aria-label="Statements checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
           <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${checking.total ? (checking.done / checking.total) * 100 : 0}%` }} />
         </div>}
       </div>}

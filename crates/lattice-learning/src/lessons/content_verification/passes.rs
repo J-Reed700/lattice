@@ -77,7 +77,7 @@ pub(super) async fn extract(
             }
             crate::lesson_progress::phase(
                 crate::lesson_progress::Phase::Coverage,
-                "Resuming saved claim coverage with the current policy",
+                "Resuming saved statement coverage with the current policy",
             );
             complete_inventory(
                 llm,

@@ -41,7 +41,7 @@ impl FidelityFinding {
 }
 
 fn failure() -> AppError {
-    invalid("The coverage audit did not account for every lesson passage with valid claim locations. The draft is saved; no lesson was published.")
+    invalid("The coverage audit did not account for every lesson passage with valid statement locations. The draft is saved; no lesson was published.")
 }
 
 fn unit_input(input: &Value, unit: &UnitClaims) -> Value {
@@ -293,14 +293,14 @@ async fn check_fidelity(
     let mut completed = 0;
     let mut judged = BTreeMap::<usize, Vec<MissingAssertion>>::new();
     crate::lesson_progress::stage(format!(
-        "Comparing extracted claims with original wording · 0 of {total} passages"
+        "Comparing extracted statements with original wording · 0 of {total} passages"
     ));
     while let Some(result) = stream.next().await {
         let (index, missing) = result?;
         judged.entry(index).or_default().extend(missing);
         completed += 1;
         crate::lesson_progress::stage(format!(
-            "Comparing extracted claims with original wording · {completed} of {total} passages"
+            "Comparing extracted statements with original wording · {completed} of {total} passages"
         ));
     }
     for unit in coverage {
@@ -343,7 +343,7 @@ pub(crate) async fn audit(
     }
     for batch in pending.chunks(4) {
         crate::lesson_progress::stage(format!(
-            "Checking claim coverage · {} of {} sections reviewed",
+            "Checking statement coverage · {} of {} sections reviewed",
             audited.len(),
             units.len()
         ));

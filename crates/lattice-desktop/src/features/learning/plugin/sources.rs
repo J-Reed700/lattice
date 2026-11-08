@@ -61,7 +61,7 @@ async fn recheck_waiting(
     let pin = learning_model(
         container,
         ModelRequirements::default(),
-        "Checking the waiting claims against the source you added",
+        "Checking the waiting statements against the source you added",
     )
     .await?;
     let web = container.web_service();

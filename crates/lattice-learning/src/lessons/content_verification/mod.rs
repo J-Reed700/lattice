@@ -435,7 +435,7 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     let count: usize = inventory.units.iter().map(|u| u.claims.len()).sum();
     if inventory.units.len() != content.len() || count == 0 {
         return Err(invalid(
-            "Claim extraction returned incomplete or excessive coverage. No lesson was published.",
+            "Statement extraction returned incomplete or excessive coverage. No lesson was published.",
         ));
     }
     for unit in &inventory.units {
@@ -452,7 +452,7 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
             })
         {
             return Err(invalid(
-                "Claim extraction returned invalid section evidence. No lesson was published.",
+                "Statement extraction returned invalid section evidence. No lesson was published.",
             ));
         }
     }

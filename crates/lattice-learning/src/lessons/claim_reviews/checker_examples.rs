@@ -211,7 +211,7 @@ impl CheckerExamples {
             LabelSource::UserRemove | LabelSource::UserEdit => Label::False,
             other => {
                 return Err(AppError::InvalidInput(format!(
-                    "{} is not a human verdict on a flagged claim.",
+                    "{} is not a human verdict on a flagged statement.",
                     other.as_str()
                 )))
             }

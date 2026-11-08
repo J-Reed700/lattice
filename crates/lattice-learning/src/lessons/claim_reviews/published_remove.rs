@@ -154,12 +154,12 @@ pub(super) async fn remove_in(
     let review = ledger
         .review
         .as_ref()
-        .ok_or_else(|| AppError::NotFound("This lesson has no claim review.".into()))?;
+        .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
     let target = ledger
         .claims
         .iter()
         .find(|entry| entry.claim_id() == claim_id)
-        .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
+        .ok_or_else(|| AppError::NotFound("No statement with that id in this lesson.".into()))?;
     if !in_section_body(target) {
         return Err(AppError::InvalidInput(ONLY_SECTION.into()));
     }

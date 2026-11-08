@@ -44,7 +44,7 @@ function useNarrow(): boolean {
 
 const ALL_KEYS: Array<[string, string]> = [
   ['A', 'Accept'], ['Shift A', 'Accept the source for all'], ['E', 'Edit the sentence'], ['R', 'Remove it'], ['S', 'Add a source'],
-  ['J / ↓', 'Next claim'], ['K / ↑', 'Previous claim'], ['U', 'Undo'], ['Enter', 'Open a queue row'], ['Esc', 'Close a form, then the screen'],
+  ['J / ↓', 'Next statement'], ['K / ↑', 'Previous statement'], ['U', 'Undo'], ['Enter', 'Open a queue row'], ['Esc', 'Close a form, then the screen'],
 ];
 
 /**
@@ -152,10 +152,10 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const anyOpen = Boolean(session.form || sheet || trusting || reader || editing || editingQuestion !== null);
   const click = (keys: string) => rootRef.current?.querySelector<HTMLButtonElement>(`[aria-keyshortcuts="${keys}"]:not(:disabled)`)?.click();
   const shortcuts = useMemo(() => [
-    { id: 'review-next', keys: 'J', description: 'Next claim', handler: () => session.step(1) },
-    { id: 'review-next-arrow', keys: 'ArrowDown', description: 'Next claim', handler: () => session.step(1) },
-    { id: 'review-previous', keys: 'K', description: 'Previous claim', handler: () => session.step(-1) },
-    { id: 'review-previous-arrow', keys: 'ArrowUp', description: 'Previous claim', handler: () => session.step(-1) },
+    { id: 'review-next', keys: 'J', description: 'Next statement', handler: () => session.step(1) },
+    { id: 'review-next-arrow', keys: 'ArrowDown', description: 'Next statement', handler: () => session.step(1) },
+    { id: 'review-previous', keys: 'K', description: 'Previous statement', handler: () => session.step(-1) },
+    { id: 'review-previous-arrow', keys: 'ArrowUp', description: 'Previous statement', handler: () => session.step(-1) },
     { id: 'review-accept', keys: 'A', description: 'Accept', handler: () => click('A') },
     { id: 'review-accept-source', keys: 'Shift+A', description: 'Accept the source for all', handler: () => click('Shift+A') },
     { id: 'review-edit', keys: 'E', description: 'Edit the sentence', handler: () => click('E') },
@@ -245,7 +245,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const focusSheet = lessonSheet ? null : sheetNode;
 
   const focus = (() => {
-    if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s claims have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
+    if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s statements have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
     if (session.removedActive && focusSheet) return focusSheet;
     if (session.removedActive) return <RemovedStatements sentences={session.removed} rewritten={session.rewritten} sections={review.sections}
@@ -274,7 +274,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       <Button type="button" variant="outline" className="mt-3" onClick={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}>Open the teaching notes</Button>
     </FocusMessage>;
     return <FocusMessage title="Everything is resolved">
-      <p>{review.state === 'ready' ? 'Every claim is verified, confirmed by you, removed or edited.' : `Every claim is verified, confirmed by you, removed or edited. ${ALL_RESOLVED.replace('Everything is resolved. ', '')}`}</p>
+      <p>{review.state === 'ready' ? 'Every statement is verified, confirmed by you, removed or edited.' : `Every statement is verified, confirmed by you, removed or edited. ${ALL_RESOLVED.replace('Everything is resolved. ', '')}`}</p>
       {takenOut}
     </FocusMessage>;
   })();

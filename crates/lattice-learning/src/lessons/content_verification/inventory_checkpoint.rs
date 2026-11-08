@@ -31,12 +31,12 @@ pub(super) async fn extract_audited_inventory(
 ) -> Result<(Inventory, Coverage)> {
     crate::lesson_progress::phase(
         crate::lesson_progress::Phase::Inventory,
-        "Extracting factual claims from the lesson and assessments",
+        "Extracting factual statements from the lesson and assessments",
     );
     let (retained, coverage) = section_checkpoints::load(llm, content).await?;
     if !retained.is_empty() {
         crate::lesson_progress::stage(format!(
-            "Reusing completed claim inventories for {} unchanged sections",
+            "Reusing completed statement inventories for {} unchanged sections",
             retained.len()
         ));
     }
@@ -250,7 +250,7 @@ pub(super) async fn complete_inventory(
     save_inventory(llm, candidate, &inventory, Some(&coverage)).await?;
     crate::lesson_progress::phase(
         crate::lesson_progress::Phase::Coverage,
-        "Checking that every factual claim was captured",
+        "Checking that every factual statement was captured",
     );
     let pending = Inventory {
         units: inventory

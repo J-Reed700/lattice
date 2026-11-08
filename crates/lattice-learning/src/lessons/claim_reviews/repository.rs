@@ -167,7 +167,7 @@ impl ClaimReviewStore for ClaimReviewRepository {
 /// The refusal of a write made against an older revision (§9): the caller
 /// reloads and acts again.
 pub(super) fn revision_conflict() -> AppError {
-    AppError::InvalidState("This claim changed; reload and act again.".into())
+    AppError::InvalidState("This statement changed; reload and act again.".into())
 }
 
 /// Refuses unless the lesson's review is at `expected` on `connection`.
@@ -183,7 +183,7 @@ pub(super) async fn check_revision(
             .await
             .map_err(db)?;
     let revision = revision.ok_or_else(|| {
-        AppError::InvalidState("This lesson has no claim review to record into.".into())
+        AppError::InvalidState("This lesson has no statement review to record into.".into())
     })?;
     if revision != expected.0 {
         return Err(revision_conflict());
@@ -220,7 +220,7 @@ pub(super) async fn append_in(
             .map_err(db)?;
     if owner.as_deref().is_some_and(|owner| owner != lesson_id) {
         return Err(AppError::InvalidInput(
-            "That claim belongs to another lesson.".into(),
+            "That statement belongs to another lesson.".into(),
         ));
     }
     let mut entry = match owner {
@@ -240,7 +240,7 @@ pub(super) async fn append_in(
             )?,
             _ => {
                 return Err(AppError::NotFound(
-                    "No claim with that id in this lesson.".into(),
+                    "No statement with that id in this lesson.".into(),
                 ))
             }
         },

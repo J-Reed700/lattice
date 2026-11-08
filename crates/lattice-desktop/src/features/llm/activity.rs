@@ -27,7 +27,7 @@ fn role_words(role: ModelRole) -> &'static str {
         ModelRole::Router => "for routing questions",
         ModelRole::Learning => "for Learning",
         ModelRole::Maintenance => "for upkeep",
-        ModelRole::Verifier => "for checking claims",
+        ModelRole::Verifier => "for checking statements",
     }
 }
 

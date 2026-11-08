@@ -135,11 +135,11 @@ fn phase_words(phase: LearningGenerationPhase) -> &'static str {
         LearningGenerationPhase::References => "Preparing reference material",
         LearningGenerationPhase::Writing => "Building the lesson draft",
         LearningGenerationPhase::Review => "Reviewing teaching and assessments",
-        LearningGenerationPhase::Inventory => "Identifying factual claims",
+        LearningGenerationPhase::Inventory => "Identifying factual statements",
         LearningGenerationPhase::Coverage => "Checking every section is covered",
         LearningGenerationPhase::Examples => "Checking worked examples",
-        LearningGenerationPhase::Evidence => "Verifying factual claims",
-        LearningGenerationPhase::Research => "Researching unresolved claims",
+        LearningGenerationPhase::Evidence => "Verifying factual statements",
+        LearningGenerationPhase::Research => "Researching unresolved statements",
         LearningGenerationPhase::Repair => "Repairing the draft",
         LearningGenerationPhase::Publishing => "Saving the verified lesson",
     }
@@ -194,7 +194,7 @@ fn lesson_item(
         ActivityProgress::of(
             u64::from(activity.checks_completed),
             u64::from(activity.checks_total),
-            "claims checked",
+            "statements checked",
         )
     });
     let lessons_done = (job.progress_total > 1).then(|| {

@@ -83,7 +83,7 @@ export function claimReviewBackend() {
       kind: shown.addedBy === "user" && !passage.url ? "pasted_text" : "page",
       standing: null,
       counts: contradicts
-        ? { outcome: "not_counted", reason: "it contradicts the claim" }
+        ? { outcome: "not_counted", reason: "it contradicts the statement" }
         : claim.state.state === "resolved_by_evidence" ? { outcome: "enough" } : { outcome: "not_enough" },
       quote,
       quoteSpan: at >= 0 ? [at, at + quote.length] : null,
@@ -186,10 +186,10 @@ export function claimReviewBackend() {
     const { request, onProgress } = args;
     const progress = (stage: ClaimAttachProgressDto) => onProgress !== undefined && send(onProgress, stage);
     const review = reviews[request.lessonId];
-    if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
+    if (!review) throw { code: "NOT_FOUND", message: "This lesson has no statement review yet." };
     if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This statement changed; reload and act again." };
     const claim = review.claims.find((item) => item.claimId === request.claimId);
-    if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
+    if (!claim) throw { code: "NOT_FOUND", message: "No statement with that id in this lesson." };
     const { evidence } = request;
     const others = { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null };
     if (evidence.kind === "attach_link") {

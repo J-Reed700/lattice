@@ -43,7 +43,7 @@ pub use section_edit::{SectionEdit, SectionEditOutcome};
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §6.2: Resume reruns nothing that has not changed.
 pub const NOTHING_CHANGED: &str =
-    "Nothing changed since the last pass. Resolve a claim or add evidence first.";
+    "Nothing changed since the last pass. Resolve a statement or add evidence first.";
 
 /// What a batch refuses when its action needs the user's eye on one statement.
 const ONE_STATEMENT: &str = "Choose one statement for that.";
@@ -125,7 +125,7 @@ impl ClaimReviewService {
             .as_ref()
             .filter(|review| review.program_id == program_id)
             .ok_or_else(|| {
-                AppError::NotFound("This lesson has no claim review to resume.".into())
+                AppError::NotFound("This lesson has no statement review to resume.".into())
             })?;
         let job = self.drafts.job(&review.job_id).await?;
         let request = LearningGenerationJobActionRequestDto {
@@ -160,7 +160,7 @@ impl ClaimReviewService {
         let review = ledger
             .review
             .clone()
-            .ok_or_else(|| AppError::NotFound("This lesson has no claim review.".into()))?;
+            .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
         if ledger.revision != Revision(expected_revision) {
             return Err(revision_conflict());
         }
@@ -168,7 +168,9 @@ impl ClaimReviewService {
             .claims
             .iter()
             .find(|entry| entry.claim_id().0 == claim_id)
-            .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
+            .ok_or_else(|| {
+                AppError::NotFound("No statement with that id in this lesson.".into())
+            })?;
         let resolution = self.plan(&review, lesson_id, entry, action, None).await?;
         self.carry_out(
             &review,
@@ -209,7 +211,7 @@ impl ClaimReviewService {
         let review = ledger
             .review
             .clone()
-            .ok_or_else(|| AppError::NotFound("This lesson has no claim review.".into()))?;
+            .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
         if ledger.revision != Revision(expected_revision) {
             return Err(if kind == ClaimActionKind::Undo {
                 AppError::InvalidState(MOVED.into())
@@ -224,7 +226,7 @@ impl ClaimReviewService {
                 .iter()
                 .find(|entry| entry.claim_id().0 == *id)
                 .ok_or_else(|| {
-                    AppError::NotFound("No claim with that id in this lesson.".into())
+                    AppError::NotFound("No statement with that id in this lesson.".into())
                 })?;
             if !chosen
                 .iter()
@@ -561,7 +563,7 @@ impl ClaimReviewService {
                 let sentence = located_quote(entry.location(), entry.statement(), &text);
                 if !whole_sentence(&text, &sentence) {
                     return Err(AppError::InvalidInput(
-                        "This claim is part of a sentence. Edit the sentence to say what goes."
+                        "This statement is part of a sentence. Edit the sentence to say what goes."
                             .into(),
                     ));
                 }
@@ -593,7 +595,7 @@ impl ClaimReviewService {
         entry: &ClaimLedgerEntry,
     ) -> Result<Resolution> {
         let ordinal = entry.undo_target().ok_or_else(|| {
-            AppError::InvalidState("There is nothing to undo on this claim.".into())
+            AppError::InvalidState("There is nothing to undo on this statement.".into())
         })?;
         let undone = entry
             .events()
@@ -686,7 +688,7 @@ impl ClaimReviewService {
                 .block_body(lesson_id, entry.location().unit_index)
                 .await?
                 .ok_or_else(|| {
-                    AppError::NotFound("The claim's section is not in the lesson.".into())
+                    AppError::NotFound("The statement's section is not in the lesson.".into())
                 });
         }
         let draft = self
@@ -702,7 +704,9 @@ impl ClaimReviewService {
             .map_err(|error| AppError::Serialization(error.to_string()))?;
         let location = entry.location();
         crate::content_verification::field_text(&candidate, location.unit_index, &location.field)
-            .ok_or_else(|| AppError::NotFound("The claim's section is not in the draft.".into()))
+            .ok_or_else(|| {
+                AppError::NotFound("The statement's section is not in the draft.".into())
+            })
     }
 }
 
