@@ -1229,7 +1229,8 @@ async fn a_save_leaves_a_reported_question_reported() -> Result<()> {
     Ok(())
 }
 
-const EDITED_THE_QUESTION: &str = "This question changed after that, so it can't be undone on its own. Edit the question to change it back.";
+const EDITED_THE_QUESTION: &str =
+    "This changed when you edited the question. Edit the question again to change it back.";
 
 #[tokio::test]
 async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_questions_text(
