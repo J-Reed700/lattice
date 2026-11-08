@@ -9,6 +9,8 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::AppError;
 
+use super::published_restore::undoable_in_published;
+
 pub(super) const ONLY_SECTION: &str = "Only a section's text can be changed in a published lesson.";
 
 const PUBLISHED: &str = "This lesson is published. Prepare it again to do that.";
@@ -56,8 +58,11 @@ fn offered_when_published(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> 
         ClaimActionKind::Confirm | ClaimActionKind::Unconfirm | ClaimActionKind::AttachEvidence => {
             true
         }
-        ClaimActionKind::Edit | ClaimActionKind::Remove => in_section_body(entry),
-        ClaimActionKind::Undo => undoes_an_accept(entry),
+        ClaimActionKind::Edit
+        | ClaimActionKind::Remove
+        | ClaimActionKind::PutBack
+        | ClaimActionKind::RestoreOriginal => in_section_body(entry),
+        ClaimActionKind::Undo => undoes_an_accept(entry) || undoable_in_published(entry),
         ClaimActionKind::ResearchWithHint => false,
     }
 }
@@ -69,9 +74,10 @@ pub(super) fn refusal(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> Opti
         return None;
     }
     Some(match action {
-        ClaimActionKind::Edit | ClaimActionKind::Remove => {
-            AppError::InvalidInput(ONLY_SECTION.into())
-        }
+        ClaimActionKind::Edit
+        | ClaimActionKind::Remove
+        | ClaimActionKind::PutBack
+        | ClaimActionKind::RestoreOriginal => AppError::InvalidInput(ONLY_SECTION.into()),
         _ => AppError::InvalidState(PUBLISHED.into()),
     })
 }

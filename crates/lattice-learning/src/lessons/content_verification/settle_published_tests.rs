@@ -889,19 +889,175 @@ async fn removing_part_of_a_published_sentence_is_still_refused_and_writes_nothi
 }
 
 #[tokio::test]
-async fn the_undo_of_a_removal_in_a_published_lesson_is_still_refused() -> Result<()> {
+async fn the_undo_of_a_removal_in_a_published_lesson_puts_the_sentence_back_where_it_was_and_the_statement_as_it_was(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+    let state = format!("{:?}", state_of(&ledger(&course).await?, &claim.0));
+    act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+    assert!(offered_for(&course, GOOD).await?.contains(&"undo".into()));
+
+    let revision = act(&course, &claim, ClaimActionRequestDto::Undo).await?;
+
+    let after = stored(&course).await?;
+    assert_eq!(
+        after.blocks, before.blocks,
+        "the text is as it was, whitespace and all"
+    );
+    assert_eq!(revision, before.ledger_revision + 2);
+    assert_eq!(after.content_revision, before.content_revision);
+    assert_eq!(
+        format!("{:?}", state_of(&ledger(&course).await?, &claim.0)),
+        state
+    );
+    let now = read(&course).await?;
+    assert_eq!(
+        now.claims, seen.claims,
+        "the findings the removal dropped are back"
+    );
+    assert_eq!(now.view.claim_count, seen.view.claim_count);
+    assert!(!offered_for(&course, GOOD).await?.contains(&"undo".into()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_returns_every_claim_the_removal_ended_whichever_one_it_is_asked_on(
+) -> Result<()> {
+    for undo_on_overlap in [false, true] {
+        let course = unchecked().await?;
+        let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+        let body = stored(&course).await?.blocks[0].clone();
+        let overlap = extract(
+            &course,
+            "overlap",
+            ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+            "Field-name whitespace is kept.",
+        )
+        .await?;
+        let before = stored(&course).await?;
+        let seen = read(&course).await?;
+        let states = |ledger: &Ledger| {
+            [&target, &overlap].map(|id| format!("{:?}", state_of(ledger, &id.0)))
+        };
+        let was = states(&ledger(&course).await?);
+        act(&course, &target, ClaimActionRequestDto::Remove).await?;
+
+        let asked = if undo_on_overlap { &overlap } else { &target };
+        act(&course, asked, ClaimActionRequestDto::Undo).await?;
+
+        let after = stored(&course).await?;
+        assert_eq!(after.blocks, before.blocks);
+        assert_eq!(states(&ledger(&course).await?), was);
+        assert_eq!(read(&course).await?.claims, seen.claims);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_restores_the_exact_text_around_the_sentence() -> Result<()> {
+    for (body, sentence) in [
+        ("A one. B two. C three.", "B two."),
+        ("A one. B two. C three.", "A one."),
+        ("A one. B two. C three.", "C three."),
+        (
+            "A one.
+
+B two.
+
+C three.",
+            "B two.",
+        ),
+        (
+            "A one.
+
+B two. C three.",
+            "B two.",
+        ),
+        (
+            "A one. B two.
+
+C three.",
+            "B two.",
+        ),
+        (
+            "A one.
+
+B two.
+
+C three.",
+            "B two.",
+        ),
+        ("A one. B two.", "B two."),
+    ] {
+        let course = unchecked().await?;
+        set_body(&course, 0, body).await?;
+        let claim = extract(
+            &course,
+            "line",
+            ClaimLocation::locate(0, UnitKind::Block, "body", sentence, body),
+            sentence,
+        )
+        .await?;
+        act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+        assert_ne!(stored(&course).await?.blocks[0], body);
+
+        act(&course, &claim, ClaimActionRequestDto::Undo).await?;
+
+        assert_eq!(
+            stored(&course).await?.blocks[0],
+            body,
+            "{sentence:?} in {body:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_by_hand_when_the_section_changed_after_it() -> Result<()>
+{
     let course = unchecked().await?;
     let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+    set_body(&course, 0, "The section was rewritten by hand.").await?;
 
     let error = refused(&course, &claim, ClaimActionRequestDto::Undo).await;
 
-    assert!(
-        error
-            .to_string()
-            .contains("This lesson is published. Prepare it again to do that."),
-        "{error}"
-    );
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_undo_of_a_batch_remove_puts_every_sentence_back_in_one_step() -> Result<()> {
+    let course = three().await?;
+    let statements = three_statements();
+    let ids = ids_of(&course, &statements).await?;
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+    let removed = act_many(
+        &course,
+        &ids,
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+
+    let undone = act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
+
+    assert_eq!(undone, removed + 1);
+    let after = stored(&course).await?;
+    assert_eq!(after.blocks, before.blocks);
+    assert_eq!(after.ledger_revision, removed + 1);
+    assert_eq!(read(&course).await?.claims, seen.claims);
+    let ledger = ledger(&course).await?;
+    for id in &ids {
+        assert!(
+            matches!(state_of(&ledger, id), ClaimState::Unverified { .. }),
+            "{:?}",
+            state_of(&ledger, id)
+        );
+    }
     Ok(())
 }
 
@@ -1472,5 +1628,186 @@ async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -
     let kept = notes().await?;
     assert_eq!(kept[0].state, TeachingFindingStateDto::Resolved);
     assert_eq!(kept[0].resolution, Some(TeachingResolutionDto::Removed));
+    Ok(())
+}
+
+const AFTER_IT: &str = "This section changed after you removed this sentence, so it can't go back on its own. Edit the section to add it back.";
+const FIRST_UNDO: &str = "First undo the other sentences you removed from this section.";
+
+const ALPHA: &str = "Alpha comes first.";
+const BRAVO: &str = "Bravo comes second.";
+const CHARLIE: &str = "Charlie comes third.";
+const DELTA: &str = "Delta comes fourth.";
+const ECHO: &str = "Echo comes last.";
+
+fn five() -> String {
+    [ALPHA, BRAVO, CHARLIE, DELTA, ECHO].join(" ")
+}
+
+/// The first section reads as `five`, with a claim on each of the three
+/// sentences between the first and the last.
+async fn adjacent(course: &Course) -> Result<[ClaimId; 3]> {
+    let body = five();
+    set_body(course, 0, &body).await?;
+    let mut ids = Vec::new();
+    for (id, sentence) in [("bravo", BRAVO), ("charlie", CHARLIE), ("delta", DELTA)] {
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", sentence, &body);
+        ids.push(extract(course, id, location, sentence).await?);
+    }
+    Ok(ids.try_into().unwrap())
+}
+
+fn in_order(body: &str) -> bool {
+    let at: Vec<usize> = [ALPHA, BRAVO, CHARLIE, DELTA, ECHO]
+        .iter()
+        .filter_map(|sentence| body.find(sentence))
+        .collect();
+    at.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+#[tokio::test]
+async fn a_batch_undo_of_a_batch_remove_of_adjacent_statements_leaves_the_text_byte_for_byte_as_it_was(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    let before = stored(&course).await?;
+    let ids = vec![bravo.0.clone(), charlie.0.clone()];
+    let removed = act_many(
+        &course,
+        &ids,
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        [ALPHA, DELTA, ECHO].join(" ")
+    );
+
+    act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
+
+    assert_eq!(stored(&course).await?.blocks, before.blocks);
+    Ok(())
+}
+
+#[tokio::test]
+async fn adjacent_removals_undone_in_any_order_come_back_in_place_or_are_refused_until_the_ones_after_them_are_back(
+) -> Result<()> {
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let course = unchecked().await?;
+        let ids = adjacent(&course).await?;
+        for id in &ids {
+            act(&course, id, ClaimActionRequestDto::Remove).await?;
+        }
+        assert_eq!(stored(&course).await?.blocks[0], [ALPHA, ECHO].join(" "));
+
+        let mut waiting = order.to_vec();
+        while !waiting.is_empty() {
+            let mut refused_now = Vec::new();
+            for index in &waiting {
+                let before = stored(&course).await?;
+                match act(&course, &ids[*index], ClaimActionRequestDto::Undo).await {
+                    Ok(_) => {
+                        let body = stored(&course).await?.blocks[0].clone();
+                        assert!(in_order(&body), "{order:?}: {body}");
+                    }
+                    Err(error) => {
+                        assert!(error.to_string().contains(FIRST_UNDO), "{error}");
+                        assert_eq!(stored(&course).await?, before, "{order:?}");
+                        refused_now.push(*index);
+                    }
+                }
+            }
+            assert!(refused_now.len() < waiting.len(), "{order:?}: no progress");
+            waiting = refused_now;
+        }
+
+        assert_eq!(stored(&course).await?.blocks[0], five(), "{order:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_after_it_and_names_that_reason(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    act(&course, &bravo, ClaimActionRequestDto::Remove).await?;
+    act(
+        &course,
+        &charlie,
+        edit(CHARLIE, "Delta replaces the third."),
+    )
+    .await?;
+
+    let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    assert!(!error.to_string().contains(FIRST_UNDO), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_but_kept_its_first_letter(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    act(&course, &bravo, ClaimActionRequestDto::Remove).await?;
+    act(
+        &course,
+        &charlie,
+        edit(CHARLIE, "Charlie comes third, after Alpha."),
+    )
+    .await?;
+
+    let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_the_first_sentences_removal_is_refused_when_the_next_one_was_edited(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let body = five();
+    set_body(&course, 0, &body).await?;
+    let mut ids = Vec::new();
+    for (id, sentence) in [("alpha", ALPHA), ("bravo", BRAVO)] {
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", sentence, &body);
+        ids.push(extract(&course, id, location, sentence).await?);
+    }
+    act(&course, &ids[0], ClaimActionRequestDto::Remove).await?;
+    act(&course, &ids[1], edit(BRAVO, "Bravo comes second, truly.")).await?;
+
+    let error = refused(&course, &ids[0], ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_removal_between_neighbours_that_occur_twice_undoes_byte_for_byte() -> Result<()> {
+    let course = unchecked().await?;
+    let body = "Same here. Gone now. Other one. Same here. Other one.";
+    set_body(&course, 0, body).await?;
+    let location = ClaimLocation::locate(0, UnitKind::Block, "body", "Gone now.", body);
+    let gone = extract(&course, "gone", location, "Gone now.").await?;
+    act(&course, &gone, ClaimActionRequestDto::Remove).await?;
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        "Same here. Other one. Same here. Other one."
+    );
+
+    act(&course, &gone, ClaimActionRequestDto::Undo).await?;
+
+    assert_eq!(stored(&course).await?.blocks[0], body);
     Ok(())
 }

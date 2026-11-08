@@ -229,7 +229,9 @@ impl ClaimEventPayloadDto {
             },
             ClaimEvent::Stepped { .. }
             | ClaimEvent::CitationDropped { .. }
-            | ClaimEvent::PublishedUnverified { .. } => return None,
+            | ClaimEvent::PublishedUnverified { .. }
+            | ClaimEvent::SentenceCut { .. }
+            | ClaimEvent::TextRemoved { .. } => return None,
         })
     }
 }
@@ -376,6 +378,14 @@ pub enum UserActionDto {
     ResearchWithHint {
         hint: String,
     },
+    PutBack {
+        sentence: String,
+        edited: bool,
+    },
+    RestoreOriginal {
+        original: String,
+        rewrite: String,
+    },
 }
 
 impl From<&UserAction> for UserActionDto {
@@ -391,6 +401,16 @@ impl From<&UserAction> for UserActionDto {
             },
             UserAction::Remove => Self::Remove,
             UserAction::ResearchWithHint { hint } => Self::ResearchWithHint { hint: hint.clone() },
+            UserAction::PutBack {
+                sentence, edited, ..
+            } => Self::PutBack {
+                sentence: sentence.clone(),
+                edited: *edited,
+            },
+            UserAction::RestoreOriginal { original, rewrite } => Self::RestoreOriginal {
+                original: original.clone(),
+                rewrite: rewrite.clone(),
+            },
         }
     }
 }

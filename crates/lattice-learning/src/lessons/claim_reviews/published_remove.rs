@@ -7,9 +7,10 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
+    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::text::segmentation::sentences;
 use sqlx::SqliteConnection;
 
 use super::actions::{in_section_body, ONLY_SECTION};
@@ -56,6 +57,53 @@ pub(super) fn without_sentence(body: &str, range: (usize, usize)) -> String {
         leading
     };
     format!("{kept_before}{separator}{kept_after}")
+}
+
+/// What a removal took out: the text, and the whole sentences that end
+/// (`follows`) and start (`precedes`) where it was taken from.
+pub(super) type Removal = (String, Option<String>, Option<String>);
+
+/// What `without_sentence` took out of `old` to leave `new`, and where: the
+/// text itself, and the sentence-aligned text of `new` before and after the
+/// junction (`None` when it was taken from the start or the end), widened by a
+/// sentence each way until the two together occur once. `None` when the two do
+/// not differ by one deletion.
+pub(super) fn removal_text(old: &str, new: &str) -> Option<Removal> {
+    let at = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(c, _)| c.len_utf8())
+        .sum::<usize>();
+    let kept = new.len().checked_sub(at)?;
+    let end = old.len().checked_sub(kept)?;
+    let text = old.get(at..end.max(at))?;
+    if format!("{}{}{}", new.get(..at)?, text, new.get(at..)?) != old || text.is_empty() {
+        return None;
+    }
+    let spans = sentences(new);
+    let mut before = spans.iter().rposition(|&(_, end)| end <= at);
+    let mut after = spans
+        .iter()
+        .position(|&(start, _)| start >= at)
+        .unwrap_or(spans.len());
+    loop {
+        let start = before.and_then(|i| spans.get(i)).map_or(0, |span| span.0);
+        let stop = spans.get(after).map_or(new.len(), |span| span.1);
+        let follows = new.get(start..at).filter(|context| !context.is_empty());
+        let precedes = new.get(at..stop).filter(|context| !context.is_empty());
+        let joined = format!("{}{}", follows.unwrap_or(""), precedes.unwrap_or(""));
+        let alone = follows.is_none() || precedes.is_none();
+        if alone || span_of(new, &joined).is_some() {
+            return Some((
+                text.to_owned(),
+                follows.map(str::to_owned),
+                precedes.map(str::to_owned),
+            ));
+        }
+        before = before.and_then(|i| i.checked_sub(1));
+        after = (after + 1).min(spans.len());
+    }
 }
 
 /// Whether a line's text before the sentence is only the marker of a list
@@ -131,7 +179,20 @@ pub(super) async fn remove_in(
         })
         .collect();
     let new_body = without_sentence(&body, range);
+    let taken = removal_text(&body, &new_body);
     for entry in &removed {
+        if let Some((text, follows, precedes)) = &taken {
+            let event = ClaimEvent::TextRemoved {
+                text: text.clone(),
+                follows: follows.clone(),
+                precedes: precedes.clone(),
+            };
+            let machine = EventProvenance {
+                actor: Actor::Machine,
+                ..user.clone()
+            };
+            append_in(connection, lesson_id, entry.claim_id(), machine, event).await?;
+        }
         let event = ClaimEvent::UserAction {
             action: UserAction::Remove,
             note: None,
@@ -150,6 +211,7 @@ pub(super) async fn remove_in(
             range,
             new_body: &new_body,
             removed: &ids,
+            claim: claim_id,
         })
     })
     .await?;

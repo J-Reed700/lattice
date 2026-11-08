@@ -4951,13 +4951,29 @@ export type ChecksumRequest = { algorithm: string; value: string }
  * A conversation that has this document among its linked documents.
  */
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
-export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
+/**
+ * Whether the place of a taken-out sentence is known.
+ */
+export type PutBackPlaceDto = "known" | "choose"
+/**
+ * A sentence the machine rewrote, with what replaced it, as plain text.
+ */
+export type RewrittenDto = { original: string; rewrite: string;
+/**
+ * The reason the check gave, when it recorded one.
+ */
+why: string | null }
+/**
+ * A section of the lesson: its index and title.
+ */
+export type ReviewSectionDto = { index: number; title: string }
+export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "put_back" | "restore_original" | "undo"
 /**
  * What the user asked for on a claim (§5.1); `resolve_learning_claim`
  * carries it with the lesson's `expected_revision`. Evidence is attached
  * through `attach_learning_claim_evidence` instead.
  */
-export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "put_back"; text: string | null; section: number | null } | { action: "restore_original" } | { action: "undo" }
 /**
  * Where an attach is, for the line the review shows while it runs.
  */
@@ -5105,7 +5121,16 @@ alsoSupported: ClaimSupportDto[];
 /**
  * What research tried.
  */
-tried: ResearchSummaryDto }
+tried: ResearchSummaryDto;
+/**
+ * For a claim the machine took out: whether its sentence goes back where
+ * it was or the user chooses the section.
+ */
+place: PutBackPlaceDto | null;
+/**
+ * For a claim the machine rewrote: what it said and what it says now.
+ */
+rewritten: RewrittenDto | null }
 /**
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
@@ -8501,6 +8526,10 @@ pass: number; stopReason: StopReasonDto | null;
  */
 changedSinceStop: boolean; claims: ClaimReviewItemDto[];
 /**
+ * The lesson's sections, for choosing where a sentence goes back.
+ */
+sections: ReviewSectionDto[];
+/**
  * Teaching-review findings the repairs did not settle: the lesson
  * publishes with these waiting for the user.
  */
@@ -9245,8 +9274,10 @@ export type ResolveLearningClaimResultDto = {
  */
 revision: number }
 /**
- * One action for several claims at once (`Confirm`, `Remove`, or `Undo` of
- * the last such batch).
+ * One action for several claims at once (`Confirm`, `Remove`, `PutBack` of
+ * a sentence as it was, or `Undo` of the last such batch). An Undo takes the
+ * claims back in the reverse of the order sent, so send the batch's own
+ * order: the last one done is the first one undone.
  */
 export type ResolveLearningClaimsRequestDto = { programId: string; lessonId: string;
 /**
@@ -10878,7 +10909,7 @@ keywords?: string[] }
  * A recorded user action. A confirmation shows the sources it was bound
  * to; the quote digest it is bound to stays on the backend.
  */
-export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string }
+export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "put_back"; sentence: string; edited: boolean } | { action: "restore_original"; original: string; rewrite: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.

@@ -5,7 +5,7 @@
     clippy::panic
 )]
 //! What a section reads like once a sentence is taken out of it.
-use super::published_remove::without_sentence;
+use super::published_remove::{removal_text, without_sentence};
 
 /// `body` without its only occurrence of `sentence`.
 fn without(body: &str, sentence: &str) -> String {
@@ -94,5 +94,53 @@ fn text_with_windows_line_breaks_keeps_its_paragraph_break() {
     assert_eq!(
         without("A one.\r\n\r\nB two.\r\n\r\nC three.", "B two."),
         "A one.\r\n\r\nC three."
+    );
+}
+
+/// What taking `sentence` out of `body` records.
+fn recorded(body: &str, sentence: &str) -> (Option<String>, Option<String>) {
+    let new = without(body, sentence);
+    let (_, follows, precedes) = removal_text(body, &new).unwrap();
+    (follows, precedes)
+}
+
+const FIVE: &str = "Alpha comes first. Bravo comes second. Charlie comes third. Delta comes fourth. Echo comes last.";
+
+#[test]
+fn a_removal_records_the_whole_sentences_either_side_of_it() {
+    assert_eq!(
+        recorded(FIVE, "Bravo comes second."),
+        (
+            Some("Alpha comes first. ".into()),
+            Some("Charlie comes third.".into())
+        )
+    );
+}
+
+#[test]
+fn the_first_sentence_has_no_context_before_it_and_the_whole_next_sentence_after() {
+    assert_eq!(
+        recorded(FIVE, "Alpha comes first."),
+        (None, Some("Bravo comes second.".into()))
+    );
+}
+
+#[test]
+fn the_last_sentence_has_no_context_after_it_and_the_whole_sentence_before() {
+    assert_eq!(
+        recorded(FIVE, "Echo comes last."),
+        (Some("Delta comes fourth.".into()), None)
+    );
+}
+
+#[test]
+fn a_pair_of_neighbours_that_occurs_twice_is_widened_by_a_sentence_each_way() {
+    let body = "Same here. Gone now. Other one. Same here. Other one.";
+    assert_eq!(
+        recorded(body, "Gone now."),
+        (
+            Some("Same here. ".into()),
+            Some("Other one. Same here.".into())
+        )
     );
 }

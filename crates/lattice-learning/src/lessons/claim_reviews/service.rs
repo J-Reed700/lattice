@@ -21,6 +21,8 @@ use super::checker_examples::{CheckerExamples, LabelSource};
 use super::dto::ClaimActionRequestDto;
 use super::published_edit::{self, PublishedEdit};
 use super::published_remove;
+use super::published_restore;
+use super::put_back;
 use super::repository::{
     append_in, bump_revision, check_revision, revision_conflict, ClaimReviewRepository,
 };
@@ -49,7 +51,7 @@ const NEEDS_NOTE: &str = "It needs a note before it can be accepted.";
 pub struct ClaimReviewService {
     pool: SqlitePool,
     store: ClaimReviewRepository,
-    examples: CheckerExamples,
+    pub(super) examples: CheckerExamples,
     drafts: LearningCurriculumRepository,
     checker_model: Option<String>,
 }
@@ -57,12 +59,12 @@ pub struct ClaimReviewService {
 /// One claim's event, the accuracy label it gives (§15) or, on Undo, the
 /// label it takes back (`unlabel`), and the verdict calibration records
 /// (`trust`) or forgets on Undo (`forget`).
-struct Resolution {
-    event: ClaimEvent,
-    label: Option<LabelSource>,
-    unlabel: Option<LabelSource>,
-    trust: Option<TrustVerdict>,
-    forget: Option<TrustVerdict>,
+pub(super) struct Resolution {
+    pub(super) event: ClaimEvent,
+    pub(super) label: Option<LabelSource>,
+    pub(super) unlabel: Option<LabelSource>,
+    pub(super) trust: Option<TrustVerdict>,
+    pub(super) forget: Option<TrustVerdict>,
 }
 
 /// A claim and the action checked for it, ready to write.
@@ -162,7 +164,7 @@ impl ClaimReviewService {
             .iter()
             .find(|entry| entry.claim_id().0 == claim_id)
             .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
-        let resolution = self.plan(&review, lesson_id, entry, action).await?;
+        let resolution = self.plan(&review, lesson_id, entry, action, None).await?;
         self.carry_out(
             &review,
             lesson_id,
@@ -174,8 +176,10 @@ impl ClaimReviewService {
 
     /// Applies one action to every claim in `claim_ids`, all or nothing:
     /// each claim is checked as `resolve` checks it, and when any is refused
-    /// nothing is written. Undo takes the claims' last action back and needs
-    /// the revision the batch returned. Returns the review's new revision.
+    /// nothing is written. Undo takes the claims' last action back, the last
+    /// one done first, and needs the revision the batch returned. Put backs
+    /// are placed one after the other, each against the text the ones before
+    /// it leave. Returns the review's new revision.
     pub async fn resolve_many(
         &self,
         lesson_id: &str,
@@ -190,6 +194,7 @@ impl ClaimReviewService {
                 source_version_ids,
             } => note.is_none() && source_version_ids.is_empty(),
             ClaimActionRequestDto::Remove | ClaimActionRequestDto::Undo => true,
+            ClaimActionRequestDto::PutBack { text, .. } => text.is_none(),
             _ => false,
         };
         if !in_bulk {
@@ -226,11 +231,43 @@ impl ClaimReviewService {
         if chosen.is_empty() {
             return Err(AppError::InvalidInput(NO_STATEMENTS.into()));
         }
+        if kind == ClaimActionKind::Undo {
+            chosen.reverse();
+        }
+        let published = review.state == LessonReviewState::Ready;
+        let mut staged = if kind == ClaimActionKind::PutBack {
+            Some(
+                self.put_back_units(&review, lesson_id, &ledger.claims)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let mut brought_back: HashSet<ClaimId> = HashSet::new();
         let mut planned = Vec::new();
         let mut refused: Vec<AppError> = Vec::new();
         for &entry in &chosen {
-            match self.plan(&review, lesson_id, entry, action.clone()).await {
-                Ok(resolution) => planned.push(Planned { entry, resolution }),
+            if brought_back.contains(entry.claim_id()) {
+                let resolution = Self::put_back_with_sibling(entry);
+                planned.push(Planned { entry, resolution });
+                continue;
+            }
+            let result = self
+                .plan(&review, lesson_id, entry, action.clone(), staged.as_ref())
+                .await;
+            match result {
+                Ok(resolution) => {
+                    if let Some(units) = staged.as_mut() {
+                        put_back::stage(units, &ledger.claims, entry, &resolution.event, published);
+                        brought_back.insert(entry.claim_id().clone());
+                        brought_back.extend(
+                            put_back::siblings(&ledger.claims, entry)
+                                .into_iter()
+                                .map(|other| other.claim_id().clone()),
+                        );
+                    }
+                    planned.push(Planned { entry, resolution });
+                }
                 Err(
                     error @ (AppError::InvalidInput(_)
                     | AppError::InvalidState(_)
@@ -243,6 +280,7 @@ impl ClaimReviewService {
             let verb = match kind {
                 ClaimActionKind::Confirm => "accepted",
                 ClaimActionKind::Remove => "removed",
+                ClaimActionKind::PutBack => "put back",
                 _ => "undone",
             };
             let message = plain(first);
@@ -268,6 +306,7 @@ impl ClaimReviewService {
         lesson_id: &str,
         entry: &ClaimLedgerEntry,
         action: ClaimActionRequestDto,
+        staged: Option<&Value>,
     ) -> Result<Resolution> {
         let kind = action_kind(&action);
         if review.state == LessonReviewState::Ready {
@@ -285,7 +324,8 @@ impl ClaimReviewService {
                 return Err(AppError::InvalidState(NEEDS_NOTE.into()));
             }
         }
-        self.resolution(review, lesson_id, entry, action).await
+        self.resolution(review, lesson_id, entry, action, staged)
+            .await
     }
 
     /// Writes the planned claims' events and text changes in one
@@ -354,6 +394,25 @@ impl ClaimReviewService {
                     ..
                 } if published => {
                     ended.extend(published_remove::remove_in(&mut tx, lesson_id, id, &user).await?);
+                }
+                event @ ClaimEvent::UserAction {
+                    action: UserAction::PutBack { .. } | UserAction::RestoreOriginal { .. },
+                    ..
+                } if published => {
+                    ended.extend(
+                        published_restore::apply_in(&mut tx, lesson_id, id, event, &user).await?,
+                    );
+                }
+                event @ ClaimEvent::UserAction {
+                    action: UserAction::PutBack { .. },
+                    ..
+                } => {
+                    ended.extend(
+                        put_back::write_draft_in(&mut tx, lesson_id, id, event, &user).await?,
+                    );
+                }
+                ClaimEvent::Undone { .. } if published => {
+                    ended.extend(published_restore::undo_in(&mut tx, lesson_id, id, &user).await?);
                 }
                 event => {
                     append_in(&mut tx, lesson_id, id, user.clone(), event.clone()).await?;
@@ -439,6 +498,7 @@ impl ClaimReviewService {
         lesson_id: &str,
         entry: &ClaimLedgerEntry,
         action: ClaimActionRequestDto,
+        staged: Option<&Value>,
     ) -> Result<Resolution> {
         let user = |action: UserAction, note: Option<String>, label: Option<LabelSource>| {
             let trust = match &action {
@@ -521,6 +581,11 @@ impl ClaimReviewService {
                 }
                 user(UserAction::ResearchWithHint { hint }, None, None)
             }
+            ClaimActionRequestDto::PutBack { text, section } => {
+                self.putting_back(review, lesson_id, entry, text, section, staged)
+                    .await
+            }
+            ClaimActionRequestDto::RestoreOriginal => self.restoring_original(entry),
             ClaimActionRequestDto::Undo => self.undo(review, lesson_id, entry).await,
         }
     }
@@ -547,20 +612,30 @@ impl ClaimReviewService {
             let sentence = located_quote(entry.location(), entry.statement(), &text);
             Ok::<bool, AppError>(!text.contains(&sentence))
         };
-        let changed_draft = match &undone.event {
-            ClaimEvent::UserAction {
-                action: UserAction::Edit { .. },
-                ..
-            } => entry.events().iter().any(|record| {
-                record.ordinal > ordinal && matches!(record.event, ClaimEvent::Superseded { .. })
-            }),
-            ClaimEvent::UserAction {
-                action: UserAction::Remove,
-                ..
-            }
-            | ClaimEvent::RepairAttempted { .. } => removal_applied().await?,
-            _ => false,
-        };
+        let published = review.state == LessonReviewState::Ready;
+        let changed_draft = !published
+            && match &undone.event {
+                ClaimEvent::UserAction {
+                    action: UserAction::Edit { .. },
+                    ..
+                } => entry.events().iter().any(|record| {
+                    record.ordinal > ordinal
+                        && matches!(record.event, ClaimEvent::Superseded { .. })
+                }),
+                ClaimEvent::UserAction {
+                    action: UserAction::Remove,
+                    ..
+                }
+                | ClaimEvent::RepairAttempted { .. } => removal_applied().await?,
+                ClaimEvent::UserAction {
+                    action: UserAction::PutBack { .. } | UserAction::RestoreOriginal { .. },
+                    ..
+                } => {
+                    self.restore_applied(review, lesson_id, entry, &undone.event)
+                        .await?
+                }
+                _ => false,
+            };
         if changed_draft {
             return Err(AppError::InvalidState(
                 "The section changed after this edit; undo it by hand.".into(),
@@ -657,6 +732,10 @@ fn not_now(action: ClaimActionKind) -> &'static str {
         ClaimActionKind::Edit | ClaimActionKind::Remove => {
             "It has already been removed or replaced."
         }
+        ClaimActionKind::PutBack => "Only a sentence the machine took out can be put back.",
+        ClaimActionKind::RestoreOriginal => {
+            "Only a sentence the machine rewrote has an original to restore."
+        }
         ClaimActionKind::Unconfirm => "It has not been accepted.",
         ClaimActionKind::ResearchWithHint => "It is not waiting for a search.",
         ClaimActionKind::AttachEvidence | ClaimActionKind::Undo => "That can't be done to it now.",
@@ -670,12 +749,14 @@ fn action_kind(action: &ClaimActionRequestDto) -> ClaimActionKind {
         ClaimActionRequestDto::Edit { .. } => ClaimActionKind::Edit,
         ClaimActionRequestDto::Remove => ClaimActionKind::Remove,
         ClaimActionRequestDto::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
+        ClaimActionRequestDto::PutBack { .. } => ClaimActionKind::PutBack,
+        ClaimActionRequestDto::RestoreOriginal => ClaimActionKind::RestoreOriginal,
         ClaimActionRequestDto::Undo => ClaimActionKind::Undo,
     }
 }
 
 /// A user action's provenance (§5.1): no job, the checker the review names.
-fn provenance(review: &LessonReview) -> EventProvenance {
+pub(super) fn provenance(review: &LessonReview) -> EventProvenance {
     EventProvenance {
         actor: Actor::User,
         at: now(),

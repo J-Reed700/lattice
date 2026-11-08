@@ -18,8 +18,13 @@ mod published_edit;
 mod published_remove;
 #[cfg(test)]
 mod published_remove_tests;
+mod published_restore;
+mod put_back;
+#[cfg(test)]
+mod put_back_tests;
 pub mod recheck;
 pub mod repository;
+mod restore;
 pub mod service;
 mod teaching_claims;
 pub mod teaching_findings;

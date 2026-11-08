@@ -313,7 +313,7 @@ const left = (remaining: number, teachingWaiting = 0, published = false) => {
   return published ? PUBLISHED_RESOLVED : ALL_RESOLVED;
 };
 
-export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'research_with_hint' | 'unconfirm' | 'undo';
+export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'research_with_hint' | 'unconfirm' | 'put_back' | 'restore_original' | 'undo';
 
 export function announcement(action: AnnouncedAction, remaining: number, teachingWaiting = 0, published = false): string {
   switch (action) {
@@ -322,9 +322,14 @@ export function announcement(action: AnnouncedAction, remaining: number, teachin
     case 'remove': return `Removed. ${left(remaining, teachingWaiting, published)}`;
     case 'research_with_hint': return 'Hint saved. It is searched when you resume.';
     case 'unconfirm': return `Acceptance withdrawn. ${left(remaining, teachingWaiting, published)}`;
+    case 'put_back': return 'Put back in the lesson.';
+    case 'restore_original': return 'Original restored.';
     case 'undo': return `Undone. ${left(remaining, teachingWaiting, published)}`;
   }
 }
+
+export const putBackMany = (count: number) => (count === 1 ? 'Put back in the lesson.' : `Put back ${count} sentences in the lesson.`);
+export const putBackUndone = (count: number) => (count === 1 ? 'Undone. It is out of the lesson again.' : `Undone. ${count} sentences are out of the lesson again.`);
 
 export function trustedAnnouncement(title: string, verified: number, stillWaiting: number): string {
   return `Trusted ${title} for this course: ${plural(verified, 'claim', 'claims')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;
@@ -387,7 +392,19 @@ export type AttachSummary = {
 };
 
 /** The result line for an attach, from its report (§3.6, §4.6). */
+const PUT_BACK_LINES = [
+  'The source supports it, so it is back in the lesson.',
+  'The source supports it. Choose where it goes and put it back.',
+  'The source does not support it, so it stays out of the lesson.',
+];
+
 export function attachSummary(report: ClaimAttachReportDto, scopeSize: number, remaining: number): AttachSummary {
+  const summary = attachSummaryOf(report, scopeSize, remaining);
+  const putBack = report.lines.find((line) => PUT_BACK_LINES.includes(line));
+  return putBack && scopeSize <= 1 ? { ...summary, line: `${summary.line} ${putBack}` } : summary;
+}
+
+function attachSummaryOf(report: ClaimAttachReportDto, scopeSize: number, remaining: number): AttachSummary {
   const title = report.source?.title ?? 'the source';
   const outcome = report.outcome;
   const checked = outcome?.outcome === 'checked' ? outcome.check.result : null;

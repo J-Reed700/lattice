@@ -61,7 +61,7 @@ function Row({ item, active, opened, settled, tabIndex, onSelect, selection }: {
  */
 export function ClaimQueue({
   groups, mode, onModeChange, activeId, openedIds, settledIds, onSelect, onAcceptSource, onAddSource,
-  resolved, teachingWaiting, teachingActive, onOpenTeaching, removedCount, removedActive, onOpenRemoved, busy, selection,
+  resolved, teachingWaiting, teachingActive, onOpenTeaching, removedCount, rewrittenCount = 0, removedActive, onOpenRemoved, busy, selection,
 }: {
   groups: ClaimGroup[];
   mode: GroupMode;
@@ -80,6 +80,8 @@ export function ClaimQueue({
   onOpenTeaching: () => void;
   /** Statements the machine took out of the lesson, which have a list of their own. */
   removedCount: number;
+  /** Sentences the machine rewrote, listed with the removals. */
+  rewrittenCount?: number;
   removedActive: boolean;
   onOpenRemoved: () => void;
   busy: boolean;
@@ -192,6 +194,15 @@ export function ClaimQueue({
             <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
             <span className="font-medium text-text-primary">Taken out of the lesson</span>
             <span className="text-xs text-text-muted">· {statementsCount(removedCount)}</span>
+          </button>
+        </section>}
+
+        {rewrittenCount > 0 && <section aria-label="Rewritten in the lesson" className="rounded-xl border border-border bg-surface">
+          <button type="button" data-queue-row="" tabIndex={-1} onClick={onOpenRemoved}
+            className="row-hover flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm">
+            <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
+            <span className="font-medium text-text-primary">Rewritten in the lesson</span>
+            <span className="text-xs text-text-muted">· {rewrittenCount === 1 ? '1 sentence' : `${rewrittenCount} sentences`}</span>
           </button>
         </section>}
 

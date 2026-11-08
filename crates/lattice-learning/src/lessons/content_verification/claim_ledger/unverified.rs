@@ -92,6 +92,7 @@ impl ClaimLedger {
         self.pending
             .repairs
             .retain(|record| !claims.contains(&record.claim_id));
+        self.pending.cuts.retain(|claim, _| !claims.contains(claim));
         self.pending.repairs.retain(|record| {
             !record
                 .rides_on

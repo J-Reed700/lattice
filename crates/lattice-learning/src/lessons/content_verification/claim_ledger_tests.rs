@@ -408,7 +408,24 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
             (2, true, RepairOutcome::Removed)
         ]
     );
+    let cut = gone
+        .cut_place()
+        .expect("the cut recorded the sentence it took out and where it stood");
+    assert!(!cut.sentence.is_empty() && !raw.contains(&cut.sentence));
+    assert!(cut.before.is_some() || cut.after.is_some(), "{cut:?}");
     Ok(())
+}
+
+#[test]
+fn pending_work_saved_before_cuts_were_recorded_still_reads() {
+    let saved = r#"{"previous":null,"repairs":[]}"#;
+    let pending: claim_ledger::Pending = serde_json::from_str(saved).unwrap();
+    assert!(pending.cuts.is_empty());
+    assert_eq!(
+        serde_json::to_string(&pending).unwrap(),
+        r#"{"previous":null,"repairs":[]}"#,
+        "no cuts, nothing new on disk"
+    );
 }
 
 #[tokio::test]
@@ -1181,6 +1198,7 @@ pub(super) fn pass_report(findings: Vec<Finding>) -> LessonVerificationReport {
         embedding_model: None,
         page_budget: None,
         unexecuted_languages: vec![],
+        replaced_findings: vec![],
     }
 }
 

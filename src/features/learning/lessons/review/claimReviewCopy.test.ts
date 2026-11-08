@@ -354,3 +354,13 @@ describe('adding a source', () => {
     });
   });
 });
+
+describe('put back and restore announcements', () => {
+  it('names a put back and a restore, and counts a bulk put back', async () => {
+    const copy = await import('@/features/learning/lessons/review/claimReviewCopy');
+    expect(copy.announcement('put_back', 0)).toBe('Put back in the lesson.');
+    expect(copy.announcement('restore_original', 0)).toBe('Original restored.');
+    expect(copy.putBackMany(1)).toBe('Put back in the lesson.');
+    expect(copy.putBackMany(3)).toBe('Put back 3 sentences in the lesson.');
+  });
+});

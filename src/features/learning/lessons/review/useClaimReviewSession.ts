@@ -4,8 +4,8 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
 import type { ActionForm } from '@/features/learning/lessons/review/ClaimActions';
-import { announcement, batchDone, batchUndone, trustedAnnouncement, type AnnouncedAction, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
-import { defaultGroupMode, groupClaims, isTakenOut, isWaitingForYou, takenOutSentences, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { announcement, batchDone, batchUndone, putBackMany, putBackUndone, trustedAnnouncement, type AnnouncedAction, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
+import { defaultGroupMode, groupClaims, isTakenOut, isWaitingForYou, rewrittenSentences, takenOutSentences, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { useLessonClaimReview, useResolveLearningClaim, useResolveLearningClaims } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useClearSourceTrustOverride } from '@/features/learning/sources/trust/useSourceTrust';
 import type {
@@ -21,7 +21,7 @@ import type {
 /** How long a resolved claim stays in the queue with its ✓ before it drops out. */
 const SETTLE_MS = 1200;
 
-type Undo = { kind: 'claim'; claimId: string } | { kind: 'batch'; claimIds: string[]; revision: number } | { kind: 'trust'; scope: LearningTrustOverrideScopeDto } | null;
+type Undo = { kind: 'claim'; claimId: string } | { kind: 'batch'; claimIds: string[]; revision: number; putBack?: boolean } | { kind: 'trust'; scope: LearningTrustOverrideScopeDto } | null;
 
 const waitingIn = (review: LessonClaimReviewDto | null | undefined) => review?.claims.filter(isWaitingForYou).length ?? 0;
 const publishedIn = (review: LessonClaimReviewDto | null | undefined) => review?.state === 'ready';
@@ -79,6 +79,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
   const resolved = useMemo(() => claims.filter((claim) => !isWaitingForYou(claim) && !isTakenOut(claim) && !settling.has(claim.claimId)), [claims, settling]);
   // What the machine took out has a list of its own: nothing there waits for the user.
   const removed = useMemo(() => takenOutSentences(claims), [claims]);
+  const rewritten = useMemo(() => rewrittenSentences(claims), [claims]);
 
   // The claim in focus: the chosen one while it exists, else the first in queue order.
   const active = claims.find((claim) => claim.claimId === activeId) ?? (teachingActive || removedActive ? undefined : ordered[0]);
@@ -135,6 +136,31 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
         setSettling((current) => { const after = new Set(current); after.delete(item.claimId); return after; });
         select(item.claimId);
         setFocusTick((tick) => tick + 1);
+      }
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error('The action could not be saved.'));
+      return false;
+    } finally {
+      setActing(false);
+    }
+  };
+
+  /** Put back or restore in the lists of the machine's changes: one claim as one action, several as one all-or-nothing call. */
+  const restore = async (claimIds: string[], request: ClaimActionRequestDto, kind: 'put_back' | 'restore_original'): Promise<boolean> => {
+    if (!review || claimIds.length === 0) return false;
+    setActing(true);
+    setError(null);
+    const expectedRevision = fresh()?.revision ?? review.revision;
+    try {
+      if (claimIds.length === 1) {
+        await resolve.mutateAsync({ claimId: claimIds[0], action: request, expectedRevision });
+        setMessage(announcement(kind, 0));
+        setUndo({ kind: 'claim', claimId: claimIds[0] });
+      } else {
+        const result = await resolveMany.mutateAsync({ claimIds, action: request, expectedRevision });
+        setMessage(kind === 'put_back' ? putBackMany(claimIds.length) : announcement(kind, 0));
+        setUndo({ kind: 'batch', claimIds, revision: result.revision, putBack: kind === 'put_back' });
       }
       return true;
     } catch (cause) {
@@ -217,7 +243,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
         const after = fresh();
         const waitingAgain = undo.claimIds.filter((id) => { const claim = after?.claims.find((entry) => entry.claimId === id); return claim && isWaitingForYou(claim); });
         setSettling((current) => new Set([...current].filter((id) => !undo.claimIds.includes(id))));
-        setMessage(batchUndone(waitingAgain.length));
+        setMessage(undo.putBack ? putBackUndone(undo.claimIds.length) : batchUndone(waitingAgain.length));
         setUndo(null);
       } catch (cause) {
         setMessage(cause instanceof Error ? cause.message : 'The change could not be undone.');
@@ -249,7 +275,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
 
   return {
     query, review, claims, waiting, groups, ordered, resolved, settling, opened,
-    mode: currentMode, setMode, active, activeIndex, teachingActive, removed, removedActive, select, step, openTeaching, openRemoved,
+    mode: currentMode, setMode, active, activeIndex, teachingActive, removed, rewritten, restore, removedActive, select, step, openTeaching, openRemoved,
     form, setForm, acting, error, message, setMessage, say, undo, undoLast, run, runMany, trusted, added,
     closestSupport, focusTick,
   };

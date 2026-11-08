@@ -25,6 +25,35 @@ pub(crate) struct WrittenOver<'a> {
     pub at: i64,
 }
 
+/// A sentence put back into a published section, or the original put in
+/// place of a rewrite, and the claim that stands for it.
+pub(crate) struct WrittenBack<'a> {
+    pub unit: usize,
+    /// The section's text before, and the span the sentence replaced (empty
+    /// where it was written in).
+    pub old_body: &'a str,
+    pub range: (usize, usize),
+    pub new_body: &'a str,
+    /// The claims that stood on the replaced text.
+    pub replaced: &'a HashSet<String>,
+    pub claim: &'a ClaimId,
+    pub sentence: &'a str,
+    pub statement: &'a str,
+    pub reason: &'a str,
+    pub at: i64,
+}
+
+/// What a published edit or restore took out of the report's findings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct ReplacedFindings {
+    /// The claim whose finding took their place.
+    by: String,
+    /// Where the first of them stood among the findings.
+    #[serde(default)]
+    at: usize,
+    findings: Vec<Finding>,
+}
+
 /// A sentence of a published section the user took out, with the claims
 /// that stood on it.
 pub(crate) struct TakenOut<'a> {
@@ -35,6 +64,8 @@ pub(crate) struct TakenOut<'a> {
     pub new_body: &'a str,
     /// The claims that stood on the removed text.
     pub removed: &'a HashSet<String>,
+    /// The claim the user removed, whose id keeps what the removal dropped.
+    pub claim: &'a ClaimId,
 }
 
 /// Whether `finding` stood on the text at `range` of `old_body` in `unit`:
@@ -63,15 +94,27 @@ impl LessonVerificationReport {
     /// `removal.removed` stood on: those findings are gone, every other
     /// finding as it was.
     pub(crate) fn taken_out(&mut self, removal: &TakenOut<'_>) {
-        self.findings.retain(|finding| {
-            !stood_on(
+        let stood = |finding: &Finding| {
+            stood_on(
                 finding,
                 removal.unit,
                 removal.removed,
                 removal.old_body,
                 removal.range,
             )
-        });
+        };
+        let at = self.findings.iter().position(stood).unwrap_or(0);
+        let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
+            .into_iter()
+            .partition(|finding| stood(finding));
+        self.findings = kept;
+        if !gone.is_empty() {
+            self.replaced_findings.push(ReplacedFindings {
+                by: removal.claim.0.clone(),
+                at,
+                findings: gone,
+            });
+        }
         self.content_sha256 =
             digest(&json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
     }
@@ -85,7 +128,17 @@ impl LessonVerificationReport {
             stood_on(finding, edit.unit, edit.replaced, edit.old_body, edit.range)
         };
         let first = self.findings.iter().position(replaced);
-        self.findings.retain(|finding| !replaced(finding));
+        let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
+            .into_iter()
+            .partition(|finding| replaced(finding));
+        self.findings = kept;
+        if !gone.is_empty() {
+            self.replaced_findings.push(ReplacedFindings {
+                by: edit.successor.0.clone(),
+                at: first.unwrap_or(0),
+                findings: gone,
+            });
+        }
         let finding = Finding {
             unit: edit.unit,
             quote: edit.after.to_owned(),
@@ -108,6 +161,103 @@ impl LessonVerificationReport {
         self.findings.insert(at, finding);
         self.content_sha256 =
             digest(&json!([self.content_sha256, edit.unit, edit.new_body]).to_string());
+    }
+}
+
+impl LessonVerificationReport {
+    /// The report after a sentence was written into the text for `back.claim`:
+    /// one finding for it, confirmed by the user, in the place of the findings
+    /// of the claims that stood on the replaced text.
+    pub(crate) fn written_back(&mut self, back: &WrittenBack<'_>) {
+        let replaced = |finding: &Finding| match &finding.claim_id {
+            Some(id) => id == &back.claim.0 || back.replaced.contains(id),
+            None => {
+                back.range.0 < back.range.1
+                    && finding.unit == back.unit
+                    && lattice_core::domain::learning::claim_review::span_of(
+                        back.old_body,
+                        &finding.quote,
+                    )
+                    .is_some_and(|(start, end)| start < back.range.1 && back.range.0 < end)
+            }
+        };
+        let first = self.findings.iter().position(replaced);
+        let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
+            .into_iter()
+            .partition(|finding| replaced(finding));
+        self.findings = kept;
+        if !gone.is_empty() {
+            self.replaced_findings.push(ReplacedFindings {
+                by: back.claim.0.clone(),
+                at: first.unwrap_or(0),
+                findings: gone,
+            });
+        }
+        let finding = Finding {
+            unit: back.unit,
+            quote: back.sentence.to_owned(),
+            statement: back.statement.to_owned(),
+            verdict: ClaimVerdict::Unverified,
+            reason: back.reason.to_owned(),
+            evidence: Vec::new(),
+            supporting_quote: None,
+            resolution: Some(Resolution::Confirmed {
+                at: back.at,
+                note: None,
+            }),
+            claim_id: Some(back.claim.0.clone()),
+            trust: None,
+            label: None,
+            class: None,
+            two_pass: Default::default(),
+        };
+        let at = first.unwrap_or_else(|| {
+            self.findings
+                .iter()
+                .position(|other| other.unit > back.unit)
+                .unwrap_or(self.findings.len())
+        });
+        self.findings.insert(at, finding);
+        self.content_sha256 =
+            digest(&json!([self.content_sha256, back.unit, back.new_body]).to_string());
+    }
+
+    /// The report after the sentence the claims in `claims` stood for was
+    /// written out of the text again: their findings go, and the findings
+    /// they replaced come back.
+    pub(crate) fn written_out(&mut self, unit: usize, new_body: &str, claims: &HashSet<String>) {
+        let own = |finding: &Finding| {
+            finding
+                .claim_id
+                .as_ref()
+                .is_some_and(|id| claims.contains(id))
+        };
+        let at = self.findings.iter().position(own);
+        self.findings.retain(|finding| !own(finding));
+        self.restore_replaced(claims, at);
+        self.content_sha256 = digest(&json!([self.content_sha256, unit, new_body]).to_string());
+    }
+
+    /// The report after the user's removal was undone: the findings it
+    /// dropped are back where they stood.
+    pub(crate) fn taken_back(&mut self, unit: usize, new_body: &str, claims: &HashSet<String>) {
+        self.restore_replaced(claims, None);
+        self.content_sha256 = digest(&json!([self.content_sha256, unit, new_body]).to_string());
+    }
+
+    /// Puts back the findings kept for the claims in `claims`, at `at` or
+    /// where they stood: the latest entry only, since an older one holds
+    /// findings a later change already replaced.
+    fn restore_replaced(&mut self, claims: &HashSet<String>, at: Option<usize>) {
+        if let Some(held) = self
+            .replaced_findings
+            .iter()
+            .rposition(|replaced| claims.contains(&replaced.by))
+        {
+            let replaced = self.replaced_findings.remove(held);
+            let place = at.unwrap_or(replaced.at).min(self.findings.len());
+            self.findings.splice(place..place, replaced.findings);
+        }
     }
 }
 
