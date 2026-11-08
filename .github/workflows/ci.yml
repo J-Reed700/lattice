@@ -39,7 +39,6 @@ jobs:
       # GitHub runs five macOS jobs at a time for the account, and every pull
       # request used to ask for five, so main's runs waited hours behind them.
       # Intel Macs, the slowest runners, are checked on pushes to main only.
-      # Ubuntu stays on 24.04: on 26.04 the runner shut down mid-build (#340, #341).
       matrix:
         os: >-
           ${{ fromJSON(format('["ubuntu-24.04", "macos-latest", "windows-latest"{0}]',
@@ -263,6 +262,21 @@ jobs:
       - run: npm ci
       - name: Build and install isolated package candidate
         run: npm run test:desktop:build -- --release
+      # Windows 11 has both on; the mic test needs them on this Server runner too.
+      - name: Windows audio service and microphone access
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          try {
+            Set-Service AudioEndpointBuilder, Audiosrv -StartupType Automatic
+            Start-Service AudioEndpointBuilder, Audiosrv
+          } catch { Write-Warning "audio service: $_" }
+          $store = 'Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+          foreach ($key in "HKLM:\$store", "HKCU:\$store", "HKCU:\$store\NonPackaged") {
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name Value -Value Allow
+          }
+          Get-Service AudioEndpointBuilder, Audiosrv | Format-Table Name, Status, StartType
       - name: Exercise the native desktop app (macOS and Windows)
         if: runner.os != 'Linux'
         run: npm run test:desktop
