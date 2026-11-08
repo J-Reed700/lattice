@@ -168,12 +168,14 @@ jobs:
       fail-fast: false
       # Macs run on pushes to main only. The account gets a few macOS runners at
       # a time, so a pull request that asked for them waited an hour or more.
+      # A draft runs Ubuntu only; marking it ready runs Windows too.
       matrix:
         os: >-
           ${{ fromJSON((endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows'))
           && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest"]' || '["ubuntu-24.04"]')
+          || (github.event.pull_request.draft && '["ubuntu-24.04"]'
           || (github.event_name == 'push' && '["ubuntu-24.04", "windows-latest", "macos-latest", "macos-15-intel"]'
-          || '["ubuntu-24.04", "windows-latest"]')) }}
+          || '["ubuntu-24.04", "windows-latest"]'))) }}
     steps:
       - uses: actions/checkout@v4
 
