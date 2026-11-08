@@ -137,6 +137,31 @@ describe('LessonSectionEditor', () => {
     expect(onSaved).not.toHaveBeenCalled();
   });
 
+  it('shows a refused save as a plain sentence', async () => {
+    const sentence = 'This section changed since you opened it.';
+    const message = `Invalid state: ${sentence}`;
+    api.edit.mockImplementation(async (request: { dryRun: boolean }) => (request.dryRun
+      ? ok(outcome())
+      : { ok: false, error: message, details: { code: 'INVALID_STATE', message, details: null } }));
+    show();
+    fireEvent.change(textBox(), { target: { value: `${BODY} My own sentence.` } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(sentence);
+    expect(screen.queryByText(/Invalid state/)).not.toBeInTheDocument();
+  });
+
+  it('shows a refused dry run as a plain sentence', async () => {
+    const sentence = 'This section changed since you opened it.';
+    const message = `Invalid input: ${sentence}`;
+    api.edit.mockImplementation(async (request: { dryRun: boolean }) => (request.dryRun
+      ? { ok: false, error: message, details: { code: 'INVALID_INPUT', message, details: null } }
+      : ok(outcome())));
+    show();
+    fireEvent.change(textBox(), { target: { value: `${BODY} My own sentence.` } });
+    expect(await screen.findByText(sentence)).toBeVisible();
+    expect(screen.queryByText(/Invalid input/)).not.toBeInTheDocument();
+  });
+
   it('a blank title disables Save, says so and runs no dry run', async () => {
     vi.useFakeTimers();
     show();

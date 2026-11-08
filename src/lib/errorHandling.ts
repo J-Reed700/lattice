@@ -176,6 +176,11 @@ export function describeFailure(failure: ApiFailure): string {
     : failure.error;
 }
 
+/** The sentence a refused call carries, without the category the backend puts before it. */
+export function refusalSentence(error: { message: string; code?: unknown }): string {
+  return error.message;
+}
+
 /** The error a failed call carries to a component, keeping its code and the backend's own text. */
 export function failureToError(failure: ApiFailure): Error {
   return apiErrorToException(failure.details ?? { code: ErrorCode.UNKNOWN, message: failure.error });
