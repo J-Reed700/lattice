@@ -306,7 +306,7 @@ def main(argv=None):
         out += entry(repo, file, revision)
     out += "];\n"
     if args.write:
-        with open(args.write, "w", encoding="utf-8", newline="") as handle:
+        with open(args.write, "w", newline="") as handle:
             handle.write(out)
     else:
         sys.stdout.write(out)

@@ -17,7 +17,6 @@ import { OutlineReviewPanel, type OutlineOperation } from '@/features/learning/c
 import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
 import { StartingPointPanel } from '@/features/learning/curriculum/StartingPointPanel';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
-import { CourseDrillsPanel } from '@/features/learning/drills/CourseDrillsPanel';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
 import { LessonPreparationLine } from '@/features/learning/lessons/LessonPreparationLine';
@@ -80,7 +79,6 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const [canvasOpened, setCanvasOpened] = useState(false);
   const [practicalOpened, setPracticalOpened] = useState(false);
-  const [drillsOpened, setDrillsOpened] = useState(false);
   // The quiz open in the Quizzes tab (runner or result), and a module test row to bring into view.
   const [quizFormId, setQuizFormId] = useState<string | null>(null);
   const [quizModuleFocus, setQuizModuleFocus] = useState<string | null>(null);
@@ -97,7 +95,6 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     // match the replaced course. The import panel itself stays open.
     setWrittenOpened(false);
     setPracticalOpened(false);
-    setDrillsOpened(false);
     setCanvasOpened(false);
     setQuizFormId(null);
     setProjectRequest(null);
@@ -120,9 +117,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     setMoreOpen(false);
     if (resolvedTab === 'canvas') setCanvasOpened(true);
     if (resolvedTab === 'practical') setPracticalOpened(true);
-    if (resolvedTab === 'drills') setDrillsOpened(true);
     if (resolvedTab === 'workbench') setWrittenOpened(true);
-    if (resolvedTab === 'workbench' || resolvedTab === 'practical' || resolvedTab === 'drills') setLastPracticeTab(resolvedTab);
+    if (resolvedTab === 'workbench' || resolvedTab === 'practical') setLastPracticeTab(resolvedTab);
   }, [destination, program.modules]);
   const [title, setTitle] = useState(program.summary.title);
   const [notebookDrafts, setNotebookDrafts] = useState<Record<string, NotebookDraft>>({});
@@ -164,9 +160,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const activateTab = (next: Tab) => {
     if (next === 'canvas') setCanvasOpened(true);
     if (next === 'practical') setPracticalOpened(true);
-    if (next === 'drills') setDrillsOpened(true);
     if (next === 'workbench') setWrittenOpened(true);
-    if (next === 'workbench' || next === 'practical' || next === 'drills') setLastPracticeTab(next);
+    if (next === 'workbench' || next === 'practical') setLastPracticeTab(next);
     setMoreOpen(false);
     setTab(next);
   };
@@ -207,7 +202,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         break;
     }
   };
-  const practiceTab = tab === 'workbench' || tab === 'practical' || tab === 'drills';
+  const practiceTab = tab === 'workbench' || tab === 'practical';
   useEffect(() => {
     if (!moreOpen) return;
     const first = moreMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
@@ -342,7 +337,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           </details>
         </div>
         <nav aria-label="Module workspace" className="studio-workspace-tabs"><NavigationTabs label="Program workspace" value={practiceTab ? 'workbench' : tab} disabled={savingBeforeMove} options={primary.filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources').map((item) => ({ ...item, badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined }))} onValueChange={(id) => id === 'workbench' ? selectPracticeGroup() : selectTab(id)} idPrefix="workspace-tab" panelId="workspace-panel" actions={<div className="relative ml-auto"><button ref={moreButtonRef} type="button" aria-haspopup="menu" aria-expanded={moreOpen} aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined} aria-controls="workspace-more-menu" onClick={() => setMoreOpen((value) => !value)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">More <span aria-hidden="true">⌄</span></button>{moreOpen && <div id="workspace-more-menu" ref={moreMenuRef} role="menu" aria-label="More workspace tools" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; items[next]?.focus(); }} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-xl">{(activeProgram ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }] : [{ id: 'portability' as const, label: 'Import & export' }]).map((item) => <button key={item.id} type="button" role="menuitem" aria-current={tab === item.id ? 'page' : undefined} onClick={() => selectMoreTab(item.id)} className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background focus-visible:bg-background focus-visible:outline-hidden">{item.label}</button>)}</div>}</div>} /></nav>
-        {practiceTab && <><div className="mt-3 flex flex-wrap items-center justify-between gap-2">{tab === 'drills' ? <div /> : <div className="text-sm text-text-secondary"><span className="font-medium text-text-primary">{currentModule?.title}</span>{currentLesson && <> <span aria-hidden="true">›</span> {currentLesson.title}</>}</div>}<NavigationTabs label="Practice activities" appearance="segmented" value={tab} disabled={savingBeforeMove} options={[{ id: 'workbench', label: 'Written practice' }, { id: 'practical', label: 'Code & simulations' }, { id: 'drills', label: 'Review drills' }]} onValueChange={selectTab} idPrefix="practice-tab" panelId="practice-content" /></div></>}
+        {practiceTab && <><div className="mt-3 flex flex-wrap items-center justify-between gap-2"><div className="text-sm text-text-secondary"><span className="font-medium text-text-primary">{currentModule?.title}</span>{currentLesson && <> <span aria-hidden="true">›</span> {currentLesson.title}</>}</div><NavigationTabs label="Practice activities" appearance="segmented" value={tab} disabled={savingBeforeMove} options={[{ id: 'workbench', label: 'Written practice' }, { id: 'practical', label: 'Code & simulations' }]} onValueChange={selectTab} idPrefix="practice-tab" panelId="practice-content" /></div></>}
 
         {activeProgram && tab === 'starting_point' && <div className="mt-4"><StartingPointPanel programId={program.summary.id} onStudy={(lessonId) => goToStep({ kind: 'lesson', title: '', reason: '', lessonId })} onChallenge={(lessonId) => goToStep({ kind: 'assessment', title: '', reason: '', lessonId })} /></div>}
         <CourseIndexNotice programId={program.summary.id} />
@@ -366,7 +361,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         })} title="A project brief shaped by these outcomes, with deliverables and a rubric." className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">04</span>{currentModule?.id === program.modules.at(-1)?.id ? 'Build your capstone →' : 'Build a module project →'}</button></nav>}
         {activeProgram && tab === 'plan' && <div className="mt-5"><PlanPanel programId={program.summary.id} onStartingPoint={() => selectTab('starting_point')} /></div>}
         {tab === 'portability' && <div className="mt-5"><PortabilityPanel programId={program.summary.id} onImported={handleImported} /></div>}
-        {activeProgram && (practiceTab || writtenOpened || practicalOpened || drillsOpened) && <div id="practice-content" role="tabpanel" tabIndex={0} aria-labelledby={`practice-tab-${practiceTab ? tab : lastPracticeTab}`} hidden={!practiceTab} className="mt-3">
+        {activeProgram && (practiceTab || writtenOpened || practicalOpened) && <div id="practice-content" role="tabpanel" tabIndex={0} aria-labelledby={`practice-tab-${practiceTab ? tab : lastPracticeTab}`} hidden={!practiceTab} className="mt-3">
         {activeProgram && writtenOpened && (
           <div hidden={tab !== 'workbench'} className="mt-5 space-y-4">
             <div role="group" aria-label="Written practice mode" className="flex flex-wrap gap-1 rounded-lg border border-border bg-background p-1 text-xs">
@@ -418,7 +413,6 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           </div>
         )}
         {activeProgram && practicalOpened && <div hidden={tab !== 'practical'} className="mt-5"><PracticalWorkbenchPanel program={program} lesson={currentLesson ?? null} projectRequest={projectRequest} /></div>}
-        {activeProgram && drillsOpened && <div hidden={tab !== 'drills'} className="mt-5"><CourseDrillsPanel programId={program.summary.id} /></div>}
         </div>}
         {activeProgram && tab === 'quizzes' && <div className="mt-4" role="tabpanel" aria-labelledby="workspace-tab-quizzes"><QuizzesOverview program={program} formId={quizFormId} onFormIdChange={setQuizFormId} focusModuleId={quizModuleFocus}
           onOpenLesson={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId); if (target) void afterNotebookSave(() => { setModuleId(target.module.id); setLessonId(lessonId); activateTab('lessons'); }); }}

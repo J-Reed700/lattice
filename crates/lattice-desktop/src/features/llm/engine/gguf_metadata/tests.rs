@@ -644,8 +644,8 @@ fn a_header_is_read_from_any_seekable_reader() {
 
 #[test]
 fn the_runtime_prices_a_server_with_the_cores_footprint() {
-    use crate::features::llm::engine::sidecar_manager::resident_bytes_of;
-    use lattice_core::domain::models::fit::{footprint, ServerBuffers};
+    use crate::features::llm::engine::sidecar_manager::{resident_bytes_of, ServerBuffers};
+    use lattice_core::domain::models::fit::{footprint, ServerBuffers as CoreBuffers};
 
     let file = qwen35_9b_header()
         .tensors(&[("output.weight", 0), ("token_embd.weight", 1_000)], 5_000)
@@ -659,7 +659,7 @@ fn the_runtime_prices_a_server_with_the_cores_footprint() {
         length - info.cpu_weight_bytes,
         Some(&info.shape),
         window,
-        ServerBuffers::chat(false),
+        CoreBuffers::chat(false),
     )
     .total();
 

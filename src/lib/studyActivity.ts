@@ -3,7 +3,7 @@ import type { ApiResult } from '@/types';
 
 import { queryClient } from './queryClient';
 
-export type StudyTab = 'study' | 'starting_point' | 'lessons' | 'sources' | 'quizzes' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas' | 'tutor' | 'drills';
+export type StudyTab = 'study' | 'starting_point' | 'lessons' | 'sources' | 'quizzes' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas' | 'tutor';
 export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean; tangentId?: string;
   /** Open the lesson's claim review screen (`?review=claims`). */
   review?: 'claims' };
@@ -38,8 +38,6 @@ const descriptions: Record<string, TaskDescription> = {
   add_learning_text_source: source('Saving your reference text', 'Save your text as a course reference'),
   refresh_learning_source: source('Checking your reference for updates', 'Fetch the source again', 'Compare it with the saved version'),
   search_learning_sources_semantically: { ...source('Finding relevant passages', 'Search the saved references for relevant passages'), detail: 'Searching the text saved in this course for relevant evidence.' },
-  course_drills: { title: 'Loading your review drills', tab: 'drills', detail: 'This is taking longer than usual. The request is still waiting for a response.', involves: ['Read the course’s lessons and its drills'] },
-  start_course_drill: { title: 'Starting your review drill', tab: 'drills', detail: 'Waiting for the app to take a drill or start writing one.', involves: ['Take a ready drill of the lesson, or start writing one'] },
   export_learning_pack: { title: 'Exporting your study pack', tab: 'portability', quickStart: true, detail: 'Larger courses and attachments take longer to package.', involves: ['Collect the selected course material', 'Write the study pack to your chosen location'] },
   preview_learning_pack_import: { title: 'Checking your study pack', tab: 'portability', quickStart: true, detail: 'Reading the pack and checking its contents before you decide what to import.', involves: ['Read and validate the pack', 'Prepare an import preview'] },
   apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
@@ -69,7 +67,7 @@ function describe(command: string): TaskDescription {
           : command.includes('diagnostic') ? 'starting_point' : command.includes('curriculum') || command.includes('plan') ? 'plan'
             : command.includes('pack') || command.includes('portability') ? 'portability'
               : command.includes('memory') || command.includes('note') ? 'notebook' : 'lessons';
-  const names: Record<StudyTab, string> = { study: 'study guide', sources: 'references', canvas: 'canvas', recall: 'recall cards', practical: 'practice environment', quizzes: 'quizzes', workbench: 'practice session', starting_point: 'starting-point check', plan: 'learning plan', portability: 'study packs', notebook: 'notebook', lessons: 'course', tutor: 'tutor', drills: 'review drills' };
+  const names: Record<StudyTab, string> = { study: 'study guide', sources: 'references', canvas: 'canvas', recall: 'recall cards', practical: 'practice environment', quizzes: 'quizzes', workbench: 'practice session', starting_point: 'starting-point check', plan: 'learning plan', portability: 'study packs', notebook: 'notebook', lessons: 'course', tutor: 'tutor' };
   return {
     title: `${read ? 'Loading' : 'Updating'} your ${command.includes('study_deck') ? 'flashcards' : names[tab]}`,
     tab, detail: read ? 'This is taking longer than usual. The request is still waiting for a response.' : 'Waiting for the app to finish this change.',

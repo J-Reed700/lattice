@@ -431,7 +431,7 @@ impl EvalConfig {
             prompts::EXTRACTOR_PROMPT_VERSION,
             prompts::VERIFIER_PROMPT_VERSION,
             prompts::SUMMARIZER_PROMPT_VERSION,
-            prompts::validator_version(),
+            prompts::VALIDATOR_VERSION,
             !self.auth_header_name.is_empty()
         )
     }

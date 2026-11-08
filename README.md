@@ -149,20 +149,16 @@ talks to the Rust backend needs the Tauri dev process.
 │   ├── lattice-core/      # Domain, application ports and contracts; no Tauri
 │   ├── lattice-desktop/   # The Tauri app: features, infrastructure, commands,
 │   │                      # migrations, sidecar binaries and app configuration
-│   ├── lattice-index/     # Passage and vector indexes
-│   ├── lattice-learning/  # Learning Studio's engine; its plugin stays in the app
-│   ├── lattice-store/     # Workspace notes
 │   └── lattice-sync/      # Experimental sync service (its own workspace)
 ├── src/                   # React and TypeScript frontend
 ├── e2e/                   # Playwright renderer journeys and native desktop tests
 ├── evals/                 # Retrieval, grounding and memory eval sets and results
 ├── docs/                  # Architecture, ADRs, design docs and user docs
 ├── scripts/               # Repository checks and developer utilities
-└── Cargo.toml             # Rust workspace: every crate above but lattice-sync
+└── Cargo.toml             # Rust workspace: lattice-core and lattice-desktop
 ```
 
-`lattice-desktop` depends on `lattice-core` and the three library crates, and
-`lattice-learning` on core, index and store, never the other way round; see
+`lattice-desktop` depends on `lattice-core`, never the other way round; see
 [Rust architecture](docs/RUST_ARCHITECTURE.md) for the layer rules.
 
 ## Development checks

@@ -1,10 +1,10 @@
 use super::*;
 use crate::features::llm::engine::sidecar_manager::weights_fixture::sparse_file;
+use crate::features::llm::engine::sidecar_manager::Footprint;
 use lattice_core::application::contracts::settings::LocalModelConfigDto;
 use lattice_core::application::ports::llm_port::{
     CompletionRequest, CompletionResponse, ModelOrigin, Pace,
 };
-use lattice_core::domain::models::fit::Footprint;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 

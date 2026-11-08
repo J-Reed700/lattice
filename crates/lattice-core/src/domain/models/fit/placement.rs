@@ -19,11 +19,11 @@ pub trait Placement: std::fmt::Debug + Send + Sync {
 }
 
 /// A dedicated card: its memory less llama.cpp's fit target, less the display reserve when the
-/// screen runs on the card. The companions never take room on it: the runtime seats the chat model
-/// first and runs them on an integrated GPU when there is one, else on the processor.
+/// screen runs on the card, less the companions when no integrated GPU takes them.
 #[derive(Debug, Clone)]
 pub struct DedicatedGpu {
     pub card: Accelerator,
+    pub companions_on_card_bytes: u64,
     /// Whether the desktop runs on this card: true unless an integrated GPU is listed, which then
     /// drives the screen.
     pub display_on_card: bool,
@@ -52,6 +52,7 @@ impl Placement for DedicatedGpu {
             } else {
                 0
             })
+            .saturating_sub(self.companions_on_card_bytes)
     }
     fn device(&self) -> FitDevice {
         FitDevice {
@@ -101,9 +102,15 @@ pub fn choose_placement(profile: &MachineProfile, companions: &Companions) -> Bo
             .max_by_key(|device| device.total_bytes)
     };
     if let Some(card) = largest(AcceleratorKind::Dedicated) {
+        let spare_integrated = largest(AcceleratorKind::Integrated).is_some();
         return Box::new(DedicatedGpu {
             card: card.clone(),
-            display_on_card: largest(AcceleratorKind::Integrated).is_none(),
+            display_on_card: !spare_integrated,
+            companions_on_card_bytes: if spare_integrated {
+                0
+            } else {
+                companions.bytes()
+            },
         });
     }
     if let Some(device) = largest(AcceleratorKind::Unified) {

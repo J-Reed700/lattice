@@ -41,7 +41,6 @@ tempfile = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, optional = true }
 unicode-normalization = { workspace = true }
 unicode-segmentation = "1.10"
 url = { workspace = true }
@@ -57,9 +56,8 @@ objc = { workspace = true }
 mockall = { workspace = true }
 proptest = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
-tracing-subscriber = { workspace = true }
 
 [features]
-# Test doubles and helpers for the other crates' tests. Enabled only through
-# their dev-dependencies, so release builds never compile them.
-test-support = ["dep:mockall", "dep:tracing-subscriber"]
+# Test doubles and helpers for the desktop crate's tests. Enabled only through
+# its dev-dependency, so release builds never compile them.
+test-support = ["dep:mockall"]

@@ -1,6 +1,5 @@
 //! Byte-safe SSE decoder; failed or truncated generations must not look successful.
-use crate::features::llm::scheduler::rejection;
-use lattice_core::application::ports::llm_port::RequestSize;
+use crate::features::llm::scheduler::rejection::{self, RequestSize};
 use lattice_core::application::ports::llm_port::ServedTiming;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};

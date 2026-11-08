@@ -24,7 +24,7 @@ vi.mock('@/features/learning/curriculum/PlanPanel', () => ({ PlanPanel: () => <d
 vi.mock('@/features/learning/canvas/CanvasPanel', () => ({ default: () => <div>Canvas view</div> }));
 vi.mock('@/features/learning/portability/PortabilityPanel', () => ({ PortabilityPanel: () => null }));
 vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCourseFlow: () => null }));
-vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({ CourseDrillsPanel: () => null }));
+vi.mock('@/features/learning/drills/CodeReviewDrillScreen', () => ({ CodeReviewDrillScreen: () => null }));
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), get: vi.fn(), generate: vi.fn(), prepare: vi.fn(), plan: vi.fn(), memory: vi.fn(), settings: vi.fn(),

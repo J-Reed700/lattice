@@ -1337,13 +1337,13 @@ async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<
 }
 },
 /**
- * Starts a drill of the course on `material`, from the lesson asked for or, with none, the one next up: an attempt
- * on a ready drill of it or, when none is ready, the build that will make one. `lines` (lines of code, or sentences)
- * and `issues` size that build. The drill comes back as the learner may see it, never with its key or its source.
+ * Starts a drill on `material`, code in a language or a passage of a course: an attempt on a ready one, or, when none
+ * is ready, the build that will make one. `lines` (lines of code, or sentences) and `patterns_count` size that build.
+ * The drill comes back as the learner may see it, never with its key or its source.
  */
-async startCourseDrill(programId: string, lessonId: string | null, material: DrillMaterialDto, mode: AttemptMode, lines: number, issues: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
+async startReviewDrill(material: ReviewMaterialDto, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_course_drill", { programId, lessonId, material, mode, lines, issues }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_review_drill", { material, mode, lines, patternsCount }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1390,13 +1390,11 @@ async codeReviewLanguages() : Promise<string[]> {
     return await TAURI_INVOKE("plugin:learning|code_review_languages");
 },
 /**
- * A course's review drills: the language code drills are offered in (`language`, or the one the course suggests),
- * what a start with no lesson comes to for code and for passages, each lesson's standing by module, and the latest
- * attempts.
+ * The courses a drill on a passage can draw on: those with at least one source.
  */
-async courseDrills(programId: string, language: string | null) : Promise<Result<CourseDrillsDto, ApiError>> {
+async reviewDrillCourses() : Promise<Result<ReviewDrillCourseDto[], ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_drills", { programId, language }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_drill_courses") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1424,6 +1422,29 @@ async downloadModel(modelId: string) : Promise<Result<DownloadModelResponse, Api
 async checkFirstRunStatus() : Promise<Result<string, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|check_first_run_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The chat models recommended for this computer, best first.
+ */
+async recommendChatModels() : Promise<Result<RecommendationDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|recommend_chat_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The verdict for each listed model file, in the order asked; `null` when a
+ * file's header could not be read.
+ */
+async readModelFits(files: ModelFileRefDto[]) : Promise<Result<(FitVerdictDto | null)[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|read_model_fits", { files }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1662,34 +1683,10 @@ async detectSystemCapabilities() : Promise<Result<SystemCapabilitiesResponse, Ap
 }
 },
 /**
- * The chat models recommended for this computer, best first, each with its fit, the device it was
- * judged against and the labels it earned.
- */
-async recommendChatModels() : Promise<Result<RecommendationDto[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:model|recommend_chat_models") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Whether each GGUF file fits this computer, in the order asked. A file whose header is not yet
- * known is read (by range request, once: the answer is kept on disk); `null` means the header
- * could not be read.
- */
-async readModelFits(files: ModelFileRefDto[]) : Promise<Result<(FitVerdictDto | null)[], AppError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:model|read_model_fits", { files }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Get the catalog's models for a specific category, with the popularity the provider reports and,
- * for chat models, whether each fits this computer. Chat models come in the recommender's order,
- * the others in the catalog's.
+ * Get compatible models for a specific category.
+ *
+ * Returns models ranked by compatibility score, with detailed
+ * compatibility analysis for each model.
  */
 async getCompatibleModels(category: string) : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
@@ -1700,7 +1697,9 @@ async getCompatibleModels(category: string) : Promise<Result<ModelRecommendation
 }
 },
 /**
- * Get all the catalog's models across all categories.
+ * Get all recommended models across all categories.
+ *
+ * Returns models ranked by compatibility, grouped by category.
  */
 async getAllRecommendedModels() : Promise<Result<ModelRecommendationDto[], AppError>> {
     try {
@@ -1733,7 +1732,7 @@ async searchModelCatalog(request: SearchModelCatalogRequest) : Promise<Result<Mo
 },
 /**
  * List the actual standalone GGUF files published in a Hugging Face repository.
- * Sizes come from the repository; each file carries its fit once its header is known.
+ * Sizes come from the repository, while memory requirements are estimates.
  */
 async getModelVariants(repoId: string) : Promise<Result<ModelMetadataDto[], AppError>> {
     try {
@@ -4201,16 +4200,6 @@ export type AppError =
  */
 { InvalidConfig: string } |
 /**
- * No Learning model is set; the text says where to choose one
- */
-{ LearningModelNotSet: string } |
-/**
- * The bundled model server cannot run at all (binary missing or blocked,
- * a library missing, exiting at once); reinstalling or another model fixes
- * it, waiting does not. The text is what the learner reads.
- */
-{ ModelServerCannotStart: string } |
-/**
  * Resource not found
  */
 { NotFound: string } |
@@ -5201,12 +5190,7 @@ export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; cl
 /**
  * The drill as the learner may see it.
  */
-export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[];
-/**
- * The lesson the drill was built from, while it exists; none for a drill from before drills were built from
- * lessons.
- */
-lesson: DrillLessonRefDto | null }
+export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[] }
 /**
  * One file of a drill, as the learner reads it or leaves it.
  */
@@ -5642,50 +5626,6 @@ export type CorpusTypeCountDto = { type: string; count: number }
  */
 export type CountedSupportDto = { sourceVersionId: string; level: LearningTrustLevel | null }
 /**
- * One of a course's latest attempts, as its drills view lists it.
- */
-export type CourseDrillAttemptDto = { attemptId: string; status: AttemptStatus; mode: AttemptMode; startedAt: number;
-/**
- * The drill's title.
- */
-title: string; material: DrillMaterialDto;
-/**
- * The lesson the drill was built from, while it exists.
- */
-lesson: DrillLessonRefDto | null;
-/**
- * How the review fared, once it is graded.
- */
-score: CodeReviewScoreDto | null }
-/**
- * A course's review drills, as its Practice view reads them.
- */
-export type CourseDrillsDto = {
-/**
- * The language code drills are offered in: the one asked for, or the one the course suggests.
- */
-language: string;
-/**
- * What a code drill in `language` with no lesson asked for comes to; none when no lesson can be drilled in code.
- */
-nextCode: NextDrillDto | null;
-/**
- * What an explanation with no lesson asked for comes to; none when no lesson can be drilled on a passage.
- */
-nextPassage: NextDrillDto | null;
-/**
- * The course has a source with text, which an explanation's passage is taken from.
- */
-hasSources: boolean;
-/**
- * The course's modules in order, each with its lessons a drill can be built from.
- */
-modules: DrillModuleDto[];
-/**
- * The course's latest attempts, newest first.
- */
-recent: CourseDrillAttemptDto[] }
-/**
  * Where a course's evidence index stands.
  */
 export type CourseIndexStatusDto =
@@ -5844,10 +5784,6 @@ export type DeleteConversationResponseDto = {
 status: string }
 export type DeleteLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number; reason: string }
 export type DeleteWorkspaceNoteRequestDto = { noteId: string }
-/**
- * What kind of device a model was judged against. An integrated GPU alone is the processor, so no
- * verdict is judged against one.
- */
 export type DeviceKindDto = "dedicated" | "unified" | "processor"
 /**
  * What a diff does with one line.
@@ -6001,68 +5937,6 @@ geometry: VisionGeometry;
  * The projector download's size, in bytes.
  */
 projector_bytes: number }
-/**
- * A lesson a drill can be built from, and where its drills stand.
- */
-export type DrillLessonDto = { lessonId: string; title: string; standing: DrillStandingDto;
-/**
- * When its drills are next due; none while no drill of it has been rated.
- */
-dueAt: number | null;
-/**
- * A code drill can be built from it: false once one kept none of the lesson's ideas, until the lesson or the
- * course's sources change.
- */
-fitsCode: boolean;
-/**
- * An explanation can be built from it: false once the course's sources held no passage for it, until the lesson
- * or the sources change.
- */
-fitsPassage: boolean;
-/**
- * The course's current lesson.
- */
-current: boolean;
-/**
- * The learner marked it done.
- */
-completed: boolean }
-/**
- * The lesson of a course a drill was built from.
- */
-export type DrillLessonRefDto = { programId: string; lessonId: string;
-/**
- * The lesson's title now.
- */
-title: string }
-/**
- * What a drill of a course is on: code in a language, or an explanation of a passage of the course's sources.
- */
-export type DrillMaterialDto = { kind: "code"; language: string } | { kind: "passage" }
-/**
- * A module of the course, and its lessons a drill can be built from.
- */
-export type DrillModuleDto = { moduleId: string; title: string; lessons: DrillLessonDto[] }
-/**
- * Where a lesson's drills stand.
- */
-export type DrillStandingDto =
-/**
- * Rated, and due again.
- */
-"due" |
-/**
- * No drill of it has been rated.
- */
-"new" |
-/**
- * Rated, and not due yet.
- */
-"rested" |
-/**
- * A drill of it is out and not yet graded, or ready to be taken.
- */
-"pending"
 /**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
@@ -6223,7 +6097,7 @@ export type ErrorCode =
  */
 "MODEL_LOAD_ERROR" |
 /**
- * A request's prompt alone fills the model's context window
+ * The prompt is larger than the model's context window
  */
 "PROMPT_EXCEEDS_WINDOW" |
 /**
@@ -6290,9 +6164,6 @@ export type ErrorCode =
  * Generic error
  */
 "UNKNOWN"
-/**
- * What Lattice knows about a model's quality: the suites it was measured in, or nothing.
- */
 export type EvidenceDto = { kind: "measured"; suites: string[] } | { kind: "untested" }
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
 /**
@@ -6497,11 +6368,7 @@ export type FinderGateDto =
 /**
  * The user turned it off (or, for the archive, the archive fallback).
  */
-"disabled" | "noKey" | "noInstance" | "noContact" |
-/**
- * A contact is set but is not an email address.
- */
-"noEmail"
+"disabled" | "noKey" | "noInstance" | "noContact" | "noEmail"
 /**
  * A finder's health since the app started.
  */
@@ -6583,17 +6450,8 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
-/**
- * The device a verdict was judged against.
- */
 export type FitDeviceDto = { name: string; kind: DeviceKindDto; totalBytes: number }
-/**
- * How well a model fits a device.
- */
 export type FitKindDto = "fits" | "tight" | "too_large"
-/**
- * Whether a model fits this computer, and what it would use.
- */
 export type FitVerdictDto = { kind: FitKindDto; needsBytes: number; budgetBytes: number; device: FitDeviceDto }
 /**
  * The fix of an issue as the lines it removes and the lines it adds, in the file the issue is in.
@@ -7740,8 +7598,7 @@ modelCallsCeilingRises?: number;
 claims: LearningClaimTally | null; recentSteps: LearningGenerationStep[] }
 export type LearningGenerationJob = { id: string; programId: string; operationId: string; kind: LearningGenerationJobKind; payloadSha256: string; baseRevisionNumber: number; status: LearningGenerationJobStatus; progressCompleted: number; progressTotal: number; progressMessage: string; activity: LearningGenerationActivity | null; resultId: string | null; error: string | null;
 /**
- * The code of the error behind `error`, for a job that failed or is
- * waiting out a temporary failure; `None` otherwise.
+ * The code of the error the job recorded; null on older jobs.
  */
 errorCode?: ErrorCode | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
@@ -7937,9 +7794,9 @@ export type LearningOutlineProgressDto = { programId?: string | null; stage: Out
  */
 detail?: string | null;
 /**
- * Set while the run waits out a temporary failure of the model server.
+ * Present while the outline waits out a model outage between attempts.
  */
-waiting?: ModelWaitDto | null; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
+waiting?: ModelWaitDto; elapsedSeconds: number; stageSeconds: number; responseCharacters: number; modelName: string | null }
 export type LearningOutlineReviewDto = { status: LearningOutlineReviewStatus; issues: LearningOutlineIssueDto[]; repairPasses: number; note: string; updatedAt: number; contentHash: string;
 /**
  * Outline items whose citation is verified: chosen by evidence linking or
@@ -8537,7 +8394,7 @@ consentAt: number | null;
  */
 consentProvider: string | null;
 /**
- * The Verifier set in Settings → Downloaded; null when none is.
+ * The Verifier set in Settings → Models; null when none is.
  */
 verifier: ModelRef | null;
 /**
@@ -8831,10 +8688,6 @@ url: string;
  * Whether downloaded
  */
 downloaded: boolean }
-/**
- * A GGUF file on Hugging Face: the repository, the file in it and the revision to read, the
- * default branch when absent.
- */
 export type ModelFileRefDto = { repo: string; file: string; revision: string | null }
 export type ModelInfo = {
 /**
@@ -8920,11 +8773,6 @@ embedding_dimensions: number | null;
  * users don't waste a 1GB+ download on a model that won't load.
  */
 embedding_compatibility: EmbeddingCompatibilityDto | null;
-/**
- * Whether this model fits this computer, judged by the backend. Null
- * while the file's header is unread, and for models that are not chat
- * models.
- */
 fit?: FitVerdictDto | null }
 /**
  * Why a turn or job runs on the model it runs on.
@@ -8951,7 +8799,7 @@ export type ModelOrigin =
  */
 "verifier_role"
 /**
- * A catalog row, with whether it fits this computer.
+ * Model recommendation DTO for frontend.
  */
 export type ModelRecommendationDto = {
 /**
@@ -8966,10 +8814,7 @@ popularity_downloads?: number | null;
  * Popularity metric from upstream provider (likes)
  */
 popularity_likes?: number | null;
-/**
- * Whether this model fits this computer; null until its header is read.
- */
-fit?: FitVerdictDto | null }
+fit: FitVerdictDto | null }
 /**
  * A model a chat or a role can name.
  *
@@ -8978,6 +8823,7 @@ fit?: FitVerdictDto | null }
  * Settings when the model is loaded, so moving a server moves every chat
  * that names it.
  */
+export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 export type ModelRef =
 /**
  * A downloaded GGUF row in `models` (`DownloadedModel::model_id`).
@@ -9032,11 +8878,6 @@ export type ModelSourceDto =
  */
 "External"
 /**
- * A wait for the model server: when the next attempt is, and the code of
- * the failure being waited out.
- */
-export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
-/**
  * A model's context window and output ceiling, in tokens. As a choice, an
  * empty field follows the provider; as a report, it is a limit the provider
  * does not state.
@@ -9044,26 +8885,6 @@ export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 export type ModelWindowDto = { contextWindow: number | null; maxOutputTokens: number | null }
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
 export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
-/**
- * The lesson a start with no lesson asked for draws on, and what it comes to.
- */
-export type NextDrillDto = { lessonId: string; status: NextDrillStatus }
-/**
- * Whether the lesson a start with no lesson draws on has a drill ready, one being built, or neither.
- */
-export type NextDrillStatus =
-/**
- * A drill of it is ready, and the start opens an attempt on it.
- */
-"ready" |
-/**
- * A build of it is under way, and the start waits for it.
- */
-"building" |
-/**
- * The start queues its build.
- */
-"to_build"
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
 /**
  * Onboarding state — what the user has already been through.
@@ -9231,14 +9052,7 @@ maxAgeDays: number | null }
  * Recent document with access metadata
  */
 export type RecentDocument = { id: string; documentId: string; documentName: string; documentPath: string; fileType: string | null; lastAccessedAt: string; accessCount: number }
-/**
- * One entry of the recommended list.
- */
-export type RecommendationDto = { modelId: string; name: string; description: string;
-/**
- * One plain sentence on what the model is for.
- */
-useFor: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
+export type RecommendationDto = { modelId: string; name: string; description: string; useFor: string; downloadBytes: number; verdict: FitVerdictDto; labels: RecommendationLabelDto[]; evidence: EvidenceDto; speed: SpeedClassDto }
 export type RecommendationLabelDto = "best" | "fastest" | "smallest_download"
 export type RefreshLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; expectedRevision: number }
 /**
@@ -9592,27 +9406,7 @@ reason: string;
 /**
  * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
  */
-alsoValid: boolean;
-/**
- * What the issue breaks of the lesson the drill was built from; none for an issue of the catalogue alone.
- */
-lesson: RevealedLessonLinkDto | null }
-/**
- * The lesson's words a key issue goes against, as the reveal shows them under "From the lesson".
- */
-export type RevealedLessonLinkDto = { lessonId: string;
-/**
- * In the order the key cites them: a sentence, or a whole block of the lesson's code, each.
- */
-sentences: RevealedLessonSentenceDto[] }
-/**
- * One unit of a lesson's words, and where it comes from.
- */
-export type RevealedLessonSentenceDto = { text: string;
-/**
- * The title of the source it comes from; none for the lesson's own teaching.
- */
-source: string | null }
+alsoValid: boolean }
 /**
  * The source passage of a drill on a passage, as the reveal shows it.
  */
@@ -9621,7 +9415,15 @@ export type RevealedSourceDto = { title: string; text: string;
  * The version of the source the passage is the exact text of.
  */
 versionId: string }
+/**
+ * A course a drill on a passage can draw on.
+ */
+export type ReviewDrillCourseDto = { programId: string; title: string }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
+/**
+ * What a learner asks to review: code in a language, or a passage from one of their courses.
+ */
+export type ReviewMaterialDto = { kind: "code"; language: string } | { kind: "passage"; programId: string; topic: string | null }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
  * A selected option records a quiz answer; otherwise the rating records recall.
@@ -10131,7 +9933,7 @@ export type SourcesStatusDto = { finders: FinderStatusDto[]; keys: KeyStatusDto[
 export type SourcingSettingsDto = {
 /**
  * Per-finder switches by finder id; a finder left out is on (its `Auth`
- * still gates it). A switch for a retired finder is dropped on load.
+ * still gates it).
  */
 finders: { [key in string]: FinderSettingDto };
 /**
@@ -10233,9 +10035,6 @@ modelId: string; modelName: string;
  * Total bytes of the download.
  */
 downloadBytes: number }
-/**
- * How quickly a model answers, from its active parameters.
- */
 export type SpeedClassDto = "fast" | "balanced" | "thorough"
 /**
  * A `StandingAssessed` event's payload: the claim's kind, whether its

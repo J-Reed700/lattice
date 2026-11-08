@@ -25,9 +25,8 @@
 //! Only production code counts: the walk follows `mod` declarations from the
 //! crate roots and skips `#[cfg(test)]` modules and items, so test files are
 //! never read. File length is the exception: it reads every `.rs` file below
-//! the root and skips test-only files by name. The app, core and library
-//! source roots are walked separately and their findings counted together; a
-//! library root's subjects start with its crate directory, `lattice-learning/`.
+//! the root and skips test-only files by name. The app and core source roots
+//! are walked separately and their findings counted together.
 //!
 //! The composition root (`bootstrap`) builds the app, so it names every
 //! feature and the `Container`. It must stay a leaf: only the crate entry
@@ -197,9 +196,6 @@ pub type Counts = BTreeMap<Key, usize>;
 pub struct SourceFile {
     /// Path below the source root, `/`-separated.
     pub relative: String,
-    /// The crate directory and `/` for a library root, else empty; put before
-    /// `relative` in findings only.
-    pub prefix: String,
     pub module: Vec<String>,
     /// False for the binary crates, whose `crate::` is not the library.
     pub library: bool,
@@ -293,7 +289,6 @@ impl Walk {
             .join("/");
         self.files.push(SourceFile {
             relative,
-            prefix: String::new(),
             module: module.clone(),
             library,
             source,
@@ -378,51 +373,29 @@ fn path_attribute(attrs: &[Attribute]) -> Option<String> {
     })
 }
 
-/// Findings below every source root and library root. A root named twice, as
-/// the app root is while it still holds core, counts once. A library root's
-/// subjects and locations start with its crate directory's name.
-pub fn findings(roots: &[&Path], libraries: &[&Path]) -> Result<Vec<Finding>, Error> {
+/// Findings below every source root. A root named twice, as the app root is
+/// while it still holds core, counts once.
+pub fn findings(roots: &[&Path]) -> Result<Vec<Finding>, Error> {
     let mut seen = HashSet::new();
     let mut found = Vec::new();
-    let all = roots
-        .iter()
-        .map(|root| (*root, false))
-        .chain(libraries.iter().map(|root| (*root, true)));
-    for (root, is_library) in all {
+    for root in roots {
         let canonical = root
             .canonicalize()
             .map_err(|e| format!("{}: {e}", root.display()))?;
-        let prefix = if is_library {
-            crate_prefix(&canonical)?
-        } else {
-            String::new()
-        };
         if !seen.insert(canonical) {
             continue;
         }
-        let (mut files, modules) = production_files(root)?;
-        for file in &mut files {
-            file.prefix.clone_from(&prefix);
-        }
+        let (files, modules) = production_files(root)?;
         found.extend(files.iter().flat_map(|file| file_findings(file, &modules)));
-        found.extend(length_findings(root, &prefix)?);
+        found.extend(length_findings(root)?);
     }
     Ok(found)
-}
-
-/// The name of the directory above a source root, and `/`.
-fn crate_prefix(source_root: &Path) -> Result<String, Error> {
-    let name = source_root
-        .parent()
-        .and_then(Path::file_name)
-        .ok_or_else(|| format!("{}: no crate directory above it", source_root.display()))?;
-    Ok(format!("{}/", name.to_string_lossy()))
 }
 
 /// Every `.rs` file below the root that is too long. Unlike the other rules
 /// this reads files from disk rather than following `mod` declarations, so a
 /// file no module reaches still counts.
-pub fn length_findings(root: &Path, prefix: &str) -> Result<Vec<Finding>, Error> {
+pub fn length_findings(root: &Path) -> Result<Vec<Finding>, Error> {
     let mut found = Vec::new();
     let mut directories = vec![root.to_path_buf()];
     while let Some(directory) = directories.pop() {
@@ -441,7 +414,7 @@ pub fn length_findings(root: &Path, prefix: &str) -> Result<Vec<Finding>, Error>
                     .collect::<Vec<_>>()
                     .join("/");
                 if !test_only_file(&relative) {
-                    found.extend(file_length(prefix, &relative, &fs::read_to_string(&path)?));
+                    found.extend(file_length(&relative, &fs::read_to_string(&path)?));
                 }
             }
         }
@@ -457,12 +430,11 @@ fn test_only_file(relative: &str) -> bool {
 }
 
 /// One finding when a non-test file has more than `MAX_LINES` lines.
-pub fn file_length(prefix: &str, relative: &str, source: &str) -> Option<Finding> {
+pub fn file_length(relative: &str, source: &str) -> Option<Finding> {
     let lines = source.matches('\n').count();
-    let shown = format!("{prefix}{relative}");
     (lines > MAX_LINES && !test_only_file(relative)).then(|| Finding {
-        key: Key::new(FILE_LENGTH, &shown, format!("max-{MAX_LINES}-lines")),
-        location: format!("{shown} ({lines} lines)"),
+        key: Key::new(FILE_LENGTH, relative, format!("max-{MAX_LINES}-lines")),
+        location: format!("{relative} ({lines} lines)"),
     })
 }
 
@@ -493,8 +465,7 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
     collector.visit_file(&file.ast);
 
     let relative = &file.relative;
-    let shown = format!("{}{relative}", file.prefix);
-    let at = |line: usize| format!("{shown}:{line}");
+    let at = |line: usize| format!("{relative}:{line}");
     let mut found = Vec::new();
     for reference in &collector.references {
         let path = &reference.path;
@@ -512,7 +483,7 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
             );
             if file.module.first().is_some_and(|s| s == "infrastructure") {
                 found.push(Finding {
-                    key: Key::new(INFRASTRUCTURE_IMPORTS_FEATURE, &shown, target.clone()),
+                    key: Key::new(INFRASTRUCTURE_IMPORTS_FEATURE, relative, target.clone()),
                     location: named.clone(),
                 });
             }
@@ -527,34 +498,34 @@ pub fn file_findings(file: &SourceFile, modules: &HashSet<Vec<String>>) -> Vec<F
         }
         if names_container(path, reference.glob) && !may_import_container(relative) {
             found.push(Finding {
-                key: Key::new(CONTAINER_IMPORT, &shown, CONTAINER_TARGET),
+                key: Key::new(CONTAINER_IMPORT, relative, CONTAINER_TARGET),
                 location: at(reference.line),
             });
         }
         if names_composition_root(path, reference.glob) && !may_import_composition_root(relative) {
             found.push(Finding {
-                key: Key::new(COMPOSITION_ROOT_IMPORT, &shown, COMPOSITION_ROOT),
+                key: Key::new(COMPOSITION_ROOT_IMPORT, relative, COMPOSITION_ROOT),
                 location: at(reference.line),
             });
         }
     }
     for (target, line, named) in collector.reexports {
         found.push(Finding {
-            key: Key::new(FEATURE_REEXPORT, &shown, target),
+            key: Key::new(FEATURE_REEXPORT, relative, target),
             location: format!("{} {named}", at(line)),
         });
     }
     if !relative.starts_with(SUPERVISOR) {
         for (target, line) in collector.spawns {
             found.push(Finding {
-                key: Key::new(RAW_SPAWN, &shown, target),
+                key: Key::new(RAW_SPAWN, relative, target),
                 location: at(line),
             });
         }
     }
     for (name, line) in collector.statics {
         found.push(Finding {
-            key: Key::new(GLOBAL_STATE, &shown, name),
+            key: Key::new(GLOBAL_STATE, relative, name),
             location: at(line),
         });
     }
@@ -1318,8 +1289,6 @@ pub struct Files<'a> {
     pub baseline: &'a Path,
     /// The feature graph allowlist.
     pub feature_graph: &'a Path,
-    /// Library crates' source roots, checked with their directory name as prefix.
-    pub libraries: &'a [&'a Path],
 }
 
 /// What the rules find in the tree, before and after the allowlist.
@@ -1333,13 +1302,9 @@ struct Current {
     allowed_counts: Counts,
 }
 
-fn current(
-    roots: &[&Path],
-    libraries: &[&Path],
-    feature_graph_path: &Path,
-) -> Result<Current, Error> {
+fn current(roots: &[&Path], feature_graph_path: &Path) -> Result<Current, Error> {
     let allowed = feature_graph::load(feature_graph_path)?;
-    let found = findings(roots, libraries)?;
+    let found = findings(roots)?;
     let mut counts = counts(&found);
     let cycles = cycle_counts(&counts);
     let allowed_counts = feature_graph::take_allowed(&mut counts, &allowed);
@@ -1409,7 +1374,7 @@ pub fn check(
     failures: &mut usize,
 ) -> Result<(), Error> {
     let baseline_path = files.baseline;
-    let current_tree = current(roots, files.libraries, files.feature_graph)?;
+    let current_tree = current(roots, files.feature_graph)?;
     check_feature_graph(&current_tree, files.feature_graph, failures);
     let Current {
         found,
@@ -1504,7 +1469,7 @@ pub fn list(
     if !RULES.contains(&rule) {
         return Err(format!("unknown rule {rule}; the rules are {}", RULES.join(", ")).into());
     }
-    let current = current(roots, files.libraries, files.feature_graph)?;
+    let current = current(roots, files.feature_graph)?;
     let baseline = read_baseline(files.baseline)?;
     let wanted =
         |key: &Key| key.rule == rule && subject.is_none_or(|s| subject_matches(&key.subject, s));
@@ -1560,7 +1525,6 @@ mod tests {
     fn source(relative: &str, module: &[&str], text: &str) -> SourceFile {
         SourceFile {
             relative: relative.to_string(),
-            prefix: String::new(),
             module: module.iter().map(|s| s.to_string()).collect(),
             library: true,
             source: text.to_string(),
@@ -2017,7 +1981,7 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
     }
 
     fn too_long(relative: &str, lines: usize) -> Vec<String> {
-        file_length("", relative, &"fn f() {}\n".repeat(lines))
+        file_length(relative, &"fn f() {}\n".repeat(lines))
             .into_iter()
             .map(|finding| {
                 format!(
@@ -2035,7 +1999,7 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
             vec!["file-length features/x.rs max-1000-lines"]
         );
         assert!(too_long("features/x.rs", 1000).is_empty());
-        let finding = file_length("", "x.rs", &"\n".repeat(1001)).unwrap();
+        let finding = file_length("x.rs", &"\n".repeat(1001)).unwrap();
         assert_eq!(
             counts(&[finding]).into_values().collect::<Vec<_>>(),
             vec![1]
@@ -2073,7 +2037,7 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         fs::write(root.join("unreached/tests/case.rs"), &long).unwrap();
         fs::write(root.join("unreached/notes.txt"), &long).unwrap();
         fs::write(root.join("short.rs"), "\n".repeat(1000)).unwrap();
-        let found: Vec<_> = length_findings(&root, "")
+        let found: Vec<_> = length_findings(&root)
             .unwrap()
             .into_iter()
             .map(|finding| finding.location)
@@ -2349,7 +2313,6 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         let files = Files {
             baseline: &baseline,
             feature_graph: &feature_graph,
-            libraries: &[],
         };
 
         // The two edges are held at zero, so every run fails them; only the
@@ -2412,8 +2375,8 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         )
         .unwrap();
 
-        let both = counts(&findings(&[&app, &core], &[]).unwrap());
-        let shared_root = counts(&findings(&[&app, &app], &[]).unwrap());
+        let both = counts(&findings(&[&app, &core]).unwrap());
+        let shared_root = counts(&findings(&[&app, &app]).unwrap());
         fs::remove_dir_all(&scratch).unwrap();
 
         assert_eq!(
@@ -2426,43 +2389,6 @@ thread_local! { static SCRATCH: RefCell<Vec<u8>> = RefCell::new(Vec::new()); }
         assert_eq!(
             shared_root,
             Counts::from([(key(FEATURE_EDGE, "features::a", "features::b"), 1)])
-        );
-    }
-
-    #[test]
-    fn library_roots_prefix_their_subjects_with_the_crate_directory() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let scratch = std::env::temp_dir().join(format!(
-            "lattice-ratchet-libraries-{}-{unique}",
-            std::process::id()
-        ));
-        let [a, b] = ["lattice-a", "lattice-b"].map(|name| scratch.join(name).join("src"));
-        for directory in [&a, &b] {
-            fs::create_dir_all(directory).unwrap();
-            fs::write(
-                directory.join("lib.rs"),
-                "pub static CACHE: Mutex<u32> = Mutex::new(0);",
-            )
-            .unwrap();
-        }
-
-        let libraries = counts(&findings(&[], &[&a, &b]).unwrap());
-        let as_app = counts(&findings(&[&a], &[]).unwrap());
-        fs::remove_dir_all(&scratch).unwrap();
-
-        assert_eq!(
-            libraries,
-            Counts::from([
-                (key(GLOBAL_STATE, "lattice-a/lib.rs", "CACHE"), 1),
-                (key(GLOBAL_STATE, "lattice-b/lib.rs", "CACHE"), 1),
-            ])
-        );
-        assert_eq!(
-            as_app,
-            Counts::from([(key(GLOBAL_STATE, "lib.rs", "CACHE"), 1)])
         );
     }
 
@@ -2649,7 +2575,6 @@ allow features::b features::c # b is built on c
         let files = Files {
             baseline: &baseline,
             feature_graph: &feature_graph,
-            libraries: &[],
         };
         fs::write(&feature_graph, "allow features::a features::b # r\n").unwrap();
         let mut writing = 0;
@@ -2684,7 +2609,6 @@ allow features::b features::c # b is built on c
         let files = Files {
             baseline: &baseline,
             feature_graph: &feature_graph,
-            libraries: &[],
         };
         fs::write(&feature_graph, LAYERED).unwrap();
         let mut failures = 0;
@@ -2699,7 +2623,7 @@ allow features::b features::c # b is built on c
             "pub fn run() { crate::features::a::run(); }",
         )
         .unwrap();
-        let cyclic = current(&[&root], &[], &feature_graph).unwrap().counts;
+        let cyclic = current(&[&root], &feature_graph).unwrap().counts;
         fs::remove_dir_all(&root).unwrap();
 
         assert!(!written
@@ -2726,7 +2650,6 @@ allow features::b features::c # b is built on c
         let files = Files {
             baseline: &baseline,
             feature_graph: &feature_graph,
-            libraries: &[],
         };
         let run = |allowlist: &str| {
             fs::write(&feature_graph, allowlist).unwrap();
@@ -2760,7 +2683,6 @@ allow features::b features::c # b is built on c
         let files = Files {
             baseline: &baseline,
             feature_graph: &feature_graph,
-            libraries: &[],
         };
         fs::write(&feature_graph, "allow features::a features::b # r\n").unwrap();
         fs::write(&baseline, "# nothing baselined\n").unwrap();

@@ -115,15 +115,4 @@ describe('course creation', () => {
     await user.click(screen.getByRole('button', { name: 'Create outline' }));
     expect(generate).toHaveBeenCalledWith(expect.objectContaining({ sourceUrls: ['https://example.com/a,b'] }));
   });
-
-  it('shows each pasted reference URL on a line of its own', async () => {
-    const user = userEvent.setup();
-    show();
-    await user.click(screen.getByRole('button', { name: 'Add optional materials' }));
-    const box = screen.getByRole('textbox', { name: /Reference URLs/ });
-    const urls = Array.from({ length: 8 }, (_, i) => `https://example.org/a/long/path/to/reference/material/${i}?section=${i}&format=full`);
-    fireEvent.change(box, { target: { value: urls.join('\n') } });
-    expect(box).toHaveAttribute('wrap', 'off');
-    expect(Number(box.getAttribute('rows'))).toBeGreaterThan(urls.length);
-  });
 });

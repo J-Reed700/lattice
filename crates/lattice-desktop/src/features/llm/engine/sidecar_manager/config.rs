@@ -1,8 +1,8 @@
 use super::*;
 use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
-use lattice_core::domain::models::fit::{
-    footprint, Footprint, ServerBuffers, FIT_TARGET_BYTES, MICRO_BATCH_TOKENS,
-};
+pub(crate) use lattice_core::domain::models::fit::FIT_TARGET_BYTES;
+use lattice_core::domain::models::fit::{footprint, MICRO_BATCH_TOKENS};
+pub use lattice_core::domain::models::fit::{Footprint, ServerBuffers};
 
 /// A bundled llama-server build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

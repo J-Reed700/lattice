@@ -17,8 +17,6 @@ use crate::shared::error::{AppError, Result};
 /// its own, so neither collects or writes into the other's files.
 pub const LATTICE_HOME_ENV: &str = "LATTICE_HOME";
 
-// global-state: which home the process has, as `LATTICE_HOME` is; any process
-// the app's entry point does not mark keeps a scratch one.
 static USERS_HOME: AtomicBool = AtomicBool::new(false);
 
 /// Let this process use `~/.lattice` when `LATTICE_HOME` is not set. Only the
@@ -51,7 +49,6 @@ fn lattice_home_override() -> Option<PathBuf> {
 
 /// One per process, under the system temp folder, laid out as a home is.
 fn scratch_home() -> &'static PathBuf {
-    // global-state: the process's scratch home, one per process like `USERS_HOME`.
     static SCRATCH: OnceLock<PathBuf> = OnceLock::new();
     SCRATCH.get_or_init(|| {
         std::env::temp_dir()

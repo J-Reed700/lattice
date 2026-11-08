@@ -15,7 +15,7 @@ rust=0
 web=0
 packages=0
 features=()
-crates=()
+core=0
 while IFS= read -r file; do
   case "$file" in
     *.rs | Cargo.toml | */Cargo.toml | Cargo.lock) rust=1 ;;
@@ -32,15 +32,7 @@ while IFS= read -r file; do
       feature=${feature%%/*}
       case " ${features[*]} " in *" $feature "*) ;; *) features+=("$feature") ;; esac
       ;;
-    crates/lattice-core/* | crates/lattice-index/* | crates/lattice-learning/* | crates/lattice-store/*)
-      crate=${file#crates/}
-      crate=${crate%%/*}
-      case " ${crates[*]} " in *" $crate "*) ;; *) crates+=("$crate") ;; esac
-      # The learning commands and their tests stay in lattice-desktop.
-      if [ "$crate" = lattice-learning ]; then
-        case " ${features[*]} " in *" learning "*) ;; *) features+=(learning) ;; esac
-      fi
-      ;;
+    crates/lattice-core/*) core=1 ;;
   esac
 done <<< "$changed"
 
@@ -59,9 +51,9 @@ if [ $rust -eq 1 ]; then
   for feature in "${features[@]}"; do
     step "cargo test features::$feature" "${cargo[@]}" test --lib -- "features::$feature"
   done
-  for crate in "${crates[@]}"; do
-    step "cargo test $crate" "${cargo[@]}" test -p "$crate" --lib
-  done
+  if [ $core -eq 1 ]; then
+    step "cargo test lattice-core" "${cargo[@]}" test -p lattice-core --lib
+  fi
   cd - >/dev/null || exit 1
 fi
 if [ $web -eq 1 ]; then

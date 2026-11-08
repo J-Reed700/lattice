@@ -10,7 +10,7 @@ use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use lattice_core::shared::testing::query_counts;
+pub mod query_counts;
 
 /// Setup a test Container with in-memory database
 ///

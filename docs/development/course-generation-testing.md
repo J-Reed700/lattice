@@ -16,15 +16,12 @@ Run from `crates/lattice-desktop/`:
 
 ```bash
 cd crates/lattice-desktop
-CARGO_INCREMENTAL=0 cargo test -p lattice-learning --lib -j 2
 CARGO_INCREMENTAL=0 cargo test --lib features::learning -j 2
 ```
 
-The first runs the engine's tests in `lattice-learning`; the second runs the tests of the plugin and the stand-ins that stay in the app.
+At `09d5a552` this runs 448 tests, all passing (414 at `62b3151f`). Use a narrower filter while working, for example `outline_linking`, `outline_review`, `outline_repair`, `generation::evidence`, `content_verification::research`, `evidence_paging`, `content_caps`, `patient_model`, `course_generation`. Keep `-j 2` and `CARGO_INCREMENTAL=0`: the build cache has filled the disk before, and many agents may share the machine. A fresh worktree needs `crates/lattice-desktop/binaries/` (the sidecar stub) and `dist/` copied from another worktree before the lib test binary builds.
 
-At `09d5a552`, before the split, `features::learning` ran 448 tests, all passing (414 at `62b3151f`). Use a narrower filter while working, for example `outline_linking`, `outline_review`, `outline_repair`, `generation::evidence`, `content_verification::research`, `evidence_paging`, `content_caps`, `patient_model`, `course_generation`. Keep `-j 2` and `CARGO_INCREMENTAL=0`: the build cache has filled the disk before, and many agents may share the machine. A fresh worktree needs `crates/lattice-desktop/binaries/` (the sidecar stub) and `dist/` copied from another worktree before the lib test binary builds.
-
-Where the tests live (paths under `crates/lattice-learning/src/`):
+Where the tests live (paths under `crates/lattice-desktop/src/features/learning/`):
 
 | Area | Tests |
 |---|---|
@@ -72,7 +69,7 @@ cargo test --locked --manifest-path scripts/rust-architecture-check/Cargo.toml
 
 ## 2. Live tests
 
-All live tests are `#[ignore]` lib tests in `crates/lattice-desktop/src/features/learning/lessons/`, compiled into the desktop crate's lib test binary. They are wired as `features::learning::tests::generation_jobs::live_lesson_tests` (`live_lesson_tests.rs`, declared in `features/learning/tests/generation_jobs.rs`) with submodules `course_e2e` (`live_course_e2e.rs`), `small` (`live_small_lesson.rs`) and `claim_pairs` (`live_claim_pairs_eval.rs`).
+All live tests are `#[ignore]` lib tests in `crates/lattice-desktop/src/features/learning/lessons/`, compiled into the lib test binary. They are wired as `generation_jobs::live_lesson_tests` (`live_lesson_tests.rs`) with submodules `course_e2e` (`live_course_e2e.rs`), `small` (`live_small_lesson.rs`) and `claim_pairs` (`live_claim_pairs_eval.rs`).
 
 ### What a live run touches
 

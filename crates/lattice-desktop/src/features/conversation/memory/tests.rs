@@ -1104,12 +1104,11 @@ fn every_schema_bound_stays_within_the_llama_cpp_grammar_repetition_limit() {
             crate::features::conversation::chat::intent::intent_schema(),
         ),
     ] {
-        let (bound, path) =
-            lattice_core::application::ports::llm_port::largest_repetition_bound(&schema);
+        let (bound, path) = super::prompts::largest_repetition_bound(&schema);
         assert!(
-            bound <= lattice_core::application::ports::llm_port::GRAMMAR_REPETITION_LIMIT as u64,
+            bound <= super::prompts::GRAMMAR_REPETITION_LIMIT as u64,
             "{name} schema bound {bound} at {path} exceeds llama.cpp's grammar limit of {}",
-            lattice_core::application::ports::llm_port::GRAMMAR_REPETITION_LIMIT
+            super::prompts::GRAMMAR_REPETITION_LIMIT
         );
     }
 }

@@ -71,9 +71,6 @@ pub const RERANKER_MODEL_DIR: &str = "qwen3-reranker-0.6b";
 /// complete again.
 pub const REEMBED_MARKER_FILE: &str = ".reembed-required";
 
-/// Upper bound on a chat message, in characters: room for a long pasted article.
-pub const MAX_CHAT_MESSAGE_CHARS: usize = 200_000;
-
 #[cfg(test)]
 mod tests {
     use super::*;

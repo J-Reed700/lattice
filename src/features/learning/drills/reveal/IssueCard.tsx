@@ -5,7 +5,6 @@ import { Check, CircleDot, FileCode, Minus, X, type LucideIcon } from 'lucide-re
 import { Badge } from '@/components/ui/badge';
 import type { ReviewKind } from '@/features/learning/drills/drillOptions';
 import { FixDiff } from '@/features/learning/drills/reveal/FixDiff';
-import { fencedCode } from '@/features/learning/drills/reveal/lessonText';
 import { plainText } from '@/features/learning/drills/reveal/plainText';
 import { ALSO_VALID_NOT_RAISED, ISSUE_OUTCOME, lineLabel } from '@/features/learning/drills/reveal/revealCopy';
 import type { RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
@@ -88,24 +87,6 @@ export function IssueCard({ entry, credited, onShow, material = 'code' }: {
         <div className="mt-4">
           <h4 className={eyebrow}>What the source says</h4>
           <blockquote className="mt-1 border-l-2 border-warning-fg/50 pl-3 text-sm leading-6 text-text-primary">{plainText(issue.sourceQuote)}</blockquote>
-        </div>
-      )}
-      {issue.lesson && issue.lesson.sentences.length > 0 && (
-        <div className="mt-4">
-          <h4 className={eyebrow}>From the lesson</h4>
-          <ul className="mt-1 space-y-3">
-            {issue.lesson.sentences.map((sentence, index) => {
-              const code = fencedCode(sentence.text);
-              return (
-                <li key={index}>
-                  {code === null
-                    ? <blockquote className="whitespace-pre-wrap border-l-2 border-warning-fg/50 pl-3 text-sm leading-6 text-text-primary">{plainText(sentence.text)}</blockquote>
-                    : <pre className="overflow-x-auto rounded-lg bg-surface-raised p-3 font-mono text-xs leading-5 text-text-primary">{code}</pre>}
-                  <p className="mt-1 text-xs text-text-muted">{sentence.source === null ? 'The lesson’s own teaching' : `From ${sentence.source}`}</p>
-                </li>
-              );
-            })}
-          </ul>
         </div>
       )}
       <div className="mt-4">

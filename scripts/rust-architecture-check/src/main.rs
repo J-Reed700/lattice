@@ -463,20 +463,17 @@ struct Options {
     core: PathBuf,
     /// The API server's source root, when one is given.
     api: Option<PathBuf>,
-    /// Library crates' source roots, each checked by the ratchet.
-    libraries: Vec<PathBuf>,
 }
 
-/// Reads `<app root> [<api root>] [--core <dir>] [--library <dir>]...
-/// [--write-baseline | --list <rule> [subject]]`. A subject is the argument
-/// right after the rule, so the roots come first.
+/// Reads `<app root> [<api root>] [--core <dir>] [--write-baseline | --list
+/// <rule> [subject]]`. A subject is the argument right after the rule, so the
+/// roots come first.
 fn parse_args(
     arguments: impl IntoIterator<Item = OsString>,
 ) -> Result<Options, Box<dyn std::error::Error>> {
     let mut write_baseline = false;
     let mut list = None;
     let mut core = None;
-    let mut libraries = Vec::new();
     let mut roots = Vec::new();
     let mut arguments = arguments.into_iter().peekable();
     while let Some(argument) = arguments.next() {
@@ -494,9 +491,6 @@ fn parse_args(
         } else if argument == "--core" {
             let directory = arguments.next().ok_or("--core expects a directory")?;
             core = Some(PathBuf::from(directory));
-        } else if argument == "--library" {
-            let directory = arguments.next().ok_or("--library expects a directory")?;
-            libraries.push(PathBuf::from(directory));
         } else if argument.to_string_lossy().starts_with("--") {
             return Err(format!("unknown flag {}", argument.to_string_lossy()).into());
         } else {
@@ -514,7 +508,6 @@ fn parse_args(
         core: core.unwrap_or_else(|| app.clone()),
         api: roots.next(),
         app,
-        libraries,
     })
 }
 
@@ -544,6 +537,13 @@ fn check_app(root: &Path, failures: &mut usize) -> Result<(), Box<dyn std::error
     for workflow in &chat_workflows {
         scan_with_drivers(workflow, &[], &["tauri"], &mut HashSet::new(), failures)?;
     }
+    scan_with_drivers(
+        &root.join("features/learning/lessons/generation_jobs.rs"),
+        &[],
+        &["tauri"],
+        &mut HashSet::new(),
+        failures,
+    )?;
     for workflow in ["branching.rs", "synthesis.rs"] {
         scan_with_drivers(
             &root.join("features/conversation").join(workflow),
@@ -607,11 +607,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         checker.join("baseline.txt"),
         checker.join("feature-graph.txt"),
     );
-    let libraries: Vec<&Path> = options.libraries.iter().map(PathBuf::as_path).collect();
     let files = ratchet::Files {
         baseline: &baseline,
         feature_graph: &feature_graph,
-        libraries: &libraries,
     };
     let roots = [options.app.as_path(), options.core.as_path()];
     if let Some(list) = &options.list {
@@ -728,7 +726,6 @@ mod tests {
                 app: "app".into(),
                 core: "app".into(),
                 api: Some("api".into()),
-                libraries: Vec::new(),
             }
         );
         assert_eq!(
@@ -739,16 +736,8 @@ mod tests {
                 app: "app".into(),
                 core: "core".into(),
                 api: None,
-                libraries: Vec::new(),
             }
         );
-        assert_eq!(
-            parse(&["app", "--library", "one", "--library", "two"])
-                .unwrap()
-                .libraries,
-            vec![PathBuf::from("one"), PathBuf::from("two")]
-        );
-        assert!(parse(&["app", "--library"]).is_err());
         assert!(parse(&["app", "--core"]).is_err());
         assert!(parse(&["app", "--cores", "core"]).is_err());
         assert!(parse(&["--core", "core"]).is_err());

@@ -185,15 +185,6 @@ pub enum AppError {
     Other(String),
 }
 
-/// The refusal for a bundled server that cannot run: an install problem the
-/// learner fixes by reinstalling or choosing another model, never by waiting.
-pub fn server_cannot_start(reason: &str) -> AppError {
-    AppError::ModelServerCannotStart(format!(
-        "The model server could not start: {}. Reinstall Lattice, or choose another model in Settings.",
-        reason.trim().trim_end_matches('.')
-    ))
-}
-
 impl AppError {
     /// Create a NotFound error with resource type and ID
     pub fn not_found(resource_type: &str, resource_id: &str) -> Self {

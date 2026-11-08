@@ -9,7 +9,7 @@ git config core.hooksPath .githooks
 | Hook | Runs | On |
 |---|---|---|
 | `pre-commit` | `cargo fmt --check` for the workspaces owning staged `.rs` files, using each crate's Rust edition; `eslint --max-warnings 0` on staged `src/`/`e2e/` TS files and `tsc --noEmit` | every commit |
-| `pre-push` | for what the push changes against `origin/main`: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --lib` for each touched `features::<name>` and each touched library crate (`lattice-core`, `lattice-index`, `lattice-learning`, `lattice-store`), with `features::learning` when `lattice-learning` changed; `type-check`, `type-check:e2e`, `lint`, `contracts:check` and `vitest run --coverage` when frontend files changed; `npm audit --audit-level=high` when `package.json` or the lockfile changed | every push |
+| `pre-push` | for what the push changes against `origin/main`: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --lib` for each touched `features::<name>` (and `lattice-core` when it changed); `type-check`, `type-check:e2e`, `lint`, `contracts:check` and `vitest run --coverage` when frontend files changed; `npm audit --audit-level=high` when `package.json` or the lockfile changed | every push |
 
 CI still runs the full suite: every Rust test, bindings, the architecture checks, desktop and e2e.
 

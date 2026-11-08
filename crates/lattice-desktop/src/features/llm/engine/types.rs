@@ -234,7 +234,16 @@ pub struct OllamaChatStreamResponse {
     pub eval_duration: Option<u64>,
 }
 
-use lattice_core::shared::error::{server_cannot_start, AppError};
+use lattice_core::shared::error::AppError;
+
+/// The refusal for a bundled server that cannot run: an install problem the
+/// learner fixes by reinstalling or choosing another model, never by waiting.
+pub(crate) fn server_cannot_start(reason: &str) -> AppError {
+    AppError::ModelServerCannotStart(format!(
+        "The model server could not start: {}. Reinstall Lattice, or choose another model in Settings.",
+        reason.trim().trim_end_matches('.')
+    ))
+}
 
 /// Auto-convert from LLMError to AppError
 impl From<crate::features::llm::engine::types::LLMError> for AppError {

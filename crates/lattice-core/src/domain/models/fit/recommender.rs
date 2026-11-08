@@ -93,10 +93,13 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    /// A catalog entry as a candidate, priced at its weights alone: its vision projector is a
-    /// separate download, which [`Self::with_downloaded_projector`] adds once it is on disk.
+    /// A catalog entry as a candidate.
     pub fn from_curated(model: &CuratedChatModel) -> Candidate {
         let pinned = model.pinned();
+        let projector_bytes = model
+            .vision
+            .as_ref()
+            .map_or(0, |vision| vision.projector_bytes);
         Candidate {
             id: model.id.into(),
             name: model.name.into(),
@@ -105,7 +108,10 @@ impl Candidate {
             parameters_b: model.parameters_b,
             active_parameters_b: model.active_parameters_b,
             download_bytes: model.size_bytes,
-            gpu_weight_bytes: model.size_bytes.saturating_sub(pinned.cpu_weight_bytes),
+            gpu_weight_bytes: model
+                .size_bytes
+                .saturating_sub(pinned.cpu_weight_bytes)
+                .saturating_add(projector_bytes),
             shape: Some(pinned.shape),
             buffers: ServerBuffers::chat(false),
             rank: model.rank,
@@ -116,15 +122,6 @@ impl Candidate {
             } else {
                 Evidence::Untested
             },
-        }
-    }
-
-    /// The candidate with `projector_bytes` of its vision projector on disk: a server holds them
-    /// beside the weights whether or not a start loads the projector, as the runtime prices it.
-    pub fn with_downloaded_projector(self, projector_bytes: u64) -> Candidate {
-        Candidate {
-            gpu_weight_bytes: self.gpu_weight_bytes.saturating_add(projector_bytes),
-            ..self
         }
     }
 

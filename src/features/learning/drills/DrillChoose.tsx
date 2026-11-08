@@ -1,38 +1,37 @@
 import { useEffect, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import type { CourseDrillAttemptDto, DrillLessonDto, NextDrillDto } from '@/lib/bindings';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { cn } from '@/lib/utils';
 
 import {
+  DEFAULT_LANGUAGE,
   languageLabel,
   sizesFor,
   validMinutes,
   type DrillMode,
   type DrillOptions,
+  type ReviewKind,
 } from './drillOptions';
-import { MODE_LABEL, momentOf } from './reveal/revealCopy';
-import { useCourseDrills } from './useCourseDrills';
+import { useDrillCourses } from './useDrillCourses';
 import { useDrillLanguages } from './useDrillLanguages';
 
 const INPUT = 'rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/15';
 
-function Choice({ name, value, checked, disabled = false, onSelect, title, detail }: {
+function Choice({ name, value, checked, onSelect, title, detail }: {
   name: string;
   value: string;
   checked: boolean;
-  disabled?: boolean;
   onSelect: () => void;
   title: string;
   detail: ReactNode;
 }) {
   return (
     <label className={cn(
-      'flex items-start gap-3 rounded-xl border p-4 transition focus-within:ring-2 focus-within:ring-ring',
-      disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
-      checked ? 'border-accent bg-accent-muted' : cn('border-border-subtle', !disabled && 'hover:border-border-strong'),
+      'flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition focus-within:ring-2 focus-within:ring-ring',
+      checked ? 'border-accent bg-accent-muted' : 'border-border-subtle hover:border-border-strong',
     )}>
-      <input type="radio" name={name} value={value} checked={checked} disabled={disabled} onChange={onSelect} className="mt-1 accent-[hsl(var(--accent))]" />
+      <input type="radio" name={name} value={value} checked={checked} onChange={onSelect} className="mt-1 accent-[hsl(var(--accent))]" />
       <span className="min-w-0">
         <span className="block text-sm font-medium text-text-primary">{title}</span>
         <span className="mt-0.5 block text-xs leading-5 text-text-secondary">{detail}</span>
@@ -46,165 +45,118 @@ const MODES: readonly { id: DrillMode; title: string; detail: string }[] = [
   { id: 'interview', title: 'Interview', detail: 'Timed, as in an interview: find the issue that matters most first, and say it clearly.' },
 ];
 
-const READING = 'Reading the course’s lessons…';
-const CODE_DETAIL = 'Code you did not write, built on the lesson’s ideas, as you would review a pull request.';
-const PASSAGE_TITLE = 'An explanation of the lesson’s sources';
-const PASSAGE_DETAIL = 'An explanation of a passage from the lesson’s sources, with errors in it, as in an exam.';
-const NO_CODE = 'No lesson of this course can be drilled in code yet.';
-const NO_SOURCE = 'The course has no source with text yet.';
-const NO_PASSAGE = 'None of the lessons’ sources holds a passage to explain.';
-const NOTHING_TO_DRILL = 'No lesson of this course can be drilled yet.';
-const PICKED_LINE = 'If no drill of it is ready, one is written when you start, usually in a minute or two.';
+const MATERIALS: readonly { id: ReviewKind; title: string; detail: string }[] = [
+  { id: 'code', title: 'Code', detail: 'Code you did not write, as you would review a pull request.' },
+  { id: 'passage', title: 'A passage from a course', detail: 'A study note on something in one of your courses, with errors in it, as in an exam.' },
+];
 
-const NEXT_LINE: Record<NextDrillDto['status'], string> = {
-  ready: 'A drill of it is ready.',
-  building: 'A drill of it is being written.',
-  to_build: 'A drill of it is written when you start, usually in a minute or two.',
-};
-
-function standingText(lesson: DrillLessonDto): string {
-  switch (lesson.standing) {
-    case 'due':
-      return 'Due now';
-    case 'new':
-      return 'New';
-    case 'rested':
-      return lesson.dueAt === null
-        ? 'Due again'
-        : `Due again ${new Date(lesson.dueAt).toLocaleDateString([], { day: 'numeric', month: 'short' })}`;
-    case 'pending':
-      return 'Not yet graded';
-  }
-}
-
-function lessonText(lesson: DrillLessonDto, fits: boolean, misfit: string): string {
-  return `${lesson.title} — ${standingText(lesson)}${lesson.current ? ', current lesson' : ''}${fits ? '' : ` (${misfit})`}`;
-}
-
-function outcomeText(attempt: CourseDrillAttemptDto): string {
-  switch (attempt.status) {
-    case 'open':
-      return 'Continue';
-    case 'submitted':
-      return 'Waiting for its grade';
-    case 'graded':
-      return attempt.score
-        ? `Found ${attempt.score.found} of ${attempt.score.found + attempt.score.halfFound + attempt.score.missed}`
-        : 'Graded';
-    case 'couldnt_grade':
-      return 'Could not be graded';
-  }
-}
-
-function recentLine(attempt: CourseDrillAttemptDto): string {
-  return [
-    attempt.lesson?.title,
-    attempt.material.kind === 'code' ? languageLabel(attempt.material.language) : 'Explanation',
-    MODE_LABEL[attempt.mode],
-    momentOf(attempt.startedAt)?.text,
-  ].filter(Boolean).join(' · ');
-}
-
-/** What the learner picks before a drill: what to review, the lesson, how they practise it and how long it is. */
-export function DrillChoose({ programId, options, onChange, onStart, onOpenAttempt }: {
-  programId: string;
+/** What the learner picks before a drill: what to review, how they practise it and how long it is. */
+export function DrillChoose({ options, onChange, onStart }: {
   options: DrillOptions;
   onChange: (patch: Partial<DrillOptions>) => void;
-  onStart: (patch: Partial<DrillOptions>) => void;
-  onOpenAttempt: (attemptId: string) => void;
+  onStart: () => void;
 }) {
-  const { view, error: viewError, reload: reloadView } = useCourseDrills(programId, options.language);
   const { languages, error, reload } = useDrillLanguages();
   const passage = options.material === 'passage';
-  const language = options.language ?? view?.language ?? null;
-  const next = view ? (passage ? view.nextPassage : view.nextCode) : null;
+  const { courses, error: coursesError, reload: reloadCourses } = useDrillCourses(passage);
 
   useEffect(() => {
-    if (!view) return;
-    if (options.material === 'code' && !view.nextCode && view.nextPassage) onChange({ material: 'passage' });
-    if (options.material === 'passage' && !view.nextPassage && view.nextCode) onChange({ material: 'code' });
-  }, [view, options.material, onChange]);
+    if (!languages || languages.includes(options.language)) return;
+    onChange({ language: languages.includes(DEFAULT_LANGUAGE) ? DEFAULT_LANGUAGE : (languages[0] ?? options.language) });
+  }, [languages, options.language, onChange]);
 
   useEffect(() => {
-    if (!view || !options.lessonId) return;
-    const picked = view.modules.flatMap((module) => module.lessons).find((lesson) => lesson.lessonId === options.lessonId);
-    const fits = picked && (options.material === 'passage' ? picked.fitsPassage : picked.fitsCode);
-    if (!fits) onChange({ lessonId: null });
-  }, [view, options.material, options.lessonId, onChange]);
+    if (!courses || courses.some((course) => course.programId === options.programId)) return;
+    onChange({ programId: courses[0]?.programId ?? null });
+  }, [courses, options.programId, onChange]);
 
-  const nextLesson = view && next ? view.modules.flatMap((module) => module.lessons).find((lesson) => lesson.lessonId === next.lessonId) : undefined;
-  let nextOption = 'Reading the lessons…';
-  if (view) nextOption = nextLesson ? `Next: ${nextLesson.title}` : 'No lesson can be drilled';
-  let lessonLine: string | null = null;
-  if (view) {
-    if (options.lessonId) lessonLine = PICKED_LINE;
-    else lessonLine = next ? NEXT_LINE[next.status] : NOTHING_TO_DRILL;
-  }
-
-  const codeOff = view !== null && !view.nextCode;
-  const passageOff = view !== null && !view.nextPassage;
   const minutesOk = options.mode !== 'interview' || validMinutes(options.minutes);
-  const canStart = view !== null && minutesOk && (next !== null || options.lessonId !== null) && (passage || Boolean(language));
+  const noCourse = passage && options.programId === null;
   const sizes = sizesFor(options.material);
   const unit = passage ? 'sentences' : 'lines';
   const things = passage ? 'errors' : 'issues';
 
   return (
     <>
-      <h2 className="font-serif text-2xl text-text-primary">Review drills</h2>
-      <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-        Review something you did not write, built from a lesson of this course, and find what is wrong in it. Then see every planted error, and what the lesson says about it.
-      </p>
-      {!view && !viewError && <p role="status" className="mt-4 text-sm text-text-secondary">{READING}</p>}
-      {viewError && (
-        <p role="alert" className="mt-4 flex items-center gap-2 text-xs text-danger-fg">
-          {viewError}
-          <Button type="button" size="sm" variant="outline" onClick={reloadView}>Try again</Button>
-        </p>
-      )}
+      <PageHeader
+        title="Review drills"
+        description="Read something you did not write and find what is wrong: code, the way you would review a pull request, or an explanation of something in your courses. Select what is wrong, say why it matters and what to do. Then see every error that was planted, and how to say it."
+      />
       <form
-        className="mt-8 space-y-8"
+        className="space-y-8"
         onSubmit={(event) => {
           event.preventDefault();
-          if (canStart) onStart({ language });
+          if (minutesOk && !noCourse) onStart();
         }}
       >
         <fieldset>
           <legend className="text-sm font-medium text-text-primary">What to review</legend>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            <Choice
-              name="drill-material"
-              value="code"
-              checked={!passage}
-              disabled={codeOff}
-              onSelect={() => onChange({ material: 'code' })}
-              title="Code"
-              detail={<>{CODE_DETAIL}{codeOff && <span className="mt-1 block text-text-muted">{NO_CODE}</span>}</>}
-            />
-            <Choice
-              name="drill-material"
-              value="passage"
-              checked={passage}
-              disabled={passageOff}
-              onSelect={() => onChange({ material: 'passage' })}
-              title={PASSAGE_TITLE}
-              detail={<>{PASSAGE_DETAIL}{passageOff && <span className="mt-1 block text-text-muted">{view?.hasSources ? NO_PASSAGE : NO_SOURCE}</span>}</>}
-            />
+            {MATERIALS.map((material) => (
+              <Choice
+                key={material.id}
+                name="drill-material"
+                value={material.id}
+                checked={options.material === material.id}
+                onSelect={() => onChange({ material: material.id })}
+                title={material.title}
+                detail={material.detail}
+              />
+            ))}
           </div>
         </fieldset>
 
-        {!passage && (
+        {passage ? (
+          <div className="space-y-6">
+            <div>
+              <label htmlFor="drill-course" className="text-sm font-medium text-text-primary">Course</label>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <select
+                  id="drill-course"
+                  value={options.programId ?? ''}
+                  disabled={!courses || courses.length === 0}
+                  onChange={(event) => onChange({ programId: event.target.value })}
+                  className={cn(INPUT, 'min-w-48 max-w-full')}
+                >
+                  {(courses ?? []).map((course) => (
+                    <option key={course.programId} value={course.programId}>{course.title}</option>
+                  ))}
+                </select>
+                {coursesError && (
+                  <p role="alert" className="flex items-center gap-2 text-xs text-danger-fg">
+                    {coursesError}
+                    <Button type="button" size="sm" variant="outline" onClick={reloadCourses}>Try again</Button>
+                  </p>
+                )}
+              </div>
+              {courses?.length === 0 && (
+                <p role="status" className="mt-1.5 text-xs text-text-muted">None of your courses has a source to take a passage from yet.</p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="drill-topic" className="text-sm font-medium text-text-primary">Topic <span className="font-normal text-text-muted">(optional)</span></label>
+              <input
+                id="drill-topic"
+                type="text"
+                value={options.topic}
+                placeholder="Anything in the course’s sources"
+                onChange={(event) => onChange({ topic: event.target.value })}
+                className={cn(INPUT, 'mt-2 block w-full max-w-md')}
+              />
+            </div>
+          </div>
+        ) : (
           <div>
             <label htmlFor="drill-language" className="text-sm font-medium text-text-primary">Language</label>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <select
                 id="drill-language"
-                value={language ?? ''}
+                value={options.language}
                 disabled={!languages}
                 onChange={(event) => onChange({ language: event.target.value })}
                 className={cn(INPUT, 'min-w-48')}
               >
-                {(languages ?? (language ? [language] : [])).map((id) => (
+                {(languages ?? [options.language]).map((id) => (
                   <option key={id} value={id}>{languageLabel(id)}</option>
                 ))}
               </select>
@@ -217,34 +169,6 @@ export function DrillChoose({ programId, options, onChange, onStart, onOpenAttem
             </div>
           </div>
         )}
-
-        <div>
-          <label htmlFor="drill-lesson" className="text-sm font-medium text-text-primary">Lesson</label>
-          <div className="mt-2">
-            <select
-              id="drill-lesson"
-              value={options.lessonId ?? ''}
-              disabled={!view}
-              onChange={(event) => onChange({ lessonId: event.target.value || null })}
-              className={cn(INPUT, 'min-w-48 max-w-full')}
-            >
-              <option value="">{nextOption}</option>
-              {(view?.modules ?? []).filter((module) => module.lessons.length > 0).map((module) => (
-                <optgroup key={module.moduleId} label={module.title}>
-                  {module.lessons.map((lesson) => {
-                    const fits = passage ? lesson.fitsPassage : lesson.fitsCode;
-                    return (
-                      <option key={lesson.lessonId} value={lesson.lessonId} disabled={!fits}>
-                        {lessonText(lesson, fits, passage ? 'no passage in the sources fits it' : 'no code drill fits it')}
-                      </option>
-                    );
-                  })}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-          {lessonLine && <p className="mt-1.5 text-xs text-text-muted">{lessonLine}</p>}
-        </div>
 
         <fieldset>
           <legend className="text-sm font-medium text-text-primary">Mode</legend>
@@ -302,29 +226,8 @@ export function DrillChoose({ programId, options, onChange, onStart, onOpenAttem
           </div>
         </fieldset>
 
-        <Button type="submit" size="lg" disabled={!canStart}>Start drill</Button>
+        <Button type="submit" size="lg" disabled={!minutesOk || noCourse}>Start drill</Button>
       </form>
-
-      {view && view.recent.length > 0 && (
-        <section className="mt-12">
-          <h3 className="text-sm font-medium text-text-primary">Recent drills</h3>
-          <ul className="mt-2 space-y-2">
-            {view.recent.map((attempt) => (
-              <li key={attempt.attemptId}>
-                <button
-                  type="button"
-                  onClick={() => onOpenAttempt(attempt.attemptId)}
-                  className="block w-full rounded-xl border border-border-subtle p-4 text-left transition hover:border-border-strong focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <span className="block text-sm font-medium text-text-primary">{attempt.title}</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-text-secondary">{recentLine(attempt)}</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-text-muted">{outcomeText(attempt)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </>
   );
 }

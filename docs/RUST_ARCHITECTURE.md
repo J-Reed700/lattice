@@ -7,16 +7,8 @@ The core layers (`domain`, `application` and `shared`) are their own crate,
 does not depend on Tauri or on the desktop crate, so the compiler rejects any
 core import of features, infrastructure or interfaces. The desktop crate
 (`lattice-desktop`, lib `lattice`) names core items as `lattice_core::…`.
-Three library crates sit between them, and none depends on Tauri or on the
-desktop crate: `lattice-index` (the passage and vector indexes),
-`lattice-store` (workspace notes) and `lattice-learning` (Learning Studio's
-engine, on core, index and store). The desktop crate keeps the learning
-plugin, its commands and the live evals, and reaches the engine through
-`features::learning`, which re-exports `lattice_learning`.
-Test doubles that the other crates' tests use sit behind core's
-`test-support` feature, which only their dev-dependencies enable;
-lattice-learning's own `test-support` feature holds the fixtures that the
-desktop crate's learning evals call.
+Test doubles that the desktop crate's tests use sit behind core's
+`test-support` feature, which only the desktop crate's dev-dependency enables.
 Shared dependency pins, lints and build profiles live in the workspace
 manifest, the root `Cargo.toml`. Run cargo from `crates/lattice-desktop`:
 its `.cargo/config.toml` sets offline SQLx and the larger thread stack the
@@ -35,10 +27,9 @@ belong to their respective adapters, not the sync contracts.
 ## Module layout
 
 - Each vertical feature under `crates/lattice-desktop/src/features/<name>/` owns its
-  engine, repositories, services, commands and plugin; Learning's engine,
-  repositories and services are the `lattice-learning` crate. Two production
-  modules still load through `#[path]`: lattice-learning's
-  `planning/curriculum_repository.rs` (`generation_recovery.rs`) and
+  engine, repositories, services, commands and plugin. Two production
+  modules still load through `#[path]`:
+  `learning/planning/curriculum_repository.rs` (`generation_recovery.rs`) and
   the macOS half of `infrastructure/setup/renderer_shutdown.rs`; the other
   `#[path]` uses are test modules. The former `infrastructure::{indexing,llm,
   qa,search,web}` aliases are gone, and infrastructure no longer re-exports
@@ -195,7 +186,7 @@ with a pace and time left only where it measured one; the composition root
 that the plugin turns into `activity://changed`; the renderer also reads
 again on `jobs://status`, the download events and `indexing://progress`.
 
-lattice-learning's `lessons/generation_jobs.rs` is Learning's lesson-preparation
+`features/learning/lessons/generation_jobs.rs` is Learning's lesson-preparation
 handler; it receives a pool, model loader, and source refresh callback instead
 of the application container. `practical_runs.rs` owns
 runtime execution, cancellation tokens, and workspace cleanup; its repository
@@ -286,7 +277,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
 - `application/services/grounded_generation/` is the one path from gathered
   evidence to an answer for every generator outside chat's tool loop: handoff
   (continue in a new chat), compare, document summaries and every Learning
-  generator (through lattice-learning's `model_call.rs`) use it today. A
+  generator (through `learning/model_call.rs`) use it today. A
   request carries instructions, a task, evidence passages under stable ids,
   optional history, an output reservation, priority/cancel/cache key and an
   optional `claim_verification` policy. It plans with `BudgetAllocation`,
@@ -435,7 +426,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   `path:10-24` grammar parsed in core's `shared/text/line_refs.rs`.
 - `explorer/index` keeps a semantic index per folder under
   `<data_dir>/folder-index/`: a passage index
-  (lattice-index's `passage_index`), which is a `passages.db` and a vectors file
+  (`infrastructure/passage_index`), which is a `passages.db` and a vectors file
   keyed by the embedding identity. The index lives outside `lattice.db`, so
   backups do not carry it; it is rebuilt from the folder. Its search is the
   library's hybrid search (`HybridSearchTrait`), built over the folder's own
@@ -460,8 +451,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
 
 ## Learning Studio and flashcards
 
-- `features/learning` is the `learning` plugin behind the Studio surface, over
-  the `lattice-learning` crate:
+- `features/learning` is the `learning` plugin behind the Studio surface:
   programs, curriculum, sources, practice, practical labs, assessment
   evidence, canvas, portability packs and Recall. Its tables come from the
   `learning_*` migrations dated `20260930020000` onward. Design:
@@ -469,7 +459,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   `docs/development/learning-studio-verification.md`.
 - Every Learning generator — lessons, outlines and their reviews, content
   verification, assessments, practice, practical activities, study decks — sends
-  its strict-JSON call through lattice-learning's `model_call.rs` into
+  its strict-JSON call through `learning/model_call.rs` into
   `application/services/grounded_generation`, so the context assembler's
   `BudgetAllocation` decides whether a prompt fits and what the answer may use.
   Generators state an output reservation and, where they choose sources before
@@ -490,7 +480,7 @@ Design and as-built notes: `docs/design/2026-09-19-conversation-memory.md`.
   (`lattice/learning-python/`). Container presets (`runtime_catalog.rs`,
   `lab_runtime.rs`) run fixed argv templates under Docker or Podman.
   Portability packs are stored under `<data_dir>/learning-packs/`.
-- Flashcards are part of Learning's Recall (lattice-learning's `recall/`); there is no
+- Flashcards are part of Learning's Recall (`learning/recall/`); there is no
   `study` plugin. FSRS (`recall/schedule.rs`) is the only scheduler, the
   schedule lives on the `study_cards` row, both review paths share
   `record_review`, and the study commands are on the `learning` plugin.

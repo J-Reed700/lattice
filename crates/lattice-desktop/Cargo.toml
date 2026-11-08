@@ -33,9 +33,6 @@ sha2 = "0.10"
 
 [dependencies]
 lattice-core = { path = "../lattice-core" }
-lattice-index = { path = "../lattice-index" }
-lattice-learning = { path = "../lattice-learning", default-features = false }
-lattice-store = { path = "../lattice-store" }
 tauri = { version = "=2.11.1", features = ["protocol-asset"] }
 tauri-plugin-wdio-webdriver = { version = "=1.4.0", optional = true }
 tauri-plugin-shell = "2.0"
@@ -86,9 +83,12 @@ futures = { workspace = true }
 async-stream = "0.3"
 reqwest = { workspace = true }
 hex = { workspace = true }
-# Runs the browser reader's check script in a test, behind the `learning-labs`
-# feature. The learner guests are lattice-learning's.
+# Learner execution: restricted JavaScript and CPython/WASI guests, behind the
+# `learning-labs` feature. Native compiler projects use the optional container
+# provider.
 rquickjs = { version = "=0.14.0", default-features = false, features = ["std", "loader"], optional = true }
+wasmtime = { version = "=48.0.8", default-features = false, features = ["cranelift", "runtime", "std"], optional = true }
+wasmtime-wasi = { version = "=48.0.8", default-features = false, features = ["p1"], optional = true }
 lopdf = { version = "0.44", default-features = false }
 encoding_rs = "0.8"
 zip = "9"
@@ -108,7 +108,7 @@ imagesize = "0.13"
 # (features/web/images/prepare.rs); decoders for the stored formats only.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 tracing-appender = "0.2"
 opentelemetry = "0.32"
 opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
@@ -223,8 +223,6 @@ webview2-com = "0.38"
 
 [dev-dependencies]
 lattice-core = { path = "../lattice-core", features = ["test-support"] }
-lattice-index = { path = "../lattice-index", features = ["test-support"] }
-lattice-learning = { path = "../lattice-learning", default-features = false, features = ["test-support"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = { workspace = true }
 insta = { version = "1.45", features = ["json", "redactions"] }
@@ -247,7 +245,7 @@ custom-protocol = ["tauri/custom-protocol"]
 # Built-in JavaScript and Python labs. The engines run only in the lab runner,
 # a child process of the app; without them practical runs report the runtimes
 # unavailable.
-learning-labs = ["dep:rquickjs", "lattice-learning/learning-labs"]
+learning-labs = ["dep:rquickjs", "dep:wasmtime", "dep:wasmtime-wasi"]
 
 test-utils = []   # Testing utilities and mocks
 desktop-e2e = ["dep:tauri-plugin-wdio-webdriver"] # Explicitly instrumented test bundles only

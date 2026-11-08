@@ -12,19 +12,55 @@ use lattice_core::domain::conversation::memory::{
 
 use super::segment::SourceSegment;
 
+/// The largest `maxLength` / `maxItems` a schema handed to llama.cpp may carry.
+/// Its GBNF conversion throws on any repetition bound above 2000, and the
+/// server then samples with no grammar at all, dropping every constraint.
+pub const GRAMMAR_REPETITION_LIMIT: usize = 2000;
+
+/// The largest `maxLength`, `maxItems`, `minLength` or `minItems` anywhere in
+/// `schema`, with its JSON pointer: what a test compares with
+/// [`GRAMMAR_REPETITION_LIMIT`] for every schema a model call sends.
+#[cfg(test)]
+pub(crate) fn largest_repetition_bound(schema: &serde_json::Value) -> (u64, String) {
+    fn walk(value: &serde_json::Value, path: &str, worst: &mut (u64, String)) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    let at = format!("{path}/{key}");
+                    if matches!(
+                        key.as_str(),
+                        "maxLength" | "maxItems" | "minLength" | "minItems"
+                    ) {
+                        let bound = child.as_u64().unwrap_or(0);
+                        if bound > worst.0 {
+                            *worst = (bound, at.clone());
+                        }
+                    }
+                    walk(child, &at, worst);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    walk(child, &format!("{path}/{index}"), worst);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut worst = (0, String::new());
+    walk(schema, "", &mut worst);
+    worst
+}
+
 /// Identity of the extractor contract, stored in `extractor_prompt_version`.
 pub const EXTRACTOR_PROMPT_VERSION: &str = "memory-extractor/2026-11-06.16";
 /// Identity of the semantic-review contract.
 pub const VERIFIER_PROMPT_VERSION: &str = "memory-verifier/2026-11-06.13";
 /// Identity of the summariser contract.
 pub const SUMMARIZER_PROMPT_VERSION: &str = "memory-summarizer/2026-10-22.3";
-/// Identity of the deterministic rules a commit must pass before its review.
-const VALIDATOR_RULES_VERSION: &str = "memory-validator/8";
 /// Stored in `validator_version`: the deterministic rules plus the review step
 /// that together decided what a commit was allowed to contain.
-pub fn validator_version() -> String {
-    format!("{VALIDATOR_RULES_VERSION}+{VERIFIER_PROMPT_VERSION}")
-}
+pub const VALIDATOR_VERSION: &str = "memory-validator/7+memory-verifier/2026-11-06.13";
 
 /// Instructions for the extractor (§15, "Extractor must be told").
 ///

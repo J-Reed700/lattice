@@ -87,6 +87,33 @@ fn a_refusal_for_size_is_told_apart_from_other_failures() {
 }
 
 #[test]
+fn a_prompt_that_fills_the_window_is_refused_with_its_numbers() {
+    let size = RequestSize {
+        prompt_tokens: 140_000,
+        counted_exactly: false,
+        ..RequestSize::default()
+    };
+    let refused = window_refusal("m", size, 131_072);
+    assert!(matches!(
+        refused,
+        AppError::PromptExceedsWindow {
+            prompt_tokens: 140_000,
+            window: 131_072,
+            counted_exactly: false,
+            ..
+        }
+    ));
+    let told = refused.to_string();
+    for expected in [
+        "prompt is 140000 tokens (estimated), which leaves no room for an answer",
+        "configured context window is 131072",
+        "not sent",
+    ] {
+        assert!(told.contains(expected), "{told}");
+    }
+}
+
+#[test]
 fn a_rejection_carries_the_servers_account_the_numbers_and_the_fix() {
     let size = RequestSize {
         prompt_tokens: 110_000,
@@ -167,6 +194,25 @@ fn a_size_refusal_of_an_estimated_prompt_claims_no_lower_server_limit() {
         assert!(estimated.contains(expected), "{estimated}");
     }
     assert!(!estimated.contains("real per-request limit"), "{estimated}");
+}
+
+#[test]
+fn a_refusal_names_the_pictures_and_how_they_were_charged() {
+    let size = RequestSize {
+        prompt_tokens: 8_300,
+        counted_exactly: true,
+        output_tokens: 0,
+        image_tokens: 2_052,
+        image_count: 2,
+    };
+    let told = window_refusal("m", size, 8_192).to_string();
+    assert!(
+        told.contains(
+            "prompt is 8300 tokens (text counted exactly; 2052 tokens for 2 pictures estimated \
+             from the model's declared geometry)"
+        ),
+        "{told}"
+    );
 }
 
 #[test]

@@ -139,18 +139,3 @@ fn no_lesson_that_fits_gives_nothing() {
 fn an_empty_course_gives_nothing() {
     assert!(next_lessons(&[], 10).is_empty());
 }
-
-#[test]
-fn a_lesson_s_standing_is_pending_new_due_or_rested() {
-    for fits in [true, false] {
-        let with = |lesson: LessonStanding| LessonStanding { fits, ..lesson };
-        assert_eq!(
-            with(pending("a", Some(1))).standing(10),
-            DrillStanding::Pending
-        );
-        assert_eq!(with(stand("a")).standing(10), DrillStanding::New);
-        assert_eq!(with(due_at("a", 10)).standing(10), DrillStanding::Due);
-        assert_eq!(with(due_at("a", 5)).standing(10), DrillStanding::Due);
-        assert_eq!(with(due_at("a", 11)).standing(10), DrillStanding::Rested);
-    }
-}

@@ -1,5 +1,5 @@
-//! A server's refusal of a request, told the same way whichever backend is
-//! behind the port.
+//! A request's size against its context window, and a server's refusal of a
+//! request, told the same way whichever backend is behind the port.
 //!
 //! The configured context window is the one measure of what a request may
 //! use: it is the window the user set for the model, and nothing here asks a
@@ -10,7 +10,6 @@
 
 use std::collections::HashSet;
 
-use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::shared::error::AppError;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,6 +20,89 @@ const ECHO_RUN_WORDS: usize = 6;
 
 /// Characters of a server's own words kept in a message.
 const SERVER_WORDS_SHOWN: usize = 240;
+
+/// What one request asks of the context window.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct RequestSize {
+    /// The prompt's tokens, pictures included.
+    pub prompt_tokens: usize,
+    /// Whether the backend's tokenizer counted the prompt's text. Otherwise
+    /// the text is the estimate. Pictures are never counted by a tokenizer.
+    pub counted_exactly: bool,
+    /// Tokens reserved for the answer.
+    pub output_tokens: u32,
+    /// What the prompt's pictures cost by the model's declared geometry,
+    /// already inside `prompt_tokens`.
+    pub image_tokens: usize,
+    /// How many pictures the prompt carries.
+    pub image_count: usize,
+}
+
+impl RequestSize {
+    /// Prompt and answer together: what the request holds in the window.
+    pub fn total(&self) -> usize {
+        self.prompt_tokens
+            .saturating_add(usize::try_from(self.output_tokens).unwrap_or(usize::MAX))
+    }
+
+    /// How the prompt was measured, naming the pictures when it has any.
+    fn counted(&self) -> String {
+        let text = if self.counted_exactly {
+            "counted exactly"
+        } else {
+            "estimated"
+        };
+        if self.image_count == 0 {
+            return text.into();
+        }
+        let pictures = if self.image_count == 1 {
+            "1 picture".to_string()
+        } else {
+            format!("{} pictures", self.image_count)
+        };
+        format!(
+            "text {text}; {} tokens for {pictures} estimated from the model's declared geometry",
+            self.image_tokens
+        )
+    }
+
+    fn describe(&self) -> String {
+        format!(
+            "{} tokens: a prompt of {} ({}) and {} for the answer",
+            self.total(),
+            self.prompt_tokens,
+            self.counted(),
+            self.output_tokens
+        )
+    }
+}
+
+/// The refusal of a request whose prompt alone fills the configured `window`,
+/// before it is sent. Nothing else is refused for its size: an answer always
+/// shrinks to the room its prompt leaves, so only a prompt that leaves none
+/// cannot be sent. It carries the numbers, so a caller that can send less
+/// (fewer passages, a smaller group) knows by how much and asks again.
+pub(crate) fn window_refusal(model: &str, size: RequestSize, window: usize) -> AppError {
+    tracing::warn!(
+        model,
+        prompt_tokens = size.prompt_tokens,
+        counted_exactly = size.counted_exactly,
+        window,
+        "llm.request_refused"
+    );
+    AppError::PromptExceedsWindow {
+        prompt_tokens: size.prompt_tokens,
+        window,
+        counted_exactly: size.counted_exactly,
+        message: format!(
+            "This request's prompt is {} tokens ({}), which leaves no room for an answer; the \
+             configured context window is {window}. It was not sent. Shorten the request, or \
+             raise the context window in Settings if the model's server holds more.",
+            size.prompt_tokens,
+            size.counted()
+        ),
+    }
+}
 
 /// A server's message made safe to show, log and compare: whitespace
 /// collapsed; every run of [`ECHO_RUN_WORDS`] or more words that also occurs

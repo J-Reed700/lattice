@@ -1187,7 +1187,6 @@ npm run contracts:sql
 cargo fmt --manifest-path crates/lattice-desktop/Cargo.toml --all -- --check
 SQLX_OFFLINE=true cargo check --manifest-path crates/lattice-desktop/Cargo.toml --lib
 SQLX_OFFLINE=true cargo clippy --manifest-path crates/lattice-desktop/Cargo.toml --lib -- -D warnings
-SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml -p lattice-learning --lib
 SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml --lib features::learning::
 SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml --test learning_studio_evals
 
@@ -1254,7 +1253,7 @@ Run the real Docker catalog checks after starting Docker:
 
 ```bash
 SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
-  -p lattice-learning --lib runtime::runtime_catalog::tests::docker_ \
+  --features bindings-export --lib features::learning::runtime::runtime_catalog::tests::docker_ \
   -- --ignored --test-threads=1
 ```
 
@@ -1273,8 +1272,8 @@ pulls. The selected image must provide `/bin/sh` and `cat`.
 LATTICE_LAB_SMOKE_ENGINE=docker \
 LATTICE_LAB_SMOKE_IMAGE_ID=sha256:<64-lowercase-hex-digest> \
 SQLX_OFFLINE=true cargo test --manifest-path crates/lattice-desktop/Cargo.toml \
-  -p lattice-learning --lib \
-  runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks \
+  --features bindings-export --lib \
+  features::learning::runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks \
   -- --ignored --nocapture
 ```
 
