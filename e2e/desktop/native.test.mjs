@@ -167,12 +167,13 @@ async function closeNormally() {
   const descendants = (await sampleProcessTree(closing.pid)).processes.filter(row => row.pid !== closing.pid);
   // Exercise the real native close event and renderer save gate, without
   // clicking another element and accidentally committing a focused title first.
-  await browser.execute(() => {
+  const lostReply = await browser.execute(() => {
     setTimeout(() => window.__TAURI__.window.getCurrentWindow().close(), 20);
-  });
+  }).then(() => null, error => error);
   const deadline = Date.now() + 30_000;
   while (closing.exitCode === null && closing.signalCode === null && Date.now() < deadline) await delay(100);
-  assert.equal(closing.exitCode, 0, 'Normal native close must exit successfully after flushing saves');
+  assert.equal(closing.exitCode, 0, 'Normal native close must exit successfully after flushing saves'
+    + (lostReply ? `; the close request's reply was lost: ${String(lostReply)}` : ''));
   const shutdownLog = await readFile(path.join(reports, `app-${launches}.log`), 'utf8');
   assert.doesNotMatch(shutdownLog, /Graceful shutdown timed out|Database close timed out|forcing exit/i,
     'A forced shutdown must not count as a successful lifecycle check');
