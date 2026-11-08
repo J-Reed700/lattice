@@ -152,6 +152,11 @@ impl From<AppError> for ApiError {
                 message: format!("Validation failed: {}", msg),
                 details: None,
             },
+            AppError::Conflict(ref msg) => ApiError {
+                code: ErrorCode::Conflict,
+                message: msg.clone(),
+                details: None,
+            },
             AppError::InvalidState(ref msg) => ApiError {
                 code: ErrorCode::InvalidState,
                 message: msg.clone(),

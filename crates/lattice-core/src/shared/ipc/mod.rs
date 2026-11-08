@@ -242,6 +242,8 @@ pub enum ErrorCode {
     // Concurrency Errors
     /// Concurrent modification detected
     ConcurrentModification,
+    /// Revision conflict
+    Conflict,
     /// Processing queue is full
     QueueFull,
 

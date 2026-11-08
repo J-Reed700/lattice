@@ -412,3 +412,28 @@ pub async fn reject_learning_practice_proposal(
         .await
         .map_err(ApiError::from)
 }
+
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_learning_practice_profile(
+    program_id: String,
+    container: State<'_, Container>,
+) -> Result<LearningPracticeProfileDto, ApiError> {
+    practice_repo(&container)
+        .get_profile(&program_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn save_learning_practice_profile(
+    request: SaveLearningPracticeProfileRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningPracticeProfileDto, ApiError> {
+    practice_repo(&container)
+        .save_profile(&request)
+        .await
+        .map_err(ApiError::from)
+}

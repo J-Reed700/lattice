@@ -10,6 +10,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 mod assistance;
+mod profiles;
 mod reads;
 mod sessions;
 mod submissions;
