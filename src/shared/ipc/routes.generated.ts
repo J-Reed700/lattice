@@ -394,6 +394,7 @@ export const COMMAND_PLUGINS = {
   set_source_trust_override: 'learning',
   set_study_deck_target: 'learning',
   settle_learning_teaching_findings: 'learning',
+  edit_learning_lesson_section: 'learning',
   show_in_folder: 'file',
   skip_learning_diagnostic: 'learning',
   start_learning_diagnostic: 'learning',

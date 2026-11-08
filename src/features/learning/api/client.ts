@@ -137,6 +137,12 @@ export const learningApi = {
   ): Promise<ApiResult<void>> =>
     learningCall('settle_learning_teaching_findings', { request }),
 
+  /** Rewrites a section of a published lesson; with `dryRun` it only answers what saving would do. */
+  editLearningLessonSection: (
+    request: Wire.EditLearningLessonSectionRequestDto,
+  ): Promise<ApiResult<Wire.LessonSectionEditDto>> =>
+    learningCall('edit_learning_lesson_section', { request }),
+
   resumeLearningLessonReview: (
     request: Wire.ResumeLearningLessonReviewRequestDto,
   ): Promise<ApiResult<Wire.LearningGenerationJob>> =>

@@ -766,6 +766,20 @@ async settleLearningTeachingFindings(request: SettleLearningTeachingFindingsRequ
 }
 },
 /**
+ * Rewrites a section of a published lesson, its title and its text. The
+ * statements on text the user changed end, the others keep their state, and
+ * each sentence the user wrote becomes a statement they confirmed. With
+ * `dry_run` it only answers what saving would do.
+ */
+async editLearningLessonSection(request: EditLearningLessonSectionRequestDto) : Promise<Result<LessonSectionEditDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_section", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Resume verification (§6.2): a lesson waiting for review continues its
  * job once something changed; a stopped one retries it.
  */
@@ -5963,6 +5977,19 @@ geometry: VisionGeometry;
  */
 projector_bytes: number }
 /**
+ * A published lesson's section as the user rewrote it, with the title and
+ * text they opened it with.
+ */
+export type EditLearningLessonSectionRequestDto = { programId: string; lessonId: string;
+/**
+ * Zero-based.
+ */
+sectionIndex: number; beforeTitle: string; beforeBody: string; title: string; body: string;
+/**
+ * Answer what saving would do and write nothing.
+ */
+dryRun: boolean }
+/**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
 export type EmbeddingCompatibilityDto =
@@ -8506,6 +8533,35 @@ changedSinceStop: boolean; claims: ClaimReviewItemDto[];
  */
 teachingFindings: TeachingFindingDto[] }
 export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
+/**
+ * What a rewrite of a section does, or did, to the lesson's statements.
+ */
+export type LessonSectionEditDto = { changed: boolean;
+/**
+ * Statements on text the user left as it was.
+ */
+statementsKept: number;
+/**
+ * Statements on text the user changed.
+ */
+statementsChanged: number;
+/**
+ * Statements on text the user deleted.
+ */
+statementsRemoved: number;
+/**
+ * Sentences the user wrote.
+ */
+sentencesWritten: number;
+/**
+ * Changed or removed statements that were checked against the sources.
+ */
+checkedStatementsAffected: number;
+/**
+ * The review's revision after a save; null for a dry run, no change, or
+ * a lesson without a review.
+ */
+revision: number | null }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
@@ -10396,7 +10452,11 @@ passageRole: TeachingPassageRoleDto;
 /**
  * Repairs that tried to settle it.
  */
-repairs: number; state: TeachingFindingStateDto }
+repairs: number; state: TeachingFindingStateDto;
+/**
+ * Whether the user changed this section after the note was written.
+ */
+partChanged: boolean }
 /**
  * What raised a teaching finding.
  */
