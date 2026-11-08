@@ -8,10 +8,10 @@ use super::support::{
     figure_mutation, fix_answer, held_back, idle_grader, last, lesson_titled, lessons_of,
     no_verdict, passage_baseline, passage_build, passage_code, passage_lesson_spec,
     passage_plant_answer, passage_spec, prepare_lesson, quiet, raised_all, reversed_mutation,
-    spacing_check, spacing_passage, supported, system, unchecked, unsupported, unsure, FakeGrader,
-    ScriptedCheck, ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST,
-    FIRST_PLANTED, FOURTH, MODEL, REVERSED, SECOND, SLEEP, SLEEP_LESSON, SMALLER_QUOTE, SPACING,
-    SPACING_LESSON, THIRD, THIRD_PLANTED,
+    spacing_check, spacing_passage, supported, system, teaches_answer, unchecked, unsupported,
+    unsure, FakeGrader, ScriptedCheck, ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE,
+    FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH, MODEL, NOT_TEACHES_REASON, REVERSED, SECOND, SLEEP,
+    SLEEP_LESSON, SMALLER_QUOTE, SPACING, SPACING_LESSON, TEACHES_REASON, THIRD, THIRD_PLANTED,
 };
 use crate::drills::bank::{self, take, Shelf};
 use crate::drills::build::{
@@ -233,7 +233,7 @@ async fn a_drill_explains_the_passage_of_the_lessons_best_source_sized_to_its_se
     let pool = pool().await?;
     let program = course(&pool).await?;
     let (version, text) = source_titled(&pool, &program, "Spacing and memory").await?;
-    let model = ScriptedModel::new([explanation_answer()]);
+    let model = ScriptedModel::new([teaches_answer(true), explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
@@ -270,8 +270,8 @@ async fn a_drill_explains_the_passage_of_the_lessons_best_source_sized_to_its_se
     assert_contiguous(&code.files[0].text);
     assert_eq!(code.suite, None);
     assert!(code.tests.is_empty());
-    assert_eq!(model.purposes(), ["clean explanation"]);
-    let request = &model.requests()[0];
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    let request = &model.requests()[1];
     let asked = last(request);
     assert!(asked.contains(&source.text), "{asked}");
     assert!(asked.contains("about 4 sentences"), "{asked}");
@@ -283,16 +283,37 @@ async fn a_drill_explains_the_passage_of_the_lessons_best_source_sized_to_its_se
     Ok(())
 }
 
-/// The passage the clean stage of a drill built to `spec` takes.
-async fn next_passage(pool: &SqlitePool, spec: &DrillSpec) -> Result<SourcePassage> {
-    let model = ScriptedModel::new([explanation_answer()]);
+/// The clean stage of a drill built to `spec` with the model answering `answers`, and the model.
+async fn clean_with(
+    pool: &SqlitePool,
+    spec: &DrillSpec,
+    answers: Vec<String>,
+) -> (ScriptedModel, Result<CleanCode>) {
+    let model = ScriptedModel::new(answers);
     let check = spacing_check();
     let grader = idle_grader();
-    let code = passage_build(pool, &model, &check, &grader)
+    let built = passage_build(pool, &model, &check, &grader)
         .clean_code(spec)
-        .await?;
-    code.source
+        .await;
+    (model, built)
+}
+
+/// The passage the clean stage of a drill built to `spec` takes when the model answers `answers`.
+async fn passage_with(
+    pool: &SqlitePool,
+    spec: &DrillSpec,
+    answers: Vec<String>,
+) -> Result<SourcePassage> {
+    clean_with(pool, spec, answers)
+        .await
+        .1?
+        .source
         .ok_or_else(|| AppError::InternalError("The clean stage took no passage.".into()))
+}
+
+/// The passage the clean stage of a drill built to `spec` takes when the passage check says yes to the first place.
+async fn next_passage(pool: &SqlitePool, spec: &DrillSpec) -> Result<SourcePassage> {
+    passage_with(pool, spec, vec![teaches_answer(true), explanation_answer()]).await
 }
 
 #[tokio::test]
@@ -332,10 +353,10 @@ async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_ne
     );
     drilled(&pool, "second", &program, &lesson, &second).await?;
 
-    let third = next_passage(&pool, &spec).await?;
+    let third = passage_with(&pool, &spec, vec![explanation_answer()]).await?;
     assert_eq!(
         third.text, opening,
-        "every place is used, so the one used longest ago"
+        "every place is used, so the one used longest ago, and it was judged to teach the lesson before"
     );
     Ok(())
 }
@@ -345,7 +366,7 @@ async fn another_lesson_of_the_course_takes_the_passage_its_own_words_find() -> 
     let pool = pool().await?;
     let program = course(&pool).await?;
     let (sleep, sleep_text) = source_titled(&pool, &program, "Sleep and memory").await?;
-    let model = ScriptedModel::new([explanation_answer()]);
+    let model = ScriptedModel::new([teaches_answer(true), explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
     let spec = passage_lesson_spec(&pool, &program, SLEEP_LESSON).await?;
@@ -356,7 +377,8 @@ async fn another_lesson_of_the_course_takes_the_passage_its_own_words_find() -> 
     assert_eq!(source.version_id, sleep);
     assert_eq!(source.text, sleep_text.trim());
     assert_eq!(code.domain, SLEEP_LESSON);
-    assert!(last(&model.requests()[0]).contains("Topic: Sleep after learning"));
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    assert!(last(&model.requests()[1]).contains("Topic: Sleep after learning"));
     Ok(())
 }
 
@@ -768,11 +790,16 @@ async fn a_prepared_lesson_whose_blocks_cite_no_source_gives_no_drill_and_is_rec
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::InvalidInput(message) if message.contains("no passage") && message.contains(SPACING_LESSON)),
+        matches!(&error, AppError::InvalidInput(message) if *message == no_teaching_passage(SPACING_LESSON)),
         "{error:?}"
     );
     assert!(model.requests().is_empty());
     assert_not_fitting(&pool, &program, &lesson).await
+}
+
+/// What the clean stage fails with when the course's sources hold no passage that teaches the lesson titled `lesson`.
+fn no_teaching_passage(lesson: &str) -> String {
+    format!("The course's sources hold no passage that teaches the lesson \"{lesson}\".")
 }
 
 /// The lesson is recorded as not fitting a passage drill, on the basis it has now.
@@ -806,7 +833,7 @@ async fn a_course_without_sources_gives_no_drill_and_records_the_lesson_as_not_f
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::InvalidInput(message) if message.contains("no passage")),
+        matches!(&error, AppError::InvalidInput(message) if *message == no_teaching_passage(SPACING_LESSON)),
         "{error:?}"
     );
     assert!(model.requests().is_empty());
@@ -844,18 +871,441 @@ async fn an_explanation_too_short_for_its_patterns_is_asked_for_again() -> Resul
     let pool = pool().await?;
     let program = course(&pool).await?;
     let short = json!({"title": "Spacing", "paragraphs": [FIRST]}).to_string();
-    let model = ScriptedModel::new([short, explanation_answer()]);
+    let model = ScriptedModel::new([teaches_answer(true), short, explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
     let code = passage_build(&pool, &model, &check, &grader)
         .clean_code(&passage_lesson_spec(&pool, &program, SPACING_LESSON).await?)
         .await?;
     assert_eq!(code.files, explanation_files());
-    let again = last(&model.requests()[1]);
+    assert_eq!(
+        model.purposes(),
+        ["passage check", "clean explanation", "clean explanation"]
+    );
+    let again = last(&model.requests()[2]);
     assert!(
         again.contains("The explanation needs at least 3 sentences, and it has 1."),
         "{again}"
     );
+    Ok(())
+}
+
+/// What a lesson's passage check is told of it: its module's title, its title and its objective.
+async fn lesson_facts(pool: &SqlitePool, lesson_id: &str) -> Result<(String, String, String)> {
+    sqlx::query_as(
+        "SELECT m.title,l.title,l.objective FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.id=?",
+    )
+    .bind(lesson_id)
+    .fetch_one(pool)
+    .await
+    .map_err(db)
+}
+
+/// The message the passage check is sent for `passage` of the source titled `source_title`.
+fn check_message(facts: &(String, String, String), source_title: &str, passage: &str) -> String {
+    format!(
+        "Module: {}\nLesson: {}\nObjective: {}\n\nSource: {}\nThe passage:\n<passage>\n{}\n</passage>",
+        facts.0, facts.1, facts.2, source_title, passage
+    )
+}
+
+/// The schema of the passage check's answer.
+fn check_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "passageTeachesTheLesson"],
+        "properties": {
+            "reason": {"type": "string", "minLength": 1},
+            "passageTeachesTheLesson": {"type": "boolean"}
+        }
+    })
+}
+
+/// The start and end byte of `part` in `text`.
+fn span_in(text: &str, part: &str) -> (i64, i64) {
+    let start = text.find(part).expect("the part is in the text");
+    (
+        i64::try_from(start).expect("a start"),
+        i64::try_from(start + part.len()).expect("an end"),
+    )
+}
+
+/// The verdicts stored for the lesson `lesson_id`, in text order: the start, the end and `teaches` of each.
+async fn verdicts(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(i64, i64, i64)>> {
+    sqlx::query_as(
+        "SELECT start_byte,end_byte,teaches FROM learning_drill_passage_checks WHERE lesson_id=? ORDER BY start_byte",
+    )
+    .bind(lesson_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)
+}
+
+/// A course of one source, "Harbour notes", whose two paragraphs of four sentences both hold words of the query of
+/// [`SPACING_LESSON`]: the lighter holds one of them and comes first in the text, the heavier holds all of them. The
+/// pick takes the heavier first and the lighter second. They are the only two places of the course.
+struct TwoPlaces {
+    program: String,
+    lesson: String,
+    spec: DrillSpec,
+    lighter: String,
+    heavier: String,
+    text: String,
+}
+
+async fn two_places(pool: &SqlitePool) -> Result<TwoPlaces> {
+    let mut fill = filler_sentences(20).into_iter();
+    let lighter = paragraph_of(Some(touched_sentence(9)), &mut fill, 4);
+    let heavier = (0..4).map(lesson_sentence).collect::<Vec<_>>().join(" ");
+    for paragraph in [&lighter, &heavier] {
+        assert_eq!(sentences(paragraph).len(), 4, "{paragraph}");
+    }
+    let text = [lighter.as_str(), heavier.as_str()].join("\n\n");
+    assert!(text.len() < 1200, "{}", text.len());
+    let program = course_of(pool, &[("Harbour notes", text.as_str())]).await?;
+    Ok(TwoPlaces {
+        lesson: lesson_titled(pool, &program, SPACING_LESSON).await?,
+        spec: passage_lesson_spec(pool, &program, SPACING_LESSON).await?,
+        program,
+        lighter,
+        heavier,
+        text,
+    })
+}
+
+#[tokio::test]
+async fn before_the_explanation_the_passage_is_asked_whether_it_teaches_the_lesson() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    let facts = lesson_facts(&pool, &lesson).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &spec,
+        vec![teaches_answer(true), explanation_answer()],
+    )
+    .await;
+    let source = built?.source.expect("the passage");
+
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    let request = &model.requests()[0];
+    assert_eq!(
+        last(request),
+        check_message(&facts, "Spacing and memory", &source.text)
+    );
+    assert_eq!(request.json_schema, Some(check_schema()));
+    assert!(
+        system(request).starts_with("You decide whether a passage from a course's sources"),
+        "{}",
+        system(request)
+    );
+    let rows: Vec<(i64, i64, String, i64, String, String)> = sqlx::query_as(
+        "SELECT start_byte,end_byte,basis,teaches,reason,model FROM learning_drill_passage_checks WHERE program_id=? AND lesson_id=?",
+    )
+    .bind(&program)
+    .bind(&lesson)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let (start, end, basis, teaches, reason, stored_model) = &rows[0];
+    assert_eq!(
+        (*start, *end),
+        (
+            i64::try_from(source.start_byte).expect("a start"),
+            i64::try_from(source.end_byte).expect("an end")
+        )
+    );
+    assert_eq!(*teaches, 1);
+    assert!(!basis.trim().is_empty());
+    assert_eq!(reason, TEACHES_REASON);
+    assert_eq!(stored_model, MODEL);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_place_that_does_not_teach_the_lesson_gives_way_to_the_next_place_in_the_picks_order(
+) -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let facts = lesson_facts(&pool, &places.lesson).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    let code = built?;
+
+    assert_eq!(
+        code.source.clone().expect("the passage").text,
+        places.lighter
+    );
+    assert_eq!(
+        model.purposes(),
+        ["passage check", "passage check", "clean explanation"]
+    );
+    let requests = model.requests();
+    assert_eq!(
+        last(&requests[0]),
+        check_message(&facts, "Harbour notes", &places.heavier),
+        "the heavier place comes first, though it is later in the text"
+    );
+    assert_eq!(
+        last(&requests[1]),
+        check_message(&facts, "Harbour notes", &places.lighter)
+    );
+    let calls: Vec<(&str, &str)> = code
+        .trail
+        .calls
+        .iter()
+        .map(|call| (call.purpose.as_str(), call.model.as_str()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("passage check", MODEL),
+            ("passage check", MODEL),
+            ("clean explanation", MODEL)
+        ]
+    );
+    let (lighter, heavier) = (
+        span_in(&places.text, &places.lighter),
+        span_in(&places.text, &places.heavier),
+    );
+    assert_eq!(
+        verdicts(&pool, &places.lesson).await?,
+        [(lighter.0, lighter.1, 1), (heavier.0, heavier.1, 0)]
+    );
+    let reasons: Vec<String> = sqlx::query_scalar(
+        "SELECT reason FROM learning_drill_passage_checks WHERE lesson_id=? ORDER BY teaches",
+    )
+    .bind(&places.lesson)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(reasons, [NOT_TEACHES_REASON, TEACHES_REASON]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_place_judged_before_for_the_lesson_is_not_asked_about_again() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (_, first) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    first?;
+
+    let (model, second) = clean_with(&pool, &places.spec, vec![explanation_answer()]).await;
+    let source = second?.source.expect("the passage");
+    assert_eq!(source.text, places.lighter);
+    assert_eq!(model.purposes(), ["clean explanation"]);
+    assert_eq!(verdicts(&pool, &places.lesson).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let facts = lesson_facts(&pool, &places.lesson).await?;
+    let (_, first) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    first?;
+    sqlx::query("UPDATE learning_drill_passage_checks SET basis='stale'")
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+
+    let (model, second) = clean_with(
+        &pool,
+        &places.spec,
+        vec![teaches_answer(true), explanation_answer()],
+    )
+    .await;
+    let source = second?.source.expect("the passage");
+    assert_eq!(source.text, places.heavier);
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    assert_eq!(
+        last(&model.requests()[0]),
+        check_message(&facts, "Harbour notes", &places.heavier)
+    );
+    let (start, end) = span_in(&places.text, &places.heavier);
+    let row: (i64, String) = sqlx::query_as(
+        "SELECT teaches,basis FROM learning_drill_passage_checks WHERE lesson_id=? AND start_byte=? AND end_byte=?",
+    )
+    .bind(&places.lesson)
+    .bind(start)
+    .bind(end)
+    .fetch_one(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(row.0, 1, "the old row was replaced");
+    assert_ne!(row.1, "stale");
+    assert_eq!(verdicts(&pool, &places.lesson).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn changing_the_lessons_objective_asks_again() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (_, first) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    first?;
+    let (module, title, objective) = lesson_facts(&pool, &places.lesson).await?;
+    let changed = format!("{objective}. Gaps matter most.");
+    sqlx::query("UPDATE learning_lessons SET objective=? WHERE id=?")
+        .bind(&changed)
+        .bind(&places.lesson)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+
+    let (model, second) = clean_with(
+        &pool,
+        &places.spec,
+        vec![teaches_answer(true), explanation_answer()],
+    )
+    .await;
+    second?;
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    assert_eq!(
+        last(&model.requests()[0]),
+        check_message(&(module, title, changed), "Harbour notes", &places.heavier)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn when_no_place_teaches_the_lesson_no_drill_is_built_and_the_lesson_is_recorded_as_not_fitting(
+) -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![teaches_answer(false), teaches_answer(false)],
+    )
+    .await;
+    let error = built.unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if *message == no_teaching_passage(SPACING_LESSON)),
+        "{error:?}"
+    );
+    assert_eq!(model.purposes(), ["passage check", "passage check"]);
+    assert_eq!(model.unused(), 0);
+    let (lighter, heavier) = (
+        span_in(&places.text, &places.lighter),
+        span_in(&places.text, &places.heavier),
+    );
+    assert_eq!(
+        verdicts(&pool, &places.lesson).await?,
+        [(lighter.0, lighter.1, 0), (heavier.0, heavier.1, 0)]
+    );
+    assert_not_fitting(&pool, &places.program, &places.lesson).await
+}
+
+fn blank_reason_answer() -> String {
+    json!({"reason": " ", "passageTeachesTheLesson": true}).to_string()
+}
+
+#[tokio::test]
+async fn a_blank_reason_is_asked_for_again_once() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            blank_reason_answer(),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    let source = built?.source.expect("the passage");
+
+    assert_eq!(source.text, places.heavier);
+    assert_eq!(
+        model.purposes(),
+        ["passage check", "passage check", "clean explanation"]
+    );
+    let again = last(&model.requests()[1]);
+    assert!(
+        again.contains("The reason is empty. Give your reason first."),
+        "{again}"
+    );
+    let (start, end) = span_in(&places.text, &places.heavier);
+    assert_eq!(verdicts(&pool, &places.lesson).await?, [(start, end, 1)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_answer_refused_twice_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![blank_reason_answer(), blank_reason_answer()],
+    )
+    .await;
+    let error = built.unwrap_err();
+
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
+    assert_eq!(model.purposes(), ["passage check", "passage check"]);
+    assert!(verdicts(&pool, &places.lesson).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failing_passage_check_call_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(&pool, &places.spec, Vec::new()).await;
+    let error = built.unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InternalError(message) if message.contains("Unexpected extra model call")),
+        "{error:?}"
+    );
+    assert_eq!(model.purposes(), ["passage check"]);
+    assert!(verdicts(&pool, &places.lesson).await?.is_empty());
     Ok(())
 }
 
@@ -1497,7 +1947,12 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
         {"path": "explanation.md", "quote": "improved recall by 40%", "comment": "The study found 14%, not 40%.", "severity": "major"}
     ]})
     .to_string();
-    let model = ScriptedModel::new([explanation_answer(), passage_plant_answer(), blind]);
+    let model = ScriptedModel::new([
+        teaches_answer(true),
+        explanation_answer(),
+        passage_plant_answer(),
+        blind,
+    ]);
     let check = spacing_check();
     let grader = FakeGrader::new(Assessment {
         issues: vec![
@@ -1518,7 +1973,12 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     assert_eq!(outcome, JobOutcome::Committed);
     assert_eq!(
         model.purposes(),
-        ["clean explanation", "plant", "blind review"]
+        [
+            "passage check",
+            "clean explanation",
+            "plant",
+            "blind review"
+        ]
     );
     assert_eq!(
         check.asked().len(),

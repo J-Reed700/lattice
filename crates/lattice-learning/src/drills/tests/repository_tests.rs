@@ -66,6 +66,8 @@ async fn the_tables_and_their_indexes_exist() -> Result<()> {
         "learning_drill_lesson_fits_lesson",
         "learning_drill_lesson_schedules",
         "learning_drill_lesson_schedules_lesson",
+        "learning_drill_passage_checks",
+        "learning_drill_passage_checks_version",
         "learning_drill_pattern_schedules",
         "learning_drill_patterns",
         "learning_drill_patterns_pattern",

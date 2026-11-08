@@ -73,6 +73,10 @@ pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
     let system = system(request);
     for (needle, name) in [
         (
+            "You decide whether a passage from a course's sources",
+            "passage check",
+        ),
+        (
             "You write the code for a code review exercise",
             "clean code",
         ),
@@ -1256,6 +1260,21 @@ pub(super) fn explanation_answer() -> String {
     json!({
         "title": "Why spacing study sessions helps",
         "paragraphs": [format!("{FIRST} {SECOND}"), format!("{THIRD} {FOURTH}")]
+    })
+    .to_string()
+}
+
+/// The reason [`teaches_answer`] gives for a passage that teaches the lesson.
+pub(super) const TEACHES_REASON: &str = "The passage explains the lesson's subject.";
+
+/// The reason [`teaches_answer`] gives for a passage that does not.
+pub(super) const NOT_TEACHES_REASON: &str = "The passage is about something else.";
+
+/// What the model answers to the passage check: `teaches`, with a reason.
+pub(super) fn teaches_answer(teaches: bool) -> String {
+    json!({
+        "reason": if teaches { TEACHES_REASON } else { NOT_TEACHES_REASON },
+        "passageTeachesTheLesson": teaches
     })
     .to_string()
 }
