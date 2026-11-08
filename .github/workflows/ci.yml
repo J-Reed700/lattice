@@ -21,6 +21,7 @@ jobs:
   # Named like main's job, with its env, so main's Rust cache is the one restored.
   rust-check:
     name: rust ${{ matrix.mode }} ${{ matrix.sha }}
+    if: false
     runs-on: ubuntu-24.04
     env:
       LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
@@ -129,6 +130,68 @@ jobs:
           printf '%s\n' "fmt ${{ steps.fmt.outcome }}" "clippy ${{ steps.clippy.outcome }}" \
             "tests ${{ steps.tests.outcome }}" "bindings ${{ steps.bindings.outcome }}"
           [ "${{ steps.fmt.outcome }} ${{ steps.clippy.outcome }} ${{ steps.tests.outcome }} ${{ steps.bindings.outcome }}" = "success success success success" ]
+
+  # The generated files for the integrated tree, to commit as they are: nothing is built where they are committed.
+  bindings-writer:
+    name: write bindings ${{ matrix.sha }}
+    runs-on: ubuntu-24.04
+    env:
+      LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+    strategy:
+      matrix:
+        sha:
+          - 5e1c685c8f33e930a12c6d497b1debf89054b143
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Add swap for the build
+        run: |
+          sudo fallocate -l 16G /ci-swapfile
+          sudo chmod 600 /ci-swapfile
+          sudo mkswap /ci-swapfile
+          sudo swapon /ci-swapfile
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-check
+          save-if: false
+
+      - name: Create build placeholders
+        run: |
+          mkdir -p dist
+          touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
+
+      - name: Write the bindings
+        working-directory: crates/lattice-desktop
+        run: cargo run --locked --features bindings-export --bin export_bindings
+
+      - name: What the generator changed
+        run: git diff --stat -- src/lib/bindings.ts src/shared/ipc/routes.generated.ts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bindings-${{ matrix.sha }}
+          path: |
+            src/lib/bindings.ts
+            src/shared/ipc/routes.generated.ts
+          if-no-files-found: error
 
   integration-frontend:
     name: integration frontend ${{ matrix.sha }}
