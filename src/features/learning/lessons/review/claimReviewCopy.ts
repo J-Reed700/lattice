@@ -302,22 +302,27 @@ export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching
 // ── Announcements (§4.5) ────────────────────────────────────────────────────
 
 export const ALL_RESOLVED = 'Everything is resolved. Resume verification to publish the lesson.';
-/** What is left after an action; never "everything" while a teaching note waits. */
-const left = (remaining: number, teachingWaiting = 0) => {
+const PUBLISHED_RESOLVED = 'Everything is resolved.';
+/**
+ * What is left after an action; never "everything" while a teaching note
+ * waits. A published lesson has nothing to resume, so it is just resolved.
+ */
+const left = (remaining: number, teachingWaiting = 0, published = false) => {
   if (remaining > 0) return `${remaining} left.`;
-  return teachingWaiting > 0 ? `No statements are left. ${teachingNotesWait(teachingWaiting)}.` : ALL_RESOLVED;
+  if (teachingWaiting > 0) return `No statements are left. ${teachingNotesWait(teachingWaiting)}.`;
+  return published ? PUBLISHED_RESOLVED : ALL_RESOLVED;
 };
 
 export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'research_with_hint' | 'unconfirm' | 'undo';
 
-export function announcement(action: AnnouncedAction, remaining: number, teachingWaiting = 0): string {
+export function announcement(action: AnnouncedAction, remaining: number, teachingWaiting = 0, published = false): string {
   switch (action) {
-    case 'confirm': return `Accepted. ${left(remaining, teachingWaiting)}`;
+    case 'confirm': return `Accepted. ${left(remaining, teachingWaiting, published)}`;
     case 'edit': return 'Sentence edited. It is checked when you resume.';
-    case 'remove': return `Removed. ${left(remaining, teachingWaiting)}`;
+    case 'remove': return `Removed. ${left(remaining, teachingWaiting, published)}`;
     case 'research_with_hint': return 'Hint saved. It is searched when you resume.';
-    case 'unconfirm': return `Acceptance withdrawn. ${left(remaining, teachingWaiting)}`;
-    case 'undo': return `Undone. ${left(remaining, teachingWaiting)}`;
+    case 'unconfirm': return `Acceptance withdrawn. ${left(remaining, teachingWaiting, published)}`;
+    case 'undo': return `Undone. ${left(remaining, teachingWaiting, published)}`;
   }
 }
 

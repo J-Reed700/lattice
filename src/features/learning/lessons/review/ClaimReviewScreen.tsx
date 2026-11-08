@@ -18,7 +18,7 @@ import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons
 import { ReviewSourceReader, type ReaderRequest } from '@/features/learning/lessons/review/ReviewSourceReader';
 import { isTeachingWaiting, TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
 import { useClaimReviewSession } from '@/features/learning/lessons/review/useClaimReviewSession';
-import { useResumeLearningLessonReview } from '@/features/learning/lessons/review/useLessonClaimReview';
+import { useResumeLearningLessonReview, useSettleTeachingFindings } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useReviewDrop, type DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -68,7 +68,8 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const resumeHelp = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const statementRef = useRef<HTMLParagraphElement>(null);
-  const [sheet, setSheet] = useState<{ target: AddSourceTarget; initial: DroppedSource | null } | null>(null);
+  const settleNotes = useSettleTeachingFindings(programId, lessonId);
+  const [sheet, setSheet] = useState<{ target: AddSourceTarget; initial: DroppedSource | null; /** The teaching note the sheet was opened from. */ findingKey?: string } | null>(null);
   const [trusting, setTrusting] = useState<{ support: ClaimSupportDto; sharing: number } | null>(null);
   const [reader, setReader] = useState<ReaderRequest | null>(null);
   const [legend, setLegend] = useState(false);
@@ -96,6 +97,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     return { level: 'claim', claimIds: [active.claimId], others };
   };
   const openSheet = (target: AddSourceTarget | null, initial: DroppedSource | null = null) => { if (target?.claimIds.length) setSheet({ target, initial }); };
+  const openNoteSheet = (claimId: string, findingKey: string) => setSheet({ target: { level: 'claim', claimIds: [claimId] }, initial: null, findingKey });
   const openGroupSheet = (group: ClaimGroup) => openSheet({ level: group.key === 'queue' ? 'queue' : 'group', claimIds: group.claims.map((claim) => claim.claimId) }, null);
   const acceptSource = (support: ClaimSupportDto | null) => { if (support?.role === 'supports') setTrusting({ support, sharing: sharingOf(support) }); };
 
@@ -176,15 +178,24 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const hold = review ? reviewHold(review, waiting.length) : 'claims';
   const auditStop = review?.stopReason?.code.startsWith(AUDIT_STOP_PREFIX) ? review.stopReason : null;
   const position = session.activeIndex >= 0 ? session.activeIndex + 1 : 0;
-  const sheetNode = sheet && review && <AddSourceSheet key={sheet.target.claimIds.join(',')} programId={programId} lessonId={lessonId} revision={review.revision}
+  const settleNote = (findingKey: string) => settleNotes.mutateAsync({ findingKeys: [findingKey], settle: 'source_added' })
+    .then(() => session.setMessage('Source added. The note is resolved.'))
+    .catch((error: unknown) => session.setMessage(error instanceof Error ? error.message : 'The note could not be resolved.'));
+  const sheetNode = sheet && review && (!sheet.findingKey || session.teachingActive) && <AddSourceSheet key={sheet.target.claimIds.join(',')} programId={programId} lessonId={lessonId} revision={review.revision}
     target={sheet.target} initial={sheet.initial} remaining={waiting.length - 1} onClose={() => setSheet(null)}
-    onAdded={(report, summary, scope) => { setSheet(null); session.added(report, summary, scope); }} />;
+    onAdded={(report, summary, scope) => {
+      const findingKey = sheet.findingKey;
+      setSheet(null);
+      session.added(report, summary, scope);
+      if (findingKey && summary.stated) void settleNote(findingKey);
+    }} />;
 
   const focus = (() => {
     if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s claims have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
     if (session.removedActive) return <RemovedStatements sentences={session.removed} />;
-    if (session.teachingActive) return <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings} />;
+    if (session.teachingActive) return sheetNode || <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
+      published={review.state === 'ready'} revision={review.revision} onAddSource={openNoteSheet} />;
     if (active) return <ClaimInFocus ref={statementRef} programId={programId} item={active} position={position || 1} total={Math.max(ordered.length, 1)}
       onPrevious={session.activeIndex > 0 ? () => session.step(-1) : null} onNext={session.activeIndex >= 0 && session.activeIndex < ordered.length - 1 ? () => session.step(1) : null}
       sharing={sharingOf(active.support)} busy={session.acting} error={session.error} form={session.form} onFormChange={session.setForm}
