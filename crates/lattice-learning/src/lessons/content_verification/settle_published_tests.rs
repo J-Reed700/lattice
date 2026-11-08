@@ -1932,13 +1932,13 @@ async fn a_note_with_an_exact_claim_removes_through_that_claim_and_creates_none(
     notes_about(&course, &[(0, FindingKind::Quotation, GOOD)]).await?;
     let note = notes_of(&course).await?.remove(0);
     assert!(note.removable);
-    assert_eq!(note.claim_ids, [target.0.clone()]);
+    assert_eq!(note.claim_ids, std::slice::from_ref(&target.0));
     let before = stored(&course).await?;
     let claims_before = ledger(&course).await?.claims.len();
 
     let removed = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await?;
 
-    assert_eq!(removed.claim_ids, [target.0.clone()]);
+    assert_eq!(removed.claim_ids, std::slice::from_ref(&target.0));
     assert_eq!(removed.revision, before.ledger_revision + 1);
     let after = stored(&course).await?;
     assert_eq!(
@@ -2039,6 +2039,11 @@ async fn a_draft_lessons_notes_cannot_have_their_sentences_removed() -> Result<(
     let error = note_removal_refused(&course, &["quotation:section-0"], revision).await;
 
     assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
+    let text = error.to_string();
+    assert!(
+        text.contains("Only a published lesson's sentences can be taken out this way."),
+        "{text}"
+    );
     Ok(())
 }
 

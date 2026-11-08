@@ -67,7 +67,7 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
   });
 
   it('offers only Keep as written on a question note', () => {
-    show([note(0, { kind: 'answer_key', passageRole: 'lesson', site: 'question', unitTitle: 'Question 1' })]);
+    show([note(0, { kind: 'answer_key', passageRole: 'lesson', site: 'question', unitTitle: 'Question 1', removable: false })]);
     const question = screen.getByRole('article', { name: 'Question 1: Answer key' });
     expect(within(question).getByRole('button', { name: 'Keep as written' })).toBeVisible();
     expect(within(question).queryByRole('button', { name: 'Remove this sentence' })).not.toBeInTheDocument();
