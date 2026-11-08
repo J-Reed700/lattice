@@ -466,19 +466,51 @@ jobs:
         if: env.REDS != 'true'
         run: node scripts/check-initial-js-budget.mjs dist
 
-      - name: Install browsers for smoke tests
-        if: env.REDS != 'true'
-        run: npx playwright install --with-deps chromium webkit
+  # Each slice runs in its own job: the smoke tests were 20 of the frontend
+  # job's 31 min, Chromium's 116 tests about 7 and WebKit on one worker.
+  browser-smoke:
+    name: browser smoke (${{ matrix.slice }})
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
+    # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slice: chromium
+            browser: chromium
+            args: --project=web-smoke
+          - slice: webkit-1of2
+            browser: webkit
+            args: --project=webkit-smoke --shard=1/2
+          - slice: webkit-2of2
+            browser: webkit
+            args: --project=webkit-smoke --shard=2/2
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Install browsers for smoke tests
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      # Playwright's webServer builds and serves the renderer itself.
       - name: Browser smoke tests
-        if: env.REDS != 'true'
-        run: npm run test:e2e
+        run: npm run test:e2e -- ${{ matrix.args }}
 
       - name: Upload browser reports and failure artifacts
-        if: always() && env.REDS != 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-browser-results
+          name: browser-results-${{ matrix.slice }}
           path: |
             e2e-results/html/
             e2e-results/results.json
@@ -489,7 +521,7 @@ jobs:
   # Main's caches sit at the 10 GB limit; PR caches and superseded main caches evicted the useful ones.
   prune-caches:
     name: prune caches
-    needs: [changes, rust-check, desktop-compatibility, repository-barrier, dependency-audit, frontend]
+    needs: [changes, rust-check, desktop-compatibility, repository-barrier, dependency-audit, frontend, browser-smoke]
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
