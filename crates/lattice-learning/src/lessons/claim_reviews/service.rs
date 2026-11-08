@@ -26,6 +26,7 @@ use super::put_back;
 use super::repository::{
     append_in, bump_revision, check_revision, revision_conflict, ClaimReviewRepository,
 };
+use super::source_deleted::deleted_versions;
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 
 mod question_edit;
@@ -516,6 +517,11 @@ impl ClaimReviewService {
                 source_version_ids,
             } => {
                 let quote = self.bound_quote(review, lesson_id, entry).await;
+                let deleted = deleted_versions(&self.pool, &review.program_id).await?;
+                let source_version_ids = source_version_ids
+                    .into_iter()
+                    .filter(|id| !deleted.contains(id))
+                    .collect();
                 user(
                     UserAction::Confirm {
                         bound: HumanBinding::new(&quote, source_version_ids),

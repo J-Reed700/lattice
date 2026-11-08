@@ -69,17 +69,7 @@ pub(super) async fn reopen_lost(
     else {
         return Ok(false);
     };
-    let deleted: HashSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT v.id FROM learning_source_versions v \
-         JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id \
-         WHERE v.program_id=? AND s.deleted_at IS NOT NULL",
-    )
-    .bind(program_id)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?
-    .into_iter()
-    .collect();
+    let deleted = deleted_versions(pool, program_id).await?;
     let planned = reopens(&ledger.claims, &deleted);
     if planned.is_empty() {
         return Ok(false);
@@ -93,6 +83,24 @@ pub(super) async fn reopen_lost(
     write(&mut tx, &ledger.lesson_id, review, &planned).await?;
     tx.commit().await.map_err(db)?;
     Ok(true)
+}
+
+/// The versions of the program's deleted sources.
+pub(super) async fn deleted_versions(
+    pool: &SqlitePool,
+    program_id: &str,
+) -> Result<HashSet<String>> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT v.id FROM learning_source_versions v \
+         JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id \
+         WHERE v.program_id=? AND s.deleted_at IS NOT NULL",
+    )
+    .bind(program_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)?
+    .into_iter()
+    .collect())
 }
 
 /// The reopen each claim gets when the `deleted` versions are gone.
