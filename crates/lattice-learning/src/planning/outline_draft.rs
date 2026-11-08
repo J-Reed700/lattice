@@ -434,19 +434,19 @@ fn remaining_note(draft: &OutlineDraft) -> String {
             let location = location(&issue.path);
             match issue.kind {
                 LearningOutlineIssueKind::Factual if issue.source_id.is_some() => format!(
-                    "{location}: the claim \"{}\" is contradicted by a saved reference. {}",
+                    "{location}: the statement \"{}\" is contradicted by a saved reference. {}",
                     short(&issue.claim),
                     issue.message
                 ),
                 LearningOutlineIssueKind::Factual if !issue.searched.is_empty() => format!(
-                    "{location}: the claim \"{}\" was not supported by any saved reference after {} {} (queries: {}).",
+                    "{location}: the statement \"{}\" was not supported by any saved reference after {} {} (queries: {}).",
                     short(&issue.claim),
                     issue.searched.len(),
                     if issue.searched.len() == 1 { "search" } else { "searches" },
                     issue.searched.join("; ")
                 ),
                 LearningOutlineIssueKind::Factual => format!(
-                    "{location}: the claim \"{}\" was not supported by the saved references.",
+                    "{location}: the statement \"{}\" was not supported by the saved references.",
                     short(&issue.claim)
                 ),
                 _ => format!("{location}: {}", issue.message),

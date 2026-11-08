@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 
-import { ArrowRight, Check, CheckCircle2, ChevronDown, ClipboardCheck, Clock3 } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, Pencil } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ResizableColumns } from '@/components/ui/ResizableColumns';
@@ -12,6 +12,7 @@ import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
 import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
+import { LessonSectionEditor } from '@/features/learning/lessons/edit/LessonSectionEditor';
 import { LessonEvidencePanel, LessonSectionEvidence, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
 import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { claimsCount, claimsNeedYou, statementsNotVerified, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
@@ -61,6 +62,9 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   quizCallout?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(isCurrent && lesson.preparation === 'ready');
+  const [editing, setEditing] = useState<number | null>(null);
+  const [editNote, setEditNote] = useState('');
+  const editedBlock = editing === null ? undefined : lesson.blocks[editing];
   // The recap opens once the learner has explained the lesson from memory
   // (learning science lessons §3.4), when a reflection asks them to first.
   const [comparedFlag, setComparedFlag] = useLessonDraft(`${lesson.id}.compared`);
@@ -159,7 +163,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
           {lesson.preparation === 'outline' ? needsReview ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent/5 p-4">
-                <p className="max-w-xl text-sm leading-6 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. The review shows it and lets you retry.' : hold === 'claims' ? 'Some claims could not be verified. The review shows each one with its evidence, one at a time.' : hold === 'resolved' ? 'Every claim is resolved. Resume verification from the review to publish the lesson.' : 'No claim needs you; the independent check has not finished. The review shows why.'}</p>
+                <p className="max-w-xl text-sm leading-6 text-text-secondary">{reviewState === 'stopped' ? 'Preparation stopped with a cause to fix. The review shows it and lets you retry.' : hold === 'claims' ? 'Some statements could not be verified. The review shows each one with its evidence, one at a time.' : hold === 'resolved' ? 'Every statement is resolved. Resume verification from the review to publish the lesson.' : 'No statement needs you; the independent check has not finished. The review shows why.'}</p>
                 {onReview && <Button variant="outline" type="button" onClick={openReview} className="studio-button studio-button-primary">{hold === 'claims' && waiting ? `Review ${claimsCount(waiting)}` : 'Open the review'}</Button>}
               </div>
               {lesson.blocks.length > 0 && <div aria-label="Draft sections" className="studio-lesson-sections">
@@ -179,13 +183,19 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
               <AuditLessonNow programId={program.summary.id} lessonId={lesson.id} />
               {showCitations && <LessonEvidencePanel key={lesson.id} programId={program.summary.id} lessonId={lesson.id} programRevision={program.summary.revision} report={evidenceReport} />}
               {!lesson.completed && program.summary.status === 'active' && <LessonWarmUp programId={program.summary.id} />}
+              <p role="status" aria-label="Section editing" className="sr-only">{editNote}</p>
+              {editedBlock && editing !== null && <LessonSectionEditor programId={program.summary.id} lessonId={lesson.id} sectionIndex={editing} title={editedBlock.title} body={editedBlock.body}
+                open onClose={() => setEditing(null)} onSaved={() => setEditNote('Section saved.')} />}
               <div className="studio-lesson-sections">
                 {lesson.blocks.map((block, index) => {
                   const prose = (content: string) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}><MarkdownViewer content={content} /></StudyTangentSelection>;
                   const check = block.kind === 'check' ? splitCheck(block.body) : null;
                   const heldRecap = block.kind === 'recap' && recallFirst && !compared;
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
-                  <div className="studio-section-label">{blockLabels[block.kind]}</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="studio-section-label">{blockLabels[block.kind]}</div>
+                    {!heldRecap && <button type="button" aria-label={`Edit section ${index + 1}: ${block.title}`} onClick={() => { setEditNote(''); setEditing(index); }} className={LISTEN_CLASS}><Pencil size={13} aria-hidden="true" />Edit</button>}
+                  </div>
                   <h4>{block.title}</h4>
                   {!heldRecap && <div className="-mx-1.5 mt-1"><ListenButton sourceId={`lesson:${lesson.id}:${index}`} markdown={`# ${block.title}\n\n${check ? check.question : block.body}`} subject={`the section “${block.title}”`} className={LISTEN_CLASS} /></div>}
                   {check ? <LessonCheck programId={program.summary.id} lessonId={lesson.id} lessonTitle={lesson.title} section={index} body={block.body} parts={check} sourceIds={block.sourceIds} active={program.summary.status === 'active'} questionView={prose(check.question)} />

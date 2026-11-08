@@ -55,12 +55,12 @@ describe('The plan of a lesson\'s statements', () => {
 });
 
 describe('The row of a lesson being prepared', () => {
-  it('counts the claims checked while they are checked, and names the phase otherwise', () => {
+  it('counts the statements checked while they are checked, and names the phase otherwise', () => {
     const activity = job().activity!;
     expect(preparingLine(null)).toBe('Preparing');
     expect(preparingLine(undefined)).toBe('Preparing');
     expect(preparingLine({ ...activity, phase: 'evidence', checksCompleted: 40, checksTotal: 44 })).toBe('Preparing · 40 of 44 checked');
-    expect(preparingLine({ ...activity, phase: 'evidence' })).toBe('Preparing · Verifying factual claims');
+    expect(preparingLine({ ...activity, phase: 'evidence' })).toBe('Preparing · Verifying factual statements');
     expect(preparingLine({ ...activity, phase: 'repair', checksCompleted: 44, checksTotal: 44 })).toBe('Preparing · Repairing the draft');
   });
 });

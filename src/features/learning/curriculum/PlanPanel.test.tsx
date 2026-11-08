@@ -87,8 +87,8 @@ describe('Learning Studio Plan editor', () => {
     const disclosure = earlier.closest('details')!;
     expect(disclosure).not.toHaveAttribute('open');
     const lines = within(disclosure).getAllByRole('listitem').map((item) => item.textContent);
-    expect(lines[0]).toMatch(/^Paused at Verifying factual claims · /);
-    expect(lines[1]).toMatch(/^Stopped at Verifying factual claims · .* · The model rejected the request\.$/);
+    expect(lines[0]).toMatch(/^Paused at Verifying factual statements · /);
+    expect(lines[1]).toMatch(/^Stopped at Verifying factual statements · .* · The model rejected the request\.$/);
   });
 
   it('lists an attempt an update ended as history, with nothing to resume or retry', async () => {

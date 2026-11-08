@@ -259,7 +259,7 @@ async fn unfinished_sections(
     );
     if crate::lesson_drafts::checkpoint(&key).await?.is_some() {
         return Ok(AppError::InvalidInput(format!(
-            "Claim extraction failed again on the same sections ({sections}) after a retry: {}. No lesson was published.",
+            "Statement extraction failed again on the same sections ({sections}) after a retry: {}. No lesson was published.",
             errors.join("; ")
         )));
     }
@@ -267,10 +267,10 @@ async fn unfinished_sections(
     let recovery = if crate::lesson_drafts::active() {
         "The lesson draft is saved; retry resumes it."
     } else {
-        "Retry the claim check."
+        "Retry the statement check."
     };
     Ok(AppError::ServiceNotAvailable(format!(
-        "Claim extraction could not complete sections {sections}: {}. {recovery} No lesson was published.",
+        "Statement extraction could not complete sections {sections}: {}. {recovery} No lesson was published.",
         errors.join("; ")
     )))
 }
@@ -361,7 +361,7 @@ async fn ask(
         let mut errors = Vec::new();
         for attempt in 0..2 {
             crate::lesson_progress::stage(format!(
-                "{} factual claims · sections {}–{} of {}",
+                "{} factual statements · sections {}–{} of {}",
                 if attempt == 0 {
                     "Extracting"
                 } else {

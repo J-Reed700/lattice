@@ -195,6 +195,22 @@ fn an_unset_learning_model_has_a_code_of_its_own() {
 }
 
 #[test]
+fn an_invalid_input_refusal_carries_its_sentence_alone() {
+    let sentence = "A question needs a prompt.";
+    let api_err: ApiError = AppError::InvalidInput(sentence.into()).into();
+    assert_eq!(api_err.code, ErrorCode::InvalidInput);
+    assert_eq!(api_err.message, sentence);
+}
+
+#[test]
+fn an_invalid_state_refusal_carries_its_sentence_alone() {
+    let sentence = "This section changed since you opened it.";
+    let api_err: ApiError = AppError::InvalidState(sentence.into()).into();
+    assert_eq!(api_err.code, ErrorCode::InvalidState);
+    assert_eq!(api_err.message, sentence);
+}
+
+#[test]
 fn a_web_status_converts_to_its_own_code_with_its_message_as_the_message() {
     let error = AppError::HttpStatus {
         status: 403,

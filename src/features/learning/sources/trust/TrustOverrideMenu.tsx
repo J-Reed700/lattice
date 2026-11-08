@@ -136,7 +136,7 @@ export function TrustOverrideMenu({
         ? `Trust “${sourceTitle}” as ${LEVEL_WORD[level].toLowerCase()} in this course.`
         : null;
   const applyLabel = impact && impact.claims > 0
-    ? `Apply and re-decide ${impact.claims} ${impact.claims === 1 ? 'claim' : 'claims'}`
+    ? `Apply and re-decide ${impact.claims} ${impact.claims === 1 ? 'statement' : 'statements'}`
     : 'Apply';
 
   return (
@@ -178,7 +178,7 @@ export function TrustOverrideMenu({
             <label className="mt-1 flex items-start gap-2"><input type="radio" name={`${id}-scope`} disabled={!site} checked={scope === 'site'} onChange={() => setScope('site')} className="mt-0.5" />
               <span>{site ?? 'Its site'}, everywhere <span className="block text-text-muted">Says who the publisher is; never makes it primary.</span></span></label>
             <label className="mt-1 flex items-start gap-2"><input type="radio" name={`${id}-scope`} disabled={!site} checked={scope === 'site_subject'} onChange={() => setScope('site_subject')} className="mt-0.5" />
-              <span>{site ?? 'Its site'}, for a subject <span className="block text-text-muted">Any level for claims about that subject; several sites can be primary for one.</span></span></label>
+              <span>{site ?? 'Its site'}, for a subject <span className="block text-text-muted">Any level for statements about that subject; several sites can be primary for one.</span></span></label>
           </fieldset>
           {scope === 'site' ? (
             <label className="block font-medium text-text-secondary">Standing
@@ -213,7 +213,7 @@ export function TrustOverrideMenu({
           {preview && <p className="font-medium text-text-primary">{preview}</p>}
           {impact
             ? <p role="status">{impactLine(impact, scope === 'source' ? 'source' : 'site')}</p>
-            : fetched.isFetching && <p role="status" className="text-text-muted">Counting the claims this would re-decide…</p>}
+            : fetched.isFetching && <p role="status" className="text-text-muted">Counting the statements this would re-decide…</p>}
           {error && <p role="alert" className="text-rose-700">{error}</p>}
           {done && <p role="status" className="text-text-primary">{done}</p>}
           <div className="flex flex-wrap gap-2">

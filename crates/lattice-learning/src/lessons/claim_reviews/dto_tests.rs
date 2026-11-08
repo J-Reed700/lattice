@@ -69,6 +69,9 @@ fn every_action_request_round_trips() {
             "edit",
             "remove",
             "research_with_hint",
+            "put_back",
+            "put_back",
+            "restore_original",
             "undo",
         ]
     );

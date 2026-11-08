@@ -23,6 +23,9 @@ pub struct BankItem {
     /// `lesson` for the lesson's own reviewed questions, `bank` for items
     /// written for a quiz.
     pub origin: &'static str,
+    /// `agreed` for items forms may draw, `dropped` for a lesson question the
+    /// bank's checks reject, kept so the lesson's questions keep their places.
+    pub review_status: &'static str,
 }
 
 /// A stable content token: same format, stem and options, same item.
@@ -38,8 +41,11 @@ pub(crate) fn content_hash(item: &StoredItem) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Store items, skipping any the bank already holds (same content, or a
-/// near-duplicate stem for the same outcome). Returns how many were stored.
+/// Store items, skipping any generated item the bank already holds (same
+/// content, or a near-duplicate stem for the same outcome). A lesson's own
+/// question is always stored in its place: one whose content the program
+/// already holds is stored `dropped`, its token salted by its ID. Returns how
+/// many were stored.
 pub(crate) async fn insert_bank_items_in(
     connection: &mut SqliteConnection,
     program_id: &str,
@@ -52,20 +58,36 @@ pub(crate) async fn insert_bank_items_in(
         let Some(outcome) = item.outcome_ids.first() else {
             continue;
         };
-        let hash = content_hash(item);
-        let exists: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND (content_sha256=? OR id=?)",
+        let mut hash = content_hash(item);
+        let mut review_status = entry.review_status;
+        let id_taken: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND id=?",
         )
         .bind(program_id)
-        .bind(&hash)
         .bind(&item.id)
         .fetch_optional(&mut *connection)
         .await
         .map_err(db)?;
-        if exists.is_some() {
+        if id_taken.is_some() {
             continue;
         }
-        let near = sqlx::query_scalar::<_, String>(
+        let repeated: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND content_sha256=?",
+        )
+        .bind(program_id)
+        .bind(&hash)
+        .fetch_optional(&mut *connection)
+        .await
+        .map_err(db)?;
+        if repeated.is_some() {
+            if entry.origin != "lesson" {
+                continue;
+            }
+            hash = format!("{:x}", Sha256::digest(format!("{hash}\0{}", item.id)));
+            review_status = "dropped";
+        }
+        let near = entry.origin == "bank"
+            && sqlx::query_scalar::<_, String>(
             "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND outcome_id=? AND review_status<>'dropped'",
         )
         .bind(program_id)
@@ -78,7 +100,7 @@ pub(crate) async fn insert_bank_items_in(
         if near {
             continue;
         }
-        sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,'agreed',?,?,?,?)")
+        sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)
             .bind(program_id)
             .bind(outcome)
@@ -91,6 +113,7 @@ pub(crate) async fn insert_bank_items_in(
             .bind(author_model)
             .bind(&hash)
             .bind(now())
+            .bind(review_status)
             .bind(entry.origin)
             .bind(&entry.lesson_id)
             .bind(&entry.source_quote)

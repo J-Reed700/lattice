@@ -7,6 +7,7 @@ import type {
   LearningClaimTally,
   LearningSufficiencyDto,
   LearningTrustLevel,
+  PutBackOutcomeDto,
   ReopenCauseDto,
   ResearchSummaryDto,
   SourceKindDto,
@@ -21,7 +22,7 @@ import type {
  */
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-export const claimsCount = (count: number) => plural(count, 'claim', 'claims');
+export const claimsCount = (count: number) => plural(count, 'statement', 'statements');
 export const statementsCount = (count: number) => plural(count, 'statement', 'statements');
 
 // ── Sources: kind, standing, "counts as" (§4.3) ─────────────────────────────
@@ -73,7 +74,7 @@ export function countsAs(support: ClaimSupportDto, sufficiency: LearningSufficie
   const who = support.standing ? standingWords(support.standing) : `${kindWithArticle(support.kind)} not yet weighed`;
   switch (support.counts.outcome) {
     case 'enough': return `${who} · enough`;
-    case 'not_enough': return `${who} · not enough on its own for this claim`;
+    case 'not_enough': return `${who} · not enough on its own for this statement`;
     case 'not_counted': return `${who} · not counted: ${support.counts.reason}`;
   }
 }
@@ -189,7 +190,7 @@ function verdictCopy(item: ClaimReviewItemDto): WhyItWaits {
       chip: 'Disputed', reason: 'An independent check disagrees with the first one.',
       detail: item.verifierCheck?.reason || null, fixes: ['accept', 'edit'],
     };
-    default: return { chip: 'Waiting for you', reason: 'This claim is waiting for you.', detail: null, fixes: ['accept', 'edit'] };
+    default: return { chip: 'Waiting for you', reason: 'This statement is waiting for you.', detail: null, fixes: ['accept', 'edit'] };
   }
 }
 
@@ -257,10 +258,12 @@ export function triedLine(tried: ResearchSummaryDto): string | null {
 
 // ── Tally (§4.4) ────────────────────────────────────────────────────────────
 
-/** "33 claims need you · 12 verified · 74 rewritten by the machine". Zero counts are left out. */
-export function tallyLine(counts: ClaimCountsDto): string {
+export const teachingNotesWait = (count: number) => `${plural(count, 'teaching note', 'teaching notes')} ${count === 1 ? 'waits' : 'wait'} for you`;
+
+/** "2 teaching notes wait for you · 33 statements need you · 12 verified". Zero counts are left out. */
+export function tallyLine(counts: ClaimCountsDto, teachingWaiting = 0): string {
   const parts: Array<[number, string]> = [
-    [counts.queued, counts.queued === 1 ? 'claim needs you' : 'claims need you'],
+    [counts.queued, counts.queued === 1 ? 'statement needs you' : 'statements need you'],
     [counts.verified, 'verified'],
     [counts.confirmed, 'confirmed by you'],
     [counts.rewritten, 'rewritten by the machine'],
@@ -268,14 +271,15 @@ export function tallyLine(counts: ClaimCountsDto): string {
     [counts.editedByYou, 'edited by you'],
     [counts.open, 'being checked'],
   ];
-  return parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`).join(' · ');
+  const line = parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`);
+  return [...(teachingWaiting > 0 ? [teachingNotesWait(teachingWaiting)] : []), ...line].join(' · ');
 }
 
 /** The running job's claims, for the preparation details: the same order and words. */
 export function jobTallyLine(tally: LearningClaimTally): string {
   const checking = tally.unchecked + tally.searching + tally.repairing;
   const parts: Array<[number, string]> = [
-    [tally.waiting, tally.waiting === 1 ? 'claim needs you' : 'claims need you'],
+    [tally.waiting, tally.waiting === 1 ? 'statement needs you' : 'statements need you'],
     [tally.verified, 'verified'],
     [tally.resolvedByYou, 'resolved by you'],
     [tally.rewritten ?? 0, 'rewritten by the machine'],
@@ -299,42 +303,66 @@ export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching
 // ── Announcements (§4.5) ────────────────────────────────────────────────────
 
 export const ALL_RESOLVED = 'Everything is resolved. Resume verification to publish the lesson.';
-const left = (remaining: number) => (remaining > 0 ? `${remaining} left.` : ALL_RESOLVED);
+const PUBLISHED_RESOLVED = 'Everything is resolved.';
+/**
+ * What is left after an action; never "everything" while a teaching note
+ * waits. A published lesson has nothing to resume, so it is just resolved.
+ */
+const left = (remaining: number, teachingWaiting = 0, published = false) => {
+  if (remaining > 0) return `${remaining} left.`;
+  if (teachingWaiting > 0) return `No statements are left. ${teachingNotesWait(teachingWaiting)}.`;
+  return published ? PUBLISHED_RESOLVED : ALL_RESOLVED;
+};
 
-export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'research_with_hint' | 'unconfirm' | 'undo';
+export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'research_with_hint' | 'unconfirm' | 'put_back' | 'restore_original' | 'undo';
 
-export function announcement(action: AnnouncedAction, remaining: number): string {
+export function announcement(action: AnnouncedAction, remaining: number, teachingWaiting = 0, published = false): string {
   switch (action) {
-    case 'confirm': return `Accepted. ${left(remaining)}`;
+    case 'confirm': return `Accepted. ${left(remaining, teachingWaiting, published)}`;
     case 'edit': return 'Sentence edited. It is checked when you resume.';
-    case 'remove': return `Removed. ${left(remaining)}`;
+    case 'remove': return `Removed. ${left(remaining, teachingWaiting, published)}`;
     case 'research_with_hint': return 'Hint saved. It is searched when you resume.';
-    case 'unconfirm': return `Acceptance withdrawn. ${left(remaining)}`;
-    case 'undo': return `Undone. ${left(remaining)}`;
+    case 'unconfirm': return `Acceptance withdrawn. ${left(remaining, teachingWaiting, published)}`;
+    case 'put_back': return 'Put back in the lesson.';
+    case 'restore_original': return 'Original restored.';
+    case 'undo': return `Undone. ${left(remaining, teachingWaiting, published)}`;
   }
 }
 
+export const putBackMany = (count: number) => (count === 1 ? 'Put back in the lesson.' : `Put back ${count} sentences in the lesson.`);
+export const putBackUndone = (count: number) => (count === 1 ? 'Undone. It is out of the lesson again.' : `Undone. ${count} sentences are out of the lesson again.`);
+
 export function trustedAnnouncement(title: string, verified: number, stillWaiting: number): string {
-  return `Trusted ${title} for this course: ${plural(verified, 'claim', 'claims')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;
+  return `Trusted ${title} for this course: ${plural(verified, 'statement', 'statements')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;
 }
+
+// ── Many statements at once ─────────────────────────────────────────────────
+
+export const SELECT_STATEMENT = 'Select this statement';
+export const selectAll = (count: number) => `Select all ${count}`;
+export const SELECT_NONE = 'Select none';
+export const NEEDS_NOTE_HINT = 'Some of these need a note. Accept them one at a time.';
+export const cannotHere = (verb: 'accepted' | 'removed') => `Some of these can't be ${verb} here.`;
+export const batchDone = (action: 'confirm' | 'remove', count: number) => `${action === 'confirm' ? 'Accepted' : 'Removed'} ${statementsCount(count)}.`;
+export const batchUndone = (count: number) => (count === 1 ? 'Undone. 1 statement waits for you again.' : `Undone. ${count} statements wait for you again.`);
 
 // ── Adding a source (§4.6) ──────────────────────────────────────────────────
 
-export function addSourceTitle(scope: 'claim' | 'group' | 'queue', count: number): string {
-  if (scope === 'claim' || count <= 1) return 'Add a source for this claim';
-  return scope === 'queue' ? `Add a source for all ${count} claims` : `Add a source for these ${count} claims`;
+export function addSourceTitle(scope: 'claim' | 'group' | 'queue' | 'lesson', count: number): string {
+  if (scope === 'lesson') return 'Add a source to the lesson';
+  if (scope === 'claim' || count <= 1) return 'Add a source for this statement';
+  return scope === 'queue' ? `Add a source for all ${count} statements` : `Add a source for these ${count} statements`;
 }
 
 export const ADD_SOURCE_HINT = 'Drop a file or a link here, paste an address or text, or choose a file. A page you add is read as it is; if it says this, that settles it.';
+
+export const ADD_SOURCE_LESSON_HINT = 'Lattice checks every open statement in this lesson against it.';
 
 export function progressLine(stage: { stage: 'fetching'; host: string | null } | { stage: 'saving' } | { stage: 'checking'; done: number; total: number; statement: string } | { stage: 'done' }): string {
   switch (stage.stage) {
     case 'fetching': return stage.host ? `Reading ${stage.host}…` : 'Reading it…';
     case 'saving': return 'Saving it to your sources';
-    case 'checking': {
-      const statement = stage.statement.length > 80 ? `${stage.statement.slice(0, 79)}…` : stage.statement;
-      return `Checking claim ${Math.min(stage.done + 1, stage.total)} of ${stage.total}: ${statement}`;
-    }
+    case 'checking': return `Checking statement ${Math.min(stage.done + 1, stage.total)} of ${stage.total}: ${stage.statement}`;
     case 'done': return 'Done';
   }
 }
@@ -365,7 +393,18 @@ export type AttachSummary = {
 };
 
 /** The result line for an attach, from its report (§3.6, §4.6). */
+const PUT_BACK_SENTENCES: Record<PutBackOutcomeDto, string> = {
+  back: 'The source supports it, so it is back in the lesson.',
+  no_place: 'The source supports it. Choose where it goes and put it back.',
+  stays_out: 'The source does not support it, so it stays out of the lesson.',
+};
+
 export function attachSummary(report: ClaimAttachReportDto, scopeSize: number, remaining: number): AttachSummary {
+  const summary = attachSummaryOf(report, scopeSize, remaining);
+  return report.putBack && scopeSize <= 1 ? { ...summary, line: `${summary.line} ${PUT_BACK_SENTENCES[report.putBack]}` } : summary;
+}
+
+function attachSummaryOf(report: ClaimAttachReportDto, scopeSize: number, remaining: number): AttachSummary {
   const title = report.source?.title ?? 'the source';
   const outcome = report.outcome;
   const checked = outcome?.outcome === 'checked' ? outcome.check.result : null;
@@ -374,28 +413,45 @@ export function attachSummary(report: ClaimAttachReportDto, scopeSize: number, r
   const noPassage = outcome?.outcome === 'no_passage';
   const others = report.others;
   if (scopeSize > 1) {
-    const verified = (stated ? 1 : 0) + others.verified;
-    const mismatched = (notStated ? 1 : 0) + others.notVerified;
-    const unmentioned = (noPassage ? 1 : 0) + others.noPassage;
     const total = Math.max(scopeSize, 1 + others.tried);
-    const done = verified + mismatched + unmentioned;
-    const parts = [
-      `Verified ${verified} of ${total} claims`,
-      mismatched ? `${mismatched} ${mismatched === 1 ? 'does' : 'do'} not match what it says` : null,
-      unmentioned ? `${unmentioned} ${unmentioned === 1 ? 'is' : 'are'} not mentioned by it` : null,
-    ].filter(Boolean).join('; ');
-    const head = report.alreadySaved ? `${title} was already one of your sources; the claims were checked against it.` : `Added ${title}.`;
-    const stopped = others.stopped ? ` Checked ${done} of ${total}; the rest were not checked: ${others.stopped}. Add and check again to continue.` : '';
-    return { stated, notStated, line: `${head} ${parts}.${stopped}` };
+    const tally = { verified: (stated ? 1 : 0) + others.verified, mismatched: (notStated ? 1 : 0) + others.notVerified, unmentioned: (noPassage ? 1 : 0) + others.noPassage };
+    return { stated, notStated, line: claimsLine(report, title, tally, total) };
   }
   if (stated) return { stated, notStated, line: `Added ${title}; it states this. ${left(remaining)}` };
   if (notStated) return { stated, notStated, line: `Added ${title}; it does not say this. The closest passage is shown: edit the sentence to match it, or add another source.` };
-  return { stated, notStated, line: `Nothing in ${title} mentions this claim. It is saved in your sources.` };
+  return { stated, notStated, line: `Nothing in ${title} mentions this statement. It is saved in your sources.` };
+}
+
+/** The sentence that sums up a source checked against several claims. `total` is null when the claims in scope are only those that were tried. */
+function claimsLine(report: ClaimAttachReportDto, title: string, tally: { verified: number; mismatched: number; unmentioned: number }, total: number | null): string {
+  const { verified, mismatched, unmentioned } = tally;
+  const done = verified + mismatched + unmentioned;
+  const checked = total ?? done;
+  const parts = [
+    `Verified ${verified} of ${checked} ${checked === 1 ? 'statement' : 'statements'}`,
+    mismatched ? `${mismatched} ${mismatched === 1 ? 'does' : 'do'} not match what it says` : null,
+    unmentioned ? `${unmentioned} ${unmentioned === 1 ? 'is' : 'are'} not mentioned by it` : null,
+  ].filter(Boolean).join('; ');
+  const head = report.alreadySaved ? `${title} was already one of your sources; the statements were checked against it.` : `Added ${title}.`;
+  const stopped = report.others.stopped ? ` Checked ${total === null ? done : `${done} of ${total}`}; the rest were not checked: ${report.others.stopped}. Add and check again to continue.` : '';
+  return `${head} ${parts}.${stopped}`;
+}
+
+/** The result line for a source added to the lesson as a whole: every open claim was checked, none is in focus. */
+export function lessonSourceSummary(report: ClaimAttachReportDto): AttachSummary {
+  const title = report.source?.title ?? 'the source';
+  const { others } = report;
+  if (others.tried === 0 && !others.stopped) {
+    const head = report.alreadySaved ? `${title} was already one of your sources.` : `Added ${title}.`;
+    return { stated: false, notStated: false, line: `${head} No open statements in this lesson to check against it.` };
+  }
+  const tally = { verified: others.verified, mismatched: others.notVerified, unmentioned: others.noPassage };
+  return { stated: false, notStated: false, line: claimsLine(report, title, tally, null) };
 }
 
 /** The Sources tab's line after adding a source (§4.6); null when nothing waited. */
 export function recheckLine(recheck: WaitingClaimsRecheckDto | null | undefined): string | null {
   if (!recheck || recheck.tried === 0) return null;
   const stopped = recheck.stopped ? ` The rest were not checked: ${recheck.stopped}.` : '';
-  return `Checked ${recheck.tried} waiting ${recheck.tried === 1 ? 'claim' : 'claims'} against it: ${recheck.verified} verified.${stopped}`;
+  return `Checked ${recheck.tried} waiting ${recheck.tried === 1 ? 'statement' : 'statements'} against it: ${recheck.verified} verified.${stopped}`;
 }

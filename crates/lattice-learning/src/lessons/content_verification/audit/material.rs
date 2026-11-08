@@ -50,7 +50,7 @@ impl AuditMaterial {
             .await?
             .review
             .filter(|review| review.program_id == program_id)
-            .ok_or_else(|| AppError::NotFound("This lesson has no claim review yet.".into()))?;
+            .ok_or_else(|| AppError::NotFound("This lesson has no statement review yet.".into()))?;
         let waiting = if review.state == LessonReviewState::Ready {
             None
         } else {
@@ -150,3 +150,7 @@ async fn passages(
         })
         .collect())
 }
+
+#[cfg(test)]
+#[path = "material_tests.rs"]
+mod tests;

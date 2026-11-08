@@ -28,8 +28,8 @@ pub use ledger::{
     CheckBasis, ClaimActionKind, ClaimLedgerEntry, EventProvenance, LedgerError, RecordedEvent,
 };
 pub use rules::{
-    end_state, identities, new_information, relitigate, reopen_cause, ClaimCounts, ExtractedClaim,
-    Identities, NewInformation, Observation, SourceChange,
+    cited_source_versions, end_state, identities, new_information, relitigate, reopen_cause,
+    ClaimCounts, ExtractedClaim, Identities, NewInformation, Observation, SourceChange,
 };
 pub use trust::{
     trust_outcomes, CalibrationOutcome, GateVerdict, SupportedBy, TrustAssessment, TrustCause,
@@ -568,11 +568,60 @@ impl CheckResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UserAction {
-    Confirm { bound: HumanBinding },
+    Confirm {
+        bound: HumanBinding,
+    },
     Unconfirm,
-    Edit { before: String, after: String },
+    Edit {
+        before: String,
+        after: String,
+    },
     Remove,
-    ResearchWithHint { hint: String },
+    ResearchWithHint {
+        hint: String,
+    },
+    /// The user put back a sentence the machine took out, as it was or as
+    /// they wrote it (`edited`), at `place`.
+    PutBack {
+        sentence: String,
+        edited: bool,
+        place: PutPlace,
+    },
+    /// The user put back the sentence a machine rewrite replaced.
+    RestoreOriginal {
+        original: String,
+        rewrite: String,
+    },
+}
+
+/// Where a sentence put back goes: a field of a unit, beside a sentence of it
+/// or at its end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PutPlace {
+    pub unit_index: usize,
+    pub field: String,
+    pub anchor: Anchor,
+}
+
+/// What a put-back sentence stands beside.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    /// After this sentence of the field.
+    After(String),
+    /// Before this sentence of the field.
+    Before(String),
+    /// At the end of the field.
+    End,
+}
+
+/// The sentence the machine cut and the sentences it stood between, in the
+/// field it was cut from (either neighbour may be absent).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CutPlace {
+    pub sentence: String,
+    pub before: Option<String>,
+    pub after: Option<String>,
 }
 
 /// What came of one machine repair of a claim.
@@ -799,6 +848,26 @@ pub enum ClaimEvent {
     PublishedUnverified {
         reason: UnverifiedReason,
     },
+    /// What the machine's cut took out of the lesson for this claim, and the
+    /// sentences it stood between, so the user can put it back where it was.
+    SentenceCut {
+        cut: CutPlace,
+    },
+    /// What the user's removal took out of a published section: the exact
+    /// text (the sentence with the whitespace beside it) and the shortest
+    /// texts that occur once in what was left and end (`follows`) or start
+    /// (`precedes`) where it was taken from, `None` at the start or the end
+    /// of the section, so an undo can write it back only where they still
+    /// meet.
+    TextRemoved {
+        text: String,
+        follows: Option<String>,
+        precedes: Option<String>,
+    },
+    /// The user's edit of the claim's whole section ended it with the user
+    /// event that follows: editing the section again takes that back, an
+    /// undo of the claim alone does not.
+    SectionEdited {},
 }
 
 impl ClaimEvent {
@@ -823,6 +892,9 @@ impl ClaimEvent {
             Self::StandingAssessed { .. } => "standing_assessed",
             Self::Stepped { .. } => "stepped",
             Self::PublishedUnverified { .. } => "published_unverified",
+            Self::SentenceCut { .. } => "sentence_cut",
+            Self::TextRemoved { .. } => "text_removed",
+            Self::SectionEdited { .. } => "section_edited",
         }
     }
 }

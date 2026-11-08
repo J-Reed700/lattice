@@ -92,6 +92,15 @@ fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
     assert_eq!(citations.len(), 1);
     assert_eq!(citations[0].key().id(), "quotation:section-2");
     assert!(citations[0].note.contains("blocks[2]"));
+    assert_eq!(
+        citations[0].summary,
+        "The quotation cited in section 3 could not be found in its source."
+    );
+    assert_eq!(
+        citations[0].passage.as_deref(),
+        Some("Water boils at exactly one hundred degrees in every kitchen.")
+    );
+    assert_eq!(citations[0].sentence, None);
 }
 
 #[test]
@@ -126,6 +135,37 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].key().id(), "quotation:section-2");
     assert!(findings[0].note.contains("Water boils at 50 degrees"));
+    assert_eq!(
+        findings[0].summary,
+        "The quotation cited for this sentence could not be found in its source: \u{201c}Water boils at 50 degrees Celsius.\u{201d}"
+    );
+    assert_eq!(
+        findings[0].passage.as_deref(),
+        Some("Water boils at exactly fifty degrees in every kitchen.")
+    );
+    assert_eq!(
+        findings[0].sentence.as_deref(),
+        Some("Water boils at 50 degrees Celsius.")
+    );
+}
+
+#[test]
+fn a_long_cited_sentence_that_cannot_be_confirmed_is_shown_whole() {
+    const LONG: &str = "Water boils at 50 degrees Celsius in every kitchen on every day of the year, whatever the pressure of the air around the pan.";
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![GeneratedCitation {
+        sentence: LONG.into(),
+        source_index: Some(0),
+        quote: "Water boils at exactly fifty degrees in every kitchen.".into(),
+    }];
+
+    let (_, findings) = assemble(lesson, &[source()], &HashSet::from(["source-a"])).unwrap();
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        findings[0].summary,
+        format!("The quotation cited for this sentence could not be found in its source: \u{201c}{LONG}\u{201d}")
+    );
 }
 
 #[test]

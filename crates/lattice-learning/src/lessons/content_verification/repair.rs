@@ -524,7 +524,7 @@ async fn repair_sections(
                 let kept = fitted_passages(llm, &system, &local, output_tokens).await;
                 if kept.is_empty() {
                     // Nothing to repair it from: the attempt is used, and the claim goes on to its last, which cuts it.
-                    let reason = "A failed claim's evidence passage does not fit in this model's context window.";
+                    let reason = "A failed statement's evidence passage does not fit in this model's context window.";
                     ledger.reject(policy, &claim_ids(&group), reason).await?;
                     drop_group(&mut context, unit, group.len(), false);
                     continue;

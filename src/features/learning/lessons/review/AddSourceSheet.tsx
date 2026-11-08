@@ -4,7 +4,7 @@ import { FileText, Globe2, Library, LoaderCircle, Type, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { AddSourceResult } from '@/features/learning/lessons/review/AddSourceResult';
-import { ADD_SOURCE_HINT, addSourceTitle, attachSummary, progressLine, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
+import { ADD_SOURCE_HINT, ADD_SOURCE_LESSON_HINT, addSourceTitle, attachSummary, lessonSourceSummary, progressLine, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
 import { useAddSource } from '@/features/learning/lessons/review/useAddSource';
 import type { DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
@@ -13,10 +13,10 @@ import type { AttachEvidenceDto, AttachNextStepDto, AttachScopeDto, ClaimAttachR
 
 type Mode = 'link' | 'paste' | 'file' | 'saved';
 
-/** Where the sheet was opened: one claim, a group of the queue, or the whole queue. */
+/** Where the sheet was opened: one claim, a group of the queue, the whole queue, or the lesson as a whole. */
 export type AddSourceTarget = {
-  level: 'claim' | 'group' | 'queue';
-  /** The claims to check; the first is the one the attach is recorded on. */
+  level: 'claim' | 'group' | 'queue' | 'lesson';
+  /** The claims to check; the first is the one the attach is recorded on. Empty for the lesson. */
   claimIds: string[];
   /** On one claim: the other waiting claims of its group, checked too when the box is on. */
   others?: string[];
@@ -53,8 +53,9 @@ function SavedSourcePicker({ programId, onPick }: { programId: string; onPick: (
 /**
  * Add a source (§3.6): a link, pasted text, a library file or a saved
  * source becomes a course source and is checked against the claims in
- * scope, with each stage shown as it happens. Opened on a claim, on a group
- * or on the whole queue; also by a drop or paste anywhere on the screen.
+ * scope, with each stage shown as it happens. Opened on a claim, on a group,
+ * on the whole queue or on the lesson as a whole; also by a drop or paste
+ * anywhere on the screen.
  */
 export function AddSourceSheet({ programId, lessonId, revision, target, initial, remaining, onClose, onAdded }: {
   programId: string;
@@ -94,13 +95,14 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
 
   const ids = target.level === 'claim' && withOthers ? [...target.claimIds, ...(target.others ?? [])] : target.claimIds;
   const scope: AttachScopeDto = ids.length > 1 ? { scope: 'claims', claimIds: ids } : { scope: 'claim' };
+  const lesson = target.level === 'lesson';
   const title = addSourceTitle(target.level, target.claimIds.length);
 
   const evidenceFor = (current: Mode): AttachEvidenceDto | string => {
     if (current === 'link') return url.trim() ? { kind: 'attach_link', url: url.trim() } : 'Enter the address of the page.';
     if (current === 'file') return documents[0] ? { kind: 'attach_document', documentId: documents[0].id } : 'Choose a file.';
     if (current === 'saved') return saved ?? 'Choose one of your sources.';
-    return text.trim() ? { kind: 'attach_text', title: origin.trim() || 'Pasted text', text } : 'Paste the text that states the claim.';
+    return text.trim() ? { kind: 'attach_text', title: origin.trim() || 'Pasted text', text } : "Paste the source's text.";
   };
 
   const run = async (evidence: AttachEvidenceDto) => {
@@ -108,11 +110,11 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
     setFailed(null);
     setLast(evidence);
     try {
-      const report = await add.mutateAsync({ claimId: ids[0], expectedRevision: revision, evidence, scope });
+      const report = await add.mutateAsync(lesson ? { lesson: true, expectedRevision: revision, evidence } : { claimId: ids[0], expectedRevision: revision, evidence, scope });
       if (!report) return; // cancelled
       const host = evidence.kind === 'attach_link' ? hostOf(evidence.url) : null;
       if (report.failure || !report.source) { setFailed({ report, host }); return; }
-      onAdded(report, attachSummary(report, ids.length, Math.max(0, remaining)), ids);
+      onAdded(report, lesson ? lessonSourceSummary(report) : attachSummary(report, ids.length, Math.max(0, remaining)), ids);
     } catch (error) {
       setFormError(error instanceof Error ? error.message : 'The source could not be added.');
     }
@@ -147,7 +149,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
         <h3 id={`${id}-title`} className="text-sm font-semibold text-text-primary">{title}</h3>
         <button type="button" aria-label="Close" onClick={() => { add.cancel(); onClose(); }} className="rounded-md p-1 text-text-muted hover:text-text-primary"><X size={16} aria-hidden="true" /></button>
       </div>
-      <p className="mt-1 text-xs leading-5 text-text-secondary">{ADD_SOURCE_HINT}</p>
+      <p className="mt-1 text-xs leading-5 text-text-secondary">{lesson ? ADD_SOURCE_LESSON_HINT : ADD_SOURCE_HINT}</p>
 
       <div role="group" aria-label="Kind of source" className="mt-3 flex flex-wrap gap-2">
         {modes.map(({ id: kind, label, icon: Icon }) => (
@@ -180,12 +182,12 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
 
       {target.level === 'claim' && (target.others?.length ?? 0) > 0 && <label className="mt-3 flex items-center gap-2 text-sm text-text-secondary">
         <input type="checkbox" checked={withOthers} disabled={busy} onChange={(event) => setWithOthers(event.target.checked)} />
-        Also check the {target.others!.length} other {target.others!.length === 1 ? 'claim that waits' : 'claims that wait'} on this source’s subject
+        Also check the {target.others!.length} other {target.others!.length === 1 ? 'statement that waits' : 'statements that wait'} on this source’s subject
       </label>}
 
       {busy && <div role="status" className="mt-3 space-y-1.5">
-        <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />{progress ? progressLine(progress) : 'Starting…'}</p>
-        {checking && <div role="progressbar" aria-label="Claims checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
+        <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span className="min-w-0 truncate" title={progress ? progressLine(progress) : undefined}>{progress ? progressLine(progress) : 'Starting…'}</span></p>
+        {checking && <div role="progressbar" aria-label="Statements checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
           <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${checking.total ? (checking.done / checking.total) * 100 : 0}%` }} />
         </div>}
       </div>}

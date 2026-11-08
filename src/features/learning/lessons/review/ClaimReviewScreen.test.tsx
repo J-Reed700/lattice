@@ -10,11 +10,11 @@ import { review, teachingFinding, unsupportedItem } from '@/features/learning/le
 import type { ClaimReviewItemDto, LessonClaimReviewDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({
-  review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn(), keep: vi.fn(), trust: vi.fn(), setTrust: vi.fn(), clearTrust: vi.fn(), version: vi.fn(), plan: vi.fn(),
+  review: vi.fn(), resolve: vi.fn(), resume: vi.fn(), audit: vi.fn(), settle: vi.fn(), trust: vi.fn(), setTrust: vi.fn(), clearTrust: vi.fn(), version: vi.fn(), plan: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, resolveLearningClaim: api.resolve, resumeLearningLessonReview: api.resume,
-  keepLearningTeachingFinding: api.keep, getLearningLessonAudit: api.audit, getLearningSourceTrust: api.trust,
+  settleLearningTeachingFindings: api.settle, getLearningLessonAudit: api.audit, getLearningSourceTrust: api.trust,
   setSourceTrustOverride: api.setTrust, clearSourceTrustOverride: api.clearTrust, getLearningSourceVersion: api.version,
   getLearningPlan: api.plan, courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
 } }));
@@ -51,10 +51,10 @@ describe('Claim review screen', () => {
   it('opens on the first waiting claim grouped by source with counts, and moves to the next after accepting', async () => {
     const claims = thirtyThreeClaims();
     show([review(claims, { counts: counts(33) }), review(confirmedFrom(claims, 'claim-1'), { revision: 8, counts: counts(32) })]);
-    const queue = await screen.findByRole('navigation', { name: 'Claims waiting for you' });
-    const first = within(queue).getByRole('region', { name: 'Field Guide to North American Butterflies · 15 claims' });
+    const queue = await screen.findByRole('navigation', { name: 'Statements waiting for you' });
+    const first = within(queue).getByRole('region', { name: 'Field Guide to North American Butterflies · 15 statements' });
     expect(within(first).getByRole('button', { name: 'Accept this source for all 15' })).toBeVisible();
-    expect(screen.getByText('33 claims need you · 12 verified · 74 rewritten by the machine')).toBeVisible();
+    expect(screen.getByText('33 statements need you · 12 verified · 74 rewritten by the machine')).toBeVisible();
     expect(statement()).toHaveTextContent('Monarch fact number 1 is stated in the guide.');
     api.resolve.mockResolvedValue(ok({ revision: 8 }));
     await userEvent.click(screen.getByRole('button', { name: 'Accept' }));
@@ -135,7 +135,7 @@ describe('Claim review screen', () => {
     const best = await screen.findByRole('region', { name: 'best evidence' });
     expect(within(best).getByText(evidence.quote, { selector: 'mark' })).toBeVisible();
     expect(within(best).getByText('Field Guide to North American Butterflies · butterflies.example.org · online book')).toBeVisible();
-    expect(within(best).getByText(/an unidentified author’s work · not enough on its own for this claim/)).toBeVisible();
+    expect(within(best).getByText(/an unidentified author’s work · not enough on its own for this statement/)).toBeVisible();
     expect(screen.queryByText(/"route": "south"/)).not.toBeInTheDocument();
     await userEvent.click(within(best).getByRole('button', { name: 'Full passage' }));
     // The code block is highlighted token by token, so read the passage's text rather than one element.
@@ -159,14 +159,14 @@ describe('Claim review screen', () => {
     api.trust.mockResolvedValue(ok({ sources: [{ sourceId: 'source-guide', impact: { source: { versions: 1, claims: 15, lessons: 1 }, site: null } }], claim: null }));
     api.setTrust.mockResolvedValue(ok({ change: { scope: { scope: 'source', programId: 'program-1', sourceId: 'source-guide' }, sourceVersionIds: ['version-source-guide'] }, impact: { versions: 1, claims: 15, lessons: 1 }, redecided: { verified: 12, reopened: 0, stillFailing: 3, notLevelled: 0 } }));
     api.clearTrust.mockResolvedValue(ok(null));
-    const queue = await screen.findByRole('navigation', { name: 'Claims waiting for you' });
+    const queue = await screen.findByRole('navigation', { name: 'Statements waiting for you' });
     await userEvent.click(within(queue).getByRole('button', { name: 'Accept this source for all 15' }));
     const dialog = await screen.findByRole('dialog');
-    expect(await within(dialog).findByText(/15 claims rest on this source/)).toBeVisible();
+    expect(await within(dialog).findByText(/15 statements rest on this source/)).toBeVisible();
     expect(within(dialog).getByRole('radio', { name: /a reliable identified source/ })).toBeChecked();
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Accept for 15 claims' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Accept for 15 statements' }));
     await waitFor(() => expect(api.setTrust).toHaveBeenCalledWith({ scope: 'source', programId: 'program-1', sourceId: 'source-guide', level: 'established', note: null }));
-    expect(await screen.findByText('Trusted Field Guide to North American Butterflies for this course: 12 claims verified, 3 still need you.')).toBeVisible();
+    expect(await screen.findByText('Trusted Field Guide to North American Butterflies for this course: 12 statements verified, 3 still need you.')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(api.clearTrust).toHaveBeenCalledWith({ scope: 'source', programId: 'program-1', sourceId: 'source-guide' }));
   });
@@ -188,9 +188,9 @@ describe('Claim review screen', () => {
     await waitFor(() => expect(screen.queryByLabelText('The sentence')).not.toBeInTheDocument());
 
     fireEvent.keyDown(document.body, { key: 's' });
-    expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Add a source for this statement' })).toBeVisible();
     fireEvent.keyDown(document.body, { key: 'Escape' });
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this statement' })).not.toBeInTheDocument());
 
     api.resolve.mockResolvedValue(ok({ revision: 8 }));
     fireEvent.keyDown(document.body, { key: 'a' });
@@ -214,7 +214,7 @@ describe('Claim review screen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Accept with a note' }));
     const submit = screen.getByRole('button', { name: 'Accept with this note' });
     expect(submit).toBeDisabled();
-    await userEvent.type(screen.getByLabelText('Why the claim is right (required)'), 'The guide rounds the figure.');
+    await userEvent.type(screen.getByLabelText('Why the statement is right (required)'), 'The guide rounds the figure.');
     await userEvent.click(submit);
     await waitFor(() => expect(api.resolve).toHaveBeenCalledWith(expect.objectContaining({
       expectedRevision: 7, action: { action: 'confirm', note: 'The guide rounds the figure.', sourceVersionIds: [] },
@@ -222,10 +222,10 @@ describe('Claim review screen', () => {
   });
 
   it('shows a stale-revision refusal on the claim and reloads the review', async () => {
-    api.resolve.mockResolvedValue({ ok: false, error: 'This claim changed; reload and act again.' });
+    api.resolve.mockResolvedValue({ ok: false, error: 'This statement changed; reload and act again.' });
     show(review([waitingOnSource(1)]));
     await userEvent.click(await screen.findByRole('button', { name: 'Remove it' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('This claim changed; reload and act again.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This statement changed; reload and act again.');
     await waitFor(() => expect(api.review).toHaveBeenCalledTimes(2));
   });
 
@@ -244,12 +244,12 @@ describe('Claim review screen', () => {
   });
 
   it('lists a published lesson’s teaching notes as the queue’s last group and keeps one as written', async () => {
-    api.keep.mockResolvedValue(ok(null));
+    api.settle.mockResolvedValue(ok(null));
     show(review([], { state: 'ready', teachingFindings: [teachingFinding()], counts: { ...counts(0), rewritten: 0, verified: 40 } }));
     await userEvent.click(await screen.findByRole('button', { name: /Teaching notes/ }));
-    expect(screen.getByText(/the example shows "result": "4"/)).toBeVisible();
+    expect(screen.getByText(/The example shows "4" in quotation marks/)).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Keep as written' }));
-    await waitFor(() => expect(api.keep).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-1', findingKey: 'teaching:section-2' }));
+    await waitFor(() => expect(api.settle).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-1', findingKeys: ['teaching:section-2'], settle: 'keep' }));
   });
 
   it('renders the empty state: everything resolved, Resume enabled, the resolved claims one toggle away', async () => {
@@ -287,14 +287,14 @@ describe('Claim review screen', () => {
     window.matchMedia = ((query: string) => ({ matches: query.includes('max-width: 767px'), media: query, addEventListener: vi.fn(), removeEventListener: vi.fn(), addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(), onchange: null })) as typeof window.matchMedia;
     try {
       show(review(thirtyThreeClaims()));
-      const queue = await screen.findByRole('navigation', { name: 'Claims waiting for you' });
-      expect(screen.queryByRole('article', { name: 'Claim in focus' })).not.toBeInTheDocument();
+      const queue = await screen.findByRole('navigation', { name: 'Statements waiting for you' });
+      expect(screen.queryByRole('article', { name: 'Statement in focus' })).not.toBeInTheDocument();
       await userEvent.click(within(queue).getByRole('button', { name: /Monarch fact number 3 / }));
-      const claim = await screen.findByRole('article', { name: 'Claim in focus' });
+      const claim = await screen.findByRole('article', { name: 'Statement in focus' });
       expect(within(claim).getByText('3 of 33')).toBeVisible();
-      expect(within(claim).getByRole('toolbar', { name: 'Claim actions' }).closest('.sticky')).not.toBeNull();
+      expect(within(claim).getByRole('toolbar', { name: 'Statement actions' }).closest('.sticky')).not.toBeNull();
       await userEvent.click(within(claim).getByRole('button', { name: 'Back to the queue' }));
-      expect(await screen.findByRole('navigation', { name: 'Claims waiting for you' })).toBeVisible();
+      expect(await screen.findByRole('navigation', { name: 'Statements waiting for you' })).toBeVisible();
     } finally {
       window.matchMedia = original;
     }

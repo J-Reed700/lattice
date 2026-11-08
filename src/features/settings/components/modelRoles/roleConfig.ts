@@ -125,7 +125,7 @@ export const ROLES: ReadonlyArray<RoleDescriptor> = [
     activeLabel: 'Active (Verifier)',
     isActive: isVerifierModel,
     allowedTypes: ['language_model', 'chat', 'cloud'],
-    hint: 'Audits every claim of a lesson against its cited passages before it publishes.',
+    hint: 'Audits every statement of a lesson against its cited passages before it publishes.',
   },
 ];
 

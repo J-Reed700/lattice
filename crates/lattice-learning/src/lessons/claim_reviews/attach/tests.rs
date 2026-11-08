@@ -27,7 +27,7 @@ use lattice_core::application::ports::{
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
     ClaimLocation, ClaimState, EventProvenance, EvidenceFingerprint, Ledger, LessonReview,
-    Revision, SourceAddedBy, UnitKind, VerdictKind,
+    Revision, SourceAddedBy, UnitKind, UserAction, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -35,8 +35,11 @@ use serde_json::{json, Value};
 use super::super::recheck::waiting_claims;
 use super::acquire::{acquire, Acquired};
 use super::failures::AttachFailureDto;
-use super::report::{ClaimAttachProgressDto, SnapshotNoteDto};
-use super::{attach, attach_to, AttachDeps, AttachRequest, Evidence, Others};
+use super::report::{ClaimAttachProgressDto, PutBackOutcomeDto, SnapshotNoteDto};
+use super::{
+    attach, attach_to, attach_to_lesson, AttachDeps, AttachRequest, Evidence, LessonSourceRequest,
+    Others,
+};
 use crate::lessons::claim_reviews::dto::{AttachOutcomeDto, SourceAddedByDto};
 use crate::lessons::content_verification::tests::{fixture_completion, fixture_prompts};
 use crate::source_library::LearningSourceLibraryRepository;
@@ -96,6 +99,47 @@ fn open_claim(id: &str, statement: &str) -> ClaimLedgerEntry {
         )
         .unwrap();
     entry
+}
+
+/// A claim the user took out of the lesson: closed.
+fn removed_claim(id: &str, statement: &str) -> ClaimLedgerEntry {
+    let mut entry = open_claim(id, statement);
+    entry
+        .append(
+            provenance(Actor::User),
+            ClaimEvent::UserAction {
+                action: UserAction::Remove,
+                note: None,
+            },
+        )
+        .unwrap();
+    entry
+}
+
+/// A claim the machine took out of the lesson, which a source may put back.
+fn taken_out_claim(id: &str, statement: &str) -> ClaimLedgerEntry {
+    let mut entry = open_claim(id, statement);
+    entry
+        .append(
+            provenance(Actor::Machine),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::Machine,
+            },
+        )
+        .unwrap();
+    entry
+}
+
+/// A claim extracted and never checked: the pass that checks it owns it.
+fn unchecked_claim(id: &str, statement: &str) -> ClaimLedgerEntry {
+    ClaimLedgerEntry::extracted(
+        ClaimId(id.into()),
+        provenance(Actor::Machine),
+        ClaimLocation::locate(0, UnitKind::Block, "body", statement, FIELD),
+        statement.into(),
+    )
+    .unwrap()
 }
 
 /// The ledger port over memory, validating every event as the store does.
@@ -367,6 +411,14 @@ struct World {
 }
 
 async fn world() -> World {
+    world_with(vec![
+        open_claim("water", WATER),
+        open_claim("mercury", MERCURY),
+    ])
+    .await
+}
+
+async fn world_with(claims: Vec<ClaimLedgerEntry>) -> World {
     let pool = tests::pool().await.unwrap();
     let repo = LearningRepository::new(pool.clone());
     let program = tests::fixture();
@@ -379,10 +431,7 @@ async fn world() -> World {
     .await
     .unwrap();
     let program_id = program.summary.id.clone();
-    let ledger = MemoryLedger::new(
-        &program_id,
-        vec![open_claim("water", WATER), open_claim("mercury", MERCURY)],
-    );
+    let ledger = MemoryLedger::new(&program_id, claims);
     World {
         pool,
         program_id,
@@ -462,6 +511,50 @@ impl World {
         .await
         .unwrap();
         (report, stages.into_inner().unwrap())
+    }
+
+    /// A source added to the lesson as a whole, with the stages it reported.
+    async fn attach_lesson(
+        &self,
+        web: &dyn WebServiceTrait,
+        judge: &dyn LLMPort,
+        expected_revision: Revision,
+        evidence: Evidence,
+    ) -> (
+        Result<super::report::ClaimAttachReportDto>,
+        Vec<ClaimAttachProgressDto>,
+    ) {
+        let library = EmptyLibrary;
+        let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+        let stages = Mutex::new(Vec::new());
+        let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
+        let report = attach_to_lesson(
+            &AttachDeps {
+                pool: &self.pool,
+                store: &self.ledger,
+                web,
+                snapshots: &snapshots,
+                documents: &library,
+                courses: None,
+                llm: judge,
+                job_id: None,
+            },
+            LessonSourceRequest {
+                program_id: &self.program_id,
+                lesson_id: LESSON,
+                expected_revision,
+                evidence,
+            },
+            &progress,
+        )
+        .await;
+        (report, stages.into_inner().unwrap())
+    }
+
+    fn event_counts(&self, ids: &[&str]) -> Vec<usize> {
+        ids.iter()
+            .map(|id| self.ledger.claim(id).events().len())
+            .collect()
     }
 
     async fn source_count(&self) -> usize {
@@ -559,7 +652,7 @@ async fn pasted_text_that_supports_the_claim_verifies_it_and_checks_the_others()
     assert_eq!(report.others.no_passage, 1);
     assert_eq!(
         report.lines[1],
-        "Also checked 1 other open claim against this source: 0 verified, 1 no passage."
+        "Also checked 1 other open statement against this source: 0 verified, 1 no passage."
     );
     assert_eq!(report.revision, world.ledger.revision().0);
 
@@ -648,6 +741,64 @@ async fn a_contradicting_source_keeps_the_claim_for_the_user_with_its_reason() {
         water.state().verdict(),
         Some(VerdictKind::Contradicted)
     ));
+}
+
+#[tokio::test]
+async fn a_source_that_supports_a_taken_out_sentence_it_cannot_put_back_reports_no_place() {
+    let world = world_with(vec![taken_out_claim("water", WATER)]).await;
+    let web = ScriptedWeb::article();
+    let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+    let judge = Judge::says("supported");
+    let report = world
+        .attach(&web, &snapshots, &judge, "water", World::pasted(NOTES))
+        .await
+        .unwrap();
+
+    assert_eq!(report.put_back, Some(PutBackOutcomeDto::NoPlace));
+    assert!(
+        !report
+            .lines
+            .iter()
+            .any(|line| line.starts_with("The source supports it")),
+        "{:?}",
+        report.lines
+    );
+}
+
+#[tokio::test]
+async fn a_source_that_does_not_support_a_taken_out_sentence_reports_it_stays_out() {
+    let world = world_with(vec![taken_out_claim("water", WATER)]).await;
+    let web = ScriptedWeb::article();
+    let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+    let judge = Judge::says("contradicted");
+    let report = world
+        .attach(&web, &snapshots, &judge, "water", World::pasted(NOTES))
+        .await
+        .unwrap();
+
+    assert_eq!(report.put_back, Some(PutBackOutcomeDto::StaysOut));
+    assert!(
+        !report
+            .lines
+            .iter()
+            .any(|line| line.starts_with("The source does not support it")),
+        "{:?}",
+        report.lines
+    );
+}
+
+#[tokio::test]
+async fn a_claim_the_machine_did_not_take_out_has_no_put_back_outcome() {
+    let world = world().await;
+    let web = ScriptedWeb::article();
+    let snapshots = Snapshots::answering(ReferenceSnapshot::Pending);
+    let judge = Judge::says("supported");
+    let report = world
+        .attach(&web, &snapshots, &judge, "water", World::pasted(NOTES))
+        .await
+        .unwrap();
+
+    assert_eq!(report.put_back, None);
 }
 
 #[tokio::test]
@@ -863,5 +1014,183 @@ async fn a_new_source_is_checked_for_the_waiting_claims_by_the_machine() {
         })
         .collect();
     assert_eq!(checking, [(0, 2), (1, 2)]);
+    assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
+}
+
+#[tokio::test]
+async fn a_source_added_to_the_lesson_is_saved_and_every_open_claim_is_checked() {
+    let world = world().await;
+    let web = ScriptedWeb::article();
+    let judge = Judge::says("supported");
+    let before = world.source_count().await;
+
+    let (report, _) = world
+        .attach_lesson(&web, &judge, world.ledger.revision(), World::pasted(NOTES))
+        .await;
+    let report = report.unwrap();
+
+    assert_eq!(world.source_count().await, before + 1);
+    assert!(report.failure.is_none());
+    assert!(report.outcome.is_none());
+    assert_eq!(report.source.as_ref().unwrap().title, NOTES);
+    // Both open claims are tried, the water claim among them: none is excluded.
+    assert_eq!(report.others.tried, 2);
+    assert_eq!(report.others.verified, 1);
+    assert_eq!(report.others.not_verified, 0);
+    assert_eq!(report.others.no_passage, 1);
+    assert!(report.others.stopped.is_none());
+    let water = world.ledger.claim("water");
+    let last = water.events().last().unwrap();
+    assert_eq!(last.provenance.actor, Actor::Machine);
+    let ClaimEvent::Checked(check) = &last.event else {
+        panic!("expected Checked, got {:?}", last.event);
+    };
+    assert!(matches!(check.result, CheckResult::Supported { .. }));
+    assert_eq!(world.ledger.claim("mercury").events().len(), 2);
+    assert_eq!(report.revision, 8);
+    assert_eq!(world.ledger.revision(), Revision(8));
+}
+
+#[tokio::test]
+async fn a_source_added_to_the_lesson_leaves_closed_claims_alone() {
+    let world = world_with(vec![
+        open_claim("water", WATER),
+        removed_claim("removed", WATER),
+        unchecked_claim("unchecked", WATER),
+        open_claim("mercury", MERCURY),
+    ])
+    .await;
+    let web = ScriptedWeb::article();
+    let judge = Judge::says("supported");
+    let ids = ["water", "removed", "unchecked", "mercury"];
+    let before = world.event_counts(&ids);
+
+    let (report, _) = world
+        .attach_lesson(&web, &judge, world.ledger.revision(), World::pasted(NOTES))
+        .await;
+    let report = report.unwrap();
+
+    assert_eq!(report.others.tried, 2);
+    assert_eq!(report.others.verified, 1);
+    assert_eq!(report.others.no_passage, 1);
+    let after = world.event_counts(&ids);
+    assert_eq!(after[0], before[0] + 1);
+    assert_eq!(after[1..], before[1..]);
+}
+
+#[tokio::test]
+async fn adding_a_source_to_the_lesson_reports_each_stage_and_the_claim_total() {
+    let world = world().await;
+    let web = ScriptedWeb::article();
+    let judge = Judge::says("supported");
+
+    let (report, stages) = world
+        .attach_lesson(&web, &judge, world.ledger.revision(), World::pasted(NOTES))
+        .await;
+    report.unwrap();
+
+    let names: Vec<Value> = stages
+        .iter()
+        .map(|stage| serde_json::to_value(stage).unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            json!({ "stage": "saving" }),
+            json!({ "stage": "checking", "done": 0, "total": 2, "statement": WATER }),
+            json!({ "stage": "checking", "done": 1, "total": 2, "statement": MERCURY }),
+            json!({ "stage": "done" }),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_stale_review_is_refused_before_a_lesson_source_is_saved() {
+    let world = world().await;
+    let web = ScriptedWeb::article();
+    let judge = Judge::says("supported");
+    let before = world.source_count().await;
+
+    let (refused, stages) = world
+        .attach_lesson(&web, &judge, Revision(3), World::pasted(NOTES))
+        .await;
+
+    let Err(AppError::InvalidState(text)) = refused else {
+        panic!("expected a stale-review refusal");
+    };
+    assert_eq!(
+        text,
+        "The lesson's review changed; reload it and try again."
+    );
+    assert_eq!(world.source_count().await, before);
+    assert_eq!(world.ledger.revision(), Revision(7));
+    assert_eq!(*judge.checks.lock().unwrap(), 0);
+    assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
+}
+
+#[tokio::test]
+async fn a_lesson_source_that_cannot_be_saved_returns_the_failure_and_checks_nothing() {
+    let world = world().await;
+    let judge = Judge::says("supported");
+    let before = world.source_count().await;
+    let cases = fixture();
+    let case = &cases["cases"][0];
+    let web = ScriptedWeb::of(case);
+
+    let (report, stages) = world
+        .attach_lesson(
+            &web,
+            &judge,
+            world.ledger.revision(),
+            Evidence::Link {
+                url: case["url"].as_str().unwrap().into(),
+            },
+        )
+        .await;
+    let report = report.unwrap();
+
+    let failure: AttachFailureDto = serde_json::from_value(case["expect"].clone()).unwrap();
+    assert_eq!(report.failure.as_ref(), Some(&failure));
+    assert_eq!(report.lines, vec![failure.message.clone()]);
+    assert!(report.source.is_none() && report.outcome.is_none());
+    assert_eq!(report.others.tried, 0);
+    assert_eq!(report.revision, 7);
+    assert_eq!(world.source_count().await, before);
+    assert_eq!(world.ledger.revision(), Revision(7));
+    assert_eq!(*judge.checks.lock().unwrap(), 0);
+    assert!(stages
+        .iter()
+        .all(|stage| !matches!(stage, ClaimAttachProgressDto::Checking { .. })));
+    assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
+}
+
+#[tokio::test]
+async fn a_lesson_with_no_open_claims_saves_the_source_and_checks_nothing() {
+    let world = world_with(vec![
+        removed_claim("removed", WATER),
+        unchecked_claim("unchecked", MERCURY),
+    ])
+    .await;
+    let web = ScriptedWeb::article();
+    let judge = Judge::says("supported");
+    let before = world.source_count().await;
+
+    let (report, stages) = world
+        .attach_lesson(&web, &judge, world.ledger.revision(), World::pasted(NOTES))
+        .await;
+    let report = report.unwrap();
+
+    assert_eq!(world.source_count().await, before + 1);
+    assert!(report.source.is_some() && report.failure.is_none());
+    assert_eq!(report.others.tried, 0);
+    assert_eq!(report.revision, 7);
+    assert_eq!(*judge.checks.lock().unwrap(), 0);
+    assert_eq!(
+        report.lines.last().unwrap(),
+        "No open statements in this lesson to check against it."
+    );
+    assert!(stages
+        .iter()
+        .all(|stage| !matches!(stage, ClaimAttachProgressDto::Checking { .. })));
     assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
 }

@@ -35,7 +35,7 @@ pub(in crate::lessons::content_verification) fn attribution_page(
 
 /// Why a comparison with no passage to read fails.
 pub(in crate::lessons::content_verification) const NO_PASSAGES: &str =
-    "No relevant saved passages were found for this claim.";
+    "No relevant saved passages were found for this statement.";
 
 /// One comparison: restored from its receipt (or a receipt saved under an
 /// earlier key for the same claim and evidence), decided on the spot when it

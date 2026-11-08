@@ -407,7 +407,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     assert!(
         progress
             .progress_message
-            .starts_with("Comparing 3 claims of section 1 with their evidence"),
+            .starts_with("Comparing 3 statements of section 1 with their evidence"),
         "{}",
         progress.progress_message
     );

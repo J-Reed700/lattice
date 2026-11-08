@@ -1,14 +1,18 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { learningClaimReviewKey, learningLessonEvidencePrefix, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import { learningClaimReviewKey, learningLessonEvidencePrefix, learningLessonQuestionKey, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import type {
   ClaimActionRequestDto,
   LearningGenerationJob,
   LessonClaimReviewDto,
+  LessonQuestionDto,
+  LessonQuestionEditDto,
+  LessonSectionEditDto,
   ResolveLearningClaimResultDto,
   SnapshotNoteDto,
+  TeachingSettleDto,
 } from '@/lib/bindings';
 import { failureToError } from '@/lib/errorHandling';
 import type { ApiResult } from '@/types';
@@ -58,17 +62,92 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
   });
 }
 
+export type ResolveManyVariables = { claimIds: string[]; action: ClaimActionRequestDto; expectedRevision: number };
+
 /**
- * "Keep as written" on a teaching finding: it stops waiting for the user;
- * the review reloads either way.
+ * One action on many claims through `resolve_learning_claims`: all of them or
+ * none, with one revision. The review reloads after success and after a
+ * refusal.
  */
-export function useKeepTeachingFinding(programId: string, lessonId: string) {
+export function useResolveLearningClaims(programId: string, lessonId: string) {
   const api = useApi();
   const client = useQueryClient();
-  return useMutation<void, Error, { findingKey: string }>({
+  return useMutation<ResolveLearningClaimResultDto, Error, ResolveManyVariables>({
     retry: false,
-    mutationFn: async ({ findingKey }) => unwrap(await api.keepLearningTeachingFinding({ programId, lessonId, findingKey })),
+    mutationFn: async ({ claimIds, action, expectedRevision }) => unwrap(await api.resolveLearningClaims({
+      programId, lessonId, claimIds, action, expectedRevision, operationId: operationId(),
+    })),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
+  });
+}
+
+/**
+ * "Keep as written" on teaching findings, or taking that back: all the
+ * findings change or none; the review reloads either way.
+ */
+export function useSettleTeachingFindings(programId: string, lessonId: string) {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation<void, Error, { findingKeys: string[]; settle: TeachingSettleDto }>({
+    retry: false,
+    mutationFn: async ({ findingKeys, settle }) => unwrap(await api.settleLearningTeachingFindings({ programId, lessonId, findingKeys, settle })),
     onSettled: () => client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
+  });
+}
+
+export type EditSectionVariables = {
+  sectionIndex: number;
+  beforeTitle: string;
+  beforeBody: string;
+  title: string;
+  body: string;
+};
+
+/**
+ * Saves the user's rewrite of one section of a published lesson. The course,
+ * its evidence and the review reload after success and after a refusal, so a
+ * section that changed underneath never stays on screen as it was.
+ */
+export function useEditLearningLessonSection(programId: string, lessonId: string) {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation<LessonSectionEditDto, Error, EditSectionVariables>({
+    retry: false,
+    mutationFn: async (variables) => unwrap(await api.editLearningLessonSection({ programId, lessonId, ...variables, dryRun: false })),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
+  });
+}
+
+/** A published lesson's question as the editor opens it; read fresh each time the editor opens. */
+export function useLearningLessonQuestion(programId: string, lessonId: string, questionIndex: number) {
+  const api = useApi();
+  return useQuery<LessonQuestionDto>({
+    queryKey: learningLessonQuestionKey(programId, lessonId, questionIndex),
+    queryFn: async () => unwrap(await api.getLearningLessonQuestion(programId, lessonId, questionIndex)),
+    staleTime: Infinity,
+    gcTime: 0,
+    retry: false,
+  });
+}
+
+export type EditQuestionVariables = {
+  questionIndex: number;
+  before: LessonQuestionDto;
+  after: LessonQuestionDto;
+};
+
+/**
+ * Saves the user's rewrite of one question of a published lesson. The course,
+ * its evidence and the review reload after success and after a refusal, as
+ * for a section.
+ */
+export function useEditLearningLessonQuestion(programId: string, lessonId: string) {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation<LessonQuestionEditDto, Error, EditQuestionVariables>({
+    retry: false,
+    mutationFn: async (variables) => unwrap(await api.editLearningLessonQuestion({ programId, lessonId, ...variables, dryRun: false })),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
   });
 }
 

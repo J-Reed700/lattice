@@ -14,8 +14,8 @@ describe('Checker accuracy', () => {
   beforeEach(() => vi.resetAllMocks());
 
   it('states the rates per checker model without a verdict', () => {
-    expect(accuracyLine(row)).toBe('412 labelled claims · false flags 9.2% · false passes 1.1% (from 38 Verifier audits) · retrieval misses 14');
-    expect(accuracyLine({ ...row, falseFlagRate: null, falsePassRate: null })).toBe('412 labelled claims · retrieval misses 14');
+    expect(accuracyLine(row)).toBe('412 labelled statements · false flags 9.2% · false passes 1.1% (from 38 Verifier audits) · retrieval misses 14');
+    expect(accuracyLine({ ...row, falseFlagRate: null, falsePassRate: null })).toBe('412 labelled statements · retrieval misses 14');
   });
 
   it('loads on open and exports the course’s examples, saying when the dialog was dismissed', async () => {
@@ -27,7 +27,7 @@ describe('Checker accuracy', () => {
     expect(await screen.findByText(/false flags 9.2%/)).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Export this course’s examples for evaluation' }));
     await waitFor(() => expect(api.exportExamples).toHaveBeenCalledWith({ programId: 'program-1' }));
-    expect(await screen.findByText('Saved 12 claim pairs to /tmp/lesson-claims.jsonl.')).toBeVisible();
+    expect(await screen.findByText('Saved 12 statement pairs to /tmp/lesson-claims.jsonl.')).toBeVisible();
     await userEvent.click(screen.getByRole('button', { name: 'Export this course’s examples for evaluation' }));
     expect(await screen.findByText('Export cancelled.')).toBeVisible();
   });
