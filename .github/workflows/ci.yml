@@ -26,9 +26,56 @@ env:
   REDS: ${{ (endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
 
 jobs:
+  # A pull request runs only the jobs its files can affect. Any doubt, an
+  # unknown path or a failure here runs everything.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      contents: read
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      web: ${{ steps.paths.outputs.web }}
+      all: ${{ steps.paths.outputs.all }}
+    steps:
+      - id: paths
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          fail_safe() { echo rust=true >> "$GITHUB_OUTPUT"; echo web=true >> "$GITHUB_OUTPUT"; echo all=true >> "$GITHUB_OUTPUT"; }
+          if [ "$EVENT" != "pull_request" ]; then fail_safe; exit 0; fi
+          if ! gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt; then
+            fail_safe; exit 0
+          fi
+          python3 - <<'PYCODE' || fail_safe
+          import os
+          files = [line.strip() for line in open('files.txt') if line.strip()]
+          rust_dirs = ('crates/', 'scripts/', 'evals/', '.cargo/', '.config/')
+          rust_names = {'Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml', 'clippy.toml', 'rustfmt.toml', 'deny.toml', 'src/lib/bindings.ts', 'src/shared/ipc/routes.generated.ts'}
+          web_dirs = ('src/', 'e2e/', 'public/', 'scripts/')
+          def is_rust(f):
+              if f.startswith('evals/') and 'results' in f.split('/'):
+                  return False
+              return f.startswith(rust_dirs) or f in rust_names
+          def is_web(f):
+              return f.startswith(web_dirs) or ('/' not in f and not f.endswith('.md'))
+          def is_quiet(f):
+              return f.startswith(('docs/', 'evals/')) or f.endswith('.md')
+          rust = any(is_rust(f) for f in files)
+          web = any(is_web(f) for f in files)
+          every = not files or len(files) >= 3000 or any(f.startswith('.github/') or not (is_rust(f) or is_web(f) or is_quiet(f)) for f in files)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              print('rust=' + str(rust).lower(), 'web=' + str(web).lower(), 'all=' + str(every).lower(), sep=chr(10), file=out)
+          PYCODE
+
   # Build on each supported platform to catch target-specific dependencies.
   rust-check:
     name: cargo check (${{ matrix.os }})
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true' }}
     runs-on: ${{ matrix.os }}
     # Intel source checks precede publication of its first sidecar. This
     # debug-only override cannot produce a release bundle; the package job
@@ -87,7 +134,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust-check
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && runner.os != 'macOS' }}
           cache-on-failure: true
 
       # Debug builds accept empty sidecars; the sidecar-binaries job checks
@@ -227,7 +274,8 @@ jobs:
 
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ${{ matrix.os }}
     # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
     # job cancelled at a cap never saves its Rust cache, so main never got a
@@ -285,6 +333,13 @@ jobs:
           key: desktop-compatibility-${{ matrix.name }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
+      # Not on Intel: its restored cache holds the shipped profile, and another profile changes every fingerprint.
+      - name: Faster release build for pull requests
+        if: github.event_name == 'pull_request' && !matrix.intel
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_RELEASE_LTO=false" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> "$GITHUB_ENV"
       - name: Fetch verified published sidecars
         if: ${{ !matrix.intel }}
         shell: bash
@@ -384,7 +439,8 @@ jobs:
   # Syntax-aware layer checks complement the filesystem-state guard.
   repository-barrier:
     name: architecture boundary checks
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -401,7 +457,8 @@ jobs:
 
   dependency-audit:
     name: Dependency vulnerability audit
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -428,6 +485,8 @@ jobs:
 
   frontend:
     name: frontend (type-check, lint, test)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true' }}
     # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
     runs-on: ubuntu-24.04
     steps:
@@ -486,22 +545,93 @@ jobs:
         if: env.REDS != 'true'
         run: node scripts/check-initial-js-budget.mjs dist
 
-      - name: Install browsers for smoke tests
-        if: env.REDS != 'true'
-        run: npx playwright install --with-deps chromium webkit
+  # Each slice runs in its own job: the smoke tests were 20 of the frontend
+  # job's 31 min, Chromium's 116 tests about 7 and WebKit on one worker.
+  browser-smoke:
+    name: browser smoke (${{ matrix.slice }})
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
+    # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slice: chromium
+            browser: chromium
+            args: --project=web-smoke
+          - slice: webkit-1of2
+            browser: webkit
+            args: --project=webkit-smoke --shard=1/2
+          - slice: webkit-2of2
+            browser: webkit
+            args: --project=webkit-smoke --shard=2/2
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Install browsers for smoke tests
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      # Playwright's webServer builds and serves the renderer itself.
       - name: Browser smoke tests
-        if: env.REDS != 'true'
-        run: npm run test:e2e
+        run: npm run test:e2e -- ${{ matrix.args }}
 
       - name: Upload browser reports and failure artifacts
-        if: always() && env.REDS != 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-browser-results
+          name: browser-results-${{ matrix.slice }}
           path: |
             e2e-results/html/
             e2e-results/results.json
             e2e-results/artifacts/
           if-no-files-found: warn
           retention-days: 14
+
+  # Main's caches sit at the 10 GB limit; PR caches and superseded main caches evicted the useful ones.
+  prune-caches:
+    name: prune caches
+    needs: [changes, rust-check, desktop-compatibility, repository-barrier, dependency-audit, frontend, browser-smoke]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete pull request caches and superseded main caches
+        shell: bash
+        run: |
+          gh cache list --limit 1000 --json id,key,ref,createdAt,sizeInBytes > caches.json
+          python3 - <<'PYCODE'
+          import json, subprocess
+          caches = json.load(open('caches.json'))
+          doomed = [c for c in caches if c['ref'].startswith('refs/pull/')]
+          groups = {}
+          for c in caches:
+              if c['ref'] == 'refs/heads/main':
+                  groups.setdefault(c['key'].rsplit('-', 1)[0], []).append(c)
+          for group in groups.values():
+              group.sort(key=lambda c: c['createdAt'], reverse=True)
+              doomed.extend(group[1:])
+          gone = set()
+          for c in doomed:
+              result = subprocess.run(['gh', 'cache', 'delete', str(c['id'])], capture_output=True, text=True)
+              if result.returncode == 0:
+                  gone.add(c['id'])
+                  print(f"deleted {c['key']} ({c['ref']}) {c['sizeInBytes'] / 1e6:.0f} MB")
+              else:
+                  print(f"::warning::could not delete {c['key']}: {result.stderr.strip()}")
+          kept = sum(c['sizeInBytes'] for c in caches if c['id'] not in gone)
+          print(f"kept {kept / 1e6:.0f} MB")
+          PYCODE
