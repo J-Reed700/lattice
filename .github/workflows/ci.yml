@@ -38,7 +38,10 @@ jobs:
       rust: ${{ steps.paths.outputs.rust }}
       web: ${{ steps.paths.outputs.web }}
       all: ${{ steps.paths.outputs.all }}
+      rust_packages: ${{ steps.crates.outputs.packages }}
     steps:
+      - uses: actions/checkout@v4
+        continue-on-error: true
       - id: paths
         shell: bash
         env:
@@ -67,9 +70,83 @@ jobs:
           rust = any(is_rust(f) for f in files)
           web = any(is_web(f) for f in files)
           every = not files or len(files) >= 3000 or any(f.startswith('.github/') or not (is_rust(f) or is_web(f) or is_quiet(f)) for f in files)
+          open('rust-files.txt', 'w').write(''.join(f + '\n' for f in files if is_rust(f)))
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
               print('rust=' + str(rust).lower(), 'web=' + str(web).lower(), 'all=' + str(every).lower(), sep=chr(10), file=out)
           PYCODE
+
+      - id: crates
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          ALL: ${{ steps.paths.outputs.all }}
+        run: |
+          if [ "$EVENT" = "pull_request" ] && [ "$ALL" != "true" ] && [ -f rust-files.txt ]; then
+            python3 scripts/ci/rust_packages.py rust-files.txt >> "$GITHUB_OUTPUT" || echo "packages=--workspace" >> "$GITHUB_OUTPUT"
+          else
+            echo "packages=--workspace" >> "$GITHUB_OUTPUT"
+          fi
+
+  rust-lint:
+    name: cargo fmt and clippy (${{ matrix.os }})
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Not RUST_* or CARGO_*: rust-cache hashes those into its key, so PRs would miss main's cache.
+      PACKAGE_ARGS: ${{ needs.changes.outputs.rust_packages || '--workspace' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          # Tauri 2 + webkit dependencies on Ubuntu.
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: Create build placeholders for source checks
+        shell: bash
+        run: |
+          mkdir -p dist
+          case "${{ runner.os }}" in
+            Linux) touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                         crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
+            macOS) triple="$(rustc -vV | awk '/^host:/ {print $2}')"
+                   touch "crates/lattice-desktop/binaries/llama-server-$triple" ;;
+            Windows) touch crates/lattice-desktop/binaries/llama-server-x86_64-pc-windows-msvc.exe \
+                           crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
+          esac
+
+      - name: cargo fmt --check
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+
+      # The workspace defines additional safety lints in Cargo.toml. Any
+      # warning fails the build.
+      - name: cargo clippy
+        working-directory: crates/lattice-desktop
+        run: cargo clippy ${{ env.PACKAGE_ARGS }} --all-targets -- -D warnings
 
   # Build on each supported platform to catch target-specific dependencies.
   rust-check:
@@ -85,19 +162,20 @@ jobs:
       # Backtraces keep file and line. Full debug info made the cache too big
       # to keep and the test build too big for the Ubuntu runner's memory.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Not RUST_* or CARGO_*: rust-cache hashes those into its key, so PRs would miss main's cache.
+      PACKAGE_ARGS: ${{ needs.changes.outputs.rust_packages || '--workspace' }}
     strategy:
       fail-fast: false
-      # GitHub runs five macOS jobs at a time for the account, and every pull
-      # request used to ask for five, so main's runs waited hours behind them.
-      # Intel Macs, the slowest runners, are checked on pushes to main only,
-      # and a draft pull request gets its macOS jobs when it is marked ready.
+      # Macs run on pushes to main only. The account gets a few macOS runners at
+      # a time, so a pull request that asked for them waited an hour or more.
+      # A draft runs Ubuntu only; marking it ready runs Windows too.
       matrix:
         os: >-
           ${{ fromJSON((endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows'))
           && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest"]' || '["ubuntu-24.04"]')
-          || format('["ubuntu-24.04", "windows-latest"{0}{1}]',
-          github.event.pull_request.draft != true && ', "macos-latest"' || '',
-          github.event_name == 'push' && ', "macos-15-intel"' || '')) }}
+          || (github.event.pull_request.draft && '["ubuntu-24.04"]'
+          || (github.event_name == 'push' && '["ubuntu-24.04", "windows-latest", "macos-latest", "macos-15-intel"]'
+          || '["ubuntu-24.04", "windows-latest"]'))) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -152,17 +230,11 @@ jobs:
                            crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
           esac
 
-      - name: cargo fmt --check
-        if: runner.os == 'Linux' && env.REDS != 'true'
-        run: cargo fmt --all -- --check
-
-      # Clippy checks everything cargo check did, so it runs in its place, first.
-      # The workspace defines additional safety lints in Cargo.toml. Any
-      # warning fails the build.
+      # macOS lints here so it takes no extra macOS runner.
       - name: cargo clippy
-        if: env.REDS != 'true'
+        if: runner.os == 'macOS' && env.REDS != 'true'
         working-directory: crates/lattice-desktop
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy ${{ env.PACKAGE_ARGS }} --all-targets -- -D warnings
 
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
@@ -191,7 +263,7 @@ jobs:
           # os error 1455), which rustc reports as E0786 invalid metadata.
           # The same selection and features as the test step, which then has
           # nothing left to build; checked are the desktop crate's executables.
-          cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
+          cargo test --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -239,7 +311,7 @@ jobs:
 
       - name: All desktop Rust unit, command and integration tests
         working-directory: crates/lattice-desktop
-        run: cargo nextest run --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
+        run: cargo nextest run --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
 
       - name: Upload the test timings
         if: ${{ !cancelled() }}
@@ -250,13 +322,13 @@ jobs:
           if-no-files-found: warn
 
       - name: Execute C#, Rust, React and Python container exercises
-        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
+        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true' && (env.PACKAGE_ARGS == '--workspace' || contains(env.PACKAGE_ARGS, 'lattice-learning'))
         working-directory: crates/lattice-desktop
         timeout-minutes: 20
-        run: cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
+        run: cargo test ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
 
       - name: Verify container staging and containment
-        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
+        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true' && (env.PACKAGE_ARGS == '--workspace' || contains(env.PACKAGE_ARGS, 'lattice-learning'))
         working-directory: crates/lattice-desktop
         timeout-minutes: 5
         shell: bash
@@ -264,7 +336,7 @@ jobs:
           image_id="$(docker image inspect --format '{{.Id}}' python:3.13.16-slim)"
           LATTICE_LAB_SMOKE_IMAGE_ID="$image_id" \
             LATTICE_LAB_SMOKE_ENGINE=docker \
-            cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
+            cargo test ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
 
       - name: generated bindings are current
         if: env.REDS != 'true'
@@ -275,7 +347,7 @@ jobs:
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
     needs: changes
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && github.event.pull_request.draft != true && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ${{ matrix.os }}
     # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
     # job cancelled at a cap never saves its Rust cache, so main never got a
@@ -283,21 +355,21 @@ jobs:
     # too. GitHub's own six-hour limit still ends a hung job.
     strategy:
       fail-fast: false
-      # Macs run as in rust-check: Apple Silicon unless the pull request is a
-      # draft, Intel on pushes to main only. The list is
-      # built whole because GitHub applies include after exclude, so an
-      # excluded Intel entry would come back as its own job.
+      # Pull requests that are ready for review build and exercise the app on
+      # Ubuntu. Windows and the Macs run on pushes to main only: a cold Windows
+      # release build takes 45 to 55 minutes, and macOS runners are few. The
+      # list is built whole because GitHub applies include after exclude, so an
+      # excluded entry would come back as its own job.
       # Hosted Windows runners use Server, not Windows 11. Keep the actual
       # runner visible; Windows 11 installation remains a release check.
       matrix:
         include: >-
-          ${{ fromJSON(format('[{0}{1}{2}]',
-          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
-          {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false}',
-          github.event.pull_request.draft != true
-          && ', {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false}' || '',
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false}',
           github.event_name == 'push'
-          && ', {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
+          && ', {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false},
+          {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false},
+          {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -453,6 +525,7 @@ jobs:
       - run: python3 -m unittest discover -s scripts/sql_tests -p 'test_*.py'
       - run: python3 -m unittest scripts/test_tauri_command_inventory.py
       - run: python3 -m unittest scripts/test_replay_claude.py
+      - run: python3 -m unittest scripts/ci/test_rust_packages.py
       - run: python3 scripts/check-tauri-command-inventory.py
 
   dependency-audit:
@@ -600,7 +673,7 @@ jobs:
   # Main's caches sit at the 10 GB limit; PR caches and superseded main caches evicted the useful ones.
   prune-caches:
     name: prune caches
-    needs: [changes, rust-check, desktop-compatibility, repository-barrier, dependency-audit, frontend, browser-smoke]
+    needs: [changes, rust-check, rust-lint, desktop-compatibility, repository-barrier, dependency-audit, frontend, browser-smoke]
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
