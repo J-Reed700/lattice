@@ -43,6 +43,22 @@ pub struct ResolveLearningClaimRequestDto {
     pub operation_id: String,
 }
 
+/// One action for several claims at once (`Confirm`, `Remove`, or `Undo` of
+/// the last such batch).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolveLearningClaimsRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
+    /// The claims the action is for.
+    pub claim_ids: Vec<String>,
+    pub action: ClaimActionRequestDto,
+    /// The review's revision the user acted on; for an Undo, the revision
+    /// the batch returned.
+    pub expected_revision: i64,
+    pub operation_id: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveLearningClaimResultDto {
@@ -146,6 +162,29 @@ pub async fn resolve_learning_claim(
         .resolve(
             &request.lesson_id,
             &request.claim_id,
+            request.action,
+            request.expected_revision,
+        )
+        .await?;
+    Ok(ResolveLearningClaimResultDto { revision })
+}
+
+/// Applies one action to every claim in the request, all or nothing.
+#[tauri::command]
+#[specta::specta]
+pub async fn resolve_learning_claims(
+    request: ResolveLearningClaimsRequestDto,
+    container: State<'_, Container>,
+) -> Result<ResolveLearningClaimResultDto, ApiError> {
+    in_course(
+        &claim_ledger(&container).load(&request.lesson_id).await?,
+        &request.program_id,
+    )?;
+    let revision = claim_reviews(&container)
+        .await?
+        .resolve_many(
+            &request.lesson_id,
+            &request.claim_ids,
             request.action,
             request.expected_revision,
         )

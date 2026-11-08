@@ -11,22 +11,20 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
-use super::actions::{in_section_body, ONLY_SECTION};
-use super::checker_examples::LabelSource;
-use super::published_restore::{self, Restore, Restoring};
+use super::actions::in_section_body;
+use super::dto::ClaimActionRequestDto;
 use super::put_back::{self, Lesson};
-use super::service::{provenance, ClaimReviewService, Resolution};
-use super::trust_changed::forget_verdict;
-use lattice_core::domain::learning::claim_review::TrustVerdict;
+use super::service::{ClaimReviewService, Resolution};
 
 const BLANK: &str = "Write the sentence you want to put back.";
-const NOT_TAKEN_OUT: &str = "Only a sentence the machine took out can be put back.";
+pub(super) const NOT_TAKEN_OUT: &str = "Only a sentence the machine took out can be put back.";
 const NOT_REWRITTEN: &str = "Only a sentence the machine rewrote has an original to restore.";
 
 fn resolution(action: UserAction) -> Resolution {
     Resolution {
         event: ClaimEvent::UserAction { action, note: None },
         label: None,
+        unlabel: None,
         trust: None,
         forget: None,
     }
@@ -79,45 +77,6 @@ impl ClaimReviewService {
         }))
     }
 
-    /// Writes a put back or a restore into a published lesson's text,
-    /// ledger and report; `None` for any other event.
-    pub(super) async fn restored_in_published(
-        &self,
-        review: &LessonReview,
-        lesson_id: &str,
-        entry: &ClaimLedgerEntry,
-        event: &ClaimEvent,
-        expected_revision: Revision,
-    ) -> Result<Option<Revision>> {
-        let restoring = match event {
-            ClaimEvent::UserAction {
-                action: UserAction::PutBack { .. },
-                ..
-            } => Restoring::PutBack,
-            ClaimEvent::UserAction {
-                action: UserAction::RestoreOriginal { original, rewrite },
-                ..
-            } => Restoring::Original { original, rewrite },
-            _ => return Ok(None),
-        };
-        if !in_section_body(entry) {
-            return Err(AppError::InvalidInput(ONLY_SECTION.into()));
-        }
-        let revision = published_restore::apply(
-            self.pool(),
-            Restore {
-                lesson_id,
-                claim_id: entry.claim_id(),
-                restoring,
-                event: event.clone(),
-                expected_revision,
-                user: provenance(review),
-            },
-        )
-        .await?;
-        Ok(Some(revision))
-    }
-
     /// Puts `claim_id`'s sentence back where it was, for a source that
     /// supports it. `None` when the place is not known: the user chooses it.
     pub(crate) async fn put_back_for_source(
@@ -130,86 +89,27 @@ impl ClaimReviewService {
             return Ok(None);
         };
         let published = review.state == LessonReviewState::Ready;
-        let Some(entry) = ledger
+        let offered = ledger
             .claims
             .iter()
             .find(|entry| entry.claim_id() == claim_id)
             .filter(|entry| entry.allows(ClaimActionKind::PutBack))
-            .filter(|entry| !published || in_section_body(entry))
-        else {
+            .is_some_and(|entry| !published || in_section_body(entry));
+        if !offered {
             return Ok(None);
+        }
+        let action = ClaimActionRequestDto::PutBack {
+            text: None,
+            section: None,
         };
-        let resolution = match self
-            .putting_back(&review, lesson_id, entry, None, None)
+        match self
+            .resolve(lesson_id, &claim_id.0, action, ledger.revision.0)
             .await
         {
-            Ok(resolution) => resolution,
-            Err(AppError::InvalidInput(message)) if message == put_back::CHOOSE => return Ok(None),
-            Err(error) => return Err(error),
-        };
-        if published {
-            return self
-                .restored_in_published(
-                    &review,
-                    lesson_id,
-                    entry,
-                    &resolution.event,
-                    ledger.revision,
-                )
-                .await;
+            Ok(revision) => Ok(Some(Revision(revision))),
+            Err(AppError::InvalidInput(message)) if message == put_back::CHOOSE => Ok(None),
+            Err(error) => Err(error),
         }
-        let revision = self
-            .store()
-            .append(
-                lesson_id,
-                entry.claim_id(),
-                provenance(&review),
-                resolution.event,
-                ledger.revision,
-            )
-            .await?;
-        Ok(Some(revision))
-    }
-
-    /// Takes back the claim's last user event on a published lesson.
-    pub(super) async fn undone_in_published(
-        &self,
-        review: &LessonReview,
-        lesson_id: &str,
-        entry: &ClaimLedgerEntry,
-        expected_revision: Revision,
-    ) -> Result<i64> {
-        let edited = entry.undo_target().is_some_and(|ordinal| {
-            entry.events().iter().any(|record| {
-                record.ordinal == ordinal
-                    && matches!(
-                        record.event,
-                        ClaimEvent::UserAction {
-                            action: UserAction::Edit { .. },
-                            ..
-                        }
-                    )
-            })
-        });
-        let revision = published_restore::undo(
-            self.pool(),
-            lesson_id,
-            entry.claim_id(),
-            expected_revision,
-            provenance(review),
-        )
-        .await?;
-        if edited {
-            self.examples
-                .forget(&entry.claim_id().0, LabelSource::UserEdit)
-                .await?;
-            let redecided =
-                forget_verdict(self.pool(), &entry.claim_id().0, TrustVerdict::Edit).await?;
-            if redecided.lessons.iter().any(|lesson| lesson == lesson_id) {
-                return Ok(self.store().load(lesson_id).await?.revision.0);
-            }
-        }
-        Ok(revision.0)
     }
 
     /// Whether a pass already wrote the user's put back or restore into the

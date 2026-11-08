@@ -5,10 +5,14 @@
 
 use lattice_core::domain::learning::acceptance::Outcome;
 use lattice_core::domain::learning::claim_review::{
-    span_of, Anchor, ClaimEvent, ClaimLedgerEntry, ClaimState, PutPlace,
+    span_of, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, EventProvenance, PutPlace,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
+use sqlx::SqliteConnection;
+use std::collections::HashSet;
+
+use super::repository::append_in;
 
 use crate::content_verification::{field_text, located_quote};
 
@@ -256,4 +260,18 @@ pub(super) fn resolve(
         Some(section) => end_of_section(lesson, section),
         None => place(lesson, claims, entry).ok_or_else(|| AppError::InvalidInput(CHOOSE.into())),
     }
+}
+
+/// Writes the user's put back `event` for `claim_id` into a draft's ledger:
+/// the next pass writes the text. The claims it put back are the ones it
+/// returns.
+pub(super) async fn write_draft_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+    claim_id: &ClaimId,
+    event: &ClaimEvent,
+    user: &EventProvenance,
+) -> Result<HashSet<ClaimId>> {
+    append_in(connection, lesson_id, claim_id, user.clone(), event.clone()).await?;
+    Ok(HashSet::from([claim_id.clone()]))
 }

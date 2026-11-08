@@ -4,9 +4,9 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { learningClaimReviewKey } from '@/features/learning/api/learningQueryKeys';
 import type { ActionForm } from '@/features/learning/lessons/review/ClaimActions';
-import { announcement, putBackMany, trustedAnnouncement, type AnnouncedAction, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
+import { announcement, batchDone, batchUndone, putBackMany, trustedAnnouncement, type AnnouncedAction, type AttachSummary } from '@/features/learning/lessons/review/claimReviewCopy';
 import { defaultGroupMode, groupClaims, isTakenOut, isWaitingForYou, rewrittenSentences, takenOutSentences, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
-import { useLessonClaimReview, useResolveLearningClaim } from '@/features/learning/lessons/review/useLessonClaimReview';
+import { useLessonClaimReview, useResolveLearningClaim, useResolveLearningClaims } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useClearSourceTrustOverride } from '@/features/learning/sources/trust/useSourceTrust';
 import type {
   ClaimActionRequestDto,
@@ -21,7 +21,7 @@ import type {
 /** How long a resolved claim stays in the queue with its ✓ before it drops out. */
 const SETTLE_MS = 1200;
 
-type Undo = { kind: 'claim'; claimId: string } | { kind: 'claims'; claimIds: string[] } | { kind: 'trust'; scope: LearningTrustOverrideScopeDto } | null;
+type Undo = { kind: 'claim'; claimId: string } | { kind: 'claims'; claimIds: string[] } | { kind: 'batch'; claimIds: string[]; revision: number } | { kind: 'trust'; scope: LearningTrustOverrideScopeDto } | null;
 
 const waitingIn = (review: LessonClaimReviewDto | null | undefined) => review?.claims.filter(isWaitingForYou).length ?? 0;
 
@@ -48,6 +48,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
   const client = useQueryClient();
   const query = useLessonClaimReview(programId, lessonId);
   const resolve = useResolveLearningClaim(programId, lessonId);
+  const resolveMany = useResolveLearningClaims(programId, lessonId);
   const clearTrust = useClearSourceTrustOverride();
   const review = query.data ?? null;
   const claims = useMemo(() => review?.claims ?? [], [review]);
@@ -170,6 +171,39 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
     }
   };
 
+  /** One action on every statement in `items`, all or none; true when it was saved. */
+  const runMany = async (items: ClaimReviewItemDto[], kind: 'confirm' | 'remove'): Promise<boolean> => {
+    if (!review || items.length === 0) return false;
+    const claimIds = items.map((item) => item.claimId);
+    setActing(true);
+    setError(null);
+    try {
+      const result = await resolveMany.mutateAsync({
+        claimIds, expectedRevision: review.revision,
+        action: kind === 'confirm' ? { action: 'confirm', note: null, sourceVersionIds: [] } : { action: 'remove' },
+      });
+      const after = fresh();
+      const gone = new Set(claimIds.filter((id) => { const claim = after?.claims.find((entry) => entry.claimId === id); return !claim || !isWaitingForYou(claim); }));
+      setMessage(batchDone(kind, claimIds.length));
+      setUndo({ kind: 'batch', claimIds, revision: result.revision });
+      if (gone.size > 0) {
+        setSettling((current) => new Set([...current, ...gone]));
+        timers.current.push(window.setTimeout(() => setSettling((current) => new Set([...current].filter((id) => !gone.has(id)))), SETTLE_MS));
+        if (!active || gone.has(active.claimId)) {
+          const next = ordered.find((claim) => !gone.has(claim.claimId)) ?? null;
+          if (next) select(next.claimId); else setActiveId(null);
+        }
+      }
+      return true;
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'The action could not be saved.');
+      setUndo(null);
+      return false;
+    } finally {
+      setActing(false);
+    }
+  };
+
   const trusted = (result: LearningTrustChangeResultDto, support: ClaimSupportDto) => {
     setMessage(trustedAnnouncement(support.source.title, result.redecided.verified, result.redecided.stillFailing));
     setUndo({ kind: 'trust', scope: { scope: 'source', programId, sourceId: support.source.sourceId } });
@@ -197,6 +231,23 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
 
   const undoLast = async () => {
     if (!undo) return;
+    if (undo.kind === 'batch') {
+      setActing(true);
+      try {
+        await resolveMany.mutateAsync({ claimIds: undo.claimIds, action: { action: 'undo' }, expectedRevision: undo.revision });
+        const after = fresh();
+        const waitingAgain = undo.claimIds.filter((id) => { const claim = after?.claims.find((entry) => entry.claimId === id); return claim && isWaitingForYou(claim); });
+        setSettling((current) => new Set([...current].filter((id) => !undo.claimIds.includes(id))));
+        setMessage(batchUndone(waitingAgain.length));
+        setUndo(null);
+      } catch (cause) {
+        setMessage(cause instanceof Error ? cause.message : 'The change could not be undone.');
+        setUndo(null);
+      } finally {
+        setActing(false);
+      }
+      return;
+    }
     if (undo.kind === 'claim') {
       const item = claims.find((claim) => claim.claimId === undo.claimId);
       if (item) await run(item, { action: 'undo' }, 'undo');
@@ -236,7 +287,7 @@ export function useClaimReviewSession(programId: string, lessonId: string, focus
   return {
     query, review, claims, waiting, groups, ordered, resolved, settling, opened,
     mode: currentMode, setMode, active, activeIndex, teachingActive, removed, rewritten, restore, removedActive, select, step, openTeaching, openRemoved,
-    form, setForm, acting, error, message, setMessage, undo, undoLast, run, trusted, added,
+    form, setForm, acting, error, message, setMessage, undo, undoLast, run, runMany, trusted, added,
     closestSupport, focusTick,
   };
 }
