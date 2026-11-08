@@ -8,10 +8,12 @@ import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSou
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
 import { ClaimQueue, queueRowId } from '@/features/learning/lessons/review/ClaimQueue';
-import { ALL_RESOLVED, tallyLine, teachingNotesForYou, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
-import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { ALL_RESOLVED, NEEDS_NOTE_HINT, cannotHere, tallyLine, teachingNotesForYou, unverifiedReviewLine } from '@/features/learning/lessons/review/claimReviewCopy';
+import { AUDIT_STOP_PREFIX, NOTHING_CHANGED, confirmNeedsNote, currentPreparationJobs, reviewHold, type ClaimGroup } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { LessonAuditLine } from '@/features/learning/lessons/review/LessonAudit';
 import { RemovedStatements } from '@/features/learning/lessons/review/RemovedStatements';
+import { SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
+import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
 import { ReviewSourceReader, type ReaderRequest } from '@/features/learning/lessons/review/ReviewSourceReader';
 import { isTeachingWaiting, TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
@@ -73,6 +75,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const [narrowView, setNarrowView] = useState<'queue' | 'claim'>('queue');
 
   const { review, active, ordered, waiting, groups } = session;
+  const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
   const jobActive = currentPreparationJobs(plan.data?.jobs ?? []).some((job) => (job.status === 'pending' || job.status === 'running') && job.activity?.lessonTitle === lessonTitle);
   const teachingWaiting = review?.teachingFindings.filter(isTeachingWaiting).length ?? 0;
@@ -204,14 +207,26 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     resolved={session.resolved}
     teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}
     removedCount={session.removed.reduce((sum, entry) => sum + entry.statements.length, 0)} removedActive={session.removedActive}
-    onOpenRemoved={() => { session.openRemoved(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
+    onOpenRemoved={() => { session.openRemoved(); if (narrow) setNarrowView('claim'); }} busy={session.acting} selection={selection} />;
+  const chosen = ordered.filter((claim) => selection.isSelected(claim.claimId));
+  const runBatch = async (kind: 'confirm' | 'remove') => { if (await session.runMany(chosen, kind)) selection.clear(); };
+  const hintOf = (verb: 'accepted' | 'removed', action: 'confirm' | 'remove') => (chosen.some((claim) => !claim.availableActions.includes(action)) ? cannotHere(verb) : undefined);
+  const needsNote = chosen.some(confirmNeedsNote);
+  const acceptHint = hintOf('accepted', 'confirm') ?? (needsNote ? NEEDS_NOTE_HINT : undefined);
+  const removeHint = hintOf('removed', 'remove');
+  const selectionBar = <SelectionBar count={chosen.length} noun={['statement', 'statements']} busy={session.acting} onClear={selection.clear}
+    actions={[
+      { label: 'Accept', onClick: () => void runBatch('confirm'), disabled: Boolean(acceptHint), hint: acceptHint },
+      { label: 'Remove', onClick: () => void runBatch('remove'), disabled: Boolean(removeHint), hint: removeHint, tone: 'danger' },
+    ]} />;
+  const queueWithBar = <>{queue}{selectionBar}</>;
 
   return (
     <div ref={rootRef} {...drop.handlers} className={`relative flex h-full min-h-0 flex-col bg-background ${drop.dragging ? 'ring-2 ring-inset ring-accent' : ''}`}>
       {header}
       {/* Always in the tree, so the first announcement is not lost. */}
-      <div className={session.message ? 'flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-2 text-sm text-text-secondary sm:px-6' : 'sr-only'}>
-        <p aria-live="polite" aria-atomic="true">{session.message}</p>
+      <div role="status" className={session.message ? 'flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-2 text-sm text-text-secondary sm:px-6' : 'sr-only'}>
+        <p>{session.message}</p>
         {session.undo && <Button type="button" size="sm" variant="outline" disabled={session.acting} onClick={() => void session.undoLast()} aria-keyshortcuts="U">Undo</Button>}
       </div>
       {drop.importing && <p role="status" className="px-4 py-2 text-xs text-text-secondary sm:px-6">Importing {drop.importing}…</p>}
@@ -225,11 +240,11 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
 
       {narrow ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-          {narrowView === 'queue' ? queue : <div className="rounded-2xl bg-surface p-4 shadow-sheet">{focus}</div>}
+          {narrowView === 'queue' ? queueWithBar : <div className="rounded-2xl bg-surface p-4 shadow-sheet">{focus}</div>}
         </div>
       ) : (
         <div className="grid min-h-0 flex-1 grid-cols-[minmax(15rem,20rem)_minmax(0,1fr)] gap-4 p-4 lg:grid-cols-[minmax(17rem,22rem)_minmax(0,1fr)] sm:p-6">
-          <div className="flex min-h-0 flex-col rounded-2xl bg-surface-raised p-2">{queue}</div>
+          <div className="flex min-h-0 flex-col rounded-2xl bg-surface-raised p-2">{queueWithBar}</div>
           <div className="min-h-0 overflow-y-auto rounded-2xl bg-surface p-5 shadow-sheet sm:p-6">{focus}</div>
         </div>
       )}

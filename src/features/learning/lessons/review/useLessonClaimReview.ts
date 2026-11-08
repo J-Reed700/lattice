@@ -58,6 +58,25 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
   });
 }
 
+export type ResolveManyVariables = { claimIds: string[]; action: ClaimActionRequestDto; expectedRevision: number };
+
+/**
+ * One action on many claims through `resolve_learning_claims`: all of them or
+ * none, with one revision. The review reloads after success and after a
+ * refusal.
+ */
+export function useResolveLearningClaims(programId: string, lessonId: string) {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation<ResolveLearningClaimResultDto, Error, ResolveManyVariables>({
+    retry: false,
+    mutationFn: async ({ claimIds, action, expectedRevision }) => unwrap(await api.resolveLearningClaims({
+      programId, lessonId, claimIds, action, expectedRevision, operationId: operationId(),
+    })),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
+  });
+}
+
 /**
  * "Keep as written" on a teaching finding: it stops waiting for the user;
  * the review reloads either way.

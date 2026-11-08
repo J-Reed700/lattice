@@ -318,6 +318,16 @@ export function trustedAnnouncement(title: string, verified: number, stillWaitin
   return `Trusted ${title} for this course: ${plural(verified, 'claim', 'claims')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;
 }
 
+// ── Many statements at once ─────────────────────────────────────────────────
+
+export const SELECT_STATEMENT = 'Select this statement';
+export const selectAll = (count: number) => `Select all ${count}`;
+export const SELECT_NONE = 'Select none';
+export const NEEDS_NOTE_HINT = 'Some of these need a note. Accept them one at a time.';
+export const cannotHere = (verb: 'accepted' | 'removed') => `Some of these can't be ${verb} here.`;
+export const batchDone = (action: 'confirm' | 'remove', count: number) => `${action === 'confirm' ? 'Accepted' : 'Removed'} ${statementsCount(count)}.`;
+export const batchUndone = (count: number) => (count === 1 ? 'Undone. 1 statement waits for you again.' : `Undone. ${count} statements wait for you again.`);
+
 // ── Adding a source (§4.6) ──────────────────────────────────────────────────
 
 export function addSourceTitle(scope: 'claim' | 'group' | 'queue', count: number): string {
