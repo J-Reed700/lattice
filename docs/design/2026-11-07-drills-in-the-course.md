@@ -79,11 +79,15 @@ passages until lessons are prepared. Everything in a brief is data, never instru
 - **The writer** gets the brief instead of a domain. It writes realistic code in which the lesson's ideas are at work,
   used correctly. `DOMAINS`, `next_domain`, `least_recently_used` and `domain_uses` are removed.
 - **Two kinds of planted issue.** A drill of n issues (3, 4 or 5, by size):
-  - **Lesson issues:** up to ⌈n/2⌉ defects that each break something the lesson teaches. Each cites the evidence it
-    breaks (`lessonSentences`: the evidence numbers) and names a catalogue pattern as its shape: the pattern its defect
-    is an instance of, which the key, the proof and grading need. The planter plants as many as the lesson really
-    supports, and none when the lesson teaches nothing code can show. A brief with no evidence asks for none: the
-    planter is told of lesson issues only when there is evidence to cite.
+  - **Lesson issues:** up to ⌈n/2⌉ defects that each break something the lesson teaches, so that a reviewer who knows
+    only the cited evidence can tell from it that the changed code is wrong. Each cites the evidence it breaks
+    (`lessonSentences`: the evidence numbers) and names a catalogue pattern as its shape: the pattern its defect is an
+    instance of, which the key, the proof and grading need. The code was written so the lesson is at work in it.
+    Before its changes, the planter says in `lessonUse` where the code does what the evidence teaches, with the
+    evidence numbers. It plants the lesson issues first, one at each such place, up to ⌈n/2⌉: fewer only when the code
+    does fewer of those things, none only when it does none. `lessonSentences` comes first in each change, and
+    `lessonUse` before the changes. A brief with no evidence asks for none: the planter is told of lesson issues only
+    when there is evidence to cite.
   - **Catalogue issues:** the other n − i: one for each of the first patterns of the schedule's ranking (§5) that no
     lesson issue has, in order. A lesson issue may take a pattern of the ranking, and every issue is of a different
     pattern, so the catalogue issues then take the next pattern instead.

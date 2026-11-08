@@ -56,6 +56,8 @@ struct Proposed {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Proposals {
+    #[serde(default, rename = "lessonUse")]
+    _lesson_use: String,
     mutations: Vec<Proposed>,
 }
 
@@ -104,27 +106,6 @@ fn schema(rules: &Rules<'_>) -> Value {
         .map(|pattern| pattern.id)
         .collect();
     let mut properties = Map::new();
-    properties.insert("pattern".into(), json!({"type": "string", "enum": ids}));
-    properties.insert("path".into(), path_schema(rules.files));
-    properties.insert("before".into(), text_schema());
-    properties.insert("after".into(), text_schema());
-    properties.insert("severity".into(), severity_schema());
-    properties.insert("consequence".into(), text_schema());
-    properties.insert("explanation".into(), text_schema());
-    let mut required = vec![
-        "pattern",
-        "path",
-        "before",
-        "after",
-        "severity",
-        "consequence",
-        "explanation",
-    ];
-    if asks_verification {
-        properties.insert("killingTest".into(), json!({"type": "string"}));
-        properties.insert("noTestBecause".into(), json!({"type": "string"}));
-        required.extend(["killingTest", "noTestBecause"]);
-    }
     if lesson {
         properties.insert(
             "lessonSentences".into(),
@@ -133,25 +114,61 @@ fn schema(rules: &Rules<'_>) -> Value {
                 "items": {"type": "integer", "minimum": 1, "maximum": rules.evidence}
             }),
         );
-        required.push("lessonSentences");
     }
+    properties.insert("pattern".into(), json!({"type": "string", "enum": ids}));
+    properties.insert("path".into(), path_schema(rules.files));
+    properties.insert("before".into(), text_schema());
+    properties.insert("after".into(), text_schema());
+    properties.insert("severity".into(), severity_schema());
+    properties.insert("consequence".into(), text_schema());
+    properties.insert("explanation".into(), text_schema());
+    let mut required = if lesson {
+        vec!["lessonSentences"]
+    } else {
+        Vec::new()
+    };
+    required.extend([
+        "pattern",
+        "path",
+        "before",
+        "after",
+        "severity",
+        "consequence",
+        "explanation",
+    ]);
+    if asks_verification {
+        properties.insert("killingTest".into(), json!({"type": "string"}));
+        properties.insert("noTestBecause".into(), json!({"type": "string"}));
+        required.extend(["killingTest", "noTestBecause"]);
+    }
+    let mut top = Map::new();
+    if lesson {
+        top.insert("lessonUse".into(), json!({"type": "string"}));
+    }
+    top.insert(
+        "mutations".into(),
+        json!({
+            "type": "array",
+            "minItems": targets.len(),
+            "maxItems": targets.len(),
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": required,
+                "properties": properties
+            }
+        }),
+    );
+    let top_required: &[&str] = if lesson {
+        &["lessonUse", "mutations"]
+    } else {
+        &["mutations"]
+    };
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["mutations"],
-        "properties": {
-            "mutations": {
-                "type": "array",
-                "minItems": targets.len(),
-                "maxItems": targets.len(),
-                "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": required,
-                    "properties": properties
-                }
-            }
-        }
+        "required": top_required,
+        "properties": top
     })
 }
 
