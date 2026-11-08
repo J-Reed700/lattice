@@ -93,7 +93,7 @@ fn proven(verdict: ProofVerdict) -> (Proof, Mutation, Trail) {
             proof,
             mutation,
             trail,
-        } => (proof, mutation, trail),
+        } => (proof, *mutation, trail),
         ProofVerdict::Unproven { why, .. } => panic!("unproven: {why}"),
     }
 }

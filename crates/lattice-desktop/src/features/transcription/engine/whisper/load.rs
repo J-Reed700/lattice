@@ -43,8 +43,10 @@ fn read_mel_filters(dir: &Path, model_id: &str, num_mel_bins: usize) -> Result<V
     };
 
     let filters: Vec<f32> = bytes
-        .chunks_exact(4)
-        .filter_map(|chunk| <[u8; 4]>::try_from(chunk).ok().map(f32::from_le_bytes))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| f32::from_le_bytes(*chunk))
         .collect();
 
     let expected = num_mel_bins * MEL_FILTER_WIDTH;

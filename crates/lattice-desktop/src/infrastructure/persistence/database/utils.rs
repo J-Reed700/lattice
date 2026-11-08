@@ -47,14 +47,11 @@ impl DatabaseUtils {
 
     /// Deserialize embedding from BLOB storage
     pub fn deserialize_embedding(blob: &[u8], dimension: usize) -> Result<Vec<f32>> {
-        blob.chunks_exact(4)
+        blob.as_chunks::<4>()
+            .0
+            .iter()
             .take(dimension)
-            .map(|bytes| {
-                let arr: [u8; 4] = bytes.try_into().map_err(|e| {
-                    AppError::Database(format!("Failed to deserialize embedding bytes: {:?}", e))
-                })?;
-                Ok(f32::from_le_bytes(arr))
-            })
+            .map(|bytes| Ok(f32::from_le_bytes(*bytes)))
             .collect()
     }
 

@@ -89,7 +89,7 @@ async fn verifier_audit_dto(
     let (consent_required_for, blocked) = match &verifier {
         None => (
             None,
-            Some(AuditStop::NoVerifier.message(None)).filter(|_| setting.on),
+            setting.on.then(|| AuditStop::NoVerifier.message(None)),
         ),
         Some(model) => {
             let required = match model {

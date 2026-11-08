@@ -255,7 +255,7 @@ async fn with_no_drill_ready_a_build_is_queued_and_the_learner_is_told() -> Resu
     let StartedCodeReviewDto::Building { job_id } = &started.dto else {
         panic!("none was ready");
     };
-    assert_eq!(started.jobs, [job_id.clone()]);
+    assert_eq!(started.jobs, std::slice::from_ref(&job_id));
     assert_eq!(
         serde_json::to_value(&started.dto).expect("a DTO is JSON"),
         json!({"status": "building", "jobId": job_id})

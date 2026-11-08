@@ -262,10 +262,7 @@ pub(super) fn decode_text_bytes(bytes: Vec<u8>, path: &std::path::Path) -> Strin
 }
 
 fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
-    let units = bytes.chunks_exact(2).filter_map(|pair| match *pair {
-        [lo, hi] => Some(unit([lo, hi])),
-        _ => None,
-    });
+    let units = bytes.as_chunks::<2>().0.iter().map(|pair| unit(*pair));
     char::decode_utf16(units)
         .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
         .collect()

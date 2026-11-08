@@ -672,9 +672,10 @@ async fn embed_cached(
             let bytes = std::fs::read(path).ok()?;
             (bytes.len() == model.dimension() * 4).then(|| {
                 bytes
-                    .chunks_exact(4)
-                    .filter_map(|b| <[u8; 4]>::try_from(b).ok())
-                    .map(f32::from_le_bytes)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|b| f32::from_le_bytes(*b))
                     .collect()
             })
         })
