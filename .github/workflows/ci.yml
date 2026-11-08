@@ -181,7 +181,8 @@ jobs:
 
       - name: generated bindings are current
         working-directory: crates/lattice-desktop
-        run: cargo run --features bindings-export --bin export_bindings -- --check
+        shell: bash
+        run: ../../target/debug/export_bindings --check
 
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
