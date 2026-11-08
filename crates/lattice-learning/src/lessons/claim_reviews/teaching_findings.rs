@@ -92,6 +92,8 @@ pub struct TeachingFindingDto {
     /// Repairs that tried to settle it.
     pub repairs: u32,
     pub state: TeachingFindingStateDto,
+    /// Whether the user changed this section after the note was written.
+    pub part_changed: bool,
 }
 
 fn kind_dto(kind: FindingKind) -> TeachingFindingKindDto {
@@ -283,6 +285,7 @@ impl TeachingFindingsRepository {
                     } else {
                         TeachingFindingStateDto::Waiting
                     },
+                    part_changed: false,
                 })
             })
             .collect()

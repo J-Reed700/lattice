@@ -92,7 +92,7 @@ mod repair_loop;
 mod repair_request;
 mod repair_work;
 mod report;
-pub(crate) use report::{TakenOut, WrittenOver};
+pub(crate) use report::{Rewritten, TakenOut, WrittenOver};
 pub mod research;
 mod review_pass;
 mod round;

@@ -12,6 +12,8 @@ use sqlx::SqlitePool;
 const CLAIM_REVIEWS: i64 = 20_261_017_150_000;
 /// The migration that gave a teaching finding its summary.
 const TEACHING_SUMMARY: i64 = 20_261_107_010_000;
+/// The migration that told a teaching finding when its part was last changed.
+const PART_CHANGED: i64 = 20_261_107_020_000;
 
 fn migrator() -> Migrator {
     sqlx::migrate!("../lattice-desktop/migrations")
@@ -255,4 +257,51 @@ async fn a_teaching_finding_gets_a_summary_column_and_an_old_one_keeps_its_data(
     .await
     .unwrap();
     assert_eq!(kept, ("A note.".into(), Some("A passage.".into()), 2, None));
+}
+
+#[tokio::test]
+async fn a_teaching_finding_gets_a_part_changed_column_and_an_old_one_keeps_its_data() {
+    let migrator = migrator();
+    assert!(migrator.iter().any(|m| m.version == PART_CHANGED));
+    let pool = memory_pool().await;
+    {
+        let mut conn = pool.acquire().await.unwrap();
+        conn.ensure_migrations_table().await.unwrap();
+        for migration in migrator
+            .iter()
+            .filter(|m| m.version < PART_CHANGED && !m.migration_type.is_down_migration())
+        {
+            conn.apply(migration).await.unwrap();
+        }
+    }
+    exec(&pool, COURSE).await;
+    exec(
+        &pool,
+        &["INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, repairs, state, job_id, found_at, kept_at)            VALUES ('l1', 'teaching:section-0', 'teaching', 'section', 0, 'Section 1: Boiling', 'sha', 'A note.', 'What is wrong.', 'A passage.', 2, 'waiting', NULL, 1000, NULL)"],
+    )
+    .await;
+    let columns = "SELECT name FROM pragma_table_info('learning_lesson_teaching_findings')";
+    let before: Vec<String> = sqlx::query_scalar(columns).fetch_all(&pool).await.unwrap();
+    assert!(!before.contains(&"part_changed_at".to_owned()));
+
+    migrator.run(&pool).await.unwrap();
+
+    let after: Vec<String> = sqlx::query_scalar(columns).fetch_all(&pool).await.unwrap();
+    assert!(after.contains(&"part_changed_at".to_owned()), "{after:?}");
+    let kept: (String, String, Option<String>, i64, Option<i64>) = sqlx::query_as(
+        "SELECT note, summary, passage, repairs, part_changed_at FROM learning_lesson_teaching_findings WHERE finding_key = 'teaching:section-0'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept,
+        (
+            "A note.".into(),
+            "What is wrong.".into(),
+            Some("A passage.".into()),
+            2,
+            None
+        )
+    );
 }

@@ -108,6 +108,7 @@ export function teachingFinding(overrides: Partial<TeachingFindingDto> = {}): Te
     passageRole: 'lesson',
     repairs: 2,
     state: 'waiting',
+    partChanged: false,
     ...overrides,
   };
 }

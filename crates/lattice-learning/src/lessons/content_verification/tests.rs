@@ -573,6 +573,9 @@ mod claim_ledger_tests;
 #[path = "settle_published_tests.rs"]
 mod settle_published_tests;
 
+#[path = "edit_section_tests.rs"]
+mod edit_section_tests;
+
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
 

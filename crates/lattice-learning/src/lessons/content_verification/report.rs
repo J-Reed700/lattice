@@ -37,6 +37,19 @@ pub(crate) struct TakenOut<'a> {
     pub removed: &'a HashSet<String>,
 }
 
+/// The user's rewrite of one section of a published lesson: the claims that
+/// ended, and a claim for each sentence they wrote.
+pub(crate) struct Rewritten<'a> {
+    pub unit: usize,
+    pub new_title: &'a str,
+    pub new_body: &'a str,
+    /// The claims on text the user changed or deleted.
+    pub ended: &'a HashSet<String>,
+    /// Each sentence the user wrote, in text order, with its claim.
+    pub written: &'a [(&'a str, &'a ClaimId)],
+    pub at: i64,
+}
+
 /// Whether `finding` stood on the text at `range` of `old_body` in `unit`:
 /// its claim is in `claims`, or it names no claim and quotes that text.
 fn stood_on(
@@ -75,6 +88,9 @@ impl LessonVerificationReport {
         self.content_sha256 =
             digest(&json!([self.content_sha256, removal.unit, removal.new_body]).to_string());
     }
+
+    /// The report after the user rewrote a section.
+    pub(crate) fn rewritten(&mut self, _rewrite: &Rewritten<'_>) {}
 
     /// The report after the user's sentence took the place of the text the
     /// findings in `edit.replaced` stood on: one finding for the user's

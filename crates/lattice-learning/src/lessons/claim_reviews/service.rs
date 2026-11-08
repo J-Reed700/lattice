@@ -25,6 +25,9 @@ use super::repository::{
     append_in, bump_revision, check_revision, revision_conflict, ClaimReviewRepository,
 };
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
+
+mod section_edit;
+pub use section_edit::{SectionEdit, SectionEditOutcome};
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;

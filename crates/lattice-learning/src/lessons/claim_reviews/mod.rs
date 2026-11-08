@@ -18,6 +18,9 @@ mod published_edit;
 mod published_remove;
 #[cfg(test)]
 mod published_remove_tests;
+mod published_rewrite;
+#[cfg(test)]
+mod published_rewrite_tests;
 pub mod recheck;
 pub mod repository;
 pub mod service;
