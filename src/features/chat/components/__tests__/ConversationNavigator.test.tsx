@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationNavigator } from '@/features/chat/components/ConversationNavigator';
@@ -15,6 +15,8 @@ const getKey = (message: ConversationMessage | OptimisticMessage) => 'id' in mes
 
 const ROW_HEIGHT = 60;
 const VIEWPORT = 300;
+/** @tanstack/virtual-core's default `isScrollingResetDelay`. */
+const VIRTUALIZER_SCROLL_END_MS = 150;
 
 /**
  * A list that scrolls as in a browser: `scrollTo` moves it at once, and the scroll event comes with the next frame,
@@ -46,7 +48,13 @@ describe('ConversationNavigator', () => {
     vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(240);
     HTMLElement.prototype.scrollTo = vi.fn();
   });
-  afterEach(() => vi.restoreAllMocks());
+  // A scroll leaves the virtualizer's 150 ms scroll-end timer running past unmount; it has to fire while jsdom's
+  // window is still there, not after the file's last test.
+  afterEach(async () => {
+    cleanup();
+    await new Promise((resolve) => setTimeout(resolve, VIRTUALIZER_SCROLL_END_MS));
+    vi.restoreAllMocks();
+  });
 
   it('steps between messages and offers a separate jump to the end', () => {
     const onNavigate = vi.fn();
