@@ -10,6 +10,7 @@ use crate::features::learning::drills::build::{
     CleanCode, DroppedMutation, LessonCheck, LessonChecked, Proved, Trail,
 };
 use crate::features::learning::drills::repository::{self, DrillStatus, StoredDrill};
+use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobOutcome, JobStatus};
@@ -287,7 +288,16 @@ async fn stored_with(
     proved: Proved,
     checked: LessonChecked,
 ) -> Result<(Harness, StoredDrill)> {
-    let (harness, spec) = Harness::lesson().await?;
+    stored_on(Harness::lesson().await?, code, proved, checked).await
+}
+
+/// [`stored_with`] on the harness of a build of `spec`.
+async fn stored_on(
+    (harness, spec): (Harness, DrillSpec),
+    code: CleanCode,
+    proved: Proved,
+    checked: LessonChecked,
+) -> Result<(Harness, StoredDrill)> {
     let (model, grader, runner) = (
         ScriptedModel::new([]),
         FakeGrader::failing("unused"),
@@ -385,6 +395,40 @@ async fn a_drill_whose_clean_stage_has_no_basis_records_nothing() -> Result<()> 
     );
     let (harness, stored) = stored_with(code(), lesson_proved(&[1], &[]), checked).await?;
     assert!(stored.drill.key[0].lesson.is_some());
+    assert!(fits_of(&harness, "code").await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_drill_whose_lesson_is_gone_by_the_store_is_stored_without_it_and_records_no_fit(
+) -> Result<()> {
+    let (harness, spec) = Harness::lesson().await?;
+    let gone = sqlx::query("DELETE FROM learning_lessons WHERE program_id=? AND id=?")
+        .bind(spec.program_id.as_deref())
+        .bind(spec.lesson_id.as_deref())
+        .execute(&harness.pool)
+        .await
+        .map_err(db)?;
+    assert_eq!(gone.rows_affected(), 1);
+    let checked = LessonChecked {
+        links: vec![lesson_brief().link(&[1]), None],
+        checks: vec![check_of("planted-1", &[1], true)],
+    };
+    let program_id = spec.program_id.clone();
+    let (harness, stored) = stored_on(
+        (harness, spec),
+        with_basis(),
+        lesson_proved(&[1], &[]),
+        checked,
+    )
+    .await?;
+    let course: (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT program_id,lesson_id FROM learning_drills WHERE id=?")
+            .bind(&stored.drill.id)
+            .fetch_one(&harness.pool)
+            .await
+            .map_err(db)?;
+    assert_eq!(course, (program_id, None));
     assert!(fits_of(&harness, "code").await?.is_empty());
     Ok(())
 }
