@@ -269,6 +269,8 @@ jobs:
       - name: Fetch verified published sidecars
         if: ${{ !matrix.intel }}
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
       - name: Build and execute Intel sidecar candidate
         if: matrix.intel
