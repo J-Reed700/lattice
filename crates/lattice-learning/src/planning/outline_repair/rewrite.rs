@@ -83,6 +83,7 @@ fn preserve_identities(
 pub(super) fn preserve_valid_citations(
     before: &Value,
     after: &mut Value,
+    _origins: &[Option<usize>],
     sources: &[LearningSourceDto],
     receipts: &CitationReceipts,
     model: &str,
@@ -134,7 +135,7 @@ pub(super) fn preserve_valid_citations(
 // A rewrite may keep a citation it was given, never introduce one. Any item
 // whose citation differs from what the module had loses it; the citation
 // check then has nothing new to judge.
-pub(super) fn strip_new_citations(before: &Value, after: &mut Value) {
+pub(super) fn strip_new_citations(before: &Value, after: &mut Value, _origins: &[Option<usize>]) {
     let clear = |field: &mut Value| {
         if let Some(object) = field.as_object_mut() {
             object.insert("sourceIndex".into(), Value::Null);
@@ -163,6 +164,27 @@ pub(super) fn strip_new_citations(before: &Value, after: &mut Value) {
     }
 }
 
+/// The repair's answer schema around the module schema.
+pub(super) fn repair_schema(module_schema: Value, _existing: usize) -> Value {
+    json!({"type":"object","additionalProperties":false,"required":["module"],"properties":{"module":module_schema}})
+}
+
+/// Each answer lesson's origin: the position of the existing lesson it
+/// revises, or `None` for a new one. Strips `from` from the answer.
+pub(super) fn lesson_origins(_module: &mut Value, _existing: usize) -> Result<Vec<Option<usize>>> {
+    Ok(vec![])
+}
+
+/// Make the draft's bindings and open findings follow the module's new
+/// lesson order.
+pub(super) fn follow_new_order(
+    _draft: &mut OutlineDraft,
+    _index: usize,
+    _origins: &[Option<usize>],
+    _module: &LearningModuleDto,
+) {
+}
+
 /// Rewrite one module for its listed findings and save the correction.
 pub(super) async fn rewrite_module(
     repo: &LearningRepository,
@@ -184,7 +206,11 @@ pub(super) async fn rewrite_module(
         .pointer("/properties/modules/items")
         .cloned()
         .ok_or_else(|| AppError::InternalError("Missing module schema".into()))?;
-    let repair_schema = json!({"type":"object","additionalProperties":false,"required":["module"],"properties":{"module":module_schema}});
+    let existing = module
+        .get("lessons")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let repair_schema = repair_schema(module_schema, existing);
     let title = module
         .get("title")
         .and_then(Value::as_str)
@@ -209,14 +235,16 @@ pub(super) async fn rewrite_module(
     // problem named. `None` is a valid answer that changes nothing.
     let accept = |raw: &str| -> Result<Option<(Value, Vec<LearningModuleDto>)>> {
         let mut repair: Repair = generation::parse_json(raw)?;
+        let origins = lesson_origins(&mut repair.module, existing)?;
         preserve_valid_citations(
             &module,
             &mut repair.module,
+            &origins,
             sources,
             &draft.citation_receipts,
             llm.model_name(),
         );
-        strip_new_citations(&module, &mut repair.module);
+        strip_new_citations(&module, &mut repair.module, &origins);
         if repair.module == module {
             return Ok(None);
         }
@@ -264,6 +292,9 @@ pub(super) async fn rewrite_module(
         Err(error) => return Err(error),
     };
     draft.candidate = candidate;
+    if let Some(saved) = modules.get(index) {
+        follow_new_order(draft, index, &[], saved);
+    }
     program.modules = modules;
     let log = outline_linking::link(llm, draft, sources, Some(index), progress).await?;
     draft.record_citations(log);

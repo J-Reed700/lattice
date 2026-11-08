@@ -77,6 +77,27 @@ pub(crate) fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequ
         course_depth: Some(depth),
     }
 }
+/// A repair answer whose lessons revise the existing lessons at `froms`
+/// (`None` for a new lesson), in answer order.
+pub(crate) fn repair_answer_with(
+    mut module: serde_json::Value,
+    froms: &[Option<usize>],
+) -> serde_json::Value {
+    if let Some(lessons) = module["lessons"].as_array_mut() {
+        for (lesson, from) in lessons.iter_mut().zip(froms) {
+            lesson["from"] = json!(from);
+        }
+    }
+    json!({"module":module})
+}
+
+/// A repair answer that keeps every lesson of `module` where it is.
+pub(crate) fn repair_answer(module: serde_json::Value) -> serde_json::Value {
+    let count = module["lessons"].as_array().map_or(0, Vec::len);
+    let froms: Vec<_> = (0..count).map(Some).collect();
+    repair_answer_with(module, &froms)
+}
+
 pub(crate) fn outline(modules: usize, lessons: usize) -> Model {
     Model(json!({"modules":(0..modules).map(|m| json!({
         "title":format!("Experimental design module {m}"),
