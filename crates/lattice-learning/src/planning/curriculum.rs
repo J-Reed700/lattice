@@ -164,7 +164,19 @@ pub enum LearningGenerationJobStatus {
     Interrupted,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    specta::Type,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningGenerationPhase {
     #[default]
@@ -192,6 +204,10 @@ pub struct LearningGenerationStep {
 #[serde(rename_all = "camelCase")]
 pub struct LearningGenerationActivity {
     pub phase: LearningGenerationPhase,
+    /// The furthest phase this lesson's preparation has reached. A repaired
+    /// draft goes back through earlier phases; its progress stays here.
+    #[serde(default)]
+    pub reached: LearningGenerationPhase,
     pub phase_started_at: i64,
     pub last_activity_at: i64,
     pub last_checkpoint_at: Option<i64>,

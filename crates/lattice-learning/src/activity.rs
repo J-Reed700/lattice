@@ -328,4 +328,37 @@ mod tests {
             "Researching unresolved statements"
         );
     }
+
+    #[test]
+    fn a_check_the_repaired_draft_goes_back_through_is_named_as_that() {
+        use LearningGenerationPhase as Phase;
+        let detail = |phase, reached| {
+            let job = running_preparation(LearningGenerationActivity {
+                phase,
+                reached,
+                ..Default::default()
+            });
+            lesson_item(&job, &HashMap::new(), &HashMap::new()).detail
+        };
+        assert_eq!(
+            detail(Phase::Review, Phase::Repair).as_deref(),
+            Some("Checking the repaired draft again")
+        );
+        assert_eq!(
+            detail(Phase::Coverage, Phase::Repair).as_deref(),
+            Some("Checking the repaired draft again")
+        );
+        assert_eq!(
+            detail(Phase::Evidence, Phase::Repair).as_deref(),
+            Some("Verifying factual statements")
+        );
+        assert_eq!(
+            detail(Phase::Repair, Phase::Repair).as_deref(),
+            Some("Repairing the draft")
+        );
+        assert_eq!(
+            detail(Phase::Review, Phase::Review).as_deref(),
+            Some("Reviewing teaching and assessments")
+        );
+    }
 }
