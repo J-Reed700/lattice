@@ -4,15 +4,19 @@
 //! as the explanation, so that each sentence of it has something of its own to say. Of the places the first page of
 //! hits overlaps, the one no drill of the course was built on that carries the most of the search's term weight
 //! comes first, a tie going to the better-ranked hit; once every one was, the one whose latest drill is the oldest.
-//! A prepared lesson draws only on the sources its blocks cite.
+//! Before the place that comes first is taken, the passage check asks the model whether it teaches the lesson; a place
+//! it turns down gives way to the next in the same order, and a verdict stored for the lesson on the same basis is not
+//! asked for again. A prepared lesson draws only on the sources its blocks cite.
 
+use super::teaches;
 use crate::drills::build::SourcePassage;
 use crate::drills::lesson::LessonContext;
 use crate::drills::repository;
 use crate::dto::LearningSourceDto;
-use crate::persistence::db;
+use crate::persistence::{db, now};
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::source_library::LearningSourceLibraryRepository;
+use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::segmentation::{
     flowed_sentences, Boundaries, Break, Flowed, Span, Strength,
@@ -22,16 +26,25 @@ use sqlx::SqlitePool;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
+/// What the pick came to: the passage, if a place teaches the lesson, and how many places the check was asked about.
+pub(super) struct Picked {
+    pub(super) passage: Option<SourcePassage>,
+    pub(super) asked: usize,
+}
+
 /// The passage the next drill of the lesson of `context` explains, sized for an explanation of `wanted` sentences:
 /// of the places the page of hits overlaps, the one no drill of the course was built on that carries the most of the
-/// search's term weight, or, once every one was, the one whose latest drill is the oldest. The ranking is read a page
-/// at a time, deeper only while every passage of the page was drilled. `None` when the lesson's sources hold nothing
-/// for it.
+/// search's term weight, or, once every one was, the one whose latest drill is the oldest. The passage check is asked
+/// whether that place teaches the lesson, unless a verdict for it is stored on the lesson's current basis; a place it
+/// turns down gives way to the next in the same order. The ranking is read a page at a time, deeper only while every
+/// passage of the page was drilled or turned down. `passage` is `None` when no place of the lesson's sources teaches
+/// it.
 pub(super) async fn pick(
     pool: &SqlitePool,
+    llm: &dyn LLMPort,
     context: &LessonContext,
     wanted: u32,
-) -> Result<Option<SourcePassage>> {
+) -> Result<Picked> {
     let owners = owners(pool, &context.program_id).await?;
     let owner = |version: &str| -> String {
         owners
@@ -52,7 +65,10 @@ pub(super) async fn pick(
         .filter(|source| !context.prepared || cited.contains(&owner(&source.id)))
         .collect();
     if sources.is_empty() {
-        return Ok(None);
+        return Ok(Picked {
+            passage: None,
+            asked: 0,
+        });
     }
     let drilled = repository::drilled_passages(pool, &context.program_id).await?;
     let wanted = usize::try_from(wanted).unwrap_or(usize::MAX);
@@ -61,18 +77,84 @@ pub(super) async fn pick(
     let weights = collection.term_weights(&query).await?;
     let mut split: HashMap<&str, Vec<Span>> = HashMap::new();
     let mut made: HashMap<(&str, usize), Option<Candidate>> = HashMap::new();
+    let basis = teaches::basis(context)?;
+    let mut verdicts = teaches::stored(pool, context, &basis).await?;
+    let mut asked = 0;
     let mut depth = FIRST_PAGE;
+    let mut hits = collection.retrieve(&query, depth).await?;
     loop {
-        let hits = collection.retrieve(&query, depth).await?;
-        let best = best_on_page(
-            &hits, &sources, &mut split, &mut made, &weights, &drilled, wanted,
-        );
+        let best = {
+            let turned_down = turned_down(&verdicts);
+            best_on_page(
+                &hits,
+                &sources,
+                &mut split,
+                &mut made,
+                &weights,
+                &drilled,
+                &turned_down,
+                wanted,
+            )
+        };
         let unused = best.as_ref().is_some_and(|(key, _)| key.0.is_none());
-        if unused || hits.len() < depth {
-            return Ok(best.map(|(_, passage)| passage));
+        if !unused && hits.len() >= depth {
+            depth = depth.saturating_mul(2);
+            hits = collection.retrieve(&query, depth).await?;
+            continue;
         }
-        depth = depth.saturating_mul(2);
+        let Some((_, passage)) = best else {
+            return Ok(Picked {
+                passage: None,
+                asked,
+            });
+        };
+        let place = (
+            passage.version_id.clone(),
+            passage.start_byte,
+            passage.end_byte,
+        );
+        if verdicts.get(&place) == Some(&true) {
+            return Ok(Picked {
+                passage: Some(passage),
+                asked,
+            });
+        }
+        let taught = teaches::ask(llm, context, &passage).await?;
+        asked += 1;
+        teaches::record(
+            pool,
+            context,
+            &passage,
+            &basis,
+            &taught,
+            llm.model_name(),
+            now(),
+        )
+        .await?;
+        if taught.teaches {
+            return Ok(Picked {
+                passage: Some(passage),
+                asked,
+            });
+        }
+        verdicts.insert(place, false);
     }
+}
+
+/// The spans the passage check turned down, by the version they are in.
+fn turned_down(
+    verdicts: &HashMap<(String, usize, usize), bool>,
+) -> HashMap<&str, Vec<(usize, usize)>> {
+    let mut spans: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    for ((version, start, end), teaches) in verdicts {
+        if !teaches {
+            spans
+                .entry(version.as_str())
+                .or_default()
+                .push((*start, *end));
+        }
+    }
+    spans
 }
 
 /// How many passages of the ranking the first page holds; each further page doubles it.
@@ -116,8 +198,9 @@ struct Candidate {
 
 /// The best candidate among the places the ranked `hits` overlap, every hit of the page weighed: of the places no drill
 /// used, the one carrying the most of the search's term weight, a tie going to the better-ranked hit and then to the
-/// lower place. The places of each source are kept in `split`, and each place's candidate in `made`, across pages, so
-/// each is made once per pick.
+/// lower place. A candidate whose span is among the `turned_down` ones, by version, is skipped. The places of each
+/// source are kept in `split`, and each place's candidate in `made`, across pages, so each is made once per pick.
+#[allow(clippy::too_many_arguments)]
 fn best_on_page<'a>(
     hits: &[ReferencePassage],
     sources: &'a [LearningSourceDto],
@@ -125,6 +208,7 @@ fn best_on_page<'a>(
     made: &mut HashMap<(&'a str, usize), Option<Candidate>>,
     weights: &HashMap<String, f64>,
     drilled: &[SourcePassage],
+    turned_down: &HashMap<&str, Vec<(usize, usize)>>,
     wanted: usize,
 ) -> Option<(Key, SourcePassage)> {
     let mut best: Option<(Key, SourcePassage)> = None;
@@ -145,6 +229,12 @@ fn best_on_page<'a>(
             else {
                 continue;
             };
+            if turned_down
+                .get(source.id.as_str())
+                .is_some_and(|spans| spans.contains(&(start, end)))
+            {
+                continue;
+            }
             let latest_use = drilled
                 .iter()
                 .enumerate()

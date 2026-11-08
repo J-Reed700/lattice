@@ -125,10 +125,18 @@ while a list item, table row or heading is a unit of its own, so a hard-wrapped 
 unwrapped one. Of the places the first page of hits overlaps, the pick is the one no drill has used that holds the most
 of the search's term weight; a tie goes to the better-ranked hit. When the first page holds none unused, the next, twice
 as deep, is read. Once all have been used, it is the one used longest ago, because drilling a lesson again on the same
-passage is the point of relearning. The explanation is written with the lesson's title as its topic. Clean review,
+passage is the point of relearning. Before a place is explained, the passage check asks the model whether it teaches the
+lesson: whether most of what it says, links, navigation and notices left out, teaches a part of the subject the lesson's
+title names, as facts, definitions, how something works, comparisons, figures, steps, rules or advice. It need not cover
+the whole lesson. A place about a course rather than its subject (a request for a course, instructions to a model, an
+outline, a list of topics that names them without teaching them), boilerplate, or a place mostly about something else is
+turned down, and the next place in the same order is asked about. Term weight alone favours exactly those: a list of a
+course's topics holds more of a lesson's words than a paragraph that explains one. A verdict is stored for the lesson
+with its basis, the check's text and the lesson's module, title and objective, so a place is asked about once for a
+lesson until one of them changes. The explanation is written with the lesson's title as its topic. Clean review,
 planting and the source check are unchanged, except that the source check shows the checker the passage's sentences as
-flowed text too. If the sources hold no passage for the lesson, that build fails with the reason, and the lesson is
-recorded as having nothing to drill from in passages (§7).
+flowed text too. If the sources hold no passage that teaches the lesson, that build fails with the reason, and the
+lesson is recorded as having nothing to drill from in passages (§7).
 
 ## 5. What comes back when: two schedules
 
@@ -179,7 +187,7 @@ al., 2008).
 
 ## 7. Persistence
 
-One migration:
+Two migrations. The first:
 - `learning_drills.lesson_id TEXT REFERENCES learning_lessons(id) ON DELETE SET NULL`, with an index for the shelf:
   `(program_id, material, language, status, created_at)`. It replaces the bank's older indexes by language, by course
   and by program. The domain-use index goes with `DOMAINS`, and an index on `lesson_id` serves deleting a lesson.
@@ -198,6 +206,10 @@ One migration:
     active source versions, which a prepared lesson's passages come from too. A record whose basis no longer matches
     is ignored. So preparing the lesson or changing a source asks the question again, and no retrieval runs to find
     that out.
+
+The second adds `learning_drill_passage_checks(program_id, lesson_id, version_id, start_byte, end_byte, basis, teaches,
+reason, model, checked_at)`: the passage check's verdict on a passage for a lesson (§4), one per lesson and passage,
+replaced by a new verdict, and gone with the course, the lesson or the source version.
 
 `DrillSpec` gets `lesson_id`. `patterns` becomes the ranked catalogue targets, n of them. The most lesson issues to
 plant, ⌈n/2⌉ for code and 0 for a passage, is derived from them (`lesson_issues()`), so no spec stores it.
