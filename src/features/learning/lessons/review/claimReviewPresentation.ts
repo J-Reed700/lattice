@@ -81,7 +81,19 @@ export type TakenOutSentence = {
   key: string;
   sentence: string;
   statements: Array<{ claimId: string; statement: string; why: string }>;
+  /** The claim a put back is made on, when one of them can be put back. */
+  claimId: string | null;
+  /** Whether the ledger knows where the sentence was. */
+  place: 'known' | 'choose';
 };
+
+/** A sentence the machine rewrote, with the claim its original is restored on. */
+export type RewrittenSentence = { claimId: string; original: string; rewrite: string; why: string | null };
+
+export function rewrittenSentences(claims: ClaimReviewItemDto[]): RewrittenSentence[] {
+  return claims.flatMap((claim) => (claim.rewritten && claim.availableActions.includes('restore_original')
+    ? [{ claimId: claim.claimId, original: claim.rewritten.original, rewrite: claim.rewritten.rewrite, why: claim.rewritten.why }] : []));
+}
 
 /** The machine's removals, a sentence several statements stood on listed once, naming each of them. */
 export function takenOutSentences(claims: ClaimReviewItemDto[]): TakenOutSentence[] {
@@ -90,8 +102,12 @@ export function takenOutSentences(claims: ClaimReviewItemDto[]): TakenOutSentenc
     const { unitIndex, field } = claim.location;
     const { sentence, statement } = claim.presentation;
     const key = `${unitIndex}:${field}:${sentence}`;
-    const entry = sentences.get(key) ?? { key, sentence, statements: [] };
+    const entry = sentences.get(key) ?? { key, sentence, statements: [], claimId: null, place: 'known' as const };
     entry.statements.push({ claimId: claim.claimId, statement, why: removalReason(claim) });
+    if (entry.claimId === null && claim.availableActions.includes('put_back')) {
+      entry.claimId = claim.claimId;
+      entry.place = claim.place === 'choose' ? 'choose' : 'known';
+    }
     sentences.set(key, entry);
   }
   return [...sentences.values()];

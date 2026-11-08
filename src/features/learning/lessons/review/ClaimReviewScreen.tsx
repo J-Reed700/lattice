@@ -179,7 +179,12 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const focus = (() => {
     if (!review) return <FocusMessage title="Not checked yet"><p>This lesson’s claims have not been checked yet. They appear here once preparation checks them.</p></FocusMessage>;
     if (review.state === 'stopped' && review.stopReason) return <FocusMessage title="Lesson preparation stopped"><StopReason reason={review.stopReason} /></FocusMessage>;
-    if (session.removedActive) return <RemovedStatements sentences={session.removed} />;
+    if (session.removedActive && sheetNode) return sheetNode;
+    if (session.removedActive) return <RemovedStatements sentences={session.removed} rewritten={session.rewritten} sections={review.sections}
+      busy={session.acting} error={session.error}
+      onPutBack={(claimIds, text, section) => void session.restore(claimIds, { action: 'put_back', text, section }, 'put_back')}
+      onRestore={(claimId) => void session.restore([claimId], { action: 'restore_original' }, 'restore_original')}
+      onAddSource={(claimId) => openSheet({ level: 'claim', claimIds: [claimId], others: [] })} />;
     if (session.teachingActive) return <TeachingFindings programId={programId} lessonId={lessonId} findings={review.teachingFindings}
       onKept={(remaining) => session.setMessage(`Kept as written. ${remaining > 0 ? teachingNotesForYou(remaining) : 'No teaching notes left.'}`)} />;
     if (active) return <ClaimInFocus ref={statementRef} programId={programId} item={active} position={position || 1} total={Math.max(ordered.length, 1)}
@@ -203,7 +208,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     onAcceptSource={(group) => acceptSource(group.claims[0]?.support ?? null)} onAddSource={openGroupSheet}
     resolved={session.resolved}
     teachingWaiting={teachingWaiting} teachingActive={session.teachingActive} onOpenTeaching={() => { session.openTeaching(); if (narrow) setNarrowView('claim'); }}
-    removedCount={session.removed.reduce((sum, entry) => sum + entry.statements.length, 0)} removedActive={session.removedActive}
+    removedCount={session.removed.reduce((sum, entry) => sum + entry.statements.length, 0)} rewrittenCount={session.rewritten.length} removedActive={session.removedActive}
     onOpenRemoved={() => { session.openRemoved(); if (narrow) setNarrowView('claim'); }} busy={session.acting} />;
 
   return (
