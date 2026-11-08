@@ -39,6 +39,8 @@ pub mod loaded_embedding_model;
 pub mod mention_repository_port;
 pub mod metrics_port;
 pub mod mock_embedding_port;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock_web_service;
 pub mod model_catalog;
 pub mod model_file_inspector;
 pub mod model_storage;
@@ -90,6 +92,8 @@ pub use corpus_listeners::{DocumentIndexObserver, SearchResultCachePort};
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use mock_web_service::MockWebService;
 mod document_filter;
 pub use document_filter::DocumentFilter;
 pub use embedding_index_binding::EmbeddingIndexBinding;

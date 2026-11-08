@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::rejection::{window_refusal, RequestSize};
 use super::{
     cancelled_error, AdmissionRequest, InferenceScheduler, PaceEstimator, Permit, ServerTokenizer,
     TokenEstimator,
@@ -24,6 +23,7 @@ use lattice_core::application::ports::llm_port::{
     tokens_for_chars, CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Pace,
     RequestLoad,
 };
+use lattice_core::application::ports::llm_port::{window_refusal, RequestSize};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::Result;
