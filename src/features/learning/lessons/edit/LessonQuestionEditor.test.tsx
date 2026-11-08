@@ -41,7 +41,7 @@ function show(question: Question = QUESTION) {
 
 const loaded = () => screen.findByRole('textbox', { name: 'Question' }) as Promise<HTMLTextAreaElement>;
 const choiceBox = (n: number) => screen.getByRole('textbox', { name: `Choice ${n}` }) as HTMLInputElement;
-const radios = () => screen.getAllByRole('radio', { name: 'Right answer' }) as HTMLInputElement[];
+const radios = () => screen.getAllByRole('radio', { name: /^Right answer: choice \d+$/ }) as HTMLInputElement[];
 const removes = () => screen.getAllByRole('button', { name: 'Remove' });
 const saveButton = () => screen.getByRole('button', { name: 'Save' });
 const requests = () => api.edit.mock.calls.map(([request]) => request);
@@ -65,6 +65,18 @@ describe('LessonQuestionEditor', () => {
     expect(screen.getByText('No changes yet.')).toBeVisible();
     expect(saveButton()).toBeDisabled();
     expect(api.edit).not.toHaveBeenCalled();
+  });
+
+  it('labels each right-answer radio by its choice, and renumbers them when a choice goes', async () => {
+    show();
+    await loaded();
+    expect(radios().map((radio) => radio.getAttribute('aria-label'))).toEqual([
+      'Right answer: choice 1', 'Right answer: choice 2', 'Right answer: choice 3', 'Right answer: choice 4',
+    ]);
+    await userEvent.click(removes()[0]);
+    expect(radios().map((radio) => radio.getAttribute('aria-label'))).toEqual([
+      'Right answer: choice 1', 'Right answer: choice 2', 'Right answer: choice 3',
+    ]);
   });
 
   it('saves the edited prompt, choices, right answer and explanation in one request, then closes, reloads and announces it', async () => {
