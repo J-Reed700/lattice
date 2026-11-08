@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -38,10 +39,12 @@ jobs:
       fail-fast: false
       # GitHub runs five macOS jobs at a time for the account, and every pull
       # request used to ask for five, so main's runs waited hours behind them.
-      # Intel Macs, the slowest runners, are checked on pushes to main only.
+      # Intel Macs, the slowest runners, are checked on pushes to main only,
+      # and a draft pull request gets its macOS jobs when it is marked ready.
       matrix:
         os: >-
-          ${{ fromJSON(format('["ubuntu-24.04", "macos-latest", "windows-latest"{0}]',
+          ${{ fromJSON(format('["ubuntu-24.04", "windows-latest"{0}{1}]',
+          github.event.pull_request.draft != true && ', "macos-latest"' || '',
           github.event_name == 'push' && ', "macos-15-intel"' || '')) }}
     steps:
       - uses: actions/checkout@v4
@@ -193,17 +196,19 @@ jobs:
     # too. GitHub's own six-hour limit still ends a hung job.
     strategy:
       fail-fast: false
-      # Intel Macs run on pushes to main only; see rust-check. The list is
+      # Macs run as in rust-check: Apple Silicon unless the pull request is a
+      # draft, Intel on pushes to main only. The list is
       # built whole because GitHub applies include after exclude, so an
       # excluded Intel entry would come back as its own job.
       # Hosted Windows runners use Server, not Windows 11. Keep the actual
       # runner visible; Windows 11 installation remains a release check.
       matrix:
         include: >-
-          ${{ fromJSON(format('[{0}{1}]',
-          '{"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false},
-          {"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
+          ${{ fromJSON(format('[{0}{1}{2}]',
+          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
           {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false}',
+          github.event.pull_request.draft != true
+          && ', {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false}' || '',
           github.event_name == 'push'
           && ', {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
     steps:
@@ -232,7 +237,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
-      - uses: Swatinem/rust-cache@v2
+      # Elsewhere the release build's time is the workspace crates, which the
+      # cache never holds, so their caches only crowded out rust-check's.
+      - if: matrix.intel
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
           key: desktop-compatibility-${{ matrix.name }}
