@@ -539,6 +539,21 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
       }).catch(e => ({ probeFailed: String(e) }));
       await browser.saveScreenshot(path.join(reports, 'voice-failure.png')).catch(() => {});
     }
+    voice.appPid = app?.pid ?? null;
+    if (process.platform === 'win32') {
+      try {
+        voice.integrity = execFileSync('whoami', ['/groups'], { encoding: 'utf8', timeout: 10_000 })
+          .split(/\r?\n/).filter(line => line.includes('Mandatory Label'));
+      } catch (e) { voice.integrity = String(e); }
+      try {
+        const listing = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+          "Get-CimInstance Win32_Process -Filter \"Name = 'msedgewebview2.exe'\" | " +
+          'Select-Object ProcessId, ParentProcessId, CreationDate, CommandLine | ConvertTo-Json -Compress',
+        ], { encoding: 'utf8', timeout: 20_000 }).trim();
+        const parsed = listing ? JSON.parse(listing) : [];
+        voice.webview2 = Array.isArray(parsed) ? parsed : [parsed];
+      } catch (e) { voice.webview2 = String(e); }
+    }
     throw error;
   } finally {
     await stopApp();
