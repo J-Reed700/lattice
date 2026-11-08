@@ -95,7 +95,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   };
   const sectionOf = (claim: ClaimReviewItemDto | null | undefined) => {
     const place = claim?.location;
-    if (!claim || !place || place.unitKind !== 'block' || place.field !== 'body') return null;
+    if (!claim || place?.unitKind !== 'block' || place.field !== 'body') return null;
     return sectionAt(place.unitIndex, [place.quote], claim.presentation.sentence);
   };
   const editable = sectionOf(active);
