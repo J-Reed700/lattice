@@ -70,8 +70,8 @@ describe('DrillReveal, a graded review', () => {
       setup();
       expect(figure('Weighted recall')).toHaveTextContent(/^63%/);
       expect(figure('Precision')).toHaveTextContent(/^75%/);
-      expect(figure('Valid extras')).toHaveTextContent(/^1/);
-      expect(figure('False positives')).toHaveTextContent(/^1$/);
+      expect(figure('Also valid')).toHaveTextContent(/^1/);
+      expect(figure('Not an issue')).toHaveTextContent(/^1$/);
     });
 
     it('leaves the precision out when there were no comments to measure', () => {
@@ -328,10 +328,10 @@ describe('DrillReveal, a graded review', () => {
       expect(second).toHaveTextContent('Matches issue 1, Stale state');
       expect(second).toHaveTextContent('Right line, wrong reason.');
       expect(third).toHaveTextContent('No lines selected');
-      expect(third).toHaveTextContent('Valid extra');
+      expect(third).toHaveTextContent('Also valid');
       expect(third).toHaveTextContent('The dictionary really does grow.');
       expect(third).not.toHaveTextContent('Your severity');
-      expect(fourth).toHaveTextContent('False positive');
+      expect(fourth).toHaveTextContent('Not an issue');
       expect(fourth).toHaveTextContent('A single dictionary operation needs none here.');
     });
 
