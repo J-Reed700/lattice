@@ -103,7 +103,7 @@ export function teachingFinding(overrides: Partial<TeachingFindingDto> = {}): Te
     site: 'section',
     unitIndex: 2,
     unitTitle: 'Section 3: Returning results',
-    note: 'Section 3 (candidate blocks-2): the example shows "result": "4" where the code returns the number 4.',
+    summary: 'The example shows "4" in quotation marks where the code returns the number 4.',
     passage: 'The function returns the sum, so the response reads {"result": "4"}.',
     repairs: 2,
     state: 'waiting',
