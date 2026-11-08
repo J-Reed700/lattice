@@ -457,8 +457,7 @@ pub(super) mod tests {
 
     /// The test that acts as the runner in a child copy of the test binary,
     /// after the crash-hook tests' pattern.
-    pub(super) const CHILD_TEST: &str =
-        "features::learning::runtime::lab_runner::tests::lab_runner_child";
+    pub(super) const CHILD_TEST: &str = "runtime::lab_runner::tests::lab_runner_child";
     /// Set in a child's environment to the role it plays.
     pub(super) const CHILD_MODE: &str = "LATTICE_LAB_RUNNER_TEST_CHILD";
 
