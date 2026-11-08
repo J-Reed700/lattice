@@ -4453,6 +4453,10 @@ export type AppError =
  */
 { ConcurrentModification: { resource: string; details: string } } |
 /**
+ * Conflict error (e.g. revision mismatch)
+ */
+{ Conflict: string } |
+/**
  * Domain layer error - business rule violations
  * BOXED to prevent stack overflow (DomainError is ~160 variants)
  */
@@ -6413,6 +6417,10 @@ export type ErrorCode =
  * Concurrent modification detected
  */
 "CONCURRENT_MODIFICATION" |
+/**
+ * Conflict detected (e.g. revision mismatch)
+ */
+"CONFLICT" |
 /**
  * Processing queue is full
  */
