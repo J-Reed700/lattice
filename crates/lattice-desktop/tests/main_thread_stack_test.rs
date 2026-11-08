@@ -2,6 +2,8 @@
 //! binary carries the result. The module is compiled a second time here
 //! because Cargo never runs tests inside `build.rs`.
 
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
+
 #[allow(dead_code)]
 #[path = "../build_support/main_thread_stack.rs"]
 mod main_thread_stack;
