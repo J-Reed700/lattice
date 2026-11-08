@@ -7,6 +7,7 @@
 use super::*;
 use std::sync::Arc;
 
+use crate::features::learning::assessment_engine::LearningItemFormat;
 use crate::features::learning::lessons::claim_reviews::attach::{
     self, report::ClaimAttachProgressDto, report::ClaimAttachReportDto, report::SnapshotNoteDto,
     AttachDeps, AttachRequest, Others,
@@ -19,7 +20,9 @@ use crate::features::learning::lessons::claim_reviews::dto::{
 };
 use crate::features::learning::lessons::claim_reviews::recheck::running_job;
 use crate::features::learning::lessons::claim_reviews::repository::ClaimReviewRepository;
-use crate::features::learning::lessons::claim_reviews::service::{ClaimReviewService, SectionEdit};
+use crate::features::learning::lessons::claim_reviews::service::{
+    ClaimReviewService, QuestionEdit, QuestionText, SectionEdit,
+};
 use crate::features::learning::lessons::claim_reviews::teaching_findings::{
     TeachingFindingsRepository, TeachingSettleDto,
 };
@@ -117,6 +120,82 @@ pub struct EditLearningLessonSectionRequestDto {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LessonSectionEditDto {
+    pub changed: bool,
+    /// Statements on text the user left as it was.
+    pub statements_kept: u32,
+    /// Statements on text the user changed.
+    pub statements_changed: u32,
+    /// Statements on text the user deleted.
+    pub statements_removed: u32,
+    /// Sentences the user wrote.
+    pub sentences_written: u32,
+    /// Changed or removed statements that were checked against the sources.
+    pub checked_statements_affected: u32,
+    /// The review's revision after a save; null for a dry run, no change, or
+    /// a lesson without a review.
+    pub revision: Option<i64>,
+}
+
+/// A published lesson's question as the editor shows it and sends it back.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonQuestionDto {
+    pub kind: LearningItemFormat,
+    pub prompt: String,
+    /// Empty for a kind without choices.
+    pub choices: Vec<String>,
+    /// The index of the right choice; null for a kind without one.
+    pub right: Option<u32>,
+    pub explanation: String,
+}
+
+impl From<QuestionText> for LessonQuestionDto {
+    fn from(question: QuestionText) -> Self {
+        Self {
+            kind: question.kind,
+            prompt: question.prompt,
+            choices: question.choices,
+            right: question
+                .right
+                .map(|right| u32::try_from(right).unwrap_or(u32::MAX)),
+            explanation: question.explanation,
+        }
+    }
+}
+
+impl From<LessonQuestionDto> for QuestionText {
+    fn from(question: LessonQuestionDto) -> Self {
+        Self {
+            kind: question.kind,
+            prompt: question.prompt,
+            choices: question.choices,
+            right: question
+                .right
+                .map(|right| usize::try_from(right).unwrap_or(usize::MAX)),
+            explanation: question.explanation,
+        }
+    }
+}
+
+/// A published lesson's question as the user rewrote it, with the question
+/// they opened.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EditLearningLessonQuestionRequestDto {
+    pub program_id: String,
+    pub lesson_id: String,
+    /// Zero-based, among the lesson's questions.
+    pub question_index: u32,
+    pub before: LessonQuestionDto,
+    pub after: LessonQuestionDto,
+    /// Answer what saving would do and write nothing.
+    pub dry_run: bool,
+}
+
+/// What a rewrite of a question does, or did, to the lesson's statements.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LessonQuestionEditDto {
     pub changed: bool,
     /// Statements on text the user left as it was.
     pub statements_kept: u32,
@@ -348,6 +427,60 @@ pub async fn edit_learning_lesson_section(
         })
         .await?;
     Ok(LessonSectionEditDto {
+        changed: outcome.changed,
+        statements_kept: outcome.statements_kept,
+        statements_changed: outcome.statements_changed,
+        statements_removed: outcome.statements_removed,
+        sentences_written: outcome.sentences_written,
+        checked_statements_affected: outcome.checked_statements_affected,
+        revision: outcome.revision,
+    })
+}
+
+/// A published lesson's question, as the editor opens it: its kind, prompt,
+/// choices, right choice and explanation.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_learning_lesson_question(
+    program_id: String,
+    lesson_id: String,
+    question_index: u32,
+    container: State<'_, Container>,
+) -> Result<LessonQuestionDto, ApiError> {
+    let question = claim_reviews(&container)
+        .await?
+        .question_text(
+            &program_id,
+            &lesson_id,
+            usize::try_from(question_index).unwrap_or(usize::MAX),
+        )
+        .await?;
+    Ok(question.into())
+}
+
+/// Rewrites a question of a published lesson: its prompt, choices, right
+/// answer and explanation. The statements on text the user changed end, the
+/// others keep their state, and each sentence the user wrote becomes a
+/// statement they confirmed. With `dry_run` it only answers what saving would
+/// do.
+#[tauri::command]
+#[specta::specta]
+pub async fn edit_learning_lesson_question(
+    request: EditLearningLessonQuestionRequestDto,
+    container: State<'_, Container>,
+) -> Result<LessonQuestionEditDto, ApiError> {
+    let outcome = claim_reviews(&container)
+        .await?
+        .edit_question(QuestionEdit {
+            program_id: request.program_id,
+            lesson_id: request.lesson_id,
+            question_index: usize::try_from(request.question_index).unwrap_or(usize::MAX),
+            before: request.before.into(),
+            after: request.after.into(),
+            dry_run: request.dry_run,
+        })
+        .await?;
+    Ok(LessonQuestionEditDto {
         changed: outcome.changed,
         statements_kept: outcome.statements_kept,
         statements_changed: outcome.statements_changed,

@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
-    HumanBinding, UnitKind, UnverifiedReason, UserAction,
+    HumanBinding, Ledger, UnitKind, UnverifiedReason, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -24,8 +24,8 @@ use lattice_core::domain::learning::claim_review::LessonReviewState;
 /// The text a section changed since the user opened it.
 pub const SECTION_CHANGED: &str =
     "This section changed since you opened it. Copy your changes, close the editor and open it again.";
-const NOT_IN_COURSE: &str = "This lesson is not in this course.";
-const BEING_PREPARED: &str =
+pub(super) const NOT_IN_COURSE: &str = "This lesson is not in this course.";
+pub(super) const BEING_PREPARED: &str =
     "This lesson is still being prepared. You can edit it once it is ready.";
 const NO_TITLE: &str = "A section needs a title.";
 const NO_TEXT: &str = "A section needs some text.";
@@ -56,15 +56,15 @@ pub struct SectionEditOutcome {
 }
 
 /// A statement that ends with the rewrite, and what takes its place.
-struct Ending<'a> {
-    entry: &'a ClaimLedgerEntry,
-    /// The statement's sentence as the section wrote it.
-    before: String,
+pub(super) struct Ending<'a> {
+    pub(super) entry: &'a ClaimLedgerEntry,
+    /// The statement's sentence as its field wrote it.
+    pub(super) before: String,
     /// The sentence that replaces it and its claim; none when it was deleted.
-    after: Option<(ClaimId, String)>,
+    pub(super) after: Option<(ClaimId, String)>,
 }
 
-fn count(items: usize) -> u32 {
+pub(super) fn count(items: usize) -> u32 {
     u32::try_from(items).unwrap_or(u32::MAX)
 }
 
@@ -84,7 +84,11 @@ async fn current_text(
     .ok_or_else(|| AppError::InvalidInput(SECTION_CHANGED.into()))
 }
 
-fn endings<'a>(claims: &'a [ClaimLedgerEntry], plan: &FieldPlan, old: &str) -> Vec<Ending<'a>> {
+pub(super) fn endings<'a>(
+    claims: &'a [ClaimLedgerEntry],
+    plan: &FieldPlan,
+    old: &str,
+) -> Vec<Ending<'a>> {
     let find = |id: &ClaimId| claims.iter().find(|entry| entry.claim_id() == id);
     let sentence = |entry: &ClaimLedgerEntry| {
         placed(entry, old)
@@ -126,24 +130,7 @@ impl ClaimReviewService {
             body,
             dry_run,
         } = edit;
-        let in_course: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?")
-                .bind(&lesson_id)
-                .bind(&program_id)
-                .fetch_optional(self.pool())
-                .await
-                .map_err(db)?;
-        if in_course.is_none() {
-            return Err(AppError::NotFound(NOT_IN_COURSE.into()));
-        }
-        let ledger = self.store().load(&lesson_id).await?;
-        if ledger
-            .review
-            .as_ref()
-            .is_some_and(|review| review.state != LessonReviewState::Ready)
-        {
-            return Err(AppError::InvalidState(BEING_PREPARED.into()));
-        }
+        let ledger = self.editable_ledger(&program_id, &lesson_id).await?;
         if title.trim().is_empty() {
             return Err(AppError::InvalidInput(NO_TITLE.into()));
         }
@@ -218,95 +205,16 @@ impl ClaimReviewService {
         if now_title != old_title || now_body != old_body {
             return Err(AppError::InvalidInput(SECTION_CHANGED.into()));
         }
-        let mut planned: Vec<Planned<'_>> = Vec::new();
-        if let Some(user) = &user {
-            let machine = EventProvenance {
-                actor: Actor::Machine,
-                ..user.clone()
-            };
-            for (field, item) in &written {
-                let location = ClaimLocation {
-                    unit_index: unit,
-                    unit_kind: UnitKind::Block,
-                    field: (*field).into(),
-                    quote: item.text.clone(),
-                    span: Some(item.span),
-                };
-                for (by, event) in [
-                    (
-                        &machine,
-                        ClaimEvent::Extracted {
-                            location,
-                            statement: item.text.clone(),
-                        },
-                    ),
-                    (
-                        &machine,
-                        ClaimEvent::PublishedUnverified {
-                            reason: UnverifiedReason::Unchecked,
-                        },
-                    ),
-                    (
-                        user,
-                        ClaimEvent::UserAction {
-                            action: UserAction::Confirm {
-                                bound: HumanBinding::new(&item.text, Vec::new()),
-                            },
-                            note: None,
-                        },
-                    ),
-                ] {
-                    append_in(&mut tx, &lesson_id, &item.successor, by.clone(), event).await?;
-                }
+        let placed_written: Vec<(&str, UnitKind, &Written)> = written
+            .iter()
+            .map(|(field, item)| (*field, UnitKind::Block, *item))
+            .collect();
+        let planned = match &user {
+            Some(user) => {
+                record_edit(&mut tx, &lesson_id, unit, &placed_written, &ending, user).await?
             }
-            for item in &ending {
-                let (action, label) = match &item.after {
-                    Some((_, text)) => (
-                        UserAction::Edit {
-                            before: item.before.clone(),
-                            after: text.clone(),
-                        },
-                        LabelSource::UserEdit,
-                    ),
-                    None => (UserAction::Remove, LabelSource::UserRemove),
-                };
-                let resolution = user_resolution(action, None, Some(label));
-                append_in(
-                    &mut tx,
-                    &lesson_id,
-                    item.entry.claim_id(),
-                    machine.clone(),
-                    ClaimEvent::SectionEdited {},
-                )
-                .await?;
-                append_in(
-                    &mut tx,
-                    &lesson_id,
-                    item.entry.claim_id(),
-                    user.clone(),
-                    resolution.event.clone(),
-                )
-                .await?;
-                if let Some((successor, _)) = &item.after {
-                    let superseded = ClaimEvent::Superseded {
-                        successor: Some(successor.clone()),
-                        by: Actor::User,
-                    };
-                    append_in(
-                        &mut tx,
-                        &lesson_id,
-                        item.entry.claim_id(),
-                        machine.clone(),
-                        superseded,
-                    )
-                    .await?;
-                }
-                planned.push(Planned {
-                    entry: item.entry,
-                    resolution,
-                });
-            }
-        }
+            None => Vec::new(),
+        };
         sqlx::query("UPDATE learning_blocks SET title=?, body=? WHERE lesson_id=? AND ordinal=?")
             .bind(&title)
             .bind(&body)
@@ -353,18 +261,164 @@ impl ClaimReviewService {
         }
         tx.commit().await.map_err(db)?;
 
+        outcome.revision = self.settle_planned(&ledger, &lesson_id, planned).await?;
+        Ok(outcome)
+    }
+}
+
+impl ClaimReviewService {
+    /// A lesson of this course whose review is not still being prepared, with its ledger.
+    pub(super) async fn editable_ledger(
+        &self,
+        program_id: &str,
+        lesson_id: &str,
+    ) -> Result<Ledger> {
+        self.ensure_in_course(program_id, lesson_id).await?;
+        let ledger = self.store().load(lesson_id).await?;
+        if ledger
+            .review
+            .as_ref()
+            .is_some_and(|review| review.state != LessonReviewState::Ready)
+        {
+            return Err(AppError::InvalidState(BEING_PREPARED.into()));
+        }
+        Ok(ledger)
+    }
+
+    pub(super) async fn ensure_in_course(&self, program_id: &str, lesson_id: &str) -> Result<()> {
+        let in_course: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?")
+                .bind(lesson_id)
+                .bind(program_id)
+                .fetch_optional(self.pool())
+                .await
+                .map_err(db)?;
+        if in_course.is_none() {
+            return Err(AppError::NotFound(NOT_IN_COURSE.into()));
+        }
+        Ok(())
+    }
+
+    /// Settles each ending after the commit and answers the review's revision
+    /// now; none for a lesson without a review.
+    pub(super) async fn settle_planned(
+        &self,
+        ledger: &Ledger,
+        lesson_id: &str,
+        planned: Vec<Planned<'_>>,
+    ) -> Result<Option<i64>> {
         let Some(review) = &ledger.review else {
-            return Ok(outcome);
+            return Ok(None);
         };
         let mut redecided = false;
         for item in planned {
-            redecided |= self.settle(review, &lesson_id, item).await?;
+            redecided |= self.settle(review, lesson_id, item).await?;
         }
-        outcome.revision = Some(if redecided {
-            self.store().load(&lesson_id).await?.revision.0
+        Ok(Some(if redecided {
+            self.store().load(lesson_id).await?.revision.0
         } else {
             ledger.revision.0 + 1
-        });
-        Ok(outcome)
+        }))
     }
+}
+
+/// Writes the events of an edit inside its transaction: each sentence the user
+/// wrote as a statement they confirmed, and for each statement that ends the
+/// edit or removal it stood under. Returns what to settle after the commit.
+pub(super) async fn record_edit<'a>(
+    tx: &mut sqlx::SqliteConnection,
+    lesson_id: &str,
+    unit: usize,
+    written: &[(&str, UnitKind, &Written)],
+    ending: &[Ending<'a>],
+    user: &EventProvenance,
+) -> Result<Vec<Planned<'a>>> {
+    let machine = EventProvenance {
+        actor: Actor::Machine,
+        ..user.clone()
+    };
+    for (field, kind, item) in written {
+        let location = ClaimLocation {
+            unit_index: unit,
+            unit_kind: *kind,
+            field: (*field).into(),
+            quote: item.text.clone(),
+            span: Some(item.span),
+        };
+        for (by, event) in [
+            (
+                &machine,
+                ClaimEvent::Extracted {
+                    location,
+                    statement: item.text.clone(),
+                },
+            ),
+            (
+                &machine,
+                ClaimEvent::PublishedUnverified {
+                    reason: UnverifiedReason::Unchecked,
+                },
+            ),
+            (
+                user,
+                ClaimEvent::UserAction {
+                    action: UserAction::Confirm {
+                        bound: HumanBinding::new(&item.text, Vec::new()),
+                    },
+                    note: None,
+                },
+            ),
+        ] {
+            append_in(&mut *tx, lesson_id, &item.successor, by.clone(), event).await?;
+        }
+    }
+    let mut planned = Vec::new();
+    for item in ending {
+        let (action, label) = match &item.after {
+            Some((_, text)) => (
+                UserAction::Edit {
+                    before: item.before.clone(),
+                    after: text.clone(),
+                },
+                LabelSource::UserEdit,
+            ),
+            None => (UserAction::Remove, LabelSource::UserRemove),
+        };
+        let resolution = user_resolution(action, None, Some(label));
+        append_in(
+            &mut *tx,
+            lesson_id,
+            item.entry.claim_id(),
+            machine.clone(),
+            ClaimEvent::SectionEdited {},
+        )
+        .await?;
+        append_in(
+            &mut *tx,
+            lesson_id,
+            item.entry.claim_id(),
+            user.clone(),
+            resolution.event.clone(),
+        )
+        .await?;
+        if let Some((successor, _)) = &item.after {
+            let superseded = ClaimEvent::Superseded {
+                successor: Some(successor.clone()),
+                by: Actor::User,
+            };
+            append_in(
+                &mut *tx,
+                lesson_id,
+                item.entry.claim_id(),
+                machine.clone(),
+                superseded,
+            )
+            .await?;
+        }
+        planned.push(Planned {
+            entry: item.entry,
+            resolution,
+        });
+    }
+    Ok(planned)
 }

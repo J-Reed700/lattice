@@ -780,6 +780,33 @@ async editLearningLessonSection(request: EditLearningLessonSectionRequestDto) : 
 }
 },
 /**
+ * A published lesson's question, as the editor opens it: its kind, prompt,
+ * choices, right choice and explanation.
+ */
+async getLearningLessonQuestion(programId: string, lessonId: string, questionIndex: number) : Promise<Result<LessonQuestionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_question", { programId, lessonId, questionIndex }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rewrites a question of a published lesson: its prompt, choices, right
+ * answer and explanation. The statements on text the user changed end, the
+ * others keep their state, and each sentence the user wrote becomes a
+ * statement they confirmed. With `dry_run` it only answers what saving would
+ * do.
+ */
+async editLearningLessonQuestion(request: EditLearningLessonQuestionRequestDto) : Promise<Result<LessonQuestionEditDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_question", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Resume verification (§6.2): a lesson waiting for review continues its
  * job once something changed; a stopped one retries it.
  */
@@ -5996,6 +6023,19 @@ geometry: VisionGeometry;
  */
 projector_bytes: number }
 /**
+ * A published lesson's question as the user rewrote it, with the question
+ * they opened.
+ */
+export type EditLearningLessonQuestionRequestDto = { programId: string; lessonId: string;
+/**
+ * Zero-based, among the lesson's questions.
+ */
+questionIndex: number; before: LessonQuestionDto; after: LessonQuestionDto;
+/**
+ * Answer what saving would do and write nothing.
+ */
+dryRun: boolean }
+/**
  * A published lesson's section as the user rewrote it, with the title and
  * text they opened it with.
  */
@@ -8555,6 +8595,47 @@ sections: ReviewSectionDto[];
  * publishes with these waiting for the user.
  */
 teachingFindings: TeachingFindingDto[] }
+/**
+ * A published lesson's question as the editor shows it and sends it back.
+ */
+export type LessonQuestionDto = { kind: LearningItemFormat; prompt: string;
+/**
+ * Empty for a kind without choices.
+ */
+choices: string[];
+/**
+ * The index of the right choice; null for a kind without one.
+ */
+right: number | null; explanation: string }
+/**
+ * What a rewrite of a question does, or did, to the lesson's statements.
+ */
+export type LessonQuestionEditDto = { changed: boolean;
+/**
+ * Statements on text the user left as it was.
+ */
+statementsKept: number;
+/**
+ * Statements on text the user changed.
+ */
+statementsChanged: number;
+/**
+ * Statements on text the user deleted.
+ */
+statementsRemoved: number;
+/**
+ * Sentences the user wrote.
+ */
+sentencesWritten: number;
+/**
+ * Changed or removed statements that were checked against the sources.
+ */
+checkedStatementsAffected: number;
+/**
+ * The review's revision after a save; null for a dry run, no change, or
+ * a lesson without a review.
+ */
+revision: number | null }
 export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
 /**
  * What a rewrite of a section does, or did, to the lesson's statements.
