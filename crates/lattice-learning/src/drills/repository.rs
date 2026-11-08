@@ -155,6 +155,13 @@ pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<
 /// The columns `read` reads.
 const COLUMNS: &str = "id,material,language,source_json,title,domain,program_id,lesson_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at,(SELECT l.title FROM learning_lessons l WHERE l.id=learning_drills.lesson_id AND l.program_id=learning_drills.program_id) AS lesson_title";
 
+/// What follows `SELECT <columns>` in `oldest_ready_on`: ?1 is the course, ?2 the material, ?3 the language and ?4 the
+/// lesson, or null for any.
+pub(crate) const OLDEST_READY_ON: &str = "FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL AND (?4 IS NULL OR lesson_id=?4) ORDER BY created_at,rowid LIMIT 1";
+
+/// The query of `any_ready_in`: ?1 is the course, ?2 the material and ?3 the language.
+pub(crate) const ANY_READY_IN: &str = "SELECT EXISTS(SELECT 1 FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL)";
+
 /// The name a material is stored under.
 fn material_name(material: &Material) -> &'static str {
     match material {
@@ -169,7 +176,7 @@ pub(crate) async fn oldest_ready_on(
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL AND (?4 IS NULL OR lesson_id=?4) ORDER BY created_at,rowid LIMIT 1"))
+    sqlx::query(&format!("SELECT {COLUMNS} {OLDEST_READY_ON}"))
         .bind(shelf.program_id)
         .bind(material_name(shelf.material))
         .bind(shelf.material.language())
@@ -187,7 +194,7 @@ pub(crate) async fn any_ready_in(
     connection: &mut SqliteConnection,
     shelf: Shelf<'_>,
 ) -> Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL)")
+    sqlx::query_scalar(ANY_READY_IN)
         .bind(shelf.program_id)
         .bind(material_name(shelf.material))
         .bind(shelf.material.language())
