@@ -637,7 +637,7 @@ fn an_explanation_naming_a_choice_by_its_letter_or_position_is_a_finding() {
         "Answer C mistakes the parent folder for the working directory.",
         "That is the misconception behind the first choice.",
         "The second option is not supported by any excerpt.",
-        "The last answer describes destructive behaviour.",
+        "The last option describes destructive behaviour.",
         "Choices 2 and 3 are relative paths.",
     ] {
         let findings = explanation_findings(explanation);
@@ -658,6 +658,8 @@ fn an_explanation_naming_no_choice_by_letter_or_position_is_no_finding() {
         "Plan B is to use an absolute path.",
         "The second step creates the folder.",
         "Choosing the parent folder is the tempting wrong answer.",
+        "The final answer is /var, two levels up.",
+        "Your first answer might be /var, which forgets the second step.",
     ] {
         assert!(
             explanation_findings(explanation).is_empty(),
