@@ -13,7 +13,9 @@ use crate::{
     references::trust::dto_map,
 };
 use lattice_core::application::services::claim_verification::PartKind;
-use lattice_core::domain::learning::claim_review::{ClaimState, Class, Ledger, UnverifiedReason};
+use lattice_core::domain::learning::claim_review::{
+    ClaimState, Class, Ledger, ReopenCause, UnverifiedReason,
+};
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::{HashMap, HashSet};
 
@@ -237,13 +239,33 @@ impl LessonVerificationReport {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                let source_removed = finding.evidence.iter().any(|passage| {
-                    by_id
-                        .get(passage.source_id.as_str())
-                        .is_some_and(|version| version.deleted_at.is_some())
-                });
+                // A finding whose claim the ledger knows follows the ledger:
+                // its statement lost its source when the claim was reopened
+                // for it. One it does not know keeps the deleted-passage rule.
+                let ledger_state = finding
+                    .claim_id
+                    .as_ref()
+                    .and_then(|id| states.states.get(id));
+                let source_removed = match ledger_state {
+                    Some(state) => matches!(
+                        state,
+                        ClaimState::Reopened {
+                            cause: ReopenCause::SourceDeleted(_),
+                            ..
+                        }
+                    ),
+                    None => finding.evidence.iter().any(|passage| {
+                        by_id
+                            .get(passage.source_id.as_str())
+                            .is_some_and(|version| version.deleted_at.is_some())
+                    }),
+                };
+                let removed_in_ledger = ledger_state.is_some() && source_removed;
                 let (stood, verified) = resolved(finding);
                 let (resolution, note, unverified_reason) = match &stood {
+                    _ if removed_in_ledger => {
+                        (LearningClaimResolutionDto::SourceRemoved, None, None)
+                    }
                     Some(Resolution::Confirmed { note, .. }) => (
                         LearningClaimResolutionDto::ConfirmedByYou,
                         note.clone(),
