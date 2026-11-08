@@ -126,7 +126,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
           <div className="space-y-2">
             {draft.choices.map((choice, index) => (
               <div key={index} className="flex items-center gap-2">
-                <input type="radio" name={`${ids}-right`} aria-label="Right answer" checked={draft.right === index} disabled={saving}
+                <input type="radio" name={`${ids}-right`} aria-label={`Right answer: choice ${index + 1}`} checked={draft.right === index} disabled={saving}
                   onChange={() => setDraft((value) => ({ ...value, right: index }))} />
                 <label htmlFor={`${ids}-choice-${index}`} className="sr-only">Choice {index + 1}</label>
                 <input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)}
