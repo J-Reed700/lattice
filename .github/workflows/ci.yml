@@ -30,9 +30,13 @@ jobs:
       max-parallel: 6
       matrix:
         include:
-          # The trust and outline reasons say statement where they mean the claim.
+          # Deleting a source reopens the statements that rest on it, and the panel agrees with the review.
           - mode: red
-            sha: 0a1c0a91cec038f5f5f8a7d1a2c8c00f1d6bf11c
+            sha: 06ace7ec5edd6be93473c1a66b9a41e45654c0be
+            built_as_is: true
+          # A confirmation made after a deletion stays confirmed.
+          - mode: red
+            sha: aac7f204ce7c3911ab2f649e0b9730ec09e495d0
             built_as_is: true
     steps:
       - uses: actions/checkout@v4
