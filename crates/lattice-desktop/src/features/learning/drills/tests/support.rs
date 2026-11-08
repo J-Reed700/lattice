@@ -925,11 +925,18 @@ pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
         material: Material::code("python"),
         title: "A sliding-window rate limiter".into(),
         files: proved.files.clone(),
-        key: proved.planted_key(),
+        key: proved.planted_key(&unchecked()),
     };
     let clean = files();
     let spec = spec();
-    let evidence = Evidence::new(&code(), &review(), &planted(), &proved, &quiet());
+    let evidence = Evidence::new(
+        &code(),
+        &review(),
+        &planted(),
+        &proved,
+        &unchecked(),
+        &quiet(),
+    );
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::insert_in(
         &mut connection,
