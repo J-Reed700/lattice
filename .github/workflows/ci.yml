@@ -291,6 +291,13 @@ jobs:
           lock.write_text('\n'.join(lines) + '\n')
           PYCODE
       - run: npm ci
+      - name: Cache Tauri's bundling tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tauri-tools-${{ runner.os }}-
       - name: Build and install isolated package candidate
         run: npm run test:desktop:build -- --release
       - name: Exercise the native desktop app (macOS and Windows)
