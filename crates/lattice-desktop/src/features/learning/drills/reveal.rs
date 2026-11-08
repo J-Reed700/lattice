@@ -5,8 +5,9 @@
 use super::attempts::{Attempt, AttemptStatus};
 use super::dto::{
     CodeReviewDrillDto, CodeReviewFileDto, CodeReviewFindingDto, CodeReviewMaterialDto,
-    CodeReviewResultDto, CodeReviewRevealDto, CodeReviewScoreDto, FindingResultKind, FixDiffDto,
-    IssueResultKind, RatedPatternDto, RevealedFindingDto, RevealedIssueDto, RevealedSourceDto,
+    CodeReviewResultDto, CodeReviewRevealDto, CodeReviewScoreDto, DrillLessonRefDto,
+    FindingResultKind, FixDiffDto, IssueResultKind, RatedPatternDto, RevealedFindingDto,
+    RevealedIssueDto, RevealedSourceDto,
 };
 use super::repository::StoredDrill;
 use lattice_core::domain::learning::drills::{
@@ -14,8 +15,13 @@ use lattice_core::domain::learning::drills::{
 };
 use lattice_core::shared::error::{AppError, Result};
 
-/// The drill as the learner may see it: its title, what it is made of and its files. For a passage that is the
-/// source's title; its text is for the reveal.
+/// The lesson the drill was built from, while it exists.
+pub(super) fn lesson_of(_stored: &StoredDrill) -> Option<DrillLessonRefDto> {
+    None
+}
+
+/// The drill as the learner may see it: its title, what it is made of, its files and its lesson.
+/// For a passage what it is made of is the source's title; its text is for the reveal.
 pub fn learner_drill(stored: &StoredDrill) -> CodeReviewDrillDto {
     CodeReviewDrillDto {
         title: stored.drill.title.clone(),
@@ -37,6 +43,7 @@ pub fn learner_drill(stored: &StoredDrill) -> CodeReviewDrillDto {
             .iter()
             .map(CodeReviewFileDto::from)
             .collect(),
+        lesson: lesson_of(stored),
     }
 }
 
@@ -174,6 +181,7 @@ fn revealed_issue(issue: &KeyIssue, outcome: IssueOutcome, reason: String) -> Re
         finding,
         reason,
         also_valid: issue.origin == Origin::FoundInReview,
+        lesson: None,
     }
 }
 

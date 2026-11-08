@@ -2,8 +2,9 @@
 //! defects planted in it, the catalogue of patterns those defects are
 //! instances of, the edits that plant them and give the key its line spans, the
 //! check a key passes before its drill is stored, the grading of a learner's
-//! findings, what the outcomes mean for each pattern's schedule, and what came
-//! of a learner's fix. Pure types and rules, no I/O.
+//! findings, what the outcomes mean for each pattern's schedule, what came
+//! of a learner's fix, and the brief of the lesson a drill is built from. Pure
+//! types and rules, no I/O.
 //!
 //! Design: docs/design/2026-11-04-code-review-drills.md §2–§4.
 
@@ -12,6 +13,7 @@ mod catalogue;
 mod diff;
 mod drill;
 mod edits;
+mod fences;
 mod fix;
 mod grading;
 mod key;
@@ -36,7 +38,7 @@ pub use grading::{
     FindingOutcome, IssueOutcome, Score, SeverityTally,
 };
 pub use key::{check_key, severity_floor, KeyFault};
-pub use lessons::{next_lessons, LessonStanding};
+pub use lessons::{next_lessons, DrillStanding, LessonStanding};
 pub use schedule::{
     lesson_rating, per_pattern, rating, ratings, targets, IssueRating, PatternDue, PatternRating,
 };

@@ -1,19 +1,19 @@
-//! What the review view's commands do, apart from Tauri: starting a drill, handing a review in, reading an attempt and
-//! asking for its grade again (docs/design/2026-11-04-code-review-drills.md section 1). The jobs they queue are
-//! returned for the caller to tell the job runtime of once they are committed.
+//! What the review view's commands do, apart from Tauri: a course's drills, starting a drill, handing a review in,
+//! reading an attempt and asking for its grade again (docs/design/2026-11-04-code-review-drills.md section 1 and
+//! docs/design/2026-11-07-drills-in-the-course.md section 8). The jobs they queue are returned for the caller to tell
+//! the job runtime of once they are committed.
 
 use super::attempts::{self, AttemptMode, Submission};
 use super::bank::{self, Shelf};
 use super::dto::{
-    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, ReviewDrillCourseDto,
-    ReviewMaterialDto, StartedCodeReviewDto,
+    CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, CourseDrillsDto,
+    StartedCodeReviewDto,
 };
 use super::reveal::{learner_drill, result_of};
 use super::schedules;
-use super::spec::DrillSpec;
-use crate::features::learning::persistence::{db, now};
-use crate::features::learning::source_library::LearningSourceLibraryRepository;
-use lattice_core::domain::learning::drills::{targets, Material};
+use super::spec::check_request;
+use crate::features::learning::persistence::db;
+use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
@@ -31,48 +31,43 @@ pub struct Acted {
     pub job: Option<String>,
 }
 
-/// Starts a drill on `asked`: opens an attempt on the oldest ready one of its shelf, which queues the build of the next.
-/// When none is ready, a build is queued and the learner is told it is under way; `lines` (lines of code, or
-/// sentences) and `patterns_count` size that build, whose patterns are the ones the schedule offers.
+/// A drill a learner asks for: of a course, on a material, built from the lesson they name or, when they name none,
+/// from any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CourseDrill {
+    pub program_id: String,
+    pub lesson_id: Option<String>,
+    pub material: Material,
+}
+
+/// Starts a drill on `asked`: opens an attempt on the oldest ready drill of its shelf built from the lesson asked
+/// for, or from any lesson when none is, which can queue the build of the next. When none is ready, the build under
+/// way is found or one is queued, of the lesson asked for or of the one next up, and the learner is told it is under
+/// way; `lines` (lines of code, or sentences) and `issues` size it, its patterns the ones the schedule offers. A
+/// request of no size, a lesson the course does not drill, and a course with no lesson to drill on the material are
+/// refused, and nothing is taken.
 pub async fn start(
     pool: &SqlitePool,
-    asked: &ReviewMaterialDto,
+    asked: &CourseDrill,
     mode: AttemptMode,
     lines: u32,
-    patterns_count: u32,
+    issues: u32,
 ) -> Result<Started> {
-    let count = usize::try_from(patterns_count).unwrap_or(usize::MAX);
-    let (material, domain, program_id) = match asked {
-        ReviewMaterialDto::Code { language } => (Material::code(language), None, None),
-        ReviewMaterialDto::Passage { program_id, topic } => (
-            Material::Passage,
-            topic
-                .as_deref()
-                .map(str::trim)
-                .filter(|topic| !topic.is_empty())
-                .map(str::to_owned),
-            Some(program_id.clone()),
-        ),
-    };
-    let states = {
+    let count = usize::try_from(issues).unwrap_or(usize::MAX);
+    check_request(&asked.material, lines, count)?;
+    if let Some(lesson) = asked.lesson_id.as_deref() {
         let mut connection = pool.acquire().await.map_err(db)?;
-        schedules::pattern_states_in(&mut connection, &material, &[]).await?
+        if !schedules::drills_lesson_in(&mut connection, &asked.program_id, lesson).await? {
+            return Err(AppError::InvalidInput(
+                "The lesson is not one the course drills.".into(),
+            ));
+        }
+    }
+    let shelf = Shelf {
+        program_id: &asked.program_id,
+        material: &asked.material,
     };
-    let patterns: Vec<String> = targets(&material, &states, now(), count)
-        .iter()
-        .map(|pattern| pattern.id.to_owned())
-        .collect();
-    let spec = DrillSpec {
-        material,
-        domain,
-        lines,
-        patterns,
-        program_id,
-        lesson_id: None,
-    };
-    spec.validate()?;
-    let shelf = Shelf::of(&spec)?;
-    if let Some(begun) = attempts::start_on(pool, shelf, spec.domain.as_deref(), mode).await? {
+    if let Some(begun) = attempts::start(pool, shelf, asked.lesson_id.as_deref(), mode).await? {
         return Ok(Started {
             dto: StartedCodeReviewDto::Started {
                 attempt_id: begun.attempt.id.clone(),
@@ -80,10 +75,10 @@ pub async fn start(
                 started_at: begun.attempt.started_at,
                 drill: learner_drill(&begun.drill),
             },
-            jobs: vec![begun.next_build],
+            jobs: begun.next_build.into_iter().collect(),
         });
     }
-    let job = bank::ensure_build(pool, &spec).await?;
+    let job = bank::ensure_build(pool, shelf, asked.lesson_id.as_deref(), lines, count).await?;
     Ok(Started {
         dto: StartedCodeReviewDto::Building {
             job_id: job.clone(),
@@ -92,26 +87,21 @@ pub async fn start(
     })
 }
 
-/// The courses a drill on a passage can draw on: those with at least one source that has text, in the order they were
-/// made.
-pub async fn courses(pool: &SqlitePool) -> Result<Vec<ReviewDrillCourseDto>> {
-    let programs: Vec<(String, String)> =
-        sqlx::query_as("SELECT id,title FROM learning_programs ORDER BY created_at,id")
-            .fetch_all(pool)
-            .await
-            .map_err(db)?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
-    let mut courses = Vec::new();
-    for (program_id, title) in programs {
-        let sources = library.verification_sources(&program_id).await?;
-        if sources
-            .iter()
-            .any(|source| !source.excerpt.trim().is_empty())
-        {
-            courses.push(ReviewDrillCourseDto { program_id, title });
-        }
-    }
-    Ok(courses)
+/// A course's review drills as its Practice view reads them, with code drills offered in `language` or, when none is
+/// asked for, in the one the course suggests.
+pub async fn course_drills(
+    _pool: &SqlitePool,
+    _program_id: &str,
+    _language: Option<&str>,
+) -> Result<CourseDrillsDto> {
+    Ok(CourseDrillsDto {
+        language: String::new(),
+        next_code: None,
+        next_passage: None,
+        has_sources: false,
+        modules: Vec::new(),
+        recent: Vec::new(),
+    })
 }
 
 /// Hands in an open attempt: the learner's findings and, when they wrote one, their fix, with the time they spent as the

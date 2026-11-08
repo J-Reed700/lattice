@@ -3,8 +3,10 @@
 //! its evidence; the reveal after a grade holds the key's issues and the clean code beside the drill's.
 
 use super::attempts::{AttemptMode, AttemptStatus};
+use super::bank::{NextStatus, NextUp};
 use lattice_core::domain::learning::drills::{
-    DiffLine, DrillFile, Finding, IssueFix, LineSpan, PatternRating, Score, Severity, SeverityTally,
+    DiffLine, DrillFile, DrillStanding, Finding, IssueFix, LineSpan, Material, PatternRating,
+    Score, Severity, SeverityTally,
 };
 use serde::{Deserialize, Serialize};
 
@@ -125,19 +127,32 @@ impl From<CodeReviewFindingDto> for Finding {
     }
 }
 
-/// What a learner asks to review: code in a language, or a passage from one of their courses.
+/// What a drill of a course is on: code in a language, or an explanation of a passage of the course's sources.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ReviewMaterialDto {
-    Code {
-        language: String,
-    },
-    Passage {
-        #[serde(rename = "programId")]
-        program_id: String,
-        /// What the passage should be about; none: anything in the course's sources.
-        topic: Option<String>,
-    },
+pub enum DrillMaterialDto {
+    Code { language: String },
+    Passage,
+}
+
+impl From<DrillMaterialDto> for Material {
+    fn from(material: DrillMaterialDto) -> Self {
+        match material {
+            DrillMaterialDto::Code { language } => Self::Code { language },
+            DrillMaterialDto::Passage => Self::Passage,
+        }
+    }
+}
+
+impl From<&Material> for DrillMaterialDto {
+    fn from(material: &Material) -> Self {
+        match material {
+            Material::Code { language } => Self::Code {
+                language: language.clone(),
+            },
+            Material::Passage => Self::Passage,
+        }
+    }
 }
 
 /// What a drill is made of, as the learner may see it.
@@ -154,11 +169,13 @@ pub enum CodeReviewMaterialDto {
     },
 }
 
-/// A course a drill on a passage can draw on.
+/// The lesson of a course a drill was built from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct ReviewDrillCourseDto {
+pub struct DrillLessonRefDto {
     pub program_id: String,
+    pub lesson_id: String,
+    /// The lesson's title now.
     pub title: String,
 }
 
@@ -169,6 +186,138 @@ pub struct CodeReviewDrillDto {
     pub title: String,
     pub material: CodeReviewMaterialDto,
     pub files: Vec<CodeReviewFileDto>,
+    /// The lesson the drill was built from, while it exists; none for a drill from before drills were built from
+    /// lessons.
+    pub lesson: Option<DrillLessonRefDto>,
+}
+
+/// A course's review drills, as its Practice view reads them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseDrillsDto {
+    /// The language code drills are offered in: the one asked for, or the one the course suggests.
+    pub language: String,
+    /// What a code drill in `language` with no lesson asked for comes to; none when no lesson can be drilled in code.
+    pub next_code: Option<NextDrillDto>,
+    /// What an explanation with no lesson asked for comes to; none when no lesson can be drilled on a passage.
+    pub next_passage: Option<NextDrillDto>,
+    /// The course has a source with text, which an explanation's passage is taken from.
+    pub has_sources: bool,
+    /// The course's modules in order, each with its lessons a drill can be built from.
+    pub modules: Vec<DrillModuleDto>,
+    /// The course's latest attempts, newest first.
+    pub recent: Vec<CourseDrillAttemptDto>,
+}
+
+/// The lesson a start with no lesson asked for draws on, and what it comes to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NextDrillDto {
+    pub lesson_id: String,
+    pub status: NextDrillStatus,
+}
+
+/// Whether the lesson a start with no lesson draws on has a drill ready, one being built, or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum NextDrillStatus {
+    /// A drill of it is ready, and the start opens an attempt on it.
+    Ready,
+    /// A build of it is under way, and the start waits for it.
+    Building,
+    /// The start queues its build.
+    ToBuild,
+}
+
+impl From<NextStatus> for NextDrillStatus {
+    fn from(status: NextStatus) -> Self {
+        match status {
+            NextStatus::Ready => Self::Ready,
+            NextStatus::Building => Self::Building,
+            NextStatus::ToBuild => Self::ToBuild,
+        }
+    }
+}
+
+impl From<NextUp> for NextDrillDto {
+    fn from(next: NextUp) -> Self {
+        Self {
+            lesson_id: next.lesson_id,
+            status: next.status.into(),
+        }
+    }
+}
+
+/// A module of the course, and its lessons a drill can be built from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DrillModuleDto {
+    pub module_id: String,
+    pub title: String,
+    pub lessons: Vec<DrillLessonDto>,
+}
+
+/// A lesson a drill can be built from, and where its drills stand.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DrillLessonDto {
+    pub lesson_id: String,
+    pub title: String,
+    pub standing: DrillStandingDto,
+    /// When its drills are next due; none while no drill of it has been rated.
+    pub due_at: Option<i64>,
+    /// A code drill can be built from it: false once one kept none of the lesson's ideas, until the lesson or the
+    /// course's sources change.
+    pub fits_code: bool,
+    /// An explanation can be built from it: false once the course's sources held no passage for it, until the lesson
+    /// or the sources change.
+    pub fits_passage: bool,
+    /// The course's current lesson.
+    pub current: bool,
+    /// The learner marked it done.
+    pub completed: bool,
+}
+
+/// Where a lesson's drills stand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum DrillStandingDto {
+    /// Rated, and due again.
+    Due,
+    /// No drill of it has been rated.
+    New,
+    /// Rated, and not due yet.
+    Rested,
+    /// A drill of it is out and not yet graded, or ready to be taken.
+    Pending,
+}
+
+impl From<DrillStanding> for DrillStandingDto {
+    fn from(standing: DrillStanding) -> Self {
+        match standing {
+            DrillStanding::Due => Self::Due,
+            DrillStanding::New => Self::New,
+            DrillStanding::Rested => Self::Rested,
+            DrillStanding::Pending => Self::Pending,
+        }
+    }
+}
+
+/// One of a course's latest attempts, as its drills view lists it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseDrillAttemptDto {
+    pub attempt_id: String,
+    pub status: AttemptStatus,
+    pub mode: AttemptMode,
+    pub started_at: i64,
+    /// The drill's title.
+    pub title: String,
+    pub material: DrillMaterialDto,
+    /// The lesson the drill was built from, while it exists.
+    pub lesson: Option<DrillLessonRefDto>,
+    /// How the review fared, once it is graded.
+    pub score: Option<CodeReviewScoreDto>,
 }
 
 /// What starting a drill came to.
@@ -298,6 +447,26 @@ pub struct RevealedIssueDto {
     pub reason: String,
     /// Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
     pub also_valid: bool,
+    /// What the issue breaks of the lesson the drill was built from; none for an issue of the catalogue alone.
+    pub lesson: Option<RevealedLessonLinkDto>,
+}
+
+/// The lesson's words a key issue goes against, as the reveal shows them under "From the lesson".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealedLessonLinkDto {
+    pub lesson_id: String,
+    /// In the order the key cites them: a sentence, or a whole block of the lesson's code, each.
+    pub sentences: Vec<RevealedLessonSentenceDto>,
+}
+
+/// One unit of a lesson's words, and where it comes from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RevealedLessonSentenceDto {
+    pub text: String,
+    /// The title of the source it comes from; none for the lesson's own teaching.
+    pub source: Option<String>,
 }
 
 /// One finding of the learner's, with what came of it.

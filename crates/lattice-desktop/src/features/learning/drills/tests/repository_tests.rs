@@ -1,7 +1,7 @@
 //! The migration: the tables, what deleting a drill or a course does, the constraints, and the indexes the bank's
 //! queries use.
 
-use super::support::{code, files, planted, proved, quiet, review, spec, MODEL, SUITE};
+use super::support::{code, files, planted, proved, quiet, review, spec, unchecked, MODEL, SUITE};
 use crate::features::learning::drills::build::Evidence;
 use crate::features::learning::drills::repository::{self, DrillStatus, NewDrill};
 use crate::features::learning::persistence::db;
@@ -18,11 +18,18 @@ async fn add(pool: &SqlitePool, id: &str, program_id: Option<&str>) -> Result<()
         material: Material::code("python"),
         title: "A limiter".into(),
         files: proved.files.clone(),
-        key: proved.planted_key(),
+        key: proved.planted_key(&unchecked()),
     };
     let mut spec = spec();
     spec.program_id = program_id.map(str::to_owned);
-    let evidence = Evidence::new(&code(), &review(), &planted(), &proved, &quiet());
+    let evidence = Evidence::new(
+        &code(),
+        &review(),
+        &planted(),
+        &proved,
+        &unchecked(),
+        &quiet(),
+    );
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::insert_in(
         &mut connection,
@@ -79,19 +86,26 @@ async fn a_drill_comes_back_as_it_went_in_with_a_row_for_each_pattern() -> Resul
     let pool = pool().await?;
     add(&pool, "drill", None).await?;
     let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_in(&mut connection, "python")
+    let stored = repository::find_in(&mut connection, "drill")
         .await?
         .expect("the drill");
     drop(connection);
     assert_eq!(stored.drill.id, "drill");
     assert_eq!(stored.drill.files, proved().files);
-    assert_eq!(stored.drill.key, proved().planted_key());
+    assert_eq!(stored.drill.key, proved().planted_key(&unchecked()));
     assert_eq!(stored.clean_files, files());
     assert_eq!(stored.spec, spec());
     assert_eq!(stored.status, DrillStatus::Ready);
     assert_eq!(
         stored.evidence,
-        Evidence::new(&code(), &review(), &planted(), &proved(), &quiet())
+        Evidence::new(
+            &code(),
+            &review(),
+            &planted(),
+            &proved(),
+            &unchecked(),
+            &quiet()
+        )
     );
     assert_eq!(
         scalar(
@@ -228,7 +242,15 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
     let pool = pool().await?;
     for (sql, index) in [
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language='python' AND status='ready' ORDER BY created_at,rowid LIMIT 1",
+            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL AND (NULL IS NULL OR lesson_id=NULL) ORDER BY created_at,rowid LIMIT 1",
+            "learning_drills_shelf",
+        ),
+        (
+            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL AND ('l' IS NULL OR lesson_id='l') ORDER BY created_at,rowid LIMIT 1",
+            "learning_drills_shelf",
+        ),
+        (
+            "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL)",
             "learning_drills_shelf",
         ),
         (

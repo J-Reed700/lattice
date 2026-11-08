@@ -3,6 +3,7 @@
 //! proofs are what a learner's fix is run against; the learner never sees them. A drill on a passage keeps the
 //! source passage its explanation was written from.
 
+use super::bank::Shelf;
 use super::build::{Evidence, SourcePassage};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, decode, encode, now};
@@ -58,11 +59,15 @@ pub struct StoredDrill {
     /// The material before any issue was planted.
     pub clean_files: Vec<DrillFile>,
     pub spec: DrillSpec,
+    /// The title of the lesson the drill was built from, as it was then; for a drill from before lessons, the domain
+    /// its code was set in.
     pub domain: String,
-    /// The course whose topic gave the domain, or whose source a passage is from, while the course exists.
+    /// The course the drill was built for, while it exists.
     pub program_id: Option<String>,
     /// The lesson the drill was built from, while it exists.
     pub lesson_id: Option<String>,
+    /// The title the drill's lesson has now, while the lesson exists.
+    pub lesson_title: Option<String>,
     pub suite: Option<String>,
     /// The passage an explanation was written from: `None` for code.
     pub source: Option<SourcePassage>,
@@ -161,13 +166,17 @@ fn material_name(material: &Material) -> &'static str {
     }
 }
 
-/// The oldest ready drill of code in `language`.
-pub(in crate::features::learning) async fn oldest_ready_in(
+/// The oldest ready drill of `shelf` built from a lesson: from `lesson`, when one is given.
+pub(in crate::features::learning) async fn oldest_ready_on(
     connection: &mut SqliteConnection,
-    language: &str,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='code' AND language=? AND status='ready' ORDER BY created_at,rowid LIMIT 1"))
-        .bind(language)
+    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL AND (?4 IS NULL OR lesson_id=?4) ORDER BY created_at,rowid LIMIT 1"))
+        .bind(shelf.program_id)
+        .bind(material_name(shelf.material))
+        .bind(shelf.material.language())
+        .bind(lesson)
         .fetch_optional(connection)
         .await
         .map_err(db)?
@@ -176,22 +185,18 @@ pub(in crate::features::learning) async fn oldest_ready_in(
         .transpose()
 }
 
-/// The oldest ready drill on a passage of the course `program_id` that was built for `topic`, as typed in any case
-/// and with any space around it, or for no topic when there is none.
-pub(in crate::features::learning) async fn oldest_ready_of_course_topic_in(
+/// Whether a drill of `shelf` built from a lesson is ready.
+pub(in crate::features::learning) async fn any_ready_in(
     connection: &mut SqliteConnection,
-    program_id: &str,
-    topic: Option<&str>,
-) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='passage' AND program_id=?2 AND status='ready' AND ((?1 IS NULL AND json_extract(spec_json,'$.domain') IS NULL) OR lower(trim(json_extract(spec_json,'$.domain')))=lower(trim(?1))) ORDER BY created_at,rowid LIMIT 1"))
-        .bind(topic)
-        .bind(program_id)
-        .fetch_optional(connection)
+    shelf: Shelf<'_>,
+) -> Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL)")
+        .bind(shelf.program_id)
+        .bind(material_name(shelf.material))
+        .bind(shelf.material.language())
+        .fetch_one(connection)
         .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+        .map_err(db)
 }
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.
@@ -242,20 +247,6 @@ pub(in crate::features::learning) async fn mark_taken_in(
         == 1)
 }
 
-/// For each domain used for `language`, when a drill of it was last built.
-pub(in crate::features::learning) async fn domain_uses(
-    pool: &SqlitePool,
-    language: &str,
-) -> Result<Vec<(String, i64)>> {
-    sqlx::query_as::<_, (String, i64)>(
-        "SELECT domain,max(created_at) FROM learning_drills WHERE language=? GROUP BY domain",
-    )
-    .bind(language)
-    .fetch_all(pool)
-    .await
-    .map_err(db)
-}
-
 fn read(row: &SqliteRow) -> Result<StoredDrill> {
     let files: Vec<DrillFile> = decode(&row.get::<String, _>("files_json"))?;
     let key: Vec<KeyIssue> = decode(&row.get::<String, _>("key_json"))?;
@@ -288,6 +279,7 @@ fn read(row: &SqliteRow) -> Result<StoredDrill> {
         domain: row.get("domain"),
         program_id: row.get("program_id"),
         lesson_id: row.get("lesson_id"),
+        lesson_title: None,
         suite: row.get("suite"),
         source,
         runner: row.get("runner"),

@@ -22,8 +22,8 @@ use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 use super::support::{
-    code, literals_mutation, planted, proved, quiet, review, stock, KILLING_TEST, LITERALS, MODEL,
-    OPERATOR, SUITE,
+    code, literals_mutation, planted, proved, quiet, review, stock, unchecked, KILLING_TEST,
+    LITERALS, MODEL, OPERATOR, SUITE,
 };
 use crate::features::learning::drills::bank;
 use crate::features::learning::drills::build::{
@@ -123,6 +123,7 @@ fn models_of(stored: &StoredDrill) -> Vec<ModelCall> {
     ];
     trails.extend(evidence.proofs.iter().map(|proof| &proof.trail));
     trails.extend(evidence.dropped.iter().map(|dropped| &dropped.trail));
+    trails.extend(evidence.lesson_checks.iter().map(|check| &check.trail));
     trails.push(&evidence.blind_review.trail);
     trails
         .into_iter()
@@ -473,6 +474,15 @@ async fn live_build_eval() -> Result<()> {
     });
     let runtimes = BuiltinRuntimes::for_tests();
     let pool = crate::features::learning::tests::pool().await?;
+    let program = crate::features::learning::tests::fixture();
+    crate::features::learning::repository::LearningRepository::new(pool.clone())
+        .create(&program)
+        .await?;
+    let lesson_id = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .map(|lesson| lesson.id.clone());
     let mut summary = Vec::new();
     for language in &wanted {
         // Each drill targets the patterns the earlier ones of its language left alone, so the eval covers the catalogue.
@@ -481,15 +491,14 @@ async fn live_build_eval() -> Result<()> {
             let name = format!("{language}-{index:02}");
             let material = Material::code(language.clone());
             let spec = DrillSpec {
-                domain: None,
                 lines,
                 patterns: targets(&material, &tried, now(), patterns)
                     .iter()
                     .map(|pattern| pattern.id.to_owned())
                     .collect(),
                 material,
-                program_id: None,
-                lesson_id: None,
+                program_id: Some(program.summary.id.clone()),
+                lesson_id: lesson_id.clone(),
             };
             tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
                 pattern: pattern.clone(),
@@ -653,6 +662,11 @@ async fn live_passage_build_eval() -> Result<()> {
     });
     let runtimes = BuiltinRuntimes::for_tests();
     let pool = copied_database(&database).await?;
+    let lesson_id: Option<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal LIMIT 1")
+        .bind(&course)
+        .fetch_optional(&pool)
+        .await
+        .map_err(db)?;
     let run = uuid::Uuid::new_v4();
     let mut tried: Vec<PatternDue> = Vec::new();
     let mut summary = Vec::new();
@@ -660,7 +674,6 @@ async fn live_passage_build_eval() -> Result<()> {
         let name = format!("passage-{index:02}");
         let material = Material::Passage;
         let spec = DrillSpec {
-            domain: None,
             lines,
             patterns: targets(&material, &tried, now(), patterns)
                 .iter()
@@ -668,7 +681,7 @@ async fn live_passage_build_eval() -> Result<()> {
                 .collect(),
             material,
             program_id: Some(course.clone()),
-            lesson_id: None,
+            lesson_id: lesson_id.clone(),
         };
         tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
             pattern: pattern.clone(),
@@ -815,7 +828,15 @@ async fn the_markdown_says_why_a_defect_was_dropped_and_what_the_blind_review_ma
     drill.evidence.blind_review = {
         let mut blind: BlindReview = quiet();
         blind.trail.call("blind review", "another-model");
-        Evidence::new(&code(), &review(), &planted(), &proved(), &blind).blind_review
+        Evidence::new(
+            &code(),
+            &review(),
+            &planted(),
+            &proved(),
+            &unchecked(),
+            &blind,
+        )
+        .blind_review
     };
     let counts = counts_of(&drill);
     let text = markdown(&drill, &counts, 1.0);
