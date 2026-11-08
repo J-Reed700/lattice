@@ -19,7 +19,6 @@ mod quotes;
 mod waiting;
 use passes::{Next, Passes};
 use quotes::{lesson_quote_checks, reanchor_lesson_quotes, restore_lesson_quotes};
-pub(crate) use waiting::held as held_findings;
 pub(crate) use waiting::record as record_waiting;
 
 pub fn project_schema() -> Value {
