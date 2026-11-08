@@ -140,20 +140,20 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
           <div className="space-y-2">
             {draft.choices.map((choice, index) => (
               <div key={index} className="space-y-1">
-              <div className="flex items-center gap-2">
-                <input type="radio" name={`${ids}-right`} aria-label={`Right answer: choice ${index + 1}`} checked={draft.right === index} disabled={saving}
-                  onChange={() => chooseRight(index)} />
-                <label htmlFor={`${ids}-choice-${index}`} className="sr-only">Choice {index + 1}</label>
-                <input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary" />
-                <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length <= MIN_CHOICES}
-                  onClick={() => removeChoice(index)}>Remove</Button>
-              </div>
-              {draft.right !== index && (
-                <textarea aria-label={`Why choice ${index + 1} is wrong`} value={reasonAt(draft, index)} disabled={saving} rows={2}
-                  placeholder="Why this choice is wrong"
-                  onChange={(event) => setReason(index, event.target.value)} className={`${field} mt-0`} />
-              )}
+                <div className="flex items-center gap-2">
+                  <input type="radio" name={`${ids}-right`} aria-label={`Right answer: choice ${index + 1}`} checked={draft.right === index} disabled={saving}
+                    onChange={() => chooseRight(index)} />
+                  <label htmlFor={`${ids}-choice-${index}`} className="sr-only">Choice {index + 1}</label>
+                  <input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary" />
+                  <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length <= MIN_CHOICES}
+                    onClick={() => removeChoice(index)}>Remove</Button>
+                </div>
+                {draft.right !== index && (
+                  <textarea aria-label={`Why choice ${index + 1} is wrong`} value={reasonAt(draft, index)} disabled={saving} rows={2}
+                    placeholder="Why this choice is wrong"
+                    onChange={(event) => setReason(index, event.target.value)} className={`${field} mt-0`} />
+                )}
               </div>
             ))}
             <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length >= MAX_CHOICES}
