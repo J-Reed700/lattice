@@ -109,8 +109,8 @@ impl LessonBrief {
     }
 }
 
-/// Writes the numbered `units` as the evidence of a brief: a heading wherever the source changes, then each unit under its
-/// number.
+/// Writes the numbered `units` as the evidence of a brief: a heading wherever the source changes, then each unit
+/// under its number.
 fn write_evidence<'a>(
     shown: &mut String,
     units: impl Iterator<Item = (usize, &'a LessonSentence)>,

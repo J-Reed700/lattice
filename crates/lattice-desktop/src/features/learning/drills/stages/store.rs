@@ -1,5 +1,5 @@
-//! Stage 7: the drill's key is checked against its material, and one transaction writes the drill and completes the job,
-//! so a cancelled job stores nothing and a stored drill never leaves its job running.
+//! Stage 7: the drill's key is checked against its material, and one transaction writes the drill and completes the
+//! job, so a cancelled job stores nothing and a stored drill never leaves its job running.
 
 use super::outputs::{
     Baseline, BlindReview, CleanCode, CleanReview, Evidence, LessonChecked, Planted, Proved,
