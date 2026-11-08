@@ -56,14 +56,15 @@ with another dedicated test build directory.
    parent traversal and absolute paths outside the chosen folder rejected by
    the real Rust boundary. A missing-file rejection must leave subsequent
    valid reads working.
-10. The mic with no models says to download Whisper. On Windows, Whisper Tiny and
-    Kokoro are then downloaded through the app, Kokoro reads a sentence into a
-    WAV, and the app restarts with that file as WebView2's fake microphone. The
-    argument that skips the permission prompt is left out, so the app's own
-    permission handler has to open the mic. With no chat model in the test
-    library, what real Whisper heard has to arrive in the composer. If the
-    models can't be downloaded the report says so and only the message is
-    checked; see `voice-result.json`.
+10. The mic with no models says to download Whisper. On Windows, Whisper Tiny
+    and Kokoro are then downloaded through the app, Kokoro reads a sentence into
+    a WAV. The Windows candidate's main window is built with WebView2's fake
+    microphone reading a file, and the test writes that WAV to the file before
+    restarting the app. The argument that skips the permission prompt is left
+    out, so the app's own permission handler has to open the mic. With no chat
+    model in the test library, what real Whisper heard has to arrive in the
+    composer. If the models can't be downloaded the report says so and only the
+    message is checked; see `voice-result.json`.
 
 Before the UI suite, the build helper runs fixed Python and JavaScript exercises
 through the installed executable. It verifies correct and incorrect results,

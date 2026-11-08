@@ -486,18 +486,17 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
     }
     voice.steps.push('models-downloaded');
 
-    const capture = path.join(reports, 'spoken.wav');
+    assert.ok(manifest.fakeMicrophone, 'The Windows candidate names the file its fake microphone plays');
     const { defaultVoice } = await speech();
     // The first sentence loads the voice as well as reading.
     await browser.setTimeout({ script: 180_000 });
-    await writeFile(capture, captureFile(await invokeLong('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 })));
+    const spoken = captureFile(await invokeLong('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 }));
+    await writeFile(manifest.fakeMicrophone, spoken);
+    await writeFile(path.join(reports, 'spoken.wav'), spoken);
     await closeNormally();
 
     // No --use-fake-ui-for-media-stream: the app's own permission handler has to let this through.
-    await launch({
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
-        `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=${capture} --autoplay-policy=no-user-gesture-required`,
-    });
+    await launch();
     await (await openChatWithMic()).click();
     await pageSays('Listening…', 60_000);
     voice.steps.push('webview2-opened-the-mic');
@@ -512,6 +511,49 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
     voice.steps.push('whisper-heard-it');
     await browser.saveScreenshot(path.join(reports, 'voice-composer.png'));
     await closeNormally();
+  } catch (error) {
+    voice.error = String(error);
+    voice.appExitCode = app?.exitCode ?? null;
+    if (browser) {
+      voice.page = await browser.executeAsync(async done => {
+        const settle = (promise, ms = 10_000) => Promise.race([
+          promise, new Promise((_, reject) => setTimeout(() => reject(new Error(`no answer in ${ms}ms`)), ms)),
+        ]);
+        const report = { text: document.body.innerText.slice(0, 4000) };
+        try {
+          report.devices = (await settle(navigator.mediaDevices.enumerateDevices())).map(d => `${d.kind}:${d.label}`);
+        } catch (e) { report.devices = String(e); }
+        try {
+          (await settle(navigator.mediaDevices.getUserMedia({ audio: true }))).getTracks().forEach(t => t.stop());
+          report.getUserMedia = 'ok';
+        } catch (e) { report.getUserMedia = `${e.name}: ${e.message}`; }
+        try {
+          const context = new AudioContext();
+          report.audioContext = context.state;
+          await settle(context.resume());
+          report.audioContextResumed = context.state;
+          await settle(context.close());
+        } catch (e) { report.audioContext = `${report.audioContext ?? ''} ${e.name}: ${e.message}`.trim(); }
+        done(report);
+      }).catch(e => ({ probeFailed: String(e) }));
+      await browser.saveScreenshot(path.join(reports, 'voice-failure.png')).catch(() => {});
+    }
+    voice.appPid = app?.pid ?? null;
+    if (process.platform === 'win32') {
+      try {
+        voice.integrity = execFileSync('whoami', ['/groups'], { encoding: 'utf8', timeout: 10_000 })
+          .split(/\r?\n/).filter(line => line.includes('Mandatory Label'));
+      } catch (e) { voice.integrity = String(e); }
+      try {
+        const listing = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+          "Get-CimInstance Win32_Process -Filter \"Name = 'msedgewebview2.exe'\" | " +
+          'Select-Object ProcessId, ParentProcessId, CreationDate, CommandLine | ConvertTo-Json -Compress',
+        ], { encoding: 'utf8', timeout: 20_000 }).trim();
+        const parsed = listing ? JSON.parse(listing) : [];
+        voice.webview2 = Array.isArray(parsed) ? parsed : [parsed];
+      } catch (e) { voice.webview2 = String(e); }
+    }
+    throw error;
   } finally {
     await stopApp();
     await writeFile(path.join(reports, 'voice-result.json'), JSON.stringify(voice, null, 2));
