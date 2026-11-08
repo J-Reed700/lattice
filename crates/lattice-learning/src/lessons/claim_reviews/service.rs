@@ -192,6 +192,7 @@ impl ClaimReviewService {
                 source_version_ids,
             } => note.is_none() && source_version_ids.is_empty(),
             ClaimActionRequestDto::Remove | ClaimActionRequestDto::Undo => true,
+            ClaimActionRequestDto::PutBack { text, .. } => text.is_none(),
             _ => false,
         };
         if !in_bulk {
@@ -245,6 +246,7 @@ impl ClaimReviewService {
             let verb = match kind {
                 ClaimActionKind::Confirm => "accepted",
                 ClaimActionKind::Remove => "removed",
+                ClaimActionKind::PutBack => "put back",
                 _ => "undone",
             };
             let message = plain(first);

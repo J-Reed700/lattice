@@ -9278,8 +9278,8 @@ export type ResolveLearningClaimResultDto = {
  */
 revision: number }
 /**
- * One action for several claims at once (`Confirm`, `Remove`, or `Undo` of
- * the last such batch).
+ * One action for several claims at once (`Confirm`, `Remove`, `PutBack` of
+ * a sentence as it was, or `Undo` of the last such batch).
  */
 export type ResolveLearningClaimsRequestDto = { programId: string; lessonId: string;
 /**

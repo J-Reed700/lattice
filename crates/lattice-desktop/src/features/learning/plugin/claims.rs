@@ -43,8 +43,8 @@ pub struct ResolveLearningClaimRequestDto {
     pub operation_id: String,
 }
 
-/// One action for several claims at once (`Confirm`, `Remove`, or `Undo` of
-/// the last such batch).
+/// One action for several claims at once (`Confirm`, `Remove`, `PutBack` of
+/// a sentence as it was, or `Undo` of the last such batch).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveLearningClaimsRequestDto {

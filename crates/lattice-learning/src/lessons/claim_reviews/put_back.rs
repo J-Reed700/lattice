@@ -5,14 +5,15 @@
 
 use lattice_core::domain::learning::acceptance::Outcome;
 use lattice_core::domain::learning::claim_review::{
-    span_of, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, EventProvenance, PutPlace,
+    span_of, Anchor, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
+    EventProvenance, PutPlace,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 use sqlx::SqliteConnection;
 use std::collections::HashSet;
 
-use super::repository::append_in;
+use super::repository::{append_in, load_in};
 
 use crate::content_verification::{field_text, located_quote};
 
@@ -262,9 +263,29 @@ pub(super) fn resolve(
     }
 }
 
-/// Writes the user's put back `event` for `claim_id` into a draft's ledger:
-/// the next pass writes the text. The claims it put back are the ones it
-/// returns.
+/// The other claims the machine took out with `entry`'s sentence: the same
+/// field of the same unit, the same sentence. Putting the sentence back
+/// brings every one of them back.
+pub(super) fn siblings<'a>(
+    claims: &'a [ClaimLedgerEntry],
+    entry: &ClaimLedgerEntry,
+) -> Vec<&'a ClaimLedgerEntry> {
+    let sentence = sentence_of(entry);
+    claims
+        .iter()
+        .filter(|other| {
+            other.claim_id() != entry.claim_id()
+                && other.allows(ClaimActionKind::PutBack)
+                && other.location().unit_index == entry.location().unit_index
+                && other.location().field == entry.location().field
+                && sentence_of(other) == sentence
+        })
+        .collect()
+}
+
+/// Writes the user's put back `event` for `claim_id`, and for the claims
+/// taken out with its sentence, into a draft's ledger: the next pass writes
+/// the text, once. The claims it put back are the ones it returns.
 pub(super) async fn write_draft_in(
     connection: &mut SqliteConnection,
     lesson_id: &str,
@@ -272,6 +293,23 @@ pub(super) async fn write_draft_in(
     event: &ClaimEvent,
     user: &EventProvenance,
 ) -> Result<HashSet<ClaimId>> {
-    append_in(connection, lesson_id, claim_id, user.clone(), event.clone()).await?;
-    Ok(HashSet::from([claim_id.clone()]))
+    let ledger = load_in(connection, lesson_id).await?;
+    let mut put: HashSet<ClaimId> = HashSet::from([claim_id.clone()]);
+    if let Some(entry) = ledger
+        .claims
+        .iter()
+        .find(|entry| entry.claim_id() == claim_id)
+    {
+        put.extend(
+            siblings(&ledger.claims, entry)
+                .into_iter()
+                .map(|other| other.claim_id().clone()),
+        );
+    }
+    let mut ordered: Vec<&ClaimId> = put.iter().collect();
+    ordered.sort();
+    for id in ordered {
+        append_in(connection, lesson_id, id, user.clone(), event.clone()).await?;
+    }
+    Ok(put)
 }

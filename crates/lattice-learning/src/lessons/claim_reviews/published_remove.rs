@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
+    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
@@ -56,6 +56,35 @@ pub(super) fn without_sentence(body: &str, range: (usize, usize)) -> String {
         leading
     };
     format!("{kept_before}{separator}{kept_after}")
+}
+
+/// What `without_sentence` took out of `old` to leave `new`, and where: the
+/// text itself, and the shortest text before it in `new` that occurs once
+/// (`None` when it was taken from the start). `None` when the two do not
+/// differ by one deletion, or no text before it names its place.
+pub(super) fn removal_text(old: &str, new: &str) -> Option<(String, Option<String>)> {
+    let at = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(c, _)| c.len_utf8())
+        .sum::<usize>();
+    let kept = new.len().checked_sub(at)?;
+    let end = old.len().checked_sub(kept)?;
+    let text = old.get(at..end.max(at))?;
+    if format!("{}{}{}", new.get(..at)?, text, new.get(at..)?) != old || text.is_empty() {
+        return None;
+    }
+    let before = new.get(..at)?;
+    if before.is_empty() {
+        return Some((text.to_owned(), None));
+    }
+    before
+        .char_indices()
+        .rev()
+        .map(|(start, _)| before.get(start..).unwrap_or_default())
+        .find(|context| new.matches(*context).count() == 1)
+        .map(|context| (text.to_owned(), Some(context.to_owned())))
 }
 
 /// Whether a line's text before the sentence is only the marker of a list
@@ -131,7 +160,19 @@ pub(super) async fn remove_in(
         })
         .collect();
     let new_body = without_sentence(&body, range);
+    let taken = removal_text(&body, &new_body);
     for entry in &removed {
+        if let Some((text, after)) = &taken {
+            let event = ClaimEvent::TextRemoved {
+                text: text.clone(),
+                after: after.clone(),
+            };
+            let machine = EventProvenance {
+                actor: Actor::Machine,
+                ..user.clone()
+            };
+            append_in(connection, lesson_id, entry.claim_id(), machine, event).await?;
+        }
         let event = ClaimEvent::UserAction {
             action: UserAction::Remove,
             note: None,
@@ -150,6 +191,7 @@ pub(super) async fn remove_in(
             range,
             new_body: &new_body,
             removed: &ids,
+            claim: claim_id,
         })
     })
     .await?;

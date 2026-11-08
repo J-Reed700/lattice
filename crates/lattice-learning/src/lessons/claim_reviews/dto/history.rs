@@ -230,7 +230,8 @@ impl ClaimEventPayloadDto {
             ClaimEvent::Stepped { .. }
             | ClaimEvent::CitationDropped { .. }
             | ClaimEvent::PublishedUnverified { .. }
-            | ClaimEvent::SentenceCut { .. } => return None,
+            | ClaimEvent::SentenceCut { .. }
+            | ClaimEvent::TextRemoved { .. } => return None,
         })
     }
 }

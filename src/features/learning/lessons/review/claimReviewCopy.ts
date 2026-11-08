@@ -317,6 +317,7 @@ export function announcement(action: AnnouncedAction, remaining: number): string
 }
 
 export const putBackMany = (count: number) => (count === 1 ? 'Put back in the lesson.' : `Put back ${count} sentences in the lesson.`);
+export const putBackUndone = (count: number) => (count === 1 ? 'Undone. It is out of the lesson again.' : `Undone. ${count} sentences are out of the lesson again.`);
 
 export function trustedAnnouncement(title: string, verified: number, stillWaiting: number): string {
   return `Trusted ${title} for this course: ${plural(verified, 'claim', 'claims')} verified, ${stillWaiting} still need${stillWaiting === 1 ? 's' : ''} you.`;

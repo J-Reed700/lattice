@@ -853,6 +853,14 @@ pub enum ClaimEvent {
     SentenceCut {
         cut: CutPlace,
     },
+    /// What the user's removal took out of a published section: the exact
+    /// text (the sentence with the whitespace beside it) and the shortest
+    /// text before it that occurs once, `None` at the start, so an undo can
+    /// write it back where it was.
+    TextRemoved {
+        text: String,
+        after: Option<String>,
+    },
 }
 
 impl ClaimEvent {
@@ -878,6 +886,7 @@ impl ClaimEvent {
             Self::Stepped { .. } => "stepped",
             Self::PublishedUnverified { .. } => "published_unverified",
             Self::SentenceCut { .. } => "sentence_cut",
+            Self::TextRemoved { .. } => "text_removed",
         }
     }
 }

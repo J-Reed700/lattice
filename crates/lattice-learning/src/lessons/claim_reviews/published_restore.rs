@@ -15,6 +15,7 @@ use super::actions::{in_section_body, ONLY_SECTION};
 use super::published_edit::{
     gone, placed, section_body, update_report, write_section_body, CHANGED,
 };
+use super::put_back::siblings;
 use super::repository::{append_in, load_in};
 use crate::content_verification::{insert_sentence, remove_sentence, WrittenBack};
 
@@ -106,6 +107,20 @@ pub(super) async fn apply_in(
         }
     };
     append_in(connection, lesson_id, claim_id, user.clone(), event.clone()).await?;
+    let mut done = HashSet::from([claim_id.clone()]);
+    if is_put_back(event) {
+        for other in siblings(&ledger.claims, target) {
+            append_in(
+                connection,
+                lesson_id,
+                other.claim_id(),
+                user.clone(),
+                event.clone(),
+            )
+            .await?;
+            done.insert(other.claim_id().clone());
+        }
+    }
     for id in &replaced {
         let superseded = ClaimEvent::Superseded {
             successor: Some(claim_id.clone()),
@@ -130,7 +145,18 @@ pub(super) async fn apply_in(
         })
     })
     .await?;
-    Ok(HashSet::from([claim_id.clone()]))
+    Ok(done)
+}
+
+/// Whether `event` is the user's put back of a sentence.
+fn is_put_back(event: &ClaimEvent) -> bool {
+    matches!(
+        event,
+        ClaimEvent::UserAction {
+            action: UserAction::PutBack { .. },
+            ..
+        }
+    )
 }
 
 /// The claims an undo of `target`'s last user event takes back, with the
@@ -143,6 +169,22 @@ struct Undoing {
     undone: Vec<(ClaimId, u32)>,
     /// A claim an edit made that goes out with the edit.
     successor: Option<ClaimId>,
+    /// The undo takes a removal back: the findings it dropped return.
+    removal: bool,
+}
+
+/// What the removal at `ordinal` took out of the claim's section: the text and
+/// what precedes it, as the last `TextRemoved` before it recorded them.
+fn removal_of(entry: &ClaimLedgerEntry, ordinal: u32) -> Option<(String, Option<String>)> {
+    entry
+        .events()
+        .iter()
+        .rev()
+        .filter(|record| record.ordinal < ordinal)
+        .find_map(|record| match &record.event {
+            ClaimEvent::TextRemoved { text, after } => Some((text.clone(), after.clone())),
+            _ => None,
+        })
 }
 
 fn last_user_event(entry: &ClaimLedgerEntry) -> Option<(u32, &ClaimEvent)> {
@@ -169,6 +211,10 @@ pub(super) fn undoable_in_published(entry: &ClaimLedgerEntry) -> bool {
                 | UserAction::RestoreOriginal { .. },
             ..
         } => true,
+        ClaimEvent::UserAction {
+            action: UserAction::Remove,
+            ..
+        } => removal_of(entry, ordinal).is_some(),
         ClaimEvent::EvidenceAttached { .. } => entry
             .events()
             .iter()
@@ -220,11 +266,65 @@ pub(super) async fn undo_in(
             let unit = place.unit_index;
             let body = section_body(connection, lesson_id, unit).await?;
             let new_body = remove_sentence(&body, sentence).ok_or_else(by_hand)?;
+            let mut undone = vec![(claim_id.clone(), ordinal)];
+            undone.extend(ledger.claims.iter().filter_map(|entry| {
+                let (other, last) = last_user_event(entry)?;
+                let same = matches!(
+                    last,
+                    ClaimEvent::UserAction {
+                        action: UserAction::PutBack { sentence: put, place: at, .. },
+                        ..
+                    } if put == sentence && at == place
+                );
+                (same && entry.claim_id() != claim_id).then(|| (entry.claim_id().clone(), other))
+            }));
             Some(Undoing {
                 unit,
                 then: new_body,
-                undone: vec![(claim_id.clone(), ordinal)],
+                undone,
                 successor: None,
+                removal: false,
+            })
+        }
+        ClaimEvent::UserAction {
+            action: UserAction::Remove,
+            ..
+        } => {
+            let removed = removal_of(target, ordinal).ok_or_else(by_hand)?;
+            let unit = target.location().unit_index;
+            let body = section_body(connection, lesson_id, unit).await?;
+            let at = match &removed.1 {
+                None => 0,
+                Some(context) if body.matches(context.as_str()).count() == 1 => body
+                    .find(context.as_str())
+                    .map(|start| start + context.len())
+                    .ok_or_else(by_hand)?,
+                Some(_) => return Err(by_hand()),
+            };
+            let (head, tail) = (body.get(..at), body.get(at..));
+            let (Some(head), Some(tail)) = (head, tail) else {
+                return Err(by_hand());
+            };
+            let new_body = format!("{head}{}{tail}", removed.0);
+            let mut undone = vec![(claim_id.clone(), ordinal)];
+            undone.extend(ledger.claims.iter().filter_map(|entry| {
+                let (other, last) = last_user_event(entry)?;
+                let same = matches!(
+                    last,
+                    ClaimEvent::UserAction {
+                        action: UserAction::Remove,
+                        ..
+                    }
+                ) && entry.location().unit_index == unit
+                    && removal_of(entry, other).as_ref() == Some(&removed);
+                (same && entry.claim_id() != claim_id).then(|| (entry.claim_id().clone(), other))
+            }));
+            Some(Undoing {
+                unit,
+                then: new_body,
+                undone,
+                successor: None,
+                removal: true,
             })
         }
         ClaimEvent::UserAction {
@@ -250,6 +350,7 @@ pub(super) async fn undo_in(
                 then: new_body,
                 undone,
                 successor: None,
+                removal: false,
             })
         }
         ClaimEvent::UserAction {
@@ -299,6 +400,7 @@ pub(super) async fn undo_in(
                 then: new_body,
                 undone,
                 successor: Some(successor),
+                removal: false,
             })
         }
         _ => None,
@@ -325,10 +427,10 @@ pub(super) async fn undo_in(
                 append_in(connection, lesson_id, successor, machine, ended).await?;
             }
             write_section_body(connection, lesson_id, undoing.unit, &undoing.then).await?;
-            let claim = undoing
-                .successor
-                .or_else(|| undoing.undone.first().map(|(id, _)| id.clone()));
-            claim.map(|claim| (undoing.unit, undoing.then, claim))
+            let mut claims: HashSet<String> =
+                undoing.undone.iter().map(|(id, _)| id.0.clone()).collect();
+            claims.extend(undoing.successor.iter().map(|id| id.0.clone()));
+            Some((undoing.unit, undoing.then, claims, undoing.removal))
         }
         None => {
             let undone = ClaimEvent::Undone {
@@ -338,9 +440,13 @@ pub(super) async fn undo_in(
             None
         }
     };
-    if let Some((unit, body, claim)) = written {
+    if let Some((unit, body, claims, removal)) = written {
         update_report(connection, &review.program_id, lesson_id, |report| {
-            report.written_out(unit, &body, &claim)
+            if removal {
+                report.taken_back(unit, &body, &claims);
+            } else {
+                report.written_out(unit, &body, &claims);
+            }
         })
         .await?;
     }

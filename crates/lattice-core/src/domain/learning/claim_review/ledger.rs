@@ -579,7 +579,8 @@ impl ClaimLedgerEntry {
             ClaimEvent::Stepped { .. } => self.apply_step(&mut next, &record.event, at)?,
             ClaimEvent::Executed { .. }
             | ClaimEvent::Stopped { .. }
-            | ClaimEvent::SentenceCut { .. } => {}
+            | ClaimEvent::SentenceCut { .. }
+            | ClaimEvent::TextRemoved { .. } => {}
             ClaimEvent::PublishedUnverified { reason } => {
                 if !matches!(
                     next.state,
