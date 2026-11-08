@@ -2,5 +2,5 @@
 
 use lattice_learning::drills::grading::JudgeGrader;
 
-#[path = "../drills/live_grading_eval.rs"]
+#[path = "live_grading_eval.rs"]
 pub(super) mod live_grading_eval;
