@@ -818,3 +818,37 @@ async fn putting_a_sentence_back_replaces_the_findings_of_every_claim_that_stood
     assert_eq!(findings_of(&course).await?, before);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_cut_recorded_in_another_section_does_not_make_this_ones_place_ambiguous() -> Result<()> {
+    let course = published().await?;
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(format!("{ALPHA} {ECHO}"))
+        .bind(&course.lesson_id)
+        .execute(&course.pool)
+        .await?;
+    let bravo = taken_out_as(
+        &course,
+        "bravo",
+        BRAVO,
+        BRAVO,
+        0,
+        Some((Some(ALPHA), Some(ECHO))),
+    )
+    .await?;
+    let zulu = "Zulu comes elsewhere.";
+    taken_out_as(
+        &course,
+        "zulu",
+        zulu,
+        zulu,
+        1,
+        Some((Some(ECHO), Some(ALPHA))),
+    )
+    .await?;
+
+    act(&course, &bravo, put_back(None, None)).await?;
+
+    assert_eq!(bodies(&course).await?[0], [ALPHA, BRAVO, ECHO].join(" "));
+    Ok(())
+}

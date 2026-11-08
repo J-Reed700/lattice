@@ -167,10 +167,21 @@ fn put_back_claim(
     after: &str,
     stored: Anchor,
 ) -> ClaimLedgerEntry {
+    put_back_claim_in(0, id, sentence, before, after, stored)
+}
+
+fn put_back_claim_in(
+    unit: usize,
+    id: &str,
+    sentence: &str,
+    before: &str,
+    after: &str,
+    stored: Anchor,
+) -> ClaimLedgerEntry {
     let mut entry = ClaimLedgerEntry::extracted(
         ClaimId(id.into()),
         provenance(Actor::Machine),
-        ClaimLocation::locate(0, UnitKind::Block, "body", sentence, sentence),
+        ClaimLocation::locate(unit, UnitKind::Block, "body", sentence, sentence),
         sentence.into(),
     )
     .unwrap();
@@ -199,7 +210,7 @@ fn put_back_claim(
                     sentence: sentence.into(),
                     edited: false,
                     place: PutPlace {
-                        unit_index: 0,
+                        unit_index: unit,
                         field: "body".into(),
                         anchor: stored,
                     },
@@ -285,4 +296,19 @@ fn a_section_end_the_user_chose_is_kept_over_the_cut_record() {
         pass(&entries, &[ALPHA, CHARLIE, ECHO].join(" ")),
         [ALPHA, CHARLIE, ECHO, BRAVO].join(" ")
     );
+}
+
+#[test]
+fn a_cut_recorded_in_another_block_does_not_make_this_blocks_place_ambiguous() {
+    let entries = [
+        put_back_claim("bravo", BRAVO, ALPHA, ECHO, Anchor::After(ECHO.into())),
+        put_back_claim_in(1, "zulu", "Zulu comes elsewhere.", ECHO, ALPHA, Anchor::End),
+    ];
+    let mut draft = json!({"blocks": [
+        {"title": "A", "body": [ALPHA, ECHO].join(" ")},
+        {"title": "B", "body": "Other."},
+    ], "questions": []});
+    let found = changes(&entries, &draft);
+    apply(None, &mut draft, found);
+    assert_eq!(body(&draft), [ALPHA, BRAVO, ECHO].join(" "));
 }

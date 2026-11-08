@@ -1446,3 +1446,61 @@ async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_after_it_a
     assert!(!error.to_string().contains(FIRST_UNDO), "{error}");
     Ok(())
 }
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_but_kept_its_first_letter(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    act(&course, &bravo, ClaimActionRequestDto::Remove).await?;
+    act(
+        &course,
+        &charlie,
+        edit(CHARLIE, "Charlie comes third, after Alpha."),
+    )
+    .await?;
+
+    let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_the_first_sentences_removal_is_refused_when_the_next_one_was_edited(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let body = five();
+    set_body(&course, 0, &body).await?;
+    let mut ids = Vec::new();
+    for (id, sentence) in [("alpha", ALPHA), ("bravo", BRAVO)] {
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", sentence, &body);
+        ids.push(extract(&course, id, location, sentence).await?);
+    }
+    act(&course, &ids[0], ClaimActionRequestDto::Remove).await?;
+    act(&course, &ids[1], edit(BRAVO, "Bravo comes second, truly.")).await?;
+
+    let error = refused(&course, &ids[0], ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_removal_between_neighbours_that_occur_twice_undoes_byte_for_byte() -> Result<()> {
+    let course = unchecked().await?;
+    let body = "Same here. Gone now. Other one. Same here. Other one.";
+    set_body(&course, 0, body).await?;
+    let location = ClaimLocation::locate(0, UnitKind::Block, "body", "Gone now.", body);
+    let gone = extract(&course, "gone", location, "Gone now.").await?;
+    act(&course, &gone, ClaimActionRequestDto::Remove).await?;
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        "Same here. Other one. Same here. Other one."
+    );
+
+    act(&course, &gone, ClaimActionRequestDto::Undo).await?;
+
+    assert_eq!(stored(&course).await?.blocks[0], body);
+    Ok(())
+}
