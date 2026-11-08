@@ -36,6 +36,8 @@ mod overrides_tests;
 #[cfg(test)]
 mod repository_tests;
 #[cfg(test)]
+mod source_deleted_tests;
+#[cfg(test)]
 mod source_view_tests;
 #[cfg(test)]
 mod test_support;

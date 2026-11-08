@@ -140,7 +140,7 @@ fn provenance(actor: Actor) -> EventProvenance {
 }
 
 /// A lesson of the course with a review waiting for the user.
-async fn waiting_lesson(course: &Course) -> Result<String> {
+pub(super) async fn waiting_lesson(course: &Course) -> Result<String> {
     let lesson_id: String = sqlx::query_scalar(
         "SELECT id FROM learning_lessons WHERE program_id = ? ORDER BY ordinal LIMIT 1",
     )
@@ -181,7 +181,7 @@ async fn waiting_lesson(course: &Course) -> Result<String> {
     Ok(lesson_id)
 }
 
-async fn append(
+pub(super) async fn append(
     pool: &SqlitePool,
     lesson_id: &str,
     claim: &ClaimId,
@@ -259,7 +259,7 @@ async fn queued_below_the_bar(
     claim
 }
 
-async fn claim_entry(pool: &SqlitePool, lesson_id: &str, claim: &ClaimId) -> ClaimLedgerEntry {
+pub(super) async fn claim_entry(pool: &SqlitePool, lesson_id: &str, claim: &ClaimId) -> ClaimLedgerEntry {
     ClaimReviewRepository::new(pool.clone())
         .load(lesson_id)
         .await
