@@ -33,6 +33,23 @@ describe('ClaimQueue', () => {
     expect(screen.queryByRole('button', { name: /Add a source for these/ })).not.toBeInTheDocument();
   });
 
+  it('says which teaching notes wait instead of everything being resolved', () => {
+    setup({ groups: [], teachingWaiting: 2 });
+    expect(screen.getByText('No statements wait for you. 2 teaching notes do.')).toBeInTheDocument();
+    expect(screen.queryByText('Everything is resolved.')).not.toBeInTheDocument();
+  });
+
+  it('says one teaching note waits in the singular', () => {
+    setup({ groups: [], teachingWaiting: 1 });
+    expect(screen.getByText('No statements wait for you. 1 teaching note does.')).toBeInTheDocument();
+  });
+
+  it('keeps the statements out of the line while some wait', () => {
+    setup({ teachingWaiting: 2 });
+    expect(screen.queryByText(/No statements wait for you/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Everything is resolved.')).not.toBeInTheDocument();
+  });
+
   it('changes the grouping mode from the select', async () => {
     const props = setup();
     await userEvent.selectOptions(screen.getByLabelText('Group by'), 'fix');

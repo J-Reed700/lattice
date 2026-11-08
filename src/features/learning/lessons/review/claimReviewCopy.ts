@@ -257,8 +257,10 @@ export function triedLine(tried: ResearchSummaryDto): string | null {
 
 // ── Tally (§4.4) ────────────────────────────────────────────────────────────
 
-/** "33 claims need you · 12 verified · 74 rewritten by the machine". Zero counts are left out. */
-export function tallyLine(counts: ClaimCountsDto): string {
+export const teachingNotesWait = (count: number) => `${plural(count, 'teaching note', 'teaching notes')} ${count === 1 ? 'waits' : 'wait'} for you`;
+
+/** "2 teaching notes wait for you · 33 claims need you · 12 verified". Zero counts are left out. */
+export function tallyLine(counts: ClaimCountsDto, teachingWaiting = 0): string {
   const parts: Array<[number, string]> = [
     [counts.queued, counts.queued === 1 ? 'claim needs you' : 'claims need you'],
     [counts.verified, 'verified'],
@@ -268,7 +270,8 @@ export function tallyLine(counts: ClaimCountsDto): string {
     [counts.editedByYou, 'edited by you'],
     [counts.open, 'being checked'],
   ];
-  return parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`).join(' · ');
+  const line = parts.filter(([count]) => count > 0).map(([count, words]) => `${count} ${words}`);
+  return [...(teachingWaiting > 0 ? [teachingNotesWait(teachingWaiting)] : []), ...line].join(' · ');
 }
 
 /** The running job's claims, for the preparation details: the same order and words. */
@@ -299,18 +302,22 @@ export const teachingNotesForYou = (count: number) => `${plural(count, 'teaching
 // ── Announcements (§4.5) ────────────────────────────────────────────────────
 
 export const ALL_RESOLVED = 'Everything is resolved. Resume verification to publish the lesson.';
-const left = (remaining: number) => (remaining > 0 ? `${remaining} left.` : ALL_RESOLVED);
+/** What is left after an action; never "everything" while a teaching note waits. */
+const left = (remaining: number, teachingWaiting = 0) => {
+  if (remaining > 0) return `${remaining} left.`;
+  return teachingWaiting > 0 ? `No statements are left. ${teachingNotesWait(teachingWaiting)}.` : ALL_RESOLVED;
+};
 
 export type AnnouncedAction = 'confirm' | 'edit' | 'remove' | 'research_with_hint' | 'unconfirm' | 'undo';
 
-export function announcement(action: AnnouncedAction, remaining: number): string {
+export function announcement(action: AnnouncedAction, remaining: number, teachingWaiting = 0): string {
   switch (action) {
-    case 'confirm': return `Accepted. ${left(remaining)}`;
+    case 'confirm': return `Accepted. ${left(remaining, teachingWaiting)}`;
     case 'edit': return 'Sentence edited. It is checked when you resume.';
-    case 'remove': return `Removed. ${left(remaining)}`;
+    case 'remove': return `Removed. ${left(remaining, teachingWaiting)}`;
     case 'research_with_hint': return 'Hint saved. It is searched when you resume.';
-    case 'unconfirm': return `Acceptance withdrawn. ${left(remaining)}`;
-    case 'undo': return `Undone. ${left(remaining)}`;
+    case 'unconfirm': return `Acceptance withdrawn. ${left(remaining, teachingWaiting)}`;
+    case 'undo': return `Undone. ${left(remaining, teachingWaiting)}`;
   }
 }
 

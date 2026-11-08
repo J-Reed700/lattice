@@ -1,7 +1,9 @@
 //! Instructional review and task-specific teaching contracts.
 use super::writer_excerpts::{self, WriterExcerpts};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
-use crate::review_findings::{FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside};
+use crate::review_findings::{
+    plain_part, FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside,
+};
 use crate::teaching_review::LengthRule;
 use lattice_core::{
     application::ports::LLMPort,
@@ -120,7 +122,8 @@ pub(crate) fn structural_findings(schema: &Value, candidate: &str) -> Result<Vec
                 FindingKind::Structure,
                 Some(FindingSite::Lesson),
                 "The material could not be read as a whole. Supply the complete material.",
-            )])
+            )
+            .with_summary("The lesson could not be read as a whole.")])
         }
     };
     let validator = jsonschema::JSONSchema::compile(schema)
@@ -145,16 +148,22 @@ pub(crate) fn structural_findings(schema: &Value, candidate: &str) -> Result<Vec
         for (index, block) in blocks.iter().enumerate() {
             let kind = block["kind"].as_str().unwrap_or_default();
             if block["body"].as_str().unwrap_or_default().trim().is_empty() {
-                issues.push(ReviewFinding::new(
-                    FindingKind::Structure,
-                    Some(FindingSite::Section(index)),
-                    format!("Teaching block {} has no body.", index + 1),
-                ));
+                issues.push(
+                    ReviewFinding::new(
+                        FindingKind::Structure,
+                        Some(FindingSite::Section(index)),
+                        format!("Teaching block {} has no body.", index + 1),
+                    )
+                    .with_summary(format!("Section {} has no text.", index + 1)),
+                );
             }
             if ["guided_practice", "independent_practice"].contains(&kind)
                 && block["rubric"].as_array().is_none_or(|r| r.len() < 2)
             {
-                issues.push(ReviewFinding::new(FindingKind::Structure, Some(FindingSite::Section(index)), format!("Practice block {} needs two to four observable, task-specific rubric criteria.", index + 1)));
+                issues.push(
+                    ReviewFinding::new(FindingKind::Structure, Some(FindingSite::Section(index)), format!("Practice block {} needs two to four observable, task-specific rubric criteria.", index + 1))
+                        .with_summary(format!("Section {} is a practice section and needs two to four clear criteria for judging an answer.", index + 1)),
+                );
             }
         }
     }
@@ -182,9 +191,10 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
         .iter()
         .map(|check| {
             let path = check["path"].as_str().unwrap_or_default();
+            let site = FindingSite::of_part(path).unwrap_or(FindingSite::Lesson);
             ReviewFinding::new(
                 FindingKind::Quotation,
-                Some(FindingSite::of_part(path).unwrap_or(FindingSite::Lesson)),
+                Some(site),
                 format!(
                     "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least 25 characters and five words.",
                     check["error"].as_str().unwrap_or("it was not found.")
@@ -193,6 +203,11 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
                 .take(700)
                 .collect::<String>(),
             )
+            .with_summary(format!(
+                "The quotation cited in {} could not be found in its source.",
+                plain_part(site)
+            ))
+            .with_passage(check["quote"].as_str().unwrap_or_default())
         })
         .collect()
 }
@@ -891,6 +906,68 @@ mod tests {
                 FindingSite::Section(1),
                 FindingSite::Section(2),
                 FindingSite::Section(2)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_block_without_a_body_or_a_rubric_is_named_in_plain_words() {
+        let found = structure(json!([
+            {"kind":"explanation","title":"Fine","body":"A crisp, correct explanation."},
+            {"kind":"recap","title":"Empty","body":"  "},
+            {"kind":"guided_practice","title":"Bare","rubric":[]}
+        ]));
+        let summaries: Vec<_> = found
+            .iter()
+            .map(|finding| finding.summary.as_str())
+            .collect();
+        assert_eq!(
+            summaries,
+            [
+                "Section 2 has no text.",
+                "Section 3 has no text.",
+                "Section 3 is a practice section and needs two to four clear criteria for judging an answer."
+            ]
+        );
+    }
+
+    #[test]
+    fn material_that_cannot_be_read_is_named_in_plain_words() {
+        let found = structural_findings(&json!({"type":"object"}), "not json").unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].summary, "The lesson could not be read as a whole.");
+    }
+
+    #[test]
+    fn a_quotation_that_matches_no_saved_reference_shows_the_quote_that_failed() {
+        let found = quotation_findings(&[
+            json!({"path":"blocks[2]","quote":"A span the source does not hold.","error":"it was not found."}),
+            json!({"path":"questions[0]","quote":"","error":"it was not found."}),
+        ]);
+        let passages: Vec<_> = found
+            .iter()
+            .map(|finding| finding.passage.as_deref())
+            .collect();
+        assert_eq!(passages, [Some("A span the source does not hold."), None]);
+    }
+
+    #[test]
+    fn a_quotation_that_matches_no_saved_reference_is_named_by_its_part() {
+        let found = quotation_findings(&[
+            json!({"path":"blocks[2]","error":"it was not found."}),
+            json!({"path":"questions[0]","error":"it was not found."}),
+            json!({"path":"requirements","error":"it was not found."}),
+        ]);
+        let summaries: Vec<_> = found
+            .iter()
+            .map(|finding| finding.summary.as_str())
+            .collect();
+        assert_eq!(
+            summaries,
+            [
+                "The quotation cited in section 3 could not be found in its source.",
+                "The quotation cited in question 1 could not be found in its source.",
+                "The quotation cited in the lesson could not be found in its source."
             ]
         );
     }

@@ -109,6 +109,13 @@ impl Passes {
                     if !known.note.contains(finding.note.as_str()) {
                         known.note = format!("{} {}", known.note, finding.note);
                     }
+                    if known.summary.is_empty() {
+                        known.summary = finding.summary;
+                    } else if !finding.summary.is_empty()
+                        && !known.summary.lines().any(|line| line == finding.summary)
+                    {
+                        known.summary = format!("{}\n{}", known.summary, finding.summary);
+                    }
                     known.passage = known.passage.take().or(finding.passage);
                 }
                 None => current.push(finding),
@@ -283,5 +290,20 @@ mod tests {
         };
         assert_eq!(send.len(), 1);
         assert_eq!(send[0].note, "First. Second.");
+    }
+
+    #[test]
+    fn the_summaries_of_two_notes_about_one_place_stay_together() {
+        let mut passes = Passes::default();
+        let Next::Repair { send, .. } = passes.next(vec![
+            section(0, "First.").with_summary("One problem."),
+            section(0, "Second.").with_summary("Another problem."),
+            section(0, "Third.").with_summary("One problem."),
+            section(0, "Fourth."),
+        ]) else {
+            panic!("expected a repair");
+        };
+        assert_eq!(send.len(), 1);
+        assert_eq!(send[0].summary, "One problem.\nAnother problem.");
     }
 }

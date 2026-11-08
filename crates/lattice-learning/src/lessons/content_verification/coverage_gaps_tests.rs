@@ -499,3 +499,77 @@ fn gaps_in_questions_follow_the_sections_in_the_findings_sites() {
     assert_eq!(sites[1].0, Some(FindingSite::Question(0)));
     assert!(sites[1].1.ends_with("In a question."));
 }
+
+#[test]
+fn a_gap_is_summarised_with_every_statement_whole() {
+    let lesson = PreparedLearningLesson {
+        blocks: vec![LearningBlockDto {
+            kind: LearningBlockKind::Explanation,
+            title: "CSV header names".into(),
+            body: GOOD.into(),
+            rubric: vec![],
+            source_ids: vec![],
+        }],
+        questions: vec![],
+        keys: vec![],
+        verification: None,
+    };
+    let mut report = attest("lesson", &lesson);
+    let long = "DictReader buffers a hundred rows before it parses the first one and keeps every parsed row in memory until the file ends.";
+    report.coverage_audit = vec![CoverageUnit {
+        index: 0,
+        complete: false,
+        reason: "gaps".into(),
+        missing_assertions: vec![
+            MissingAssertion {
+                passage_id: "unit-0-passage-0".into(),
+                statement: long.into(),
+            },
+            MissingAssertion {
+                passage_id: "unit-0-passage-1".into(),
+                statement: "It is slow.".into(),
+            },
+        ],
+    }];
+
+    let findings = report.coverage_findings(1);
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        findings[0].summary,
+        format!("Some statements here were never checked against a source. The checker read them as: \u{201c}{long}\u{201d}, \u{201c}It is slow.\u{201d}.")
+    );
+}
+
+#[test]
+fn one_gap_says_the_checker_read_it_that_way() {
+    let lesson = PreparedLearningLesson {
+        blocks: vec![LearningBlockDto {
+            kind: LearningBlockKind::Explanation,
+            title: "CSV header names".into(),
+            body: GOOD.into(),
+            rubric: vec![],
+            source_ids: vec![],
+        }],
+        questions: vec![],
+        keys: vec![],
+        verification: None,
+    };
+    let mut report = attest("lesson", &lesson);
+    report.coverage_audit = vec![CoverageUnit {
+        index: 0,
+        complete: false,
+        reason: "gaps".into(),
+        missing_assertions: vec![MissingAssertion {
+            passage_id: "unit-0-passage-0".into(),
+            statement: "It is slow.".into(),
+        }],
+    }];
+
+    let findings = report.coverage_findings(1);
+
+    assert_eq!(
+        findings[0].summary,
+        "A statement here was never checked against a source. The checker read it as: \u{201c}It is slow.\u{201d}."
+    );
+}
