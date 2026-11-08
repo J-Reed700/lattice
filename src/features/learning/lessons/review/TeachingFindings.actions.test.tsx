@@ -68,28 +68,26 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
     expect(within(question).queryByRole('button', { name: 'Add a source' })).not.toBeInTheDocument();
   });
 
-  it('removes the sentence with one call on all its claims and the review revision, then settles the note removed', async () => {
+  it('removes the sentence with one call on all its claims and the review revision, and settles nothing', async () => {
     show([note(0), note(1)]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Remove this sentence' }));
-    await waitFor(() => expect(api.settle).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('status')).toHaveTextContent('Removed the sentence from the lesson.');
     expect(api.resolveMany).toHaveBeenCalledTimes(1);
     expect(api.resolveMany).toHaveBeenCalledWith(remove(['claim-0a', 'claim-0b']));
-    expect(api.settle).toHaveBeenCalledWith(settled('removed', ['quotation:section-0']));
-    expect(api.resolveMany.mock.invocationCallOrder[0]).toBeLessThan(api.settle.mock.invocationCallOrder[0]);
+    expect(api.settle).not.toHaveBeenCalled();
   });
 
-  it('says the sentence was removed, and Undo takes the claims back and then reopens the note', async () => {
+  it('says the sentence was removed, and Undo is one undo call on the same claims with the returned revision and no settle', async () => {
     show([note(0)]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Remove this sentence' }));
     const status = await screen.findByRole('status');
     expect(status).toHaveTextContent('Removed the sentence from the lesson.');
     api.resolveMany.mockClear();
-    api.settle.mockClear();
     await userEvent.click(within(status).getByRole('button', { name: 'Undo' }));
-    await waitFor(() => expect(api.settle).toHaveBeenCalledWith(settled('reopen', ['quotation:section-0'])));
+    await waitFor(() => expect(api.resolveMany).toHaveBeenCalledTimes(1));
     expect(api.resolveMany).toHaveBeenCalledWith(undo(['claim-0a', 'claim-0b'], 9));
-    expect(api.resolveMany.mock.invocationCallOrder[0]).toBeLessThan(api.settle.mock.invocationCallOrder[0]);
-    expect(await screen.findByRole('status')).toHaveTextContent('1 teaching note waits for you again.');
+    expect(await screen.findByText('1 teaching note waits for you again.')).toBeVisible();
+    expect(api.settle).not.toHaveBeenCalled();
   });
 
   it('shows a refusal of the removal as the card alert and settles nothing', async () => {
@@ -102,11 +100,10 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
     expect(screen.queryByText('Removed the sentence from the lesson.')).not.toBeInTheDocument();
   });
 
-  it('shows the backend refusal of an Undo as an alert and does not reopen the note', async () => {
+  it('shows the backend refusal of an Undo as an alert and keeps the removal status', async () => {
     show([note(0)]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Remove this sentence' }));
     const status = await screen.findByRole('status');
-    api.settle.mockClear();
     api.resolveMany.mockResolvedValue({ ok: false, error: 'This removal cannot be undone yet.' });
     await userEvent.click(within(status).getByRole('button', { name: 'Undo' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('This removal cannot be undone yet.');
@@ -123,16 +120,30 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
     expect(api.resolveMany).not.toHaveBeenCalled();
   });
 
-  it('shows a removed note with its chip and an Undo, and no checkbox', async () => {
+  it('shows a removed note with its chip and an Undo, and no checkbox', () => {
     show([note(0, { state: 'resolved', resolution: 'removed', resolvedAt: 5, claimIds: ['claim-0a', 'claim-0b'] }), note(1)]);
     expect(within(card(0)).getByText('Removed from the lesson')).toBeVisible();
     expect(within(card(0)).queryByRole('button', { name: 'Keep as written' })).not.toBeInTheDocument();
     expect(within(card(0)).queryByRole('button', { name: 'Remove this sentence' })).not.toBeInTheDocument();
+    expect(within(card(0)).getByRole('button', { name: 'Undo' })).toBeVisible();
     expect(screen.queryByRole('checkbox', { name: 'Select the note on Section 1: Part 1' })).not.toBeInTheDocument();
+  });
+
+  it('takes a removed note back with one undo call on its claims and the review revision, and settles nothing', async () => {
+    show([note(0, { state: 'resolved', resolution: 'removed', resolvedAt: 5, claimIds: ['claim-0a', 'claim-0b'] })]);
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Undo' }));
-    await waitFor(() => expect(api.settle).toHaveBeenCalledWith(settled('reopen', ['quotation:section-0'])));
+    await waitFor(() => expect(api.resolveMany).toHaveBeenCalledTimes(1));
     expect(api.resolveMany).toHaveBeenCalledWith(undo(['claim-0a', 'claim-0b'], REVISION));
-    expect(api.resolveMany.mock.invocationCallOrder[0]).toBeLessThan(api.settle.mock.invocationCallOrder[0]);
+    expect(api.settle).not.toHaveBeenCalled();
+  });
+
+  it('shows the refusal of a removed note\'s Undo as that card\'s alert', async () => {
+    api.resolveMany.mockResolvedValue({ ok: false, error: 'This removal cannot be undone yet.' });
+    show([note(0, { state: 'resolved', resolution: 'removed', resolvedAt: 5, claimIds: ['claim-0a'] }), note(1)]);
+    await userEvent.click(within(card(0)).getByRole('button', { name: 'Undo' }));
+    expect(await within(card(0)).findByRole('alert')).toHaveTextContent('This removal cannot be undone yet.');
+    expect(within(card(1)).queryByRole('alert')).not.toBeInTheDocument();
+    expect(api.settle).not.toHaveBeenCalled();
   });
 
   it('shows a note that had a source added with its chip, and Undo only reopens it', async () => {
@@ -142,12 +153,6 @@ describe('TeachingFindings, acting on a note about a sentence', () => {
     await userEvent.click(within(card(0)).getByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(api.settle).toHaveBeenCalledWith(settled('reopen', ['quotation:section-0'])));
     expect(api.resolveMany).not.toHaveBeenCalled();
-  });
-
-  it('offers no Undo on a removed note whose claims are not known', () => {
-    show([note(0, { state: 'resolved', resolution: 'removed', resolvedAt: 5, claimIds: [] })]);
-    expect(within(card(0)).getByText('Removed from the lesson')).toBeVisible();
-    expect(within(card(0)).queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
   });
 
   it('does not say all notes were kept when one was removed', () => {
@@ -166,18 +171,32 @@ describe('TeachingFindings, removing many sentences at once', () => {
 
   const selectAll = async () => userEvent.click(screen.getByRole('button', { name: /^Select all \d+$/ }));
 
-  it('removes every selected note\'s claims with one call, settles those notes once, and says how many', async () => {
+  it('removes every selected note\'s claims with one call, settles nothing, and counts the sentences', async () => {
     show([note(0), note(1), note(2)]);
     fireEvent.click(box(0));
     fireEvent.click(box(2));
     const bar = screen.getByRole('toolbar', { name: '2 teaching notes selected' });
     await userEvent.click(within(bar).getByRole('button', { name: 'Remove these sentences' }));
-    await waitFor(() => expect(api.settle).toHaveBeenCalledTimes(1));
+    expect(await screen.findByRole('status')).toHaveTextContent('Removed 2 sentences from the lesson.');
     expect(api.resolveMany).toHaveBeenCalledTimes(1);
     expect(api.resolveMany).toHaveBeenCalledWith(remove(['claim-0a', 'claim-0b', 'claim-2a', 'claim-2b']));
-    expect(api.settle).toHaveBeenCalledWith(settled('removed', ['quotation:section-0', 'quotation:section-2']));
-    expect(await screen.findByRole('status')).toHaveTextContent('Removed 2 sentences from the lesson.');
+    expect(api.settle).not.toHaveBeenCalled();
     expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+  });
+
+  it('says one sentence when two selected notes are about the same sentence', async () => {
+    show([note(0), note(0, { findingKey: 'teaching:section-0', kind: 'teaching', passageRole: 'lesson' })]);
+    await selectAll();
+    await userEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Removed the sentence from the lesson.');
+    expect(api.resolveMany).toHaveBeenCalledWith(remove(['claim-0a', 'claim-0b']));
+  });
+
+  it('counts three notes on two sentences as two sentences', async () => {
+    show([note(0), note(0, { findingKey: 'teaching:section-0', kind: 'teaching', passageRole: 'lesson' }), note(1)]);
+    await selectAll();
+    await userEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Removed 2 sentences from the lesson.');
   });
 
   it('names a claim shared by two notes once', async () => {
@@ -187,30 +206,30 @@ describe('TeachingFindings, removing many sentences at once', () => {
     await waitFor(() => expect(api.resolveMany).toHaveBeenCalledWith(remove(['shared', 'claim-0', 'claim-1'])));
   });
 
-  it('takes the whole batch back with one Undo', async () => {
+  it('takes the whole batch back with one undo call on the same claims in the same order', async () => {
     show([note(0), note(1)]);
     await selectAll();
     await userEvent.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' }));
     const status = await screen.findByRole('status');
     api.resolveMany.mockClear();
-    api.settle.mockClear();
     await userEvent.click(within(status).getByRole('button', { name: 'Undo' }));
-    await waitFor(() => expect(api.settle).toHaveBeenCalledWith(settled('reopen', ['quotation:section-0', 'quotation:section-1'])));
-    expect(api.resolveMany).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.resolveMany).toHaveBeenCalledTimes(1));
     expect(api.resolveMany).toHaveBeenCalledWith(undo(['claim-0a', 'claim-0b', 'claim-1a', 'claim-1b'], 9));
-    expect(await screen.findByRole('status')).toHaveTextContent('2 teaching notes wait for you again.');
+    expect(await screen.findByText('2 teaching notes wait for you again.')).toBeVisible();
+    expect(api.settle).not.toHaveBeenCalled();
   });
 
   it('is disabled with its hint while a selected note is not about one sentence, and the hint goes with the selection', async () => {
+    const hint = 'Some of these notes are not about one sentence, so they can\'t be removed. Unselect them to remove the rest.';
     show([note(0), note(1, { claimIds: [] })]);
     await selectAll();
     const bar = screen.getByRole('toolbar');
     expect(within(bar).getByRole('button', { name: 'Remove these sentences' })).toBeDisabled();
     expect(within(bar).getByRole('button', { name: 'Keep as written' })).toBeEnabled();
-    expect(within(bar).getByText('Some of these notes are not about one sentence. Remove them one at a time.')).toBeVisible();
+    expect(within(bar).getByText(hint)).toBeVisible();
     fireEvent.click(box(1));
     expect(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Remove these sentences' })).toBeEnabled();
-    expect(screen.queryByText('Some of these notes are not about one sentence. Remove them one at a time.')).not.toBeInTheDocument();
+    expect(screen.queryByText(hint)).not.toBeInTheDocument();
   });
 
   it('has no Remove these sentences on a draft lesson', async () => {

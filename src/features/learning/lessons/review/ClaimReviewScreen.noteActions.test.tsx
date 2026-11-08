@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { waitingOnSource } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { review, teachingFinding } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { ClaimAttachReportDto, LessonClaimReviewDto, TeachingFindingDto } from '@/lib/bindings';
+import type { ClaimAttachReportDto, ClaimReviewItemDto, LessonClaimReviewDto, TeachingFindingDto } from '@/lib/bindings';
 
 // Acting on a teaching note from the review screen: Add a source, and the line after the last statement.
 const api = vi.hoisted(() => ({
@@ -55,6 +55,29 @@ async function openSheetFromTheNote() {
   expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
 }
 
+const confirmedClaim = (index: number): ClaimReviewItemDto => ({ ...waitingOnSource(index), state: { state: 'confirmed', at: 2 }, availableActions: [] });
+const withClaims = (finding: TeachingFindingDto, claims: ClaimReviewItemDto[]) => review(claims, { state: 'ready', revision: 7, teachingFindings: [finding], counts: counts(claims.length) });
+
+async function openNotesFromTheQueue() {
+  await userEvent.click(await screen.findByRole('button', { name: /^Teaching notes/ }));
+  expect(await screen.findByRole('region', { name: 'Teaching review' })).toBeVisible();
+}
+
+async function openSheet() {
+  const notes = screen.getByRole('region', { name: 'Teaching review' });
+  await userEvent.click(within(notes).getByRole('button', { name: 'Add a source' }));
+  expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+}
+
+/** The sheet is gone, the notes are still shown, and no statement took the user's place. */
+async function staysOnTheNotes() {
+  await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+  expect(await screen.findByRole('region', { name: 'Teaching review' })).toBeVisible();
+  expect(screen.getByRole('button', { name: /^Teaching notes/ })).toHaveAttribute('aria-current', 'true');
+  expect(screen.queryByRole('button', { name: 'Edit the sentence' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole('article', { name: 'Section 1: Migration: Source quotation' })).toHaveFocus());
+}
+
 async function addLink() {
   await userEvent.type(screen.getByLabelText('Page address'), URL_);
   await userEvent.click(screen.getByRole('button', { name: 'Add and check' }));
@@ -69,39 +92,93 @@ describe('Claim review screen, acting on a teaching note', () => {
     api.settle.mockResolvedValue(ok(null));
   });
 
-  it('adds a source for the note\'s first claim and settles the note source_added when the source states it', async () => {
+  it('adds a source for a note whose claim is not waiting, settles the note, and stays on the notes', async () => {
     api.attach.mockResolvedValue(ok(report(true)));
-    show(published(aboutSentence()));
-    await openSheetFromTheNote();
+    show(withClaims(aboutSentence({ claimIds: ['claim-9'] }), [waitingOnSource(1), confirmedClaim(9)]));
+    await openNotesFromTheQueue();
+    await openSheet();
     await addLink();
     await waitFor(() => expect(api.attach).toHaveBeenCalled());
     expect(api.attach.mock.calls[0][0]).toMatchObject({
-      claimId: 'claim-9a', expectedRevision: 7, evidence: { kind: 'attach_link', url: URL_ }, scope: { scope: 'claim' },
+      claimId: 'claim-9', expectedRevision: 7, evidence: { kind: 'attach_link', url: URL_ }, scope: { scope: 'claim' },
     });
     await waitFor(() => expect(api.settle).toHaveBeenCalledWith({
       programId: 'program-1', lessonId: 'lesson-1', settle: 'source_added', findingKeys: ['quotation:section-0'],
     }));
     expect(await screen.findByText('Source added. The note is resolved.')).toBeVisible();
+    await staysOnTheNotes();
   });
 
-  it('leaves the note waiting when the source does not state the sentence', async () => {
-    api.attach.mockResolvedValue(ok(report(false)));
-    show(published(aboutSentence()));
-    await openSheetFromTheNote();
+  it('adds a source for a note whose claim is waiting, settles the note, and stays on the notes', async () => {
+    api.attach.mockResolvedValue(ok(report(true)));
+    show(withClaims(aboutSentence({ claimIds: ['claim-1'] }), [waitingOnSource(1)]));
+    await openNotesFromTheQueue();
+    await openSheet();
     await addLink();
-    await waitFor(() => expect(api.attach).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+    await waitFor(() => expect(api.attach.mock.calls[0]?.[0]).toMatchObject({ claimId: 'claim-1' }));
+    await waitFor(() => expect(api.settle).toHaveBeenCalledWith({
+      programId: 'program-1', lessonId: 'lesson-1', settle: 'source_added', findingKeys: ['quotation:section-0'],
+    }));
+    expect(await screen.findByText('Source added. The note is resolved.')).toBeVisible();
+    await staysOnTheNotes();
+  });
+
+  it('says why the note stays when the source is added but the settle fails', async () => {
+    api.attach.mockResolvedValue(ok(report(true)));
+    api.settle.mockResolvedValue({ ok: false, error: 'Some of these notes changed since you opened them. Reload the lesson.' });
+    show(withClaims(aboutSentence({ claimIds: ['claim-9'] }), [waitingOnSource(1), confirmedClaim(9)]));
+    await openNotesFromTheQueue();
+    await openSheet();
+    await addLink();
+    expect(await screen.findByText('Some of these notes changed since you opened them. Reload the lesson.')).toBeVisible();
+    expect(screen.queryByText('Source added. The note is resolved.')).not.toBeInTheDocument();
+    await staysOnTheNotes();
+  });
+
+  it('leaves the note waiting and says what the source did when it does not state the sentence', async () => {
+    api.attach.mockResolvedValue(ok(report(false)));
+    show(withClaims(aboutSentence({ claimIds: ['claim-9'] }), [waitingOnSource(1), confirmedClaim(9)]));
+    await openNotesFromTheQueue();
+    await openSheet();
+    await addLink();
+    expect(await screen.findByText(/Added Monarch Watch; it does not say this\./)).toBeVisible();
     expect(api.settle).not.toHaveBeenCalled();
     expect(screen.queryByText('Source added. The note is resolved.')).not.toBeInTheDocument();
+    await staysOnTheNotes();
   });
 
-  it('leaves the note waiting when the sheet is closed without adding anything', async () => {
+  it('closes the sheet opened from a note with Escape from the focused address field, back to the notes', async () => {
     show(published(aboutSentence()));
     await openSheetFromTheNote();
-    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(screen.getByLabelText('Page address')).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+    expect(await screen.findByRole('region', { name: 'Teaching review' })).toBeVisible();
     expect(api.attach).not.toHaveBeenCalled();
     expect(api.settle).not.toHaveBeenCalled();
+  });
+
+  it('closes a statement\'s sheet with Escape from the focused address field, and stays on the statement', async () => {
+    show(review([waitingOnSource(1)], { counts: counts(1) }));
+    await screen.findByRole('button', { name: 'Edit the sentence' });
+    await userEvent.keyboard('s');
+    expect(await screen.findByRole('heading', { name: 'Add a source for this claim' })).toBeVisible();
+    expect(screen.getByLabelText('Page address')).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Add a source for this claim' })).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Edit the sentence' })).toBeVisible();
+  });
+
+  it('leaves the edit form open with its text when Escape is typed in its textarea', async () => {
+    show(review([waitingOnSource(1)], { counts: counts(1) }));
+    await screen.findByRole('button', { name: 'Edit the sentence' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit the sentence' }));
+    const sentence = await screen.findByLabelText('The sentence');
+    await userEvent.click(sentence);
+    await userEvent.type(sentence, ' Edited.');
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByLabelText('The sentence')).toBeVisible();
+    expect((screen.getByLabelText('The sentence') as HTMLTextAreaElement).value).toContain('Edited.');
   });
 
   it('says everything is resolved, and never to resume, after the last statement on a published lesson', async () => {

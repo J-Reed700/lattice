@@ -1028,18 +1028,9 @@ async fn dto_states(store: &TeachingFindingsRepository) -> Vec<TeachingFindingSt
 }
 
 #[tokio::test]
-async fn settling_removed_or_source_added_resolves_waiting_notes_with_that_resolution() {
+async fn settling_source_added_resolves_a_waiting_note_with_that_resolution() {
     let store = TeachingFindingsRepository::new(pool().await);
     three_waiting(&store).await;
-    store
-        .settle(
-            "p1",
-            "l1",
-            &keys(&["teaching:section-0"]),
-            TeachingSettleDto::Removed,
-        )
-        .await
-        .unwrap();
     store
         .settle(
             "p1",
@@ -1052,16 +1043,14 @@ async fn settling_removed_or_source_added_resolves_waiting_notes_with_that_resol
     assert_eq!(
         dto_states(&store).await,
         [
-            TeachingFindingStateDto::Resolved,
+            TeachingFindingStateDto::Waiting,
             TeachingFindingStateDto::Resolved,
             TeachingFindingStateDto::Waiting
         ]
     );
-    let removed = dto_of(&store, "teaching:section-0").await;
-    assert_eq!(removed.resolution, Some(TeachingResolutionDto::Removed));
-    assert!(removed.resolved_at.is_some());
     let added = dto_of(&store, "structure:section-1").await;
     assert_eq!(added.resolution, Some(TeachingResolutionDto::SourceAdded));
+    assert!(added.resolved_at.is_some());
     let waiting = dto_of(&store, "answer_key:question-0").await;
     assert_eq!((waiting.resolution, waiting.resolved_at), (None, None));
     let kept_at: i64 = sqlx::query_scalar(
@@ -1082,15 +1071,11 @@ async fn a_resolved_note_cannot_be_kept_or_resolved_again_and_one_stale_key_refu
             "p1",
             "l1",
             &keys(&["teaching:section-0"]),
-            TeachingSettleDto::Removed,
+            TeachingSettleDto::SourceAdded,
         )
         .await
         .unwrap();
-    for settle in [
-        TeachingSettleDto::Keep,
-        TeachingSettleDto::Removed,
-        TeachingSettleDto::SourceAdded,
-    ] {
+    for settle in [TeachingSettleDto::Keep, TeachingSettleDto::SourceAdded] {
         assert!(store
             .settle("p1", "l1", &keys(&["teaching:section-0"]), settle)
             .await
@@ -1127,7 +1112,7 @@ async fn reopening_takes_kept_and_resolved_notes_back_and_clears_the_resolution(
             "p1",
             "l1",
             &keys(&["teaching:section-0"]),
-            TeachingSettleDto::Removed,
+            TeachingSettleDto::SourceAdded,
         )
         .await
         .unwrap();

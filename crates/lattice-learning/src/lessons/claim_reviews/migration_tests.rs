@@ -325,14 +325,14 @@ async fn a_teaching_finding_gets_a_sentence_and_a_resolution_and_an_old_one_keep
         .bind(resolution.map(str::to_owned))
         .bind(resolved_at)
     };
-    insert("a", "resolved", None, Some("removed"), Some(5))
+    insert("a", "resolved", None, Some("source_added"), Some(5))
         .execute(&pool)
         .await
         .unwrap();
-    insert("b", "resolved", None, Some("source_added"), Some(5))
+    assert!(insert("b", "resolved", None, Some("removed"), Some(5))
         .execute(&pool)
         .await
-        .unwrap();
+        .is_err());
     assert!(insert("c", "resolved", None, None, None)
         .execute(&pool)
         .await
@@ -341,15 +341,17 @@ async fn a_teaching_finding_gets_a_sentence_and_a_resolution_and_an_old_one_keep
         .execute(&pool)
         .await
         .is_err());
-    assert!(insert("e", "waiting", None, Some("removed"), Some(5))
+    assert!(insert("e", "waiting", None, Some("source_added"), Some(5))
         .execute(&pool)
         .await
         .is_err());
-    assert!(insert("f", "resolved", Some(3), Some("removed"), Some(5))
-        .execute(&pool)
-        .await
-        .is_err());
-    assert!(insert("g", "resolved", None, Some("removed"), None)
+    assert!(
+        insert("f", "resolved", Some(3), Some("source_added"), Some(5))
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    assert!(insert("g", "resolved", None, Some("source_added"), None)
         .execute(&pool)
         .await
         .is_err());

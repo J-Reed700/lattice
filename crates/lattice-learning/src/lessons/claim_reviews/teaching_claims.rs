@@ -96,3 +96,281 @@ pub(super) fn name_claims(
         };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lessons::claim_reviews::teaching_findings::{
+        TeachingFindingKindDto, TeachingPassageRoleDto,
+    };
+    use lattice_core::domain::learning::claim_review::{
+        ClaimEvent, ClaimId, ClaimLocation, EventProvenance, Revision, UnitKind, UserAction,
+    };
+
+    const SENTENCE: &str = "The reader keeps every field name exactly as written.";
+    const NEIGHBOUR: &str = "A second sentence stays in the section.";
+
+    fn provenance(actor: Actor, at: i64) -> EventProvenance {
+        EventProvenance {
+            actor,
+            at,
+            job_id: None,
+            app_version: "test".into(),
+            checker_model: None,
+        }
+    }
+
+    fn claim(id: &str, unit: usize, quote: &str, body: &str) -> ClaimLedgerEntry {
+        ClaimLedgerEntry::extracted(
+            ClaimId(id.into()),
+            provenance(Actor::Machine, 1),
+            ClaimLocation::locate(unit, UnitKind::Block, "body", quote, body),
+            SENTENCE.into(),
+        )
+        .unwrap()
+    }
+
+    fn removed_by_user(mut entry: ClaimLedgerEntry, at: i64) -> (ClaimLedgerEntry, u32) {
+        let ordinal = entry
+            .append(
+                provenance(Actor::User, at),
+                ClaimEvent::UserAction {
+                    action: UserAction::Remove,
+                    note: None,
+                },
+            )
+            .unwrap();
+        (entry, ordinal)
+    }
+
+    fn undone(mut entry: ClaimLedgerEntry, ordinal: u32, at: i64) -> ClaimLedgerEntry {
+        entry
+            .append(
+                provenance(Actor::User, at),
+                ClaimEvent::Undone {
+                    event_ordinal: ordinal,
+                },
+            )
+            .unwrap();
+        entry
+    }
+
+    fn removed_by_machine(mut entry: ClaimLedgerEntry) -> ClaimLedgerEntry {
+        entry
+            .append(
+                provenance(Actor::Machine, 5),
+                ClaimEvent::Superseded {
+                    successor: None,
+                    by: Actor::Machine,
+                },
+            )
+            .unwrap();
+        entry
+    }
+
+    fn ledger(claims: Vec<ClaimLedgerEntry>) -> Ledger {
+        Ledger {
+            lesson_id: "l1".into(),
+            review: None,
+            revision: Revision(1),
+            claims,
+        }
+    }
+
+    fn note(
+        unit: u32,
+        key: &str,
+        state: TeachingFindingStateDto,
+        resolution: Option<TeachingResolutionDto>,
+        resolved_at: Option<i64>,
+    ) -> TeachingFindingDto {
+        TeachingFindingDto {
+            finding_key: key.into(),
+            kind: TeachingFindingKindDto::Quotation,
+            site: TeachingFindingSiteDto::Section,
+            unit_index: Some(unit),
+            unit_title: "Section".into(),
+            summary: "No source is cited for this sentence.".into(),
+            passage: None,
+            passage_role: TeachingPassageRoleDto::Lesson,
+            sentence: Some(SENTENCE.into()),
+            claim_ids: Vec::new(),
+            resolution,
+            resolved_at,
+            repairs: 0,
+            state,
+        }
+    }
+
+    fn waiting(unit: u32, key: &str) -> TeachingFindingDto {
+        note(unit, key, TeachingFindingStateDto::Waiting, None, None)
+    }
+
+    fn bodies(unit: usize, body: &str) -> HashMap<usize, String> {
+        HashMap::from([(unit, body.to_owned())])
+    }
+
+    fn named(findings: &[TeachingFindingDto]) -> Vec<Vec<String>> {
+        findings
+            .iter()
+            .map(|finding| {
+                let mut ids = finding.claim_ids.clone();
+                ids.sort();
+                ids
+            })
+            .collect()
+    }
+
+    fn both() -> String {
+        format!("{SENTENCE} {NEIGHBOUR}")
+    }
+
+    #[test]
+    fn a_removed_sentence_shows_its_note_removed_with_the_claims_and_the_latest_removal_time() {
+        let before = both();
+        let (first, _) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
+        let (second, _) = removed_by_user(claim("b", 0, SENTENCE, &before), 250);
+        let bystander = claim("c", 0, NEIGHBOUR, &before);
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(
+            &ledger(vec![first, second, bystander]),
+            &bodies(0, NEIGHBOUR),
+            &mut findings,
+        );
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
+        assert_eq!(findings[0].resolution, Some(TeachingResolutionDto::Removed));
+        assert_eq!(findings[0].resolved_at, Some(250));
+        assert_eq!(named(&findings), [vec!["a".to_owned(), "b".to_owned()]]);
+    }
+
+    #[test]
+    fn a_claim_stored_with_a_two_sentence_quote_is_named_when_its_sentence_is_removed() {
+        let before = both();
+        let (wide, _) = removed_by_user(claim("wide", 0, &before, &before), 100);
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(&ledger(vec![wide]), &bodies(0, NEIGHBOUR), &mut findings);
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
+        assert_eq!(findings[0].resolution, Some(TeachingResolutionDto::Removed));
+        assert_eq!(named(&findings), [vec!["wide".to_owned()]]);
+    }
+
+    #[test]
+    fn an_undone_removal_leaves_the_note_waiting_with_the_live_claims() {
+        let before = both();
+        let (entry, ordinal) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
+        let entry = undone(entry, ordinal, 200);
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(&ledger(vec![entry]), &bodies(0, &before), &mut findings);
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
+        assert_eq!(findings[0].resolution, None);
+        assert_eq!(named(&findings), [vec!["a".to_owned()]]);
+    }
+
+    #[test]
+    fn a_kept_or_source_added_note_shows_removed_while_its_removal_stands_and_as_it_was_after_the_undo(
+    ) {
+        let before = both();
+        let stored = || {
+            [
+                note(
+                    0,
+                    "quotation:section-0",
+                    TeachingFindingStateDto::Kept,
+                    None,
+                    None,
+                ),
+                note(
+                    0,
+                    "teaching:section-0",
+                    TeachingFindingStateDto::Resolved,
+                    Some(TeachingResolutionDto::SourceAdded),
+                    Some(40),
+                ),
+            ]
+        };
+        let (entry, ordinal) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
+
+        let mut findings = stored();
+        name_claims(
+            &ledger(vec![entry.clone()]),
+            &bodies(0, NEIGHBOUR),
+            &mut findings,
+        );
+        for finding in &findings {
+            assert_eq!(finding.state, TeachingFindingStateDto::Resolved);
+            assert_eq!(finding.resolution, Some(TeachingResolutionDto::Removed));
+            assert_eq!(finding.resolved_at, Some(100));
+            assert_eq!(finding.claim_ids, ["a"]);
+        }
+
+        let mut findings = stored();
+        name_claims(
+            &ledger(vec![undone(entry, ordinal, 200)]),
+            &bodies(0, &before),
+            &mut findings,
+        );
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Kept);
+        assert_eq!(findings[0].resolution, None);
+        assert_eq!(findings[1].state, TeachingFindingStateDto::Resolved);
+        assert_eq!(
+            findings[1].resolution,
+            Some(TeachingResolutionDto::SourceAdded)
+        );
+        assert_eq!(findings[1].resolved_at, Some(40));
+        assert_eq!(
+            named(&findings),
+            [vec!["a".to_owned()], vec!["a".to_owned()]]
+        );
+    }
+
+    #[test]
+    fn two_notes_on_one_sentence_both_show_removed_when_it_is_removed_once() {
+        let before = both();
+        let (entry, _) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
+        let mut findings = [
+            waiting(0, "quotation:section-0"),
+            waiting(0, "teaching:section-0"),
+        ];
+        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        for finding in &findings {
+            assert_eq!(finding.state, TeachingFindingStateDto::Resolved);
+            assert_eq!(finding.resolution, Some(TeachingResolutionDto::Removed));
+        }
+        assert_eq!(
+            named(&findings),
+            [vec!["a".to_owned()], vec!["a".to_owned()]]
+        );
+    }
+
+    #[test]
+    fn a_sentence_still_in_the_section_is_not_removed() {
+        let before = both();
+        let (entry, _) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(&ledger(vec![entry]), &bodies(0, &before), &mut findings);
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
+        assert_eq!(findings[0].resolution, None);
+        assert_eq!(named(&findings), [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn a_claim_the_machine_removed_does_not_show_the_note_removed() {
+        let before = both();
+        let entry = removed_by_machine(claim("a", 0, SENTENCE, &before));
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
+        assert_eq!(findings[0].resolution, None);
+        assert_eq!(named(&findings), [Vec::<String>::new()]);
+    }
+
+    #[test]
+    fn a_removal_in_another_section_does_not_show_the_note_removed() {
+        let before = both();
+        let (entry, _) = removed_by_user(claim("a", 1, SENTENCE, &before), 100);
+        let mut findings = [waiting(0, "quotation:section-0")];
+        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
+        assert_eq!(named(&findings), [Vec::<String>::new()]);
+    }
+}

@@ -1379,21 +1379,49 @@ async fn a_note_with_no_sentence_or_whose_sentence_is_gone_names_no_claims() -> 
 }
 
 #[tokio::test]
-async fn a_note_in_a_draft_lesson_names_no_claims() -> Result<()> {
+async fn a_note_in_a_draft_lesson_names_no_claims_and_shows_removed_for_nothing() -> Result<()> {
+    use crate::lessons::claim_reviews::teaching_findings::{
+        TeachingFindingStateDto, TeachingResolutionDto,
+    };
     let course = unchecked().await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     note_about(&course, 0, Some(GOOD)).await?;
     sqlx::query("UPDATE learning_lesson_reviews SET state='needs_review' WHERE lesson_id=?")
         .bind(&course.lesson_id)
         .execute(&course.pool)
         .await?;
     assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
+
+    let revision = ledger(&course).await?.revision;
+    ClaimReviewRepository::new(course.pool.clone())
+        .append(
+            &course.lesson_id,
+            &target,
+            user_event(chrono::Utc::now().timestamp_millis()),
+            ClaimEvent::UserAction {
+                action: UserAction::Remove,
+                note: None,
+            },
+            revision,
+        )
+        .await?;
+    set_body(&course, 0, "The section no longer holds the sentence.").await?;
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .expect("the lesson has its review");
+    let note = &review.teaching_findings[0];
+    assert!(note.claim_ids.is_empty());
+    assert_eq!(note.state, TeachingFindingStateDto::Waiting);
+    assert_eq!(note.resolution, None::<TeachingResolutionDto>);
     Ok(())
 }
 
 #[tokio::test]
-async fn a_note_resolved_by_removing_its_sentence_names_the_claims_that_removal_ended() -> Result<()>
-{
-    use crate::lessons::claim_reviews::teaching_findings::TeachingSettleDto;
+async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -> Result<()> {
+    use crate::lessons::claim_reviews::teaching_findings::{
+        TeachingFindingStateDto, TeachingResolutionDto, TeachingSettleDto,
+    };
     let course = unchecked().await?;
     let body = stored(&course).await?.blocks[0].clone();
     let overlap = extract(
@@ -1405,41 +1433,44 @@ async fn a_note_resolved_by_removing_its_sentence_names_the_claims_that_removal_
     .await?;
     let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
     note_about(&course, 0, Some(GOOD)).await?;
-    let ids = claim_ids_of_notes(&course).await?[0].1.clone();
-    assert!(ids.contains(&overlap.0) && ids.contains(&target.0));
+    let notes = || async {
+        ClaimReviewService::new(course.pool.clone())
+            .review(&course.program_id, &course.lesson_id)
+            .await
+            .map(|review| review.expect("the lesson has its review").teaching_findings)
+    };
+    let waiting = notes().await?;
+    assert_eq!(waiting[0].state, TeachingFindingStateDto::Waiting);
+    assert_eq!(waiting[0].claim_ids.len(), 2);
 
     act(&course, &target, ClaimActionRequestDto::Remove).await?;
+    let removed = notes().await?;
+    assert_eq!(removed[0].state, TeachingFindingStateDto::Resolved);
+    assert_eq!(removed[0].resolution, Some(TeachingResolutionDto::Removed));
+    assert!(removed[0].resolved_at.is_some());
+    let mut named = removed[0].claim_ids.clone();
+    named.sort();
+    assert_eq!(named, sorted(&[&target, &overlap]));
+
+    let stored_state: (String, Option<String>) = sqlx::query_as(
+        "SELECT state, resolution FROM learning_lesson_teaching_findings WHERE lesson_id=?",
+    )
+    .bind(&course.lesson_id)
+    .fetch_one(&course.pool)
+    .await?;
+    assert_eq!(stored_state, ("waiting".to_owned(), None));
+
     let store = TeachingFindingsRepository::new(course.pool.clone());
     store
         .settle(
             &course.program_id,
             &course.lesson_id,
             &["quotation:section-0".to_owned()],
-            TeachingSettleDto::Removed,
+            TeachingSettleDto::Keep,
         )
         .await?;
-
-    let after = claim_ids_of_notes(&course).await?;
-    assert_eq!(after.len(), 1);
-    assert!(after[0].1.contains(&overlap.0), "{after:?}");
-    assert!(after[0].1.iter().all(|id| ids.contains(id)));
-
-    store
-        .settle(
-            &course.program_id,
-            &course.lesson_id,
-            &["quotation:section-0".to_owned()],
-            TeachingSettleDto::Reopen,
-        )
-        .await?;
-    store
-        .settle(
-            &course.program_id,
-            &course.lesson_id,
-            &["quotation:section-0".to_owned()],
-            TeachingSettleDto::SourceAdded,
-        )
-        .await?;
-    assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
+    let kept = notes().await?;
+    assert_eq!(kept[0].state, TeachingFindingStateDto::Resolved);
+    assert_eq!(kept[0].resolution, Some(TeachingResolutionDto::Removed));
     Ok(())
 }
