@@ -37,7 +37,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 /// Rewrites the stored checksum of an applied migration to the embedded one when it is the
 /// checksum of the same SQL with the other line endings. Any other difference is left for sqlx
 /// to refuse. Does nothing before `_sqlx_migrations` exists.
-async fn reconcile_line_endings(pool: &SqlitePool, migrator: &Migrator) -> Result<()> {
+pub(crate) async fn reconcile_line_endings(pool: &SqlitePool, migrator: &Migrator) -> Result<()> {
     let mut tx = pool.begin().await?;
 
     let has_table: i64 = sqlx::query_scalar(
