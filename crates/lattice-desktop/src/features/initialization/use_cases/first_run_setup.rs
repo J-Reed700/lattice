@@ -1,4 +1,6 @@
-use crate::features::model_management::recommend::{recommend_chat_models, MachineProfileProbe};
+use crate::features::model_management::recommend::{
+    recommend_chat_models, MachineProfileProbe, ProjectorsOnDisk,
+};
 use lattice_core::domain::models::embedding_defaults::default_embedding_model;
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::Result;
@@ -90,7 +92,7 @@ impl CheckFirstRunStatusUseCase {
     /// The model the recommender puts first for this computer, with a fresh install's KV cache
     /// setting; none when nothing fits.
     async fn chat_recommendation(&self) -> Option<RecommendedModel> {
-        let top = recommend_chat_models(self.probe.as_ref(), &BTreeMap::new())
+        let top = recommend_chat_models(self.probe.as_ref(), &BTreeMap::new(), &ProjectorsOnDisk)
             .await
             .into_iter()
             .next();
