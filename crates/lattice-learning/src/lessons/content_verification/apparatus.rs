@@ -3,7 +3,7 @@
 //! reading its quotations as the lesson's own statements.
 use regex::Regex;
 use serde_json::Value;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 fn pattern(source: &str) -> Regex {
     match Regex::new(source) {
@@ -16,14 +16,15 @@ fn pattern(source: &str) -> Regex {
 }
 
 fn mention() -> &'static Regex {
-    static MENTION: OnceLock<Regex> = OnceLock::new();
-    MENTION
-        .get_or_init(|| pattern(r"(?i) ?[(\[][ \t]*source[ \t]?index[ \t]*:?[ \t]*\d+[ \t]*[)\]]"))
+    static MENTION: LazyLock<Regex> = LazyLock::new(|| {
+        pattern(r"(?i) ?[(\[][ \t]*source[ \t]?index[ \t]*:?[ \t]*\d+[ \t]*[)\]]")
+    });
+    &MENTION
 }
 
 fn list_marker() -> &'static Regex {
-    static MARKER: OnceLock<Regex> = OnceLock::new();
-    MARKER.get_or_init(|| pattern(r"^\s*(?:[-*+]|\d+[.)])[ \t]+"))
+    static MARKER: LazyLock<Regex> = LazyLock::new(|| pattern(r"^\s*(?:[-*+]|\d+[.)])[ \t]+"));
+    &MARKER
 }
 
 struct Line {

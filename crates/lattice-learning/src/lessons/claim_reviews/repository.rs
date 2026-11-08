@@ -102,6 +102,16 @@ impl ClaimReviewRepository {
             .await
             .map_err(db)
     }
+
+    /// The body of the lesson's block at `ordinal`, when the lesson has one.
+    pub async fn block_body(&self, lesson_id: &str, ordinal: usize) -> Result<Option<String>> {
+        sqlx::query_scalar("SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?")
+            .bind(lesson_id)
+            .bind(i64::try_from(ordinal).unwrap_or(i64::MAX))
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(db)
+    }
 }
 
 #[async_trait]

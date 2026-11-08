@@ -92,6 +92,7 @@ pub use provenance_gate::with_outline_trust;
 mod repair;
 pub(crate) use repair::{confine, Protected};
 mod repair_loop;
+mod repair_request;
 mod repair_work;
 mod report;
 pub(crate) use report::WrittenOver;
@@ -109,13 +110,12 @@ pub mod test_support;
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
-use repair_loop::repair_context;
-#[cfg(test)]
 pub(crate) use repair_loop::verify_and_repair;
-pub(crate) use repair_loop::{
-    has_pending_repair, verify_and_repair_with_references,
-};
-use repair_loop::{repair_fingerprint, PendingRepair};
+pub(crate) use repair_loop::verify_and_repair_with_references;
+pub(crate) use repair_request::has_pending_repair;
+#[cfg(test)]
+use repair_request::repair_context;
+use repair_request::{repair_fingerprint, PendingRepair};
 #[cfg(test)]
 use report::content_hash;
 pub(crate) use report::{

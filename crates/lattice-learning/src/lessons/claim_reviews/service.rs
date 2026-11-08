@@ -426,13 +426,13 @@ impl ClaimReviewService {
             if !in_section_body(entry) {
                 return Err(AppError::InvalidInput(ONLY_SECTION.into()));
             }
-            return published_edit::section_body(
-                &self.pool,
-                lesson_id,
-                entry.location().unit_index,
-            )
-            .await?
-            .ok_or_else(|| AppError::NotFound("The claim's section is not in the lesson.".into()));
+            return self
+                .store
+                .block_body(lesson_id, entry.location().unit_index)
+                .await?
+                .ok_or_else(|| {
+                    AppError::NotFound("The claim's section is not in the lesson.".into())
+                });
         }
         let draft = self
             .drafts
