@@ -12,8 +12,9 @@
 //! 2. clean review (`drill-build-v1:clean_review`)
 //! 3. plant (`drill-build-v1:plant`)
 //! 4. prove (`drill-build-v1:prove`)
-//! 5. blind review (`drill-build-v1:blind_review`)
-//! 6. store: one transaction writes the drill and completes the job, so it has no checkpoint to resume from.
+//! 5. lesson check (`drill-build-v1:lesson_check`)
+//! 6. blind review (`drill-build-v1:blind_review`)
+//! 7. store: one transaction writes the drill and completes the job, so it has no checkpoint to resume from.
 
 use crate::features::learning::drills::grader::ReviewGrader;
 use crate::features::learning::drills::material::{DrillMaterial, StageCtx};
@@ -52,8 +53,8 @@ pub(in crate::features::learning) use outputs::*;
 /// shape.
 pub(in crate::features::learning) const CHECKPOINT_PREFIX: &str = "drill-build-v1";
 
-/// The steps of a build, for the job's progress: the five checkpointed stages and the store.
-pub(in crate::features::learning) const STEPS: u32 = 6;
+/// The steps of a build, for the job's progress: the six checkpointed stages and the store.
+pub(in crate::features::learning) const STEPS: u32 = 7;
 
 /// A checkpointed stage of a build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,7 +102,7 @@ impl Stage {
             Self::Plant => 2,
             Self::Prove => 3,
             Self::LessonCheck => 4,
-            Self::BlindReview => 4,
+            Self::BlindReview => 5,
         }
     }
 
@@ -118,7 +119,7 @@ impl Stage {
 }
 
 /// The step after the last stage.
-const STORE_INDEX: u32 = 5;
+const STORE_INDEX: u32 = 6;
 
 /// Builds one drill. The model, the material, the grader and the database are the build's own; the job runtime's
 /// context carries the checkpoints and the cancellation.
@@ -193,9 +194,13 @@ impl<'a> DrillBuild<'a> {
         else {
             return Ok(JobOutcome::Stopped);
         };
-        let checked = LessonChecked {
-            links: Vec::new(),
-            checks: Vec::new(),
+        let Some(checked) = self
+            .stage(context, Stage::LessonCheck, || {
+                self.lesson_check(spec, &baseline, &proved)
+            })
+            .await?
+        else {
+            return Ok(JobOutcome::Stopped);
         };
         let Some(blind) = self
             .stage(context, Stage::BlindReview, || {

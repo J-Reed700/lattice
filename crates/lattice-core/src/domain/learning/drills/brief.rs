@@ -62,19 +62,13 @@ impl LessonBrief {
         line(&mut shown, "Lesson objective", &self.objective);
         if !self.evidence.is_empty() {
             shown.push_str("\nEvidence:\n");
-            let mut heading: Option<Option<&str>> = None;
-            for (index, unit) in self.evidence.iter().enumerate() {
-                let source = unit.source.as_deref();
-                if heading != Some(source) {
-                    heading = Some(source);
-                    match source {
-                        Some(title) => shown.push_str(&format!("From {title}:\n")),
-                        None => shown.push_str("From the lesson:\n"),
-                    }
-                }
-                let separator = if unit.text.contains('\n') { '\n' } else { ' ' };
-                shown.push_str(&format!("L{}{separator}{}\n", index + 1, unit.text));
-            }
+            write_evidence(
+                &mut shown,
+                self.evidence
+                    .iter()
+                    .enumerate()
+                    .map(|(index, unit)| (index + 1, unit)),
+            );
         }
         shown.push_str("</brief>");
         shown
@@ -83,8 +77,19 @@ impl LessonBrief {
     /// The evidence units `numbers` cite (1-based, in the order given), written as `render` writes its evidence and
     /// joined with `\n`. `None` exactly when `link` is `None`.
     pub fn cited(&self, numbers: &[usize]) -> Option<String> {
-        let _ = numbers;
-        None
+        if numbers.is_empty() {
+            return None;
+        }
+        let units = numbers
+            .iter()
+            .map(|&number| Some((number, self.evidence.get(number.checked_sub(1)?)?)))
+            .collect::<Option<Vec<_>>>()?;
+        let mut shown = String::new();
+        write_evidence(&mut shown, units.into_iter());
+        if shown.ends_with('\n') {
+            shown.pop();
+        }
+        Some(shown)
     }
 
     /// The link of an issue that cites the evidence `numbers` (1-based): the cited units, cloned, in the order of
@@ -101,6 +106,27 @@ impl LessonBrief {
             lesson_id: self.lesson_id.clone(),
             sentences,
         })
+    }
+}
+
+/// Writes the numbered `units` as the evidence of a brief: a heading wherever the source changes, then each unit under its
+/// number.
+fn write_evidence<'a>(
+    shown: &mut String,
+    units: impl Iterator<Item = (usize, &'a LessonSentence)>,
+) {
+    let mut heading: Option<Option<&str>> = None;
+    for (number, unit) in units {
+        let source = unit.source.as_deref();
+        if heading != Some(source) {
+            heading = Some(source);
+            match source {
+                Some(title) => shown.push_str(&format!("From {title}:\n")),
+                None => shown.push_str("From the lesson:\n"),
+            }
+        }
+        let separator = if unit.text.contains('\n') { '\n' } else { ' ' };
+        shown.push_str(&format!("L{number}{separator}{}\n", unit.text));
     }
 }
 

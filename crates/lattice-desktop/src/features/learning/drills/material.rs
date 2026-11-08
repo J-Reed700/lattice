@@ -121,10 +121,10 @@ pub(in crate::features::learning) trait DrillMaterial:
     /// How a learner's fix of `issue` is checked, on `tools`.
     fn fix_strategy<'a>(&'a self, issue: &KeyIssue, tools: Tools<'a>) -> Box<dyn FixStrategy + 'a>;
 
-    /// Stage 5. What the blind reviewer and the describer are told.
+    /// Stage 6. What the blind reviewer and the describer are told.
     fn reviewer_wording(&self, spec: &DrillSpec) -> ReviewerWording;
 
-    /// Stage 5. What both are shown beside the material of `baseline`, when they are shown anything: for a passage,
+    /// Stage 6. What both are shown beside the material of `baseline`, when they are shown anything: for a passage,
     /// the source it was written from.
     fn reviewer_context(&self, _baseline: &Baseline) -> Option<String> {
         None

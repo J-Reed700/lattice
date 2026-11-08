@@ -229,7 +229,6 @@ impl Proved {
     /// The planted issues of the key, in the order of the targets, each with what `checked` ties it to in the
     /// lesson.
     pub fn planted_key(&self, checked: &LessonChecked) -> Vec<KeyIssue> {
-        let _ = checked;
         self.proven
             .iter()
             .zip(&self.spans)
@@ -244,7 +243,7 @@ impl Proved {
                 explanation: proven.mutation.explanation.clone(),
                 proof: proven.proof.clone(),
                 origin: Origin::Planted,
-                lesson: None,
+                lesson: checked.links.get(position).cloned().flatten(),
             })
             .collect()
     }
@@ -270,7 +269,7 @@ pub struct Findability {
     pub reason: String,
 }
 
-/// Stage 5: what the blind review found, how it was judged, and the issues it added to the key.
+/// Stage 6: what the blind review found, how it was judged, and the issues it added to the key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlindReview {
     pub findings: Vec<ReviewedFinding>,
@@ -336,7 +335,6 @@ impl Evidence {
         checked: &LessonChecked,
         blind: &BlindReview,
     ) -> Self {
-        let _ = checked;
         let proofs = proved
             .proven
             .iter()
@@ -357,7 +355,7 @@ impl Evidence {
             plant: planted.trail.clone(),
             proofs,
             dropped: proved.dropped.clone(),
-            lesson_checks: Vec::new(),
+            lesson_checks: checked.checks.clone(),
             blind_review: BlindReviewEvidence {
                 findings: blind.findings.clone(),
                 assessment: blind.assessment.clone(),
