@@ -155,52 +155,52 @@ describe('Course page', () => {
     expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
   });
 
-  it('has Quizzes as a primary tab, and Practice keeps only written practice and code', async () => {
+  it('has Quizzes as a primary tab, and Practice renders the unified Practice area with five cards', async () => {
     show(program(GOAL));
     const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
     expect(tabs.map((tab) => tab.textContent)).toEqual(['Lessons', 'Practice', 'Quizzes', 'Recall', 'Notebook', 'Tutor', 'Sources']);
     await userEvent.click(tabs[1]);
-    const practice = await screen.findByRole('tablist', { name: 'Practice activities' });
-    expect(within(practice).getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Written practice', 'Code & simulations', 'Review drills']);
+    expect(await screen.findByRole('heading', { level: 3, name: 'Explain' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 3, name: 'Code' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 3, name: 'Mock interview' })).toBeVisible();
+    expect(screen.getByRole('heading', { level: 3, name: 'Role-play' })).toBeVisible();
+    expect(screen.queryByRole('tablist', { name: 'Practice activities' })).not.toBeInTheDocument();
     expect(screen.queryByText(/Quick checks/)).not.toBeInTheDocument();
   });
 
   describe('Review drills', () => {
     const primaryTab = (name: string) => within(screen.getByRole('tablist', { name: 'Program workspace' })).getByRole('tab', { name });
 
-    it('shows the drills of this course, and not the module and lesson line a drill picks for itself', async () => {
+    it('shows the drills of this course, and returns to Practice home on Back to Practice', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       await user.click(primaryTab('Practice'));
-      expect(screen.getByText('›')).toBeInTheDocument();
+      expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
 
-      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
-      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
-      expect(screen.getByText('Review drills of program-1')).toBeVisible();
-      expect(screen.queryByText('›')).not.toBeInTheDocument();
-      expect(screen.getAllByText('Circulation')).toEqual([
-        screen.getByRole('heading', { level: 2, name: 'Circulation' }),
-      ]);
+      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: 'Start' }));
+      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
 
-      await user.click(screen.getByRole('tab', { name: 'Written practice' }));
-      expect(screen.getByText('›')).toBeInTheDocument();
-      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
+      await user.click(screen.getByRole('button', { name: 'Back to Practice' }));
+      expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
+      expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
     });
 
-    it('is mounted once, and stays so while the learner is on Written practice or Lessons and back', async () => {
+    it('is mounted once, and stays so while the learner is on Lessons and back', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
       await user.click(primaryTab('Practice'));
       expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
-      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
+
+      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: 'Start' }));
+      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
       expect(drills.mounts).toBe(1);
 
-      await user.click(screen.getByRole('tab', { name: 'Written practice' }));
       await user.click(primaryTab('Lessons'));
       expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
+
       await user.click(primaryTab('Practice'));
-      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
       expect(screen.getByText('Review drills of program-1')).toBeVisible();
       expect(drills.mounts).toBe(1);
     });
@@ -208,20 +208,20 @@ describe('Course page', () => {
     it('opens from a destination on that tab', async () => {
       show(program(GOAL), vi.fn(), { programId: 'program-1', tab: 'drills' });
       expect(await screen.findByText('Review drills of program-1')).toBeVisible();
-      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
-      expect(screen.queryByText('›')).not.toBeInTheDocument();
+      expect(primaryTab('Practice')).toHaveAttribute('aria-selected', 'true');
     });
 
     it('is where Practice reopens when it was the last practice view', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       await user.click(primaryTab('Practice'));
-      await user.click(screen.getByRole('tab', { name: 'Review drills' }));
+      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: 'Start' }));
+      expect(await screen.findByText('Review drills of program-1')).toBeVisible();
+
       await user.click(primaryTab('Lessons'));
       expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
 
       await user.click(primaryTab('Practice'));
-      expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
       expect(screen.getByText('Review drills of program-1')).toBeVisible();
     });
   });
@@ -253,6 +253,9 @@ describe('Course page', () => {
     show(program(GOAL));
     const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
     await user.click(tabs[1]);
+    expect(await screen.findByRole('heading', { level: 3, name: 'Explain' })).toBeVisible();
+
+    await user.click(within(screen.getByTestId('card-explain')).getByRole('button', { name: 'Start' }));
     const practiceModes = await screen.findByRole('group', { name: 'Written practice mode' });
     expect(practiceModes).toBeVisible();
     const feynmanButton = within(practiceModes).getByRole('button', { name: 'Feynman technique (Teach a beginner)' });
@@ -295,7 +298,7 @@ describe('Course page', () => {
       show(twoModules());
       const tabs = within(screen.getByRole('tablist', { name: 'Program workspace' })).getAllByRole('tab');
       await user.click(tabs[1]);
-      await screen.findByRole('tablist', { name: 'Practice activities' });
+      await screen.findByRole('heading', { level: 3, name: 'Explain' });
       await user.click(screen.getByRole('button', { name: 'Journey: Respiration' }));
       expect(await screen.findByRole('heading', { level: 2, name: 'Respiration' })).toBeVisible();
       expect(picked('Module')).toHaveTextContent('Module 2: Respiration');

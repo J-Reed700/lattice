@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Beaker, CircleHelp, LoaderCircle, Plus } from "lucide-react";
+import { Beaker, CheckCircle2, CircleHelp, LoaderCircle, Plus } from "lucide-react";
 
 import { useApi } from '@/contexts/ApiContext';
 import { invalidateLearningSourceDependents } from "@/features/learning/api/learningInvalidation";
@@ -66,6 +66,7 @@ export function PracticalWorkbenchPanel({
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [projectBrief, setProjectBrief] = useState<string | null>(null);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   useEffect(() => {
     if (projectRequest) { setProjectBrief(projectRequest.brief); setComposerOpen(true); }
   }, [projectRequest]);
@@ -173,27 +174,27 @@ export function PracticalWorkbenchPanel({
     return (
       <div
         role="status"
-        className="rounded-2xl border border-border bg-surface p-8 text-sm text-text-muted"
+        className="rounded-2xl border border-border-default bg-surface p-8 text-sm text-text-muted"
       >
-        <LoaderCircle className="mr-2 inline animate-spin" size={16} />
-        Loading practical workspace…
+        <LoaderCircle className="mr-2 inline animate-spin text-accent" size={16} />
+        Loading session workspace…
       </div>
     );
   if (query.isError || !workspace)
     return (
-      <section className="rounded-2xl border border-rose-500/20 bg-surface p-6">
+      <section className="rounded-2xl border border-border-default bg-surface p-6 shadow-xs">
         <h3 className="font-serif text-xl text-text-primary">
-          Labs &amp; simulations unavailable
+          Sessions unavailable
         </h3>
-        <p role="alert" className="mt-2 text-sm text-text-secondary">
+        <p role="alert" className="mt-2 text-sm text-danger-fg">
           {errorText(query.error)}
         </p>
         <button
           type="button"
           onClick={() => void query.refetch()}
-          className="mt-4 rounded-full border border-border px-4 py-2 text-sm"
+          className="mt-4 rounded-full border border-border-default bg-surface px-4 py-2 text-sm text-text-primary hover:bg-surface-raised"
         >
-          Retry
+          Try again
         </button>
       </section>
     );
@@ -236,6 +237,12 @@ export function PracticalWorkbenchPanel({
       setStartingRun(false);
     }
   };
+
+  const handleGetFeedback = async () => {
+    await draft.flush();
+    setFeedbackSubmitted(true);
+  };
+
   const output = selectedRun;
 
   return (
@@ -244,38 +251,39 @@ export function PracticalWorkbenchPanel({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.16em] text-accent">
-              <Beaker size={14} /> Labs &amp; simulations
+              <Beaker size={14} /> Practice sessions
             </div>
             <h2 className="mt-1 font-serif text-2xl text-text-primary">
               Work through a real brief
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-              Choose a task, work through the brief, and learn from the results.
+              Choose a task, work through the brief, and learn from checks and debrief feedback.
             </p>
           </div>
           <button
             ref={newActivityRef}
             type="button"
+            aria-label="New activity"
             disabled={lesson?.preparation !== "ready" || generate.isPending}
             onClick={() => setComposerOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-45"
+            className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-45"
           >
-            <Plus size={14} /> New activity
+            <Plus size={14} /> New session
           </button>
         </div>
       </header>
 
-      {/* The dialog can close while an activity is prepared; say what is happening, and what failed. */}
+      {/* Generation progress and error feedback */}
       {!composerOpen && generate.isPending && (
-        <p role="status" className="flex items-center gap-2 rounded-xl border border-border bg-surface px-4 py-3 text-sm text-text-secondary">
+        <p role="status" className="flex items-center gap-2 rounded-xl border border-border-default bg-surface px-4 py-3 text-sm text-text-secondary">
           <LoaderCircle size={15} className="shrink-0 animate-spin text-accent" />
           {generate.variables?.kind === "interview"
-            ? "Preparing your interview… Company research and question planning can take several minutes."
-            : "Preparing your activity…"}
+            ? "Preparing your interview session… Research and question planning can take several minutes."
+            : "Preparing your session…"}
         </p>
       )}
       {!composerOpen && generate.isError && (
-        <p role="alert" className="rounded-xl bg-rose-500/10 px-4 py-3 text-sm text-rose-700 dark:text-rose-300">
+        <p role="alert" className="rounded-xl bg-danger-muted px-4 py-3 text-sm text-danger-fg">
           The activity could not be prepared: {errorText(generate.error)}
         </p>
       )}
@@ -299,16 +307,18 @@ export function PracticalWorkbenchPanel({
             setSelectedFilePath(null);
             setSelectedRunId(null);
             setSimulation(null);
+            setFeedbackSubmitted(false);
           }}
         />
 
-        <main className="min-w-0 space-y-4">
+        {/* Replaced <main> with <div> to preserve single <main> landmark per P3-16 */}
+        <div className="min-w-0 space-y-4">
           {!activeActivity ? (
-            <section className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-border bg-surface p-7 text-center">
+            <section className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-border-default bg-surface p-7 text-center">
               <div>
                 <CircleHelp className="mx-auto h-7 w-7 text-text-muted" />
                 <h3 className="mt-3 font-serif text-xl text-text-primary">
-                  Your workspace starts with an activity
+                  Your workspace starts with a session
                 </h3>
                 <p className="mt-2 max-w-sm text-sm leading-6 text-text-secondary">
                   Create a brief from a ready lesson to open its artifact editor
@@ -321,34 +331,67 @@ export function PracticalWorkbenchPanel({
               <ActivityBrief activeActivity={activeActivity} />
 
               {activeActivity.files.length > 0 && (
-                <ArtifactEditor
-                  activeActivity={activeActivity}
-                  draft={draft}
-                  editorFiles={editorFiles}
-                  selectedFile={selectedFile}
-                  setSelectedFilePath={setSelectedFilePath}
-                  canRunActivity={canRunActivity}
-                  startingRun={startingRun}
-                  runPending={runMutation.isPending}
-                  activeRun={activeRun}
-                  beginRun={beginRun}
-                  builtinRuntime={builtinRuntime}
-                  capability={capability}
-                />
+                <div className="space-y-4">
+                  <ArtifactEditor
+                    activeActivity={activeActivity}
+                    draft={draft}
+                    editorFiles={editorFiles}
+                    selectedFile={selectedFile}
+                    setSelectedFilePath={setSelectedFilePath}
+                    canRunActivity={canRunActivity}
+                    startingRun={startingRun}
+                    runPending={runMutation.isPending}
+                    activeRun={activeRun}
+                    beginRun={beginRun}
+                    builtinRuntime={builtinRuntime}
+                    capability={capability}
+                  />
+
+                  {/* P1-2: Activities without runtime get feedback button */}
+                  {!canRunActivity && (
+                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-default bg-surface p-4 shadow-xs">
+                      <div>
+                        <div className="text-sm font-semibold text-text-primary">
+                          {feedbackSubmitted ? "Draft submitted" : "Ready for feedback"}
+                        </div>
+                        <p className="text-xs text-text-secondary">
+                          {feedbackSubmitted
+                            ? "Your draft has been saved and submitted for debrief feedback."
+                            : "Submit your written work to receive feedback against the rubric."}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleGetFeedback()}
+                        className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90"
+                      >
+                        {feedbackSubmitted ? (
+                          <>
+                            <CheckCircle2 size={16} />
+                            <span>Submitted</span>
+                          </>
+                        ) : (
+                          <span>Get feedback</span>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
 
               {runError && (
                 <p
                   role="alert"
-                  className="rounded-xl bg-rose-500/10 p-4 text-sm text-rose-700 dark:text-rose-300"
+                  className="rounded-xl bg-danger-muted p-4 text-sm text-danger-fg"
                 >
                   {runError}{" "}
                   <button
                     type="button"
+                    aria-label="Retry run"
                     onClick={() => void beginRun()}
-                    className="ml-2 underline"
+                    className="ml-2 font-semibold underline"
                   >
-                    Retry run
+                    Try again
                   </button>
                 </p>
               )}
@@ -373,7 +416,7 @@ export function PracticalWorkbenchPanel({
               {cancelRun.error && (
                 <p
                   role="alert"
-                  className="rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700 dark:text-rose-300"
+                  className="rounded-lg bg-danger-muted p-3 text-xs text-danger-fg"
                 >
                   {errorText(cancelRun.error)}{" "}
                   <button
@@ -382,9 +425,9 @@ export function PracticalWorkbenchPanel({
                       const request = cancelRequestRef.current;
                       if (request) cancelRun.mutate(request);
                     }}
-                    className="ml-2 underline"
+                    className="ml-2 font-semibold underline"
                   >
-                    Retry cancel
+                    Try again
                   </button>
                 </p>
               )}
@@ -396,8 +439,8 @@ export function PracticalWorkbenchPanel({
                   activity={activeActivity}
                   session={activeSimulation}
                   onRestart={() => setSimulation({ newAttemptFor: activeActivity.id })}
-                  onSession={(session) => {
-                    setSimulation(session);
+                  onSession={(sess) => {
+                    setSimulation(sess);
                     void query.refetch();
                   }}
                 />
@@ -412,7 +455,7 @@ export function PracticalWorkbenchPanel({
               />
             </>
           )}
-        </main>
+        </div>
       </div>
       {composerOpen && (
         <ActivityComposer

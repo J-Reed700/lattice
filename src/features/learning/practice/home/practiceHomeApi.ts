@@ -1,4 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
+import { studyActivityCall } from '@/lib/studyActivity';
+import type { CommandName } from '@/shared/ipc/transport';
 
 export interface LearningPracticeProfileDto {
   programId: string;
@@ -53,10 +54,21 @@ export interface PracticeDueDto {
   totalDue: number;
 }
 
-/** Wraps the backend commands for practice profiles, coding build, and practice due. */
+async function invokeCommand<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const result = await studyActivityCall<T>('learning', command as CommandName, args);
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+  return result.data;
+}
+
+/** Wraps backend learning commands for practice profiles, coding build, and practice due. */
 export const practiceHomeApi = {
   getProfile: async (programId: string): Promise<LearningPracticeProfileDto> => {
-    return invoke<LearningPracticeProfileDto>('plugin:learning|get_learning_practice_profile', {
+    return invokeCommand<LearningPracticeProfileDto>('get_learning_practice_profile', {
       programId,
     });
   },
@@ -64,7 +76,7 @@ export const practiceHomeApi = {
   saveProfile: async (
     request: SaveLearningPracticeProfileRequestDto,
   ): Promise<LearningPracticeProfileDto> => {
-    return invoke<LearningPracticeProfileDto>('plugin:learning|save_learning_practice_profile', {
+    return invokeCommand<LearningPracticeProfileDto>('save_learning_practice_profile', {
       request,
     });
   },
@@ -72,13 +84,13 @@ export const practiceHomeApi = {
   startCodingBuild: async (
     request: StartCodingBuildRequestDto,
   ): Promise<StartedCodingBuildDto> => {
-    return invoke<StartedCodingBuildDto>('plugin:learning|start_coding_build', {
+    return invokeCommand<StartedCodingBuildDto>('start_coding_build', {
       request,
     });
   },
 
   getDue: async (programId: string): Promise<PracticeDueDto> => {
-    return invoke<PracticeDueDto>('plugin:learning|practice_due', {
+    return invokeCommand<PracticeDueDto>('practice_due', {
       programId,
     });
   },
