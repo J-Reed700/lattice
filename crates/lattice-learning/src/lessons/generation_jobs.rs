@@ -100,6 +100,7 @@ impl JobHandler for LessonGenerationWorker {
                     prepared.revision,
                     &prepared.staged,
                     &prepared.held,
+                    Some(prepared.model.as_str()),
                 )
                 .await
             {
@@ -127,6 +128,8 @@ struct Prepared {
     revision: i64,
     staged: Vec<(String, crate::dto::PreparedLearningLesson)>,
     held: Vec<crate::content_verification::HeldForReview>,
+    /// The Learning model the lessons were prepared with.
+    model: String,
 }
 
 impl LessonGenerationWorker {
@@ -407,6 +410,7 @@ impl LessonGenerationWorker {
             revision: program.summary.revision,
             staged,
             held,
+            model: llm.model_name().to_owned(),
         })
     }
 }

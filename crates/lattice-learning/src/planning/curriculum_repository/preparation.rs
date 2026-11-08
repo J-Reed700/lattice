@@ -93,7 +93,7 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
         lessons: &[(String, crate::dto::PreparedLearningLesson)],
     ) -> Result<()> {
-        self.publish_prepared(id, expected_revision, lessons, &[])
+        self.publish_prepared(id, expected_revision, lessons, &[], None)
             .await
     }
 
@@ -106,6 +106,7 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
         lessons: &[(String, crate::dto::PreparedLearningLesson)],
         held: &[crate::content_verification::HeldForReview],
+        author_model: Option<&str>,
     ) -> Result<()> {
         if lessons.is_empty() || lessons.len() + held.len() > 3 {
             return Err(AppError::InvalidInput(
@@ -194,8 +195,13 @@ impl LearningCurriculumRepository {
                 &prepared.questions,
                 &prepared.keys,
             );
-            crate::assessment_repository::insert_bank_items_in(&mut tx, &program_id, &items, None)
-                .await?;
+            crate::assessment_repository::insert_bank_items_in(
+                &mut tx,
+                &program_id,
+                &items,
+                author_model,
+            )
+            .await?;
             crate::quiz_blueprints::ensure_blueprint_in(
                 &mut tx,
                 &program_id,
