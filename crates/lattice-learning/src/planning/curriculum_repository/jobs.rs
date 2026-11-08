@@ -55,8 +55,19 @@ impl LearningCurriculumRepository {
                 "Select one lesson to prepare.".into(),
             ));
         }
-        let mut job = self.start_job(request).await?;
-        let jobs = self.jobs(&request.program_id).await?;
+        let job = self.start_job(request).await?;
+        self.retry_replayed_job_if_stopped(&request.program_id, request.expected_revision, job)
+            .await
+    }
+
+    async fn retry_replayed_job_if_stopped(
+        &self,
+        program_id: &str,
+        expected_revision: i64,
+        job: LearningGenerationJob,
+    ) -> Result<LearningGenerationJob> {
+        let mut job = job;
+        let jobs = self.jobs(program_id).await?;
         let mut visited = std::collections::HashSet::new();
         while let Some(child) = jobs
             .iter()
@@ -78,13 +89,13 @@ impl LearningCurriculumRepository {
             job = self
                 .retry_job(&LearningGenerationJobActionRequestDto {
                     operation_id: stable_job_operation_id(
-                        &request.program_id,
+                        program_id,
                         &format!("retry-{}", job.id),
-                        request.expected_revision,
+                        expected_revision,
                     ),
-                    program_id: request.program_id.clone(),
+                    program_id: program_id.to_string(),
                     job_id: job.id.clone(),
-                    expected_revision: request.expected_revision,
+                    expected_revision,
                 })
                 .await?;
         }
@@ -129,7 +140,11 @@ impl LearningCurriculumRepository {
         tx.commit().await.map_err(db)?;
         let mut jobs = Vec::new();
         for id in &ids {
-            jobs.push(self.job(id).await?);
+            let job = self.job(id).await?;
+            let job = self
+                .retry_replayed_job_if_stopped(&request.program_id, request.expected_revision, job)
+                .await?;
+            jobs.push(job);
         }
         Ok(jobs)
     }
@@ -225,18 +240,17 @@ impl LearningCurriculumRepository {
         }
         // A new UI revision or operation ID must not create duplicate work for
         // a lesson already queued against the same teaching inputs.
-        let scopes = job_scopes(&mut **tx, &request.program_id).await?;
-        let mut active =
-            JobStore::list_for_subject_in(&mut **tx, LESSON_PREPARATION, &request.program_id)
-                .await?
-                .into_iter()
-                .filter(|job| {
-                    !job.status.is_finished()
-                        && scopes
-                            .get(&job.id)
-                            .is_some_and(|scope| scope.content_revision == Some(content_revision))
-                })
-                .collect::<Vec<_>>();
+        let scopes = job_scopes(tx, &request.program_id).await?;
+        let mut active = JobStore::list_for_subject_in(tx, LESSON_PREPARATION, &request.program_id)
+            .await?
+            .into_iter()
+            .filter(|job| {
+                !job.status.is_finished()
+                    && scopes
+                        .get(&job.id)
+                        .is_some_and(|scope| scope.content_revision == Some(content_revision))
+            })
+            .collect::<Vec<_>>();
         active.reverse();
         for existing in active {
             let ids = existing
@@ -267,7 +281,7 @@ impl LearningCurriculumRepository {
             return Ok(existing.id);
         }
         let admitted = JobStore::submit_in(
-            &mut **tx,
+            tx,
             &NewJob {
                 kind: LESSON_PREPARATION.into(),
                 subject_id: Some(request.program_id.clone()),
