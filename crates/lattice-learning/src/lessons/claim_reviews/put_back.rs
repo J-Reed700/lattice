@@ -152,8 +152,39 @@ pub(super) fn place(
     claims: &[ClaimLedgerEntry],
     entry: &ClaimLedgerEntry,
 ) -> Option<PutPlace> {
-    let _ = (lesson, claims, entry);
-    None
+    let field = entry.location().field.clone();
+    if let Some(cut) = entry.cut_place() {
+        let neighbours = [
+            cut.before.as_ref().map(|text| (text, true)),
+            cut.after.as_ref().map(|text| (text, false)),
+        ];
+        for (text, after) in neighbours.into_iter().flatten() {
+            if let Some(unit_index) = lesson.unit_holding(&field, text) {
+                let anchor = if after {
+                    Anchor::After(text.clone())
+                } else {
+                    Anchor::Before(text.clone())
+                };
+                return Some(PutPlace {
+                    unit_index,
+                    field,
+                    anchor,
+                });
+            }
+        }
+    }
+    let unit_index = if section_went_out(claims) {
+        surviving_unit(claims, entry)?
+    } else {
+        entry.location().unit_index
+    };
+    let text = lesson.text(unit_index, &field)?;
+    let anchor = beside_claims(claims, entry, unit_index, &field, &text);
+    Some(PutPlace {
+        unit_index,
+        field,
+        anchor,
+    })
 }
 
 /// After the nearest earlier claim of the unit and field whose sentence is
@@ -202,8 +233,15 @@ fn beside_claims(
 
 /// The end of section `section`'s text.
 pub(super) fn end_of_section(lesson: &Lesson<'_>, section: u32) -> Result<PutPlace> {
-    let _ = (lesson, section);
-    Err(AppError::InternalError("not built yet".into()))
+    let unit_index = usize::try_from(section).unwrap_or(usize::MAX);
+    if unit_index >= lesson.blocks() || lesson.text(unit_index, "body").is_none() {
+        return Err(AppError::InvalidInput(NO_SECTION.into()));
+    }
+    Ok(PutPlace {
+        unit_index,
+        field: "body".into(),
+        anchor: Anchor::End,
+    })
 }
 
 /// The place for `entry`'s sentence: the end of the section the user chose,
@@ -214,6 +252,8 @@ pub(super) fn resolve(
     entry: &ClaimLedgerEntry,
     section: Option<u32>,
 ) -> Result<PutPlace> {
-    let _ = (lesson, claims, entry, section);
-    Err(AppError::InternalError("not built yet".into()))
+    match section {
+        Some(section) => end_of_section(lesson, section),
+        None => place(lesson, claims, entry).ok_or_else(|| AppError::InvalidInput(CHOOSE.into())),
+    }
 }

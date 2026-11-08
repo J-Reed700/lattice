@@ -113,14 +113,78 @@ impl LessonVerificationReport {
     /// one finding for it, confirmed by the user, in the place of the findings
     /// of the claims that stood on the replaced text.
     pub(crate) fn written_back(&mut self, back: &WrittenBack<'_>) {
-    let _ = back;
-}
+        let replaced = |finding: &Finding| match &finding.claim_id {
+            Some(id) => id == &back.claim.0 || back.replaced.contains(id),
+            None => {
+                back.range.0 < back.range.1
+                    && finding.unit == back.unit
+                    && lattice_core::domain::learning::claim_review::span_of(
+                        back.old_body,
+                        &finding.quote,
+                    )
+                    .is_some_and(|(start, end)| start < back.range.1 && back.range.0 < end)
+            }
+        };
+        let first = self.findings.iter().position(replaced);
+        let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
+            .into_iter()
+            .partition(|finding| replaced(finding));
+        self.findings = kept;
+        if !gone.is_empty() {
+            self.replaced_findings.push(ReplacedFindings {
+                by: back.claim.0.clone(),
+                findings: gone,
+            });
+        }
+        let finding = Finding {
+            unit: back.unit,
+            quote: back.sentence.to_owned(),
+            statement: back.statement.to_owned(),
+            verdict: ClaimVerdict::Unverified,
+            reason: back.reason.to_owned(),
+            evidence: Vec::new(),
+            supporting_quote: None,
+            resolution: Some(Resolution::Confirmed {
+                at: back.at,
+                note: None,
+            }),
+            claim_id: Some(back.claim.0.clone()),
+            trust: None,
+            label: None,
+            class: None,
+            two_pass: Default::default(),
+        };
+        let at = first.unwrap_or_else(|| {
+            self.findings
+                .iter()
+                .position(|other| other.unit > back.unit)
+                .unwrap_or(self.findings.len())
+        });
+        self.findings.insert(at, finding);
+        self.content_sha256 =
+            digest(&json!([self.content_sha256, back.unit, back.new_body]).to_string());
+    }
 
     /// The report after `claim`'s sentence was written out of the text again:
     /// its finding goes, and the findings it replaced come back.
     pub(crate) fn written_out(&mut self, unit: usize, new_body: &str, claim: &ClaimId) {
-    let _ = (unit, new_body, claim);
-}
+        let at = self
+            .findings
+            .iter()
+            .position(|finding| finding.claim_id.as_deref() == Some(claim.0.as_str()));
+        self.findings
+            .retain(|finding| finding.claim_id.as_deref() != Some(claim.0.as_str()));
+        if let Some(held) = self
+            .replaced_findings
+            .iter()
+            .rposition(|replaced| replaced.by == claim.0)
+        {
+            let replaced = self.replaced_findings.remove(held);
+            let at = at.unwrap_or(self.findings.len()).min(self.findings.len());
+            self.findings.splice(at..at, replaced.findings);
+        }
+        self.content_sha256 = digest(&json!([self.content_sha256, unit, new_body]).to_string());
+    }
 }
 
 /// How a lesson's preparation ends when `count` of its statements are

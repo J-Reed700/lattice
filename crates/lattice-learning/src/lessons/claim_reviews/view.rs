@@ -166,7 +166,7 @@ impl ClaimReviewService {
                     entry,
                     &ledger.claims,
                     &context,
-                    (&units, &titles),
+                    (&units, titles.as_slice()),
                     published,
                 )
             })
