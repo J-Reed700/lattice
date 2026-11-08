@@ -109,7 +109,7 @@ fn a_primary_meets_a_specification_and_an_established_blog_alone_does_not() {
         ]
     );
     assert!(reasons.last().unwrap().text.starts_with(
-        "Specification claim about OpenAI API: supported only by established sources"
+        "Specification statement about OpenAI API: supported only by established sources"
     ));
 }
 
@@ -158,13 +158,14 @@ fn two_independent_established_origins_corroborate_but_two_pages_of_one_origin_d
             support("b", "b", TrustLevel::Established),
         ],
     );
-    assert!(matches!(
-        corroborated,
-        Decision::Sufficient {
-            label: Some(Label::Secondary),
-            ..
-        }
-    ));
+    let Decision::Sufficient { label, reasons, .. } = &corroborated else {
+        panic!()
+    };
+    assert_eq!(*label, Some(Label::Secondary));
+    assert!(reasons.iter().any(|reason| {
+        reason.code == ReasonCode::MetByCorroboration
+            && reason.text == "2 independent origins support the specification statement"
+    }));
     let one_origin = decide_static(
         &profile(ClaimKind::Historical),
         &[

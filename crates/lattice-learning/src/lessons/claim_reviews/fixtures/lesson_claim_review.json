@@ -241,7 +241,7 @@
           "standing": null,
           "counts": {
             "outcome": "not_counted",
-            "reason": "Its date rules it out for this claim."
+            "reason": "Its date rules it out for this statement."
           },
           "quote": "100 °C at 101.325 kPa",
           "quoteSpan": null,
@@ -271,7 +271,10 @@
             "addedBy": "research"
           }
         ]
-      }
+      },
+      "place": null,
+      "putBackUnit": null,
+      "rewritten": null
     },
     {
       "claimId": "claim-2",
@@ -374,7 +377,16 @@
         "pagesMentioning": 0,
         "stated": false,
         "relevant": []
-      }
+      },
+      "place": null,
+      "putBackUnit": null,
+      "rewritten": null
+    }
+  ],
+  "sections": [
+    {
+      "index": 0,
+      "title": "Phase changes"
     }
   ],
   "teachingFindings": [
@@ -384,10 +396,16 @@
       "site": "section",
       "unitIndex": 0,
       "unitTitle": "Section 1: Phase changes",
-      "note": "Section 1 (candidate blocks-0): the example shows \"result\": \"4\" where the code returns the number 4.",
+      "summary": "The example shows \"4\" in quotation marks where the code returns the number 4.",
       "passage": "The function returns the number 4.",
+      "passageRole": "lesson",
+      "sentence": null,
+      "claimIds": [],
+      "resolution": null,
+      "resolvedAt": null,
       "repairs": 2,
-      "state": "waiting"
+      "state": "waiting",
+      "partChanged": false
     },
     {
       "findingKey": "structure:lesson",
@@ -395,10 +413,16 @@
       "site": "lesson",
       "unitIndex": null,
       "unitTitle": "Whole lesson",
-      "note": "The lesson needs exactly one recap; it has none.",
+      "summary": "The lesson needs exactly one recap; it has none.",
       "passage": null,
+      "passageRole": "lesson",
+      "sentence": null,
+      "claimIds": [],
+      "resolution": null,
+      "resolvedAt": null,
       "repairs": 0,
-      "state": "kept"
+      "state": "kept",
+      "partChanged": false
     }
   ]
 }

@@ -77,7 +77,7 @@ pub(super) async fn extract(
             }
             crate::lesson_progress::phase(
                 crate::lesson_progress::Phase::Coverage,
-                "Resuming saved claim coverage with the current policy",
+                "Resuming saved statement coverage with the current policy",
             );
             complete_inventory(
                 llm,
@@ -691,5 +691,6 @@ pub(super) fn report(
         embedding_model: references.embedding_model(),
         page_budget: Some(evidence_checks::page_budget_note(llm, checks)),
         unexecuted_languages: execution::unexecuted_languages(candidate),
+        replaced_findings: Vec::new(),
     }
 }

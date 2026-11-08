@@ -18,6 +18,31 @@ fn test_builder_methods() {
 }
 
 #[test]
+fn a_network_error_and_an_invalid_input_say_what_happened_and_nothing_else() {
+    assert_eq!(
+        AppError::Network("x".to_string()).to_string(),
+        "Network error: x"
+    );
+    assert_eq!(
+        AppError::InvalidInput("x".to_string()).to_string(),
+        "Invalid input: x"
+    );
+}
+
+#[test]
+fn a_web_status_displays_its_message_alone() {
+    let error = AppError::HttpStatus {
+        status: 403,
+        message: "HTTP 403 Forbidden: Site blocked automated access.".to_string(),
+    };
+    assert_eq!(
+        error.to_string(),
+        "HTTP 403 Forbidden: Site blocked automated access."
+    );
+    assert_eq!(error.error_code(), "HTTP_STATUS");
+}
+
+#[test]
 fn test_error_codes() {
     assert_eq!(AppError::QueueFull.error_code(), "QUEUE_FULL");
     assert_eq!(

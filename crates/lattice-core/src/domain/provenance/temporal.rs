@@ -107,12 +107,12 @@ pub fn validity(
         TemporalScope::Timeless => TemporalValidity::Valid,
         TemporalScope::AsOf { date } => match effective {
             None => TemporalValidity::Undated {
-                reason: format!("Undated, and the claim is as of {}", day(*date)),
+                reason: format!("Undated, and the statement is as of {}", day(*date)),
             },
             Some(at) if at >= *date => TemporalValidity::Valid,
             Some(at) => TemporalValidity::Invalid {
                 reason: format!(
-                    "Dated {}, before the claim's as-of date {}",
+                    "Dated {}, before the statement's as-of date {}",
                     day(at),
                     day(*date)
                 ),
@@ -129,7 +129,7 @@ pub fn validity(
                         reason: format!("It does not name version {version} and is undated"),
                     },
                     (None, Some(date)) => TemporalValidity::CannotPlace {
-                        reason: format!("Undated, and the claim holds since {}", day(*date)),
+                        reason: format!("Undated, and the statement holds since {}", day(*date)),
                     },
                 };
             };
@@ -139,7 +139,7 @@ pub fn validity(
                 } else {
                     TemporalValidity::Invalid {
                         reason: format!(
-                            "Dated {}, before the claim's since-date {}",
+                            "Dated {}, before the statement's since-date {}",
                             day(at),
                             day(*date)
                         ),
@@ -158,7 +158,7 @@ pub fn validity(
         }
         TemporalScope::Current => match (effective, newest_primary) {
             (None, _) => TemporalValidity::Undated {
-                reason: "Undated, and the claim is about the current state".into(),
+                reason: "Undated, and the statement is about the current state".into(),
             },
             (Some(at), Some((newer, newest))) if at < newest => TemporalValidity::Stale {
                 newer_primary: newer.to_owned(),

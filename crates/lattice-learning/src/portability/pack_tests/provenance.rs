@@ -205,6 +205,14 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
         "provenance is course data, not optional learner activity"
     );
     assert!(!decoded.manifest.privacy.includes_learner_evidence);
+    assert!(decoded
+        .manifest
+        .privacy
+        .omitted_items
+        .iter()
+        .any(|item| item.contains(
+            "Finished lesson statement reviews, with your notes on statements, travel with"
+        )));
     sqlx::query("UPDATE learning_lesson_verifications SET report_json=json_set(report_json,'$.findings[0].reason','Current-only receipt') WHERE program_id=?")
         .bind(&original.summary.id).execute(&pool).await?;
     let applied = apply_path(&packs, path, LearningPackConflictPolicy::ReplaceAfterBackup).await?;

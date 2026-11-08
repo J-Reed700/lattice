@@ -187,7 +187,7 @@ impl SidecarRegistry {
         let drained: Vec<RegistryEntry> = {
             let mut state = self.entries.lock();
             state.closed = true;
-            state.entries.drain(..).collect()
+            std::mem::take(&mut state.entries)
         };
 
         let mut killed = 0;

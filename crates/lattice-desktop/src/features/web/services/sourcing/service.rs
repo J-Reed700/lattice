@@ -480,7 +480,10 @@ impl SourceFinding for SourcingService {
         let html = match http.get(url.as_str(), headers, MAX_PAGE_BODY_BYTES).await {
             Fetched::Body(body) => body,
             Fetched::Status { code, .. } => {
-                return Err(AppError::Network(format!("HTTP {code} fetching {url}")));
+                return Err(AppError::HttpStatus {
+                    status: code,
+                    message: format!("HTTP {code} fetching {url}"),
+                });
             }
             Fetched::Transport(err) => {
                 return Err(AppError::Network(format!("Failed to fetch {url}: {err}")));

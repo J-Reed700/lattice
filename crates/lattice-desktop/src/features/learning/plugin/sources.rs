@@ -61,7 +61,7 @@ async fn recheck_waiting(
     let pin = learning_model(
         container,
         ModelRequirements::default(),
-        "Checking the waiting claims against the source you added",
+        "Checking the waiting statements against the source you added",
     )
     .await?;
     let web = container.web_service();
@@ -349,11 +349,7 @@ pub async fn refresh_learning_source(
         ));
     }
     let captured_result = async {
-        let page = container
-            .web_service()
-            .fetch_reference_page(&url)
-            .await
-            .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
+        let page = container.web_service().fetch_reference_page(&url).await?;
         let title = page.output.title.clone().unwrap_or_else(|| url.clone());
         Ok::<_, lattice_core::shared::error::AppError>(
             crate::features::learning::references::trust::capture::web_capture(page, &url, title),

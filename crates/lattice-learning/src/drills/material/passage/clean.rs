@@ -1,15 +1,18 @@
-//! Stage 1 for a passage: the passage is picked from the course's sources, and the model explains it the way a
-//! classmate's study note would, one sentence to a line.
+//! Stage 1 for a passage: the passage is picked from the course's sources and checked to teach the lesson, and the
+//! model explains it the way a classmate's study note would, one sentence to a line.
 
 use super::{explanation_text, pick, sentences_needed, PassageMaterial, EXPLANATION_PATH};
 use crate::drills::budget;
 use crate::drills::build::ask::{ask_request, refuse, text_schema};
 use crate::drills::build::{CleanCode, SourcePassage, Trail};
+use crate::drills::lesson::LessonContext;
 use crate::drills::material::StageCtx;
+use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
 use crate::generation::parse_json;
 use crate::model_call;
-use lattice_core::domain::learning::drills::DrillFile;
+use crate::persistence::{db, now};
+use lattice_core::domain::learning::drills::{DrillFile, Material};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::segmentation::sentences;
 use serde::Deserialize;
@@ -38,27 +41,52 @@ impl PassageMaterial<'_> {
         ctx: &StageCtx<'_>,
     ) -> Result<CleanCode> {
         let targets = spec.targets()?;
-        let program_id = spec.course().ok_or_else(|| {
-            AppError::InvalidInput(
-                "A drill on a passage names the course whose sources it is taken from.".into(),
+        let (Some(program_id), Some(lesson_id)) = (spec.course(), spec.lesson_id.as_deref()) else {
+            return Err(AppError::InvalidInput(
+                "A drill on a passage is built from a lesson of its course.".into(),
+            ));
+        };
+        let context = LessonContext::load(ctx.pool, program_id, lesson_id).await?;
+        let basis = {
+            let mut connection = ctx.pool.acquire().await.map_err(db)?;
+            schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?
+        };
+        let mut trail = Trail::default();
+        let picked = pick::pick(ctx.pool, ctx.llm, &context, spec.lines).await?;
+        for _ in 0..picked.asked {
+            trail.call("passage check", ctx.llm.model_name());
+        }
+        let Some(source) = picked.passage else {
+            let mut connection = ctx.pool.acquire().await.map_err(db)?;
+            schedules::record_fit_in(
+                &mut connection,
+                program_id,
+                lesson_id,
+                &Material::Passage,
+                false,
+                &basis,
+                now(),
             )
-        })?;
-        let source = pick::pick(ctx.pool, program_id, spec.domain.as_deref(), spec.lines).await?;
+            .await?;
+            return Err(AppError::InvalidInput(format!(
+                "The course's sources hold no passage that teaches the lesson \"{}\".",
+                context.lesson
+            )));
+        };
         let needed = sentences_needed(&targets);
         let request = model_call::structured(
             SYSTEM,
-            prompt(spec, &source),
+            prompt(spec, &context, &source),
             schema(),
             budget::explanation(spec.lines),
             "low",
         );
         let asked = ask_request(ctx.llm, request, |raw| read(raw, needed, spec.lines)).await?;
-        let mut trail = Trail::default();
         trail.call("clean explanation", ctx.llm.model_name());
         Ok(CleanCode {
             drill_id: uuid::Uuid::new_v4().to_string(),
             title: asked.value.title,
-            domain: spec.domain.clone().unwrap_or_else(|| source.title.clone()),
+            domain: context.lesson.clone(),
             files: vec![DrillFile {
                 path: EXPLANATION_PATH.to_owned(),
                 text: asked.value.text,
@@ -66,20 +94,17 @@ impl PassageMaterial<'_> {
             tests: Vec::new(),
             suite: None,
             source: Some(source),
+            brief: None,
+            basis: Some(basis),
             trail,
         })
     }
 }
 
-fn prompt(spec: &DrillSpec, source: &SourcePassage) -> String {
-    let topic = spec
-        .domain
-        .as_deref()
-        .map(|topic| format!("Topic: {topic}\n"))
-        .unwrap_or_default();
+fn prompt(spec: &DrillSpec, context: &LessonContext, source: &SourcePassage) -> String {
     format!(
-        "Source: {}\n{topic}Size: about {} sentences in all\n\nThe passage:\n<passage>\n{}\n</passage>",
-        source.title, spec.lines, source.text
+        "Source: {}\nTopic: {}\nSize: about {} sentences in all\n\nThe passage:\n<passage>\n{}\n</passage>",
+        source.title, context.lesson, spec.lines, source.text
     )
 }
 

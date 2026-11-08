@@ -38,7 +38,7 @@ function scopeOf(entry: LearningSiteTrustOverrideDto['trustOverride']): Learning
 function recordLine(record: { right: number; wrong: number }) {
   const total = record.right + record.wrong;
   if (total === 0) return 'No verdicts on its pages yet.';
-  return `${record.wrong} of ${total} ${total === 1 ? 'claim' : 'claims'} its pages supported ${record.wrong === 1 ? 'was' : 'were'} overturned.`;
+  return `${record.wrong} of ${total} ${total === 1 ? 'statement' : 'statements'} its pages supported ${record.wrong === 1 ? 'was' : 'were'} overturned.`;
 }
 
 /** One level under one kind's bar: accepted alone or not, its verdicts, and any move. */
@@ -95,7 +95,7 @@ export function SourceTrustSettings() {
         {clear.error && <p role="alert" className="text-sm text-rose-700">{clear.error.message}</p>}
       </SettingsSection>
 
-      <SettingsSection title="Bars in force" description="Which level of source is enough alone for each kind of claim. Your verdicts move a bar in either direction once the evidence is strong enough.">
+      <SettingsSection title="Bars in force" description="Which level of source is enough alone for each kind of statement. Your verdicts move a bar in either direction once the evidence is strong enough.">
         {calibration.isLoading && <p role="status" className="text-sm text-text-muted">Loading…</p>}
         {calibration.error && <p role="alert" className="text-sm text-rose-700">{calibration.error.message}</p>}
         {calibration.data && (
@@ -107,7 +107,7 @@ export function SourceTrustSettings() {
                 </caption>
                 <thead>
                   <tr>
-                    <th scope="col" className="px-2 py-1.5 font-medium text-text-muted">Claim kind</th>
+                    <th scope="col" className="px-2 py-1.5 font-medium text-text-muted">Statement kind</th>
                     {levels.map((level) => <th key={level} scope="col" className="px-2 py-1.5 font-medium text-text-muted">{LEVEL_WORD[level]}</th>)}
                   </tr>
                 </thead>
@@ -145,10 +145,10 @@ export function SourceTrustSettings() {
         </SettingsSection>
       )}
 
-      <SettingsSection title="Checker reliability" description="How often the local checker was wrong on claims you labelled, per checker model.">
+      <SettingsSection title="Checker reliability" description="How often the local checker was wrong on statements you labelled, per checker model.">
         {checker.isLoading && <p role="status" className="text-sm text-text-muted">Loading…</p>}
         {checker.error && <p role="alert" className="text-sm text-rose-700">{checker.error.message}</p>}
-        {checker.data?.length === 0 && <p className="text-sm text-text-secondary">No labelled claims yet. Each confirmation, removal, edit or added source labels one.</p>}
+        {checker.data?.length === 0 && <p className="text-sm text-text-secondary">No labelled statements yet. Each confirmation, removal, edit or added source labels one.</p>}
         {checker.data?.map((row) => <p key={row.checkerModel} className="text-sm text-text-secondary"><span className="font-medium text-text-primary">{row.checkerModel}: </span>{accuracyLine(row)}</p>)}
       </SettingsSection>
 

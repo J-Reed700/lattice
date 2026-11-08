@@ -520,7 +520,7 @@ impl Review for PreparationReview<'_, '_> {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Evidence,
             if waiting.iter().any(|waits| waits.step == Step::Research) {
-                "Searching again for the claims the last round of research could not reach"
+                "Searching again for the statements the last round of research could not reach"
             } else {
                 "Reading the statements the last pass left waiting"
             },
@@ -534,7 +534,7 @@ impl Review for PreparationReview<'_, '_> {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Repair,
             if escalated {
-                "Removing a repeatedly unsupported claim"
+                "Removing a repeatedly unsupported statement"
             } else {
                 "Correcting defects found by evidence checks"
             },
@@ -764,7 +764,7 @@ pub(super) async fn recite(
     if moved {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Repair,
-            "Citing the passages that support claims their sections cited elsewhere",
+            "Citing the passages that support statements their sections cited elsewhere",
         );
     }
     Ok(moved)
@@ -837,7 +837,7 @@ async fn hold(
     let message = match &stop_reason {
         Some(stop) => stop.message.clone(),
         None => format!(
-            "Needs your review: {claims} claim{} could not be verified",
+            "Needs your review: {claims} statement{} could not be verified",
             if claims == 1 { "" } else { "s" }
         ),
     };

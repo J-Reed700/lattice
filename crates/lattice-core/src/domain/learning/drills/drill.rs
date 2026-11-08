@@ -158,6 +158,27 @@ pub struct KeyIssue {
     pub explanation: String,
     pub proof: Proof,
     pub origin: Origin,
+    /// What the issue breaks of its drill's lesson: `None` for an issue of the catalogue alone, and in keys stored
+    /// before drills were built from lessons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lesson: Option<LessonLink>,
+}
+
+/// What a key issue goes against in the lesson its drill was built from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LessonLink {
+    pub lesson_id: String,
+    /// The lesson's evidence the defect breaks, as code copied it from the lesson's brief.
+    pub sentences: Vec<LessonSentence>,
+}
+
+/// One unit of a lesson's evidence: a sentence, or a whole fenced block of code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LessonSentence {
+    pub text: String,
+    /// The title of the source it comes from; `None` for the lesson's own teaching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// Material to review and what is known to be wrong with it. A drill stored

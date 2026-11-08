@@ -130,22 +130,11 @@ impl ClaimReviewStore for ClaimReviewRepository {
         expected_revision: Revision,
     ) -> Result<Revision> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        let revision: Option<i64> =
-            sqlx::query_scalar("SELECT revision FROM learning_lesson_reviews WHERE lesson_id=?")
-                .bind(lesson_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?;
-        let revision = revision.ok_or_else(|| {
-            AppError::InvalidState("This lesson has no claim review to record into.".into())
-        })?;
-        if revision != expected_revision.0 {
-            return Err(revision_conflict());
-        }
+        check_revision(&mut tx, lesson_id, expected_revision).await?;
         append_in(&mut tx, lesson_id, claim_id, provenance, event).await?;
         bump_revision(&mut tx, lesson_id).await?;
         tx.commit().await.map_err(db)?;
-        Ok(Revision(revision + 1))
+        Ok(Revision(expected_revision.0 + 1))
     }
 
     async fn set_lesson_review(&self, lesson_id: &str, review: LessonReview) -> Result<Revision> {
@@ -178,7 +167,28 @@ impl ClaimReviewStore for ClaimReviewRepository {
 /// The refusal of a write made against an older revision (§9): the caller
 /// reloads and acts again.
 pub(super) fn revision_conflict() -> AppError {
-    AppError::InvalidState("This claim changed; reload and act again.".into())
+    AppError::InvalidState("This statement changed; reload and act again.".into())
+}
+
+/// Refuses unless the lesson's review is at `expected` on `connection`.
+pub(super) async fn check_revision(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+    expected: Revision,
+) -> Result<()> {
+    let revision: Option<i64> =
+        sqlx::query_scalar("SELECT revision FROM learning_lesson_reviews WHERE lesson_id=?")
+            .bind(lesson_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(db)?;
+    let revision = revision.ok_or_else(|| {
+        AppError::InvalidState("This lesson has no statement review to record into.".into())
+    })?;
+    if revision != expected.0 {
+        return Err(revision_conflict());
+    }
+    Ok(())
 }
 
 pub(super) async fn bump_revision(
@@ -210,7 +220,7 @@ pub(super) async fn append_in(
             .map_err(db)?;
     if owner.as_deref().is_some_and(|owner| owner != lesson_id) {
         return Err(AppError::InvalidInput(
-            "That claim belongs to another lesson.".into(),
+            "That statement belongs to another lesson.".into(),
         ));
     }
     let mut entry = match owner {
@@ -230,7 +240,7 @@ pub(super) async fn append_in(
             )?,
             _ => {
                 return Err(AppError::NotFound(
-                    "No claim with that id in this lesson.".into(),
+                    "No statement with that id in this lesson.".into(),
                 ))
             }
         },

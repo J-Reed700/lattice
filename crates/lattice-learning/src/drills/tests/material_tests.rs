@@ -1,19 +1,20 @@
 //! Code as a drill's material: every text that reaches a model for a code drill is, byte for byte, the text the
 //! stages carried before the material was a Strategy. The texts of that time are kept in `tests/golden`, taken from
-//! the stages as they were; a spec stored before passages is still read.
+//! the stages as they were, except the clean code's system text and the judge's, which are the ones they have had
+//! since drills were built from a lesson; a spec stored before passages is still read.
 
 use super::support::{
-    baseline, build, code, idle_grader, last, review_answer, spec, system, FakeRunner,
-    ScriptedModel, OPERATOR,
+    baseline, build, code, code_check_answer, code_spec, idle_grader, last, review_answer, spec,
+    system, FakeRunner, ScriptedModel, OPERATOR,
 };
 use crate::drills::build::ask::render_files;
 use crate::drills::build::Baseline;
 use crate::drills::material::{CodeMaterial, DrillMaterial, JudgeWording};
 use crate::drills::runner::CodeRunner;
-use crate::drills::spec::DrillSpec;
+use crate::drills::spec::{check_language, DrillSpec};
 use crate::tests::pool;
-use lattice_core::domain::learning::drills::{Material, Pattern};
-use lattice_core::shared::error::Result;
+use lattice_core::domain::learning::drills::{Material, Pattern, LANGUAGES};
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::json;
 
 const CLEAN_SYSTEM: &str = include_str!("golden/clean_system.txt");
@@ -45,28 +46,37 @@ fn targets_of(spec: &DrillSpec) -> Vec<&'static Pattern> {
     spec.targets().expect("the patterns are in the catalogue")
 }
 
-/// The first request a stage made. The model's script is empty, so the stage fails after it; the failure is not
-/// what is looked at.
+/// The first request the clean code stage made for a spec of a new course's spacing lesson, with `patterns` when
+/// there are any. The model's script is empty, so the stage fails after it; the failure is not what is looked at.
 async fn first_request_of_clean_code(
-    spec: &DrillSpec,
+    patterns: &[&str],
     runner: Option<&FakeRunner>,
 ) -> Result<(String, String)> {
     let pool = pool().await?;
-    let model = ScriptedModel::new(["{}".to_owned()]);
+    let mut spec = code_spec(&pool).await?;
+    if !patterns.is_empty() {
+        spec.patterns = patterns.iter().map(|id| (*id).to_owned()).collect();
+    }
+    let model = ScriptedModel::new([code_check_answer(true), "{}".to_owned()]);
     let grader = idle_grader();
-    let _ = build(&pool, &model, runner, &grader).clean_code(spec).await;
-    let request = model.requests().remove(0);
+    let _ = build(&pool, &model, runner, &grader)
+        .clean_code(&spec)
+        .await;
+    let request = model.requests().remove(1);
     Ok((system(&request), last(&request)))
 }
 
 #[tokio::test]
 async fn the_clean_code_request_for_code_without_a_runner_is_what_it_was() -> Result<()> {
-    let (system, user) = first_request_of_clean_code(&spec(), None).await?;
+    let (system, user) = first_request_of_clean_code(&[], None).await?;
     assert_eq!(system, golden(CLEAN_SYSTEM));
-    assert_eq!(
-        user,
-        "Language: python\nDomain: rate limiting\nSize: about 40 lines of code in all"
+    assert!(
+        user.starts_with(
+            "Language: python\nSize: about 40 lines of code in all\n\n<brief>\nCourse: "
+        ),
+        "{user}"
     );
+    assert!(user.ends_with("\n</brief>"), "{user}");
     Ok(())
 }
 
@@ -74,7 +84,7 @@ async fn the_clean_code_request_for_code_without_a_runner_is_what_it_was() -> Re
 async fn the_clean_code_request_with_a_runner_names_its_contract_and_the_suite_it_asks_for(
 ) -> Result<()> {
     let runner = FakeRunner::passing();
-    let (system, _) = first_request_of_clean_code(&spec(), Some(&runner)).await?;
+    let (system, _) = first_request_of_clean_code(&[], Some(&runner)).await?;
     let runs = golden(CLEAN_RUNNER)
         .replace("{entrypoint}", runner.entrypoint())
         .replace("{extension}", "py");
@@ -87,7 +97,7 @@ async fn the_clean_code_request_with_a_runner_names_its_contract_and_the_suite_i
 
 #[tokio::test]
 async fn the_clean_code_request_for_a_testing_pattern_asks_for_a_test_file() -> Result<()> {
-    let testing = spec_of(&["testing.untested_branch"]);
+    let testing = ["testing.untested_branch"];
     let (system, _) = first_request_of_clean_code(&testing, None).await?;
     assert_eq!(
         system,
@@ -201,6 +211,28 @@ fn the_plant_request_with_a_runner_shows_the_suite_and_the_test_files() {
 }
 
 #[test]
+fn a_code_drill_takes_half_its_issues_rounded_up_from_its_lesson_and_a_passage_none() {
+    let patterns = |count: usize| -> Vec<String> {
+        (0..count)
+            .map(|number| format!("pattern.{number}"))
+            .collect()
+    };
+    for (size, most) in [(1, 1), (2, 1), (3, 2), (4, 2), (5, 3)] {
+        let code = DrillSpec {
+            patterns: patterns(size),
+            ..spec()
+        };
+        assert_eq!(code.lesson_issues(), most, "{size} patterns of code");
+    }
+    let passage = DrillSpec {
+        material: Material::Passage,
+        patterns: patterns(3),
+        ..spec()
+    };
+    assert_eq!(passage.lesson_issues(), 0);
+}
+
+#[test]
 fn the_reviewer_and_the_describer_are_what_they_were() {
     let wording = CodeMaterial::new(None).reviewer_wording(&spec());
     assert_eq!(wording.reviewer, golden(REVIEWER));
@@ -247,6 +279,7 @@ fn a_passage_is_built_from_a_course_and_judged_in_sentences() {
     let without_course = DrillSpec {
         material: Material::Passage,
         patterns: vec!["fidelity.misquoted_figure".into()],
+        lesson_id: Some("lesson".into()),
         ..spec()
     };
     assert!(without_course.validate().is_err());
@@ -273,9 +306,19 @@ fn a_spec_stored_with_a_language_is_read_as_code_in_it() {
     });
     let read: DrillSpec = serde_json::from_value(stored).unwrap();
     assert_eq!(read.material, Material::code("python"));
-    assert_eq!(read.domain.as_deref(), Some("rate limiting"));
     assert_eq!(read.lines, 40);
     assert_eq!(read.patterns, [OPERATOR]);
+}
+
+#[test]
+fn a_language_is_one_drills_are_written_in_when_the_catalogue_holds_it() {
+    for language in LANGUAGES {
+        assert!(check_language(language).is_ok(), "{language}");
+    }
+    assert!(matches!(
+        check_language("klingon"),
+        Err(AppError::InvalidInput(message)) if message == "klingon is not a language drills are written in."
+    ));
 }
 
 #[test]

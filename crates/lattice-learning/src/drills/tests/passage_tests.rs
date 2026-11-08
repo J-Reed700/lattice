@@ -4,17 +4,19 @@
 //! shelf for each course. The model, the source check and the grader are scripted.
 
 use super::support::{
-    contradicted, course, explanation, explanation_answer, explanation_files, figure_mutation,
-    fix_answer, idle_grader, last, no_verdict, passage_baseline, passage_build, passage_code,
-    passage_plant_answer, passage_spec, quiet, raised_all, reversed_mutation, spacing_check,
-    spacing_passage, supported, system, unsupported, unsure, FakeGrader, ScriptedCheck,
-    ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE, FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH,
-    MODEL, REVERSED, SECOND, SLEEP, SMALLER_QUOTE, SPACING, THIRD, THIRD_PLANTED,
+    contradicted, course, course_of, explanation, explanation_answer, explanation_files,
+    figure_mutation, fix_answer, held_back, idle_grader, last, lesson_titled, lessons_of,
+    no_verdict, passage_baseline, passage_build, passage_code, passage_lesson_spec,
+    passage_plant_answer, passage_spec, prepare_lesson, quiet, raised_all, reversed_mutation,
+    spacing_check, spacing_passage, supported, system, teaches_answer, unchecked, unsupported,
+    unsure, FakeGrader, ScriptedCheck, ScriptedModel, CHECK_MODEL, CONTRADICTION, FIGURE,
+    FIGURE_QUOTE, FIRST, FIRST_PLANTED, FOURTH, MODEL, NOT_TEACHES_REASON, REVERSED, SECOND, SLEEP,
+    SLEEP_LESSON, SMALLER_QUOTE, SPACING, SPACING_LESSON, TEACHES_REASON, THIRD, THIRD_PLANTED,
 };
-use crate::drills::bank::{self, take, take_from, Shelf};
+use crate::drills::bank::{self, take, Shelf};
 use crate::drills::build::{
-    CleanCode, CleanReview, Evidence, Mutation, Planted, Proved, ProvenMutation, SourcePassage,
-    Trail, Verification,
+    Baseline, CleanCode, CleanReview, Evidence, Mutation, Planted, Proved, ProvenMutation,
+    SourcePassage, Trail, Verification,
 };
 use crate::drills::fix_grading::{grade_fix, FixCase};
 use crate::drills::jobs::spec_of;
@@ -43,8 +45,11 @@ use lattice_core::domain::learning::drills::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
+use lattice_core::shared::text::segmentation::sentences;
 use serde_json::json;
 use sqlx::SqlitePool;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 /// The course's sources as stored: each version's id, title and whole text.
@@ -99,6 +104,7 @@ fn sourced_issue() -> KeyIssue {
             reason: "The source gives 14%, not 40%.".into(),
         },
         origin: Origin::Planted,
+        lesson: None,
     }
 }
 
@@ -133,15 +139,19 @@ fn clean_review() -> CleanReview {
     }
 }
 
-/// Puts a ready drill on `source` of the course `program_id` into the bank.
+/// Puts a ready drill on `source`, built from the lesson `lesson_id` of the course `program_id`, into the bank.
 pub(super) async fn drilled(
     pool: &SqlitePool,
     id: &str,
     program_id: &str,
+    lesson_id: &str,
     source: &SourcePassage,
 ) -> Result<()> {
     let drill = planted_drill(id);
-    let spec = passage_spec(program_id);
+    let spec = DrillSpec {
+        lesson_id: Some(lesson_id.to_owned()),
+        ..passage_spec(program_id)
+    };
     let planted = Planted {
         mutations: Vec::new(),
         trail: Trail::default(),
@@ -151,6 +161,7 @@ pub(super) async fn drilled(
         &clean_review(),
         &planted,
         &no_proofs(),
+        &unchecked(),
         &quiet(),
     );
     let mut connection = pool.acquire().await.map_err(db)?;
@@ -185,12 +196,15 @@ async fn at(pool: &SqlitePool, id: &str, created_at: i64) -> Result<()> {
 
 #[test]
 fn a_passage_spec_names_its_course() {
-    let spec = passage_spec("course");
+    let spec = DrillSpec {
+        lesson_id: Some("lesson".into()),
+        ..passage_spec("course")
+    };
     assert!(spec.validate().is_ok());
     for course in [None, Some(" ".to_owned())] {
         let without = DrillSpec {
             program_id: course,
-            ..passage_spec("course")
+            ..spec.clone()
         };
         assert!(
             matches!(without.validate(), Err(AppError::InvalidInput(_))),
@@ -199,12 +213,12 @@ fn a_passage_spec_names_its_course() {
     }
     let code_pattern = DrillSpec {
         patterns: vec!["correctness.wrong_operator".into()],
-        ..passage_spec("course")
+        ..spec.clone()
     };
     assert!(code_pattern.validate().is_err());
     let empty = DrillSpec {
         lines: 0,
-        ..passage_spec("course")
+        ..spec.clone()
     };
     assert!(
         matches!(empty.validate(), Err(AppError::InvalidInput(message)) if message.contains("sentence"))
@@ -214,15 +228,15 @@ fn a_passage_spec_names_its_course() {
 // The passage.
 
 #[tokio::test]
-async fn a_drill_explains_a_passage_of_the_course_s_first_source_sized_to_its_sentences(
+async fn a_drill_explains_the_passage_of_the_lessons_best_source_sized_to_its_sentences(
 ) -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
     let (version, text) = source_titled(&pool, &program, "Spacing and memory").await?;
-    let model = ScriptedModel::new([explanation_answer()]);
+    let model = ScriptedModel::new([teaches_answer(true), explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
-    let spec = passage_spec(&program);
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let code = passage_build(&pool, &model, &check, &grader)
         .clean_code(&spec)
         .await?;
@@ -249,107 +263,606 @@ async fn a_drill_explains_a_passage_of_the_course_s_first_source_sized_to_its_se
     );
 
     assert_eq!(code.title, "Why spacing study sessions helps");
-    assert_eq!(code.domain, "Spacing and memory");
+    assert_eq!(code.domain, SPACING_LESSON);
+    assert_eq!(code.brief, None, "a passage is not written from a brief");
+    assert!(code.basis.is_some());
     assert_eq!(code.files, explanation_files(), "one sentence to a line");
     assert_contiguous(&code.files[0].text);
     assert_eq!(code.suite, None);
     assert!(code.tests.is_empty());
-    assert_eq!(model.purposes(), ["clean explanation"]);
-    let request = &model.requests()[0];
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    let request = &model.requests()[1];
     let asked = last(request);
     assert!(asked.contains(&source.text), "{asked}");
     assert!(asked.contains("about 4 sentences"), "{asked}");
+    assert!(
+        asked.contains("Topic: Spacing study over sessions"),
+        "{asked}"
+    );
     assert!(check.asked().is_empty(), "nothing is checked while writing");
     Ok(())
 }
 
-/// The passage the clean stage of a drill on the course `program_id` takes.
-async fn next_passage(pool: &SqlitePool, program_id: &str) -> Result<SourcePassage> {
-    let model = ScriptedModel::new([explanation_answer()]);
+/// The clean stage of a drill built to `spec` with the model answering `answers`, and the model.
+async fn clean_with(
+    pool: &SqlitePool,
+    spec: &DrillSpec,
+    answers: Vec<String>,
+) -> (ScriptedModel, Result<CleanCode>) {
+    let model = ScriptedModel::new(answers);
     let check = spacing_check();
     let grader = idle_grader();
-    let code = passage_build(pool, &model, &check, &grader)
-        .clean_code(&passage_spec(program_id))
-        .await?;
-    code.source
+    let built = passage_build(pool, &model, &check, &grader)
+        .clean_code(spec)
+        .await;
+    (model, built)
+}
+
+/// The passage the clean stage of a drill built to `spec` takes when the model answers `answers`.
+async fn passage_with(
+    pool: &SqlitePool,
+    spec: &DrillSpec,
+    answers: Vec<String>,
+) -> Result<SourcePassage> {
+    clean_with(pool, spec, answers)
+        .await
+        .1?
+        .source
         .ok_or_else(|| AppError::InternalError("The clean stage took no passage.".into()))
 }
 
+/// The passage the clean stage of a drill built to `spec` takes when the passage check says yes to the first place.
+async fn next_passage(pool: &SqlitePool, spec: &DrillSpec) -> Result<SourcePassage> {
+    passage_with(pool, spec, vec![teaches_answer(true), explanation_answer()]).await
+}
+
 #[tokio::test]
-async fn the_next_drill_takes_the_least_drilled_source_and_never_a_drilled_passage() -> Result<()> {
+async fn the_next_drill_of_a_lesson_takes_the_passage_drilled_longest_ago_and_never_the_same_twice_running(
+) -> Result<()> {
     let pool = pool().await?;
-    let program = course(&pool).await?;
-    let (spacing, spacing_text) = source_titled(&pool, &program, "Spacing and memory").await?;
-    let (sleep, sleep_text) = source_titled(&pool, &program, "Sleep and memory").await?;
-    let first = next_passage(&pool, &program).await?;
-    assert_eq!(first.version_id, spacing);
-    drilled(&pool, "first", &program, &first).await?;
+    let program = course_of(&pool, &[("Spacing and memory", SPACING)]).await?;
+    let (_, text) = source_titled(&pool, &program, "Spacing and memory").await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let opening = text
+        .find("\n\nSpacing works best")
+        .and_then(|end| text.get(..end))
+        .expect("the third paragraph starts with the words");
+    let later = text
+        .find("Spacing works best")
+        .zip(text.find("\n\nGains were"))
+        .and_then(|(start, end)| text.get(start..end))
+        .expect("the third and fourth paragraphs");
 
-    let second = next_passage(&pool, &program).await?;
-    assert_eq!(second.version_id, sleep, "the source drilled least");
+    let first = next_passage(&pool, &spec).await?;
     assert_eq!(
-        second.text,
-        sleep_text.trim(),
-        "the whole of a short source"
+        first.text, opening,
+        "the first two paragraphs: four sentences"
     );
-    drilled(&pool, "second", &program, &second).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    drilled(&pool, "first", &program, &lesson, &first).await?;
 
-    let third = next_passage(&pool, &program).await?;
-    assert_eq!(third.version_id, spacing);
-    assert!(third.start_byte >= first.end_byte, "{third:?}");
+    let second = next_passage(&pool, &spec).await?;
     assert_eq!(
-        spacing_text.get(third.start_byte..third.end_byte),
-        Some(third.text.as_str())
+        second.text, later,
+        "the paragraphs no drill touched: the third and the fourth"
     );
-    assert!(
-        third.text.starts_with("Spacing works best"),
-        "{}",
-        third.text
+    assert!(second.start_byte >= first.end_byte, "{second:?}");
+    assert_eq!(
+        text.get(second.start_byte..second.end_byte),
+        Some(second.text.as_str())
+    );
+    drilled(&pool, "second", &program, &lesson, &second).await?;
+
+    let third = passage_with(&pool, &spec, vec![explanation_answer()]).await?;
+    assert_eq!(
+        third.text, opening,
+        "every place is used, so the one used longest ago, and it was judged to teach the lesson before"
     );
     Ok(())
 }
 
 #[tokio::test]
-async fn a_topic_narrows_the_passage_to_what_the_sources_say_about_it() -> Result<()> {
+async fn another_lesson_of_the_course_takes_the_passage_its_own_words_find() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
-    let (sleep, _) = source_titled(&pool, &program, "Sleep and memory").await?;
-    let model = ScriptedModel::new([explanation_answer()]);
+    let (sleep, sleep_text) = source_titled(&pool, &program, "Sleep and memory").await?;
+    let model = ScriptedModel::new([teaches_answer(true), explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
-    let spec = DrillSpec {
-        domain: Some("sleep deprivation".into()),
-        ..passage_spec(&program)
-    };
+    let spec = passage_lesson_spec(&pool, &program, SLEEP_LESSON).await?;
     let code = passage_build(&pool, &model, &check, &grader)
         .clean_code(&spec)
         .await?;
-    assert_eq!(code.source.map(|source| source.version_id), Some(sleep));
-    assert_eq!(code.domain, "sleep deprivation");
-    assert!(last(&model.requests()[0]).contains("Topic: sleep deprivation"));
+    let source = code.source.expect("the passage");
+    assert_eq!(source.version_id, sleep);
+    assert_eq!(source.text, sleep_text.trim());
+    assert_eq!(code.domain, SLEEP_LESSON);
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    assert!(last(&model.requests()[1]).contains("Topic: Sleep after learning"));
     Ok(())
 }
 
 #[tokio::test]
-async fn a_course_without_sources_gives_no_drill() -> Result<()> {
+async fn a_passage_drill_takes_the_paragraph_of_a_hit_its_lessons_words_are_in() -> Result<()> {
     let pool = pool().await?;
-    let mut program = crate::tests::fixture();
-    program.sources = Vec::new();
-    crate::repository::LearningRepository::new(pool.clone())
-        .create(&program)
-        .await?;
+    let opening = "The committee met on a Tuesday to discuss a study. Members reviewed the agenda with care. Minutes were circulated to everyone afterwards. Nothing was decided about the catering.";
+    let closing = "Spacing sessions apart helps recall. Learners who study across several sessions improve their recall. Spreading the work out lets them explain the concept. Short gaps between sessions help much less.";
+    let text = [opening, closing].join("\n\n");
+    assert!(text.len() < 1200, "{}", text.len());
+    let program = course_of(&pool, &[("Meeting notes", text.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (version, _) = source_titled(&pool, &program, "Meeting notes").await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.text, closing);
+    assert!(
+        !picked.text.contains("Nothing was decided"),
+        "{}",
+        picked.text
+    );
+    assert_eq!(picked.version_id, version);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_hits_paragraph_is_taken_by_the_weight_of_the_words_it_holds_and_not_their_count(
+) -> Result<()> {
+    let pool = pool().await?;
+    let common = "The spacing study sessions began in March. Staff booked the hall for each date. Tea was served at the break. Attendance was recorded by the clerk.";
+    let rare = "Every recall of a stored concept left a trace. Researchers logged each trace with a timestamp. The logs were archived in the basement. Nobody opened the archive for years.";
+    let text = [common, rare].join("\n\n");
+    let others: Vec<(String, String)> = (0..5)
+        .map(|number| {
+            (
+                format!("Site {number}"),
+                format!("The spacing study sessions of site {number} were short. Volunteers wore blue badges. Coffee was free. Parking was limited."),
+            )
+        })
+        .collect();
+    let mut sources: Vec<(&str, &str)> = vec![("Meeting notes", text.as_str())];
+    sources.extend(
+        others
+            .iter()
+            .map(|(title, body)| (title.as_str(), body.as_str())),
+    );
+    let program = course_of(&pool, &sources).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (version, _) = source_titled(&pool, &program, "Meeting notes").await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.version_id, version);
+    assert_eq!(picked.text, rare);
+    Ok(())
+}
+
+/// `count` distinct sentences of filler about a harbour, none holding a word of the query of [`SPACING_LESSON`] or
+/// another word that begins with one.
+fn filler_sentences(count: usize) -> Vec<String> {
+    const TRADES: [&str; 10] = [
+        "baker", "weaver", "cooper", "mason", "tanner", "potter", "sailor", "miller", "carter",
+        "smith",
+    ];
+    const CARGO: [&str; 3] = ["salt", "barley", "timber"];
+    (0..count)
+        .map(|number| {
+            format!(
+                "At the harbour the {} number {number} loaded crates of {} onto the grey cart.",
+                TRADES[number % TRADES.len()],
+                CARGO[number % CARGO.len()],
+            )
+        })
+        .collect()
+}
+
+/// A sentence holding the words of the query of [`SPACING_LESSON`]: `number` makes it distinct.
+fn lesson_sentence(number: usize) -> String {
+    format!("Spacing study over sessions helps recall of item {number}, and learners improve and explain several.")
+}
+
+/// A sentence of filler with one word of the query of [`SPACING_LESSON`] in it.
+fn touched_sentence(number: usize) -> String {
+    format!("At the harbour the baker number {number} told of recall onto the grey cart.")
+}
+
+/// `count` sentences on one line, those of `lesson` the lesson's own and those of `touched` holding one word of its
+/// query, and the byte span of each in the line.
+fn one_line_of(count: usize, lesson: &[usize], touched: &[usize]) -> (String, Vec<(usize, usize)>) {
+    let mut line = String::new();
+    let mut spans = Vec::new();
+    for (number, filler) in filler_sentences(count).into_iter().enumerate() {
+        let sentence = if lesson.contains(&number) {
+            lesson_sentence(number)
+        } else if touched.contains(&number) {
+            touched_sentence(number)
+        } else {
+            filler
+        };
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        spans.push((line.len(), line.len() + sentence.len()));
+        line.push_str(&sentence);
+    }
+    (line, spans)
+}
+
+/// The text from the start of sentence `first` to the end of sentence `last` of `spans`.
+fn run_of<'a>(line: &'a str, spans: &[(usize, usize)], first: usize, last: usize) -> &'a str {
+    let (start, _) = spans[first];
+    let (_, end) = spans[last];
+    &line[start..end]
+}
+
+/// A paragraph of `total` sentences: `lead` if there is one, then sentences taken from `filler`.
+fn paragraph_of(
+    lead: Option<String>,
+    filler: &mut std::vec::IntoIter<String>,
+    total: usize,
+) -> String {
+    let mut held: Vec<String> = lead.into_iter().collect();
+    while held.len() < total {
+        match filler.next() {
+            Some(sentence) => held.push(sentence),
+            None => break,
+        }
+    }
+    held.join(" ")
+}
+
+#[tokio::test]
+async fn the_unrelated_paragraph_beside_a_drilled_one_gives_way_to_a_lower_hit_about_the_lesson(
+) -> Result<()> {
+    let pool = pool().await?;
+    let mut fill = filler_sentences(60).into_iter();
+    let own = (0..4).map(lesson_sentence).collect::<Vec<_>>().join(" ");
+    let unrelated = paragraph_of(None, &mut fill, 4);
+    let about = paragraph_of(Some(touched_sentence(9)), &mut fill, 4);
+    let tail = paragraph_of(None, &mut fill, 4);
+    for paragraph in [&own, &unrelated, &about] {
+        assert_eq!(sentences(paragraph).len(), 4, "{paragraph}");
+    }
+    let first_source = [own.as_str(), unrelated.as_str()].join("\n\n");
+    let second_source = [about.as_str(), tail.as_str()].join("\n\n");
+    assert!(
+        first_source.len() < 1200 && second_source.len() < 1200,
+        "one window each"
+    );
+    let plain: Vec<(String, String)> = (0..6)
+        .map(|number| (format!("Plain {number}"), paragraph_of(None, &mut fill, 4)))
+        .collect();
+    let mut sources: Vec<(&str, &str)> = vec![
+        ("Lesson notes", first_source.as_str()),
+        ("Side notes", second_source.as_str()),
+    ];
+    sources.extend(
+        plain
+            .iter()
+            .map(|(title, body)| (title.as_str(), body.as_str())),
+    );
+    let program = course_of(&pool, &sources).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    let (side, _) = source_titled(&pool, &program, "Side notes").await?;
+
+    let first = next_passage(&pool, &spec).await?;
+    assert_eq!(first.text, own);
+    drilled(&pool, "first", &program, &lesson, &first).await?;
+
+    let second = next_passage(&pool, &spec).await?;
+    assert_eq!(second.version_id, side);
+    assert_eq!(second.text, about);
+    assert!(!second.text.contains(&unrelated), "{}", second.text);
+    Ok(())
+}
+
+#[tokio::test]
+async fn of_the_places_the_hits_overlap_the_heaviest_comes_first_and_not_the_best_ranked_hits(
+) -> Result<()> {
+    let pool = pool().await?;
+    let mut fill = filler_sentences(120).into_iter();
+    let repeated = "The spacing log said spacing was kept, spacing was logged, spacing was seen and spacing was shown.";
+    let two_terms =
+        "At the harbour the baker number 1 told of spacing and recall onto the grey cart.";
+    let rank_first = paragraph_of(Some(repeated.to_owned()), &mut fill, 4);
+    let heavier = paragraph_of(Some(two_terms.to_owned()), &mut fill, 4);
+    for paragraph in [&rank_first, &heavier] {
+        assert_eq!(sentences(paragraph).len(), 4, "{paragraph}");
+        assert!(paragraph.len() < 1200);
+    }
+    let common: Vec<(String, String)> = (0..5)
+        .map(|number| {
+            (
+                format!("Common {number}"),
+                paragraph_of(Some(touched_sentence(number)), &mut fill, 4),
+            )
+        })
+        .collect();
+    let plain: Vec<(String, String)> = (0..15)
+        .map(|number| (format!("Plain {number}"), paragraph_of(None, &mut fill, 4)))
+        .collect();
+    let mut sources: Vec<(&str, &str)> = vec![
+        ("Notes X", rank_first.as_str()),
+        ("Notes Y", heavier.as_str()),
+    ];
+    sources.extend(
+        common
+            .iter()
+            .chain(plain.iter())
+            .map(|(title, body)| (title.as_str(), body.as_str())),
+    );
+    let program = course_of(&pool, &sources).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (version, _) = source_titled(&pool, &program, "Notes Y").await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.version_id, version);
+    assert_eq!(picked.text, heavier);
+    assert!(!picked.text.contains("spacing log"), "{}", picked.text);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_long_paragraph_gives_a_run_of_as_many_sentences_as_the_explanation() -> Result<()> {
+    let pool = pool().await?;
+    let (line, spans) = one_line_of(30, &[12, 13, 14, 15], &[]);
+    assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
+    assert_eq!(sentences(&line).len(), 30);
+    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.text, run_of(&line, &spans, 12, 15));
+    assert_eq!(sentences(&picked.text).len(), 4);
+    assert_eq!(
+        line.get(picked.start_byte..picked.end_byte),
+        Some(picked.text.as_str())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_last_run_of_a_long_paragraph_takes_the_sentences_left_over() -> Result<()> {
+    let pool = pool().await?;
+    let (line, spans) = one_line_of(30, &[26, 27, 28], &[]);
+    assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
+    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.text, run_of(&line, &spans, 24, 29));
+    assert_eq!(sentences(&picked.text).len(), 6);
+    assert_eq!(
+        line.get(picked.start_byte..picked.end_byte),
+        Some(picked.text.as_str())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_second_drill_of_a_long_paragraph_takes_another_run_of_it() -> Result<()> {
+    let pool = pool().await?;
+    let (line, spans) = one_line_of(30, &[12, 13, 14, 15], &[21]);
+    assert!(!line.contains('\n') && line.len() > 2000, "{}", line.len());
+    let program = course_of(&pool, &[("Harbour log", line.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+
+    let first = next_passage(&pool, &spec).await?;
+    assert_eq!(first.text, run_of(&line, &spans, 12, 15));
+    drilled(&pool, "first", &program, &lesson, &first).await?;
+
+    let second = next_passage(&pool, &spec).await?;
+    let held = sentences(&second.text).len();
+    assert!((4..=7).contains(&held), "{held}: {second:?}");
+    assert_eq!(
+        line.get(second.start_byte..second.end_byte),
+        Some(second.text.as_str())
+    );
+    assert!(
+        second.end_byte <= first.start_byte || first.end_byte <= second.start_byte,
+        "{first:?} {second:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_hard_wrapped_paragraph_is_cut_at_sentence_ends_into_runs_as_long_as_the_explanation(
+) -> Result<()> {
+    let pool = pool().await?;
+    let mut words = String::new();
+    for (number, filler) in filler_sentences(16).into_iter().enumerate() {
+        let sentence = if (6..=9).contains(&number) {
+            lesson_sentence(number)
+        } else {
+            filler
+        };
+        words.push_str(&sentence);
+        words.push(' ');
+    }
+    let mut text = String::new();
+    let mut width = 0;
+    for word in words.split_whitespace() {
+        if width + word.len() + 1 > 60 && width > 0 {
+            text.push('\n');
+            width = 0;
+        } else if width > 0 {
+            text.push(' ');
+            width += 1;
+        }
+        text.push_str(word);
+        width += word.len();
+    }
+    assert!(
+        !text.contains("\n\n") && text.len() > 1200,
+        "{}",
+        text.len()
+    );
+    assert_eq!(text.matches('.').count(), 16);
+    let program = course_of(&pool, &[("Harbour log", text.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert!(picked.text.len() < text.trim().len(), "{picked:?}");
+    let ends = picked.text.matches('.').count();
+    assert!((4..=7).contains(&ends), "{ends} sentences: {}", picked.text);
+    assert!(picked.text.ends_with('.'), "{}", picked.text);
+    let before = text.get(..picked.start_byte).unwrap_or("x").trim();
+    assert!(before.is_empty() || before.ends_with('.'), "{before}");
+    assert_eq!(
+        text.get(picked.start_byte..picked.end_byte),
+        Some(picked.text.as_str())
+    );
+    Ok(())
+}
+
+/// The id of the active version of the source of the course `program_id` titled `title`.
+async fn version_of(pool: &SqlitePool, program_id: &str, title: &str) -> Result<String> {
+    Ok(source_titled(pool, program_id, title).await?.0)
+}
+
+#[tokio::test]
+async fn a_prepared_lessons_passage_comes_only_from_the_sources_its_blocks_cite() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let spacing = version_of(&pool, &program, "Spacing and memory").await?;
+    let sleep = version_of(&pool, &program, "Sleep and memory").await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    prepare_lesson(
+        &pool,
+        &lesson,
+        &[("explanation", "Rest helps.", &[sleep.as_str()])],
+    )
+    .await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let source = next_passage(&pool, &spec).await?;
+    assert_eq!(
+        source.version_id, sleep,
+        "the query ranks the spacing source first ({spacing}), the block cites the other"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_block_citing_an_older_version_of_a_source_takes_the_passage_from_its_active_version(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let older = version_of(&pool, &program, "Sleep and memory").await?;
+    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) SELECT 'newer-sleep',program_id,source_id,2,title,publisher,requested_url,resolved_url,full_text,excerpt,'newer-sha',word_count,truncated,extraction_version,acquired_at+1 FROM learning_source_versions WHERE id=?")
+        .bind(&older)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    sqlx::query("UPDATE learning_source_library SET active_version_id='newer-sleep' WHERE active_version_id=?")
+        .bind(&older)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    prepare_lesson(
+        &pool,
+        &lesson,
+        &[("explanation", "Gaps help.", &[older.as_str()])],
+    )
+    .await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let source = next_passage(&pool, &spec).await?;
+    assert_eq!(
+        source.version_id, "newer-sleep",
+        "the spacing source ranks first; the block cites an older version of the sleep source"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_prepared_lesson_whose_blocks_cite_no_source_gives_no_drill_and_is_recorded_as_not_fitting(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    prepare_lesson(&pool, &lesson, &[("explanation", "Gaps help.", &[])]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let model = ScriptedModel::new([explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
     let error = passage_build(&pool, &model, &check, &grader)
-        .clean_code(&passage_spec(&program.summary.id))
+        .clean_code(&spec)
         .await
         .unwrap_err();
     assert!(
-        matches!(&error, AppError::InvalidInput(message) if message.contains("no source")),
+        matches!(&error, AppError::InvalidInput(message) if *message == no_teaching_passage(SPACING_LESSON)),
         "{error:?}"
     );
     assert!(model.requests().is_empty());
+    assert_not_fitting(&pool, &program, &lesson).await
+}
+
+/// What the clean stage fails with when the course's sources hold no passage that teaches the lesson titled `lesson`.
+fn no_teaching_passage(lesson: &str) -> String {
+    format!("The course's sources hold no passage that teaches the lesson \"{lesson}\".")
+}
+
+/// The lesson is recorded as not fitting a passage drill, on the basis it has now.
+async fn assert_not_fitting(pool: &SqlitePool, program: &str, lesson: &str) -> Result<()> {
+    let recorded: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT fits,basis FROM learning_drill_lesson_fits WHERE program_id=? AND lesson_id=? AND material='passage'",
+    )
+    .bind(program)
+    .bind(lesson)
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let basis = crate::drills::schedules::fit_basis_in(&mut connection, program, lesson).await?;
+    assert_eq!(recorded, [(0, basis)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_course_without_sources_gives_no_drill_and_records_the_lesson_as_not_fitting(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course_of(&pool, &[]).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let model = ScriptedModel::new([explanation_answer()]);
+    let check = spacing_check();
+    let grader = idle_grader();
+    let error = passage_build(&pool, &model, &check, &grader)
+        .clean_code(&spec)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if *message == no_teaching_passage(SPACING_LESSON)),
+        "{error:?}"
+    );
+    assert!(model.requests().is_empty());
+    assert_not_fitting(&pool, &program, &lesson).await
+}
+
+#[tokio::test]
+async fn a_passage_spec_without_a_lesson_or_with_one_of_another_course_fails_before_any_model_call(
+) -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let other = course(&pool).await?;
+    let foreign = lesson_titled(&pool, &other, SPACING_LESSON).await?;
+    let without = passage_spec(&program);
+    let elsewhere = DrillSpec {
+        lesson_id: Some(foreign),
+        ..passage_spec(&program)
+    };
+    for spec in [without, elsewhere] {
+        let model = ScriptedModel::new([explanation_answer()]);
+        let check = spacing_check();
+        let grader = idle_grader();
+        let error = passage_build(&pool, &model, &check, &grader)
+            .clean_code(&spec)
+            .await
+            .unwrap_err();
+        assert!(matches!(&error, AppError::InvalidInput(_)), "{error:?}");
+        assert!(model.requests().is_empty());
+    }
     Ok(())
 }
 
@@ -358,18 +871,441 @@ async fn an_explanation_too_short_for_its_patterns_is_asked_for_again() -> Resul
     let pool = pool().await?;
     let program = course(&pool).await?;
     let short = json!({"title": "Spacing", "paragraphs": [FIRST]}).to_string();
-    let model = ScriptedModel::new([short, explanation_answer()]);
+    let model = ScriptedModel::new([teaches_answer(true), short, explanation_answer()]);
     let check = spacing_check();
     let grader = idle_grader();
     let code = passage_build(&pool, &model, &check, &grader)
-        .clean_code(&passage_spec(&program))
+        .clean_code(&passage_lesson_spec(&pool, &program, SPACING_LESSON).await?)
         .await?;
     assert_eq!(code.files, explanation_files());
-    let again = last(&model.requests()[1]);
+    assert_eq!(
+        model.purposes(),
+        ["passage check", "clean explanation", "clean explanation"]
+    );
+    let again = last(&model.requests()[2]);
     assert!(
         again.contains("The explanation needs at least 3 sentences, and it has 1."),
         "{again}"
     );
+    Ok(())
+}
+
+/// What a lesson's passage check is told of it: its module's title, its title and its objective.
+async fn lesson_facts(pool: &SqlitePool, lesson_id: &str) -> Result<(String, String, String)> {
+    sqlx::query_as(
+        "SELECT m.title,l.title,l.objective FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.id=?",
+    )
+    .bind(lesson_id)
+    .fetch_one(pool)
+    .await
+    .map_err(db)
+}
+
+/// The message the passage check is sent for `passage` of the source titled `source_title`.
+fn check_message(facts: &(String, String, String), source_title: &str, passage: &str) -> String {
+    format!(
+        "Module: {}\nLesson: {}\nObjective: {}\n\nSource: {}\nThe passage:\n<passage>\n{}\n</passage>",
+        facts.0, facts.1, facts.2, source_title, passage
+    )
+}
+
+/// The schema of the passage check's answer.
+fn check_schema() -> serde_json::Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "passageTeachesTheLesson"],
+        "properties": {
+            "reason": {"type": "string", "minLength": 1},
+            "passageTeachesTheLesson": {"type": "boolean"}
+        }
+    })
+}
+
+/// The start and end byte of `part` in `text`.
+fn span_in(text: &str, part: &str) -> (i64, i64) {
+    let start = text.find(part).expect("the part is in the text");
+    (
+        i64::try_from(start).expect("a start"),
+        i64::try_from(start + part.len()).expect("an end"),
+    )
+}
+
+/// The verdicts stored for the lesson `lesson_id`, in text order: the start, the end and `teaches` of each.
+async fn verdicts(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(i64, i64, i64)>> {
+    sqlx::query_as(
+        "SELECT start_byte,end_byte,teaches FROM learning_drill_passage_checks WHERE lesson_id=? ORDER BY start_byte",
+    )
+    .bind(lesson_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)
+}
+
+/// A course of one source, "Harbour notes", whose two paragraphs of four sentences both hold words of the query of
+/// [`SPACING_LESSON`]: the lighter holds one of them and comes first in the text, the heavier holds all of them. The
+/// pick takes the heavier first and the lighter second. They are the only two places of the course.
+struct TwoPlaces {
+    program: String,
+    lesson: String,
+    spec: DrillSpec,
+    lighter: String,
+    heavier: String,
+    text: String,
+}
+
+async fn two_places(pool: &SqlitePool) -> Result<TwoPlaces> {
+    let mut fill = filler_sentences(20).into_iter();
+    let lighter = paragraph_of(Some(touched_sentence(9)), &mut fill, 4);
+    let heavier = (0..4).map(lesson_sentence).collect::<Vec<_>>().join(" ");
+    for paragraph in [&lighter, &heavier] {
+        assert_eq!(sentences(paragraph).len(), 4, "{paragraph}");
+    }
+    let text = [lighter.as_str(), heavier.as_str()].join("\n\n");
+    assert!(text.len() < 1200, "{}", text.len());
+    let program = course_of(pool, &[("Harbour notes", text.as_str())]).await?;
+    Ok(TwoPlaces {
+        lesson: lesson_titled(pool, &program, SPACING_LESSON).await?,
+        spec: passage_lesson_spec(pool, &program, SPACING_LESSON).await?,
+        program,
+        lighter,
+        heavier,
+        text,
+    })
+}
+
+#[tokio::test]
+async fn before_the_explanation_the_passage_is_asked_whether_it_teaches_the_lesson() -> Result<()> {
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    let facts = lesson_facts(&pool, &lesson).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &spec,
+        vec![teaches_answer(true), explanation_answer()],
+    )
+    .await;
+    let source = built?.source.expect("the passage");
+
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    let request = &model.requests()[0];
+    assert_eq!(
+        last(request),
+        check_message(&facts, "Spacing and memory", &source.text)
+    );
+    assert_eq!(request.json_schema, Some(check_schema()));
+    assert!(
+        system(request).starts_with("You decide whether a passage from a course's sources"),
+        "{}",
+        system(request)
+    );
+    let rows: Vec<(i64, i64, String, i64, String, String)> = sqlx::query_as(
+        "SELECT start_byte,end_byte,basis,teaches,reason,model FROM learning_drill_passage_checks WHERE program_id=? AND lesson_id=?",
+    )
+    .bind(&program)
+    .bind(&lesson)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let (start, end, basis, teaches, reason, stored_model) = &rows[0];
+    assert_eq!(
+        (*start, *end),
+        (
+            i64::try_from(source.start_byte).expect("a start"),
+            i64::try_from(source.end_byte).expect("an end")
+        )
+    );
+    assert_eq!(*teaches, 1);
+    assert!(!basis.trim().is_empty());
+    assert_eq!(reason, TEACHES_REASON);
+    assert_eq!(stored_model, MODEL);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_place_that_does_not_teach_the_lesson_gives_way_to_the_next_place_in_the_picks_order(
+) -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let facts = lesson_facts(&pool, &places.lesson).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    let code = built?;
+
+    assert_eq!(
+        code.source.clone().expect("the passage").text,
+        places.lighter
+    );
+    assert_eq!(
+        model.purposes(),
+        ["passage check", "passage check", "clean explanation"]
+    );
+    let requests = model.requests();
+    assert_eq!(
+        last(&requests[0]),
+        check_message(&facts, "Harbour notes", &places.heavier),
+        "the heavier place comes first, though it is later in the text"
+    );
+    assert_eq!(
+        last(&requests[1]),
+        check_message(&facts, "Harbour notes", &places.lighter)
+    );
+    let calls: Vec<(&str, &str)> = code
+        .trail
+        .calls
+        .iter()
+        .map(|call| (call.purpose.as_str(), call.model.as_str()))
+        .collect();
+    assert_eq!(
+        calls,
+        [
+            ("passage check", MODEL),
+            ("passage check", MODEL),
+            ("clean explanation", MODEL)
+        ]
+    );
+    let (lighter, heavier) = (
+        span_in(&places.text, &places.lighter),
+        span_in(&places.text, &places.heavier),
+    );
+    assert_eq!(
+        verdicts(&pool, &places.lesson).await?,
+        [(lighter.0, lighter.1, 1), (heavier.0, heavier.1, 0)]
+    );
+    let reasons: Vec<String> = sqlx::query_scalar(
+        "SELECT reason FROM learning_drill_passage_checks WHERE lesson_id=? ORDER BY teaches",
+    )
+    .bind(&places.lesson)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(reasons, [NOT_TEACHES_REASON, TEACHES_REASON]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_place_judged_before_for_the_lesson_is_not_asked_about_again() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (_, first) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    first?;
+
+    let (model, second) = clean_with(&pool, &places.spec, vec![explanation_answer()]).await;
+    let source = second?.source.expect("the passage");
+    assert_eq!(source.text, places.lighter);
+    assert_eq!(model.purposes(), ["clean explanation"]);
+    assert_eq!(verdicts(&pool, &places.lesson).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_verdict_made_on_another_basis_is_asked_again() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let facts = lesson_facts(&pool, &places.lesson).await?;
+    let (_, first) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    first?;
+    sqlx::query("UPDATE learning_drill_passage_checks SET basis='stale'")
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+
+    let (model, second) = clean_with(
+        &pool,
+        &places.spec,
+        vec![teaches_answer(true), explanation_answer()],
+    )
+    .await;
+    let source = second?.source.expect("the passage");
+    assert_eq!(source.text, places.heavier);
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    assert_eq!(
+        last(&model.requests()[0]),
+        check_message(&facts, "Harbour notes", &places.heavier)
+    );
+    let (start, end) = span_in(&places.text, &places.heavier);
+    let row: (i64, String) = sqlx::query_as(
+        "SELECT teaches,basis FROM learning_drill_passage_checks WHERE lesson_id=? AND start_byte=? AND end_byte=?",
+    )
+    .bind(&places.lesson)
+    .bind(start)
+    .bind(end)
+    .fetch_one(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(row.0, 1, "the old row was replaced");
+    assert_ne!(row.1, "stale");
+    assert_eq!(verdicts(&pool, &places.lesson).await?.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn changing_the_lessons_objective_asks_again() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (_, first) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            teaches_answer(false),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    first?;
+    let (module, title, objective) = lesson_facts(&pool, &places.lesson).await?;
+    let changed = format!("{objective}. Gaps matter most.");
+    sqlx::query("UPDATE learning_lessons SET objective=? WHERE id=?")
+        .bind(&changed)
+        .bind(&places.lesson)
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+
+    let (model, second) = clean_with(
+        &pool,
+        &places.spec,
+        vec![teaches_answer(true), explanation_answer()],
+    )
+    .await;
+    second?;
+    assert_eq!(model.purposes(), ["passage check", "clean explanation"]);
+    assert_eq!(
+        last(&model.requests()[0]),
+        check_message(&(module, title, changed), "Harbour notes", &places.heavier)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn when_no_place_teaches_the_lesson_no_drill_is_built_and_the_lesson_is_recorded_as_not_fitting(
+) -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![teaches_answer(false), teaches_answer(false)],
+    )
+    .await;
+    let error = built.unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if *message == no_teaching_passage(SPACING_LESSON)),
+        "{error:?}"
+    );
+    assert_eq!(model.purposes(), ["passage check", "passage check"]);
+    assert_eq!(model.unused(), 0);
+    let (lighter, heavier) = (
+        span_in(&places.text, &places.lighter),
+        span_in(&places.text, &places.heavier),
+    );
+    assert_eq!(
+        verdicts(&pool, &places.lesson).await?,
+        [(lighter.0, lighter.1, 0), (heavier.0, heavier.1, 0)]
+    );
+    assert_not_fitting(&pool, &places.program, &places.lesson).await
+}
+
+fn blank_reason_answer() -> String {
+    json!({"reason": " ", "passageTeachesTheLesson": true}).to_string()
+}
+
+#[tokio::test]
+async fn a_blank_reason_is_asked_for_again_once() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![
+            blank_reason_answer(),
+            teaches_answer(true),
+            explanation_answer(),
+        ],
+    )
+    .await;
+    let source = built?.source.expect("the passage");
+
+    assert_eq!(source.text, places.heavier);
+    assert_eq!(
+        model.purposes(),
+        ["passage check", "passage check", "clean explanation"]
+    );
+    let again = last(&model.requests()[1]);
+    assert!(
+        again.contains("The reason is empty. Give your reason first."),
+        "{again}"
+    );
+    let (start, end) = span_in(&places.text, &places.heavier);
+    assert_eq!(verdicts(&pool, &places.lesson).await?, [(start, end, 1)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_answer_refused_twice_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(
+        &pool,
+        &places.spec,
+        vec![blank_reason_answer(), blank_reason_answer()],
+    )
+    .await;
+    let error = built.unwrap_err();
+
+    assert!(
+        matches!(error, AppError::ModelAnswerUnusable(_)),
+        "{error:?}"
+    );
+    assert_eq!(model.purposes(), ["passage check", "passage check"]);
+    assert!(verdicts(&pool, &places.lesson).await?.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_failing_passage_check_call_fails_the_clean_stage_and_stores_nothing() -> Result<()> {
+    let pool = pool().await?;
+    let places = two_places(&pool).await?;
+    let (model, built) = clean_with(&pool, &places.spec, Vec::new()).await;
+    let error = built.unwrap_err();
+
+    assert!(
+        matches!(&error, AppError::InternalError(message) if message.contains("Unexpected extra model call")),
+        "{error:?}"
+    );
+    assert_eq!(model.purposes(), ["passage check"]);
+    assert!(verdicts(&pool, &places.lesson).await?.is_empty());
     Ok(())
 }
 
@@ -848,6 +1784,7 @@ async fn a_contradiction_within_the_explanation_is_judged_on_the_explanation() -
         consequence: "A reader cannot tell who the benefit was found in.".into(),
         explanation: "Sentence 4 contradicts sentence 2 about who was studied.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     };
     let proved = passage_build(&pool, &model, &check, &grader)
         .prove(&spec, &passage_baseline(), &planted_of(vec![contradiction]))
@@ -935,7 +1872,12 @@ async fn the_blind_reviewer_reads_the_explanation_with_its_source_and_an_extra_i
     });
     let proved = proved_figure();
     let reviewed = passage_build(&pool, &model, &check, &grader)
-        .blind_review(&passage_spec("course"), &passage_baseline(), &proved)
+        .blind_review(
+            &passage_spec("course"),
+            &passage_baseline(),
+            &proved,
+            &unchecked(),
+        )
         .await?;
     assert_eq!(model.purposes(), ["blind review", "key entry"]);
 
@@ -989,7 +1931,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     let pool = pool().await?;
     let program = course(&pool).await?;
     let (_, text) = source_titled(&pool, &program, "Spacing and memory").await?;
-    let spec = passage_spec(&program);
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let job = bank::queue_build(&pool, &spec, "passage").await?;
     let store = JobStore::new(pool.clone());
     store
@@ -998,14 +1940,19 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
         .ok_or_else(|| AppError::InternalError("The job was not claimed.".into()))?;
     assert_eq!(
         store.get(&job).await?.subject_id,
-        Some(format!("passage:{program}"))
+        Some(format!("drill:{program}:passage"))
     );
     let context = JobContext::detached(&store, &job).await?;
     let blind = json!({"findings": [
         {"path": "explanation.md", "quote": "improved recall by 40%", "comment": "The study found 14%, not 40%.", "severity": "major"}
     ]})
     .to_string();
-    let model = ScriptedModel::new([explanation_answer(), passage_plant_answer(), blind]);
+    let model = ScriptedModel::new([
+        teaches_answer(true),
+        explanation_answer(),
+        passage_plant_answer(),
+        blind,
+    ]);
     let check = spacing_check();
     let grader = FakeGrader::new(Assessment {
         issues: vec![
@@ -1026,7 +1973,12 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     assert_eq!(outcome, JobOutcome::Committed);
     assert_eq!(
         model.purposes(),
-        ["clean explanation", "plant", "blind review"]
+        [
+            "passage check",
+            "clean explanation",
+            "plant",
+            "blind review"
+        ]
     );
     assert_eq!(
         check.asked().len(),
@@ -1035,9 +1987,13 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     );
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_of_course_topic_in(&mut connection, &program, None)
-        .await?
-        .expect("the drill is in the course's bank");
+    let stored = repository::oldest_ready_on(
+        &mut connection,
+        Shelf::of(&spec)?,
+        spec.lesson_id.as_deref(),
+    )
+    .await?
+    .expect("the drill is in the course's bank");
     drop(connection);
     assert_eq!(stored.drill.material, Material::Passage);
     assert_eq!(stored.spec, spec);
@@ -1330,6 +2286,31 @@ async fn a_hard_wrapped_source_with_irregular_space_still_gives_exact_quotes() -
 }
 
 #[tokio::test]
+async fn the_items_of_a_list_in_a_passage_go_to_the_checker_apart() -> Result<()> {
+    let passage = "Study habits that help:\n- Space sessions apart\n- Test yourself often\n- Sleep after studying\n\nTogether they improve recall.";
+    let model = ScriptedModel::new([
+        "Reason: The list names it.\nSource passage: passage-2\nVerdict: supported".to_owned(),
+    ]);
+    let found = ClaimSourceCheck::new(&model)
+        .check("Testing oneself often helps.", passage)
+        .await?;
+    assert_eq!(found.says, SourceSays::Supported);
+    assert_eq!(found.quote.as_deref(), Some("- Test yourself often"));
+    let asked = last(&model.requests()[0]);
+    for shown in [
+        "[passage-0]\nStudy habits that help:",
+        "[passage-1]\n- Space sessions apart",
+        "[passage-2]\n- Test yourself often",
+        "[passage-3]\n- Sleep after studying",
+        "[passage-4]\nTogether they improve recall.",
+    ] {
+        assert!(asked.contains(shown), "{shown:?} in {asked}");
+    }
+    assert!(!asked.contains("[passage-5]"), "{asked}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_verdict_citing_no_sentence_of_the_passage_is_a_finding_of_nothing() -> Result<()> {
     let cites_nothing =
         "Reason: The source gives 14%.\nSource passage: passage-9\nVerdict: contradicted"
@@ -1398,7 +2379,8 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
     let source = spacing_passage();
-    drilled(&pool, "passage", &program, &source).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    drilled(&pool, "passage", &program, &lesson, &source).await?;
     let mut connection = pool.acquire().await.map_err(db)?;
     let stored = repository::find_in(&mut connection, "passage")
         .await?
@@ -1406,7 +2388,13 @@ async fn a_passage_drill_comes_back_as_it_went_in() -> Result<()> {
     drop(connection);
     assert_eq!(stored.drill, planted_drill("passage"));
     assert_eq!(stored.source, Some(source.clone()));
-    assert_eq!(stored.spec, passage_spec(&program));
+    assert_eq!(
+        stored.spec,
+        DrillSpec {
+            lesson_id: Some(lesson),
+            ..passage_spec(&program)
+        }
+    );
     assert_eq!(stored.program_id.as_deref(), Some(program.as_str()));
     let (material, language): (String, Option<String>) =
         sqlx::query_as("SELECT material,language FROM learning_drills WHERE id='passage'")
@@ -1436,6 +2424,7 @@ async fn a_passage_drill_without_its_source_is_not_stored() -> Result<()> {
         &clean_review(),
         &planted,
         &no_proofs(),
+        &unchecked(),
         &quiet(),
     );
     let mut connection = pool.acquire().await.map_err(db)?;
@@ -1488,7 +2477,7 @@ async fn the_table_holds_a_language_for_code_and_a_source_for_a_passage() -> Res
     .map_err(db)?;
     assert_eq!(null, 0, "a passage has no language");
     let index: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='learning_drills_course_bank'",
+        "SELECT count(*) FROM sqlite_master WHERE type='index' AND name='learning_drills_shelf'",
     )
     .fetch_one(&pool)
     .await
@@ -1531,12 +2520,19 @@ async fn a_code_drill_stored_before_passages_still_reads() -> Result<()> {
     use super::support::{code, files, planted, proved, review, OPERATOR};
     let pool = pool().await?;
     let spec = json!({"language": "python", "domain": "rate limiting", "lines": 40, "patterns": [OPERATOR], "programId": null});
-    let evidence = Evidence::new(&code(), &review(), &planted(), &proved(), &quiet());
+    let evidence = Evidence::new(
+        &code(),
+        &review(),
+        &planted(),
+        &proved(),
+        &unchecked(),
+        &quiet(),
+    );
     sqlx::query("INSERT INTO learning_drills(id,language,title,domain,program_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at) VALUES('old','python','A limiter','rate limiting',NULL,?,?,?,?,?,NULL,NULL,'m','ready',1,NULL)")
         .bind(spec.to_string())
         .bind(encode(&files())?)
         .bind(encode(&proved().files)?)
-        .bind(encode(&proved().planted_key())?)
+        .bind(encode(&proved().planted_key(&unchecked()))?)
         .bind(encode(&evidence)?)
         .execute(&pool)
         .await
@@ -1548,8 +2544,6 @@ async fn a_code_drill_stored_before_passages_still_reads() -> Result<()> {
     assert_eq!(stored.drill.material, Material::code("python"));
     assert_eq!(stored.spec.material, Material::code("python"));
     assert_eq!(stored.source, None);
-    let ready = repository::oldest_ready_in(&mut connection, "python").await?;
-    assert_eq!(ready.map(|ready| ready.drill.id), Some("old".to_owned()));
     Ok(())
 }
 
@@ -1564,6 +2558,14 @@ fn a_clean_stage_saved_before_passages_still_loads() {
     let read: CleanCode = serde_json::from_value(saved).unwrap();
     assert_eq!(read, code());
 
+    let mut saved = serde_json::to_value(code()).unwrap();
+    let object = saved.as_object_mut().unwrap();
+    object.remove("source");
+    assert!(object.remove("brief").is_some());
+    assert!(object.remove("basis").is_some());
+    let read: CleanCode = serde_json::from_value(saved).unwrap();
+    assert_eq!((read.brief, read.basis), (None, None));
+
     let passage = serde_json::to_value(passage_code()).unwrap();
     assert_eq!(passage["source"]["versionId"], "spacing-v1");
     let read: CleanCode = serde_json::from_value(passage).unwrap();
@@ -1577,49 +2579,99 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
     let pool = pool().await?;
     let first = course(&pool).await?;
     let second = course(&pool).await?;
+    let first_lessons = lessons_of(&pool, &first).await?;
+    let second_lessons = lessons_of(&pool, &second).await?;
     let source = spacing_passage();
-    drilled(&pool, "first-new", &first, &source).await?;
-    drilled(&pool, "first-old", &first, &source).await?;
-    drilled(&pool, "second", &second, &source).await?;
+    drilled(&pool, "first-new", &first, &first_lessons[0], &source).await?;
+    drilled(&pool, "first-old", &first, &first_lessons[0], &source).await?;
+    drilled(&pool, "second", &second, &second_lessons[0], &source).await?;
     at(&pool, "first-new", 20).await?;
     at(&pool, "first-old", 10).await?;
+    let python = Material::code("python");
+    let passages = Material::Passage;
 
     assert_eq!(
-        take(&pool, "python").await?,
+        take(
+            &pool,
+            Shelf {
+                program_id: &first,
+                material: &python
+            },
+            None
+        )
+        .await?,
         None,
         "no passage is on a language's shelf"
     );
-    let taken = take_from(&pool, Shelf::Course(&first))
-        .await?
-        .expect("a ready drill of the first course");
+    let taken = take(
+        &pool,
+        Shelf {
+            program_id: &first,
+            material: &passages,
+        },
+        None,
+    )
+    .await?
+    .expect("a ready drill of the first course");
     assert_eq!(taken.drill.drill.id, "first-old");
-    let job = JobStore::new(pool.clone()).get(&taken.next_build).await?;
-    assert_eq!(job.subject_id, Some(format!("passage:{first}")));
-    let queued = spec_of(&job)?;
-    let expected: Vec<String> = targets(&Material::Passage, &[], 0, 2)
+    assert_eq!(taken.next_build, None, "first-new is ready");
+
+    let taken = take(
+        &pool,
+        Shelf {
+            program_id: &second,
+            material: &passages,
+        },
+        None,
+    )
+    .await?
+    .expect("a ready drill of the second course");
+    assert_eq!(taken.drill.drill.id, "second");
+    let next = taken.next_build.as_deref().expect("a build was queued");
+    let job = JobStore::new(pool.clone()).get(next).await?;
+    assert_eq!(job.subject_id, Some(format!("drill:{second}:passage")));
+    let expected: Vec<String> = targets(&Material::Passage, &held_back(&taken.drill.drill), 0, 2)
         .iter()
         .map(|pattern| pattern.id.to_owned())
         .collect();
     assert_eq!(
-        queued,
+        spec_of(&job)?,
         DrillSpec {
             material: Material::Passage,
-            domain: None,
             lines: 4,
             patterns: expected,
-            program_id: Some(first.clone()),
-        }
+            program_id: Some(second.clone()),
+            lesson_id: Some(second_lessons[1].clone()),
+        },
+        "the lesson the drill was built from is pending, so the next is built from the one after"
     );
-
-    let taken = take_from(&pool, Shelf::Course(&second))
-        .await?
-        .expect("a ready drill of the second course");
-    assert_eq!(taken.drill.drill.id, "second");
-    assert_eq!(take_from(&pool, Shelf::Course(&second)).await?, None);
-    let again = take_from(&pool, Shelf::Course(&first))
-        .await?
-        .expect("the other drill of the first course");
+    assert_eq!(
+        take(
+            &pool,
+            Shelf {
+                program_id: &second,
+                material: &passages
+            },
+            None
+        )
+        .await?,
+        None
+    );
+    let again = take(
+        &pool,
+        Shelf {
+            program_id: &first,
+            material: &passages,
+        },
+        None,
+    )
+    .await?
+    .expect("the other drill of the first course");
     assert_eq!(again.drill.drill.id, "first-new");
+    assert!(
+        again.next_build.is_some(),
+        "the first course's shelf is empty now"
+    );
     Ok(())
 }
 
@@ -1627,21 +2679,30 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
 async fn a_build_under_way_for_a_course_is_found_again_and_another_course_gets_its_own(
 ) -> Result<()> {
     let pool = pool().await?;
-    let first = bank::ensure_build(&pool, &passage_spec("one")).await?;
-    assert_eq!(
-        bank::ensure_build(&pool, &passage_spec("one")).await?,
-        first
-    );
-    let other = bank::ensure_build(&pool, &passage_spec("two")).await?;
-    assert_ne!(other, first);
-    assert_eq!(Shelf::of(&passage_spec("one"))?, Shelf::Course("one"));
-    assert_eq!(Shelf::Course("one").subject(), "passage:one");
-    assert_eq!(Shelf::of(&super::support::spec())?.subject(), "python");
-    let lost = DrillSpec {
-        program_id: None,
-        ..passage_spec("one")
+    let one = course(&pool).await?;
+    let two = course(&pool).await?;
+    let passages = Material::Passage;
+    let on_one = Shelf {
+        program_id: &one,
+        material: &passages,
     };
-    assert!(Shelf::of(&lost).is_err());
+    let on_two = Shelf {
+        program_id: &two,
+        material: &passages,
+    };
+    let first = bank::ensure_build(&pool, on_one, None, 4, 2).await?;
+    assert_eq!(bank::ensure_build(&pool, on_one, None, 4, 2).await?, first);
+    let other = bank::ensure_build(&pool, on_two, None, 4, 2).await?;
+    assert_ne!(other, first);
+    let store = JobStore::new(pool.clone());
+    assert_eq!(
+        store.get(&first).await?.subject_id,
+        Some(format!("drill:{one}:passage"))
+    );
+    assert_eq!(
+        store.get(&other).await?.subject_id,
+        Some(format!("drill:{two}:passage"))
+    );
     Ok(())
 }
 
@@ -1864,4 +2925,193 @@ fn explanation_text_of(sentences: &[&str]) -> String {
     let mut text = sentences.join("\n");
     text.push('\n');
     text
+}
+
+#[test]
+fn a_baseline_and_the_evidence_keep_the_brief_the_clean_code_was_written_from() {
+    use lattice_core::domain::learning::drills::LessonBrief;
+    let brief = LessonBrief {
+        lesson_id: "lesson-1".into(),
+        course: "Memory science".into(),
+        goal: String::new(),
+        prior_knowledge: String::new(),
+        module: "Spacing".into(),
+        module_summary: String::new(),
+        outcomes: Vec::new(),
+        lesson: "Spacing study over sessions".into(),
+        objective: "Explain why spreading study helps".into(),
+        evidence: Vec::new(),
+    };
+    let code = CleanCode {
+        brief: Some(brief.clone()),
+        ..passage_code()
+    };
+    let baseline = Baseline::new(&code, &clean_review());
+    assert_eq!(baseline.brief, Some(brief.clone()));
+    let planted = Planted {
+        mutations: Vec::new(),
+        trail: Trail::default(),
+    };
+    let evidence = Evidence::new(
+        &code,
+        &clean_review(),
+        &planted,
+        &no_proofs(),
+        &unchecked(),
+        &quiet(),
+    );
+    assert_eq!(evidence.brief, Some(brief));
+    let without = Evidence::new(
+        &passage_code(),
+        &clean_review(),
+        &planted,
+        &no_proofs(),
+        &unchecked(),
+        &quiet(),
+    );
+    assert_eq!(without.brief, None);
+    assert!(serde_json::to_value(&without)
+        .unwrap()
+        .get("brief")
+        .is_none());
+}
+
+// The lesson a stored passage drill fits.
+
+#[tokio::test]
+async fn a_stored_passage_drill_records_that_the_lesson_fits_passages() -> Result<()> {
+    use super::support::Harness;
+    use crate::drills::build::store::Built;
+    let pool = pool().await?;
+    let program = course(&pool).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let harness = Harness::on(pool, &spec).await?;
+    let (model, grader) = (ScriptedModel::new([]), FakeGrader::failing("unused"));
+    let code = CleanCode {
+        basis: Some("basis-1".into()),
+        ..passage_code()
+    };
+    let planted = Planted {
+        mutations: vec![figure_mutation()],
+        trail: Trail::default(),
+    };
+    let (proved, review, baseline, blind) =
+        (proved_figure(), clean_review(), passage_baseline(), quiet());
+    let context = harness.context().await?;
+    let outcome = harness
+        .build(&model, None, &grader)
+        .store(
+            &context,
+            &spec,
+            Built {
+                baseline: &baseline,
+                code: &code,
+                review: &review,
+                planted: &planted,
+                proved: &proved,
+                checked: &unchecked(),
+                blind: &blind,
+            },
+        )
+        .await?;
+    assert_eq!(outcome, JobOutcome::Committed);
+    let fits: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT fits,basis FROM learning_drill_lesson_fits WHERE material='passage'",
+    )
+    .fetch_all(&harness.pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(fits, [(1, "basis-1".to_owned())]);
+    Ok(())
+}
+
+/// A source of `count` short paragraphs of two sentences each, every one made of words the query of [`SPACING_LESSON`]
+/// holds, so that every chunk of it matches.
+fn large_source(count: usize) -> String {
+    (0..count)
+        .map(|number| {
+            format!(
+                "Spacing study over sessions helps recall of item {number}. Spread sessions strengthen recall after {number} days."
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+/// Picks the passage for [`SPACING_LESSON`] from a course of one large source, in a thread of its own so that a
+/// picker that never returns fails the test instead of hanging it, and checks that it came back within a minute and
+/// is exact bytes of the source. With `already_drilled`, a drill covering the whole source was recorded first.
+fn picks_within_the_deadline(already_drilled: bool) {
+    const DEADLINE: Duration = Duration::from_secs(60);
+    let text = large_source(6_000);
+    assert!(text.len() >= 500_000, "{}", text.len());
+    let size = text.len();
+    let body = text.clone();
+    let (ready_sender, ready_receiver) = mpsc::channel::<std::result::Result<String, String>>();
+    let (done_sender, done_receiver) =
+        mpsc::channel::<(std::result::Result<SourcePassage, String>, Duration)>();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async move {
+            let setup = async {
+                let pool = pool().await?;
+                let program = course_of(&pool, &[("Large source", body.as_str())]).await?;
+                let (version, _) = source_titled(&pool, &program, "Large source").await?;
+                let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+                if already_drilled {
+                    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+                    let whole = SourcePassage {
+                        version_id: version.clone(),
+                        start_byte: 0,
+                        end_byte: body.len(),
+                        title: "Large source".to_owned(),
+                        text: body.clone(),
+                    };
+                    drilled(&pool, "whole", &program, &lesson, &whole).await?;
+                }
+                Ok::<_, AppError>((pool, spec, version))
+            };
+            let (pool, spec, version) = match setup.await {
+                Ok(done) => done,
+                Err(error) => {
+                    let _ = ready_sender.send(Err(format!("{error:?}")));
+                    return;
+                }
+            };
+            let _ = ready_sender.send(Ok(version));
+            let started = Instant::now();
+            let picked = next_passage(&pool, &spec).await;
+            let _ = done_sender.send((
+                picked.map_err(|error| format!("{error:?}")),
+                started.elapsed(),
+            ));
+        });
+    });
+    let version = ready_receiver
+        .recv_timeout(Duration::from_secs(600))
+        .expect("the course was set up within ten minutes")
+        .expect("the course was set up");
+    let (picked, elapsed) = done_receiver.recv_timeout(DEADLINE).unwrap_or_else(|_| {
+        panic!("no passage was picked within {DEADLINE:?} from a source of {size} bytes")
+    });
+    let passage = picked.expect("a passage was picked");
+    assert!(elapsed < DEADLINE, "{elapsed:?}");
+    assert_eq!(passage.version_id, version);
+    assert_eq!(
+        text.get(passage.start_byte..passage.end_byte),
+        Some(passage.text.as_str())
+    );
+}
+
+#[test]
+fn a_passage_is_picked_from_a_large_fresh_course_within_the_deadline() {
+    picks_within_the_deadline(false);
+}
+
+#[test]
+fn a_passage_is_picked_from_a_large_course_whose_every_place_was_drilled_within_the_deadline() {
+    picks_within_the_deadline(true);
 }

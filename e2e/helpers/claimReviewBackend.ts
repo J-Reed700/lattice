@@ -83,7 +83,7 @@ export function claimReviewBackend() {
       kind: shown.addedBy === "user" && !passage.url ? "pasted_text" : "page",
       standing: null,
       counts: contradicts
-        ? { outcome: "not_counted", reason: "it contradicts the claim" }
+        ? { outcome: "not_counted", reason: "it contradicts the statement" }
         : claim.state.state === "resolved_by_evidence" ? { outcome: "enough" } : { outcome: "not_enough" },
       quote,
       quoteSpan: at >= 0 ? [at, at + quote.length] : null,
@@ -186,10 +186,10 @@ export function claimReviewBackend() {
     const { request, onProgress } = args;
     const progress = (stage: ClaimAttachProgressDto) => onProgress !== undefined && send(onProgress, stage);
     const review = reviews[request.lessonId];
-    if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
-    if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This claim changed; reload and act again." };
+    if (!review) throw { code: "NOT_FOUND", message: "This lesson has no statement review yet." };
+    if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This statement changed; reload and act again." };
     const claim = review.claims.find((item) => item.claimId === request.claimId);
-    if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
+    if (!claim) throw { code: "NOT_FOUND", message: "No statement with that id in this lesson." };
     const { evidence } = request;
     const others = { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null };
     if (evidence.kind === "attach_link") {
@@ -197,7 +197,7 @@ export function claimReviewBackend() {
       if (evidence.url.includes("403")) {
         const failure = { kind: "refused" as const, message: `${hostOf(evidence.url)} refused the request (HTTP 403).`, nextSteps: [{ step: "paste_text" as const, origin: evidence.url }, { step: "add_file" as const }] };
         progress({ stage: "done" });
-        return { revision: review.revision, source: null, alreadySaved: false, outcome: null, failure, snapshot: { state: "not_applicable" }, others, lines: [failure.message] };
+        return { revision: review.revision, source: null, alreadySaved: false, outcome: null, failure, snapshot: { state: "not_applicable" }, others, lines: [failure.message], putBack: null };
       }
     }
     progress({ stage: "saving" });
@@ -225,8 +225,8 @@ export function claimReviewBackend() {
     review.changedSinceStop = true;
     recount(review);
     progress({ stage: "done" });
-    const lines = [stated ? `Verified against ${title}.` : `Nothing in ${title} mentions this claim. It is saved in your sources.`];
-    if (others.tried) lines.push(`Also checked ${others.tried} other open claim${others.tried === 1 ? "" : "s"} against this source: ${others.verified} verified, ${others.noPassage} no passage.`);
+    const lines = [stated ? `Verified against ${title}.` : `Nothing in ${title} mentions this statement. It is saved in your sources.`];
+    if (others.tried) lines.push(`Also checked ${others.tried} other open ${others.tried === 1 ? "statement" : "statements"} against this source: ${others.verified} verified, ${others.noPassage} no passage.`);
     return {
       revision: review.revision,
       source: { sourceId, sourceVersionId: versionId, title, url, addedBy: "user" },
@@ -236,6 +236,7 @@ export function claimReviewBackend() {
       snapshot: { state: "not_applicable" },
       others,
       lines,
+      putBack: null,
     };
   }
 

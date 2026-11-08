@@ -16,7 +16,9 @@ use crate::lessons::claim_reviews::attach::{
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::ClaimReviewService;
+use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
 use crate::repository::LearningRepository;
+use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, SetAside};
 use async_trait::async_trait;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput,
@@ -29,7 +31,7 @@ use lattice_core::application::ports::{
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
-    Ledger, ReopenCause, TrustCause, UnitKind,
+    Ledger, ReopenCause, TrustCause, UnitKind, UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
@@ -473,7 +475,7 @@ async fn an_edit_of_a_questions_claim_in_a_published_lesson_is_refused_and_write
     assert!(
         error
             .to_string()
-            .contains("Only a section's text can be edited in a published lesson."),
+            .contains("Only a section's text can be changed in a published lesson."),
         "{error}"
     );
     Ok(())
@@ -508,7 +510,7 @@ fn actions(item: &Value) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn the_actions_a_published_lesson_offers_never_include_remove_or_a_research_hint_and_edit_only_on_section_text(
+async fn the_actions_a_published_lesson_offers_never_include_a_research_hint_or_an_undo_before_you_act_and_edit_and_remove_only_on_section_text(
 ) -> Result<()> {
     let course = unchecked().await?;
     let prompt = "Which setting keeps header whitespace?";
@@ -537,7 +539,7 @@ async fn the_actions_a_published_lesson_offers_never_include_remove_or_a_researc
     assert_eq!(claims.len(), 4);
     for item in claims {
         let offered = actions(item);
-        for never in ["remove", "research_with_hint", "undo"] {
+        for never in ["research_with_hint", "undo"] {
             assert!(!offered.contains(&never.into()), "{item}");
         }
     }
@@ -546,6 +548,7 @@ async fn the_actions_a_published_lesson_offers_never_include_remove_or_a_researc
         let offered = actions(item);
         let section_text = statement == GOOD || statement == figure(7);
         assert_eq!(offered.contains(&"edit".into()), section_text, "{item}");
+        assert_eq!(offered.contains(&"remove".into()), section_text, "{item}");
         if section_text {
             assert!(offered.contains(&"confirm".into()), "{item}");
             assert!(offered.contains(&"attach_evidence".into()), "{item}");
@@ -672,5 +675,1139 @@ async fn a_source_the_user_attaches_that_supports_a_published_not_verified_state
     assert_eq!(now.resolution(GOOD), "verified");
     assert_eq!(now.on(GOOD)["unverifiedReason"], Value::Null);
     assert_eq!(now.resolution(&figure(7)), "not_verified");
+    Ok(())
+}
+
+const CHANGED_WORDS: &str = "Only a section's text can be changed in a published lesson.";
+
+/// Three published sections, each stating one statement not verified.
+async fn three() -> Result<Course> {
+    let course = Course::new().await?;
+    let prepared = course
+        .prepare(&unreadable(), &lesson(&[GOOD, &figure(7), &figure(8)]))
+        .await
+        .expect("the lesson publishes, its statements not verified");
+    course.publish(prepared).await?;
+    Ok(course)
+}
+
+fn three_statements() -> Vec<String> {
+    vec![GOOD.into(), figure(7), figure(8)]
+}
+
+async fn ids_of(course: &Course, statements: &[String]) -> Result<Vec<String>> {
+    let ledger = ledger(course).await?;
+    Ok(statements
+        .iter()
+        .map(|statement| entry_for(&ledger, statement).claim_id().0.clone())
+        .collect())
+}
+
+async fn act_many(
+    course: &Course,
+    ids: &[String],
+    action: ClaimActionRequestDto,
+    revision: i64,
+) -> Result<i64> {
+    ClaimReviewService::new(course.pool.clone())
+        .resolve_many(&course.lesson_id, ids, action, revision)
+        .await
+}
+
+/// The refusal a batch gets, with what it left written.
+async fn batch_refused(
+    course: &Course,
+    ids: &[String],
+    action: ClaimActionRequestDto,
+    revision: i64,
+) -> AppError {
+    let before = stored(course).await.unwrap();
+    let error = act_many(course, ids, action, revision).await.unwrap_err();
+    assert_eq!(stored(course).await.unwrap(), before, "{error}");
+    error
+}
+
+fn state_of<'a>(ledger: &'a Ledger, id: &str) -> &'a ClaimState {
+    ledger
+        .claims
+        .iter()
+        .find(|entry| entry.claim_id().0 == id)
+        .unwrap()
+        .state()
+}
+
+async fn offered_for(course: &Course, statement: &str) -> Result<Vec<String>> {
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .expect("the published lesson has its review");
+    let review = serde_json::to_value(&review)?;
+    let item = review["claims"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["statement"] == json!(statement))
+        .unwrap_or_else(|| panic!("{statement}: {review}"));
+    Ok(actions(item))
+}
+
+#[tokio::test]
+async fn removing_a_published_statement_takes_its_sentence_out_cleanly_ends_every_claim_on_it_removed_by_you_and_updates_the_report(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    let body = stored(&course).await?.blocks[0].clone();
+    let overlap = extract(
+        &course,
+        "overlap",
+        ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+        "Field-name whitespace is kept.",
+    )
+    .await?;
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+    let other = format!("{:?}", entry_for(&ledger(&course).await?, &figure(7)));
+
+    let revision = act(&course, &target, ClaimActionRequestDto::Remove).await?;
+
+    let after = stored(&course).await?;
+    assert_eq!(
+        after.blocks[0],
+        before.blocks[0].replacen(&format!("{GOOD} "), "", 1)
+    );
+    assert!(
+        after.blocks[0].starts_with("Try it yourself"),
+        "{}",
+        after.blocks[0]
+    );
+    assert!(!after.blocks[0].contains("  "));
+    assert_eq!(after.blocks[1], before.blocks[1]);
+    assert_eq!(after.content_revision, before.content_revision);
+    assert_eq!(revision, before.ledger_revision + 1);
+    assert_eq!(after.ledger_revision, before.ledger_revision + 1);
+    let ledger = ledger(&course).await?;
+    for id in [&target, &overlap] {
+        assert!(
+            matches!(
+                state_of(&ledger, &id.0),
+                ClaimState::Removed {
+                    by: Actor::User,
+                    ..
+                }
+            ),
+            "{id:?} is {:?}",
+            state_of(&ledger, &id.0)
+        );
+    }
+    assert_eq!(
+        format!("{:?}", entry_for(&ledger, &figure(7))),
+        other,
+        "a claim the sentence does not overlap is untouched"
+    );
+
+    let now = read(&course).await?;
+    assert!(now.claims.iter().all(|entry| entry["claim"] != json!(GOOD)));
+    assert_eq!(now.view.claim_count, seen.view.claim_count - 1);
+    assert_eq!(now.others(GOOD), seen.others(GOOD));
+    assert_ne!(now.view.content_sha256, seen.view.content_sha256);
+    assert_ne!(after.report, before.report);
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_a_published_statement_with_an_old_revision_writes_nothing() -> Result<()> {
+    let course = unchecked().await?;
+    let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    let revision = ledger(&course).await?.revision.0;
+    let before = stored(&course).await?;
+
+    let error = ClaimReviewService::new(course.pool.clone())
+        .resolve(
+            &course.lesson_id,
+            &claim.0,
+            ClaimActionRequestDto::Remove,
+            revision + 1,
+        )
+        .await
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("This statement changed; reload and act again."),
+        "{error}"
+    );
+    assert_eq!(stored(&course).await?, before);
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_a_questions_statement_from_a_published_lesson_is_refused_and_writes_nothing(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let prompt = "Which setting keeps header whitespace?";
+    let claim = extract(
+        &course,
+        "question",
+        ClaimLocation::locate(0, UnitKind::Question, "prompt", prompt, prompt),
+        prompt,
+    )
+    .await?;
+
+    let error = refused(&course, &claim, ClaimActionRequestDto::Remove).await;
+
+    assert!(error.to_string().contains(CHANGED_WORDS), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_part_of_a_published_sentence_is_still_refused_and_writes_nothing() -> Result<()> {
+    let course = unchecked().await?;
+    let clause = "DictReader keeps whitespace in them";
+    let body = format!(
+        "The first row names the columns, and {clause}. {}",
+        stored(&course).await?.blocks[0]
+    );
+    set_body(&course, 0, &body).await?;
+    let claim = extract(
+        &course,
+        "clause",
+        ClaimLocation::locate(0, UnitKind::Block, "body", clause, &body),
+        clause,
+    )
+    .await?;
+
+    let error = refused(&course, &claim, ClaimActionRequestDto::Remove).await;
+
+    assert!(
+        error
+            .to_string()
+            .contains("This statement is part of a sentence. Edit the sentence to say what goes."),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_in_a_published_lesson_puts_the_sentence_back_where_it_was_and_the_statement_as_it_was(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+    let state = format!("{:?}", state_of(&ledger(&course).await?, &claim.0));
+    act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+    assert!(offered_for(&course, GOOD).await?.contains(&"undo".into()));
+
+    let revision = act(&course, &claim, ClaimActionRequestDto::Undo).await?;
+
+    let after = stored(&course).await?;
+    assert_eq!(
+        after.blocks, before.blocks,
+        "the text is as it was, whitespace and all"
+    );
+    assert_eq!(revision, before.ledger_revision + 2);
+    assert_eq!(after.content_revision, before.content_revision);
+    assert_eq!(
+        format!("{:?}", state_of(&ledger(&course).await?, &claim.0)),
+        state
+    );
+    let now = read(&course).await?;
+    assert_eq!(
+        now.claims, seen.claims,
+        "the findings the removal dropped are back"
+    );
+    assert_eq!(now.view.claim_count, seen.view.claim_count);
+    assert!(!offered_for(&course, GOOD).await?.contains(&"undo".into()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_returns_every_claim_the_removal_ended_whichever_one_it_is_asked_on(
+) -> Result<()> {
+    for undo_on_overlap in [false, true] {
+        let course = unchecked().await?;
+        let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+        let body = stored(&course).await?.blocks[0].clone();
+        let overlap = extract(
+            &course,
+            "overlap",
+            ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+            "Field-name whitespace is kept.",
+        )
+        .await?;
+        let before = stored(&course).await?;
+        let seen = read(&course).await?;
+        let states = |ledger: &Ledger| {
+            [&target, &overlap].map(|id| format!("{:?}", state_of(ledger, &id.0)))
+        };
+        let was = states(&ledger(&course).await?);
+        act(&course, &target, ClaimActionRequestDto::Remove).await?;
+
+        let asked = if undo_on_overlap { &overlap } else { &target };
+        act(&course, asked, ClaimActionRequestDto::Undo).await?;
+
+        let after = stored(&course).await?;
+        assert_eq!(after.blocks, before.blocks);
+        assert_eq!(states(&ledger(&course).await?), was);
+        assert_eq!(read(&course).await?.claims, seen.claims);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_restores_the_exact_text_around_the_sentence() -> Result<()> {
+    for (body, sentence) in [
+        ("A one. B two. C three.", "B two."),
+        ("A one. B two. C three.", "A one."),
+        ("A one. B two. C three.", "C three."),
+        (
+            "A one.
+
+B two.
+
+C three.",
+            "B two.",
+        ),
+        (
+            "A one.
+
+B two. C three.",
+            "B two.",
+        ),
+        (
+            "A one. B two.
+
+C three.",
+            "B two.",
+        ),
+        (
+            "A one.
+
+B two.
+
+C three.",
+            "B two.",
+        ),
+        ("A one. B two.", "B two."),
+    ] {
+        let course = unchecked().await?;
+        set_body(&course, 0, body).await?;
+        let claim = extract(
+            &course,
+            "line",
+            ClaimLocation::locate(0, UnitKind::Block, "body", sentence, body),
+            sentence,
+        )
+        .await?;
+        act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+        assert_ne!(stored(&course).await?.blocks[0], body);
+
+        act(&course, &claim, ClaimActionRequestDto::Undo).await?;
+
+        assert_eq!(
+            stored(&course).await?.blocks[0],
+            body,
+            "{sentence:?} in {body:?}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_by_hand_when_the_section_changed_after_it() -> Result<()>
+{
+    let course = unchecked().await?;
+    let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    act(&course, &claim, ClaimActionRequestDto::Remove).await?;
+    set_body(&course, 0, "The section was rewritten by hand.").await?;
+
+    let error = refused(&course, &claim, ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_undo_of_a_batch_remove_puts_every_sentence_back_in_one_step() -> Result<()> {
+    let course = three().await?;
+    let statements = three_statements();
+    let ids = ids_of(&course, &statements).await?;
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+    let removed = act_many(
+        &course,
+        &ids,
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+
+    let undone = act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
+
+    assert_eq!(undone, removed + 1);
+    let after = stored(&course).await?;
+    assert_eq!(after.blocks, before.blocks);
+    assert_eq!(after.ledger_revision, removed + 1);
+    assert_eq!(read(&course).await?.claims, seen.claims);
+    let ledger = ledger(&course).await?;
+    for id in &ids {
+        assert!(
+            matches!(state_of(&ledger, id), ClaimState::Unverified { .. }),
+            "{:?}",
+            state_of(&ledger, id)
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_an_accept_in_a_published_lesson_is_offered_and_puts_the_statement_back_not_verified(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let claim = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    assert!(!offered_for(&course, GOOD).await?.contains(&"undo".into()));
+
+    act(&course, &claim, confirm()).await?;
+
+    assert!(offered_for(&course, GOOD).await?.contains(&"undo".into()));
+    assert!(!offered_for(&course, &figure(7))
+        .await?
+        .contains(&"undo".into()));
+    assert_eq!(read(&course).await?.resolution(GOOD), "confirmed_by_you");
+
+    act(&course, &claim, ClaimActionRequestDto::Undo).await?;
+
+    let back = read(&course).await?;
+    assert_eq!(back.resolution(GOOD), "not_verified");
+    assert_eq!(back.on(GOOD)["unverifiedReason"], json!("unchecked"));
+    assert!(!offered_for(&course, GOOD).await?.contains(&"undo".into()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_accept_confirms_every_statement_and_moves_the_revision_once() -> Result<()> {
+    let course = three().await?;
+    let statements = three_statements();
+    let ids = ids_of(&course, &statements).await?;
+    let before = stored(&course).await?;
+
+    let revision = act_many(&course, &ids, confirm(), before.ledger_revision).await?;
+
+    assert_eq!(revision, before.ledger_revision + 1);
+    let after = stored(&course).await?;
+    assert_eq!(after.ledger_revision, before.ledger_revision + 1);
+    assert_eq!(after.blocks, before.blocks);
+    let now = read(&course).await?;
+    for statement in &statements {
+        assert_eq!(now.resolution(statement), "confirmed_by_you", "{statement}");
+    }
+    assert_eq!(now.view.confirmed_count, 3);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_with_one_statement_that_cannot_be_removed_writes_nothing_and_says_how_many(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let prompt = "Which setting keeps header whitespace?";
+    let question = extract(
+        &course,
+        "question",
+        ClaimLocation::locate(0, UnitKind::Question, "prompt", prompt, prompt),
+        prompt,
+    )
+    .await?;
+    let mut ids = ids_of(&course, &[GOOD.into(), figure(7)]).await?;
+    ids.insert(1, question.0.clone());
+    let revision = ledger(&course).await?.revision.0;
+
+    let error = batch_refused(&course, &ids, ClaimActionRequestDto::Remove, revision).await;
+
+    assert!(
+        error.to_string().contains(&format!(
+            "1 of these can't be removed: {CHANGED_WORDS} Nothing was changed."
+        )),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_where_none_can_be_removed_says_none_of_them_can() -> Result<()> {
+    let course = unchecked().await?;
+    let prompt = "Which setting keeps header whitespace?";
+    let question = extract(
+        &course,
+        "question",
+        ClaimLocation::locate(0, UnitKind::Question, "prompt", prompt, prompt),
+        prompt,
+    )
+    .await?;
+    let revision = ledger(&course).await?.revision.0;
+
+    let error = batch_refused(
+        &course,
+        &[question.0],
+        ClaimActionRequestDto::Remove,
+        revision,
+    )
+    .await;
+
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("None of these can be removed: {CHANGED_WORDS}")),
+        "{error}"
+    );
+    assert!(
+        !error.to_string().contains("Nothing was changed"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_remove_on_a_published_lesson_takes_every_sentence_out_in_one_step() -> Result<()> {
+    let course = three().await?;
+    let statements = three_statements();
+    let ids = ids_of(&course, &statements).await?;
+    let before = stored(&course).await?;
+    let seen = read(&course).await?;
+
+    let revision = act_many(
+        &course,
+        &ids,
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+
+    assert_eq!(revision, before.ledger_revision + 1);
+    let after = stored(&course).await?;
+    assert_eq!(after.ledger_revision, before.ledger_revision + 1);
+    for (index, statement) in statements.iter().enumerate() {
+        assert_eq!(
+            after.blocks[index],
+            before.blocks[index].replacen(&format!("{statement} "), "", 1)
+        );
+        assert!(after.blocks[index].starts_with("Try it yourself"));
+    }
+    let ledger = ledger(&course).await?;
+    for id in &ids {
+        assert!(
+            matches!(
+                state_of(&ledger, id),
+                ClaimState::Removed {
+                    by: Actor::User,
+                    ..
+                }
+            ),
+            "{:?}",
+            state_of(&ledger, id)
+        );
+    }
+    let now = read(&course).await?;
+    assert_eq!(now.view.claim_count, seen.view.claim_count - 3);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_remove_of_two_statements_on_one_sentence_takes_the_sentence_out_once() -> Result<()>
+{
+    let course = unchecked().await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    let body = stored(&course).await?.blocks[0].clone();
+    let overlap = extract(
+        &course,
+        "overlap",
+        ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+        "Field-name whitespace is kept.",
+    )
+    .await?;
+    let before = stored(&course).await?;
+
+    let revision = act_many(
+        &course,
+        &[target.0.clone(), overlap.0.clone()],
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+
+    assert_eq!(revision, before.ledger_revision + 1);
+    let after = stored(&course).await?;
+    assert_eq!(
+        after.blocks[0],
+        before.blocks[0].replacen(&format!("{GOOD} "), "", 1)
+    );
+    let ledger = ledger(&course).await?;
+    for id in [&target, &overlap] {
+        assert!(matches!(
+            state_of(&ledger, &id.0),
+            ClaimState::Removed {
+                by: Actor::User,
+                ..
+            }
+        ));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_undo_with_the_revision_the_batch_returned_undoes_every_statement() -> Result<()> {
+    let course = three().await?;
+    let statements = three_statements();
+    let ids = ids_of(&course, &statements).await?;
+    let first = ledger(&course).await?.revision.0;
+    let accepted = act_many(&course, &ids, confirm(), first).await?;
+
+    let undone = act_many(&course, &ids, ClaimActionRequestDto::Undo, accepted).await?;
+
+    assert_eq!(undone, accepted + 1);
+    let now = read(&course).await?;
+    for statement in &statements {
+        assert_eq!(now.resolution(statement), "not_verified", "{statement}");
+    }
+    let ledger = ledger(&course).await?;
+    for id in &ids {
+        assert!(
+            matches!(state_of(&ledger, id), ClaimState::Unverified { .. }),
+            "{:?}",
+            state_of(&ledger, id)
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_undo_after_the_revision_moved_is_refused_and_writes_nothing() -> Result<()> {
+    let course = three().await?;
+    let statements = three_statements();
+    let ids = ids_of(&course, &statements).await?;
+    let first = ledger(&course).await?.revision.0;
+    let accepted = act_many(&course, &ids, confirm(), first).await?;
+    act(
+        &course,
+        &ClaimId(ids[0].clone()),
+        ClaimActionRequestDto::Unconfirm,
+    )
+    .await?;
+
+    let error = batch_refused(&course, &ids, ClaimActionRequestDto::Undo, accepted).await;
+
+    assert!(
+        error
+            .to_string()
+            .contains("Something changed since then. Undo them one at a time."),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_batch_asked_for_something_that_needs_one_statement_is_refused_and_writes_nothing(
+) -> Result<()> {
+    let course = three().await?;
+    let ids = ids_of(&course, &three_statements()).await?;
+    let revision = ledger(&course).await?.revision.0;
+    let with_a_note = ClaimActionRequestDto::Confirm {
+        note: Some("Checked by hand.".into()),
+        source_version_ids: vec![],
+    };
+
+    for action in [edit(GOOD, NEW), with_a_note] {
+        let error = batch_refused(&course, &ids, action, revision).await;
+        assert!(
+            error.to_string().contains("Choose one statement for that."),
+            "{error}"
+        );
+    }
+    Ok(())
+}
+
+/// A waiting teaching note on `section` about `sentence`, as a pass left it.
+async fn note_about(course: &Course, section: usize, sentence: Option<&str>) -> Result<()> {
+    let candidate = json!({"blocks":[
+        {"title":"One","body":"Body."},{"title":"Two","body":"Body."}
+    ],"questions":[]});
+    let mut finding = ReviewFinding::new(
+        FindingKind::Quotation,
+        Some(FindingSite::Section(section)),
+        "A note.",
+    )
+    .with_summary("No source is cited for this sentence.");
+    finding.sentence = sentence.map(str::to_owned);
+    TeachingFindingsRepository::new(course.pool.clone())
+        .record(
+            &course.lesson_id,
+            "job",
+            &candidate,
+            &[SetAside {
+                finding,
+                repairs: 0,
+            }],
+            true,
+        )
+        .await
+}
+
+/// The ids of the claims each note names, by the note's section.
+async fn claim_ids_of_notes(course: &Course) -> Result<Vec<(Option<u32>, Vec<String>)>> {
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .expect("the lesson has its review");
+    Ok(review
+        .teaching_findings
+        .into_iter()
+        .map(|note| {
+            let mut ids = note.claim_ids;
+            ids.sort();
+            (note.unit_index, ids)
+        })
+        .collect())
+}
+
+fn sorted(ids: &[&ClaimId]) -> Vec<String> {
+    let mut ids: Vec<String> = ids.iter().map(|id| id.0.clone()).collect();
+    ids.sort();
+    ids
+}
+
+fn user_event(at: i64) -> EventProvenance {
+    EventProvenance {
+        actor: Actor::User,
+        at,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: None,
+    }
+}
+
+#[tokio::test]
+async fn a_notes_claim_ids_are_the_live_claims_on_exactly_its_sentence() -> Result<()> {
+    let course = unchecked().await?;
+    let body = stored(&course).await?.blocks[0].clone();
+    let overlap = extract(
+        &course,
+        "overlap",
+        ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+        "Field-name whitespace is kept.",
+    )
+    .await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    let other = entry_for(&ledger(&course).await?, &figure(7))
+        .claim_id()
+        .clone();
+    note_about(&course, 0, Some(GOOD)).await?;
+
+    assert_eq!(
+        claim_ids_of_notes(&course).await?,
+        [(Some(0), sorted(&[&target, &overlap]))]
+    );
+
+    note_about(&course, 1, Some(&figure(7))).await?;
+    let notes = claim_ids_of_notes(&course).await?;
+    assert_eq!(
+        notes
+            .iter()
+            .find(|(unit, _)| *unit == Some(1))
+            .map(|(_, ids)| ids.clone()),
+        Some(sorted(&[&other]))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_claim_on_another_sentence_of_the_section_is_not_named() -> Result<()> {
+    let course = unchecked().await?;
+    let body = stored(&course).await?.blocks[0].clone();
+    let practice = "Try it yourself: open the sample file, read its first row, and compare each header name with the one you expected to see.";
+    extract(
+        &course,
+        "neighbour",
+        ClaimLocation::locate(0, UnitKind::Block, "body", practice, &body),
+        "Practice reads the first row.",
+    )
+    .await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    note_about(&course, 0, Some(GOOD)).await?;
+
+    assert_eq!(
+        claim_ids_of_notes(&course).await?,
+        [(Some(0), sorted(&[&target]))]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn removed_and_edited_claims_are_not_named() -> Result<()> {
+    let course = unchecked().await?;
+    let body = stored(&course).await?.blocks[0].clone();
+    let at = chrono::Utc::now().timestamp_millis();
+    let mut gone = Vec::new();
+    for name in ["removed", "edited"] {
+        let id = extract(
+            &course,
+            name,
+            ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+            "Field-name whitespace is kept.",
+        )
+        .await?;
+        let repository = ClaimReviewRepository::new(course.pool.clone());
+        let action = if name == "removed" {
+            UserAction::Remove
+        } else {
+            UserAction::Edit {
+                before: GOOD.into(),
+                after: NEW.into(),
+            }
+        };
+        let revision = ledger(&course).await?.revision;
+        repository
+            .append(
+                &course.lesson_id,
+                &id,
+                user_event(at),
+                ClaimEvent::UserAction { action, note: None },
+                revision,
+            )
+            .await?;
+        if name == "edited" {
+            let revision = ledger(&course).await?.revision;
+            repository
+                .append(
+                    &course.lesson_id,
+                    &id,
+                    machine(),
+                    ClaimEvent::Superseded {
+                        successor: None,
+                        by: Actor::User,
+                    },
+                    revision,
+                )
+                .await?;
+        }
+        gone.push(id);
+    }
+    let ledger = ledger(&course).await?;
+    for id in &gone {
+        assert!(
+            matches!(
+                state_of(&ledger, &id.0),
+                ClaimState::Removed { .. } | ClaimState::Edited { .. }
+            ),
+            "{:?}",
+            state_of(&ledger, &id.0)
+        );
+    }
+    let live = entry_for(&ledger, GOOD).claim_id().clone();
+    note_about(&course, 0, Some(GOOD)).await?;
+
+    assert_eq!(
+        claim_ids_of_notes(&course).await?,
+        [(Some(0), sorted(&[&live]))]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_note_with_no_sentence_or_whose_sentence_is_gone_names_no_claims() -> Result<()> {
+    let course = unchecked().await?;
+    note_about(&course, 0, None).await?;
+    assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
+
+    note_about(&course, 0, Some(GOOD)).await?;
+    assert_eq!(claim_ids_of_notes(&course).await?.len(), 1);
+    assert_ne!(
+        claim_ids_of_notes(&course).await?[0].1,
+        Vec::<String>::new()
+    );
+    set_body(
+        &course,
+        0,
+        "The section was rewritten and holds none of it.",
+    )
+    .await?;
+    assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_note_in_a_draft_lesson_names_no_claims_and_shows_removed_for_nothing() -> Result<()> {
+    use crate::lessons::claim_reviews::teaching_findings::{
+        TeachingFindingStateDto, TeachingResolutionDto,
+    };
+    let course = unchecked().await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    note_about(&course, 0, Some(GOOD)).await?;
+    sqlx::query("UPDATE learning_lesson_reviews SET state='needs_review' WHERE lesson_id=?")
+        .bind(&course.lesson_id)
+        .execute(&course.pool)
+        .await?;
+    assert_eq!(claim_ids_of_notes(&course).await?, [(Some(0), vec![])]);
+
+    let revision = ledger(&course).await?.revision;
+    ClaimReviewRepository::new(course.pool.clone())
+        .append(
+            &course.lesson_id,
+            &target,
+            user_event(chrono::Utc::now().timestamp_millis()),
+            ClaimEvent::UserAction {
+                action: UserAction::Remove,
+                note: None,
+            },
+            revision,
+        )
+        .await?;
+    set_body(&course, 0, "The section no longer holds the sentence.").await?;
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .expect("the lesson has its review");
+    let note = &review.teaching_findings[0];
+    assert!(note.claim_ids.is_empty());
+    assert_eq!(note.state, TeachingFindingStateDto::Waiting);
+    assert_eq!(note.resolution, None::<TeachingResolutionDto>);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -> Result<()> {
+    use crate::lessons::claim_reviews::teaching_findings::{
+        TeachingFindingStateDto, TeachingResolutionDto, TeachingSettleDto,
+    };
+    let course = unchecked().await?;
+    let body = stored(&course).await?.blocks[0].clone();
+    let overlap = extract(
+        &course,
+        "overlap",
+        ClaimLocation::locate(0, UnitKind::Block, "body", GOOD, &body),
+        "Field-name whitespace is kept.",
+    )
+    .await?;
+    let target = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
+    note_about(&course, 0, Some(GOOD)).await?;
+    let notes = || async {
+        ClaimReviewService::new(course.pool.clone())
+            .review(&course.program_id, &course.lesson_id)
+            .await
+            .map(|review| review.expect("the lesson has its review").teaching_findings)
+    };
+    let waiting = notes().await?;
+    assert_eq!(waiting[0].state, TeachingFindingStateDto::Waiting);
+    assert_eq!(waiting[0].claim_ids.len(), 2);
+
+    act(&course, &target, ClaimActionRequestDto::Remove).await?;
+    let removed = notes().await?;
+    assert_eq!(removed[0].state, TeachingFindingStateDto::Resolved);
+    assert_eq!(removed[0].resolution, Some(TeachingResolutionDto::Removed));
+    assert!(removed[0].resolved_at.is_some());
+    let mut named = removed[0].claim_ids.clone();
+    named.sort();
+    assert_eq!(named, sorted(&[&target, &overlap]));
+
+    let stored_state: (String, Option<String>) = sqlx::query_as(
+        "SELECT state, resolution FROM learning_lesson_teaching_findings WHERE lesson_id=?",
+    )
+    .bind(&course.lesson_id)
+    .fetch_one(&course.pool)
+    .await?;
+    assert_eq!(stored_state, ("waiting".to_owned(), None));
+
+    let store = TeachingFindingsRepository::new(course.pool.clone());
+    store
+        .settle(
+            &course.program_id,
+            &course.lesson_id,
+            &["quotation:section-0".to_owned()],
+            TeachingSettleDto::Keep,
+        )
+        .await?;
+    let kept = notes().await?;
+    assert_eq!(kept[0].state, TeachingFindingStateDto::Resolved);
+    assert_eq!(kept[0].resolution, Some(TeachingResolutionDto::Removed));
+    Ok(())
+}
+
+const AFTER_IT: &str = "This section changed after you removed this sentence, so it can't go back on its own. Edit the section to add it back.";
+const FIRST_UNDO: &str = "First undo the other sentences you removed from this section.";
+
+const ALPHA: &str = "Alpha comes first.";
+const BRAVO: &str = "Bravo comes second.";
+const CHARLIE: &str = "Charlie comes third.";
+const DELTA: &str = "Delta comes fourth.";
+const ECHO: &str = "Echo comes last.";
+
+fn five() -> String {
+    [ALPHA, BRAVO, CHARLIE, DELTA, ECHO].join(" ")
+}
+
+/// The first section reads as `five`, with a claim on each of the three
+/// sentences between the first and the last.
+async fn adjacent(course: &Course) -> Result<[ClaimId; 3]> {
+    let body = five();
+    set_body(course, 0, &body).await?;
+    let mut ids = Vec::new();
+    for (id, sentence) in [("bravo", BRAVO), ("charlie", CHARLIE), ("delta", DELTA)] {
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", sentence, &body);
+        ids.push(extract(course, id, location, sentence).await?);
+    }
+    Ok(ids.try_into().unwrap())
+}
+
+fn in_order(body: &str) -> bool {
+    let at: Vec<usize> = [ALPHA, BRAVO, CHARLIE, DELTA, ECHO]
+        .iter()
+        .filter_map(|sentence| body.find(sentence))
+        .collect();
+    at.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+#[tokio::test]
+async fn a_batch_undo_of_a_batch_remove_of_adjacent_statements_leaves_the_text_byte_for_byte_as_it_was(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    let before = stored(&course).await?;
+    let ids = vec![bravo.0.clone(), charlie.0.clone()];
+    let removed = act_many(
+        &course,
+        &ids,
+        ClaimActionRequestDto::Remove,
+        before.ledger_revision,
+    )
+    .await?;
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        [ALPHA, DELTA, ECHO].join(" ")
+    );
+
+    act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
+
+    assert_eq!(stored(&course).await?.blocks, before.blocks);
+    Ok(())
+}
+
+#[tokio::test]
+async fn adjacent_removals_undone_in_any_order_come_back_in_place_or_are_refused_until_the_ones_after_them_are_back(
+) -> Result<()> {
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let course = unchecked().await?;
+        let ids = adjacent(&course).await?;
+        for id in &ids {
+            act(&course, id, ClaimActionRequestDto::Remove).await?;
+        }
+        assert_eq!(stored(&course).await?.blocks[0], [ALPHA, ECHO].join(" "));
+
+        let mut waiting = order.to_vec();
+        while !waiting.is_empty() {
+            let mut refused_now = Vec::new();
+            for index in &waiting {
+                let before = stored(&course).await?;
+                match act(&course, &ids[*index], ClaimActionRequestDto::Undo).await {
+                    Ok(_) => {
+                        let body = stored(&course).await?.blocks[0].clone();
+                        assert!(in_order(&body), "{order:?}: {body}");
+                    }
+                    Err(error) => {
+                        assert!(error.to_string().contains(FIRST_UNDO), "{error}");
+                        assert_eq!(stored(&course).await?, before, "{order:?}");
+                        refused_now.push(*index);
+                    }
+                }
+            }
+            assert!(refused_now.len() < waiting.len(), "{order:?}: no progress");
+            waiting = refused_now;
+        }
+
+        assert_eq!(stored(&course).await?.blocks[0], five(), "{order:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_after_it_and_names_that_reason(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    act(&course, &bravo, ClaimActionRequestDto::Remove).await?;
+    act(
+        &course,
+        &charlie,
+        edit(CHARLIE, "Delta replaces the third."),
+    )
+    .await?;
+
+    let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    assert!(!error.to_string().contains(FIRST_UNDO), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_but_kept_its_first_letter(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let [bravo, charlie, _] = adjacent(&course).await?;
+    act(&course, &bravo, ClaimActionRequestDto::Remove).await?;
+    act(
+        &course,
+        &charlie,
+        edit(CHARLIE, "Charlie comes third, after Alpha."),
+    )
+    .await?;
+
+    let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_undo_of_the_first_sentences_removal_is_refused_when_the_next_one_was_edited(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let body = five();
+    set_body(&course, 0, &body).await?;
+    let mut ids = Vec::new();
+    for (id, sentence) in [("alpha", ALPHA), ("bravo", BRAVO)] {
+        let location = ClaimLocation::locate(0, UnitKind::Block, "body", sentence, &body);
+        ids.push(extract(&course, id, location, sentence).await?);
+    }
+    act(&course, &ids[0], ClaimActionRequestDto::Remove).await?;
+    act(&course, &ids[1], edit(BRAVO, "Bravo comes second, truly.")).await?;
+
+    let error = refused(&course, &ids[0], ClaimActionRequestDto::Undo).await;
+
+    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_removal_between_neighbours_that_occur_twice_undoes_byte_for_byte() -> Result<()> {
+    let course = unchecked().await?;
+    let body = "Same here. Gone now. Other one. Same here. Other one.";
+    set_body(&course, 0, body).await?;
+    let location = ClaimLocation::locate(0, UnitKind::Block, "body", "Gone now.", body);
+    let gone = extract(&course, "gone", location, "Gone now.").await?;
+    act(&course, &gone, ClaimActionRequestDto::Remove).await?;
+    assert_eq!(
+        stored(&course).await?.blocks[0],
+        "Same here. Other one. Same here. Other one."
+    );
+
+    act(&course, &gone, ClaimActionRequestDto::Undo).await?;
+
+    assert_eq!(stored(&course).await?.blocks[0], body);
     Ok(())
 }

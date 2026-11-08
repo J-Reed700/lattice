@@ -184,7 +184,9 @@ mod macos {
         let rgbx = draw(&pdf_page, width, height, scale)
             .ok_or_else(|| fail("CoreGraphics could not create a bitmap"))?;
         let rgb: Vec<u8> = rgbx
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .flat_map(|pixel| pixel.iter().take(3).copied())
             .collect();
         let bytes = encode_png(&rgb, width, height).map_err(|reason| fail(&reason))?;

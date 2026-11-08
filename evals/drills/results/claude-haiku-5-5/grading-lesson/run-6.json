@@ -1,0 +1,1139 @@
+{
+  "model": {
+    "name": "claude-haiku-5-5",
+    "provider": "anthropic",
+    "context_window": 131072
+  },
+  "cases": 10,
+  "failed": 0,
+  "issues": {
+    "total": 33,
+    "agree": 33,
+    "agreement": 1.0,
+    "exact": 33,
+    "exact_agreement": 1.0,
+    "confusion": {
+      "found": {
+        "found": 16
+      },
+      "half_found": {
+        "half_found": 7
+      },
+      "missed": {
+        "missed": 10
+      }
+    }
+  },
+  "findings": {
+    "total": 35,
+    "agree": 34,
+    "agreement": 0.9714285714285714,
+    "exact": 34,
+    "exact_agreement": 0.9714285714285714,
+    "confusion": {
+      "false_positive": {
+        "false_positive": 7,
+        "matches": 1
+      },
+      "matches": {
+        "matches": 23
+      },
+      "valid_extra": {
+        "valid_extra": 4
+      }
+    }
+  },
+  "disagreements": [
+    {
+      "case": "07-typescript-the-together-lesson-cited-on-a-single-request",
+      "why": "The first finding cites the lesson's idea that requests which do not depend on each other should be started together, and puts it on the one request of moveWidget. Everything after that request uses its result, so there is nothing to start with it and the code follows the idea: false positive. The second names the lesson's issue on the two requests in loadVisible in its own words, that the hidden ids do not depend on the widgets and the wait should be the slower of the two: found. The sort that reorders the caller's list is named in full: found. The save that is not awaited, which the lesson's sentence on awaiting a call whose outcome matters is about, is not mentioned: missed.",
+      "kind": "finding",
+      "index": 0,
+      "finding": {
+        "span": {
+          "path": "layout.ts",
+          "start": 34,
+          "end": 34
+        },
+        "text": "api.widgets is awaited on its own before the rest of the function runs, but requests that do not depend on each other should be started together and awaited together.",
+        "severity": "major"
+      },
+      "label": "false_positive",
+      "got": {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "reason": "It is about the sequential independent-await problem of issue 3, citing the lesson that requests should start together, but it points at line 34 in moveWidget, where no sibling request is awaited in sequence; the real pair is on lines 14 to 15. Its cause is the right one, though it is misplaced, and finding 2 gives the credited cause.",
+      "key": [
+        {
+          "id": "layout-serial-awaits",
+          "pattern": "performance.sequential_awaits",
+          "severity": "minor",
+          "span": {
+            "path": "layout.ts",
+            "start": 14,
+            "end": 15
+          },
+          "consequence": "The hidden-id request only starts once the widget request has finished, so loading the dashboard takes as long as both requests added together instead of the slower of the two.",
+          "fix": {
+            "path": "layout.ts",
+            "before": "  const widgets = await api.widgets(userId);\n  const hiddenIds = await api.hiddenIds(userId);",
+            "after": "  const [widgets, hiddenIds] = await Promise.all([\n    api.widgets(userId),\n    api.hiddenIds(userId),\n  ]);"
+          },
+          "explanation": "loadVisible awaits two requests that do not depend on each other, one after the other, so their waits add up. Start both and await them together with Promise.all.",
+          "proof": {
+            "judged": {
+              "reason": "The edit replaces the Promise.all over both requests with two awaits in sequence, and the clean code overlaps them."
+            }
+          },
+          "origin": "planted",
+          "lesson": {
+            "lesson_id": "lesson-1",
+            "sentences": [
+              {
+                "text": "Requests that do not depend on each other should be started together and awaited together, so that the wait is the slowest request and not the sum.",
+                "source": "Asynchronous requests"
+              }
+            ]
+          }
+        },
+        {
+          "id": "layout-sort-in-place",
+          "pattern": "correctness.mutated_argument",
+          "severity": "major",
+          "span": {
+            "path": "layout.ts",
+            "start": 21,
+            "end": 21
+          },
+          "consequence": "Array.prototype.sort reorders the array it is called on, so ordered() and topThree() change the order of the caller's own list as a side effect, and a list the caller still holds is reordered under it.",
+          "fix": {
+            "path": "layout.ts",
+            "before": "  return widgets.sort((a, b) => a.position - b.position);",
+            "after": "  return [...widgets].sort((a, b) => a.position - b.position);"
+          },
+          "explanation": "ordered() sorts the array it was given instead of a copy, and sort works in place, so every caller's list is reordered. Copy first, as in [...widgets].sort(...).",
+          "proof": {
+            "judged": {
+              "reason": "The edit drops the copy that the clean code sorts, so the sort now reorders the argument itself."
+            }
+          },
+          "origin": "planted"
+        },
+        {
+          "id": "layout-save-not-awaited",
+          "pattern": "concurrency.missing_await",
+          "severity": "major",
+          "span": {
+            "path": "layout.ts",
+            "start": 42,
+            "end": 42
+          },
+          "consequence": "moveWidget resolves before the layout is saved, and if the save fails the rejection belongs to nobody: the caller is told the move worked and the failure surfaces as an unhandled rejection.",
+          "fix": {
+            "path": "layout.ts",
+            "before": "  api.saveLayout(userId, result);",
+            "after": "  await api.saveLayout(userId, result);"
+          },
+          "explanation": "The call to saveLayout is not awaited, so moveWidget returns before the save is done and can neither wait for it nor report its failure. Await it before returning.",
+          "proof": {
+            "judged": {
+              "reason": "The edit removes the await that the clean code puts in front of saveLayout."
+            }
+          },
+          "origin": "planted",
+          "lesson": {
+            "lesson_id": "lesson-1",
+            "sentences": [
+              {
+                "text": "Await a call whose outcome matters, so that its failure reaches the caller instead of being lost."
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "detail_differences": [],
+  "results": [
+    {
+      "case": "01-python-the-race-and-the-query-in-the-lessons-words",
+      "kind": "lesson_words",
+      "seconds": 3.4708092,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: the sku is pasted into the query text so a quote in it is read as SQL, and it says to pass it as a parameter. This is the SQL injection problem."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the check-then-act race: the check is made before the lock, another worker may reserve the same units in between, and the check and update must happen under one lock as one step."
+          ],
+          [
+            "missed",
+            "The loop bound range(len(history)) makes history[i + 1] read past the end on the last pass. No finding mentions the loop bound or the IndexError; finding 3 is about the lock and finding 1 and 2 are about other issues."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "It describes the check-then-act race on the stock check and the reserve update, matching issue 2 on the same lines."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "It describes the SQL injection from pasting the sku into the query text, matching issue 1."
+          ],
+          [
+            "false_positive",
+            "Moving the lock into reserve would create a new lock per call, which does nothing to share it between workers. The shared lock in __init__ is correct, so this is a false claim about the code."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "02-go-the-open-body-and-the-same-lookup-in-the-lessons-words",
+      "kind": "lesson_words",
+      "seconds": 5.4175205,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed",
+          {
+            "found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: Rate returns without closing resp.Body on any path, so each call leaves its connection held open and a program runs out of connections. That is the leaked handle the issue describes."
+          ],
+          [
+            "missed",
+            "No finding mentions the discarded error from json.NewDecoder Decode, or the broken response hidden as a missing rate."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the repeated work: each pass asks the service for the same pair's rate that does not change, and says to fetch it once before the loop. That is the cause of the repeated lookup."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the unclosed response body on every path and its connection-exhaustion consequence."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the repeated rate lookup inside the loop of ConvertAll, which should be done once before the loop."
+          ],
+          [
+            "false_positive",
+            "Suggests http.DefaultClient for simplicity; this is a preference, not a real defect, since a dedicated client with a timeout is sound. This is a false positive."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "03-rust-the-narrow-sum-and-the-limit-in-the-lessons-words",
+      "kind": "lesson_words",
+      "seconds": 3.0265922,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: a batch may hold up to limit_cents, so a payment reaching exactly the limit belongs in it, and the >= comparison wrongly sends it to the next batch. This is the idea the lesson states."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: the payments are summed as u32 before widening to u64, so the addition overflows before the widening can help. It states the lesson's point that the sum must be in a wide enough type from the start."
+          ],
+          [
+            "missed",
+            "No finding mentions the nested scan over earlier payments or its quadratic cost. Finding 1 and 2 concern other lines and problems."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies the u32 summation overflow in total_cents, which is a real defect matching issue 2."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies that the >= comparison at line 14 excludes a payment that exactly fills the limit, contrary to the at-most-limit contract. This matches issue 1."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "04-java-we-were-taught-something-else",
+      "kind": "lesson_vague",
+      "seconds": 3.2419207,
+      "labels": {
+        "issues": [
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          {
+            "found": {
+              "finding": 3
+            }
+          },
+          {
+            "half_found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          "valid_extra",
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 only says the comparison is not how the reviewer was taught; it names no identity-versus-equality cause, so it is at most a pointer at the line without a cause."
+          ],
+          [
+            {
+              "found": {
+                "finding": 3
+              }
+            },
+            "Finding 4 names the cause: kept.remove changes the list during the for-each walk, so the iterator detects the change and throws ConcurrentModificationException."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 says only that the code goes against the lesson, without naming repeated concatenation copying the string each turn or the quadratic cost."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Says the comparison is not how strings were taught, with no cause; it points at line 27, which is the real issue's location, so it is about issue 1 but unexplained."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Points at the concatenation loop and cites the lesson, but gives no cause such as copying or quadratic growth."
+          ],
+          [
+            "valid_extra",
+            "Correctly notes that largest throws IndexOutOfBoundsException on an empty list; this is a real risk in the clean code too, and it is not a planted issue in the key."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly names the ConcurrentModificationException cause from modifying kept during the for-each loop."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "05-sql-it-ignores-what-we-were-taught",
+      "kind": "lesson_vague",
+      "seconds": 6.7519554,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 2
+            }
+          },
+          {
+            "half_found": {
+              "finding": 0
+            }
+          },
+          "missed",
+          {
+            "half_found": {
+              "finding": 1
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                3
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the hardcoded password in the script, in version control, and says changing it means editing a migration. That is the cause: the secret is written into source that anyone can read."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 points at lines 6 to 12 and says the migration is not written as the lesson teaches, which hints at the lack of a transaction, but it never names the cause: no transaction, so a failure partway leaves partial changes. The lesson is only alluded to, so this is a half-find."
+          ],
+          [
+            "missed",
+            "No finding mentions the date() function on placed_at or the index not being usable. The finding on line 14 is about comment style only."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 is on line 22 but only says the line ignores the lesson, without naming NULL comparisons or the unreferred customers lost. It does not name the cause, so it is at most a half-find pointing at the issue."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Points at lines 6 to 12 and says the lesson was not followed, but names no cause such as the missing transaction or the resulting partial state. It only points at the issue."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  3
+                ]
+              }
+            },
+            "Says the line ignores the lesson but does not name NULL comparison or the excluded unreferred customers. It only points at the issue."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Names the hardcoded password in version-controlled source and the cost of changing it, which is the cause of the secret-in-code issue."
+          ],
+          [
+            "false_positive",
+            "A style preference about comment syntax; not a real defect and unrelated to any planted issue."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "06-javascript-the-await-lesson-cited-where-the-await-is",
+      "kind": "lesson_misapplied",
+      "seconds": 3.505449,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          "missed",
+          "missed",
+          "missed"
+        ],
+        "findings": [
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          "valid_extra"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: with var every click handler shares one i, which equals buttons.length by the time of clicking, so commands[i] is undefined; it states the fix of using let."
+          ],
+          [
+            "missed",
+            "No finding addresses the anonymous resize listener that can never be removed."
+          ],
+          [
+            "missed",
+            "No finding addresses the loose equality comparison on revision."
+          ],
+          [
+            "missed",
+            "Finding 1 points at line 20, the await of ownerOf, and complains that a promise is used before being awaited; it does not mention the missing await on canEdit at line 25, so it names a different problem and does not name the cause of the unawaited canEdit call."
+          ]
+        ],
+        "findings": [
+          [
+            "false_positive",
+            "Complains that owner is read before ownerOf's promise is awaited; this is a real missing await but at line 20, which is actually correctly awaited. The claim is wrong about the code, and it does not identify the unawaited canEdit call in save, so it is not about issue 1's cause."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly names the var closure capture causing every handler to use the final i, matching the key's loop-variable issue."
+          ],
+          [
+            "valid_extra",
+            "wordCount splitting on a single space miscounts empty documents and repeated spaces; this is a real defect in the code but is not among the key's planted issues, and it is a genuine problem of this code."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "07-typescript-the-together-lesson-cited-on-a-single-request",
+      "kind": "lesson_misapplied",
+      "seconds": 8.6054194,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 2
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          "false_positive",
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          }
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: hiddenIds does not depend on the widgets and is only requested after they arrive, so both should start together and the wait should be the slower request, not the sum."
+          ],
+          [
+            {
+              "found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 names the cause: sort reorders the caller's own array as a side effect, and it gives the fix of sorting a copy."
+          ],
+          [
+            "missed",
+            "No finding mentions the missing await on saveLayout or the lost save failure."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "It is about the sequential independent-await problem of issue 3, citing the lesson that requests should start together, but it points at line 34 in moveWidget, where no sibling request is awaited in sequence; the real pair is on lines 14 to 15. Its cause is the right one, though it is misplaced, and finding 2 gives the credited cause."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "It names the cause of the sequential independent awaits: hiddenIds does not depend on the widgets and is only requested once they arrive, with the fix of starting both together."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "It names the cause of the in-place mutation: sort reorders the caller's array as a side effect, and the fix is to sort a copy."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "08-python-two-lesson-issues-one-half-found-catalogue-issue",
+      "kind": "mixed",
+      "seconds": 6.8416046,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "half_found": {
+              "finding": 2
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          "false_positive",
+          "valid_extra"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the shared empty list built once at definition, so events leak into later calls, matching the mutable default argument cause."
+          ],
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the naive datetime.now() being compared with timezone-aware event times, which is the cause of the naive/aware mismatch."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 says only that error handling in send is poor, without stating that the caught exception hides send failures from the caller."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the shared mutable default list and the cross-call leakage of events."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Correctly identifies the naive now() versus aware event times and the resulting TypeError."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Points at the send error handling but gives no cause; it does not say failures are silently dropped."
+          ],
+          [
+            "false_positive",
+            "Readability preference about a list comprehension; not a real defect."
+          ],
+          [
+            "valid_extra",
+            "Empty events list causing ZeroDivisionError in average_age_hours is a real defect not in the key, and the clean code has the same behavior, so it is a genuine risk."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "09-typescript-lesson-and-catalogue-issues-found-half-found-and-missed",
+      "kind": "mixed",
+      "seconds": 6.6371628000000005,
+      "labels": {
+        "issues": [
+          "missed",
+          {
+            "half_found": {
+              "finding": 1
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          }
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          "false_positive",
+          "valid_extra"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            "missed",
+            "No finding complains about the boolean onlyOpen flag parameter selecting behaviour in ordersFor; findings 1 through 4 do not address it."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 points at the deeply nested discount function but only says it is hard to follow, giving no cause such as the nested conditions burying the main path or the need for early returns."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 names the cause: 450 and 120 are unexplained literals for the flat charge and per-kilo price, so whoever changes rates must guess which number to touch."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies the unnamed magic numbers 450 and 120 in shippingCents and why it matters."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Says only that the function is hard to follow, with no cause named; it points at the nested discount logic of issue 2 but gives no reason."
+          ],
+          [
+            "false_positive",
+            "Asks to rewrite reduce as a for loop as a matter of preference; this is a style choice, not a defect, so it is a false_positive."
+          ],
+          [
+            "valid_extra",
+            "Real defect: averageTotalCents returns NaN for an empty list since 0/0 is NaN. The key does not hold this issue, so it is a valid extra."
+          ]
+        ]
+      }
+    },
+    {
+      "case": "10-java-the-promised-cap-and-the-due-date-with-one-vague-remark",
+      "kind": "mixed",
+      "seconds": 3.2734659,
+      "labels": {
+        "issues": [
+          {
+            "found": {
+              "finding": 1
+            }
+          },
+          {
+            "half_found": {
+              "finding": 2
+            }
+          },
+          {
+            "found": {
+              "finding": 0
+            }
+          },
+          "missed"
+        ],
+        "findings": [
+          {
+            "matches": {
+              "issues": [
+                2
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                0
+              ]
+            }
+          },
+          {
+            "matches": {
+              "issues": [
+                1
+              ]
+            }
+          },
+          "false_positive"
+        ]
+      },
+      "got": {
+        "issues": [
+          [
+            {
+              "found": {
+                "finding": 1
+              }
+            },
+            "Finding 2 names the cause: on the due date itself the check returns true, so a renewal on the last day is wrongly refused; it states that a loan is overdue only after its due date."
+          ],
+          [
+            {
+              "half_found": {
+                "finding": 2
+              }
+            },
+            "Finding 3 only says the condition is hard to read, without explaining that the combined negated rules and nested ternary make the meaning hard to re-derive and easy to break when changed."
+          ],
+          [
+            {
+              "found": {
+                "finding": 0
+              }
+            },
+            "Finding 1 says the comment promises a cap on fines that fineCents does not apply, which is the misleading-comment cause."
+          ],
+          [
+            "missed",
+            "No finding mentions the negative day count for books returned before the due date; finding 4 concerns the fine constant type, which is a different problem."
+          ]
+        ],
+        "findings": [
+          [
+            {
+              "matches": {
+                "issues": [
+                  2
+                ]
+              }
+            },
+            "Correctly identifies that the comment promises a price cap that the code does not implement."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  0
+                ]
+              }
+            },
+            "Correctly identifies the on-due-date overdue error caused by the isBefore comparison."
+          ],
+          [
+            {
+              "matches": {
+                "issues": [
+                  1
+                ]
+              }
+            },
+            "Only states the condition is hard to read; it names no cause, so it is about the complex conditional issue but earns only a half find."
+          ],
+          [
+            "false_positive",
+            "Suggesting double for fines is a preference that misreads the cents model; charging partial days is not required and the constant is not the defect here."
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -56,7 +56,7 @@ function AcceptSourceBody({ programId, support, sharing, onClose, onTrusted }: P
       {set.error && <p role="alert" className="mt-2 text-xs text-danger-fg">{set.error.message}</p>}
       <div className="mt-5 flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button type="button" disabled={set.isPending} onClick={() => void confirm()}>{set.isPending ? 'Checking the claims…' : `Accept for ${claimsCount(count)}`}</Button>
+        <Button type="button" disabled={set.isPending} onClick={() => void confirm()}>{set.isPending ? 'Checking the statements…' : `Accept for ${claimsCount(count)}`}</Button>
       </div>
     </DialogContent>
   );

@@ -81,7 +81,22 @@ export type TakenOutSentence = {
   key: string;
   sentence: string;
   statements: Array<{ claimId: string; statement: string; why: string }>;
+  /** The claim a put back is made on, when one of them can be put back. */
+  claimId: string | null;
+  /** Whether the ledger knows where the sentence was. */
+  place: 'known' | 'choose';
 };
+
+/** The last sentence of the plain text before a sentence, or '' when it does not end in one. */
+export const sentenceBefore = (contextBefore: string) => contextBefore.trim().match(/[^.!?]*[.!?]+["'’”)\]]*$/)?.[0].trim() ?? '';
+
+/** A sentence the machine rewrote, with the claim its original is restored on. */
+export type RewrittenSentence = { claimId: string; original: string; rewrite: string; why: string | null };
+
+export function rewrittenSentences(claims: ClaimReviewItemDto[]): RewrittenSentence[] {
+  return claims.flatMap((claim) => (claim.rewritten && claim.availableActions.includes('restore_original')
+    ? [{ claimId: claim.claimId, original: claim.rewritten.original, rewrite: claim.rewritten.rewrite, why: claim.rewritten.why }] : []));
+}
 
 /** The machine's removals, a sentence several statements stood on listed once, naming each of them. */
 export function takenOutSentences(claims: ClaimReviewItemDto[]): TakenOutSentence[] {
@@ -90,8 +105,12 @@ export function takenOutSentences(claims: ClaimReviewItemDto[]): TakenOutSentenc
     const { unitIndex, field } = claim.location;
     const { sentence, statement } = claim.presentation;
     const key = `${unitIndex}:${field}:${sentence}`;
-    const entry = sentences.get(key) ?? { key, sentence, statements: [] };
+    const entry = sentences.get(key) ?? { key, sentence, statements: [], claimId: null, place: 'known' as const };
     entry.statements.push({ claimId: claim.claimId, statement, why: removalReason(claim) });
+    if (entry.claimId === null && claim.availableActions.includes('put_back')) {
+      entry.claimId = claim.claimId;
+      entry.place = claim.place === 'choose' ? 'choose' : 'known';
+    }
     sentences.set(key, entry);
   }
   return [...sentences.values()];
@@ -344,6 +363,8 @@ function describeUserAction(action: UserActionDto, note: string | null): string 
     case 'edit': return `Edited: “${action.before}” → “${action.after}”`;
     case 'remove': return 'Removed the sentence';
     case 'research_with_hint': return `Asked for a search: “${action.hint}”`;
+    case 'put_back': return action.edited ? `Put back after editing: “${action.sentence}”` : `Put back in the lesson: “${action.sentence}”`;
+    case 'restore_original': return `Restored the original: “${action.rewrite}” → “${action.original}”`;
   }
 }
 
@@ -364,7 +385,7 @@ function checkVerdict(result: CheckResultDto): string {
 /** One history row in words. */
 export function describeEvent(payload: ClaimEventPayloadDto): string {
   switch (payload.kind) {
-    case 'extracted': return `Claim found in ${payload.field}: “${payload.statement}”`;
+    case 'extracted': return `Statement found in ${payload.field}: “${payload.statement}”`;
     case 'checked': {
       const who = payload.check.checker.role === 'verifier' ? 'Independent check' : 'Checker';
       const verdict = checkVerdict(payload.check.result).toLowerCase();
@@ -379,12 +400,12 @@ export function describeEvent(payload: ClaimEventPayloadDto): string {
     case 'user_action': return describeUserAction(payload.action, payload.note);
     case 'evidence_attached': {
       const input = { saved_passage: 'a saved passage', link: 'a link', document: 'a file', pasted_text: 'pasted text' }[payload.provenance.input];
-      const result = payload.result.outcome === 'no_passage' ? 'it does not mention the claim'
-        : payload.result.check.result.verdict === 'failed' ? verdictWords(payload.result.check.result.kind).toLowerCase() : 'it states the claim';
+      const result = payload.result.outcome === 'no_passage' ? 'it does not mention the statement'
+        : payload.result.check.result.verdict === 'failed' ? verdictWords(payload.result.check.result.kind).toLowerCase() : 'it supports the statement';
       return `Added ${input}: ${result}`;
     }
-    case 'superseded': return payload.successor ? 'Replaced by a re-extracted claim' : 'Removed by an edit';
-    case 'born_of_repair': return 'Added while repairing another claim';
+    case 'superseded': return payload.successor ? 'Replaced by a newer statement' : 'Removed by an edit';
+    case 'born_of_repair': return 'Added while repairing another statement';
     case 'classified': return `Sorted as ${CLASSES[payload.class]}, ${CLASSIFIERS[payload.by]}`;
     case 'reopened': return REOPEN_CAUSES[payload.cause.cause];
     case 'undone': return `Undid step ${payload.eventOrdinal}`;
@@ -440,7 +461,7 @@ export function reviewHold(review: LessonClaimReviewDto, waiting: number): Revie
   return review.changedSinceStop ? 'resolved' : 'audit';
 }
 
-export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a claim or add a source first.';
+export const NOTHING_CHANGED = 'Nothing changed since the last check. Resolve a statement or add a source first.';
 
 /** Lessons a completed job held for review, from its result reference. */
 export function heldLessonIds(job: Pick<LearningGenerationJob, 'status' | 'resultId'> | null | undefined): string[] {

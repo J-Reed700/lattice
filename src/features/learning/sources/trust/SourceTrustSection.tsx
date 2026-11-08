@@ -41,7 +41,7 @@ export function SourceTrustSection({
               {reassess.isPending ? 'Assessing…' : entry.standing ? 'Assess again' : 'Assess'}
             </button>
           </div>
-          <p className="text-[11px] leading-5 text-text-muted">A source is primary only for a subject it owns; each claim card shows the level for that claim’s subject.</p>
+          <p className="text-[11px] leading-5 text-text-muted">A source is primary only for a subject it owns; each statement shows the level for that statement’s subject.</p>
           {reassess.error && <p role="alert" className="text-xs text-rose-700">{reassess.error.message}</p>}
           <TrustOverrideMenu entry={entry} programId={programId} sourceTitle={sourceTitle} />
         </div>

@@ -1,6 +1,8 @@
 use std::env;
 use std::path::PathBuf;
 
+#[path = "build_support/main_thread_stack.rs"]
+mod main_thread_stack;
 #[path = "build_support/sidecar_guard.rs"]
 mod sidecar_guard;
 
@@ -42,6 +44,16 @@ fn embed_windows_manifest() {
     );
 }
 
+/// Reserve the main thread's stack in the app and `export_bindings`; the test
+/// harnesses run their tests on spawned threads.
+fn reserve_main_thread_stack() {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    for arg in main_thread_stack::link_args(&target_os, &target_env) {
+        println!("cargo::rustc-link-arg-bins={arg}");
+    }
+}
+
 fn main() {
     // An instrumented binary must never use the shipping identity or its data.
     // Keep the WebDriver endpoint opt-in and confined to test-only bundles.
@@ -65,6 +77,7 @@ fn main() {
         }
     }
     embed_windows_manifest();
+    reserve_main_thread_stack();
 
     if !guard_llama_sidecar() {
         // The guard logged `cargo::error`s; Cargo fails the build once this
@@ -542,8 +555,13 @@ fn main() {
                     "course_index_close",
                     "get_learning_lesson_claim_review",
                     "resolve_learning_claim",
+                    "resolve_learning_claims",
                     "attach_learning_claim_evidence",
-                    "keep_learning_teaching_finding",
+                    "attach_learning_lesson_source",
+                    "settle_learning_teaching_findings",
+                    "edit_learning_lesson_section",
+                    "get_learning_lesson_question",
+                    "edit_learning_lesson_question",
                     "resume_learning_lesson_review",
                     "capture_learning_source_snapshot",
                     "get_learning_checker_accuracy",
@@ -610,12 +628,12 @@ fn main() {
                     "create_learning_tangent",
                     "list_learning_tangents",
                     "set_conversation_course",
-                    "start_review_drill",
+                    "start_course_drill",
                     "submit_code_review",
                     "code_review_result",
                     "regrade_code_review",
                     "code_review_languages",
-                    "review_drill_courses",
+                    "course_drills",
                 ]),
             )
             .plugin(

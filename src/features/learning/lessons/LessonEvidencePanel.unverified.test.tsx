@@ -52,24 +52,24 @@ describe('lesson evidence with statements that are not verified', () => {
       unverified('Water boils at 100 °C on Everest.', 'unsupported'),
       unverified('Steam is hotter than boiling water.', 'contradicted'),
     ]);
-    expect(evidenceSummary(data)).toBe('2 claims verified against sources · 2 not verified');
+    expect(evidenceSummary(data)).toBe('2 statements verified against sources · 2 not verified');
     mocks.evidence.mockResolvedValue({ ok: true, data });
     show();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
-    expect(await screen.findByText(/2 claims verified against sources · 2 not verified/)).toBeVisible();
+    expect(await screen.findByText(/2 statements verified against sources · 2 not verified/)).toBeVisible();
   });
 
   it('counts a lone unverified statement as "1 not verified" and never as verified', () => {
-    expect(evidenceSummary(report([unverified('Water boils at 100 °C on Everest.', 'unchecked')]))).toBe('0 claims verified against sources · 1 not verified');
+    expect(evidenceSummary(report([unverified('Water boils at 100 °C on Everest.', 'unchecked')]))).toBe('0 statements verified against sources · 1 not verified');
   });
 
   it('reads exactly as today for a lesson with nothing unverified', async () => {
     const data = report([claim({ claim: 'Ice floats on water.' }), claim({ claim: 'Water expands as it freezes.' })]);
-    expect(evidenceSummary(data)).toBe('2 claims verified against sources');
+    expect(evidenceSummary(data)).toBe('2 statements verified against sources');
     mocks.evidence.mockResolvedValue({ ok: true, data });
     show();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
-    expect(await screen.findByText(/2 claims verified against sources/)).toBeVisible();
+    expect(await screen.findByText(/2 statements verified against sources/)).toBeVisible();
     expect(screen.queryByText(/not verified/i)).not.toBeInTheDocument();
   });
 });

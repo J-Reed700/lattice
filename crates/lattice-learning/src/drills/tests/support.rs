@@ -8,24 +8,25 @@ use crate::drills::attempt_grading::AttemptGrading;
 use crate::drills::attempts::{self, Attempt, AttemptMode, Submission};
 use crate::drills::bank;
 use crate::drills::build::{
-    Baseline, BlindReview, CleanCode, CleanReview, DrillBuild, Evidence, Mutation, Planted, Proved,
-    ProvenMutation, SourcePassage, Trail, Verification,
+    Baseline, BlindReview, CleanCode, CleanReview, DrillBuild, Evidence, LessonChecked, Mutation,
+    Planted, Proved, ProvenMutation, SourcePassage, Trail, Verification,
 };
 use crate::drills::grader::{Review, ReviewGrader};
 use crate::drills::material::passage::{SourceFinding, SourceSays};
 use crate::drills::material::{CodeMaterial, PassageMaterial, SourceCheck};
-use crate::drills::repository::{self, NewDrill};
+use crate::drills::repository::{self, NewDrill, StoredDrill};
 use crate::drills::runner::{CodeRunner, RunOutcome};
+use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
-use crate::persistence::db;
+use crate::persistence::{db, now};
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
-    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, LineSpan,
-    Material, Proof, Severity,
+    apply, Assessment, Drill, DrillFile, Edit, Finding, FindingOutcome, IssueOutcome, KeyIssue,
+    LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
@@ -72,6 +73,11 @@ pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
     let system = system(request);
     for (needle, name) in [
         (
+            "You decide whether a passage from a course's sources",
+            "passage check",
+        ),
+        ("You decide whether a lesson of a course", "code fit check"),
+        (
             "You write the code for a code review exercise",
             "clean code",
         ),
@@ -109,6 +115,10 @@ pub(super) fn purpose(request: &CompletionRequest) -> &'static str {
             "new edit",
         ),
         ("You judge a code review exercise", "judge"),
+        (
+            "You check one defect planted in code for a code review exercise on a lesson",
+            "lesson check",
+        ),
         ("You write a test that shows a defect", "killing test"),
         ("Report every problem you would raise", "blind review"),
         ("A reviewer commented on code", "key entry"),
@@ -276,6 +286,7 @@ impl CodeRunner for FakeRunner {
 /// What the grader was asked to judge.
 pub(super) struct Seen {
     pub issues: Vec<String>,
+    pub key: Vec<KeyIssue>,
     pub files: Vec<DrillFile>,
     pub clean: Vec<DrillFile>,
     pub findings: Vec<Finding>,
@@ -309,6 +320,7 @@ impl FakeGrader {
                 seen.iter()
                     .map(|one| Seen {
                         issues: one.issues.clone(),
+                        key: one.key.clone(),
                         files: one.files.clone(),
                         clean: one.clean.clone(),
                         findings: one.findings.clone(),
@@ -330,6 +342,7 @@ impl ReviewGrader for FakeGrader {
                     .iter()
                     .map(|issue| issue.id.clone())
                     .collect(),
+                key: review.drill.key.clone(),
                 files: review.drill.files.clone(),
                 clean: review.clean.to_vec(),
                 findings: review.findings.to_vec(),
@@ -427,10 +440,20 @@ pub const LITERALS: &str = "readability.magic_number";
 pub(super) fn spec() -> DrillSpec {
     DrillSpec {
         material: Material::code("python"),
-        domain: Some("rate limiting".into()),
         lines: 40,
         patterns: vec![OPERATOR.into(), LITERALS.into()],
         program_id: None,
+        lesson_id: None,
+    }
+}
+
+/// A spec for code in Python on the course `course` built from its lesson `lesson`: ids only, for tests that queue or
+/// read a spec and never build it.
+pub(super) fn lesson_spec() -> DrillSpec {
+    DrillSpec {
+        program_id: Some("course".into()),
+        lesson_id: Some("lesson".into()),
+        ..spec()
     }
 }
 
@@ -459,6 +482,7 @@ pub(super) fn operator_mutation() -> Mutation {
         explanation:
             "The comparison lets one call too many through. It should refuse at the limit.".into(),
         verification: Verification::KillingTest(KILLING_TEST.into()),
+        lesson_sentences: vec![],
     }
 }
 
@@ -471,6 +495,7 @@ pub fn literals_mutation() -> Mutation {
         explanation:
             "The constants are no longer used. Use them so the defaults change in one place.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     }
 }
 
@@ -514,6 +539,76 @@ pub(super) fn plant_answer() -> String {
     .to_string()
 }
 
+/// The lesson the code of the fixtures is written for: two units of its own teaching and one from a source. The
+/// operator change breaks the first, the literals change the second.
+pub fn lesson_brief() -> LessonBrief {
+    let unit = |text: &str, source: Option<&str>| LessonSentence {
+        text: text.into(),
+        source: source.map(str::to_owned),
+    };
+    LessonBrief {
+        lesson_id: "lesson-1".into(),
+        course: "Rate limiting in services".into(),
+        goal: "Protect a service from callers that send too much".into(),
+        prior_knowledge: "Basic Python".into(),
+        module: "Limiters".into(),
+        module_summary: "How a limiter counts and refuses calls".into(),
+        outcomes: vec!["Write a sliding-window limiter".into()],
+        lesson: "A sliding-window limiter".into(),
+        objective: "Refuse calls past the limit inside a window".into(),
+        evidence: vec![
+            unit(
+                "A limiter refuses a call once the calls in its window reach the limit.",
+                None,
+            ),
+            unit(
+                "A limiter's defaults are named once, so they change in one place.",
+                None,
+            ),
+            unit(
+                "A sliding window forgets the calls older than its length.",
+                Some("Rate limiting notes"),
+            ),
+        ],
+    }
+}
+
+/// [`baseline`] with the brief of [`lesson_brief`], as the clean stage leaves it for a lesson.
+pub(super) fn baseline_with_brief() -> Baseline {
+    Baseline {
+        brief: Some(lesson_brief()),
+        ..baseline()
+    }
+}
+
+/// What the lesson check has made of a drill none of whose issues is a lesson issue.
+pub fn unchecked() -> LessonChecked {
+    LessonChecked {
+        links: Vec::new(),
+        checks: Vec::new(),
+    }
+}
+
+/// [`proved`] with the operator change a lesson issue citing `operator` and the literals change one citing
+/// `literals` (an empty list for a catalogue issue).
+pub(super) fn lesson_proved(operator: &[usize], literals: &[usize]) -> Proved {
+    let mut proved = proved();
+    for (item, sentences) in proved.proven.iter_mut().zip([operator, literals]) {
+        item.mutation.lesson_sentences = sentences.to_vec();
+    }
+    proved
+}
+
+/// What the model answers to the lesson check.
+pub(super) fn lesson_check_answer(breaks: bool, follows: bool) -> String {
+    json!({
+        "reason": "The sentences say a limiter refuses at its limit, and the edit lets one call more through.",
+        "editBreaksTheSentences": breaks,
+        "codeBeforeTheEditFollowsTheSentences": follows
+    })
+    .to_string()
+}
+
 pub(super) fn judge_answer(confirmed: bool) -> String {
     let reason = if confirmed {
         "The edit changes the comparison, so one call too many is allowed, and the original code refuses at the limit."
@@ -537,6 +632,8 @@ pub fn code() -> CleanCode {
         tests: Vec::new(),
         suite: Some(SUITE.into()),
         source: None,
+        brief: None,
+        basis: None,
         trail: Trail::default(),
     }
 }
@@ -678,8 +775,15 @@ pub(super) struct Harness {
 }
 
 impl Harness {
-    pub(super) async fn new(spec: &DrillSpec) -> Result<Self> {
+    /// A harness over a new course from [`code_spec`], and the spec of its build.
+    pub(super) async fn lesson() -> Result<(Self, DrillSpec)> {
         let pool = crate::test_support::pool().await?;
+        let spec = code_spec(&pool).await?;
+        Ok((Self::on(pool, &spec).await?, spec))
+    }
+
+    /// A harness over `pool`, with a build job queued for `spec` and claimed.
+    pub(super) async fn on(pool: SqlitePool, spec: &DrillSpec) -> Result<Self> {
         let job = bank::queue_build(&pool, spec, "test").await?;
         let store = JobStore::new(pool.clone());
         store
@@ -824,27 +928,38 @@ pub(super) fn raised_all(drill: &Drill) -> Assessment {
     }
 }
 
-/// Puts the drill of [`proved`] into the bank, ready, as a finished build leaves it: with its suite, its runner and
-/// its evidence.
+/// [`stock_on`] for [`spec`]: a drill built for no course and no lesson.
 pub async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
+    stock_on(pool, id, &spec()).await
+}
+
+/// Puts the drill of [`proved`] into the bank, ready, as a finished build for `spec` leaves it: with its suite, its
+/// runner and its evidence. The course and the lesson of `spec` must exist for the drill to keep them.
+pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> Result<()> {
     let proved = proved();
     let drill = Drill {
         id: id.into(),
         material: Material::code("python"),
         title: "A sliding-window rate limiter".into(),
         files: proved.files.clone(),
-        key: proved.planted_key(),
+        key: proved.planted_key(&unchecked()),
     };
     let clean = files();
-    let spec = spec();
-    let evidence = Evidence::new(&code(), &review(), &planted(), &proved, &quiet());
+    let evidence = Evidence::new(
+        &code(),
+        &review(),
+        &planted(),
+        &proved,
+        &unchecked(),
+        &quiet(),
+    );
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::insert_in(
         &mut connection,
         &NewDrill {
             drill: &drill,
             clean_files: &clean,
-            spec: &spec,
+            spec,
             domain: "rate limiting",
             suite: Some(SUITE),
             source: None,
@@ -854,6 +969,32 @@ pub async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
         },
     )
     .await
+}
+
+/// The drill a build stored: the only one in the pool.
+pub(super) async fn built_drill(pool: &SqlitePool) -> Result<Option<StoredDrill>> {
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM learning_drills")
+        .fetch_optional(pool)
+        .await
+        .map_err(db)?;
+    let Some(id) = id else {
+        return Ok(None);
+    };
+    let mut connection = pool.acquire().await.map_err(db)?;
+    repository::find_in(&mut connection, &id).await
+}
+
+/// Takes the stocked drill `drill_id` from the bank and opens an attempt on it, as starting a drill does, without the
+/// bank choosing it.
+pub(super) async fn opened(
+    pool: &SqlitePool,
+    drill_id: &str,
+    mode: AttemptMode,
+) -> Result<Attempt> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let taken = repository::mark_taken_in(&mut connection, drill_id, now()).await?;
+    assert!(taken, "the drill {drill_id} was ready to be taken");
+    attempts::insert_in(&mut connection, drill_id, mode).await
 }
 
 /// A pool with every migration, a drill stocked and an attempt opened on it and submitted, and its grading job
@@ -883,12 +1024,10 @@ impl Waiting {
     ) -> Result<Self> {
         let pool = crate::test_support::pool().await?;
         stock(&pool, "drill").await?;
-        let begun = attempts::start(&pool, "python", AttemptMode::Practice)
-            .await?
-            .ok_or_else(|| AppError::InternalError("No drill was ready.".into()))?;
+        let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
         let queued = attempts::submit(
             &pool,
-            &begun.attempt.id,
+            &attempt.id,
             Submission {
                 findings,
                 fix_files,
@@ -903,7 +1042,7 @@ impl Waiting {
         Ok(Self {
             pool,
             store,
-            attempt: begun.attempt.id,
+            attempt: attempt.id,
             job,
         })
     }
@@ -1126,6 +1265,37 @@ pub(super) fn explanation_answer() -> String {
     .to_string()
 }
 
+/// The reason [`teaches_answer`] gives for a passage that teaches the lesson.
+pub(super) const TEACHES_REASON: &str = "The passage explains the lesson's subject.";
+
+/// The reason [`teaches_answer`] gives for a passage that does not.
+pub(super) const NOT_TEACHES_REASON: &str = "The passage is about something else.";
+
+/// What the model answers to the passage check: `teaches`, with a reason.
+pub(super) fn teaches_answer(teaches: bool) -> String {
+    json!({
+        "reason": if teaches { TEACHES_REASON } else { NOT_TEACHES_REASON },
+        "passageTeachesTheLesson": teaches
+    })
+    .to_string()
+}
+
+/// The reason [`code_check_answer`] gives for a lesson that teaches what code can show.
+pub(super) const CODE_TEACHES_REASON: &str =
+    "The lesson teaches a rule a program can follow or break.";
+
+/// The reason [`code_check_answer`] gives for a lesson that does not.
+pub(super) const CODE_NOT_TEACHES_REASON: &str = "The lesson teaches only what people say aloud.";
+
+/// What the model answers to the code fit check: `teaches`, with a reason.
+pub(super) fn code_check_answer(teaches: bool) -> String {
+    json!({
+        "reason": if teaches { CODE_TEACHES_REASON } else { CODE_NOT_TEACHES_REASON },
+        "lessonTeachesWhatCodeCanShow": teaches
+    })
+    .to_string()
+}
+
 /// The source the planted sentences go against: the figure is 14%, and the benefit smaller for known material.
 pub(super) fn spacing_check() -> ScriptedCheck {
     ScriptedCheck::new(|sentence| {
@@ -1150,10 +1320,10 @@ pub(super) fn spacing_check() -> ScriptedCheck {
 pub(super) fn passage_spec(program_id: &str) -> DrillSpec {
     DrillSpec {
         material: Material::Passage,
-        domain: None,
         lines: 4,
         patterns: vec![FIGURE.into(), REVERSED.into()],
         program_id: Some(program_id.into()),
+        lesson_id: None,
     }
 }
 
@@ -1170,6 +1340,7 @@ pub(super) fn figure_mutation() -> Mutation {
             .into(),
         explanation: "The study found 14% better recall, not 40%.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     }
 }
 
@@ -1185,6 +1356,7 @@ pub(super) fn reversed_mutation() -> Mutation {
         consequence: "A reader would space their review of what they already know best.".into(),
         explanation: "The benefit was smaller for well known material, not larger.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     }
 }
 
@@ -1221,6 +1393,8 @@ pub(super) fn passage_code() -> CleanCode {
         tests: Vec::new(),
         suite: None,
         source: Some(spacing_passage()),
+        brief: None,
+        basis: None,
         trail: Trail::default(),
     }
 }
@@ -1252,29 +1426,222 @@ pub(super) fn passage_build<'a>(
     )
 }
 
+/// The title of the first lesson of a course from [`course`]: its subject is what [`SPACING`] says.
+pub(super) const SPACING_LESSON: &str = "Spacing study over sessions";
+
+/// The title of the second lesson of a course from [`course`]: its subject is what [`SLEEP`] says.
+pub(super) const SLEEP_LESSON: &str = "Sleep after learning";
+
 /// A course with the sources [`SPACING`] and [`SLEEP`], in that order, and its id.
 pub(super) async fn course(pool: &SqlitePool) -> Result<String> {
+    course_of(
+        pool,
+        &[("Spacing and memory", SPACING), ("Sleep and memory", SLEEP)],
+    )
+    .await
+}
+
+/// A course with `sources` (a title and a text each), in that order, and its id. The first module's two lessons are
+/// [`SPACING_LESSON`] and [`SLEEP_LESSON`], so that a lesson's query finds what the fixture sources say; the second
+/// module keeps the fixture's.
+pub(super) async fn course_of(pool: &SqlitePool, sources: &[(&str, &str)]) -> Result<String> {
     use crate::dto::LearningSourceDto;
     use crate::repository::LearningRepository;
     let mut program = crate::test_support::fixture();
-    program.sources = vec![
-        LearningSourceDto {
-            id: format!("spacing-{}", uuid::Uuid::new_v4()),
-            title: "Spacing and memory".into(),
+    if let Some(module) = program.modules.first_mut() {
+        let named = [
+            (
+                SPACING_LESSON,
+                "Explain why spreading study over several sessions improves recall",
+            ),
+            (
+                SLEEP_LESSON,
+                "Explain how sleep after learning helps memory",
+            ),
+        ];
+        for (lesson, (title, objective)) in module.lessons.iter_mut().zip(named) {
+            lesson.title = title.into();
+            lesson.objective = objective.into();
+        }
+    }
+    program.sources = sources
+        .iter()
+        .enumerate()
+        .map(|(position, (title, text))| LearningSourceDto {
+            id: format!("source-{position}-{}", uuid::Uuid::new_v4()),
+            title: (*title).into(),
             url: None,
-            excerpt: SPACING.into(),
-            acquired_at: 1,
-        },
-        LearningSourceDto {
-            id: format!("sleep-{}", uuid::Uuid::new_v4()),
-            title: "Sleep and memory".into(),
-            url: None,
-            excerpt: SLEEP.into(),
-            acquired_at: 2,
-        },
-    ];
+            excerpt: (*text).into(),
+            acquired_at: i64::try_from(position).unwrap_or(0) + 1,
+        })
+        .collect();
     LearningRepository::new(pool.clone())
         .create(&program)
         .await?;
     Ok(program.summary.id)
+}
+
+/// The id of the lesson of the course `program_id` titled `title`.
+pub(super) async fn lesson_titled(
+    pool: &SqlitePool,
+    program_id: &str,
+    title: &str,
+) -> Result<String> {
+    sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND title=?")
+        .bind(program_id)
+        .bind(title)
+        .fetch_one(pool)
+        .await
+        .map_err(db)
+}
+
+/// Gives the lesson `lesson_id` these teaching blocks, in order: a kind, a body and the source versions it cites each.
+pub(super) async fn add_blocks(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    blocks: &[(&str, &str, &[&str])],
+) -> Result<()> {
+    for (ordinal, (kind, body, cited)) in blocks.iter().enumerate() {
+        sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,?,?,?,?,?)")
+            .bind(lesson_id)
+            .bind(i64::try_from(ordinal).unwrap_or(0))
+            .bind(*kind)
+            .bind("Title")
+            .bind(*body)
+            .bind(serde_json::to_string(cited).unwrap_or_default())
+            .execute(pool)
+            .await
+            .map_err(db)?;
+    }
+    Ok(())
+}
+
+/// [`add_blocks`], and the lesson is prepared.
+pub(super) async fn prepare_lesson(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    blocks: &[(&str, &str, &[&str])],
+) -> Result<()> {
+    add_blocks(pool, lesson_id, blocks).await?;
+    sqlx::query("UPDATE learning_lessons SET preparation='ready' WHERE id=?")
+        .bind(lesson_id)
+        .execute(pool)
+        .await
+        .map(drop)
+        .map_err(db)
+}
+
+/// A spec for code in Python on a new course from [`course`], built from its spacing lesson.
+pub(super) async fn code_spec(pool: &SqlitePool) -> Result<DrillSpec> {
+    let program = course(pool).await?;
+    let lesson = lesson_titled(pool, &program, SPACING_LESSON).await?;
+    Ok(DrillSpec {
+        program_id: Some(program),
+        lesson_id: Some(lesson),
+        ..spec()
+    })
+}
+
+/// [`passage_spec`] for the course `program_id`, built from its lesson titled `lesson_title`.
+pub(super) async fn passage_lesson_spec(
+    pool: &SqlitePool,
+    program_id: &str,
+    lesson_title: &str,
+) -> Result<DrillSpec> {
+    Ok(DrillSpec {
+        lesson_id: Some(lesson_titled(pool, program_id, lesson_title).await?),
+        ..passage_spec(program_id)
+    })
+}
+
+/// The lessons of the course `program_id`, in course order.
+pub(super) async fn lessons_of(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
+    sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal")
+        .bind(program_id)
+        .fetch_all(pool)
+        .await
+        .map_err(db)
+}
+
+/// Records that the lesson `lesson_id` of the course `program_id` does not fit `material`, on the lesson's basis now.
+/// Code is turned down by a build whose code fit check answers no.
+pub(super) async fn record_unfit(
+    pool: &SqlitePool,
+    program_id: &str,
+    lesson_id: &str,
+    material: &Material,
+) -> Result<()> {
+    if material.language().is_some() {
+        let spec = DrillSpec {
+            material: material.clone(),
+            program_id: Some(program_id.to_owned()),
+            lesson_id: Some(lesson_id.to_owned()),
+            ..spec()
+        };
+        let model = ScriptedModel::new([code_check_answer(false)]);
+        let grader = idle_grader();
+        return match build(pool, &model, None, &grader).clean_code(&spec).await {
+            Err(AppError::InvalidInput(_)) => Ok(()),
+            other => Err(AppError::InternalError(format!(
+                "The code fit check did not turn the lesson down: {:?}",
+                other.map(|_| ())
+            ))),
+        };
+    }
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let basis = schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?;
+    schedules::record_fit_in(
+        &mut connection,
+        program_id,
+        lesson_id,
+        material,
+        false,
+        &basis,
+        now(),
+    )
+    .await
+}
+
+/// Sets the curriculum state of the lesson `lesson_id`, such as `skipped` or `replaced`.
+pub(super) async fn set_state(pool: &SqlitePool, lesson_id: &str, state: &str) -> Result<()> {
+    sqlx::query("UPDATE learning_lessons SET curriculum_state=? WHERE id=?")
+        .bind(state)
+        .bind(lesson_id)
+        .execute(pool)
+        .await
+        .map(drop)
+        .map_err(db)
+}
+
+/// The patterns of a drill's key, each once and in the key's order, as the schedule holds them back while the drill
+/// is out: pending, with no date.
+pub(super) fn held_back(drill: &Drill) -> Vec<PatternDue> {
+    let mut held: Vec<PatternDue> = Vec::new();
+    for issue in &drill.key {
+        if held.iter().all(|state| state.pattern != issue.pattern) {
+            held.push(PatternDue {
+                pattern: issue.pattern.clone(),
+                due_at: None,
+                pending: true,
+            });
+        }
+    }
+    held
+}
+
+/// A row in the pattern schedule of `material` (`code:python`, `passage`) for `pattern`, due at `due_at`.
+pub(super) async fn schedule_pattern(
+    pool: &SqlitePool,
+    material: &str,
+    pattern: &str,
+    due_at: i64,
+) -> Result<()> {
+    sqlx::query("INSERT INTO learning_drill_pattern_schedules(material,pattern_id,stability,difficulty,last_reviewed_at,due_at,interval_days,review_count,lapses) VALUES(?,?,1.0,5.0,0,?,1,1,0)")
+        .bind(material)
+        .bind(pattern)
+        .bind(due_at)
+        .execute(pool)
+        .await
+        .map(drop)
+        .map_err(db)
 }

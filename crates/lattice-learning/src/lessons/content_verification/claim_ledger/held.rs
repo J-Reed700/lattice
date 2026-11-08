@@ -13,7 +13,7 @@ const NEEDS_REVIEW_REF: &str = "needs_review:";
 /// failure category in front of them, wherever it is shown or logged.
 pub(crate) fn needs_review(claims: usize) -> AppError {
     AppError::Other(format!(
-        "Needs your review: {claims} claim{} could not be verified. Resolve each one, then resume verification.",
+        "Needs your review: {claims} statement{} could not be verified. Resolve each one, then resume verification.",
         if claims == 1 { "" } else { "s" }
     ))
 }
@@ -101,15 +101,15 @@ pub(crate) fn review_outcome(held: &[HeldForReview]) -> (String, String) {
             ),
             _ => format!(
                 "Stopped: the checking model's answers could not be read for {}",
-                plural(claims, "claim")
+                plural(claims, "statement")
             ),
         }
     } else if held.len() == 1 {
-        format!("Needs your review: {}", plural(claims, "claim"))
+        format!("Needs your review: {}", plural(claims, "statement"))
     } else {
         format!(
             "Needs your review: {} in {}",
-            plural(claims, "claim"),
+            plural(claims, "statement"),
             plural(held.len(), "lesson")
         )
     };
@@ -132,7 +132,7 @@ mod tests {
             review_outcome(&[held("a", 2), held("b", 3)]),
             (
                 "needs_review:a,b".to_owned(),
-                "Needs your review: 5 claims in 2 lessons".to_owned()
+                "Needs your review: 5 statements in 2 lessons".to_owned()
             )
         );
     }
@@ -168,7 +168,8 @@ mod tests {
             review_outcome(&[stopped]),
             (
                 "needs_review:a".to_owned(),
-                "Stopped: the checking model's answers could not be read for 3 claims".to_owned()
+                "Stopped: the checking model's answers could not be read for 3 statements"
+                    .to_owned()
             )
         );
     }

@@ -39,8 +39,8 @@ describe('Trust override menu', () => {
     toggle.focus();
     await userEvent.keyboard('{Enter}');
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByRole('status')).toHaveTextContent('3 checked claims in 2 lessons rest on this source; they will be re-decided.');
-    expect(screen.getByRole('button', { name: 'Apply and re-decide 3 claims' })).toBeVisible();
+    expect(screen.getByRole('status')).toHaveTextContent('3 checked statements in 2 lessons rest on this source; they will be re-decided.');
+    expect(screen.getByRole('button', { name: 'Apply and re-decide 3 statements' })).toBeVisible();
     await userEvent.keyboard('{Escape}');
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(toggle).toHaveFocus();
@@ -51,9 +51,9 @@ describe('Trust override menu', () => {
     show();
     await userEvent.click(screen.getByRole('button', { name: /Change trust/ }));
     await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Level' }), 'primary');
-    await userEvent.click(screen.getByRole('button', { name: 'Apply and re-decide 3 claims' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Apply and re-decide 3 statements' }));
     await waitFor(() => expect(api.set).toHaveBeenCalledWith({ scope: 'source', programId: 'program-1', sourceId: 'source-1', level: 'primary', note: null }));
-    expect(await screen.findByText(/^Saved\. 3 claims/)).toBeVisible();
+    expect(await screen.findByText(/^Saved\. 3 statements/)).toBeVisible();
   });
 
   it('gives a site override a standing only, never a level', async () => {
@@ -66,7 +66,7 @@ describe('Trust override menu', () => {
     expect([...(standing as HTMLSelectElement).options].map((option) => option.value)).toEqual(['institutional', 'identified', 'community', 'distrusted']);
     expect(screen.getByText(/A site is never primary by itself/)).toBeVisible();
     await userEvent.selectOptions(standing, 'institutional');
-    await userEvent.click(screen.getByRole('button', { name: 'Apply and re-decide 5 claims' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Apply and re-decide 5 statements' }));
     await waitFor(() => expect(api.set).toHaveBeenCalledWith({ scope: 'site', registrableDomain: 'example-dev.net', standing: 'institutional', note: null }));
   });
 

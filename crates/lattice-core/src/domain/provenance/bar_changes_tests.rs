@@ -82,7 +82,7 @@ fn a_relaxed_bar_names_the_verdict_that_moved_it_and_why() {
     assert!(change
         .reason
         .text
-        .starts_with("Established sources on specification claims"));
+        .starts_with("Established sources on specification statements"));
     assert!(change.reason.text.contains("accepted alone since"));
 }
 
@@ -96,6 +96,10 @@ fn a_bar_that_moves_back_records_the_return() {
     assert!(!back.accepted_alone);
     assert_eq!(back.lowest_after, Some(TrustLevel::Authoritative));
     assert!(back.reason.text.contains("back to the static bar"));
+    assert!(back
+        .reason
+        .text
+        .contains("sources on specification statements:"));
 }
 
 #[test]

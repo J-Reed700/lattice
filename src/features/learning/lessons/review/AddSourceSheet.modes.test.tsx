@@ -33,7 +33,7 @@ vi.mock('./AddSourceResult', () => ({
   ),
 }));
 
-const report = (overrides: Partial<ClaimAttachReportDto> = {}) => ({ source: { sourceId: 's1' }, failure: null, outcomes: [], ...overrides } as unknown as ClaimAttachReportDto);
+const report = (overrides: Partial<ClaimAttachReportDto> = {}) => ({ source: { sourceId: 's1' }, failure: null, outcomes: [], lines: [], putBack: null, others: { tried: 0, verified: 0, notVerified: 0, noPassage: 0, stopped: null }, ...overrides } as unknown as ClaimAttachReportDto);
 
 function renderSheet(props: Partial<ComponentProps<typeof AddSourceSheet>> = {}) {
   const handlers = { onClose: vi.fn(), onAdded: vi.fn() };
@@ -59,7 +59,7 @@ describe('AddSourceSheet', () => {
     mode('Paste text instead');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     submit();
-    expect(screen.getByRole('alert')).toHaveTextContent('Paste the text that states the claim.');
+    expect(screen.getByRole('alert')).toHaveTextContent("Paste the source's text.");
     mode('Choose a file…');
     submit();
     expect(screen.getByRole('alert')).toHaveTextContent('Choose a file.');
@@ -134,7 +134,7 @@ describe('AddSourceSheet', () => {
 
   it('can also check the other claims waiting on the subject', async () => {
     renderSheet({ target: { level: 'claim', claimIds: ['c1'], others: ['c2', 'c3'] } });
-    const box = screen.getByRole('checkbox', { name: /Also check the 2 other claims that wait/ });
+    const box = screen.getByRole('checkbox', { name: /Also check the 2 other statements that wait/ });
     expect(box).toBeChecked();
     fireEvent.change(screen.getByLabelText('Page address'), { target: { value: 'https://example.org/a' } });
     submit();
@@ -146,7 +146,7 @@ describe('AddSourceSheet', () => {
 
   it('names a single other claim in the singular', () => {
     renderSheet({ target: { level: 'claim', claimIds: ['c1'], others: ['c2'] } });
-    expect(screen.getByRole('checkbox', { name: /Also check the 1 other claim that waits/ })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Also check the 1 other statement that waits/ })).toBeInTheDocument();
   });
 
   it('does nothing more when the run was cancelled, and reports a run that failed', async () => {
@@ -195,7 +195,7 @@ describe('AddSourceSheet', () => {
   it('shows checking progress while busy', () => {
     mocks.add = { ...mocks.add, isPending: true, progress: { stage: 'checking', done: 1, total: 4, statement: 'Sage calms' } };
     renderSheet();
-    expect(screen.getByRole('progressbar', { name: 'Claims checked' })).toHaveAttribute('aria-valuenow', '1');
+    expect(screen.getByRole('progressbar', { name: 'Statements checked' })).toHaveAttribute('aria-valuenow', '1');
     expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
   });
 

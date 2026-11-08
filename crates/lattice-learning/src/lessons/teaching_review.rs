@@ -276,7 +276,11 @@ async fn review_sections(
                     if blank && !settle {
                         problems.push("An issue must not be blank.".into());
                     } else if !blank && !issues.iter().any(|known| known.note == issue) {
-                        issues.push(ReviewFinding::new(FindingKind::Teaching, None, issue));
+                        let summary = issue.trim().to_owned();
+                        issues.push(
+                            ReviewFinding::new(FindingKind::Teaching, None, issue)
+                                .with_summary(summary),
+                        );
                     }
                 }
                 for (section, mut value) in review.block_checks {
@@ -292,7 +296,8 @@ async fn review_sections(
                         if indices.contains(&index) && !finding.trim().is_empty() {
                             let note = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding);
                             if !issues.iter().any(|known| known.note == note) {
-                                let mut issue = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(index)), note);
+                                let mut issue = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(index)), note)
+                                    .with_summary(finding.trim());
                                 issue.passage = value.get("passageId").and_then(Value::as_str).and_then(|id| passage_text(&shown, index, id));
                                 issues.push(issue);
                             }
@@ -394,6 +399,11 @@ mod tests {
         assert!(actual
             .iter()
             .all(|f| f.kind == FindingKind::Teaching && f.site.is_none()));
+        // The reviewer's own statement of the problem is what the user reads.
+        assert_eq!(
+            actual.iter().map(|f| f.summary.clone()).collect::<Vec<_>>(),
+            findings
+        );
         assert_eq!(model.prompts.lock().unwrap().len(), 1);
         Ok(())
     }
@@ -461,6 +471,10 @@ mod tests {
             .find(|i| i.note.contains("membrane behavior"))
             .unwrap();
         assert_eq!(defect.site, Some(FindingSite::Section(1)));
+        assert_eq!(
+            defect.summary,
+            "The claimed membrane behavior contradicts the stated boundary condition."
+        );
         let prompts = model.prompts.lock().unwrap();
         assert_eq!(prompts.len(), 2);
         let retry: Value = serde_json::from_str(prompts[1].rsplit("\n\n").next().unwrap())?;

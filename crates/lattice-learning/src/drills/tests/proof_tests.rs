@@ -93,7 +93,7 @@ fn proven(verdict: ProofVerdict) -> (Proof, Mutation, Trail) {
             proof,
             mutation,
             trail,
-        } => (proof, mutation, trail),
+        } => (proof, *mutation, trail),
         ProofVerdict::Unproven { why, .. } => panic!("unproven: {why}"),
     }
 }
@@ -601,6 +601,28 @@ async fn a_smell_that_fails_the_suite_is_sent_back_once_for_a_new_edit_that_keep
 }
 
 #[tokio::test]
+async fn a_lesson_issue_whose_edit_is_replaced_keeps_the_sentences_it_cites() -> Result<()> {
+    let mut world = World::new();
+    world.literals.lesson_sentences = vec![2];
+    let model = ScriptedModel::new([
+        replacement("src/config.py", LITERALS_BEFORE, RESHAPED),
+        judge_answer(true),
+    ]);
+    let runner = failing_when_inlined();
+    let cancel = CancellationToken::new();
+    let verdict = strategy(
+        StrategyKind::BehaviourKeptThenJudged,
+        tools(&model, Some(&runner), &cancel),
+    )
+    .prove(&world.literals_case())
+    .await?;
+    let (_, mutation, _) = proven(verdict);
+    assert_eq!(mutation.edit.after, RESHAPED, "the new edit stands");
+    assert_eq!(mutation.lesson_sentences, vec![2]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_smell_that_fails_the_suite_again_is_unproven_without_asking_the_judge() -> Result<()> {
     let world = World::new();
     let model = ScriptedModel::new([replacement("src/config.py", LITERALS_BEFORE, RESHAPED)]);
@@ -715,6 +737,7 @@ fn testing_case_files() -> (Vec<DrillFile>, Vec<DrillFile>, Mutation) {
         consequence: "The test passes whatever the limiter does.".into(),
         explanation: "The test checks nothing. Assert on the result.".into(),
         verification: Verification::NotAsked,
+        lesson_sentences: vec![],
     };
     (clean, weakened, mutation)
 }

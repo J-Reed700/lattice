@@ -136,7 +136,7 @@ pub(super) fn supports(
                 ClaimSupportRoleDto::Contradicts,
                 Some(dto_map::level(contrary.trust.level)),
                 ClaimSupportCountsDto::NotCounted {
-                    reason: "it contradicts the claim".into(),
+                    reason: "it contradicts the statement".into(),
                 },
                 contrary.quote.clone(),
             )
@@ -234,7 +234,7 @@ fn excluded(level: TrustLevel) -> ClaimSupportCountsDto {
     let reason = if level == TrustLevel::Distrusted {
         "the source is distrusted"
     } else {
-        "its date rules it out for this claim"
+        "its date rules it out for this statement"
     };
     ClaimSupportCountsDto::NotCounted {
         reason: reason.into(),

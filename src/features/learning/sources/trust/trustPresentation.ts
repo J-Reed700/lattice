@@ -67,7 +67,7 @@ const KIND_WORD: Record<string, string> = {
 const KIND_PHRASE: Record<string, string> = {
   specification: 'how an API, standard or rule is defined',
   measurement: 'a number or measurement',
-  version_bound: 'a claim tied to a version or date',
+  version_bound: 'a statement tied to a version or date',
   definition: 'what a term means',
   practice: 'a recommendation',
   opinion: 'an evaluation',
@@ -107,7 +107,7 @@ const RELATION_WORD: Record<LearningSourceRelationDto['kind'], string> = {
   archive_of: 'Archived copy of',
   canonical_of: 'Republished from',
   cites: 'Cites',
-  cited_for_claim: 'Cited for a claim',
+  cited_for_claim: 'Cited for a statement',
 };
 
 /** "Mirror of …", "Cites …", "Cited by …", read from this version's side. */
@@ -123,7 +123,7 @@ export function relationLine(relation: LearningSourceRelationDto, versionId: str
 export function trackRecordLine(record: { right: number; wrong: number }): string | null {
   const total = record.right + record.wrong;
   if (total === 0) return null;
-  return `Your verdicts: ${record.right} of ${plural(total, 'claim')} it supported held${record.wrong ? `, ${record.wrong} overturned` : ''}`;
+  return `Your verdicts: ${record.right} of ${plural(total, 'statement')} it supported held${record.wrong ? `, ${record.wrong} overturned` : ''}`;
 }
 
 /** "Trust learn.microsoft.com as primary for: .NET, C#" — one line per site and level. */
@@ -148,26 +148,26 @@ export function overrideLines(overrides: LearningTrustOverrideDto[]): string[] {
 /** What an override change sends back to be re-decided (§18.7, §19). */
 export function impactLine(impact: LearningTrustImpactDto, target: 'source' | 'site'): string {
   const subject = target === 'source' ? 'this source' : 'this site';
-  if (impact.claims === 0) return `No checked claim rests on ${subject}; later checks use the new level.`;
-  return `${plural(impact.claims, 'checked claim')} in ${plural(impact.lessons, 'lesson')} ${impact.claims === 1 ? 'rests' : 'rest'} on ${subject}; ${impact.claims === 1 ? 'it' : 'they'} will be re-decided.`;
+  if (impact.claims === 0) return `No checked statement rests on ${subject}; later checks use the new level.`;
+  return `${plural(impact.claims, 'checked statement')} in ${plural(impact.lessons, 'lesson')} ${impact.claims === 1 ? 'rests' : 'rest'} on ${subject}; ${impact.claims === 1 ? 'it' : 'they'} will be re-decided.`;
 }
 
 /** What re-deciding did after an override change: "2 claims verified · 1 reopened for you". */
 export function redecidedLine(redecided: LearningTrustRedecidedDto): string {
   const parts = [
-    redecided.verified ? `${plural(redecided.verified, 'claim')} verified` : null,
-    redecided.reopened ? `${plural(redecided.reopened, 'claim')} reopened for you` : null,
-    redecided.stillFailing ? `${plural(redecided.stillFailing, 'claim')} still short of the bar` : null,
-    redecided.notLevelled ? `${plural(redecided.notLevelled, 'claim')} left as ${redecided.notLevelled === 1 ? 'it was' : 'they were'}: a source in ${redecided.notLevelled === 1 ? 'it' : 'them'} was never assessed` : null,
+    redecided.verified ? `${plural(redecided.verified, 'statement')} verified` : null,
+    redecided.reopened ? `${plural(redecided.reopened, 'statement')} reopened for you` : null,
+    redecided.stillFailing ? `${plural(redecided.stillFailing, 'statement')} still short of the bar` : null,
+    redecided.notLevelled ? `${plural(redecided.notLevelled, 'statement')} left as ${redecided.notLevelled === 1 ? 'it was' : 'they were'}: a source in ${redecided.notLevelled === 1 ? 'it' : 'them'} was never assessed` : null,
   ].filter(Boolean);
-  return parts.length ? `${parts.join(' · ')}.` : 'No claim’s decision changed.';
+  return parts.length ? `${parts.join(' · ')}.` : 'No statement’s decision changed.';
 }
 
 /** The lowest level accepted alone for a kind now, in words. */
 export function barLine(bar: LearningKindBarDto): string {
   const moved = bar.levels.some((level) => level.basis !== 'static');
   const calibrated = moved ? ' (moved by your verdicts)' : '';
-  if (!bar.lowestAccepted) return `No single source is enough for ${KIND_PHRASE[bar.claimKind] ?? 'this kind of claim'} now; it needs independent sources that agree${calibrated}`;
+  if (!bar.lowestAccepted) return `No single source is enough for ${KIND_PHRASE[bar.claimKind] ?? 'this kind of statement'} now; it needs independent sources that agree${calibrated}`;
   const accepted = TRUST_LEVELS.filter((level) => levelRank(level) >= levelRank(bar.lowestAccepted!));
   const words = accepted.map((level) => LEVEL_WORD[level].toLowerCase());
   const list = words.length > 1 ? `${words.slice(0, -1).join(', ')} or ${words[words.length - 1]}` : words[0];
@@ -201,7 +201,7 @@ const LABEL_PHRASE: Record<string, string> = {
 /** A published claim's kind, subject and the label it is shown with. */
 export function sufficiencyNote(sufficiency: LearningSufficiencyDto): string {
   return [
-    `${kindWord(sufficiency.claimKind)} claim${sufficiency.subject ? ` about ${sufficiency.subject}` : ''}`,
+    `${kindWord(sufficiency.claimKind)} statement${sufficiency.subject ? ` about ${sufficiency.subject}` : ''}`,
     sufficiency.label ? LABEL_PHRASE[sufficiency.label] ?? sufficiency.label.replace(/_/g, ' ') : null,
   ].filter(Boolean).join(' · ');
 }
@@ -235,7 +235,7 @@ export function verifiedByLevel(claims: LearningClaimEvidenceDto[]): string[] {
   if (counts.size === 0) return [];
   const parts = TRUST_LEVELS.filter((level) => counts.has(level)).map((level, index) => {
     const count = counts.get(level)!;
-    return index === 0 ? `${plural(count, 'claim')} verified against ${AGAINST[level]}` : `${count} against ${AGAINST[level]}`;
+    return index === 0 ? `${plural(count, 'statement')} verified against ${AGAINST[level]}` : `${count} against ${AGAINST[level]}`;
   });
   if (unweighed) parts.push(`${unweighed} against sources not weighed for standing`);
   return parts;

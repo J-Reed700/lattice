@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   addSourceTitle, announcement, attachSummary, claimsNeedYou, countsAs, failureLine, fixGroupOf, jobTallyLine, kindWithArticle,
-  progressLine, recheckLine, resolvedChip, sourceLine, tallyLine, triedLine, trustedAnnouncement, verifiedLabel, whyItWaits, ALL_RESOLVED,
+  progressLine, recheckLine, resolvedChip, sourceLine, tallyLine, teachingNotesWait, triedLine, trustedAnnouncement, verifiedLabel, whyItWaits, ALL_RESOLVED,
 } from '@/features/learning/lessons/review/claimReviewCopy';
 import { support, sufficiency, tried } from '@/features/learning/lessons/review/claimReviewScreenFixtures';
 import { claimItem, fieldGuideSupport } from '@/features/learning/lessons/review/claimReviewTestData';
@@ -19,7 +19,7 @@ const checkedResult = (supported: boolean) => ({
   },
 });
 const report = (overrides: Partial<ClaimAttachReportDto> = {}): ClaimAttachReportDto => ({
-  revision: 1, source, alreadySaved: false, outcome: checkedResult(true), failure: null, snapshot: { state: 'not_applicable' }, others: none, lines: [], ...overrides,
+  revision: 1, source, alreadySaved: false, outcome: checkedResult(true), failure: null, snapshot: { state: 'not_applicable' }, others: none, lines: [], putBack: null, ...overrides,
 });
 
 describe('source words', () => {
@@ -43,7 +43,7 @@ describe('countsAs', () => {
     expect(countsAs(support({ role: 'contradicts', standing: null }), null)).toBe('a source in this course');
   });
 
-  it('says a source the user added counts when it states the claim', () => {
+  it('says a source the user added counts when it supports the statement', () => {
     const added = support({ source: { ...support().source, addedBy: 'user' }, counts: { outcome: 'enough' } });
     expect(countsAs(added, null)).toBe('a source you added · enough, it states this');
   });
@@ -59,7 +59,7 @@ describe('countsAs', () => {
 
   it('describes each outcome with the source’s standing, or says it is not yet weighed', () => {
     expect(countsAs(support({ standing: 'established', counts: { outcome: 'enough' } }), null)).toBe('a reliable identified source · enough');
-    expect(countsAs(support({ standing: 'established', counts: { outcome: 'not_enough' } }), null)).toBe('a reliable identified source · not enough on its own for this claim');
+    expect(countsAs(support({ standing: 'established', counts: { outcome: 'not_enough' } }), null)).toBe('a reliable identified source · not enough on its own for this statement');
     expect(countsAs(support({ standing: null, counts: { outcome: 'enough' } }), null)).toBe('an online book not yet weighed · enough');
   });
 });
@@ -122,7 +122,7 @@ describe('whyItWaits', () => {
   it('covers the verdicts without a source', () => {
     expect(whyItWaits(claimItem({ verdictKind: { kind: 'no_source' } as never })).fixes).toEqual(['add_source', 'remove']);
     expect(whyItWaits(claimItem({ verdictKind: { kind: 'could_not_judge' } as never })).chip).toBe('Could not check');
-    expect(whyItWaits(claimItem({ verdictKind: null }))).toMatchObject({ chip: 'Waiting for you', reason: 'This claim is waiting for you.' });
+    expect(whyItWaits(claimItem({ verdictKind: null }))).toMatchObject({ chip: 'Waiting for you', reason: 'This statement is waiting for you.' });
   });
 
   it('quotes the contradicting source, and says nothing specific when none is on file', () => {
@@ -199,21 +199,35 @@ describe('triedLine', () => {
 describe('tallies', () => {
   it('leaves out zero counts and agrees in number', () => {
     const counts = { verified: 12, confirmed: 0, queued: 1, open: 0, removedByYou: 0, editedByYou: 3, rewritten: 74 };
-    expect(tallyLine(counts)).toBe('1 claim needs you · 12 verified · 74 rewritten by the machine · 3 edited by you');
+    expect(tallyLine(counts)).toBe('1 statement needs you · 12 verified · 74 rewritten by the machine · 3 edited by you');
     expect(tallyLine({ ...counts, queued: 33, confirmed: 1, removedByYou: 1, open: 4 })).toBe(
-      '33 claims need you · 12 verified · 1 confirmed by you · 74 rewritten by the machine · 1 removed by you · 3 edited by you · 4 being checked',
+      '33 statements need you · 12 verified · 1 confirmed by you · 74 rewritten by the machine · 1 removed by you · 3 edited by you · 4 being checked',
     );
   });
 
   it('describes the running job’s claims', () => {
     const tally = { unchecked: 1, searching: 5, repairing: 4, waiting: 1, verified: 10, resolvedByYou: 2, rewritten: 5 };
-    expect(jobTallyLine(tally)).toBe('1 claim needs you · 10 verified · 2 resolved by you · 5 rewritten by the machine · 10 being checked');
-    expect(jobTallyLine({ ...tally, waiting: 2, rewritten: undefined, unchecked: 0, searching: 0, repairing: 0 })).toBe('2 claims need you · 10 verified · 2 resolved by you');
+    expect(jobTallyLine(tally)).toBe('1 statement needs you · 10 verified · 2 resolved by you · 5 rewritten by the machine · 10 being checked');
+    expect(jobTallyLine({ ...tally, waiting: 2, rewritten: undefined, unchecked: 0, searching: 0, repairing: 0 })).toBe('2 statements need you · 10 verified · 2 resolved by you');
+  });
+
+  it('begins with the teaching notes that wait, in the singular and the plural', () => {
+    const counts = { verified: 12, confirmed: 0, queued: 1, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 };
+    expect(tallyLine(counts, 2)).toBe('2 teaching notes wait for you · 1 statement needs you · 12 verified');
+    expect(tallyLine(counts, 1)).toBe('1 teaching note waits for you · 1 statement needs you · 12 verified');
+    expect(tallyLine({ ...counts, queued: 0, verified: 0 }, 3)).toBe('3 teaching notes wait for you');
+    expect(tallyLine(counts, 0)).toBe('1 statement needs you · 12 verified');
+    expect(tallyLine(counts)).toBe('1 statement needs you · 12 verified');
+  });
+
+  it('says the teaching notes wait in the singular and the plural', () => {
+    expect(teachingNotesWait(1)).toBe('1 teaching note waits for you');
+    expect(teachingNotesWait(2)).toBe('2 teaching notes wait for you');
   });
 
   it('agrees in number for the counts the queue shows', () => {
-    expect(claimsNeedYou(1)).toBe('1 claim needs you');
-    expect(claimsNeedYou(3)).toBe('3 claims need you');
+    expect(claimsNeedYou(1)).toBe('1 statement needs you');
+    expect(claimsNeedYou(3)).toBe('3 statements need you');
   });
 });
 
@@ -228,18 +242,51 @@ describe('announcements', () => {
     expect(announcement('undo', 5)).toBe('Undone. 5 left.');
   });
 
+  it('never says everything is resolved while a teaching note waits', () => {
+    expect(announcement('confirm', 0, 2)).toBe('Accepted. No statements are left. 2 teaching notes wait for you.');
+    expect(announcement('remove', 0, 1)).toBe('Removed. No statements are left. 1 teaching note waits for you.');
+    expect(announcement('unconfirm', 0, 3)).toBe('Acceptance withdrawn. No statements are left. 3 teaching notes wait for you.');
+    expect(announcement('undo', 0, 2)).toBe('Undone. No statements are left. 2 teaching notes wait for you.');
+    expect(announcement('confirm', 4, 2)).toBe('Accepted. 4 left.');
+    expect(announcement('confirm', 0, 0)).toBe(`Accepted. ${ALL_RESOLVED}`);
+    expect(announcement('edit', 0, 2)).toBe('Sentence edited. It is checked when you resume.');
+  });
+
+  it('says everything is resolved, and never to resume, once nothing is left on a published lesson', () => {
+    expect(announcement('confirm', 0, 0, true)).toBe('Accepted. Everything is resolved.');
+    expect(announcement('remove', 0, 0, true)).toBe('Removed. Everything is resolved.');
+    expect(announcement('unconfirm', 0, 0, true)).toBe('Acceptance withdrawn. Everything is resolved.');
+    expect(announcement('undo', 0, 0, true)).toBe('Undone. Everything is resolved.');
+    for (const action of ['confirm', 'remove', 'unconfirm', 'undo'] as const) {
+      expect(announcement(action, 0, 0, true)).not.toMatch(/Resume verification/);
+    }
+  });
+
+  it('on a published lesson still counts what is left, and still names the teaching notes that wait', () => {
+    expect(announcement('confirm', 4, 0, true)).toBe('Accepted. 4 left.');
+    expect(announcement('remove', 0, 2, true)).toBe('Removed. No statements are left. 2 teaching notes wait for you.');
+    expect(announcement('undo', 0, 1, true)).toBe('Undone. No statements are left. 1 teaching note waits for you.');
+  });
+
+  it('on a draft lesson keeps telling the user to resume verification', () => {
+    for (const action of ['confirm', 'remove', 'unconfirm', 'undo'] as const) {
+      expect(announcement(action, 0, 0, false)).toContain(ALL_RESOLVED);
+      expect(announcement(action, 0)).toContain(ALL_RESOLVED);
+    }
+  });
+
   it('announces a trusted source with the claims it settled', () => {
-    expect(trustedAnnouncement('Monarch Watch', 3, 1)).toBe('Trusted Monarch Watch for this course: 3 claims verified, 1 still needs you.');
-    expect(trustedAnnouncement('Monarch Watch', 1, 2)).toBe('Trusted Monarch Watch for this course: 1 claim verified, 2 still need you.');
+    expect(trustedAnnouncement('Monarch Watch', 3, 1)).toBe('Trusted Monarch Watch for this course: 3 statements verified, 1 still needs you.');
+    expect(trustedAnnouncement('Monarch Watch', 1, 2)).toBe('Trusted Monarch Watch for this course: 1 statement verified, 2 still need you.');
   });
 });
 
 describe('adding a source', () => {
   it('titles the sheet by what the source is for', () => {
-    expect(addSourceTitle('claim', 5)).toBe('Add a source for this claim');
-    expect(addSourceTitle('group', 1)).toBe('Add a source for this claim');
-    expect(addSourceTitle('group', 4)).toBe('Add a source for these 4 claims');
-    expect(addSourceTitle('queue', 9)).toBe('Add a source for all 9 claims');
+    expect(addSourceTitle('claim', 5)).toBe('Add a source for this statement');
+    expect(addSourceTitle('group', 1)).toBe('Add a source for this statement');
+    expect(addSourceTitle('group', 4)).toBe('Add a source for these 4 statements');
+    expect(addSourceTitle('queue', 9)).toBe('Add a source for all 9 statements');
   });
 
   it('reports progress at each stage', () => {
@@ -247,8 +294,29 @@ describe('adding a source', () => {
     expect(progressLine({ stage: 'fetching', host: null })).toBe('Reading it…');
     expect(progressLine({ stage: 'saving' })).toBe('Saving it to your sources');
     expect(progressLine({ stage: 'done' })).toBe('Done');
-    expect(progressLine({ stage: 'checking', done: 1, total: 4, statement: 'Short.' })).toBe('Checking claim 2 of 4: Short.');
-    expect(progressLine({ stage: 'checking', done: 9, total: 4, statement: 'x'.repeat(100) })).toBe(`Checking claim 4 of 4: ${'x'.repeat(79)}…`);
+    expect(progressLine({ stage: 'checking', done: 1, total: 4, statement: 'Short.' })).toBe('Checking statement 2 of 4: Short.');
+    expect(progressLine({ stage: 'checking', done: 9, total: 4, statement: 'x'.repeat(100) })).toBe(`Checking statement 4 of 4: ${'x'.repeat(100)}`);
+  });
+
+  describe('the put-back outcome of an attach', () => {
+    const base = attachSummary(report(), 1, 3).line;
+
+    it.each([
+      ['back', 'The source supports it, so it is back in the lesson.'],
+      ['no_place', 'The source supports it. Choose where it goes and put it back.'],
+      ['stays_out', 'The source does not support it, so it stays out of the lesson.'],
+    ] as const)('follows the summary of one statement with its sentence for %s', (putBack, sentence) => {
+      expect(attachSummary(report({ putBack }), 1, 3).line).toBe(`${base} ${sentence}`);
+    });
+
+    it('leaves the sentence out when more than one statement is in scope (a guard: it passes before and after the change)', () => {
+      expect(attachSummary(report({ putBack: 'back' }), 15, 18).line).toBe(attachSummary(report(), 15, 18).line);
+    });
+
+    it('does not read the sentence from the lines', () => {
+      const line = 'The source supports it, so it is back in the lesson.';
+      expect(attachSummary(report({ lines: [line], putBack: null }), 1, 3).line).toBe(base);
+    });
   });
 
   it('explains each failure in one sentence, naming the host when known', () => {
@@ -274,18 +342,18 @@ describe('adding a source', () => {
 
     it('says nothing mentions the claim when no passage was found', () => {
       const summary = attachSummary(report({ outcome: { outcome: 'no_passage' } }), 1, 3);
-      expect(summary).toEqual({ stated: false, notStated: false, line: 'Nothing in Monarch Watch mentions this claim. It is saved in your sources.' });
-      expect(attachSummary(report({ source: null, outcome: null }), 1, 0).line).toBe('Nothing in the source mentions this claim. It is saved in your sources.');
+      expect(summary).toEqual({ stated: false, notStated: false, line: 'Nothing in Monarch Watch mentions this statement. It is saved in your sources.' });
+      expect(attachSummary(report({ source: null, outcome: null }), 1, 0).line).toBe('Nothing in the source mentions this statement. It is saved in your sources.');
     });
 
     it('counts a group’s results together, with the claims that did not match or were not mentioned', () => {
       const line = attachSummary(report({ others: { tried: 14, verified: 11, notVerified: 2, noPassage: 1, stopped: null } }), 15, 4).line;
-      expect(line).toBe('Added Monarch Watch. Verified 12 of 15 claims; 2 do not match what it says; 1 is not mentioned by it.');
+      expect(line).toBe('Added Monarch Watch. Verified 12 of 15 statements; 2 do not match what it says; 1 is not mentioned by it.');
     });
 
     it('uses singular verbs, counts the claim in focus, and notes a source already saved', () => {
       const line = attachSummary(report({ alreadySaved: true, outcome: checkedResult(false), others: { tried: 1, verified: 0, notVerified: 0, noPassage: 1, stopped: null } }), 2, 4).line;
-      expect(line).toBe('Monarch Watch was already one of your sources; the claims were checked against it. Verified 0 of 2 claims; 1 does not match what it says; 1 is not mentioned by it.');
+      expect(line).toBe('Monarch Watch was already one of your sources; the statements were checked against it. Verified 0 of 2 statements; 1 does not match what it says; 1 is not mentioned by it.');
     });
 
     it('says where checking stopped, so the user can add and check again', () => {
@@ -302,8 +370,18 @@ describe('adding a source', () => {
     });
 
     it('counts the waiting claims checked and says where it stopped', () => {
-      expect(recheckLine({ lessons: 1, tried: 1, verified: 1, notVerified: 0, noPassage: 0, stopped: null })).toBe('Checked 1 waiting claim against it: 1 verified.');
-      expect(recheckLine({ lessons: 2, tried: 6, verified: 4, notVerified: 1, noPassage: 0, stopped: 'out of time' })).toBe('Checked 6 waiting claims against it: 4 verified. The rest were not checked: out of time.');
+      expect(recheckLine({ lessons: 1, tried: 1, verified: 1, notVerified: 0, noPassage: 0, stopped: null })).toBe('Checked 1 waiting statement against it: 1 verified.');
+      expect(recheckLine({ lessons: 2, tried: 6, verified: 4, notVerified: 1, noPassage: 0, stopped: 'out of time' })).toBe('Checked 6 waiting statements against it: 4 verified. The rest were not checked: out of time.');
     });
+  });
+});
+
+describe('put back and restore announcements', () => {
+  it('names a put back and a restore, and counts a bulk put back', async () => {
+    const copy = await import('@/features/learning/lessons/review/claimReviewCopy');
+    expect(copy.announcement('put_back', 0)).toBe('Put back in the lesson.');
+    expect(copy.announcement('restore_original', 0)).toBe('Original restored.');
+    expect(copy.putBackMany(1)).toBe('Put back in the lesson.');
+    expect(copy.putBackMany(3)).toBe('Put back 3 sentences in the lesson.');
   });
 });

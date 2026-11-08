@@ -107,9 +107,9 @@ pub fn resolve(
         let contrary_placed = contrary.temporal == TemporalValidity::Valid;
         if support_placed != contrary_placed {
             let text = if support_placed {
-                format!("{id} cannot be placed at the claim's version or date; the support can")
+                format!("{id} cannot be placed at the statement's version or date; the support can")
             } else {
-                format!("{id} speaks to the claim's version or date; the support cannot")
+                format!("{id} speaks to the statement's version or date; the support cannot")
             };
             let reason = Reason::new(ReasonCode::TemporallyPlaced, text);
             return if support_placed {
@@ -160,7 +160,7 @@ pub fn resolve(
                     reasons: vec![Reason::new(
                         ReasonCode::NewerEvidence,
                         format!(
-                            "{id} ({}) is newer than the support ({}), and the claim is about a subject that changes",
+                            "{id} ({}) is newer than the support ({}), and the statement is about a subject that changes",
                             day(contrary_at),
                             day(support_at)
                         ),

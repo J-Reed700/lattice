@@ -31,8 +31,8 @@ use citations::{
 #[cfg(test)]
 pub(crate) use claim_ledger::locate;
 pub(crate) use claim_ledger::{
-    field_text, held_for_review, held_lessons, located, located_quote, review_outcome, unit_texts,
-    HeldForReview,
+    claim_quote, field_pointer, field_text, held_for_review, held_lessons, located, located_quote,
+    review_outcome, unit_texts, HeldForReview,
 };
 mod class_checks;
 mod classify;
@@ -59,6 +59,10 @@ mod inventory_checkpoint;
 mod learner_view;
 pub(crate) use learner_view::ClaimStates;
 mod portability;
+mod put_text;
+pub(crate) use put_text::{
+    cuts_for, insert_sentence, put_at_junction, put_place, put_sentence, remove_sentence, Placing,
+};
 mod quote_claims;
 mod readings;
 mod resolution;
@@ -92,9 +96,10 @@ mod repair_loop;
 mod repair_request;
 mod repair_work;
 mod report;
-pub(crate) use report::WrittenOver;
+pub(crate) use report::{Rewritten, TakenOut, WrittenBack, WrittenOver};
 pub mod research;
 mod review_pass;
+pub(crate) use review_pass::with_pending_put_backs;
 mod round;
 mod rounds;
 pub(crate) use rounds::Rounds;
@@ -392,6 +397,10 @@ pub struct LessonVerificationReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     page_budget: Option<String>,
     unexecuted_languages: Vec<String>,
+    /// Findings a published edit or restore replaced, by the claim that took
+    /// their place, so an Undo brings them back.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    replaced_findings: Vec<report::ReplacedFindings>,
 }
 
 fn units(candidate: &Value) -> Result<Vec<Value>> {
@@ -426,7 +435,7 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
     let count: usize = inventory.units.iter().map(|u| u.claims.len()).sum();
     if inventory.units.len() != content.len() || count == 0 {
         return Err(invalid(
-            "Claim extraction returned incomplete or excessive coverage. No lesson was published.",
+            "Statement extraction returned incomplete or excessive coverage. No lesson was published.",
         ));
     }
     for unit in &inventory.units {
@@ -443,7 +452,7 @@ fn validate_inventory(inventory: &Inventory, content: &[Value]) -> Result<()> {
             })
         {
             return Err(invalid(
-                "Claim extraction returned invalid section evidence. No lesson was published.",
+                "Statement extraction returned invalid section evidence. No lesson was published.",
             ));
         }
     }

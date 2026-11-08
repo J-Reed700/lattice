@@ -46,6 +46,39 @@ pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     prepared
 }
 
+/// A prepared lesson whose questions are `(prompt, options, key)`, in order.
+pub(crate) fn prepared_with_questions(
+    lesson_id: &str,
+    questions: &[(&str, [&str; 4], usize)],
+) -> PreparedLearningLesson {
+    let mut prepared = prepared(lesson_id);
+    prepared.questions.clear();
+    prepared.keys.clear();
+    for (position, (prompt, options, key)) in questions.iter().enumerate() {
+        let qid = id();
+        prepared.questions.push(LessonQuestion {
+            id: qid.clone(),
+            kind: match position % 3 {
+                0 => LessonQuestionKind::Practice,
+                1 => LessonQuestionKind::Quiz,
+                _ => LessonQuestionKind::Test,
+            },
+            prompt: (*prompt).into(),
+            options: options.iter().map(|o| (*o).into()).collect(),
+            source_ids: vec![],
+        });
+        prepared.keys.push(LessonAnswerKey {
+            question_id: qid,
+            correct_index: *key,
+            explanation: format!("Explanation {position}."),
+        });
+    }
+    prepared.verification = Some(super::content_verification::tests::attest(
+        lesson_id, &prepared,
+    ));
+    prepared
+}
+
 pub(super) async fn ready_program(repo: &LearningRepository) -> Result<LearningProgramDto> {
     let mut p = fixture();
     repo.create(&p).await?;

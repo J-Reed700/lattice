@@ -576,7 +576,7 @@ fn finish_corroboration(
     reasons.push(Reason::new(
         ReasonCode::MetByCorroboration,
         format!(
-            "{} independent origins support the {} claim",
+            "{} independent origins support the {} statement",
             qualifying.len(),
             kind_name(profile.kind)
         ),

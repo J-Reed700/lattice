@@ -100,7 +100,7 @@ async fn judge(
         ClaimJudgment::Judged(outcome) => Ok((outcome, judged.shown)),
         ClaimJudgment::Failed(error) => Err(error),
         ClaimJudgment::Unusable => Err(AppError::Other(
-            "The claim check returned no usable verdict. The finding is kept; Repair can try again."
+            "The statement check returned no usable verdict. The finding is kept; Repair can try again."
                 .into(),
         )),
     }
@@ -330,7 +330,7 @@ async fn resolve_factual(
             ),
             None => {
                 progress.detail(format!(
-                    "Finding {position} of {total}: judging the claim against {} saved passages",
+                    "Finding {position} of {total}: judging the statement against {} saved passages",
                     passages.len()
                 ));
                 let texts: Vec<String> = passages.iter().map(|p| p.text.clone()).collect();
@@ -374,7 +374,7 @@ async fn resolve_factual(
         shown.extend(passages);
     }
     let Some(((verdict, reason, evidence), page)) = decision else {
-        issue_mut(draft, id)?.message = "No saved reference addresses this claim.".into();
+        issue_mut(draft, id)?.message = "No saved reference addresses this statement.".into();
         return Ok(Resolution::Rewrite(NARROW));
     };
     // A supported assertion stands only when its support meets the bar for

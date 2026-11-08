@@ -267,8 +267,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             course_index_close,
             get_learning_lesson_claim_review,
             resolve_learning_claim,
+            resolve_learning_claims,
             attach_learning_claim_evidence,
-            keep_learning_teaching_finding,
+            attach_learning_lesson_source,
+            settle_learning_teaching_findings,
+            edit_learning_lesson_section,
+            get_learning_lesson_question,
+            edit_learning_lesson_question,
             resume_learning_lesson_review,
             capture_learning_source_snapshot,
             get_learning_checker_accuracy,
@@ -335,12 +340,12 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             create_learning_tangent,
             list_learning_tangents,
             set_conversation_course,
-            start_review_drill,
+            start_course_drill,
             submit_code_review,
             code_review_result,
             regrade_code_review,
             code_review_languages,
-            review_drill_courses
+            course_drills
         ])
         .build()
 }

@@ -21,7 +21,7 @@ describe('lesson evidence', () => {
     show();
     expect(mocks.evidence).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
-    expect(await screen.findByText(/9 claims verified against sources/)).toBeVisible();
+    expect(await screen.findByText(/9 statements verified against sources/)).toBeVisible();
     expect(screen.getByText(/were not compiled or executed/)).toBeVisible();
     expect(screen.getByText(/collection has changed/)).toBeVisible();
     await userEvent.click(screen.getByText('Borrowing does not transfer ownership.'));
@@ -41,11 +41,11 @@ describe('lesson evidence', () => {
     show();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('evidence is unavailable');
-    expect(screen.queryByText(/claims verified against sources/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/statements verified against sources/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry evidence' })).toBeVisible();
   });
 
-  it('puts checked claims beside the generated section they verify', async () => {
+  it('puts checked statements beside the generated section they verify', async () => {
     const data = {
       policy: 'lesson-evidence-v17', checkedAt: 1, checkerModel: 'checker', retrievalMode: 'hybrid', embeddingModel: null, contentSha256: 'hash', claimCount: 1, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
       teachingClaims: [{ sectionIndex: 1, contentQuote: 'The generated sentence.', claim: 'A grounded claim.', verdict: 'supported', reason: 'Exact passage agrees.', supportingQuote: null, passages: [{ sourceVersionId: 'version-2', title: 'Frozen source', url: 'https://example.com', text: 'The exact frozen passage.', startByte: 40, endByte: 65, retrievalKind: 'lexical' }] }],
@@ -53,8 +53,8 @@ describe('lesson evidence', () => {
     const report = { data, isFetching: false, isError: false } as unknown as LessonEvidenceQuery;
     render(<LessonSectionEvidence report={report} sectionIndex={1} />);
 
-    expect(screen.getByText(/Evidence · 1 checked claim · 1 passage/)).toBeVisible();
-    await userEvent.click(screen.getByText(/Evidence · 1 checked claim/));
+    expect(screen.getByText(/Evidence · 1 checked statement · 1 passage/)).toBeVisible();
+    await userEvent.click(screen.getByText(/Evidence · 1 checked statement/));
     expect(screen.getByText('A grounded claim.')).toBeVisible();
     expect(screen.getByText(/The generated sentence/)).toBeVisible();
     await userEvent.click(screen.getByText('Frozen source'));
@@ -72,8 +72,8 @@ describe('lesson evidence', () => {
     const report = { data, isFetching: false, isError: false } as unknown as LessonEvidenceQuery;
     render(<LessonSectionEvidence report={report} sectionIndex={0} />);
 
-    expect(screen.getByText(/Evidence · 1 checked claim · 1 common knowledge · 1 passage/)).toBeVisible();
-    await userEvent.click(screen.getByText(/Evidence · 1 checked claim/));
+    expect(screen.getByText(/Evidence · 1 checked statement · 1 common knowledge · 1 passage/)).toBeVisible();
+    await userEvent.click(screen.getByText(/Evidence · 1 checked statement/));
     const label = screen.getByText('Common knowledge · not checked against a source');
     expect(label).toBeVisible();
     expect(label.className).not.toMatch(/rose|red|amber|emerald/);
@@ -81,7 +81,7 @@ describe('lesson evidence', () => {
     mocks.evidence.mockResolvedValue({ ok: true, data });
     show();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
-    expect(await screen.findByText(/1 claim verified against sources · 1 common knowledge, not checked against a source/)).toBeVisible();
+    expect(await screen.findByText(/1 statement verified against sources · 1 common knowledge, not checked against a source/)).toBeVisible();
   });
 
   it('shows a confirmation as the user’s, apart from machine verification, and flags removed sources', async () => {
@@ -95,12 +95,14 @@ describe('lesson evidence', () => {
     } });
     show();
     await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
-    expect(await screen.findByText(/12 claims verified against sources · 3 confirmed by you/)).toBeVisible();
+    expect(await screen.findByText(/12 statements verified against sources · 3 confirmed by you/)).toBeVisible();
     const confirmed = screen.getByText('Confirmed by you');
     expect(confirmed.className).not.toMatch(/emerald/);
     expect(screen.getByText(/Rounded for beginners/)).toBeVisible();
     expect(screen.getByText('Source removed · review')).toBeVisible();
-    expect(screen.getByRole('status')).toHaveTextContent('1 claim lost its source');
+    expect(screen.getByRole('status')).toHaveTextContent('1 statement lost its source — use Review to look at it.');
+    expect(screen.getByText('The source that supported this statement was deleted. The lesson stays readable; use Review to attach another source or confirm it.')).toBeInTheDocument();
+    expect(screen.getByText('2 teaching statements')).toBeInTheDocument();
   });
 
   describe('statements sorted into classes', () => {
@@ -129,7 +131,7 @@ describe('lesson evidence', () => {
       show();
       await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
 
-      expect(await screen.findByText(/1 claim verified against sources · 1 consistent with their sources · 1 common knowledge, not checked against a source/)).toBeVisible();
+      expect(await screen.findByText(/1 statement verified against sources · 1 consistent with their sources · 1 common knowledge, not checked against a source/)).toBeVisible();
       expect(screen.getByText('According to Quillet manual')).toBeVisible();
       expect(screen.getByText(/Common knowledge, not in the source/)).toBeVisible();
       expect(screen.getByText('a lexer turns characters into tokens')).toBeVisible();
@@ -143,7 +145,7 @@ describe('lesson evidence', () => {
       const report = { data, isFetching: false, isError: false } as unknown as LessonEvidenceQuery;
       render(<LessonSectionEvidence report={report} sectionIndex={0} />);
 
-      expect(screen.getByText(/Evidence · 1 checked claim · 1 consistent with their sources · 1 common knowledge · 2 passages/)).toBeVisible();
+      expect(screen.getByText(/Evidence · 1 checked statement · 1 consistent with their sources · 1 common knowledge · 2 passages/)).toBeVisible();
     });
 
     it('does not count a statement the user settled as having passed its class’s check', async () => {
@@ -152,7 +154,7 @@ describe('lesson evidence', () => {
       show();
       await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
 
-      expect(await screen.findByText(/1 claim verified against sources · 1 consistent with their sources · 1 confirmed by you/)).toBeVisible();
+      expect(await screen.findByText(/1 statement verified against sources · 1 consistent with their sources · 1 confirmed by you/)).toBeVisible();
       expect(screen.queryByText(/common knowledge, not checked against a source/)).not.toBeInTheDocument();
     });
   });

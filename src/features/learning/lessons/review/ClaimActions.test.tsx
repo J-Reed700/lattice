@@ -29,7 +29,7 @@ const contradicted = () => claimItem({ ...unsupportedItem(1), verdictKind: { kin
 describe('ClaimActions', () => {
   it('shows only the actions the claim offers', () => {
     setup(claimItem({ availableActions: ['remove'], support: null }));
-    const bar = screen.getByRole('toolbar', { name: 'Claim actions' });
+    const bar = screen.getByRole('toolbar', { name: 'Statement actions' });
     expect(within(bar).getByRole('button', { name: 'Remove it' })).toBeInTheDocument();
     for (const name of ['Accept', 'Edit the sentence', 'Add a source']) expect(within(bar).queryByRole('button', { name })).not.toBeInTheDocument();
     expect(within(bar).queryByRole('button', { name: /Accept this source/ })).not.toBeInTheDocument();
@@ -67,8 +67,8 @@ describe('ClaimActions', () => {
     expect(save).toBeDisabled();
     // The toolbar button with the form open and no note explains what is missing.
     await userEvent.click(screen.getByRole('button', { name: 'Accept with a note' }));
-    expect(screen.getByRole('alert')).toHaveTextContent('Write a note saying why the claim is right despite the source.');
-    await userEvent.type(screen.getByLabelText('Why the claim is right (required)'), '  The newer survey disagrees.  ');
+    expect(screen.getByRole('alert')).toHaveTextContent('Write a note saying why the statement is right despite the source.');
+    await userEvent.type(screen.getByLabelText('Why the statement is right (required)'), '  The newer survey disagrees.  ');
     await userEvent.click(save);
     expect(onAct).toHaveBeenCalledWith({ action: 'confirm', note: 'The newer survey disagrees.', sourceVersionIds: ['v-field-guide'] }, 'confirm');
   });
@@ -185,13 +185,13 @@ describe('ClaimActions', () => {
     expect(within(checks).getByText('No check recorded.')).toBeInTheDocument();
     expect(within(checks).getByText('Independent check')).toBeInTheDocument();
     expect(within(checks).getByText('The passage is about something else.')).toBeInTheDocument();
-    expect(screen.getByRole('list', { name: 'Claim history' })).toHaveTextContent('Removed the sentence');
+    expect(screen.getByRole('list', { name: 'Statement history' })).toHaveTextContent('Removed the sentence');
   });
 
   it('shows history without check columns when no independent check ran', async () => {
     setup(unsupportedItem(1), 'history');
     expect(screen.queryByRole('group', { name: 'First check and independent check' })).not.toBeInTheDocument();
-    expect(screen.getByText('Nothing has been recorded for this claim yet.')).toBeInTheDocument();
+    expect(screen.getByText('Nothing has been recorded for this statement yet.')).toBeInTheDocument();
   });
 
   it('shows Saving while busy and disables the actions', () => {
