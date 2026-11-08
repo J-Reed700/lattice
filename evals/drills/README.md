@@ -10,8 +10,11 @@ was measured. Results live under `results/<model>/`, and every result names its 
 | Build (`live_build_eval`, `live_passage_build_eval`) | Are the planted issues real? | at least 95% | by hand: nothing scores it |
 | Build, the lesson | Is every drill about its lesson? | every drill | by hand, from each drill's brief and Markdown |
 | Build, the lesson links | Does each lesson link really break the sentences it cites? | at least 95% of the links shown | by hand, from the sentences under each key issue and the lesson checks |
+| Build, the fit checks | Does the passage check pass only places that teach the lesson, and the code fit check only lessons code can show? | reported | by hand, from the verdicts and reasons the copy stores in `learning_drill_passage_checks` and `learning_drill_code_checks` |
 
 Write-ups are dated files beside this one. The first is [2026-11-05-FIRST-MEASUREMENT.md](2026-11-05-FIRST-MEASUREMENT.md).
+[2026-11-08-DRILLS-IN-THE-COURSE.md](2026-11-08-DRILLS-IN-THE-COURSE.md) measures the drills built from a course's lessons,
+and the checks that decide which lessons and passages they are built from.
 
 ## Run them
 
@@ -67,6 +70,8 @@ regression, 1 a regression, and 2 means the reports cannot be compared, for inst
 ```sh
 python -X utf8 -I evals/drills/check_regression.py check evals/drills/results/claude-haiku-5-5/grading/baseline.json run-1.json
 ```
+
+A run of the lesson set is compared with its own baseline, `results/claude-haiku-5-5/grading-lesson/baseline.json`.
 
 A model's answers vary, so a drop counts only past the noise: 2 items, or the spread of wrong items between the baseline's
 runs when that is wider. An item every baseline run got right and this run got wrong is listed to read by hand. A change
