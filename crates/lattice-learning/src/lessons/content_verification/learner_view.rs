@@ -239,9 +239,6 @@ impl LessonVerificationReport {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
-                // A finding whose claim the ledger knows follows the ledger:
-                // its statement lost its source when the claim was reopened
-                // for it. One it does not know keeps the deleted-passage rule.
                 let ledger_state = finding
                     .claim_id
                     .as_ref()

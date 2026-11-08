@@ -259,7 +259,11 @@ async fn queued_below_the_bar(
     claim
 }
 
-pub(super) async fn claim_entry(pool: &SqlitePool, lesson_id: &str, claim: &ClaimId) -> ClaimLedgerEntry {
+pub(super) async fn claim_entry(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    claim: &ClaimId,
+) -> ClaimLedgerEntry {
     ClaimReviewRepository::new(pool.clone())
         .load(lesson_id)
         .await
