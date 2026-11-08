@@ -15,7 +15,8 @@ use super::{provenance, ClaimReviewService};
 use crate::assessment_engine::{
     self as engine, normalize_answer, LearningAssessmentKey, LearningItemFormat,
 };
-use crate::assessment_repository::LearningAssessmentRepository;
+use crate::assessment_generation::StoredItem;
+use crate::assessment_repository::{content_hash, LearningAssessmentRepository};
 use crate::content_verification::Rewritten;
 use crate::lessons::claim_reviews::published_edit::update_report;
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan};
@@ -30,6 +31,7 @@ const NO_PROMPT: &str = "A question needs a prompt.";
 const BLANK_CHOICE: &str = "Each choice needs some text.";
 const SAME_CHOICES: &str = "Each choice needs different text.";
 const NO_RIGHT: &str = "Choose the right answer.";
+const SAME_QUESTION: &str = "Another question in this course has the same prompt and choices.";
 
 fn too_few() -> String {
     let least = *engine::SINGLE_CHOICE_OPTIONS.start();
@@ -136,6 +138,25 @@ async fn stored_question(
             explanation,
         },
     }))
+}
+
+/// Whether another question of the program has this content token.
+async fn repeats_another(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    candidate_id: &str,
+    token: &str,
+) -> Result<bool> {
+    let other: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND content_sha256=? AND id<>?",
+    )
+    .bind(program_id)
+    .bind(token)
+    .bind(candidate_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(other.is_some())
 }
 
 fn refuse(text: impl Into<String>) -> Result<()> {
@@ -289,7 +310,8 @@ impl ClaimReviewService {
     /// Writes the question's new text, ends the statements that stood on what
     /// changed, and keeps the rest. A dry run writes nothing. A new prompt or
     /// choice is written as a statement only when it replaces one. A question
-    /// the bank had dropped is agreed again by a valid save.
+    /// the bank had dropped is agreed again by a valid save. A save stores the
+    /// new content's token and is refused when another question has the same content.
     pub async fn edit_question(&self, edit: QuestionEdit) -> Result<QuestionEditOutcome> {
         let QuestionEdit {
             program_id,
@@ -333,7 +355,15 @@ impl ClaimReviewService {
                 revision: None,
             });
         }
-        engine::validate_candidate(&edited_candidate(bank_item.candidate, &stored.text, &new))?;
+        let edited = edited_candidate(bank_item.candidate, &stored.text, &new);
+        engine::validate_candidate(&edited)?;
+        let token = content_hash(&StoredItem::from(edited));
+        let mut connection = self.pool().acquire().await.map_err(db)?;
+        let repeated = repeats_another(&mut connection, &program_id, &stored.id, &token).await?;
+        drop(connection);
+        if repeated {
+            return Err(AppError::InvalidInput(SAME_QUESTION.into()));
+        }
 
         let unit = usize::try_from(sections)
             .unwrap_or_default()
@@ -424,6 +454,9 @@ impl ClaimReviewService {
         {
             return Err(AppError::InvalidInput(QUESTION_CHANGED.into()));
         }
+        if repeats_another(&mut tx, &program_id, &stored.id, &token).await? {
+            return Err(AppError::InvalidInput(SAME_QUESTION.into()));
+        }
         let planned = match &user {
             Some(user) => record_edit(&mut tx, &lesson_id, unit, &written, &ending, user).await?,
             None => Vec::new(),
@@ -442,10 +475,11 @@ impl ClaimReviewService {
         };
         let answer_changed = answer_changed(old, &new);
         sqlx::query(
-            "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json), review_status=CASE WHEN review_status='dropped' THEN 'agreed' ELSE review_status END WHERE id=?",
+            "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json), content_sha256=?, review_status=CASE WHEN review_status='dropped' THEN 'agreed' ELSE review_status END WHERE id=?",
         )
         .bind(&new.prompt)
         .bind(options)
+        .bind(&token)
         .bind(&stored.id)
         .execute(&mut *tx)
         .await

@@ -17,8 +17,8 @@ mod overview;
 mod recall;
 mod submission;
 
-pub(crate) use bank::insert_bank_items_in;
 pub use bank::BankItem;
+pub(crate) use bank::{content_hash, insert_bank_items_in};
 pub use contests::{ContestInput, Regrade};
 pub use submission::ItemGrade;
 
