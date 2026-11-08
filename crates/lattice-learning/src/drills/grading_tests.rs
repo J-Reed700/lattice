@@ -975,7 +975,7 @@ async fn the_answer_is_asked_for_under_the_schema_and_decoded_deterministically(
     grade(&llm, &Scene::new()).await?;
     let asked = llm.asked();
     assert_eq!(asked[0].json_schema, Some(schema()));
-    let sampling = asked[0].sampling.clone().unwrap_or_default();
+    let sampling = asked[0].sampling.unwrap_or_default();
     assert_eq!((sampling.temperature, sampling.top_k), (Some(0.0), Some(1)));
     Ok(())
 }

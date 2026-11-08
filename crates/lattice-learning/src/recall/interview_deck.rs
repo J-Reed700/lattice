@@ -555,11 +555,18 @@ mod tests {
             "plan-only",
             "interview",
             "ready",
-            &[plan_file.clone()],
+            std::slice::from_ref(&plan_file),
         )
         .await?;
         assert!(load(&pool, "program", "plan-only").await?.guides.is_none());
-        save(&pool, "draft", "interview", "draft", &[plan_file.clone()]).await?;
+        save(
+            &pool,
+            "draft",
+            "interview",
+            "draft",
+            std::slice::from_ref(&plan_file),
+        )
+        .await?;
         save(&pool, "lab", "code_lab", "ready", &[]).await?;
         save(&pool, "empty", "interview", "ready", &[]).await?;
         for activity in ["draft", "lab", "empty"] {

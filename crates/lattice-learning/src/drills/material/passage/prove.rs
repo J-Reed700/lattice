@@ -116,7 +116,7 @@ impl ProofStrategy for SourceChecked<'_> {
         }
         Ok(ProofVerdict::Proven {
             proof,
-            mutation,
+            mutation: Box::new(mutation),
             trail,
         })
     }

@@ -150,8 +150,10 @@ fn rows(path: &Path, width: usize) -> Vec<Vec<f32>> {
     bytes
         .chunks_exact(width * 4)
         .map(|row| {
-            row.chunks_exact(4)
-                .map(|f| f32::from_le_bytes([f[0], f[1], f[2], f[3]]))
+            row.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|f| f32::from_le_bytes(*f))
                 .collect()
         })
         .collect()
