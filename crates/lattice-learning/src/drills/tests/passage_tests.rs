@@ -389,13 +389,13 @@ async fn a_block_citing_an_older_version_of_a_source_takes_the_passage_from_its_
 ) -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
-    let older = version_of(&pool, &program, "Spacing and memory").await?;
-    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) SELECT 'newer-spacing',program_id,source_id,2,title,publisher,requested_url,resolved_url,full_text,excerpt,'newer-sha',word_count,truncated,extraction_version,acquired_at+1 FROM learning_source_versions WHERE id=?")
+    let older = version_of(&pool, &program, "Sleep and memory").await?;
+    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) SELECT 'newer-sleep',program_id,source_id,2,title,publisher,requested_url,resolved_url,full_text,excerpt,'newer-sha',word_count,truncated,extraction_version,acquired_at+1 FROM learning_source_versions WHERE id=?")
         .bind(&older)
         .execute(&pool)
         .await
         .map_err(db)?;
-    sqlx::query("UPDATE learning_source_library SET active_version_id='newer-spacing' WHERE active_version_id=?")
+    sqlx::query("UPDATE learning_source_library SET active_version_id='newer-sleep' WHERE active_version_id=?")
         .bind(&older)
         .execute(&pool)
         .await
@@ -409,7 +409,10 @@ async fn a_block_citing_an_older_version_of_a_source_takes_the_passage_from_its_
     .await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
     let source = next_passage(&pool, &spec).await?;
-    assert_eq!(source.version_id, "newer-spacing");
+    assert_eq!(
+        source.version_id, "newer-sleep",
+        "the spacing source ranks first; the block cites an older version of the sleep source"
+    );
     Ok(())
 }
 

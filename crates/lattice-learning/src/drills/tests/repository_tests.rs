@@ -240,33 +240,38 @@ async fn a_row_must_agree_with_its_status_and_pair_its_suite_with_its_runner() -
 #[tokio::test]
 async fn the_banks_queries_use_their_indexes() -> Result<()> {
     let pool = pool().await?;
-    for (sql, index) in [
+    let oldest = format!(
+        "EXPLAIN QUERY PLAN SELECT id {}",
+        repository::OLDEST_READY_ON
+    );
+    let any = format!("EXPLAIN QUERY PLAN {}", repository::ANY_READY_IN);
+    for (query, index) in [
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL AND (NULL IS NULL OR lesson_id=NULL) ORDER BY created_at,rowid LIMIT 1",
+            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(None::<&str>),
             "learning_drills_shelf",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL AND ('l' IS NULL OR lesson_id='l') ORDER BY created_at,rowid LIMIT 1",
+            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(Some("l")),
             "learning_drills_shelf",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT EXISTS(SELECT 1 FROM learning_drills WHERE program_id='p' AND material='code' AND language IS 'python' AND status='ready' AND lesson_id IS NOT NULL)",
+            sqlx::query(&any).bind("p").bind("code").bind("python"),
             "learning_drills_shelf",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT drill_id FROM learning_drill_patterns WHERE pattern_id='errors.swallowed_exception'",
+            sqlx::query("EXPLAIN QUERY PLAN SELECT drill_id FROM learning_drill_patterns WHERE pattern_id='errors.swallowed_exception'"),
             "learning_drill_patterns_pattern",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p'",
+            sqlx::query("EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p'"),
             "learning_drills_shelf",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE lesson_id='l'",
+            sqlx::query("EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE lesson_id='l'"),
             "learning_drills_lesson",
         ),
     ] {
-        let plan: Vec<String> = sqlx::query(sql)
+        let plan: Vec<String> = query
             .fetch_all(&pool)
             .await
             .map_err(db)?
@@ -275,7 +280,7 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
             .collect();
         assert!(
             plan.iter().any(|step| step.contains(index)),
-            "{sql} plans {plan:?}"
+            "{index} plans {plan:?}"
         );
     }
     Ok(())

@@ -157,6 +157,10 @@ async fn an_outline_lesson_takes_no_more_than_its_planned_minutes_take_to_read_b
     let context = outline(&pool).await?;
     let spacing = units_under(SPACING, "Spacing and memory");
     let sleep = units_under(SLEEP, "Sleep and memory");
+    assert!(
+        !spacing.is_empty() && !sleep.is_empty(),
+        "each source has units to read"
+    );
     let long = lesson_brief(&none(), &pool, &context, usize::MAX).await?;
     assert_eq!(long.evidence.get(..spacing.len()), Some(&spacing[..]));
     assert_eq!(
