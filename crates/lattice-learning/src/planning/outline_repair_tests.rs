@@ -29,7 +29,7 @@ fn with_summary(text: &str) -> Value {
 fn module_with_summary(candidate: &Value, text: &str) -> Value {
     let mut module = candidate["modules"][0].clone();
     module["summary"]["text"] = json!(text);
-    json!({"module":module})
+    repair_answer(module.clone())
 }
 
 fn module_with_objective(candidate: &Value, lesson: usize, objective: &str) -> Value {
@@ -262,7 +262,7 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
             objective,
             "Name the measurement for this lesson.",
         )]),
-        json!({"module":first}),
+        repair_answer(first.clone()),
         verdicts(
             &[("finding-1", "resolved")],
             vec![plan_finding(
@@ -271,7 +271,7 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
                 "Name the measurement for this lesson too.",
             )],
         ),
-        json!({"module":second}),
+        repair_answer(second.clone()),
         verdicts(
             &[("finding-2", "resolved")],
             vec![plan_finding(
@@ -280,7 +280,7 @@ async fn a_module_that_keeps_spawning_findings_runs_out_of_rewrites() -> Result<
                 "And for this lesson.",
             )],
         ),
-        json!({"module":third}),
+        repair_answer(third.clone()),
         verdicts(
             &[("finding-3", "resolved")],
             vec![plan_finding(
@@ -332,7 +332,7 @@ async fn plan_repair_never_adds_a_citation() -> Result<()> {
         initial,
         no_links(),
         issue(0),
-        json!({"module":fixed}),
+        repair_answer(fixed.clone()),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = generate_with(&repo, &llm, sources).await?;
@@ -382,9 +382,17 @@ async fn second_plan_attempt_asks_for_the_smallest_edit() -> Result<()> {
     let llm = model(vec![
         initial.clone(),
         issue(0),
-        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the first comparison.",
+        )),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The project brief still names no measurement."}],"newFindings":[]}),
-        json!({"module":module_with_objective(&initial, 0, "Measure the comparison with a stated outcome.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the comparison with a stated outcome.",
+        )),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = service::generate(
@@ -431,7 +439,7 @@ async fn targeted_research_saves_pages_the_judge_then_reads_and_repair_tells_the
         json!({"needs":[{"gap":0,"query":"random assignment confounding primary source","kind":"web"}]}),
         select_all(1),
         judged("unsupported", None),
-        json!({"module":initial["modules"][0]}),
+        repair_answer(initial["modules"][0].clone()),
     ]);
     let sources = vec![original_source()];
     let drafts = DraftRunRegistry::new();
@@ -566,10 +574,10 @@ async fn an_unchanged_last_attempt_leaves_a_plan_finding_as_an_advisory_and_pass
     let llm = model(vec![
         initial.clone(),
         issue(0),
-        json!({"module":first.clone()}),
+        repair_answer(first.clone()),
         json!({"verdicts":[{"id":"finding-1","status":"unresolved","reason":"The project brief still names no measurement."}],"newFindings":[]}),
         // The last attempt returns the module unchanged.
-        json!({"module":first}),
+        repair_answer(first.clone()),
     ]);
     let program = service::generate(
         &repo,
@@ -604,7 +612,7 @@ async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advis
         initial.clone(),
         issue(0),
         // The first attempt returns the module unchanged.
-        json!({"module":initial["modules"][0].clone()}),
+        repair_answer(initial["modules"][0].clone()),
     ]);
     let program = service::generate(
         &repo,
@@ -631,7 +639,7 @@ async fn a_first_attempt_that_keeps_the_module_leaves_a_plan_finding_as_an_advis
 fn clashing_correction(initial: &Value) -> Value {
     let mut clashing = module_with_objective(initial, 0, "Measure the first comparison.");
     clashing["title"] = initial["modules"][1]["title"].clone();
-    json!({"module":clashing})
+    repair_answer(clashing.clone())
 }
 
 #[tokio::test]
@@ -643,7 +651,11 @@ async fn a_correction_that_repeats_another_modules_title_is_asked_again_and_save
         issue(0),
         clashing_correction(&initial),
         // Asked again with the clash named, the model keeps its own title.
-        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the first comparison.",
+        )),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = service::generate(
@@ -691,13 +703,17 @@ async fn a_correction_still_unusable_keeps_its_module_and_repair_goes_on() -> Re
         clashing_correction(&initial),
         clashing_correction(&initial),
         // Module 2 is still repaired in the same pass.
-        json!({"module":second}),
+        repair_answer(second.clone()),
         verdicts(
             &[("finding-1", "unresolved"), ("finding-2", "resolved")],
             vec![],
         ),
         // The next pass takes module 1 up again, and its correction is saved.
-        json!({"module":module_with_objective(&initial, 0, "Measure the first comparison.")}),
+        repair_answer(module_with_objective(
+            &initial,
+            0,
+            "Measure the first comparison.",
+        )),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let program = service::generate(
@@ -813,7 +829,7 @@ async fn a_repair_may_add_a_lesson_and_keeps_every_saved_identity_in_order() -> 
             "The learner needs a lesson on measurement before this one.",
         )]),
         repair_answer(clashing.clone()),
-        repair_answer(clashing),
+        repair_answer(clashing.clone()),
     ]);
     let drafted = service::generate(
         &repo,

@@ -3,7 +3,7 @@
 use super::outline_reference_tests::*;
 use crate::{
     dto::*,
-    lessons::course_generation_tests::{outline, request},
+    lessons::course_generation_tests::{outline, repair_answer, request},
     outline_draft::{
         repair_saved, DraftRunRegistry, LearningOutlineIssueDto, LearningOutlineIssueKind,
         LearningOutlineReviewStatus, OutlineDraft, RepairLearningOutlineRequestDto,
@@ -32,7 +32,7 @@ async fn single_module_recheck_reuses_completed_checks_and_keeps_whole_course_co
         initial,
         links(&[("/modules/1/summary", ORIGINAL)]),
         issue(1),
-        json!({"module":fixed}),
+        repair_answer(fixed.clone()),
         verdicts(&[("finding-1", "resolved")], vec![]),
     ]);
     let sources = vec![source];
@@ -208,7 +208,7 @@ async fn interrupted_incremental_review_resumes_from_last_completed_receipt_with
         initial,
         links(&[("/modules/0/summary", ORIGINAL)]),
         issue(1),
-        json!({"module":fixed}),
+        repair_answer(fixed.clone()),
         no_links(),
         json!({"invalid":"unfinished review"}),
     ]);
@@ -288,7 +288,7 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
         initial.clone(),
         links(&[("/modules/0/summary", ORIGINAL)]),
         issue(1),
-        json!({"module":fixed}),
+        repair_answer(fixed.clone()),
         verdicts(
             &[("finding-1", "resolved")],
             vec![plan_finding(
@@ -297,7 +297,7 @@ async fn incremental_review_anchors_cross_module_effects_to_the_module_that_must
                 "The changed project no longer supplies the randomized comparison the final project needs. Restore that dependency here.",
             )],
         ),
-        json!({"module":fixed}),
+        repair_answer(fixed.clone()),
     ]);
     let drafts = DraftRunRegistry::new();
     let program = service::generate_with_references(
