@@ -7,6 +7,7 @@ import type {
   ClaimActionRequestDto,
   LearningGenerationJob,
   LessonClaimReviewDto,
+  LessonSectionEditDto,
   ResolveLearningClaimResultDto,
   SnapshotNoteDto,
   TeachingSettleDto,
@@ -89,6 +90,29 @@ export function useSettleTeachingFindings(programId: string, lessonId: string) {
     retry: false,
     mutationFn: async ({ findingKeys, settle }) => unwrap(await api.settleLearningTeachingFindings({ programId, lessonId, findingKeys, settle })),
     onSettled: () => client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
+  });
+}
+
+export type EditSectionVariables = {
+  sectionIndex: number;
+  beforeTitle: string;
+  beforeBody: string;
+  title: string;
+  body: string;
+};
+
+/**
+ * Saves the user's rewrite of one section of a published lesson. The course,
+ * its evidence and the review reload after success and after a refusal, so a
+ * section that changed underneath never stays on screen as it was.
+ */
+export function useEditLearningLessonSection(programId: string, lessonId: string) {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation<LessonSectionEditDto, Error, EditSectionVariables>({
+    retry: false,
+    mutationFn: async (variables) => unwrap(await api.editLearningLessonSection({ programId, lessonId, ...variables, dryRun: false })),
+    onSettled: () => refreshAfterAction(client, programId, lessonId),
   });
 }
 

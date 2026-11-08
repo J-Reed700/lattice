@@ -105,6 +105,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
                     : finding.unitTitle}
                 </p>
                 <p className="mt-2 text-sm leading-6 whitespace-pre-line text-text-secondary">{finding.summary}</p>
+                {finding.partChanged && <p className="mt-1 text-xs text-text-muted">You changed this part after this note was written.</p>}
                 {finding.passage && <>
                   <p className="mt-2 text-[11px] font-semibold uppercase tracking-[.12em] text-text-muted">{passageLabel(finding)}</p>
                   <blockquote className="mt-1 border-l-2 border-accent pl-3 text-xs leading-5 whitespace-pre-wrap wrap-anywhere text-text-primary">{finding.passage}</blockquote>
