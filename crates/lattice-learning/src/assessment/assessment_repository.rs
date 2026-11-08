@@ -359,8 +359,9 @@ async fn candidates_in(
     Ok(candidates)
 }
 
-/// The question as its form drew it: the form item's prompt, options and key
-/// over the bank row. An item without a key copy is read from the bank whole.
+/// The question as its form drew it: the form item's prompt, options, key,
+/// explanation and wrong-choice reasons over the bank row. An item without a
+/// key copy is read from the bank whole.
 fn drawn_candidate(bank: &StoredCandidate, item: &SqliteRow) -> Result<StoredCandidate> {
     let Some(key) = item.get::<Option<String>, _>("key_json") else {
         return Ok(bank.clone());
@@ -374,6 +375,12 @@ fn drawn_candidate(bank: &StoredCandidate, item: &SqliteRow) -> Result<StoredCan
     drawn.candidate.options = authored.into_iter().map(|(_, option)| option).collect();
     drawn.candidate.left = decode(item.get("left_items_json"))?;
     drawn.candidate.key = decode(&key)?;
+    if let Some(explanation) = item.get::<Option<String>, _>("explanation") {
+        drawn.candidate.explanation = explanation;
+    }
+    if let Some(reasons) = item.get::<Option<String>, _>("distractor_rationales_json") {
+        drawn.candidate.distractor_rationales = decode(&reasons)?;
+    }
     Ok(drawn)
 }
 

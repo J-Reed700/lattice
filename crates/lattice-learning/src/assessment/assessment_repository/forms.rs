@@ -196,7 +196,7 @@ impl LearningAssessmentRepository {
                 .outcome_ids
                 .first()
                 .ok_or_else(|| invalid("A quiz question has no outcome."))?;
-            sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed,option_order_json,left_items_json,key_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed,option_order_json,left_items_json,key_json,explanation,distractor_rationales_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(&req.form_id)
                 .bind(ordinal as i64)
                 .bind(&item.id)
@@ -212,6 +212,8 @@ impl LearningAssessmentRepository {
                 .bind(json(&item.option_order)?)
                 .bind(json(&item.left)?)
                 .bind(json(&stored.candidate.key)?)
+                .bind(&stored.candidate.explanation)
+                .bind(json(&stored.candidate.distractor_rationales)?)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
