@@ -215,23 +215,40 @@ impl LearningPracticalRepository {
             }
             _ => "The evaluator did not complete.",
         };
-        let check = LearningPracticalCheckResultDto {
-            name: "Contained evaluator".into(),
-            status: check_status,
-            message: message.into(),
-            duration_ms: Some(execution.duration_ms),
+        let case_checks = extract_case_checks(&execution.stdout);
+        let checks = if case_checks.is_empty() {
+            vec![LearningPracticalCheckResultDto {
+                name: "Contained evaluator".into(),
+                status: check_status,
+                message: message.into(),
+                duration_ms: Some(execution.duration_ms),
+                detail: None,
+            }]
+        } else {
+            case_checks
         };
         let timestamp = now();
         let mut tx = self.pool.begin().await.map_err(db)?;
         let updated = sqlx::query("UPDATE learning_practical_runs SET status=?,stdout=?,stderr=?,output_truncated=?,exit_code=?,duration_ms=?,check_results_json=?,completed_at=? WHERE id=? AND status='running'")
             .bind(status_name(&status)).bind(&execution.stdout).bind(&execution.stderr)
             .bind(execution.output_truncated as i64).bind(execution.exit_code.map(i64::from))
-            .bind(execution.duration_ms).bind(json(&vec![check.clone()])?).bind(timestamp)
+            .bind(execution.duration_ms).bind(json(&checks)?).bind(timestamp)
             .bind(&prepared.dto.id).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() == 1 {
-            sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms) VALUES(?,0,?,?,?,?)")
-                .bind(&prepared.dto.id).bind(&check.name).bind(check_status_name(check.status))
-                .bind(&check.message).bind(check.duration_ms).execute(&mut *tx).await.map_err(db)?;
+            for (ordinal, check) in checks.iter().enumerate() {
+                let detail_json = check.detail.as_ref().map(json).transpose()?;
+                sqlx::query("INSERT INTO learning_practical_run_checks(run_id,ordinal,name,status,message,duration_ms,detail_json) VALUES(?,?,?,?,?,?,?)")
+                    .bind(&prepared.dto.id)
+                    .bind(ordinal as i64)
+                    .bind(&check.name)
+                    .bind(check_status_name(check.status))
+                    .bind(&check.message)
+                    .bind(check.duration_ms)
+                    .bind(detail_json)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(db)?;
+            }
             if !matches!(
                 status,
                 LearningPracticalRunStatus::RuntimeUnavailable
@@ -341,4 +358,11 @@ fn cleanup_record(row: &sqlx::sqlite::SqliteRow) -> Result<RunCleanup> {
             .transpose()?,
         owner_token: workspace_owner_token_from_snapshot(row.get("activity_snapshot_json")),
     })
+}
+
+/// Parses per-case check results from runner stdout if present.
+fn extract_case_checks(_stdout: &str) -> Vec<LearningPracticalCheckResultDto> {
+    // Stage 1 stub: per-case extraction returns empty to compile without panicking,
+    // causing tests expecting per-case check rows to fail on assertion.
+    Vec::new()
 }
