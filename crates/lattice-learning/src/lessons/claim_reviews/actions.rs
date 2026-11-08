@@ -15,6 +15,8 @@ pub(super) const ONLY_SECTION: &str = "Only a section's text can be changed in a
 
 const EDITED_THE_SECTION: &str =
     "This changed when you edited the section. Edit the section again to change it back.";
+const EDITED_THE_QUESTION: &str =
+    "This question changed after that, so it can't be undone on its own. Edit the question to change it back.";
 
 const PUBLISHED: &str = "This lesson is published. Prepare it again to do that.";
 
@@ -74,7 +76,16 @@ fn offered_when_published(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> 
 /// when it is offered, or the ledger alone is to refuse it.
 pub(super) fn refusal(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> Option<AppError> {
     if action == ClaimActionKind::Undo && ended_by_section_edit(entry) {
-        return Some(AppError::InvalidState(EDITED_THE_SECTION.into()));
+        let on_question = matches!(
+            entry.location().unit_kind,
+            UnitKind::Question | UnitKind::AnswerKey
+        );
+        let text = if on_question {
+            EDITED_THE_QUESTION
+        } else {
+            EDITED_THE_SECTION
+        };
+        return Some(AppError::InvalidState(text.into()));
     }
     if !entry.allows(action) || offered_when_published(entry, action) {
         return None;
