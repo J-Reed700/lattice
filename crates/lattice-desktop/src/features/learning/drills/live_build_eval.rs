@@ -1194,7 +1194,11 @@ async fn the_markdown_shows_the_course_the_lesson_its_brief_each_issues_lesson_w
     assert!(text.contains(
         "> A sliding window forgets the calls older than its length.\n(Rate limiting notes)\n"
     ));
-    assert_eq!(text.matches("From the lesson:").count(), 1);
+    let key = text
+        .split_once("## The key")
+        .map(|(_, key)| key)
+        .expect("the markdown has a key section");
+    assert_eq!(key.matches("From the lesson:").count(), 1);
     // Each check: the issue, the pattern, the sentences, both answers, whether it passed, and why.
     assert!(text.contains("## The lesson checks\n\n"));
     assert!(text.contains(&format!(
