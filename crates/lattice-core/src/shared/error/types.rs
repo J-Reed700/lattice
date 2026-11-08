@@ -550,16 +550,8 @@ impl fmt::Display for AppError {
                 "Permission denied: {}. Please check file permissions.",
                 e
             ),
-            AppError::InvalidInput(e) => write!(
-                f,
-                "Invalid input: {}. Please check your input and try again.",
-                e
-            ),
-            AppError::Network(e) => write!(
-                f,
-                "Network error: {}. Please check your connection.",
-                e
-            ),
+            AppError::InvalidInput(e) => write!(f, "Invalid input: {}", e),
+            AppError::Network(e) => write!(f, "Network error: {}", e),
             AppError::HttpStatus { message, .. } => write!(f, "{}", message),
             AppError::FileTooLarge { path, size_bytes, max_size_bytes } => write!(
                 f,
