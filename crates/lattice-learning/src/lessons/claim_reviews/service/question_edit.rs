@@ -12,7 +12,10 @@ use sqlx::SqliteConnection;
 
 use super::section_edit::{count, endings, record_edit};
 use super::{provenance, ClaimReviewService};
-use crate::assessment_engine::{normalize_answer, LearningAssessmentKey, LearningItemFormat};
+use crate::assessment_engine::{
+    self as engine, normalize_answer, LearningAssessmentKey, LearningItemFormat,
+};
+use crate::assessment_repository::LearningAssessmentRepository;
 use crate::content_verification::Rewritten;
 use crate::lessons::claim_reviews::published_edit::update_report;
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan};
@@ -24,13 +27,22 @@ const QUESTION_CHANGED: &str =
     "This question changed since you opened it. Copy your changes, close the editor and open it again.";
 const NOT_IN_LESSON: &str = "This question is not in this lesson.";
 const NO_PROMPT: &str = "A question needs a prompt.";
-const TOO_FEW: &str = "A question needs at least two choices.";
-const TOO_MANY: &str = "A question can have at most 8 choices.";
 const BLANK_CHOICE: &str = "Each choice needs some text.";
 const SAME_CHOICES: &str = "Each choice needs different text.";
 const NO_RIGHT: &str = "Choose the right answer.";
-/// The engine's cap on a single-choice question's options.
-const MAX_CHOICES: usize = 8;
+
+fn too_few() -> String {
+    let least = *engine::SINGLE_CHOICE_OPTIONS.start();
+    match least {
+        2 => "A question needs at least two choices.".into(),
+        _ => format!("A question needs at least {least} choices."),
+    }
+}
+
+fn too_many() -> String {
+    let most = *engine::SINGLE_CHOICE_OPTIONS.end();
+    format!("A question can have at most {most} choices.")
+}
 
 /// A question as the editor shows it: its prompt, its choices in order, the
 /// right choice and its explanation.
@@ -126,7 +138,7 @@ async fn stored_question(
     }))
 }
 
-fn refuse(text: &str) -> Result<()> {
+fn refuse(text: impl Into<String>) -> Result<()> {
     Err(AppError::InvalidInput(text.into()))
 }
 
@@ -137,11 +149,11 @@ fn validate(kind: LearningItemFormat, after: &QuestionText) -> Result<()> {
     match kind {
         LearningItemFormat::SingleChoice => {
             let choices = after.choices.len();
-            if choices < 2 {
-                return refuse(TOO_FEW);
+            if choices < *engine::SINGLE_CHOICE_OPTIONS.start() {
+                return refuse(too_few());
             }
-            if choices > MAX_CHOICES {
-                return refuse(TOO_MANY);
+            if choices > *engine::SINGLE_CHOICE_OPTIONS.end() {
+                return refuse(too_many());
             }
             if after.choices.iter().any(|choice| choice.trim().is_empty()) {
                 return refuse(BLANK_CHOICE);
@@ -186,6 +198,33 @@ fn effective(before: &QuestionText, after: QuestionText) -> QuestionText {
         },
         explanation: after.explanation,
     }
+}
+
+/// Whether the choices or the right answer differ, which makes the stored
+/// per-choice rationales stale.
+fn answer_changed(old: &QuestionText, new: &QuestionText) -> bool {
+    new.choices != old.choices || new.right != old.right
+}
+
+/// The stored bank item with the edit applied, as the quiz engine will read it.
+fn edited_candidate(
+    stored: engine::LearningAssessmentCandidate,
+    old: &QuestionText,
+    new: &QuestionText,
+) -> engine::LearningAssessmentCandidate {
+    let mut candidate = stored;
+    candidate.prompt.clone_from(&new.prompt);
+    candidate.explanation.clone_from(&new.explanation);
+    if new.kind == LearningItemFormat::SingleChoice {
+        candidate.options.clone_from(&new.choices);
+    }
+    if let Some(right) = new.right.filter(|_| has_choices(new.kind)) {
+        candidate.key = LearningAssessmentKey::Choice(right);
+    }
+    if answer_changed(old, new) {
+        candidate.distractor_rationales.clear();
+    }
+    candidate
 }
 
 /// The unit's text as the report stores it: its choices and explanation
@@ -265,6 +304,12 @@ impl ClaimReviewService {
         let stored = stored_question(&mut connection, &program_id, &lesson_id, question_index)
             .await?
             .ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))?;
+        let bank_item = LearningAssessmentRepository::stored_candidate_in(
+            &mut connection,
+            &program_id,
+            &stored.id,
+        )
+        .await?;
         let sections: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id=?")
                 .bind(&lesson_id)
@@ -287,6 +332,7 @@ impl ClaimReviewService {
                 revision: None,
             });
         }
+        engine::validate_candidate(&edited_candidate(bank_item.candidate, &stored.text, &new))?;
 
         let unit = usize::try_from(sections)
             .unwrap_or_default()
@@ -393,7 +439,7 @@ impl ClaimReviewService {
             )?),
             _ => None,
         };
-        let answer_changed = new.choices != old.choices || new.right != old.right;
+        let answer_changed = answer_changed(old, &new);
         sqlx::query(
             "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json) WHERE id=?",
         )
