@@ -42,6 +42,22 @@ use lattice_core::shared::error::{AppError, Result};
 /// The argument that makes this executable a lab runner instead of the app.
 pub const LAB_RUNNER_ARG: &str = "--lattice-lab-runner";
 
+/// Set in a test binary's runner child to the role it plays; `serve` serves.
+#[cfg(any(test, feature = "test-support"))]
+pub const CHILD_MODE: &str = "LATTICE_LAB_RUNNER_TEST_CHILD";
+
+/// The executable a run's child is a copy of.
+#[derive(Clone, Copy)]
+pub(crate) enum Runner {
+    /// The app, which takes [`LAB_RUNNER_ARG`].
+    App,
+    /// A test binary, which cannot: it runs only the named test, which serves
+    /// when [`CHILD_MODE`] says so. One test thread: the harness then prints
+    /// nothing while the test runs (no slow-test notice in the frames).
+    #[cfg(any(test, feature = "test-support"))]
+    Test(&'static str),
+}
+
 /// The child's first output; the version changes with the protocol.
 const GREETING: &[u8] = b"lattice-lab-runner/1\n";
 /// Output tolerated before the greeting: a test harness's banner, say.
@@ -252,6 +268,7 @@ impl Deadlines {
 /// outlives its deadlines. `warmup`, held by a Python run, is released once
 /// the child has loaded the interpreter.
 pub(crate) async fn run(
+    runner: Runner,
     spec: BuiltinLabExecutionSpec,
     python: Option<PythonBundle>,
     warmup: Option<tokio::sync::MutexGuard<'_, ()>>,
@@ -262,21 +279,23 @@ pub(crate) async fn run(
     let request = RunRequest { spec, python };
     // raw-spawn: one child per lab run; supervise kills it on cancel, timeout
     // and protocol failure, and kill_on_drop when the caller goes away.
-    let mut child = runner_command(scratch.path())?.spawn().map_err(|error| {
-        AppError::ServiceNotAvailable(format!("The lab runner could not start: {error}"))
-    })?;
+    let mut child = runner_command(runner, scratch.path())?
+        .spawn()
+        .map_err(|error| {
+            AppError::ServiceNotAvailable(format!("The lab runner could not start: {error}"))
+        })?;
     supervise(&mut child, &request, &cancellation, deadlines, warmup).await
 }
 
 /// This executable as a runner: no inherited environment, the run's scratch
 /// directory as working directory and temporary directory, piped stdio.
-fn runner_command(scratch: &Path) -> Result<Command> {
+fn runner_command(runner: Runner, scratch: &Path) -> Result<Command> {
     let executable = tauri_utils::platform::current_exe().map_err(|error| {
         AppError::InternalError(format!("Cannot locate this executable: {error}"))
     })?;
     let mut command = Command::new(executable);
     command
-        .args(runner_args())
+        .args(runner_args(runner))
         .env_clear()
         .envs(runner_environment(scratch))
         .current_dir(scratch)
@@ -284,29 +303,22 @@ fn runner_command(scratch: &Path) -> Result<Command> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    #[cfg(any(test, feature = "test-support"))]
+    if let Runner::Test(_) = runner {
+        command.env(CHILD_MODE, "serve");
+    }
     Ok(command)
 }
 
-#[cfg(not(test))]
-fn runner_args() -> Vec<OsString> {
-    vec![LAB_RUNNER_ARG.into()]
-}
-
-/// The lib test binary cannot take [`LAB_RUNNER_ARG`]; it runs the runner from
-/// a test that serves when [`tests::CHILD_MODE`] says so. One test thread:
-/// the harness then prints nothing while the test runs (no slow-test notice
-/// in the middle of the frames).
-#[cfg(test)]
-fn runner_args() -> Vec<OsString> {
-    [
-        "--exact",
-        tests::CHILD_TEST,
-        "--nocapture",
-        "--test-threads=1",
-    ]
-    .into_iter()
-    .map(OsString::from)
-    .collect()
+fn runner_args(runner: Runner) -> Vec<OsString> {
+    match runner {
+        Runner::App => vec![LAB_RUNNER_ARG.into()],
+        #[cfg(any(test, feature = "test-support"))]
+        Runner::Test(test) => ["--exact", test, "--nocapture", "--test-threads=1"]
+            .into_iter()
+            .map(OsString::from)
+            .collect(),
+    }
 }
 
 /// What the engines need from the environment: somewhere to put temporary
@@ -322,8 +334,6 @@ fn runner_environment(scratch: &Path) -> Vec<(OsString, OsString)> {
             environment.push(("SystemRoot".into(), root));
         }
     }
-    #[cfg(test)]
-    environment.push((tests::CHILD_MODE.into(), "serve".into()));
     environment
 }
 
@@ -457,9 +467,7 @@ pub(super) mod tests {
 
     /// The test that acts as the runner in a child copy of the test binary,
     /// after the crash-hook tests' pattern.
-    pub(super) const CHILD_TEST: &str = "runtime::lab_runner::tests::lab_runner_child";
-    /// Set in a child's environment to the role it plays.
-    pub(super) const CHILD_MODE: &str = "LATTICE_LAB_RUNNER_TEST_CHILD";
+    pub(crate) const CHILD_TEST: &str = "runtime::lab_runner::tests::lab_runner_child";
 
     fn javascript_spec(checks: &str, timeout_seconds: u64) -> BuiltinLabExecutionSpec {
         BuiltinLabExecutionSpec {
@@ -546,7 +554,7 @@ pub(super) mod tests {
     }
 
     fn spawn_child(scratch: &Path, mode: &str) -> Child {
-        let mut command = runner_command(scratch).unwrap();
+        let mut command = runner_command(Runner::Test(CHILD_TEST), scratch).unwrap();
         command.env(CHILD_MODE, mode);
         command.spawn().unwrap()
     }
@@ -663,6 +671,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn a_lab_runs_in_a_child_process() -> Result<()> {
         let result = run(
+            Runner::Test(CHILD_TEST),
             javascript_spec("console.log('from the child')", 5),
             None,
             None,

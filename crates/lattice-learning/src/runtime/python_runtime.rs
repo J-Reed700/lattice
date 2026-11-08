@@ -34,10 +34,12 @@ pub struct PythonBundle {
 }
 
 /// A bundled runtime directory whose interpreter and standard library matched
-/// the digests in its manifest. Only [`PythonRuntime::verify`] makes one.
+/// the digests in its manifest, and where its runs keep the compiled
+/// interpreter. Only [`PythonRuntime::verify`] makes one.
 #[derive(Debug, Clone)]
 pub struct PythonRuntime {
     root: PathBuf,
+    module_cache: Option<PathBuf>,
 }
 
 impl PythonRuntime {
@@ -50,20 +52,26 @@ impl PythonRuntime {
         })?;
         Ok(Self {
             root: resource_root,
+            module_cache: module_cache_dir(),
         })
     }
 
-    /// The bundle in the source tree, which the lib tests run on.
+    /// The bundle in the source tree, which tests run on, with the compiled
+    /// interpreter in the test cache.
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn source_tree() -> Option<Self> {
-        Self::verify(source_tree_root()).ok()
+        let python = Self::verify(source_tree_root()).ok()?;
+        Some(Self {
+            module_cache: test_module_cache(),
+            ..python
+        })
     }
 
     /// What a lab run needs to start the interpreter from this bundle.
     pub(super) fn bundle(&self) -> PythonBundle {
         PythonBundle {
             root: self.root.clone(),
-            module_cache: module_cache_dir(),
+            module_cache: self.module_cache.clone(),
         }
     }
 }
@@ -75,6 +83,11 @@ fn module_cache_dir() -> Option<PathBuf> {
 
 #[cfg(test)]
 fn module_cache_dir() -> Option<PathBuf> {
+    test_module_cache()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn test_module_cache() -> Option<PathBuf> {
     Some(std::env::temp_dir().join("lattice-learning-python-test-modules"))
 }
 
@@ -87,7 +100,7 @@ fn source_tree_root() -> PathBuf {
 pub(super) fn test_bundle() -> PythonBundle {
     PythonBundle {
         root: source_tree_root(),
-        module_cache: module_cache_dir(),
+        module_cache: test_module_cache(),
     }
 }
 

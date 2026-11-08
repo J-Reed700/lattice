@@ -129,6 +129,8 @@ pub struct BuiltinRuntimes {
     /// Only one Python run loads the interpreter at a time, so a cold cache is
     /// compiled once and every other run waits to load the result.
     python_warmup: Arc<tokio::sync::Mutex<()>>,
+    /// What each run's child is a copy of.
+    runner: lab_runner::Runner,
 }
 
 impl BuiltinRuntimes {
@@ -138,13 +140,24 @@ impl BuiltinRuntimes {
             guest_slots: Arc::new(tokio::sync::Semaphore::new(CONCURRENT_GUESTS)),
             python,
             python_warmup: Arc::default(),
+            runner: lab_runner::Runner::App,
         }
     }
 
     /// Runtimes on the source tree's Python bundle, for one test.
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> Self {
+        Self::for_test_binary(lab_runner::tests::CHILD_TEST)
+    }
+
+    /// Runtimes for a test binary on the source tree's Python bundle: each lab
+    /// runs in a child copy of the binary that runs only `child_test`.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn for_tests() -> Self {
-        Self::new(PythonRuntime::source_tree())
+    pub fn for_test_binary(child_test: &'static str) -> Self {
+        Self {
+            runner: lab_runner::Runner::Test(child_test),
+            ..Self::new(PythonRuntime::source_tree())
+        }
     }
 
     /// What a Python run on these runtimes is given.
@@ -224,7 +237,7 @@ impl BuiltinRuntimes {
         } else {
             None
         };
-        let result = lab_runner::run(spec, python, warmup, token).await;
+        let result = lab_runner::run(self.runner, spec, python, warmup, token).await;
         drop(permit);
         result
     }
