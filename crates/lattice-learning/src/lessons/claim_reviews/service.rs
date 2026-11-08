@@ -28,6 +28,7 @@ use super::repository::{
 };
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 
+mod question_edit;
 mod section_edit;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
@@ -36,6 +37,7 @@ use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
+pub use question_edit::{QuestionEdit, QuestionEditOutcome, QuestionText};
 pub use section_edit::{SectionEdit, SectionEditOutcome};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
