@@ -196,8 +196,8 @@ struct CoverageUnit {
     index: usize,
     complete: bool,
     reason: String,
-    /// Empty exactly when complete. They are not claims: the lesson reports
-    /// them as findings for the teaching review, and they never block it.
+    /// Empty exactly when complete. What remains is what the rule layer makes
+    /// Internal, or what the guard refuses: recorded in the report only.
     missing_assertions: Vec<MissingAssertion>,
 }
 
