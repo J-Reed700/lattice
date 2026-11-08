@@ -186,7 +186,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
       </label>}
 
       {busy && <div role="status" className="mt-3 space-y-1.5">
-        <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />{progress ? progressLine(progress) : 'Starting…'}</p>
+        <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span className="min-w-0 truncate" title={progress ? progressLine(progress) : undefined}>{progress ? progressLine(progress) : 'Starting…'}</span></p>
         {checking && <div role="progressbar" aria-label="Statements checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
           <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${checking.total ? (checking.done / checking.total) * 100 : 0}%` }} />
         </div>}

@@ -361,10 +361,7 @@ export function progressLine(stage: { stage: 'fetching'; host: string | null } |
   switch (stage.stage) {
     case 'fetching': return stage.host ? `Reading ${stage.host}…` : 'Reading it…';
     case 'saving': return 'Saving it to your sources';
-    case 'checking': {
-      const statement = stage.statement.length > 80 ? `${stage.statement.slice(0, 79)}…` : stage.statement;
-      return `Checking statement ${Math.min(stage.done + 1, stage.total)} of ${stage.total}: ${statement}`;
-    }
+    case 'checking': return `Checking statement ${Math.min(stage.done + 1, stage.total)} of ${stage.total}: ${stage.statement}`;
     case 'done': return 'Done';
   }
 }
