@@ -260,10 +260,7 @@ async fn a_live_status_is_an_http_status_and_a_failed_read_is_a_network_error() 
         panic!("a 404 is an answer, not a lost connection: {error:?}");
     };
     assert_eq!(*status, 404);
-    assert!(
-        message.starts_with("HTTP 404 Not Found: Not Found. "),
-        "{message}"
-    );
+    assert!(message.starts_with("HTTP 404 Not Found. "), "{message}");
     assert!(message.contains(NOTHING_ARCHIVED), "{message}");
 
     let down = "https://down.example/report";

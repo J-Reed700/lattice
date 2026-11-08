@@ -759,7 +759,7 @@ async fn a_page_that_cannot_be_read_gives_its_own_error_unchanged() {
         AppError::InvalidInput("This page did not provide enough static reference text.".into()),
         AppError::HttpStatus {
             status: 404,
-            message: "HTTP 404 Not Found: Not Found".into(),
+            message: "HTTP 404 Not Found".into(),
         },
         AppError::Network("Failed to fetch URL: connection refused".into()),
     ] {

@@ -69,7 +69,17 @@ mod tests {
             panic!("404 is an answer, not a lost connection: {error:?}");
         };
         assert_eq!(*status, 404);
-        assert_eq!(message, "HTTP 404 Not Found: Not Found");
-        assert_eq!(error.to_string(), "HTTP 404 Not Found: Not Found");
+        assert_eq!(message, "HTTP 404 Not Found");
+        assert_eq!(error.to_string(), "HTTP 404 Not Found");
+    }
+
+    #[test]
+    fn a_status_with_no_standard_reason_is_named_by_its_code_alone() {
+        let error = status_error(StatusCode::from_u16(599).unwrap());
+        let AppError::HttpStatus { status, message } = &error else {
+            panic!("599 is an answer, not a lost connection: {error:?}");
+        };
+        assert_eq!(*status, 599);
+        assert_eq!(message, "HTTP 599");
     }
 }
