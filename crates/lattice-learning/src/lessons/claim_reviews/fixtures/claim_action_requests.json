@@ -22,6 +22,19 @@
     "hint": "NIST steam tables"
   },
   {
+    "action": "put_back",
+    "text": null,
+    "section": null
+  },
+  {
+    "action": "put_back",
+    "text": "Water boils at 100 °C at sea level.",
+    "section": 0
+  },
+  {
+    "action": "restore_original"
+  },
+  {
     "action": "undo"
   }
 ]

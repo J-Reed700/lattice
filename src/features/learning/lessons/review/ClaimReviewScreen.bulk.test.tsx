@@ -31,7 +31,7 @@ function show(data: LessonClaimReviewDto | LessonClaimReviewDto[]) {
 
 const four = () => [1, 2, 3, 4].map((index) => waitingOnSource(index));
 const confirmed = (claims: ClaimReviewItemDto[], ids: string[]) => claims.map((claim) => (ids.includes(claim.claimId) ? { ...claim, state: { state: 'confirmed' as const, at: 2 } } : claim));
-const bar = () => screen.getByRole('toolbar');
+const bar = () => screen.getByRole('toolbar', { name: /selected$/ });
 const boxes = () => screen.getAllByRole('checkbox', { name: 'Select this statement' });
 const selectAll = async () => userEvent.click((await screen.findAllByRole('button', { name: /^Select all \d+$/ }))[0]);
 
@@ -57,7 +57,7 @@ describe('Claim review screen, many statements at once', () => {
     await selectAll();
     expect(bar()).toHaveTextContent('4 statements selected');
     await userEvent.click(screen.getByRole('button', { name: 'Select none' }));
-    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(screen.queryByRole('toolbar', { name: /selected$/ })).not.toBeInTheDocument();
   });
 
   it('accepts every selected statement in one call with the review revision, says so, and clears the selection', async () => {
@@ -75,7 +75,7 @@ describe('Claim review screen, many statements at once', () => {
     }));
     expect(api.resolve).not.toHaveBeenCalled();
     expect(await screen.findByRole('status')).toHaveTextContent('Accepted 2 statements.');
-    expect(screen.queryByRole('toolbar')).not.toBeInTheDocument();
+    expect(screen.queryByRole('toolbar', { name: /selected$/ })).not.toBeInTheDocument();
   });
 
   it('removes every selected statement in one call', async () => {

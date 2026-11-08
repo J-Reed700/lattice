@@ -790,18 +790,24 @@ async fn an_old_row_no_format_matches_gets_the_plain_line_for_its_kind() {
 #[tokio::test]
 async fn a_quotation_finding_lists_its_quote_as_a_quotation_and_the_rest_as_the_lesson() {
     let store = TeachingFindingsRepository::new(pool().await);
-    let mut quote = set_aside(
-        FindingKind::Quotation,
-        FindingSite::Section(1),
-        "Section 2 cites a quote.",
-        0,
+    let mut quote = with_summary(
+        set_aside(
+            FindingKind::Quotation,
+            FindingSite::Section(1),
+            "Section 2 cites a quote.",
+            0,
+        ),
+        "The quotation cited in section 2 could not be found in its source.",
     );
     quote.finding.passage = Some("A quotation of the source.".into());
-    let bare = set_aside(
-        FindingKind::Quotation,
-        FindingSite::Question(0),
-        "Question 1 cites nothing.",
-        0,
+    let bare = with_summary(
+        set_aside(
+            FindingKind::Quotation,
+            FindingSite::Question(0),
+            "Question 1 cites nothing.",
+            0,
+        ),
+        "The quotation cited in question 1 could not be found in its source.",
     );
     store
         .record(

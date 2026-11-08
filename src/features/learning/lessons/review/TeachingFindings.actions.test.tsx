@@ -3,8 +3,8 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
 import { teachingFinding } from '@/features/learning/lessons/review/claimReviewTestData';
+import { TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
 import type { TeachingFindingDto } from '@/lib/bindings';
 
 const api = vi.hoisted(() => ({ settle: vi.fn(), resolveMany: vi.fn() }));

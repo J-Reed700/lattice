@@ -3,8 +3,8 @@ import { useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 
 import { ReviewCheckbox, SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
-import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import { useResolveLearningClaims, useSettleTeachingFindings } from '@/features/learning/lessons/review/useLessonClaimReview';
+import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import type { TeachingFindingDto, TeachingFindingKindDto } from '@/lib/bindings';
 
 const KIND_LABELS: Record<TeachingFindingKindDto, string> = {

@@ -182,10 +182,12 @@ describe('what the machine took out of the lesson', () => {
           { claimId: 'a', statement: 'Tesseract was written in 2019.', why: 'Not stated by the passages compared · No passage gives the year.' },
           { claimId: 'b', statement: 'Tesseract reads pixels into text.', why: 'Taken out with the sentence or section it stood in' },
         ],
+        claimId: null, place: 'known',
       },
       {
         key: '2:body:Water boils at 100 °C.', sentence: 'Water boils at 100 °C.',
         statements: [{ claimId: 'c', statement: 'Water boils at 100 °C.', why: 'A source says otherwise · A passage says otherwise.' }],
+        claimId: null, place: 'known',
       },
     ]);
   });

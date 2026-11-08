@@ -364,9 +364,11 @@ async fn the_rewritten_report_drops_findings_with_no_claim_whose_text_is_gone() 
     let mut gone = template.clone();
     gone.claim_id = None;
     gone.quote = "A sentence that is gone.".into();
+    gone.statement = "A sentence that is gone.".into();
     let mut stays = template.clone();
     stays.claim_id = None;
     stays.quote = "A sentence that stays.".into();
+    stays.statement = "A sentence that stays.".into();
     report.findings.push(gone);
     report.findings.push(stays);
     let ended = HashSet::from([template.claim_id.clone().unwrap()]);

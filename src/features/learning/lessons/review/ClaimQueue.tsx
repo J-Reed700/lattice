@@ -4,9 +4,9 @@ import { Check, ChevronRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { claimsCount, resolvedChip, SELECT_NONE, SELECT_STATEMENT, selectAll, statementsCount, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
-import { teachingNotesNoun } from '@/features/learning/lessons/review/TeachingFindings';
 import { GROUP_MODE_LABELS, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { ReviewCheckbox } from '@/features/learning/lessons/review/SelectionBar';
+import { teachingNotesNoun } from '@/features/learning/lessons/review/TeachingFindings';
 import type { ClaimReviewItemDto } from '@/lib/bindings';
 
 const NAVIGATION_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End']);

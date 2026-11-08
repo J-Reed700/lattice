@@ -110,9 +110,11 @@ describe('Putting back and restoring from the review', () => {
 
   it('puts back one sentence the machine took out with several statements as one claim', async () => {
     const sentence = 'Loops repeat a block.';
-    show([cut('a', sentence), { ...cut('b', sentence), statement: 'Loops repeat.' }]);
+    show([cut('a', sentence), { ...cut('b', sentence), presentation: { ...cut('b', sentence).presentation, statement: 'Loops repeat.' } }]);
     const list = await open();
-    expect(within(list).getAllByText(sentence)).toHaveLength(1);
+    expect(within(list).getAllByText(sentence, { selector: 'p' })).toHaveLength(1);
+    expect(within(list).getAllByRole('button', { name: 'Put it back' })).toHaveLength(1);
+    expect(within(list).getByText('Loops repeat.')).toBeInTheDocument();
     await userEvent.click(within(list).getByRole('button', { name: 'Put it back' }));
     await waitFor(() => expect(api.resolve).toHaveBeenCalledTimes(1));
     expect(api.resolve).toHaveBeenCalledWith(expect.objectContaining({ claimId: 'a' }));

@@ -2,8 +2,8 @@ import { useId, useState } from 'react';
 
 import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
-import { ReviewCheckbox, SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
 import type { RewrittenSentence, TakenOutSentence } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { ReviewCheckbox, SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import type { ReviewSectionDto } from '@/lib/bindings';
 
