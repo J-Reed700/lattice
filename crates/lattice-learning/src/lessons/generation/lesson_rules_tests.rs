@@ -609,7 +609,7 @@ fn an_explanation_naming_a_choice_by_its_number_is_a_finding() {
     assert_eq!(findings[0].key().site, FindingSite::Question(0));
     assert_eq!(
         findings[0].summary,
-        format!("This explanation names a choice by its number, which learners don't see: \u{201c}{sentence}\u{201d}")
+        format!("This explanation names a choice by its number, letter or position, and the choices are shuffled before learners see them: \u{201c}{sentence}\u{201d}")
     );
     assert_eq!(findings[0].sentence.as_deref(), Some(sentence));
 }
@@ -686,6 +686,6 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
     candidate["blocks"][0]["body"] =
         json!("The second option is wrong. Two sources agree that the shell replies.");
     candidate["questions"][0]["explanation"] =
-        json!("The second option is wrong because it reverses the order.");
+        json!("The parent folder is wrong because it reverses the order.");
     assert!(lesson_rules(&candidate).is_empty());
 }

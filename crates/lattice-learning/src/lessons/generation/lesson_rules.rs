@@ -244,14 +244,21 @@ fn is_citation_label(line: &str) -> bool {
         && after.starts_with(':')
 }
 
-/// Whether `sentence` names a choice by its number, as "Option 2".
+/// Whether `sentence` names a choice by its number, letter or position, as
+/// "Option 2", "Option B" or "the first choice".
 fn names_a_choice(sentence: &str) -> bool {
     lazy_regex::regex!(r"(?i)\b(?:option|choice)s?\s+#?\d+\b").is_match(sentence)
+        || lazy_regex::regex!(r"(?i:\b(?:option|choice|answer)s?)\s+\(?[A-H]\b\)?")
+            .is_match(sentence)
+        || lazy_regex::regex!(
+            r"(?i)\b(?:first|second|third|fourth|fifth|last|final)\s+(?:choice|option|answer)s?\b"
+        )
+        .is_match(sentence)
 }
 
 /// Writer scaffolding in the text a learner reads: a sentence naming a source
 /// by its number, a citation label line and, in an answer explanation, a
-/// choice named by its number. Code is exempt.
+/// choice named by its number, letter or position. Code is exempt.
 fn scaffolding(
     item: &Value,
     fields: &[&str],
@@ -304,9 +311,9 @@ fn scaffolding(
                 (summary, note)
             } else if explanation && names_a_choice(&sentence) {
                 let summary = format!(
-                    "This explanation names a choice by its number, which learners don't see: \u{201c}{sentence}\u{201d}"
+                    "This explanation names a choice by its number, letter or position, and the choices are shuffled before learners see them: \u{201c}{sentence}\u{201d}"
                 );
-                let note = format!("{label} names a choice by its number in \"{sentence}\". Name the choice by its words instead.");
+                let note = format!("{label} names a choice by its number, letter or position in \"{sentence}\". The choices are shuffled before learners see them: name the choice by its words instead.");
                 (summary, note)
             } else {
                 continue;

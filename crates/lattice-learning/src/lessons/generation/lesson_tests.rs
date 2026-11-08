@@ -339,6 +339,6 @@ async fn the_lesson_writers_prompt_says_to_name_a_choice_by_its_words() {
     .unwrap();
 
     assert!(prompt.contains(
-        "An explanation names each choice by its words, never by its number or position."
+        "An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them."
     ));
 }
