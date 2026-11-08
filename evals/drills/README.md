@@ -50,14 +50,14 @@ across the lessons of two courses:
 
 ```sh
 LATTICE_DB_COPY=copy.sqlite LATTICE_COURSES=course-1,course-2 LATTICE_DRILL_EVAL_OUT=build-code LATTICE_DRILL_EVAL_COUNT=20 \
-  cargo test -p lattice-desktop --lib live_build_eval -- --ignored --nocapture --test-threads=1
+  cargo test -p lattice-desktop --lib live_build_eval::live_build_eval -- --ignored --nocapture --test-threads=1
 LATTICE_DB_COPY=copy.sqlite LATTICE_COURSES=course-1,course-2 LATTICE_DRILL_EVAL_OUT=build-passage LATTICE_DRILL_EVAL_COUNT=10 \
   cargo test -p lattice-desktop --lib live_passage_build_eval -- --ignored --nocapture --test-threads=1
 ```
 
 `summary.json` names the model and the courses and lists each drill with its course, lesson and counts. For code it totals the
-lessons drilled, those none of whose drills kept a lesson issue, and the lesson checks made and failed. Nothing scores the bars
-above: read every key issue, and every lesson link against the sentences it cites, in the Markdown.
+lessons drilled, those none of whose drills kept a lesson issue, and the lesson checks made and failed. Nothing scores the build's
+bars: read every key issue, and every lesson link against the sentences it cites, in the Markdown.
 
 ## Check a change for a regression
 
