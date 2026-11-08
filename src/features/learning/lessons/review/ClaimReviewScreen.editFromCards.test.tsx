@@ -38,8 +38,9 @@ const note = (overrides: Partial<TeachingFindingDto> = {}) => teachingFinding({
   findingKey: 'teaching:section-1', unitIndex: 1, unitTitle: 'Section 2: Freezing', sentence: FREEZING, passage: null, ...overrides,
 });
 
-const cut = (claimId: string, sentence: string, unitIndex: number, contextBefore: string): ClaimReviewItemDto => claimItem({
-  claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: ['put_back'], verdictKind: null, reason: null, place: 'known',
+const cut = (claimId: string, sentence: string, unitIndex: number, putBackUnit: number | null, contextBefore: string): ClaimReviewItemDto => claimItem({
+  claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: ['put_back'], verdictKind: null, reason: null,
+  place: putBackUnit === null ? 'choose' : 'known', putBackUnit,
   location: { unitIndex, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null },
   presentation: { statement: sentence, sentence, contextBefore, contextAfter: '', place: '' },
 });
@@ -124,7 +125,7 @@ describe('Claim review screen: editing the section from a note or a taken-out se
   });
 
   it('opens the editor on the section a sentence was taken out of, at the sentence before it', async () => {
-    show(review([cut('a', BOILING, 0, BEFORE_BOILING)], { state: 'ready', counts, sections: [{ index: 0, title: 'Boiling' }] }));
+    show(review([cut('a', BOILING, 0, 0, BEFORE_BOILING)], { state: 'ready', counts, sections: [{ index: 0, title: 'Boiling' }] }));
     const list = await openTakenOut();
     await userEvent.click(await within(list).findByRole('button', EDIT));
     expect(await screen.findByRole('dialog', { name: 'Edit section 1' })).toBeVisible();
@@ -138,10 +139,26 @@ describe('Claim review screen: editing the section from a note or a taken-out se
   });
 
   it('offers it only on a taken-out sentence whose section the course has', async () => {
-    show(review([cut('a', BOILING, 0, ''), cut('b', 'A sentence of a section that is gone.', 7, '')], { state: 'ready', counts }));
+    show(review([cut('a', BOILING, 0, 0, ''), cut('b', 'A sentence of a section that is gone.', 7, 7, '')], { state: 'ready', counts }));
     const list = await openTakenOut();
     expect(await within(list).findAllByRole('button', EDIT)).toHaveLength(1);
     expect(within(within(list).getByText(BOILING).closest('li') as HTMLElement).getByRole('button', EDIT)).toBeVisible();
+  });
+
+  it('opens the section the sentence goes back into, not the one its old place names', async () => {
+    show(review([cut('a', FREEZING, 1, 0, BEFORE_BOILING)], { state: 'ready', counts }));
+    const list = await openTakenOut();
+    await userEvent.click(await within(list).findByRole('button', EDIT));
+    expect(await screen.findByRole('dialog', { name: 'Edit section 1' })).toBeVisible();
+    expect(screen.getByLabelText('Title')).toHaveValue('Boiling');
+    expect(screen.getByLabelText('Text')).toHaveValue(BODIES[0]);
+  });
+
+  it('does not offer it on a taken-out sentence with no known place', async () => {
+    show(review([cut('a', BOILING, 0, null, '')], { state: 'ready', counts }));
+    const list = await openTakenOut();
+    expect(within(list).getByText(BOILING)).toBeVisible();
+    expect(within(list).queryByRole('button', EDIT)).not.toBeInTheDocument();
   });
 
   it('still opens the section from the statement card', async () => {

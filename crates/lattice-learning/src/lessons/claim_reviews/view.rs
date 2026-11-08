@@ -580,6 +580,7 @@ fn item(
         also_supported,
         tried: presentation::tried(entry, sources),
         place,
+        put_back_unit: None,
         rewritten,
     }
 }

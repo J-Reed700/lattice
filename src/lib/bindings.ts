@@ -5136,6 +5136,11 @@ tried: ResearchSummaryDto;
  */
 place: PutBackPlaceDto | null;
 /**
+ * For a sentence the machine took out whose place is known: the unit it goes
+ * back into, as the lesson stands now.
+ */
+putBackUnit: number | null;
+/**
  * For a claim the machine rewrote: what it said and what it says now.
  */
 rewritten: RewrittenDto | null }

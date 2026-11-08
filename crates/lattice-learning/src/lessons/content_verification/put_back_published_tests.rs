@@ -456,6 +456,34 @@ async fn the_review_says_where_a_taken_out_sentence_goes_and_lists_the_sections(
 }
 
 #[tokio::test]
+async fn the_review_names_the_unit_a_taken_out_sentence_goes_back_into_as_the_lesson_stands(
+) -> Result<()> {
+    let course = published().await?;
+    let stale = taken_out(&course, "stale", 1, Some((Some(GOOD), None))).await?;
+    let unknown = taken_out(&course, "unknown", 9, None).await?;
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .unwrap();
+    let item = |id: &ClaimId| {
+        review
+            .claims
+            .iter()
+            .find(|item| item.claim_id == id.0)
+            .unwrap()
+    };
+
+    assert_eq!(item(&stale).location.unit_index, 1, "the old place");
+    assert_eq!(
+        item(&stale).put_back_unit,
+        Some(0),
+        "the section holding its neighbour"
+    );
+    assert_eq!(item(&unknown).put_back_unit, None);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_source_that_supports_a_taken_out_sentence_puts_it_back_where_it_stood() -> Result<()> {
     let course = published().await?;
     let known = taken_out(&course, "known", 0, Some((Some(GOOD), None))).await?;

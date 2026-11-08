@@ -53,6 +53,7 @@ export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimRev
     history: [],
     localCheck: null,
     place: null,
+    putBackUnit: null,
     rewritten: null,
     verifierCheck: null,
     sufficiency: null,

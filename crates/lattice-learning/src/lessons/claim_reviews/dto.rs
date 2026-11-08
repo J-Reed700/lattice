@@ -147,6 +147,9 @@ pub struct ClaimReviewItemDto {
     /// For a claim the machine took out: whether its sentence goes back where
     /// it was or the user chooses the section.
     pub place: Option<PutBackPlaceDto>,
+    /// For a sentence the machine took out whose place is known: the unit it goes
+    /// back into, as the lesson stands now.
+    pub put_back_unit: Option<usize>,
     /// For a claim the machine rewrote: what it said and what it says now.
     pub rewritten: Option<RewrittenDto>,
 }
