@@ -141,6 +141,7 @@ fn phase_words(phase: LearningGenerationPhase) -> &'static str {
         LearningGenerationPhase::Evidence => "Verifying factual statements",
         LearningGenerationPhase::Research => "Researching unresolved statements",
         LearningGenerationPhase::Repair => "Repairing the draft",
+        LearningGenerationPhase::Questions => "Writing quiz questions",
         LearningGenerationPhase::Publishing => "Saving the verified lesson",
     }
 }

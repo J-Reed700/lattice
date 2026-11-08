@@ -7893,7 +7893,7 @@ export type LearningGenerationJobKind = "program_outline" | "lesson_preparation"
  */
 "quiz_grading"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
-export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "publishing"
+export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "questions" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
 /**
  * "I think I was right": the first grade and the blind regrade, side by side.

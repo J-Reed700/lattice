@@ -177,6 +177,7 @@ pub enum LearningGenerationPhase {
     Evidence,
     Research,
     Repair,
+    Questions,
     Publishing,
 }
 
