@@ -7,13 +7,14 @@
 //! wording. It is bound to the text of that part (`unit_sha256`): while the
 //! text is unchanged the machine does not repair it again and a "keep as
 //! written" stands; once the text changes, both lapse.
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
 
+use super::teaching_summary::{derive, Stored};
 use crate::persistence::{db, now};
 use crate::review_findings::{site_sha256, unit, FindingKey, FindingKind, FindingSite, SetAside};
 
@@ -64,7 +65,7 @@ pub enum TeachingSettleDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TeachingFindingDto {
-    /// Names the finding in `keep_learning_teaching_finding`.
+    /// Names the finding in `settle_learning_teaching_findings`.
     pub finding_key: String,
     pub kind: TeachingFindingKindDto,
     pub site: TeachingFindingSiteDto,
@@ -175,10 +176,10 @@ impl TeachingFindingsRepository {
             let (site, index) = site_columns(finding.key().site);
             sqlx::query(
                 "INSERT INTO learning_lesson_teaching_findings \
-                 (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, passage, repairs, state, job_id, found_at, kept_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, NULL) \
+                 (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, repairs, state, job_id, found_at, kept_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, NULL) \
                  ON CONFLICT(lesson_id, finding_key) DO UPDATE SET \
-                 unit_title=excluded.unit_title, note=excluded.note, passage=excluded.passage, \
+                 unit_title=excluded.unit_title, note=excluded.note, summary=excluded.summary, passage=excluded.passage, \
                  repairs=max(repairs, excluded.repairs), job_id=excluded.job_id, found_at=excluded.found_at, \
                  state=CASE WHEN state='kept' AND unit_sha256=excluded.unit_sha256 THEN 'kept' ELSE 'waiting' END, \
                  kept_at=CASE WHEN state='kept' AND unit_sha256=excluded.unit_sha256 THEN kept_at ELSE NULL END, \
@@ -192,6 +193,7 @@ impl TeachingFindingsRepository {
             .bind(shown.title.as_str())
             .bind(shown.sha256.as_str())
             .bind(finding.note.as_str())
+            .bind((!finding.summary.is_empty()).then_some(finding.summary.as_str()))
             .bind(finding.passage.as_deref().or(shown.passage.as_deref()))
             .bind(i64::from(*repairs))
             .bind(job_id)
@@ -206,7 +208,7 @@ impl TeachingFindingsRepository {
     /// The lesson's findings: by place, then kind.
     pub async fn list(&self, lesson_id: &str) -> Result<Vec<TeachingFindingDto>> {
         let rows = sqlx::query(
-            "SELECT finding_key, kind, site, unit_index, unit_title, note, passage, repairs, state \
+            "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, repairs, state \
              FROM learning_lesson_teaching_findings WHERE lesson_id=? \
              ORDER BY CASE site WHEN 'lesson' THEN 0 WHEN 'section' THEN 1 ELSE 2 END, unit_index, kind",
         )
@@ -214,17 +216,34 @@ impl TeachingFindingsRepository {
         .fetch_all(&self.pool)
         .await
         .map_err(db)?;
+        let sections = self.sections_for_old_rows(lesson_id, &rows).await?;
         rows.iter()
             .map(|row| {
                 let corrupt = || AppError::InternalError("Invalid stored teaching finding".into());
                 let site = site_of(&row.get::<String, _>("site"), row.get("unit_index"))
                     .ok_or_else(corrupt)?;
+                let kind =
+                    FindingKind::from_column(&row.get::<String, _>("kind")).ok_or_else(corrupt)?;
+                let passage: Option<String> = row.get("passage");
+                let summary = match row
+                    .get::<Option<String>, _>("summary")
+                    .filter(|summary| !summary.is_empty())
+                {
+                    Some(summary) => summary,
+                    None => derive(&Stored {
+                        kind,
+                        site,
+                        note: &row.get::<String, _>("note"),
+                        passage: passage.as_deref(),
+                        section: match site {
+                            FindingSite::Section(index) => sections.get(&index).map(String::as_str),
+                            _ => None,
+                        },
+                    }),
+                };
                 Ok(TeachingFindingDto {
                     finding_key: row.get("finding_key"),
-                    kind: kind_dto(
-                        FindingKind::from_column(&row.get::<String, _>("kind"))
-                            .ok_or_else(corrupt)?,
-                    ),
+                    kind: kind_dto(kind),
                     site: match site {
                         FindingSite::Lesson => TeachingFindingSiteDto::Lesson,
                         FindingSite::Section(_) => TeachingFindingSiteDto::Section,
@@ -234,8 +253,8 @@ impl TeachingFindingsRepository {
                         .get::<Option<i64>, _>("unit_index")
                         .and_then(|index| u32::try_from(index).ok()),
                     unit_title: row.get("unit_title"),
-                    summary: row.get("note"),
-                    passage: row.get("passage"),
+                    summary,
+                    passage,
                     repairs: u32::try_from(row.get::<i64, _>("repairs")).unwrap_or_default(),
                     state: if row.get::<String, _>("state") == "kept" {
                         TeachingFindingStateDto::Kept
@@ -247,41 +266,80 @@ impl TeachingFindingsRepository {
             .collect()
     }
 
+    /// The published sections a finding with no summary may be about, by
+    /// index; read only when such a finding quotes a sentence.
+    async fn sections_for_old_rows(
+        &self,
+        lesson_id: &str,
+        rows: &[sqlx::sqlite::SqliteRow],
+    ) -> Result<HashMap<usize, String>> {
+        let wanted = rows.iter().any(|row| {
+            row.get::<Option<String>, _>("summary")
+                .is_none_or(|summary| summary.is_empty())
+                && row.get::<String, _>("kind") == FindingKind::Quotation.as_str()
+                && row.get::<String, _>("site") == "section"
+        });
+        if !wanted {
+            return Ok(HashMap::new());
+        }
+        let blocks = sqlx::query("SELECT ordinal, body FROM learning_blocks WHERE lesson_id=?")
+            .bind(lesson_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db)?;
+        Ok(blocks
+            .iter()
+            .filter_map(|row| {
+                Some((
+                    usize::try_from(row.get::<i64, _>("ordinal")).ok()?,
+                    row.get::<String, _>("body"),
+                ))
+            })
+            .collect())
+    }
+
     /// Keeps or reopens every finding in `finding_keys` in one transaction:
     /// all or nothing. Refused when the list is empty, the lesson is not in
     /// the course, or a finding is not in the state the change needs.
     pub async fn settle(
         &self,
-        _program_id: &str,
-        _lesson_id: &str,
-        _finding_keys: &[String],
-        _settle: TeachingSettleDto,
+        program_id: &str,
+        lesson_id: &str,
+        finding_keys: &[String],
+        settle: TeachingSettleDto,
     ) -> Result<()> {
-        Err(AppError::InternalError("not built yet".into()))
-    }
-
-    /// "Keep as written": the user resolves a waiting finding without a
-    /// change. Refused when the finding is not waiting in this course.
-    pub async fn keep(&self, program_id: &str, lesson_id: &str, finding_key: &str) -> Result<()> {
-        let kept = sqlx::query(
-            "UPDATE learning_lesson_teaching_findings SET state='kept', kept_at=? \
-             WHERE lesson_id=? AND finding_key=? AND state='waiting' \
-             AND EXISTS (SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?)",
-        )
-        .bind(now())
-        .bind(lesson_id)
-        .bind(finding_key)
-        .bind(lesson_id)
-        .bind(program_id)
-        .execute(&self.pool)
-        .await
-        .map_err(db)?;
-        if kept.rows_affected() == 0 {
-            return Err(AppError::NotFound(
-                "This teaching finding is no longer waiting for you. Reload the lesson.".into(),
+        let distinct: BTreeSet<&str> = finding_keys.iter().map(String::as_str).collect();
+        if distinct.is_empty() {
+            return Err(AppError::InvalidInput(
+                "Select at least one teaching note.".into(),
             ));
         }
-        Ok(())
+        let (from, to, kept_at) = match settle {
+            TeachingSettleDto::Keep => ("waiting", "kept", Some(now())),
+            TeachingSettleDto::Reopen => ("kept", "waiting", None),
+        };
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let changed = sqlx::query(
+            "UPDATE learning_lesson_teaching_findings SET state=?, kept_at=? \
+             WHERE lesson_id=? AND state=? AND finding_key IN (SELECT value FROM json_each(?)) \
+             AND EXISTS (SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?)",
+        )
+        .bind(to)
+        .bind(kept_at)
+        .bind(lesson_id)
+        .bind(from)
+        .bind(serde_json::to_string(&distinct)?)
+        .bind(lesson_id)
+        .bind(program_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
+        if usize::try_from(changed.rows_affected()).ok() != Some(distinct.len()) {
+            return Err(AppError::NotFound(
+                "Some of these notes changed since you opened them. Reload the lesson.".into(),
+            ));
+        }
+        tx.commit().await.map_err(db)
     }
 }
 

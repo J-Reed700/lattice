@@ -7,7 +7,7 @@
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
 use crate::content_verification::{figures, needs_citation, Givens, CITED_KINDS};
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -65,14 +65,21 @@ fn text<'a>(item: &'a Value, field: &str) -> &'a str {
     item.get(field).and_then(Value::as_str).unwrap_or_default()
 }
 
-fn structure(site: FindingSite, note: String) -> ReviewFinding {
-    ReviewFinding::new(FindingKind::Structure, Some(site), note)
+/// A broken rule, with what is wrong in plain words for the user and the
+/// note the repair is given.
+fn structure(site: FindingSite, summary: String, note: String) -> ReviewFinding {
+    ReviewFinding::new(FindingKind::Structure, Some(site), note).with_summary(summary)
 }
 
 /// A citation a part lacks. Not structure: it does not hold up the content
 /// review, and the repair that follows settles it by appending the citation.
-fn citation(site: FindingSite, note: String) -> ReviewFinding {
-    ReviewFinding::new(FindingKind::Quotation, Some(site), note)
+fn citation(site: FindingSite, summary: String, note: String) -> ReviewFinding {
+    ReviewFinding::new(FindingKind::Quotation, Some(site), note).with_summary(summary)
+}
+
+/// "2 checks", "1 contrast": `count` of `noun`, in the plural unless it is one.
+fn counted(count: usize, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
 /// `sentence` without the Markdown that opens it, a heading's hashes or a
@@ -121,7 +128,7 @@ pub(crate) fn teaching_sentences(text: &str) -> Vec<String> {
 }
 
 /// The sentences of `text` outside its code fences, as a writer lists them.
-fn prose_sentences(text: &str) -> Vec<String> {
+pub(crate) fn prose_sentences(text: &str) -> Vec<String> {
     let prose = prose(text);
     sentences(&prose)
         .into_iter()
@@ -191,8 +198,11 @@ fn uncited_specifics(
                 .cloned()
                 .collect()
         };
-        let note = if quotes.is_empty() {
-            format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.")
+        let (summary, note) = if quotes.is_empty() {
+            let summary =
+                format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
+            let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.");
+            (summary, note)
         } else {
             let missing = quotes
                 .iter()
@@ -202,9 +212,14 @@ fn uncited_specifics(
             if missing.is_empty() {
                 continue;
             }
-            format!("{label}: the quote cited for \"{shown}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "))
+            let summary = format!(
+                "The quotation cited for this sentence does not contain {}: \u{201c}{sentence}\u{201d}",
+                join_plain(&missing)
+            );
+            let note = format!("{label}: the quote cited for \"{shown}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
+            (summary, note)
         };
-        findings.push(citation(site, note));
+        findings.push(citation(site, summary, note));
     }
 }
 
@@ -230,15 +245,18 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
     let mut titles = HashMap::new();
     for (index, block) in blocks.iter().enumerate() {
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
+        let plain = format!("Section {}", index + 1);
         let title = text(block, "title");
         if !validate_text(title) {
             findings.push(structure(
                 FindingSite::Section(index),
+                format!("{plain} needs a title."),
                 format!("{section} needs a title."),
             ));
         } else if let Some(first) = titles.get(&normalize(title)) {
             findings.push(structure(
                 FindingSite::Section(index),
+                format!("{plain} has the same title as section {}.", first + 1),
                 format!("{section} repeats the title of section {}; give each section a distinct title.", first + 1),
             ));
         } else {
@@ -263,8 +281,16 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             .iter()
             .map(|(kind, count, _, _)| format!("{count} {}", kind.replace('_', " ")))
             .collect();
+        let plain: Vec<_> = counts
+            .iter()
+            .map(|(kind, count, _, _)| counted(*count, &kind.replace('_', " ")))
+            .collect();
         findings.push(structure(
             FindingSite::Lesson,
+            format!(
+                "The lesson does not have the sections it is written with. It has {}.",
+                plain.join(", ")
+            ),
             format!("The lesson needs at least two explanations, two worked examples, one contrast and two checks, and exactly one each of guided practice, independent practice, reflection and recap; it has {}.", has.join(", ")),
         ));
     }
@@ -284,17 +310,20 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             _ => continue,
         }
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
+        let plain = format!("Section {}", index + 1);
         let held_back = split_check(text(block, "body"))
             .is_some_and(|(case, reveal)| !case.trim().is_empty() && !reveal.trim().is_empty());
         if !held_back {
             findings.push(structure(
                 FindingSite::Section(index),
+                format!("{plain} is a check, but it does not hold its answer back until the learner has tried."),
                 format!("{section} is a check: write the case to reason through first, then one line `{CHECK_REVEAL}`, then the answer, the reasoning and the misconception each plausible wrong answer reveals. Nothing above that line may give the answer away."),
             ));
         }
         if !example_since_check {
             findings.push(structure(
                 FindingSite::Section(index),
+                format!("{plain} is a check on an idea that no worked example has shown since the previous check."),
                 format!("{section} checks an idea no worked example has shown since the previous check; place each check after the example of the idea it asks the learner to apply."),
             ));
         }
@@ -304,6 +333,7 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         if reflection > recap {
             findings.push(structure(
                 FindingSite::Section(recap),
+                format!("Section {} recaps the lesson before the learner is asked to explain it from memory.", recap + 1),
                 format!("Section {} (candidate blocks-{recap}) recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", recap + 1),
             ));
         }
@@ -314,10 +344,15 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         let site = FindingSite::Question(index);
         let prompt = text(question, "prompt");
         if !validate_text(prompt) {
-            findings.push(structure(site, format!("{label} needs a prompt.")));
+            findings.push(structure(
+                site,
+                format!("{label} needs a prompt."),
+                format!("{label} needs a prompt."),
+            ));
         } else if let Some(first) = prompts.get(&normalize(prompt)) {
             findings.push(structure(
                 site,
+                format!("{label} asks the same thing as question {}.", first + 1),
                 format!(
                     "{label} repeats question {}; ask something distinct.",
                     first + 1
@@ -329,6 +364,7 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         if !validate_text(text(question, "explanation")) {
             findings.push(structure(
                 site,
+                format!("{label} needs an answer explanation."),
                 format!("{label} needs an answer explanation."),
             ));
         }
@@ -350,6 +386,7 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         {
             findings.push(structure(
                 site,
+                format!("{label} needs four distinct answer choices."),
                 format!("{label} needs four distinct answer choices."),
             ));
         }
@@ -386,8 +423,16 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             .iter()
             .map(|(kind, count)| format!("{count} {kind}"))
             .collect();
+        let plain: Vec<_> = per_kind
+            .iter()
+            .map(|(kind, count)| counted(*count, &format!("{kind} question")))
+            .collect();
         findings.push(structure(
             FindingSite::Lesson,
+            format!(
+                "The lesson needs at least two questions each for practice, quiz and test. It has {}.",
+                plain.join(", ")
+            ),
             format!("The lesson needs at least two distinct questions each for practice, quiz and test; it has {}.", has.join(", ")),
         ));
     }

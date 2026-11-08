@@ -165,6 +165,17 @@ impl LessonVerificationReport {
                     .iter()
                     .map(|missing| missing.statement.as_str())
                     .collect();
+                let quoted: Vec<String> = statements
+                    .iter()
+                    .map(|statement| format!("\u{201c}{statement}\u{201d}"))
+                    .collect();
+                let summary = match quoted.as_slice() {
+                    [only] => format!("This statement was never checked against a source: {only}."),
+                    _ => format!(
+                        "These statements were never checked against a source: {}.",
+                        quoted.join(", ")
+                    ),
+                };
                 ReviewFinding::new(
                     FindingKind::Teaching,
                     Some(site),
@@ -173,6 +184,7 @@ impl LessonVerificationReport {
                         statements.join("; ")
                     ),
                 )
+                .with_summary(summary)
             })
             .collect()
     }

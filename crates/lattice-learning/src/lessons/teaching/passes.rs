@@ -109,6 +109,13 @@ impl Passes {
                     if !known.note.contains(finding.note.as_str()) {
                         known.note = format!("{} {}", known.note, finding.note);
                     }
+                    if known.summary.is_empty() {
+                        known.summary = finding.summary;
+                    } else if !finding.summary.is_empty()
+                        && !known.summary.lines().any(|line| line == finding.summary)
+                    {
+                        known.summary = format!("{}\n{}", known.summary, finding.summary);
+                    }
                     known.passage = known.passage.take().or(finding.passage);
                 }
                 None => current.push(finding),

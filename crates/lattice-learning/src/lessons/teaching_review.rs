@@ -276,7 +276,11 @@ async fn review_sections(
                     if blank && !settle {
                         problems.push("An issue must not be blank.".into());
                     } else if !blank && !issues.iter().any(|known| known.note == issue) {
-                        issues.push(ReviewFinding::new(FindingKind::Teaching, None, issue));
+                        let summary = issue.trim().to_owned();
+                        issues.push(
+                            ReviewFinding::new(FindingKind::Teaching, None, issue)
+                                .with_summary(summary),
+                        );
                     }
                 }
                 for (section, mut value) in review.block_checks {
@@ -292,7 +296,8 @@ async fn review_sections(
                         if indices.contains(&index) && !finding.trim().is_empty() {
                             let note = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding);
                             if !issues.iter().any(|known| known.note == note) {
-                                let mut issue = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(index)), note);
+                                let mut issue = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(index)), note)
+                                    .with_summary(finding.trim());
                                 issue.passage = value.get("passageId").and_then(Value::as_str).and_then(|id| passage_text(&shown, index, id));
                                 issues.push(issue);
                             }

@@ -123,14 +123,22 @@ impl ReviewFinding {
 }
 
 /// `items` as a plain list: "a", "a and b", "a, b and c".
-pub(crate) fn join_plain(_items: &[String]) -> String {
-    String::new()
+pub(crate) fn join_plain(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+    }
 }
 
 /// How a summary names the part a site is: "section 3", "question 2" or
 /// "the lesson".
-pub(crate) fn plain_part(_site: FindingSite) -> String {
-    String::new()
+pub(crate) fn plain_part(site: FindingSite) -> String {
+    match site {
+        FindingSite::Lesson => "the lesson".to_owned(),
+        FindingSite::Section(index) => format!("section {}", index + 1),
+        FindingSite::Question(index) => format!("question {}", index + 1),
+    }
 }
 
 /// A finding's identity across passes and reviews.

@@ -19,6 +19,7 @@ pub mod recheck;
 pub mod repository;
 pub mod service;
 pub mod teaching_findings;
+mod teaching_summary;
 pub mod trust_changed;
 pub mod trust_overrides;
 mod view;
