@@ -42,7 +42,7 @@ export function AuditHold({ reason }: { reason: StopReasonDto | null }) {
     <FocusMessage title="Waiting for the independent check">
       {reason
         ? <><p><span className="font-semibold text-text-primary">It could not finish: </span>{reason.message}</p><p><span className="font-semibold text-text-primary">Fix: </span>{reason.fix}</p></>
-        : <p>No claim needs you, but the independent check of this lesson has not finished, so the lesson is held.</p>}
+        : <p>No statement needs you, but the independent check of this lesson has not finished, so the lesson is held.</p>}
       <p>Resume verification to run it again, or turn it off for this course on the Plan tab.</p>
     </FocusMessage>
   );

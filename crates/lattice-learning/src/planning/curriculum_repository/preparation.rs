@@ -204,6 +204,7 @@ impl LearningCurriculumRepository {
                     source_quote: authored.source_quote.clone(),
                     lesson_id: Some(lesson_id.clone()),
                     origin: "bank",
+                    review_status: "agreed",
                 });
             }
             crate::assessment_repository::insert_bank_items_in(

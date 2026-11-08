@@ -1,8 +1,8 @@
 //! Starting a quiz, reading a form, and saving answers while it is open.
 use super::{
-    assessment_operation, candidates_in, decode, format_name, invalid, json, mode_name,
-    parse_form_status, parse_format, parse_grade, parse_mode, parse_purpose, parse_scope,
-    parse_timing, scope_kind_name, uuid, LearningAssessmentRepository,
+    assessment_operation, candidates_in, decode, drawn_candidate, format_name, invalid, json,
+    mode_name, parse_form_status, parse_format, parse_grade, parse_mode, parse_purpose,
+    parse_scope, parse_timing, scope_kind_name, uuid, LearningAssessmentRepository,
 };
 use crate::assessment_engine as engine;
 use crate::dto::*;
@@ -196,7 +196,7 @@ impl LearningAssessmentRepository {
                 .outcome_ids
                 .first()
                 .ok_or_else(|| invalid("A quiz question has no outcome."))?;
-            sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed,option_order_json,left_items_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+            sqlx::query("INSERT INTO learning_assessment_form_items(form_id,ordinal,candidate_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,points,previously_exposed,option_order_json,left_items_json,key_json,explanation,distractor_rationales_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(&req.form_id)
                 .bind(ordinal as i64)
                 .bind(&item.id)
@@ -211,6 +211,9 @@ impl LearningAssessmentRepository {
                 .bind(item.previously_exposed as i64)
                 .bind(json(&item.option_order)?)
                 .bind(json(&item.left)?)
+                .bind(json(&stored.candidate.key)?)
+                .bind(&stored.candidate.explanation)
+                .bind(json(&stored.candidate.distractor_rationales)?)
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
@@ -300,9 +303,10 @@ impl LearningAssessmentRepository {
                 || (mode == LearningQuizMode::Practice
                     && format.is_keyed()
                     && response.is_answered());
-            let candidate = candidates.get(&id).ok_or_else(|| {
+            let bank = candidates.get(&id).ok_or_else(|| {
                 AppError::InvalidState("This quiz question is no longer available.".into())
             })?;
+            let candidate = &drawn_candidate(bank, &r)?;
             let key_reveal = reveal.then(|| {
                 let reveal = engine::key_reveal(&candidate.candidate, &option_order);
                 LearningKeyRevealDto {

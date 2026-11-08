@@ -31,7 +31,7 @@ import type { CheckerVerdictDto, ClaimAttachReportDto, ClaimEventDto, ClaimRevie
 
 const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob => ({
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 1,
-  status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 2 claims', activity: null,
+  status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 2 statements', activity: null,
   resultId: 'needs_review:lesson-1,lesson-2', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: STOPPED_AT,
   ...overrides,
 });
@@ -98,7 +98,7 @@ describe('claim review presentation', () => {
     expect(describeEvent(event.event)).toBe('Independent check (claude): a source says otherwise · The guide says 2,500 miles.');
   });
 
-  it('tells a hold by claims from a hold by the Verifier audit, so nothing reads "0 claims"', () => {
+  it('tells a hold by claims from a hold by the Verifier audit, so nothing reads "0 statements"', () => {
     const auditStop = { code: 'verifier_turned_off', message: 'Audit stopped: you turned the Verifier off.', fix: 'Resume to publish without the audit.', at: 1, request: null };
     expect(reviewHold(review([claimItem()], { changedSinceStop: true }), 1)).toBe('claims');
     expect(reviewHold(review([], { stopReason: auditStop }), 0)).toBe('audit_stop');
@@ -108,10 +108,10 @@ describe('claim review presentation', () => {
 
   it('the tally never counts the machine’s rewrites as the user’s', () => {
     const counts = { verified: 12, confirmed: 0, queued: 33, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 74 };
-    expect(tallyLine(counts)).toBe('33 claims need you · 12 verified · 74 rewritten by the machine');
-    expect(tallyLine({ ...counts, queued: 1, confirmed: 2, removedByYou: 1 })).toBe('1 claim needs you · 12 verified · 2 confirmed by you · 74 rewritten by the machine · 1 removed by you');
+    expect(tallyLine(counts)).toBe('33 statements need you · 12 verified · 74 rewritten by the machine');
+    expect(tallyLine({ ...counts, queued: 1, confirmed: 2, removedByYou: 1 })).toBe('1 statement needs you · 12 verified · 2 confirmed by you · 74 rewritten by the machine · 1 removed by you');
     const tally = { unchecked: 0, searching: 3, repairing: 0, waiting: 5, verified: 40, resolvedByYou: 0, rewritten: 9 };
-    expect(jobTallyLine(tally)).toBe('5 claims need you · 40 verified · 9 rewritten by the machine · 3 being checked');
+    expect(jobTallyLine(tally)).toBe('5 statements need you · 40 verified · 9 rewritten by the machine · 3 being checked');
     expect(jobTallyLine(tally)).not.toMatch(/resolved by you/);
   });
 
@@ -121,7 +121,7 @@ describe('claim review presentation', () => {
     // No level word in the standing words, except the one the copy deck keeps (§4.3).
     for (const level of LEVELS.filter((each) => each !== 'community')) expect(standingWords(level)).not.toMatch(new RegExp(`\\b${level}\\b`));
     expect(standingWords('community')).toBe('a community page (forum, wiki, Q&A)');
-    expect(countsAs(support(), sufficiency('no_identified_source'))).toBe('an unidentified author’s work · not enough on its own for this claim');
+    expect(countsAs(support(), sufficiency('no_identified_source'))).toBe('an unidentified author’s work · not enough on its own for this statement');
     expect(countsAs(support({ standing: 'established', counts: { outcome: 'enough' } }), null)).toBe('a reliable identified source · enough');
     expect(countsAs(support({ source: { ...support().source, addedBy: 'user' } }), null)).toBe('a source you added · enough, it states this');
     expect(countsAs(support({ counts: { outcome: 'enough' } }), sufficiency(null, { sufficient: true, label: 'best_available' }))).toBe('the course’s strongest source on this subject · enough');
@@ -150,9 +150,9 @@ describe('claim review presentation', () => {
     const report: ClaimAttachReportDto = {
       revision: 8, source: { ...support().source, title: 'Monarch Watch' }, alreadySaved: false,
       outcome: { outcome: 'checked', check: { checker: { role: 'local', model: 'qwen' }, result: { verdict: 'supported', sourceVersionId: 'v', supportingQuote: 'q' }, reason: '', fingerprint: 'f', evidence: [], windowTokens: 1 } },
-      failure: null, snapshot: { state: 'not_applicable' }, others: { tried: 14, verified: 11, notVerified: 2, noPassage: 1, stopped: null }, lines: [],
+      failure: null, snapshot: { state: 'not_applicable' }, others: { tried: 14, verified: 11, notVerified: 2, noPassage: 1, stopped: null }, lines: [], putBack: null,
     };
-    expect(attachSummary(report, 15, 18).line).toBe('Added Monarch Watch. Verified 12 of 15 claims; 2 do not match what it says; 1 is not mentioned by it.');
+    expect(attachSummary(report, 15, 18).line).toBe('Added Monarch Watch. Verified 12 of 15 statements; 2 do not match what it says; 1 is not mentioned by it.');
     expect(attachSummary(report, 1, 32).line).toBe('Added Monarch Watch; it states this. 32 left.');
   });
 });
@@ -182,10 +182,12 @@ describe('what the machine took out of the lesson', () => {
           { claimId: 'a', statement: 'Tesseract was written in 2019.', why: 'Not stated by the passages compared · No passage gives the year.' },
           { claimId: 'b', statement: 'Tesseract reads pixels into text.', why: 'Taken out with the sentence or section it stood in' },
         ],
+        claimId: null, place: 'known',
       },
       {
         key: '2:body:Water boils at 100 °C.', sentence: 'Water boils at 100 °C.',
         statements: [{ claimId: 'c', statement: 'Water boils at 100 °C.', why: 'A source says otherwise · A passage says otherwise.' }],
+        claimId: null, place: 'known',
       },
     ]);
   });

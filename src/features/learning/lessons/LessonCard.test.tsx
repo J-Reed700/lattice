@@ -24,7 +24,7 @@ const lesson: LearningLessonDto = { id: 'lesson-1', title: 'Phase changes', obje
 const program = { summary: { id: 'program-1', revision: 44, status: 'active' }, sources: [], modules: [] } as unknown as LearningProgramDto;
 const held: LearningGenerationJob = {
   id: 'job-1', programId: 'program-1', operationId: 'op', kind: 'lesson_preparation', payloadSha256: 'hash', baseRevisionNumber: 44,
-  status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 3 claims', activity: null,
+  status: 'completed', progressCompleted: 1, progressTotal: 1, progressMessage: 'Needs your review: 3 statements', activity: null,
   resultId: 'needs_review:lesson-1', error: null, retryOfJobId: null, createdAt: 1, startedAt: 1, finishedAt: 2,
 };
 const noReview = { ok: true, data: null };
@@ -49,7 +49,7 @@ describe('Lesson card review state', () => {
     api.review.mockResolvedValue({ ok: true, data: review([unsupportedItem(1), unsupportedItem(2), unsupportedItem(3)]) });
     const onReview = show(lesson);
     const row = screen.getByRole('article');
-    expect(await within(row).findByText('3 claims need you')).toBeVisible();
+    expect(await within(row).findByText('3 statements need you')).toBeVisible();
     expect(within(row).queryByText(/failed|Outline/)).not.toBeInTheDocument();
     // The row says how many and leads away; no claim text is on the course page.
     expect(screen.queryByText('Statement number 1.')).not.toBeInTheDocument();
@@ -58,7 +58,7 @@ describe('Lesson card review state', () => {
     await userEvent.click(screen.getByRole('button', { name: /Phase changes/ }));
     expect(screen.queryByRole('region', { name: /claim review/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Prepare lesson' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Review 3 claims' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Review 3 statements' }));
     expect(onReview).toHaveBeenCalledTimes(2);
   });
 

@@ -1,9 +1,10 @@
 //! Attaching evidence to a claim (§5.4): the user's link, file, pasted text or
 //! saved passage becomes a source of the course, and the claim, with every
 //! other open claim of the lesson the source mentions, is checked against that
-//! source alone by the publication judge. Each event is appended at the
-//! ledger's revision of the moment, after re-reading that the claim still
-//! takes it (§9).
+//! source alone by the publication judge. A source added to the lesson as a
+//! whole is checked against every open claim of the lesson. Each event is
+//! appended at the ledger's revision of the moment, after re-reading that the
+//! claim still takes it (§9).
 
 mod acquire;
 mod check;
@@ -17,7 +18,7 @@ use lattice_core::application::ports::{
 };
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, CheckResult, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    ClaimState, EventProvenance, Revision, TrustVerdict,
+    ClaimState, EventProvenance, Ledger, Revision, TrustVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
@@ -25,7 +26,9 @@ use std::sync::Arc;
 
 use self::acquire::Acquired;
 pub(crate) use self::acquire::{capture_page, PageCapture};
-use self::report::{ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto};
+use self::report::{
+    ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto, PutBackOutcomeDto,
+};
 use super::checker_examples::CheckerExamples;
 use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
@@ -80,6 +83,14 @@ pub struct AttachRequest<'a> {
     pub program_id: &'a str,
     pub lesson_id: &'a str,
     pub claim_id: &'a ClaimId,
+    pub expected_revision: Revision,
+    pub evidence: Evidence,
+}
+
+/// One source added to a lesson as a whole, as the command received it.
+pub struct LessonSourceRequest<'a> {
+    pub program_id: &'a str,
+    pub lesson_id: &'a str,
     pub expected_revision: Revision,
     pub evidence: Evidence,
 }
@@ -286,30 +297,127 @@ pub async fn attach_to(
     report
 }
 
+/// Adds the user's evidence to the lesson as a whole and checks every open
+/// claim of the lesson against it, reporting each stage through `progress`.
+/// The report has no check of a claim of its own: `outcome` is null.
+pub async fn attach_to_lesson(
+    deps: &AttachDeps<'_>,
+    request: LessonSourceRequest<'_>,
+    progress: &(dyn Fn(ClaimAttachProgressDto) + Send + Sync),
+) -> Result<ClaimAttachReportDto> {
+    let report = lesson_source_reporting(deps, request, progress).await;
+    progress(ClaimAttachProgressDto::Done);
+    report
+}
+
+async fn lesson_source_reporting(
+    deps: &AttachDeps<'_>,
+    request: LessonSourceRequest<'_>,
+    progress: &(dyn Fn(ClaimAttachProgressDto) + Send + Sync),
+) -> Result<ClaimAttachReportDto> {
+    let ledger = current_ledger(
+        deps,
+        request.program_id,
+        request.lesson_id,
+        request.expected_revision,
+    )
+    .await?;
+    let others = OtherClaims {
+        scope: Others::Lesson,
+        except: None,
+    };
+    let mut checking = Checking {
+        report: progress,
+        done: 0,
+        total: count(
+            ledger
+                .claims
+                .iter()
+                .filter(|entry| others.take(entry))
+                .count(),
+        ),
+    };
+    progress(acquiring_stage(&request.evidence));
+    let source = match acquire::acquire(deps, request.program_id, &request.evidence).await? {
+        Acquired::Saved(source) => source,
+        Acquired::NotSaved(failure) => return Ok(report::not_saved(ledger.revision, failure)),
+    };
+    let version_id = source.saved.version_id.clone();
+    let (sources, course) = course_material(deps, request.program_id).await?;
+    let references = ReferenceCollection::searchable_now(course.as_ref(), &sources).await?;
+    let (others, after) = check_others(
+        deps,
+        &references,
+        &version_id,
+        (request.program_id, request.lesson_id),
+        &others,
+        source.already_saved,
+        &mut checking,
+    )
+    .await?;
+    Ok(report::added_to_lesson(
+        after.unwrap_or(ledger.revision),
+        &source.saved,
+        source.already_saved,
+        source.snapshot,
+        others,
+    ))
+}
+
+/// The lesson's ledger, when it belongs to the course and is at the revision
+/// the user acted on.
+async fn current_ledger(
+    deps: &AttachDeps<'_>,
+    program_id: &str,
+    lesson_id: &str,
+    expected_revision: Revision,
+) -> Result<Ledger> {
+    let ledger = deps.store.load(lesson_id).await?;
+    if ledger
+        .review
+        .as_ref()
+        .is_some_and(|review| review.program_id != program_id)
+    {
+        return Err(AppError::NotFound("Lesson not found in this course".into()));
+    }
+    if ledger.revision != expected_revision {
+        return Err(AppError::InvalidState(
+            "The lesson's review changed; reload it and try again.".into(),
+        ));
+    }
+    Ok(ledger)
+}
+
+/// The first stage of an attach: fetching a link, or saving anything else.
+fn acquiring_stage(evidence: &Evidence) -> ClaimAttachProgressDto {
+    match evidence {
+        Evidence::Link { url } => ClaimAttachProgressDto::Fetching {
+            host: url::Url::parse(url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned)),
+        },
+        _ => ClaimAttachProgressDto::Saving,
+    }
+}
+
 async fn attach_reporting(
     deps: &AttachDeps<'_>,
     request: AttachRequest<'_>,
     others: Others<'_>,
     progress: &(dyn Fn(ClaimAttachProgressDto) + Send + Sync),
 ) -> Result<ClaimAttachReportDto> {
-    let ledger = deps.store.load(request.lesson_id).await?;
-    if ledger
-        .review
-        .as_ref()
-        .is_some_and(|review| review.program_id != request.program_id)
-    {
-        return Err(AppError::NotFound("Lesson not found in this course".into()));
-    }
-    if ledger.revision != request.expected_revision {
-        return Err(AppError::InvalidState(
-            "The lesson's review changed; reload it and try again.".into(),
-        ));
-    }
+    let ledger = current_ledger(
+        deps,
+        request.program_id,
+        request.lesson_id,
+        request.expected_revision,
+    )
+    .await?;
     let entry = claim(&ledger.claims, request.claim_id)
-        .ok_or_else(|| AppError::NotFound("Claim not found in this lesson".into()))?;
+        .ok_or_else(|| AppError::NotFound("Statement not found in this lesson".into()))?;
     if !entry.allows(ClaimActionKind::AttachEvidence) {
         return Err(AppError::InvalidState(
-            "Evidence can be added to an open or confirmed claim only.".into(),
+            "Evidence can be added to an open or confirmed statement only.".into(),
         ));
     }
     let statement = entry.statement().to_owned();
@@ -328,14 +436,7 @@ async fn attach_reporting(
                 .count(),
         ),
     };
-    progress(match &request.evidence {
-        Evidence::Link { url } => ClaimAttachProgressDto::Fetching {
-            host: url::Url::parse(url)
-                .ok()
-                .and_then(|url| url.host_str().map(str::to_owned)),
-        },
-        _ => ClaimAttachProgressDto::Saving,
-    });
+    progress(acquiring_stage(&request.evidence));
     let source = match acquire::acquire(deps, request.program_id, &request.evidence).await? {
         Acquired::Saved(source) => source,
         Acquired::NotSaved(failure) => return Ok(report::not_saved(ledger.revision, failure)),
@@ -349,6 +450,11 @@ async fn attach_reporting(
         None => check::passages_from(deps.llm, &references, &version_id, &statement).await?,
     };
     let outcome = check::judge(deps.llm, &statement, &passages).await?;
+    let put_back = if entry.taken_out() {
+        Some(put_back_for(deps, request.lesson_id, request.claim_id, &outcome).await?)
+    } else {
+        None
+    };
     let event = ClaimEvent::EvidenceAttached {
         source_version_id: version_id.clone(),
         provenance: source.provenance.clone(),
@@ -365,7 +471,7 @@ async fn attach_reporting(
     .await?
     .ok_or_else(|| {
         AppError::InvalidState(
-            "The claim changed while the evidence was being checked; reload it. The source is saved in your references."
+            "The statement changed while the evidence was being checked; reload it. The source is saved in your references."
                 .into(),
         )
     })?;
@@ -416,14 +522,39 @@ async fn attach_reporting(
     {
         revision = deps.store.load(request.lesson_id).await?.revision;
     }
-    Ok(report::checked(
+    let mut report = report::checked(
         revision,
         &source.saved,
         source.already_saved,
         &outcome,
         source.snapshot,
         others,
-    ))
+    );
+    report.put_back = put_back;
+    Ok(report)
+}
+
+/// Puts the claim's taken-out sentence back when `outcome` supports it.
+async fn put_back_for(
+    deps: &AttachDeps<'_>,
+    lesson_id: &str,
+    claim_id: &ClaimId,
+    outcome: &AttachOutcome,
+) -> Result<PutBackOutcomeDto> {
+    let supported = matches!(
+        outcome,
+        AttachOutcome::Checked(check) if matches!(check.result, CheckResult::Supported { .. })
+    );
+    if !supported {
+        return Ok(PutBackOutcomeDto::StaysOut);
+    }
+    let service = super::service::ClaimReviewService::new(deps.pool.clone());
+    let back = service.put_back_for_source(lesson_id, claim_id).await?;
+    Ok(if back.is_some() {
+        PutBackOutcomeDto::Back
+    } else {
+        PutBackOutcomeDto::NoPlace
+    })
 }
 
 /// The lesson's other open claims in scope, checked against the new source

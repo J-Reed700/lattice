@@ -2,9 +2,9 @@
 //! transaction; written answers and short-answer near-misses wait as
 //! `pending` for the grading job, and the verdict waits for them.
 use super::{
-    assessment_operation, candidate_in, decode, dimension_for, grade_name, insert_followup,
-    invalid, json, parse_format, parse_grade, parse_mode, parse_purpose, stronger_grade, uuid,
-    LearningAssessmentRepository, STALE_EVIDENCE_MS,
+    assessment_operation, candidate_in, decode, dimension_for, drawn_candidate, grade_name,
+    insert_followup, invalid, json, parse_format, parse_grade, parse_mode, parse_purpose,
+    stronger_grade, uuid, LearningAssessmentRepository, STALE_EVIDENCE_MS,
 };
 use crate::assessment_engine as engine;
 use crate::dto::*;
@@ -230,15 +230,17 @@ impl LearningAssessmentRepository {
         let mut pending = 0usize;
         for (ordinal, item) in form.items.iter().enumerate() {
             let ordinal = ordinal as i64;
-            let stored = candidate_in(&mut tx, &req.program_id, &item.id).await?;
-            let order: Vec<usize> = decode(
-                &sqlx::query_scalar::<_, String>("SELECT option_order_json FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?")
-                    .bind(&req.form_id)
-                    .bind(ordinal)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(db)?,
-            )?;
+            let bank = candidate_in(&mut tx, &req.program_id, &item.id).await?;
+            let drawn = sqlx::query(
+                "SELECT * FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?",
+            )
+            .bind(&req.form_id)
+            .bind(ordinal)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(db)?;
+            let order: Vec<usize> = decode(drawn.get("option_order_json"))?;
+            let stored = drawn_candidate(&bank, &drawn)?;
             let response = engine::LearningAssessmentResponse {
                 item_id: item.id.clone(),
                 selected_indices: item.selected_indices.clone(),

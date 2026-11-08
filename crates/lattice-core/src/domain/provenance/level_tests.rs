@@ -481,3 +481,24 @@ fn pasted_text_without_an_origin_says_it_was_added_by_you() {
         "Added by you · origin not stated"
     );
 }
+
+#[test]
+fn a_statement_without_a_subject_says_so_in_its_own_words() {
+    let mut case = Case::web(
+        "https://fetch.spec.whatwg.org/",
+        Standing::Institutional,
+        EditorialProcess::Editorial,
+        ContentNature::PrimaryDocument,
+    );
+    case.subject = None;
+    let reason = case
+        .level()
+        .reasons
+        .into_iter()
+        .find(|reason| reason.code == ReasonCode::NoSubject)
+        .unwrap();
+    assert_eq!(
+        reason.text,
+        "The statement names no subject, so ownership was not judged"
+    );
+}

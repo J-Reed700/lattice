@@ -184,7 +184,7 @@ fn explain(
         f64::from(held) * 100.0 / f64::from(total)
     };
     format!(
-        "{} sources on {} claims: {total} verdicts, {share:.0}% held; back to the static bar since {} (probability {:.2} that they hold at least the {:.0}% target)",
+        "{} sources on {} statements: {total} verdicts, {share:.0}% held; back to the static bar since {} (probability {:.2} that they hold at least the {:.0}% target)",
         capitalised(level.as_str()),
         kind.as_str().replace('_', "-"),
         day(at),

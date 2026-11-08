@@ -115,7 +115,7 @@ export function evidenceSummary(report: LearningLessonEvidenceDto): string {
   const common = report.teachingClaims.filter((claim) => passedAs(claim, 'common')).length;
   const verified = Math.max(0, report.claimCount - report.confirmedCount - consistent - common - notVerified);
   const byLevel = verifiedByLevel(report.teachingClaims.filter((claim) => !passedAs(claim, 'reasoning') && !passedAs(claim, 'common')));
-  const against = byLevel.length ? byLevel : verified > 0 || consistent + common === 0 ? [`${verified} ${verified === 1 ? 'claim' : 'claims'} verified against sources`] : [];
+  const against = byLevel.length ? byLevel : verified > 0 || consistent + common === 0 ? [`${verified} ${verified === 1 ? 'statement' : 'statements'} verified against sources`] : [];
   return [
     ...against,
     consistent > 0 ? `${consistent} consistent with their sources` : null,
@@ -154,7 +154,7 @@ function ClaimEvidence({
         <p className="mt-2 text-xs leading-5 text-text-secondary"><span className="font-medium text-text-primary">Your note: </span>{claim.note}</p>
       )}
       {claim.resolution === 'source_removed' && (
-        <p className="mt-2 text-xs leading-5 text-text-secondary">The source that supported this claim was deleted. The lesson stays readable; review the claim to attach another source or confirm it.</p>
+        <p className="mt-2 text-xs leading-5 text-text-secondary">The source that supported this statement was deleted. The lesson stays readable; use Review to attach another source or confirm it.</p>
       )}
       {claim.contentQuote && (
         <blockquote className="mt-2 border-l-2 border-border pl-3 text-xs leading-5 text-text-muted">
@@ -216,7 +216,7 @@ export function LessonEvidencePanel({
         <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-h-10 w-full items-center gap-2 text-left text-sm font-semibold text-accent">
           <FileSearch size={17} />
           {open ? 'Hide lesson evidence' : 'View lesson evidence'}
-          {data && <span className="ml-auto text-xs font-normal text-text-muted">{data.teachingClaims.length} teaching {data.teachingClaims.length === 1 ? 'claim' : 'claims'}</span>}
+          {data && <span className="ml-auto text-xs font-normal text-text-muted">{data.teachingClaims.length} teaching {data.teachingClaims.length === 1 ? 'statement' : 'statements'}</span>}
         </button>
         {open && (
           <div className="mt-3 space-y-4">
@@ -233,7 +233,7 @@ export function LessonEvidencePanel({
                 <p className="text-sm leading-6 text-text-secondary">
                   {evidenceSummary(data)} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
                 </p>
-                {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-amber-600/30 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'claim lost its source' : 'claims lost their source'} — review {sourceRemovedCount(data) === 1 ? 'it' : 'them'} in the claim review.</p>}
+                {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-amber-600/30 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'statement lost its source' : 'statements lost their source'} — use Review to look at {sourceRemovedCount(data) === 1 ? 'it' : 'them'}.</p>}
                 <p className="text-xs leading-5 text-text-muted">
                   {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical' ? 'Keyword retrieval — references were not searched by meaning' : data.retrievalMode === 'partial' ? 'Semantic and keyword retrieval over the embedded references; keyword retrieval for the rest — embedding was not finished' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
                 </p>
@@ -306,7 +306,7 @@ export function LessonSectionEvidence({
       <details className="mt-4 border-t border-border pt-3">
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-2 text-xs font-medium text-accent">
           <ShieldCheck size={14} />
-          Evidence · {checked} checked {checked === 1 ? 'claim' : 'claims'}
+          Evidence · {checked} checked {checked === 1 ? 'statement' : 'statements'}
           {consistent > 0 && ` · ${consistent} consistent with their sources`}
           {common > 0 && ` · ${common} common knowledge`}
           {confirmed > 0 && ` · ${confirmed} confirmed by you`}

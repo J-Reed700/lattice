@@ -3,8 +3,10 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ChevronRight } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { claimsCount, resolvedChip, statementsCount, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
+import { claimsCount, resolvedChip, SELECT_NONE, SELECT_STATEMENT, selectAll, statementsCount, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
 import { GROUP_MODE_LABELS, type ClaimGroup, type GroupMode } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { ReviewCheckbox } from '@/features/learning/lessons/review/SelectionBar';
+import { teachingNotesNoun } from '@/features/learning/lessons/review/TeachingFindings';
 import type { ClaimReviewItemDto } from '@/lib/bindings';
 
 const NAVIGATION_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End']);
@@ -14,17 +16,29 @@ export const queueRowId = (claimId: string) => `claim-row-${claimId}`;
 
 export const TEACHING_ROW = 'teaching-notes';
 
+/** What the queue needs of the screen's selection of statements. */
+export type QueueSelection = {
+  isSelected: (claimId: string) => boolean;
+  toggle: (claimId: string, options?: { shiftKey?: boolean }) => void;
+  setMany: (claimIds: readonly string[], on: boolean) => void;
+};
+
 const shortPlace = (item: ClaimReviewItemDto) => item.presentation.place.split(' · ')[0] || item.presentation.place;
 
-function Row({ item, active, opened, settled, tabIndex, onSelect }: {
+function Row({ item, active, opened, settled, tabIndex, onSelect, selection }: {
   item: ClaimReviewItemDto; active: boolean; opened: boolean; settled: boolean; tabIndex: number; onSelect: () => void;
+  selection?: QueueSelection;
 }) {
   return (
-    <li>
+    <li className="flex items-start gap-1">
+      {selection && <span className="flex h-9 shrink-0 items-start pl-1.5 pt-1.5">
+        <ReviewCheckbox label={SELECT_STATEMENT} checked={selection.isSelected(item.claimId)}
+          onToggle={(shiftKey) => selection.toggle(item.claimId, { shiftKey })} />
+      </span>}
       <button
         type="button" id={queueRowId(item.claimId)} data-queue-row="" tabIndex={tabIndex}
         aria-current={active ? 'true' : undefined} onClick={onSelect}
-        className={`row-hover flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-accent ${active ? 'bg-accent/10' : ''}`}
+        className={`row-hover flex min-w-0 flex-1 items-start gap-2 rounded-lg px-2 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-accent ${active ? 'bg-accent/10' : ''}`}
       >
         <span aria-hidden="true" className="mt-0.5 w-3 shrink-0 text-xs leading-5 text-accent">
           {settled ? <Check size={12} className="mt-1 text-success-fg" /> : opened ? '●' : '○'}
@@ -47,7 +61,7 @@ function Row({ item, active, opened, settled, tabIndex, onSelect }: {
  */
 export function ClaimQueue({
   groups, mode, onModeChange, activeId, openedIds, settledIds, onSelect, onAcceptSource, onAddSource,
-  resolved, teachingWaiting, teachingActive, onOpenTeaching, removedCount, removedActive, onOpenRemoved, busy,
+  resolved, teachingWaiting, teachingActive, onOpenTeaching, removedCount, rewrittenCount = 0, removedActive, onOpenRemoved, busy, selection,
 }: {
   groups: ClaimGroup[];
   mode: GroupMode;
@@ -66,9 +80,13 @@ export function ClaimQueue({
   onOpenTeaching: () => void;
   /** Statements the machine took out of the lesson, which have a list of their own. */
   removedCount: number;
+  /** Sentences the machine rewrote, listed with the removals. */
+  rewrittenCount?: number;
   removedActive: boolean;
   onOpenRemoved: () => void;
   busy: boolean;
+  /** The statements chosen for one action on many; without it the rows have no checkboxes. */
+  selection?: QueueSelection;
 }) {
   const id = useId();
   const listRef = useRef<HTMLDivElement>(null);
@@ -107,7 +125,7 @@ export function ClaimQueue({
 
   const total = groups.reduce((sum, group) => sum + group.claims.length, 0);
   return (
-    <nav aria-label="Claims waiting for you" className="flex min-h-0 flex-col">
+    <nav aria-label="Statements waiting for you" className="flex min-h-0 flex-col">
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-2">
         <label htmlFor={`${id}-mode`} className="flex items-center gap-2 text-xs text-text-secondary">
           Group by
@@ -122,7 +140,9 @@ export function ClaimQueue({
       </div>
 
       <div ref={listRef} onKeyDown={onKeyDown} className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {total === 0 && <p className="px-2 py-3 text-sm text-text-secondary">Everything is resolved.</p>}
+        {total === 0 && <p className="px-2 py-3 text-sm text-text-secondary">
+          {teachingWaiting > 0 ? `No statements wait for you. ${teachingNotesNoun(teachingWaiting)} ${teachingWaiting === 1 ? 'does' : 'do'}.` : 'Everything is resolved.'}
+        </p>}
         {groups.map((group) => {
           const open = !collapsed.has(group.key);
           const bodyId = `${id}-${group.key}`;
@@ -138,13 +158,20 @@ export function ClaimQueue({
               </button>
               {open && <div id={bodyId} className="px-1.5 pb-2">
                 {group.claims.length >= 2 && <div className="flex flex-wrap gap-1.5 px-1.5 pb-2">
+                  {selection && (() => {
+                    const ids = group.claims.map((claim) => claim.claimId);
+                    const all = ids.every((claimId) => selection.isSelected(claimId));
+                    return <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => selection.setMany(ids, !all)}>
+                      {all ? SELECT_NONE : selectAll(ids.length)}
+                    </Button>;
+                  })()}
                   {group.source && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => onAcceptSource(group)}>Accept this source for all {group.claims.length}</Button>}
                   <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => onAddSource(group)}>Add a source for these {group.claims.length}</Button>
                 </div>}
                 <ul role="list" className="space-y-0.5">
                   {group.claims.map((item) => (
                     <Row key={item.claimId} item={item} active={item.claimId === activeId} opened={openedIds.has(item.claimId)} settled={settledIds.has(item.claimId)}
-                      tabIndex={item.claimId === rovingId ? 0 : -1} onSelect={() => onSelect(item.claimId)} />
+                      tabIndex={item.claimId === rovingId ? 0 : -1} onSelect={() => onSelect(item.claimId)} selection={selection} />
                   ))}
                 </ul>
               </div>}
@@ -170,11 +197,20 @@ export function ClaimQueue({
           </button>
         </section>}
 
+        {rewrittenCount > 0 && <section aria-label="Rewritten in the lesson" className="rounded-xl border border-border bg-surface">
+          <button type="button" data-queue-row="" tabIndex={-1} onClick={onOpenRemoved}
+            className="row-hover flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm">
+            <ChevronRight size={14} aria-hidden="true" className="shrink-0 text-text-muted" />
+            <span className="font-medium text-text-primary">Rewritten in the lesson</span>
+            <span className="text-xs text-text-muted">· {rewrittenCount === 1 ? '1 sentence' : `${rewrittenCount} sentences`}</span>
+          </button>
+        </section>}
+
         {resolved.length > 0 && <div className="pt-1">
           <Button type="button" size="sm" variant="ghost" aria-expanded={showResolved} onClick={() => setShowResolved((value) => !value)}>
             {showResolved ? 'Hide resolved' : `Show resolved (${resolved.length})`}
           </Button>
-          {showResolved && <ul role="list" aria-label="Resolved claims" className="mt-1 space-y-0.5">
+          {showResolved && <ul role="list" aria-label="Resolved statements" className="mt-1 space-y-0.5">
             {resolved.map((item) => (
               <li key={item.claimId}>
                 <button type="button" data-queue-row="" tabIndex={-1} id={queueRowId(item.claimId)} aria-current={item.claimId === activeId ? 'true' : undefined} onClick={() => onSelect(item.claimId)}

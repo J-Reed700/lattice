@@ -132,6 +132,57 @@ fn the_side_placed_at_the_claims_version_wins() {
         panic!()
     };
     assert_eq!(note.code, ReasonCode::TemporallyPlaced);
+    assert_eq!(
+        note.text,
+        "blog cannot be placed at the statement's version or date; the support can"
+    );
+}
+
+#[test]
+fn a_contrary_placed_at_the_version_wins_and_says_statement() {
+    let version = profile(
+        ClaimKind::VersionBound,
+        TemporalScope::Since {
+            version: Some("7.2".into()),
+            date: None,
+        },
+    );
+    let mut unplaced = support("docs", TrustLevel::Established, READ);
+    unplaced.temporal = TemporalValidity::CannotPlace {
+        reason: "no version".into(),
+    };
+    let placed = contrary("blog", TrustLevel::Primary, READ);
+    let Resolution::ContraryWins { reasons } = resolve(
+        &version,
+        &[unplaced],
+        &placed,
+        std::slice::from_ref(&placed),
+    ) else {
+        panic!()
+    };
+    assert_eq!(
+        reasons[0].text,
+        "blog speaks to the statement's version or date; the support cannot"
+    );
+}
+
+#[test]
+fn a_newer_source_says_the_statement_is_about_a_subject_that_changes() {
+    let supports = [support("old", TrustLevel::Authoritative, READ - 400 * DAY)];
+    let newer = contrary("new", TrustLevel::Authoritative, READ - 10 * DAY);
+    let Resolution::ContraryWins { reasons } =
+        resolve(&current(), &supports, &newer, std::slice::from_ref(&newer))
+    else {
+        panic!()
+    };
+    assert_eq!(
+        reasons[0].text,
+        format!(
+            "new ({}) is newer than the support ({}), and the statement is about a subject that changes",
+            crate::domain::provenance::temporal::day(READ - 10 * DAY),
+            crate::domain::provenance::temporal::day(READ - 400 * DAY)
+        )
+    );
 }
 
 #[test]

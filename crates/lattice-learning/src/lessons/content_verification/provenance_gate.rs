@@ -469,7 +469,7 @@ pub(super) async fn weigh(
         return Ok(());
     };
     crate::lesson_progress::stage(format!(
-        "Weighing where the support of {} claims comes from",
+        "Weighing where the support of {} statements comes from",
         targets.len()
     ));
     let claims: Vec<(usize, &str)> = targets

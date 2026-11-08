@@ -197,6 +197,12 @@ impl LearningSourceLibraryRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Source changed; reload and retry."));
         }
+        crate::lessons::claim_reviews::source_deleted::reopen_for_deleted_source(
+            &mut tx,
+            &req.program_id,
+            &req.source_id,
+        )
+        .await?;
         portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
             .record(&mut *tx, &Some(&req.source_id))
             .await?;

@@ -103,7 +103,7 @@ test('A source shows its level with the reasons, and a site is trusted as primar
   await section.getByRole('button', { name: /Established · Why\?/ }).click();
   const reasons = page.getByRole('dialog');
   await expect(reasons.getByText('Identified publisher: Example Field Office (JSON-LD publisher)')).toBeVisible();
-  await expect(reasons.getByText('Your verdicts: 4 of 5 claims it supported held, 1 overturned')).toBeVisible();
+  await expect(reasons.getByText('Your verdicts: 4 of 5 statements it supported held, 1 overturned')).toBeVisible();
   await page.keyboard.press('Escape');
 
   // A site alone takes a standing; primary needs a subject.
@@ -114,9 +114,9 @@ test('A source shows its level with the reasons, and a site is trusted as primar
   await section.getByRole('combobox', { name: 'Level' }).selectOption('primary');
   await section.getByRole('textbox', { name: 'Another subject' }).fill('Field methods');
   await expect(section.getByText('Trust example.org as primary for: Field methods')).toBeVisible();
-  await expect(section.getByText('2 checked claims in 1 lesson rest on this site; they will be re-decided.')).toBeVisible();
-  await section.getByRole('button', { name: 'Apply and re-decide 2 claims' }).click();
-  await expect(section.getByText('Saved. 2 claims verified.')).toBeVisible();
+  await expect(section.getByText('2 checked statements in 1 lesson rest on this site; they will be re-decided.')).toBeVisible();
+  await section.getByRole('button', { name: 'Apply and re-decide 2 statements' }).click();
+  await expect(section.getByText('Saved. 2 statements verified.')).toBeVisible();
   const calls = await page.evaluate(() => (window as unknown as { __TRUST_CALLS__: unknown[] }).__TRUST_CALLS__);
   expect(calls).toEqual([{
     command: 'set_source_trust_override',
@@ -132,7 +132,7 @@ test('Settings shows the bars in force, the site overrides and their record', as
   await page.goto('/settings?tab=source-trust');
   await expect(page.getByRole('heading', { name: 'Source trust' })).toBeVisible();
   await expect(page.getByText('Trust example.org as primary for: Field methods')).toBeVisible();
-  await expect(page.getByText('2 of 9 claims its pages supported were overturned.')).toBeVisible();
+  await expect(page.getByText('2 of 9 statements its pages supported were overturned.')).toBeVisible();
   const table = page.getByRole('table');
   await expect(table.getByText('41 verdicts recorded · policy source-trust-v1')).toBeVisible();
   await expect(table.getByRole('rowheader', { name: /Specification/ })).toContainText('Alone from authoritative');

@@ -728,6 +728,17 @@ async resolveLearningClaim(request: ResolveLearningClaimRequestDto) : Promise<Re
 }
 },
 /**
+ * Applies one action to every claim in the request, all or nothing.
+ */
+async resolveLearningClaims(request: ResolveLearningClaimsRequestDto) : Promise<Result<ResolveLearningClaimResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|resolve_learning_claims", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Attach the user's evidence to a claim (§5.4): save it as a course
  * source, check the claim against it, then the other open claims in scope,
  * reporting each stage on `on_progress`.
@@ -741,13 +752,68 @@ async attachLearningClaimEvidence(request: AttachLearningClaimEvidenceRequestDto
 }
 },
 /**
- * "Keep as written": the user settles a teaching finding the repairs did
- * not, without changing the lesson. It stays settled while the part it is
- * about keeps its text.
+ * Add the user's evidence to the lesson as a whole: save it as a course
+ * source and check every open claim of the lesson against it, reporting each
+ * stage on `on_progress`.
  */
-async keepLearningTeachingFinding(request: KeepLearningTeachingFindingRequestDto) : Promise<Result<null, ApiError>> {
+async attachLearningLessonSource(request: AttachLearningLessonSourceRequestDto, onProgress: TAURI_CHANNEL<ClaimAttachProgressDto>) : Promise<Result<ClaimAttachReportDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|keep_learning_teaching_finding", { request }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|attach_learning_lesson_source", { request, onProgress }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * "Keep as written": the user settles teaching findings the repairs did
+ * not, without changing the lesson, or takes that back. A kept finding stays
+ * settled while the part it is about keeps its text. All the findings change
+ * or none.
+ */
+async settleLearningTeachingFindings(request: SettleLearningTeachingFindingsRequestDto) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|settle_learning_teaching_findings", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rewrites a section of a published lesson, its title and its text. The
+ * statements on text the user changed end, the others keep their state, and
+ * each sentence the user wrote becomes a statement they confirmed. With
+ * `dry_run` it only answers what saving would do.
+ */
+async editLearningLessonSection(request: EditLearningLessonSectionRequestDto) : Promise<Result<LessonSectionEditDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_section", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * A published lesson's question, as the editor opens it: its kind, prompt,
+ * choices, right choice and explanation.
+ */
+async getLearningLessonQuestion(programId: string, lessonId: string, questionIndex: number) : Promise<Result<LessonQuestionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_question", { programId, lessonId, questionIndex }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Rewrites a question of a published lesson: its prompt, choices, right
+ * answer and explanation. The statements on text the user changed end, the
+ * others keep their state, and each sentence the user wrote becomes a
+ * statement they confirmed. With `dry_run` it only answers what saving would
+ * do.
+ */
+async editLearningLessonQuestion(request: EditLearningLessonQuestionRequestDto) : Promise<Result<LessonQuestionEditDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_question", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4545,6 +4611,14 @@ claimId: string;
  */
 expectedRevision: number; evidence: AttachEvidenceDto; scope: AttachScopeDto }
 /**
+ * Evidence the user adds to the lesson as a whole.
+ */
+export type AttachLearningLessonSourceRequestDto = { programId: string; lessonId: string;
+/**
+ * The review's revision the user acted on.
+ */
+expectedRevision: number; evidence: AttachEvidenceDto }
+/**
  * What the card offers after a failure.
  */
 export type AttachNextStepDto =
@@ -4946,13 +5020,23 @@ export type ChecksumRequest = { algorithm: string; value: string }
  * A conversation that has this document among its linked documents.
  */
 export type CitingConversationDto = { conversationId: string; title: string; updatedAt: string; passageCount: number }
-export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "undo"
+export type ClaimActionKindDto = "confirm" | "edit" | "remove" | "attach_evidence" | "research_with_hint" | "unconfirm" | "put_back" | "restore_original" | "undo"
 /**
  * What the user asked for on a claim (§5.1); `resolve_learning_claim`
  * carries it with the lesson's `expected_revision`. Evidence is attached
  * through `attach_learning_claim_evidence` instead.
  */
-export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "undo" }
+export type ClaimActionRequestDto = { action: "confirm"; note: string | null; sourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } |
+/**
+ * Put a sentence the machine took out back: as it was (`text` null) or
+ * as the user writes it. `section` (0-based) puts it at the end of that
+ * section; null puts it where it was.
+ */
+{ action: "put_back"; text: string | null; section: number | null } |
+/**
+ * Put the sentence the machine rewrote back in place of the rewrite.
+ */
+{ action: "restore_original" } | { action: "undo" }
 /**
  * Where an attach is, for the line the review shows while it runs.
  */
@@ -4967,7 +5051,8 @@ export type ClaimAttachProgressDto =
  */
 { stage: "checking"; done: number; total: number; statement: string } | { stage: "done" }
 /**
- * What `attach_learning_claim_evidence` returns.
+ * What `attach_learning_claim_evidence` and `attach_learning_lesson_source`
+ * return.
  */
 export type ClaimAttachReportDto = {
 /**
@@ -4984,13 +5069,18 @@ source: SourceRefDto | null;
  */
 alreadySaved: boolean;
 /**
- * The targeted check of the claim; null when nothing was saved.
+ * The targeted check of the claim; null when nothing was saved, and for
+ * a source added to the lesson as a whole.
  */
 outcome: AttachOutcomeDto | null; failure: AttachFailureDto | null; snapshot: SnapshotNoteDto; others: OtherClaimsCheckedDto;
 /**
  * The card's lines, in order.
  */
-lines: string[] }
+lines: string[];
+/**
+ * What the source did for a sentence the machine took out; null for any other claim.
+ */
+putBack: PutBackOutcomeDto | null }
 export type ClaimCountsDto = { verified: number; confirmed: number; queued: number; open: number;
 /**
  * Removed by the user.
@@ -5100,7 +5190,21 @@ alsoSupported: ClaimSupportDto[];
 /**
  * What research tried.
  */
-tried: ResearchSummaryDto }
+tried: ResearchSummaryDto;
+/**
+ * For a claim the machine took out: whether its sentence goes back where
+ * it was or the user chooses the section.
+ */
+place: PutBackPlaceDto | null;
+/**
+ * For a sentence the machine took out whose place is known: the unit it goes
+ * back into, as the lesson stands now.
+ */
+putBackUnit: number | null;
+/**
+ * For a claim the machine rewrote: what it said and what it says now.
+ */
+rewritten: RewrittenDto | null }
 /**
  * Where a claim stands. The verdict, reason, supporting passage and the
  * user's note are the item's own fields, so they are not repeated here.
@@ -6069,6 +6173,32 @@ export type DrillStandingDto =
  */
 "pending"
 /**
+ * A published lesson's question as the user rewrote it, with the question
+ * they opened.
+ */
+export type EditLearningLessonQuestionRequestDto = { programId: string; lessonId: string;
+/**
+ * Zero-based, among the lesson's questions.
+ */
+questionIndex: number; before: LessonQuestionDto; after: LessonQuestionDto;
+/**
+ * Answer what saving would do and write nothing.
+ */
+dryRun: boolean }
+/**
+ * A published lesson's section as the user rewrote it, with the title and
+ * text they opened it with.
+ */
+export type EditLearningLessonSectionRequestDto = { programId: string; lessonId: string;
+/**
+ * Zero-based.
+ */
+sectionIndex: number; beforeTitle: string; beforeBody: string; title: string; body: string;
+/**
+ * Answer what saving would do and write nothing.
+ */
+dryRun: boolean }
+/**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
 export type EmbeddingCompatibilityDto =
@@ -7019,11 +7149,6 @@ export type JournalSynthesisDto = { job: JobDto; title: string; heading: string;
  */
 activity: SynthesisActivityDto | null }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
-export type KeepLearningTeachingFindingRequestDto = { programId: string; lessonId: string;
-/**
- * The finding's `findingKey` from the review.
- */
-findingKey: string }
 /**
  * A service whose key lives in the keyring, as the panel and the key
  * commands name it.
@@ -8620,11 +8745,85 @@ pass: number; stopReason: StopReasonDto | null;
  */
 changedSinceStop: boolean; claims: ClaimReviewItemDto[];
 /**
+ * The lesson's sections, for choosing where a sentence goes back.
+ */
+sections: ReviewSectionDto[];
+/**
  * Teaching-review findings the repairs did not settle: the lesson
  * publishes with these waiting for the user.
  */
 teachingFindings: TeachingFindingDto[] }
+/**
+ * A published lesson's question as the editor shows it and sends it back.
+ */
+export type LessonQuestionDto = { kind: LearningItemFormat; prompt: string;
+/**
+ * Empty for a kind without choices.
+ */
+choices: string[];
+/**
+ * The index of the right choice; null for a kind without one.
+ */
+right: number | null; explanation: string }
+/**
+ * What a rewrite of a question does, or did, to the lesson's statements.
+ */
+export type LessonQuestionEditDto = { changed: boolean;
+/**
+ * Statements on text the user left as it was.
+ */
+statementsKept: number;
+/**
+ * Statements on text the user changed.
+ */
+statementsChanged: number;
+/**
+ * Statements on text the user deleted.
+ */
+statementsRemoved: number;
+/**
+ * Sentences the user wrote.
+ */
+sentencesWritten: number;
+/**
+ * Changed or removed statements that were checked against the sources.
+ */
+checkedStatementsAffected: number;
+/**
+ * The review's revision after a save; null for a dry run, no change, or
+ * a lesson without a review.
+ */
+revision: number | null }
 export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
+/**
+ * What a rewrite of a section does, or did, to the lesson's statements.
+ */
+export type LessonSectionEditDto = { changed: boolean;
+/**
+ * Statements on text the user left as it was.
+ */
+statementsKept: number;
+/**
+ * Statements on text the user changed.
+ */
+statementsChanged: number;
+/**
+ * Statements on text the user deleted.
+ */
+statementsRemoved: number;
+/**
+ * Sentences the user wrote.
+ */
+sentencesWritten: number;
+/**
+ * Changed or removed statements that were checked against the sources.
+ */
+checkedStatementsAffected: number;
+/**
+ * The review's revision after a save; null for a dry run, no change, or
+ * a lesson without a review.
+ */
+revision: number | null }
 export type ListBackupsResultDto = { backups: BackupInfoDto[] }
 /**
  * Request to list batch jobs (paginated).
@@ -9201,6 +9400,14 @@ telemetryEnabled: boolean;
 crashReporting: boolean }
 export type ProvenanceDto = { input: "saved_passage"; startByte: number; endByte: number } | { input: "link"; url: string } | { input: "document"; documentId: string } | { input: "pasted_text" }
 /**
+ * What a source did for a sentence the machine took out.
+ */
+export type PutBackOutcomeDto = "back" | "no_place" | "stays_out"
+/**
+ * Whether the place of a taken-out sentence is known.
+ */
+export type PutBackPlaceDto = "known" | "choose"
+/**
  * Where a quick capture landed, so the UI can name the destination
  * instead of saying "saved" and leaving the user to guess.
  */
@@ -9383,6 +9590,22 @@ export type ResolveLearningClaimResultDto = {
  * The review's revision after the action: send it with the next one.
  */
 revision: number }
+/**
+ * One action for several claims at once (`Confirm`, `Remove`, `PutBack` of
+ * a sentence as it was, or `Undo` of the last such batch). An Undo takes the
+ * claims back in the reverse of the order sent, so send the batch's own
+ * order: the last one done is the first one undone.
+ */
+export type ResolveLearningClaimsRequestDto = { programId: string; lessonId: string;
+/**
+ * The claims the action is for.
+ */
+claimIds: string[]; action: ClaimActionRequestDto;
+/**
+ * The review's revision the user acted on; for an Undo, the revision
+ * the batch returned.
+ */
+expectedRevision: number; operationId: string }
 /**
  * Response for link resolution (for frontend compatibility).
  */
@@ -9635,11 +9858,23 @@ export type RevealedSourceDto = { title: string; text: string;
  */
 versionId: string }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
+/**
+ * A section of the lesson: its index and title.
+ */
+export type ReviewSectionDto = { index: number; title: string }
 export type ReviewStudyCardRequestDto = { reviewId: string; cardId: string; expectedReviews: number;
 /**
  * A selected option records a quiz answer; otherwise the rating records recall.
  */
 selectedOption: number | null; rating: StudyRating }
+/**
+ * A sentence the machine rewrote, with what replaced it, as plain text.
+ */
+export type RewrittenDto = { original: string; rewrite: string;
+/**
+ * The reason the check gave, when it recorded one.
+ */
+why: string | null }
 /**
  * Router settings for conversation scope and routing decisions.
  */
@@ -9959,6 +10194,11 @@ onboarding: OnboardingSettingsDto;
  * contact and the archive fallback. Keys live in the keyring.
  */
 sourcing: SourcingSettingsDto }
+export type SettleLearningTeachingFindingsRequestDto = { programId: string; lessonId: string;
+/**
+ * The findings' `findingKey`s from the review.
+ */
+findingKeys: string[]; settle: TeachingSettleDto }
 /**
  * The key's issues of one severity and how many of them were found.
  */
@@ -10502,7 +10742,7 @@ document_count: number }
  */
 export type TeachingFindingDto = {
 /**
- * Names the finding in `keep_learning_teaching_finding`.
+ * Names the finding in `settle_learning_teaching_findings`.
  */
 findingKey: string; kind: TeachingFindingKindDto; site: TeachingFindingSiteDto;
 /**
@@ -10514,17 +10754,43 @@ unitIndex: number | null;
  */
 unitTitle: string;
 /**
- * The reviewer's note.
+ * What is wrong, in plain words.
  */
-note: string;
+summary: string;
 /**
  * The passage the finding is about, when one was chosen.
  */
 passage: string | null;
 /**
+ * Whether the passage is the lesson's own text or a quotation it cites.
+ */
+passageRole: TeachingPassageRoleDto;
+/**
+ * The whole sentence a quotation finding is about, when it is about one.
+ */
+sentence: string | null;
+/**
+ * The live claims on exactly that sentence in the published section; for a
+ * note shown removed, the claims an undo of the user's removal takes back,
+ * none when that removal came with an edit of the whole section.
+ */
+claimIds: string[];
+/**
+ * How a resolved finding was resolved.
+ */
+resolution: TeachingResolutionDto | null;
+/**
+ * When it was resolved.
+ */
+resolvedAt: number | null;
+/**
  * Repairs that tried to settle it.
  */
-repairs: number; state: TeachingFindingStateDto }
+repairs: number; state: TeachingFindingStateDto;
+/**
+ * Whether the user changed this section after the note was written.
+ */
+partChanged: boolean }
 /**
  * What raised a teaching finding.
  */
@@ -10558,7 +10824,52 @@ export type TeachingFindingStateDto =
 /**
  * The user kept the text as written.
  */
-"kept"
+"kept" |
+/**
+ * The user took the sentence out or added a source for it.
+ */
+"resolved"
+/**
+ * What the passage under a finding is.
+ */
+export type TeachingPassageRoleDto =
+/**
+ * Text of the lesson, or a question's prompt.
+ */
+"lesson" |
+/**
+ * The quotation of a source that a sentence or a part cites.
+ */
+"quotation"
+/**
+ * How a resolved teaching finding was resolved.
+ */
+export type TeachingResolutionDto =
+/**
+ * The user's removal of the sentence stands: worked out when the review is
+ * read, never stored.
+ */
+"removed" |
+/**
+ * A source that supports the sentence was added.
+ */
+"source_added"
+/**
+ * What the user does with waiting or kept teaching findings.
+ */
+export type TeachingSettleDto =
+/**
+ * Keep the text as written: waiting becomes kept.
+ */
+"keep" |
+/**
+ * Take a kept or resolved finding back: it becomes waiting.
+ */
+"reopen" |
+/**
+ * A source was added for the sentence: waiting becomes resolved.
+ */
+"source_added"
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
@@ -10944,7 +11255,7 @@ keywords?: string[] }
  * A recorded user action. A confirmation shows the sources it was bound
  * to; the quote digest it is bound to stays on the backend.
  */
-export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string }
+export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "put_back"; sentence: string; edited: boolean } | { action: "restore_original"; original: string; rewrite: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.

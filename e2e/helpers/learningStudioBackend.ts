@@ -1191,10 +1191,10 @@ export async function installLearningStudioBackend(page: Page) {
       resolve_learning_claim: (args: MockArgs) => {
         const request = getRequest<{ lessonId: string; claimId: string; expectedRevision: number; action: ClaimActionRequestDto }>(args);
         const review = state.claimReviews[request.lessonId];
-        if (!review) throw { code: "NOT_FOUND", message: "This lesson has no claim review yet." };
-        if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This claim changed; reload and act again." };
+        if (!review) throw { code: "NOT_FOUND", message: "This lesson has no statement review yet." };
+        if (review.revision !== request.expectedRevision) throw { code: "INVALID_STATE", message: "This statement changed; reload and act again." };
         const claim = review.claims.find((item) => item.claimId === request.claimId);
-        if (!claim) throw { code: "NOT_FOUND", message: "No claim with that id in this lesson." };
+        if (!claim) throw { code: "NOT_FOUND", message: "No statement with that id in this lesson." };
         const now = Date.now();
         const { action } = request;
         const record = (event: ClaimEventPayloadDto) => claim.history.push({ ordinal: claim.history.length, actor: "user", at: now, jobId: null, appVersion: "e2e", checkerModel: null, event });
@@ -1234,7 +1234,7 @@ export async function installLearningStudioBackend(page: Page) {
         const holding = state.planWorkspace.jobs.find((job) => job.resultId?.includes(request.lessonId));
         if (!review || !holding) throw { code: "NOT_FOUND", message: "Nothing is waiting for review in this lesson." };
         if (review.claims.some((item) => item.state.state === "queued") && !review.changedSinceStop)
-          throw { code: "INVALID_STATE", message: "Nothing changed since the last pass. Resolve a claim or add evidence first." };
+          throw { code: "INVALID_STATE", message: "Nothing changed since the last pass. Resolve a statement or add evidence first." };
         review.state = "verifying";
         const next: LearningGenerationJob = { ...holding, id: crypto.randomUUID(), operationId: request.operationId, retryOfJobId: holding.id, status: "pending", resultId: null, createdAt: Date.now(), startedAt: null, finishedAt: null, progressMessage: "Resuming verification", error: null };
         state.planWorkspace.jobs.unshift(next);

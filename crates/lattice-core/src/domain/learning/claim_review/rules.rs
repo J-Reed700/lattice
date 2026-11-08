@@ -78,7 +78,7 @@ pub fn new_information(prev: &ClaimLedgerEntry, now: &Observation) -> Option<New
             quote_sha256: text_sha256(&now.quote),
         });
     }
-    let cited = cited_sources(prev);
+    let cited = cited_source_versions(prev);
     if let Some(change) = now
         .source_changes
         .iter()
@@ -118,7 +118,7 @@ pub fn new_information(prev: &ClaimLedgerEntry, now: &Observation) -> Option<New
 
 /// The source versions a claim relies on: what its last local check
 /// compared, what resolved it and what the user bound a confirmation to.
-fn cited_sources(entry: &ClaimLedgerEntry) -> BTreeSet<&str> {
+pub fn cited_source_versions(entry: &ClaimLedgerEntry) -> BTreeSet<&str> {
     let mut cited: BTreeSet<&str> = entry
         .basis()
         .map(|basis| {

@@ -69,8 +69,8 @@ it('a finished preparation that holds claims links to the review', async () => {
   await advance(1000);
   act(() => task.finish());
   await advance(10);
-  const card = screen.getByRole('article', { name: 'Checking claims against your source' });
-  expect(within(card).getByRole('status')).toHaveTextContent('3 claims need you');
+  const card = screen.getByRole('article', { name: 'Checking statements against your source' });
+  expect(within(card).getByRole('status')).toHaveTextContent('3 statements need you');
   fireEvent.click(within(card).getByRole('button', { name: 'Review' }));
   expect(open).toHaveBeenCalledWith(expect.objectContaining({ programId: 'course', lessonId: 'lesson-1', tab: 'lessons', review: 'claims' }));
   expect(within(card).queryByRole('button', { name: 'View result' })).not.toBeInTheDocument();

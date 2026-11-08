@@ -16,7 +16,7 @@ use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};
@@ -640,14 +640,28 @@ fn cite_sentences(
                 }
             }
             Err(AppError::InvalidInput(message)) => {
-                let sentence: String = cited.sentence.chars().take(80).collect();
-                findings.push(ReviewFinding::new(
-                    FindingKind::Quotation,
-                    Some(site),
+                let shown: String = cited.sentence.chars().take(80).collect();
+                let summary = if cited.sentence.trim().is_empty() {
+                    "The quotation cited for a sentence could not be found in its source."
+                        .to_owned()
+                } else {
                     format!(
-                        "The source citation of the sentence \"{sentence}\" could not be confirmed: {message}"
-                    ),
-                ));
+                        "The quotation cited for this sentence could not be found in its source: \u{201c}{}\u{201d}",
+                        cited.sentence.trim()
+                    )
+                };
+                findings.push(
+                    ReviewFinding::new(
+                        FindingKind::Quotation,
+                        Some(site),
+                        format!(
+                            "The source citation of the sentence \"{shown}\" could not be confirmed: {message}"
+                        ),
+                    )
+                    .with_summary(summary)
+                    .with_passage(&cited.quote)
+                    .with_sentence(&cited.sentence),
+                );
             }
             Err(other) => return Err(other),
         }
@@ -674,11 +688,18 @@ fn citation(
         FindingSite::Section(index) => format!("blocks[{index}]"),
         FindingSite::Lesson => "the lesson".to_owned(),
     };
-    findings.push(ReviewFinding::new(
-        FindingKind::Quotation,
-        Some(site),
-        format!("The source citation at {part} could not be confirmed: {error}"),
-    ));
+    findings.push(
+        ReviewFinding::new(
+            FindingKind::Quotation,
+            Some(site),
+            format!("The source citation at {part} could not be confirmed: {error}"),
+        )
+        .with_summary(format!(
+            "The quotation cited in {} could not be found in its source.",
+            plain_part(site)
+        ))
+        .with_passage(quote),
+    );
     if sources.is_empty() {
         return Ok(Vec::new());
     }

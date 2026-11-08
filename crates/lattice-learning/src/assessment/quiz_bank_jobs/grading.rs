@@ -129,9 +129,10 @@ impl QuizGradingWorker {
             if !wanted {
                 continue;
             }
-            let stored = LearningAssessmentRepository::stored_candidate_in(
+            let stored = LearningAssessmentRepository::drawn_candidate_in(
                 &mut connection,
                 program_id,
+                form_id,
                 &item.id,
             )
             .await?;

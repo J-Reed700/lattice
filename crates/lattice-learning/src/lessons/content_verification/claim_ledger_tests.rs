@@ -408,7 +408,24 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
             (2, true, RepairOutcome::Removed)
         ]
     );
+    let cut = gone
+        .cut_place()
+        .expect("the cut recorded the sentence it took out and where it stood");
+    assert!(!cut.sentence.is_empty() && !raw.contains(&cut.sentence));
+    assert!(cut.before.is_some() || cut.after.is_some(), "{cut:?}");
     Ok(())
+}
+
+#[test]
+fn pending_work_saved_before_cuts_were_recorded_still_reads() {
+    let saved = r#"{"previous":null,"repairs":[]}"#;
+    let pending: claim_ledger::Pending = serde_json::from_str(saved).unwrap();
+    assert!(pending.cuts.is_empty());
+    assert_eq!(
+        serde_json::to_string(&pending).unwrap(),
+        r#"{"previous":null,"repairs":[]}"#,
+        "no cuts, nothing new on disk"
+    );
 }
 
 #[tokio::test]
@@ -1181,6 +1198,7 @@ pub(super) fn pass_report(findings: Vec<Finding>) -> LessonVerificationReport {
         embedding_model: None,
         page_budget: None,
         unexecuted_languages: vec![],
+        replaced_findings: vec![],
     }
 }
 
@@ -1587,6 +1605,90 @@ async fn remove_and_edit_act_on_the_located_sentence() -> Result<()> {
         body.replace(&format!("{TWELVE_SENTENCE} "), "")
             .replace(raw_atp, after)
     );
+    Ok(())
+}
+
+const CHANGED_AFTER: &str = "This section changed after that, so it can't be undone on its own. Edit the section to change it back.";
+
+#[tokio::test]
+async fn the_undo_of_an_edit_a_pass_already_carried_into_the_draft_says_to_edit_the_section(
+) -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let program_id = repo.job(&job).await?.program_id;
+    let draft = cell_lesson(CELL).to_string();
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        lesson_drafts::resume(INPUT.into()).await?;
+        lesson_drafts::save(&draft).await
+    })
+    .await?;
+    let store = ClaimReviewRepository::new(pool.clone());
+    let revision = store
+        .set_lesson_review(
+            &lesson_id,
+            LessonReview {
+                program_id,
+                job_id: job.clone(),
+                state: LessonReviewState::NeedsReview,
+                draft_sha256: digest(&draft),
+                checker_model: "figures-fixture".into(),
+                stop_reason: None,
+            },
+        )
+        .await?;
+    let provenance = |actor| EventProvenance {
+        actor,
+        at: 1,
+        job_id: Some(job.clone()),
+        app_version: "fixture".into(),
+        checker_model: Some("figures-fixture".into()),
+    };
+    let id = ClaimId("atp".into());
+    let revision = store
+        .append(
+            &lesson_id,
+            &id,
+            provenance(Actor::Machine),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", ATP_SENTENCE, CELL),
+                statement: ATP.into(),
+            },
+            revision,
+        )
+        .await?;
+    let service = ClaimReviewService::new(pool.clone());
+    let revision = service
+        .resolve(
+            &lesson_id,
+            "atp",
+            ClaimActionRequestDto::Edit {
+                before: ATP_SENTENCE.into(),
+                after: "Mitochondria make most of a cell's ATP.".into(),
+            },
+            revision.0,
+        )
+        .await?;
+    let revision = store
+        .append(
+            &lesson_id,
+            &id,
+            provenance(Actor::Machine),
+            ClaimEvent::Superseded {
+                successor: None,
+                by: Actor::User,
+            },
+            Revision(revision),
+        )
+        .await?;
+
+    let result = service
+        .resolve(&lesson_id, "atp", ClaimActionRequestDto::Undo, revision.0)
+        .await;
+
+    match result {
+        Err(error) => assert!(error.to_string().contains(CHANGED_AFTER), "{error}"),
+        Ok(_) => panic!("the undo was carried out"),
+    }
     Ok(())
 }
 

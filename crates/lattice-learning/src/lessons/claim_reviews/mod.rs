@@ -15,10 +15,24 @@ mod dto_tests;
 #[cfg(test)]
 mod migration_tests;
 mod published_edit;
+mod published_remove;
+#[cfg(test)]
+mod published_remove_tests;
+mod published_restore;
+mod published_rewrite;
+#[cfg(test)]
+mod published_rewrite_tests;
+mod put_back;
+#[cfg(test)]
+mod put_back_tests;
 pub mod recheck;
 pub mod repository;
+mod restore;
 pub mod service;
+pub(crate) mod source_deleted;
+mod teaching_claims;
 pub mod teaching_findings;
+mod teaching_summary;
 pub mod trust_changed;
 pub mod trust_overrides;
 mod view;

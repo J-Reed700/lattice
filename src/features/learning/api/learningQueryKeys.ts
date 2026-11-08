@@ -32,6 +32,8 @@ export const learningClaimReviewPrefix = (programId: string) =>
   [...LEARNING_CLAIM_REVIEW_ROOT, programId] as const;
 export const learningClaimReviewKey = (programId: string, lessonId: string) =>
   [...learningClaimReviewPrefix(programId), lessonId] as const;
+export const learningLessonQuestionKey = (programId: string, lessonId: string, questionIndex: number) =>
+  ['learning-lesson-question', programId, lessonId, questionIndex] as const;
 export const LEARNING_CHECKER_ACCURACY_KEY = ['learning-checker-accuracy'] as const;
 export const learningVerifierAuditKey = (programId: string) => ['learning-verifier-audit', programId] as const;
 export const learningLessonAuditKey = (programId: string, lessonId: string) =>

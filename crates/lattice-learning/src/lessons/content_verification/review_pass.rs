@@ -7,7 +7,7 @@
 use super::claim_ledger::ClaimLedger;
 use super::*;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, UserAction,
+    Actor, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, CutPlace, UserAction,
 };
 
 /// The user's research hint for a claim waiting for them, until a research
@@ -57,6 +57,25 @@ fn edit_applied(entry: &ClaimLedgerEntry) -> bool {
     })
 }
 
+/// The claim's latest action by the user, when it is the put back or restore
+/// `wanted` names and the user has not taken it back.
+fn live(entry: &ClaimLedgerEntry, wanted: impl Fn(&UserAction) -> bool) -> Option<&UserAction> {
+    let events = entry.events();
+    let (ordinal, action) = events.iter().rev().find_map(|record| match &record.event {
+        ClaimEvent::UserAction { action, .. } if record.provenance.actor == Actor::User => {
+            Some((record.ordinal, action))
+        }
+        _ => None,
+    })?;
+    if !wanted(action) {
+        return None;
+    }
+    let undone = events.iter().any(|record| {
+        matches!(&record.event, ClaimEvent::Undone { event_ordinal } if *event_ordinal == ordinal)
+    });
+    (!undone).then_some(action)
+}
+
 fn pointer(candidate: &Value, unit: usize, field: &str) -> Option<String> {
     let blocks = candidate.get("blocks")?.as_array()?.len();
     Some(if unit < blocks {
@@ -79,13 +98,52 @@ enum Change {
         pointer: String,
         quote: String,
     },
+    PutBack {
+        pointer: String,
+        anchor: Anchor,
+        sentence: String,
+        cuts: Vec<CutPlace>,
+    },
+    Replace {
+        pointer: String,
+        from: String,
+        to: String,
+    },
 }
 
 /// The user's edits and removals, located in the draft.
-fn changes(ledger: &ClaimLedger, candidate: &Value) -> Vec<Change> {
+fn changes(entries: &[ClaimLedgerEntry], candidate: &Value) -> Vec<Change> {
     let mut changes = Vec::new();
-    for entry in ledger.entries() {
+    for entry in entries {
         let location = entry.location();
+        let put_back = live(entry, |action| matches!(action, UserAction::PutBack { .. }));
+        if let Some(UserAction::PutBack {
+            sentence, place, ..
+        }) = put_back
+        {
+            if let Some(pointer) = pointer(candidate, place.unit_index, &place.field) {
+                changes.push(Change::PutBack {
+                    pointer,
+                    anchor: place.anchor.clone(),
+                    sentence: sentence.clone(),
+                    cuts: cuts_for(entries, entry, place.unit_index, &place.field),
+                });
+            }
+            continue;
+        }
+        let restore = live(entry, |action| {
+            matches!(action, UserAction::RestoreOriginal { .. })
+        });
+        if let Some(UserAction::RestoreOriginal { original, rewrite }) = restore {
+            if let Some(pointer) = pointer(candidate, location.unit_index, &location.field) {
+                changes.push(Change::Replace {
+                    pointer,
+                    from: rewrite.clone(),
+                    to: original.clone(),
+                });
+            }
+            continue;
+        }
         let Some(pointer) = pointer(candidate, location.unit_index, &location.field) else {
             continue;
         };
@@ -136,7 +194,10 @@ struct Applied {
 /// saw it, when a repair has changed it since.
 fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) -> Applied {
     let mut applied = Applied::default();
-    for change in changes {
+    let (put_backs, changes): (Vec<Change>, Vec<Change>) = changes
+        .into_iter()
+        .partition(|change| matches!(change, Change::PutBack { .. }));
+    for change in put_backs.into_iter().chain(changes) {
         match change {
             Change::Edit {
                 claim,
@@ -172,6 +233,35 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
                     applied.edited.push(claim);
                 }
             }
+            Change::PutBack {
+                pointer,
+                anchor,
+                sentence,
+                cuts,
+            } => {
+                let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
+                    continue;
+                };
+                if text.contains(sentence.as_str()) {
+                    continue;
+                }
+                let put = put_sentence(text, &sentence, &cuts, &anchor);
+                if let (Some(put), Some(slot)) = (put, candidate.pointer_mut(&pointer)) {
+                    *slot = Value::String(put);
+                }
+            }
+            Change::Replace { pointer, from, to } => {
+                let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
+                    continue;
+                };
+                if text.matches(from.as_str()).count() != 1 || text.contains(to.as_str()) {
+                    continue;
+                }
+                let replaced = text.replacen(from.as_str(), &to, 1);
+                if let Some(slot) = candidate.pointer_mut(&pointer) {
+                    *slot = Value::String(replaced);
+                }
+            }
             Change::Remove { pointer, quote } => {
                 let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
                     continue;
@@ -194,13 +284,25 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
     applied
 }
 
+/// `candidate` with the put backs the user asked for that it does not hold
+/// yet written in, as the next pass writes them.
+pub(crate) fn with_pending_put_backs(candidate: &Value, entries: &[ClaimLedgerEntry]) -> Value {
+    let put_backs = changes(entries, candidate)
+        .into_iter()
+        .filter(|change| matches!(change, Change::PutBack { .. }))
+        .collect();
+    let mut copy = candidate.clone();
+    apply(None, &mut copy, put_backs);
+    copy
+}
+
 /// Whether the user changed something the draft does not hold yet.
 pub(super) fn has_user_changes(ledger: &ClaimLedger, candidate: &Value) -> bool {
     let mut copy = candidate.clone();
     apply(
         ledger.pending.previous.as_ref(),
         &mut copy,
-        changes(ledger, candidate),
+        changes(ledger.entries(), candidate),
     );
     copy != *candidate
 }
@@ -213,7 +315,7 @@ pub(super) async fn apply_user_changes(
     candidate: &mut Value,
 ) -> Result<bool> {
     let original = candidate.clone();
-    let changes = changes(ledger, candidate);
+    let changes = changes(ledger.entries(), candidate);
     let applied = apply(ledger.pending.previous.as_ref(), candidate, changes);
     if *candidate == original {
         return Ok(false);
@@ -233,3 +335,6 @@ pub(super) async fn apply_user_changes(
     ledger.save_pending().await?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod put_back_tests;

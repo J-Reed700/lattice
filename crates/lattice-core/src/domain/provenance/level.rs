@@ -218,7 +218,7 @@ fn own_level(
     if subject.is_none() {
         reasons.push(Reason::new(
             ReasonCode::NoSubject,
-            "The claim names no subject, so ownership was not judged",
+            "The statement names no subject, so ownership was not judged",
         ));
     }
 

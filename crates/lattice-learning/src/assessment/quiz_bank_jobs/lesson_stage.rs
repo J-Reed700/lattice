@@ -12,8 +12,9 @@ fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
 
 /// A prepared lesson's own reviewed questions as bank items (single choice;
 /// difficulty from their kind: practice 2, quiz 3, test 4). Options are
-/// reshuffled so the key's position is code's choice. Questions that fail the
-/// bank's checks are left out.
+/// reshuffled so the key's position is code's choice. A question that fails
+/// the bank's checks stays, marked `dropped`, so the lesson's questions keep
+/// their places.
 pub(crate) fn lesson_seed_items(
     lesson_id: &str,
     outcome_id: &str,
@@ -44,16 +45,22 @@ pub(crate) fn lesson_seed_items(
                 explanation: key.explanation.clone(),
                 distractor_rationales: vec![],
             };
-            if let Err(error) = engine::validate_candidate(&candidate) {
-                tracing::info!(question = %q.id, %error, "A lesson question did not join the quiz bank");
-                return None;
-            }
-            engine::shuffle_authored(&mut candidate);
+            let review_status = match engine::validate_candidate(&candidate) {
+                Ok(()) => {
+                    engine::shuffle_authored(&mut candidate);
+                    "agreed"
+                }
+                Err(error) => {
+                    tracing::info!(question = %q.id, %error, "A lesson question was kept out of the quiz bank's draws");
+                    "dropped"
+                }
+            };
             Some(BankItem {
                 item: candidate.into(),
                 source_quote: String::new(),
                 lesson_id: Some(lesson_id.to_string()),
                 origin: "lesson",
+                review_status,
             })
         })
         .collect()
@@ -135,6 +142,7 @@ pub(crate) async fn lesson_bank_stage(
         .collect();
     let seeds: Vec<StoredItem> = lesson_seed_items(lesson_id, &outcome_id, questions, keys)
         .into_iter()
+        .filter(|s| s.review_status == "agreed")
         .map(|s| s.item)
         .collect();
     let mut written: Vec<AuthoredItem> = Vec::new();

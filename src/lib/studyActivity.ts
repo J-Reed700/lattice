@@ -45,7 +45,8 @@ const descriptions: Record<string, TaskDescription> = {
   apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
   save_learning_pack_as: { withdrawsOn: 'cancelled', title: 'Saving your course to a file', tab: 'portability', quickStart: true, detail: 'Choose where to save the file. Larger courses take longer to package.', involves: ['Choose where to save the course file', 'Collect the course and your progress', 'Write the file to the chosen location'] },
   export_all_learning_packs: { withdrawsOn: 'cancelled', title: 'Exporting all your courses', tab: 'portability', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
-  attach_learning_claim_evidence: model('Checking claims against your source', 'lessons', 'Save the source to the course', 'Check the waiting claims against it'),
+  attach_learning_claim_evidence: model('Checking statements against your source', 'lessons', 'Save the source to the course', 'Check the waiting statements against it'),
+  attach_learning_lesson_source: model('Checking the lesson against your source', 'lessons', 'Save the source to the course', 'Check every open statement of the lesson against it'),
   generate_study_deck: { ...model('Creating your flashcard deck', 'recall', 'Read the selected documents', 'Generate cited questions and answers', 'Save your deck'), tab: undefined },
   generate_conversation_study_deck: { ...model('Creating flashcards from your conversation', 'recall', 'Read the verified claims and citations', 'Create and save a deck from those claims'), tab: undefined },
 };
