@@ -486,18 +486,17 @@ test('packaged desktop: the mic says what is missing, then hears a recording thr
     }
     voice.steps.push('models-downloaded');
 
-    const capture = path.join(reports, 'spoken.wav');
+    assert.ok(manifest.fakeMicrophone, 'The Windows candidate names the file its fake microphone plays');
     const { defaultVoice } = await speech();
     // The first sentence loads the voice as well as reading.
     await browser.setTimeout({ script: 180_000 });
-    await writeFile(capture, captureFile(await invokeLong('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 })));
+    const spoken = captureFile(await invokeLong('plugin:speech|synthesize_speech', { text: spokenWords, voice: defaultVoice, speed: 1 }));
+    await writeFile(manifest.fakeMicrophone, spoken);
+    await writeFile(path.join(reports, 'spoken.wav'), spoken);
     await closeNormally();
 
     // No --use-fake-ui-for-media-stream: the app's own permission handler has to let this through.
-    await launch({
-      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
-        `--use-fake-device-for-media-stream --use-file-for-fake-audio-capture=${capture} --autoplay-policy=no-user-gesture-required`,
-    });
+    await launch();
     await (await openChatWithMic()).click();
     await pageSays('Listening…', 60_000);
     voice.steps.push('webview2-opened-the-mic');
