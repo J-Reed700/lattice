@@ -17,6 +17,21 @@ config.identifier = `tech.lattice.compatibility.${candidateToken}`;
 // candidate a unique product name so that default location is isolated and we
 // test a real Unicode-and-spaces installation path on Windows.
 if (platform === 'win32') config.productName = `Lattice Compatibility café ${candidateToken}`;
+// On CI WebView2 never took the fake-device flags from the environment, so the Windows candidate's main window is given them.
+const fakeMicrophone = platform === 'win32' ? path.join(output, 'fake-microphone.wav') : null;
+if (fakeMicrophone && /[\s"]/.test(fakeMicrophone)) {
+  throw new Error(`The fake microphone path is split on spaces inside one browser argument, so it cannot hold whitespace or a quote: ${fakeMicrophone}`);
+}
+if (fakeMicrophone) {
+  const base = JSON.parse(await readFile(path.join(root, 'crates/lattice-desktop/tauri.conf.json'), 'utf8'));
+  const windows = base.app?.windows ?? [];
+  const main = windows.find(window => window.label === 'main');
+  if (!main) throw new Error('tauri.conf.json has no main window');
+  // wry's default arguments, which additionalBrowserArgs replaces.
+  const defaults = '--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required';
+  main.additionalBrowserArgs = `${main.additionalBrowserArgs ?? defaults} --use-fake-device-for-media-stream --use-file-for-fake-audio-capture=${fakeMicrophone}`;
+  config.app = { ...config.app, windows };
+}
 const configPath = path.join(output, 'config.json');
 await writeFile(configPath, JSON.stringify(config, null, 2));
 const env = { ...process.env };
@@ -133,6 +148,6 @@ await writeFile(path.join(output, 'reports', 'embedded-runtime.json'), `${JSON.s
 await writeFile(fixture, '# Compatibility fixture\n\nThe Cedar observatory opens at 08:40 on Tuesday. CEDAR-7319.\n');
 await writeFile(path.join(output, 'manifest.json'), JSON.stringify({
   identifier: config.identifier, binary, sidecar, pythonRuntime, fixture, platform, arch: process.arch,
-  profile: release ? 'release' : 'debug', installed,
+  profile: release ? 'release' : 'debug', installed, fakeMicrophone,
 }, null, 2));
 console.log(`Desktop candidate ready: ${binary}`);
