@@ -10,6 +10,7 @@ use crate::curriculum::{
 use crate::persistence::{db, decode, hash};
 use crate::plan_dto::{
     LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
+    StartLearningModuleJobsRequestDto,
 };
 use crate::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
 use lattice_core::shared::error::{AppError, Result};
@@ -85,6 +86,15 @@ impl LearningCurriculumRepository {
                 .await?;
         }
         Ok(job)
+    }
+
+    /// Saves a job for each unprepared lesson of a module, in course order.
+    /// The caller dispatches them.
+    pub async fn start_module_jobs(
+        &self,
+        _request: &StartLearningModuleJobsRequestDto,
+    ) -> Result<Vec<LearningGenerationJob>> {
+        Err(AppError::InvalidState("not built".into()))
     }
 
     /// Saves a lesson job for the runtime to run. The caller dispatches it.
@@ -524,6 +534,7 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
             .cause_code
             .and_then(|code| serde_json::from_value(serde_json::Value::String(code)).ok()),
         ended_by_update,
+        lesson_ids: Vec::new(),
         retry_of_job_id: job.retry_of_job_id,
         created_at: job.created_at,
         started_at: job.started_at,

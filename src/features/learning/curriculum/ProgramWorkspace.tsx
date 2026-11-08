@@ -65,6 +65,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   /** Opens another course, e.g. the copy an import just created. */
   onOpenProgram: (programId: string) => void;
   onPrepare: (lesson: LearningLessonDto) => void; preparePending: boolean; prepareError?: Error;
+  onPrepareModule?: (module: LearningModuleDto) => void;
   onComplete: (lesson: LearningLessonDto) => void; completePending: boolean; completeError?: Error;
   /** Opens a lesson's claim review screen (UI design §2.3). */
   onReview?: (programId: string, lessonId: string, claimId?: string) => void;

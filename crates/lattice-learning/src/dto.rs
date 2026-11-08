@@ -213,6 +213,13 @@ pub struct PrepareLearningLessonRequestDto {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct PrepareLearningModuleRequestDto {
+    pub program_id: String,
+    pub module_id: String,
+    pub expected_revision: i64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct CompleteLearningLessonRequestDto {
     pub program_id: String,
     pub lesson_id: String,
