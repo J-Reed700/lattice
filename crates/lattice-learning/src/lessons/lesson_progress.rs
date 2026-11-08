@@ -38,6 +38,8 @@ struct State {
     ceilings: Vec<u32>,
     #[cfg(test)]
     stages: Vec<String>,
+    #[cfg(test)]
+    phases: Vec<LearningGenerationPhase>,
 }
 
 #[derive(Clone, Default)]
@@ -223,6 +225,10 @@ pub(crate) fn received(text: &str) {
 pub(crate) fn phase(phase: LearningGenerationPhase, message: impl Into<String>) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(test)]
+        if state.activity.phase != phase || state.activity.phase_started_at == 0 {
+            state.phases.push(phase);
+        }
         let activity = &mut state.activity;
         if activity.phase != phase || activity.phase_started_at == 0 {
             activity.phase = phase;
@@ -548,6 +554,18 @@ pub(crate) async fn staged<T>(future: impl std::future::Future<Output = T>) -> (
         .stages
         .clone();
     (value, stages)
+}
+
+/// Runs `future` with fresh progress and returns each phase it changed to, in
+/// order, and every stage it showed.
+#[cfg(test)]
+pub(crate) async fn phased<T>(
+    future: impl std::future::Future<Output = T>,
+) -> (T, Vec<LearningGenerationPhase>, Vec<String>) {
+    let progress = Progress::default();
+    let value = CURRENT.scope(progress.clone(), future).await;
+    let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+    (value, state.phases.clone(), state.stages.clone())
 }
 
 impl Progress {
