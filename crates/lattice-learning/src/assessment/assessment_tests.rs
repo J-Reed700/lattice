@@ -1647,6 +1647,7 @@ async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropp
     );
     Ok(())
 }
+<<<<<<< HEAD
 
 #[tokio::test]
 async fn the_quiz_stage_is_a_phase_of_its_own_named_for_the_set_it_writes() -> Result<()> {
@@ -1750,3 +1751,5 @@ fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choi
     assert_eq!(reveal.correct_indices, vec![right]);
     assert_eq!(reveal.distractor_rationales[right], "");
 }
+=======
+>>>>>>> fix/quiz-writing-overlaps-the-next-lesson

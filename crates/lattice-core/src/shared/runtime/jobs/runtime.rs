@@ -595,6 +595,8 @@ impl JobRuntime {
             Err(error) => tracing::warn!(job_id = id, %error, "Could not finalize job"),
         }
         self.events.publish(id).await;
+        // A committed job may have queued others in its own transaction.
+        self.wake.notify_one();
     }
 
     /// Retries a write that settles a job whose worker has finished, for as

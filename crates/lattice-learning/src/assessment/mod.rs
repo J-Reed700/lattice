@@ -8,4 +8,6 @@ pub(crate) mod assessment_tests;
 pub mod grade_rationale;
 pub(crate) mod key_review;
 pub mod quiz_bank_jobs;
+#[cfg(test)]
+mod quiz_bank_lesson_tests;
 pub mod quiz_blueprints;

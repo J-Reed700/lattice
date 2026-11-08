@@ -248,6 +248,23 @@ impl LearningAssessmentRepository {
             .collect()
     }
 
+    /// A lesson's own reviewed questions that are in the bank.
+    pub(crate) async fn lesson_seeds_in(
+        connection: &mut SqliteConnection,
+        program_id: &str,
+        lesson_id: &str,
+    ) -> Result<Vec<StoredItem>> {
+        let rows = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin='lesson' AND c.review_status='agreed' ORDER BY c.id"))
+            .bind(program_id)
+            .bind(lesson_id)
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(db)?;
+        rows.iter()
+            .map(|row| candidate_from_row(row, vec![]).map(|c| c.candidate.into()))
+            .collect()
+    }
+
     /// What a quiz still needs written: per requirement, up to three forms'
     /// worth, or with `top_up` one more form's worth wherever fewer unseen
     /// items remain than a form asks. Empty when the quiz has nothing to ask
