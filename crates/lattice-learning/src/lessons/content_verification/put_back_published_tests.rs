@@ -484,6 +484,49 @@ async fn the_review_names_the_unit_a_taken_out_sentence_goes_back_into_as_the_le
 }
 
 #[tokio::test]
+async fn the_review_names_the_section_a_sentence_goes_back_into_when_its_own_section_went_out(
+) -> Result<()> {
+    let course = published().await?;
+    let gone = taken_out(&course, "gone", 3, None).await?;
+    let survivor = ClaimId("survivor".into());
+    let body = bodies(&course).await?[1].clone();
+    for unit in [3, 1] {
+        append(
+            &course,
+            &survivor,
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(unit, UnitKind::Block, "body", &body, &body),
+                statement: body.clone(),
+            },
+        )
+        .await?;
+    }
+    let review = ClaimReviewService::new(course.pool.clone())
+        .review(&course.program_id, &course.lesson_id)
+        .await?
+        .unwrap();
+    let item = review
+        .claims
+        .iter()
+        .find(|item| item.claim_id == gone.0)
+        .unwrap();
+
+    assert_eq!(item.location.unit_index, 3, "the section that went out");
+    assert_eq!(
+        item.put_back_unit,
+        Some(1),
+        "the section its section's survivor is in now"
+    );
+
+    act(&course, &gone, put_back(None, None)).await?;
+
+    let after = bodies(&course).await?;
+    assert!(after[1].contains(CUT), "{after:?}");
+    assert!(!after[0].contains(CUT), "{after:?}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_source_that_supports_a_taken_out_sentence_puts_it_back_where_it_stood() -> Result<()> {
     let course = published().await?;
     let known = taken_out(&course, "known", 0, Some((Some(GOOD), None))).await?;
