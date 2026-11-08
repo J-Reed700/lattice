@@ -65,3 +65,7 @@ pub async fn calibration(pool: &SqlitePool) -> Result<LearningSourceTrustCalibra
         verdicts: u32::try_from(view.verdicts).unwrap_or(u32::MAX),
     })
 }
+
+#[cfg(test)]
+#[path = "calibration_view_tests.rs"]
+mod tests;

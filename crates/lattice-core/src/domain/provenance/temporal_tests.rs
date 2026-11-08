@@ -133,3 +133,52 @@ fn current_claims_are_stale_against_a_newer_primary_and_valid_without_one() {
         TemporalValidity::Undated { .. }
     ));
 }
+
+#[test]
+fn reasons_say_statement_where_they_mean_the_claim() {
+    let as_of_date = READ - 100 * DAY;
+    let as_of = TemporalScope::AsOf { date: as_of_date };
+    assert_eq!(
+        validity(&as_of, &dates(None, None), false, None),
+        TemporalValidity::Undated {
+            reason: format!("Undated, and the statement is as of {}", day(as_of_date))
+        }
+    );
+    assert_eq!(
+        validity(&as_of, &dates(Some(READ - 200 * DAY), None), false, None),
+        TemporalValidity::Invalid {
+            reason: format!(
+                "Dated {}, before the statement's as-of date {}",
+                day(READ - 200 * DAY),
+                day(as_of_date)
+            )
+        }
+    );
+    let since_date = READ - 30 * DAY;
+    let since = TemporalScope::Since {
+        version: None,
+        date: Some(since_date),
+    };
+    assert_eq!(
+        validity(&since, &dates(None, None), false, None),
+        TemporalValidity::CannotPlace {
+            reason: format!("Undated, and the statement holds since {}", day(since_date))
+        }
+    );
+    assert_eq!(
+        validity(&since, &dates(Some(READ - 90 * DAY), None), false, None),
+        TemporalValidity::Invalid {
+            reason: format!(
+                "Dated {}, before the statement's since-date {}",
+                day(READ - 90 * DAY),
+                day(since_date)
+            )
+        }
+    );
+    assert_eq!(
+        validity(&TemporalScope::Current, &dates(None, None), false, None),
+        TemporalValidity::Undated {
+            reason: "Undated, and the statement is about the current state".into()
+        }
+    );
+}
