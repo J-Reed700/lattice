@@ -1647,46 +1647,6 @@ async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropp
     );
     Ok(())
 }
-<<<<<<< HEAD
-
-#[tokio::test]
-async fn the_quiz_stage_is_a_phase_of_its_own_named_for_the_set_it_writes() -> Result<()> {
-    let pool = migrated().await?;
-    let model = crate::lessons::course_generation_tests::ScriptedModel {
-        outputs: std::sync::Mutex::new(Default::default()),
-        prompts: std::sync::Mutex::new(Vec::new()),
-    };
-    // The unscripted model refuses, which ends the stage after its first set.
-    let (_, phases, stages) =
-        crate::lesson_progress::phased(crate::quiz_bank_jobs::lesson_bank_stage(
-            &model,
-            &pool,
-            "program",
-            "lesson",
-            "Title",
-            "Objective",
-            &[],
-            &[],
-            &[],
-        ))
-        .await;
-    let names: Vec<_> = phases
-        .iter()
-        .map(|phase| serde_json::to_value(phase).unwrap())
-        .collect();
-    assert_eq!(names, vec![serde_json::json!("questions")]);
-    let message = stages
-        .iter()
-        .find(|stage| stage.contains("quiz questions"))
-        .unwrap();
-    let total = message.strip_prefix("Writing quiz questions · set 1 of ");
-    assert!(
-        total.is_some_and(|total| total.parse::<usize>().is_ok_and(|total| total > 0)),
-        "{message}"
-    );
-    Ok(())
-}
-
 fn reasoned_lesson_question() -> (Vec<LessonQuestion>, Vec<LessonAnswerKey>) {
     let question_id = id();
     let questions = vec![LessonQuestion {
@@ -1751,5 +1711,4 @@ fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choi
     assert_eq!(reveal.correct_indices, vec![right]);
     assert_eq!(reveal.distractor_rationales[right], "");
 }
-=======
->>>>>>> fix/quiz-writing-overlaps-the-next-lesson
+
