@@ -228,6 +228,16 @@ fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool
         .any(|finding| passes.is_none_or(|passes| passes.repairable(&finding.key())))
 }
 
+/// A lesson's review reports its phase; other material reviewed inside a job
+/// (a quiz batch) changes only the message.
+fn review_step(is_lesson: bool, lesson_words: &str, other_words: &str) {
+    if is_lesson {
+        crate::lesson_progress::phase(crate::lesson_progress::Phase::Review, lesson_words);
+    } else {
+        crate::lesson_progress::stage(other_words);
+    }
+}
+
 /// A second model call critiques the actual candidate. One targeted repair is
 /// allowed; unresolved issues fail closed without publishing partial material.
 /// A lesson (`review_lesson`) instead repairs while each pass fixes something
@@ -419,6 +429,7 @@ async fn review_material(
         .lesson_references
         .is_some()
         .then(|| Passes::new(context.held));
+    let is_lesson = passes.is_some();
     // A review cut short resumes with the repairs it had made to this draft.
     if let Some(passes) = passes.as_mut() {
         if let Some(saved) = crate::lesson_drafts::teaching_passes(&candidate).await? {
@@ -527,19 +538,24 @@ async fn review_material(
         let blocking = holds_up_review(&structure, passes.as_ref());
         let can_edit_spans = !is_outline && !blocking;
         let issues = if !blocking {
-            crate::lesson_progress::phase(
-                crate::lesson_progress::Phase::Review,
+            review_step(
+                is_lesson,
                 "Checking assessment answer keys",
+                "Checking the quiz questions' answer keys",
             );
             let answer_issues = crate::key_review::check(llm, &candidate_value).await?;
-            crate::lesson_progress::phase(
-                crate::lesson_progress::Phase::Review,
-                if attempt == 0 {
-                    "Reviewing every teaching section"
-                } else {
-                    "Rechecking the revised lesson"
-                },
-            );
+            let (lesson_words, other_words) = if attempt == 0 {
+                (
+                    "Reviewing every teaching section",
+                    "Reviewing the quiz questions",
+                )
+            } else {
+                (
+                    "Rechecking the revised lesson",
+                    "Rechecking the corrected quiz questions",
+                )
+            };
+            review_step(is_lesson, lesson_words, other_words);
             let mut issues = crate::teaching_review::review(
                 llm,
                 &format!(
@@ -656,10 +672,11 @@ async fn review_material(
         if let Some(progress) = progress {
             progress.stage(crate::outline_progress::OutlineStage::Repairing);
         }
-        crate::lesson_progress::phase(
-            crate::lesson_progress::Phase::Repair,
-            "Correcting the lesson from review findings",
-        );
+        crate::lesson_progress::stage(if is_lesson {
+            "Correcting the lesson from review findings"
+        } else {
+            "Correcting the quiz questions from review findings"
+        });
         let repaired = if can_edit_spans {
             let edit_system = format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::instructions(schema));
             let prompt: Map<String, Value> = parts

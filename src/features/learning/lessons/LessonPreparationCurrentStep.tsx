@@ -1,13 +1,13 @@
 import { Activity, LoaderCircle } from 'lucide-react';
 
-import { PREPARATION_PHASES, preparationDuration } from '@/features/learning/lessons/lessonPreparationActivity';
+import { preparationDuration, shownPhase } from '@/features/learning/lessons/lessonPreparationActivity';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
 /** The current step, first behind the preparation status line's Details. */
 export function LessonPreparationCurrentStep({ job, now }: { job: LearningGenerationJob; now: number }) {
   const activity = job.activity;
   if (!activity) return null;
-  const phase = PREPARATION_PHASES[activity.phase];
+  const phase = shownPhase(activity);
   const phaseElapsed = Math.max(0, (now - activity.phaseStartedAt) / 1000);
   const idle = Math.max(0, (now - activity.lastActivityAt) / 1000);
   const followingChecks = activity.phase === 'repair' || activity.phase === 'research';

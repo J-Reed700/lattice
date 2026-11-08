@@ -389,3 +389,42 @@ fn a_restarted_job_counts_its_calls_again_and_keeps_the_rest() {
     );
     assert_eq!(activity.checks_total, 10);
 }
+
+#[tokio::test]
+async fn a_lessons_progress_keeps_the_furthest_phase_it_reached() {
+    let progress = Progress::default();
+    CURRENT
+        .scope(progress.clone(), async {
+            lesson("A lesson");
+            phase(Phase::Review, "Reviewing");
+            phase(Phase::Evidence, "Checking");
+            phase(Phase::Repair, "Repairing");
+            phase(Phase::Review, "Reviewing the repaired draft");
+            let activity = progress.snapshot().2;
+            assert_eq!(
+                (activity.phase, activity.reached),
+                (Phase::Review, Phase::Repair)
+            );
+            phase(Phase::Evidence, "Checking again");
+            assert_eq!(progress.snapshot().2.reached, Phase::Repair);
+            lesson("A lesson");
+            assert_eq!(progress.snapshot().2.reached, Phase::References);
+            phase(Phase::Repair, "Repairing");
+            lesson("Another lesson");
+            assert_eq!(progress.snapshot().2.reached, Phase::References);
+        })
+        .await;
+}
+
+#[test]
+fn a_restarted_job_reaches_its_phases_again() {
+    let saved = LearningGenerationActivity {
+        phase: Phase::Repair,
+        reached: Phase::Repair,
+        ..Default::default()
+    };
+
+    let activity = resumed(Some(serde_json::to_value(&saved).unwrap()));
+
+    assert_eq!(activity.reached, Phase::References);
+}

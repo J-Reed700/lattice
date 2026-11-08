@@ -16,7 +16,7 @@ import {
   useStartLearningDiagnostic,
   useSubmitLearningDiagnostic,
 } from '@/features/learning/curriculum/useLearningPlan';
-import { PREPARATION_PHASES } from '@/features/learning/lessons/lessonPreparationActivity';
+import { shownPhase } from '@/features/learning/lessons/lessonPreparationActivity';
 import { LessonPreparationStatus } from '@/features/learning/lessons/LessonPreparationProgress';
 import { CheckerAccuracy } from '@/features/learning/lessons/review/CheckerAccuracy';
 import { VerifierAuditSwitch } from '@/features/learning/lessons/review/VerifierAuditSwitch';
@@ -81,7 +81,7 @@ const ATTEMPT_OUTCOMES: Record<LearningGenerationJob['status'], string> = {
 /** One line for an earlier attempt: how and where it ended, when, and why. */
 function attemptOutcome(job: LearningGenerationJob): string {
   if (job.endedByUpdate) return `Ended by a Lattice update · ${dateLabel(job.finishedAt ?? job.createdAt)}`;
-  const phase = job.kind === 'lesson_preparation' && job.activity ? PREPARATION_PHASES[job.activity.phase].title : null;
+  const phase = job.kind === 'lesson_preparation' && job.activity ? shownPhase(job.activity).title : null;
   return [
     phase ? `${ATTEMPT_OUTCOMES[job.status]} at ${phase}` : ATTEMPT_OUTCOMES[job.status],
     dateLabel(job.finishedAt ?? job.createdAt),

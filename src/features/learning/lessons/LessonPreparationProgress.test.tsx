@@ -118,6 +118,44 @@ describe('Durable lesson preparation progress', () => {
     reopened.unmount(); reopened.client.clear();
   });
 
+  it('lists the quiz stage between fact checks and publishing, and marks Publish current when the lesson is saved', async () => {
+    const current: LearningGenerationJob = { ...job, activity: {
+      phase: 'publishing', phaseStartedAt: Date.now() - 5_000, lastActivityAt: Date.now() - 1_000,
+      lastCheckpointAt: null, lessonTitle: 'Understanding observations', modelName: 'Test model',
+      modelRunning: false, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,
+      checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
+      statements: null, modelCalls: 0, modelCallsCeiling: null, recentSteps: [],
+    } };
+    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
+    const view = show();
+    await screen.findByRole('status');
+    await openDetails();
+    const steps = within(screen.getByRole('list', { name: 'Preparation workflow' })).getAllByRole('listitem');
+    expect(steps.map((step) => step.textContent?.replace(/^\d+/, ''))).toEqual([
+      'References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Quiz questions', 'Publish',
+    ]);
+    expect(steps.filter((step) => step.getAttribute('aria-current') === 'step').map((step) => step.textContent)).toEqual(['7Publish']);
+    view.unmount(); view.client.clear();
+  });
+
+  it('keeps Fact checks & repairs current while the repaired draft goes back through the teaching review', async () => {
+    const current: LearningGenerationJob = { ...job, activity: {
+      phase: 'review', reached: 'repair', phaseStartedAt: Date.now() - 5_000, lastActivityAt: Date.now() - 1_000,
+      lastCheckpointAt: null, lessonTitle: 'Understanding observations', modelName: 'Test model',
+      modelRunning: false, responseCharacters: 0, modelAttempt: 1, verificationPass: 2,
+      checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
+      statements: null, modelCalls: 0, modelCallsCeiling: null, recentSteps: [],
+    } };
+    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
+    const view = show();
+    expect(await screen.findByRole('status')).toHaveTextContent('Preparing Understanding observations · Fact checks & repairs');
+    await openDetails();
+    const steps = within(screen.getByRole('list', { name: 'Preparation workflow' })).getAllByRole('listitem');
+    expect(steps.filter((step) => step.getAttribute('aria-current') === 'step').map((step) => step.textContent)).toEqual(['5Fact checks & repairs']);
+    expect(screen.getByRole('heading', { name: 'Checking the repaired draft again' })).toBeVisible();
+    view.unmount(); view.client.clear();
+  });
+
   it('rejoins an existing job, polls real progress, and refreshes the lesson on completion', async () => {
     let current = job;
     api.plan.mockImplementation(async () => ({ ok: true, data: { programId: 'program-1', jobs: [current] } }));

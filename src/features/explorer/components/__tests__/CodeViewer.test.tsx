@@ -1,4 +1,4 @@
-import { foldable, foldedRanges, foldEffect, language } from '@codemirror/language';
+import { foldedRanges, foldEffect, language } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -110,7 +110,7 @@ describe('CodeViewer', () => {
     const { rerender } = showViewer();
     await waitFor(() => expect(view().state.facet(language)?.name).toBe('cpp'));
     const header = view().state.doc.line(3);
-    const body = foldable(view().state, header.from, header.to)!;
+    const body = { from: header.to, to: view().state.doc.line(7).from };
     view().dispatch({ effects: foldEffect.of(body) });
     expect(foldedRanges(view().state).size).toBe(1);
 

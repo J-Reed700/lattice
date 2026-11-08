@@ -7835,7 +7835,12 @@ export type LearningFollowUpActionKind = "lesson" | "practice" | "assessment" | 
 export type LearningFollowUpReasonCode = "missed_outcome" | "assisted_success" | "low_transfer" | "stale_evidence" | "uncertain_grade"
 export type LearningFollowUpRecommendationDto = { id: string; outcomeId: string | null; reasonCode: LearningFollowUpReasonCode; explanation: string; actionKind: LearningFollowUpActionKind; actionRef: string | null; status: LearningFollowUpStatus; evidenceEventIds: string[]; createdAt: number; decidedAt: number | null }
 export type LearningFollowUpStatus = "pending" | "accepted" | "dismissed" | "completed"
-export type LearningGenerationActivity = { phase: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number;
+export type LearningGenerationActivity = { phase: LearningGenerationPhase;
+/**
+ * The furthest phase this lesson's preparation has reached. A repaired
+ * draft goes back through earlier phases; its progress stays here.
+ */
+reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number;
 /**
  * Claims of this pass with a finished first check. Each claim counts once.
  */
@@ -7893,7 +7898,7 @@ export type LearningGenerationJobKind = "program_outline" | "lesson_preparation"
  */
 "quiz_grading"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
-export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "publishing"
+export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "questions" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
 /**
  * "I think I was right": the first grade and the blind regrade, side by side.

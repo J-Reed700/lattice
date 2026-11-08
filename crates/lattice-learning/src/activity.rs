@@ -141,7 +141,26 @@ fn phase_words(phase: LearningGenerationPhase) -> &'static str {
         LearningGenerationPhase::Evidence => "Verifying factual statements",
         LearningGenerationPhase::Research => "Researching unresolved statements",
         LearningGenerationPhase::Repair => "Repairing the draft",
+        LearningGenerationPhase::Questions => "Writing quiz questions",
         LearningGenerationPhase::Publishing => "Saving the verified lesson",
+    }
+}
+
+/// The step of the lesson's progress view a phase shows under, as
+/// `lessonPreparationActivity.ts` groups them.
+fn progress_step(phase: LearningGenerationPhase) -> u8 {
+    match phase {
+        LearningGenerationPhase::References => 0,
+        LearningGenerationPhase::Writing => 1,
+        LearningGenerationPhase::Review => 2,
+        LearningGenerationPhase::Inventory
+        | LearningGenerationPhase::Coverage
+        | LearningGenerationPhase::Examples => 3,
+        LearningGenerationPhase::Evidence
+        | LearningGenerationPhase::Research
+        | LearningGenerationPhase::Repair => 4,
+        LearningGenerationPhase::Questions => 5,
+        LearningGenerationPhase::Publishing => 6,
     }
 }
 
@@ -204,9 +223,12 @@ fn lesson_item(
             "lessons",
         )
     });
-    item = item
-        .detail(phase_words(activity.phase))
-        .progress(checks.or(lessons_done));
+    let detail = if progress_step(activity.phase) < progress_step(activity.reached) {
+        "Checking the repaired draft again"
+    } else {
+        phase_words(activity.phase)
+    };
+    item = item.detail(detail).progress(checks.or(lessons_done));
     match activity.model_name {
         Some(name) if activity.model_running => item.uses(ActivityResource::Model { name }),
         _ => item,
@@ -325,6 +347,39 @@ mod tests {
         assert_eq!(
             phase_words(LearningGenerationPhase::Research),
             "Researching unresolved statements"
+        );
+    }
+
+    #[test]
+    fn a_check_the_repaired_draft_goes_back_through_is_named_as_that() {
+        use LearningGenerationPhase as Phase;
+        let detail = |phase, reached| {
+            let job = running_preparation(LearningGenerationActivity {
+                phase,
+                reached,
+                ..Default::default()
+            });
+            lesson_item(&job, &HashMap::new(), &HashMap::new()).detail
+        };
+        assert_eq!(
+            detail(Phase::Review, Phase::Repair).as_deref(),
+            Some("Checking the repaired draft again")
+        );
+        assert_eq!(
+            detail(Phase::Coverage, Phase::Repair).as_deref(),
+            Some("Checking the repaired draft again")
+        );
+        assert_eq!(
+            detail(Phase::Evidence, Phase::Repair).as_deref(),
+            Some("Verifying factual statements")
+        );
+        assert_eq!(
+            detail(Phase::Repair, Phase::Repair).as_deref(),
+            Some("Repairing the draft")
+        );
+        assert_eq!(
+            detail(Phase::Review, Phase::Review).as_deref(),
+            Some("Reviewing teaching and assessments")
         );
     }
 }
