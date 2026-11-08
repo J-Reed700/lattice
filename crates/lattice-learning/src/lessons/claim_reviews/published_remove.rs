@@ -7,7 +7,8 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
+    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, EventProvenance,
+    UnitKind, UnverifiedReason, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::segmentation::sentences;
@@ -219,4 +220,44 @@ pub(super) async fn remove_in(
         .iter()
         .map(|entry| entry.claim_id().clone())
         .collect())
+}
+
+/// Takes `sentence`, which no claim stands on exactly, out of the section on
+/// `connection`: a claim for it is made as an edit makes its successor, then
+/// removed through [`remove_in`], which ends every claim that overlaps it.
+/// Returns the claim made and the claims the removal ended.
+pub(super) async fn remove_sentence_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+    unit: usize,
+    sentence: &str,
+    user: &EventProvenance,
+) -> Result<(ClaimId, HashSet<ClaimId>)> {
+    let body = section_body(connection, lesson_id, unit).await?;
+    let span = span_of(&body, sentence).ok_or_else(|| AppError::InvalidInput(CHANGED.into()))?;
+    let claim_id = ClaimId::generate();
+    let location = ClaimLocation {
+        unit_index: unit,
+        unit_kind: UnitKind::Block,
+        field: "body".into(),
+        quote: sentence.into(),
+        span: Some(span),
+    };
+    let machine = EventProvenance {
+        actor: Actor::Machine,
+        ..user.clone()
+    };
+    for event in [
+        ClaimEvent::Extracted {
+            location,
+            statement: sentence.into(),
+        },
+        ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::Unchecked,
+        },
+    ] {
+        append_in(connection, lesson_id, &claim_id, machine.clone(), event).await?;
+    }
+    let ended = remove_in(connection, lesson_id, &claim_id, user).await?;
+    Ok((claim_id, ended))
 }

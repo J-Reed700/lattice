@@ -112,6 +112,7 @@ export function teachingFinding(overrides: Partial<TeachingFindingDto> = {}): Te
     passageRole: 'lesson',
     sentence: null,
     claimIds: [],
+    removable: false,
     resolution: null,
     resolvedAt: null,
     repairs: 2,
