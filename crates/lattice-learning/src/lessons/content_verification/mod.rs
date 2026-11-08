@@ -25,6 +25,7 @@ use apparatus::strip_citation_apparatus;
 pub(crate) use apparatus::strip_draft_apparatus;
 mod citations;
 mod claim_ledger;
+pub(crate) use citations::names_a_source;
 use citations::{
     overlaps, restates, section_citations, source_mentions, take_cited, Citations, CITED,
 };
@@ -195,8 +196,8 @@ struct CoverageUnit {
     index: usize,
     complete: bool,
     reason: String,
-    /// Empty exactly when complete. They are not claims: the lesson reports
-    /// them as findings for the teaching review, and they never block it.
+    /// Empty exactly when complete. What remains is what the rule layer makes
+    /// Internal, or what the guard refuses: recorded in the report only.
     missing_assertions: Vec<MissingAssertion>,
 }
 

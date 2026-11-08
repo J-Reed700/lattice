@@ -592,3 +592,96 @@ fn a_block_title_longer_than_160_characters_or_of_two_letters_is_no_finding() {
     candidate["blocks"][3]["title"] = json!("   ");
     assert_eq!(lesson_rules(&candidate).len(), 1);
 }
+
+fn findings_of(candidate: &Value) -> Vec<(String, Option<String>)> {
+    lesson_rules(candidate)
+        .into_iter()
+        .map(|finding| (finding.summary, finding.sentence))
+        .collect()
+}
+
+#[test]
+fn a_source_label_needs_no_citation_and_has_no_quote_to_lack_its_digit() {
+    let sentence = "Source 0 describes the usual pattern.";
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(sentence);
+    assert!(!findings_of(&candidate)
+        .iter()
+        .any(|(summary, _)| summary.starts_with("No source is cited")));
+
+    candidate["blocks"][0]["citations"] = json!([{
+        "sentence":sentence,"sourceIndex":0,
+        "quote":"A root prompt and a user prompt set the pattern."}]);
+    assert!(!findings_of(&candidate)
+        .iter()
+        .any(|(summary, _)| summary.contains("does not contain")));
+}
+
+#[test]
+fn a_sentence_naming_a_source_by_number_is_a_finding_with_its_whole_sentence() {
+    let sentence = "Source 2 shows that the shell replies with results.";
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(format!("The shell runs commands. {sentence}"));
+
+    let findings = lesson_rules(&candidate);
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].kind, FindingKind::Quotation);
+    assert_eq!(findings[0].key().site, FindingSite::Section(0));
+    assert_eq!(
+        findings[0].summary,
+        format!("This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}")
+    );
+    assert_eq!(findings[0].sentence.as_deref(), Some(sentence));
+    assert!(findings[0].note.contains("citations list"));
+}
+
+#[test]
+fn a_source_named_in_a_question_is_a_finding_at_the_question() {
+    let mut candidate = lesson();
+    candidate["questions"][0]["prompt"] = json!("What does source 1 say the shell does?");
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].key().site, FindingSite::Question(0));
+    assert!(findings[0]
+        .summary
+        .starts_with("This sentence names a source by its number"));
+}
+
+#[test]
+fn a_citation_label_line_is_one_finding_not_two() {
+    let line = "Citation: Source 2 describes a root prompt and a user prompt.";
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(format!("The shell runs commands.\n\n{line}"));
+
+    let found = findings_of(&candidate);
+
+    assert_eq!(
+        found,
+        [(
+            format!(
+                "This line is a citation written into the lesson's text: \u{201c}{line}\u{201d}"
+            ),
+            Some(line.to_owned())
+        )]
+    );
+    for form in [
+        "**Citation:** the manual",
+        "- Citations: the manual",
+        "**Citation**: the manual",
+    ] {
+        candidate["blocks"][0]["body"] = json!(format!("The shell runs commands.\n\n{form}"));
+        assert_eq!(findings_of(&candidate).len(), 1, "{form}");
+    }
+}
+
+#[test]
+fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] =
+        json!("```text\nSource 2 shows that x.\nCitation: the manual\n```\n\nThe shell replies.");
+    assert!(lesson_rules(&candidate).is_empty());
+    candidate["blocks"][0]["body"] =
+        json!("The second option is wrong. Two sources agree that the shell replies.");
+    assert!(lesson_rules(&candidate).is_empty());
+}

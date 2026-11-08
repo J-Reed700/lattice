@@ -124,7 +124,15 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
             if let Some(block) = block.as_object_mut() {
                 block.remove("body");
                 block.insert("index".into(), json!(index));
+                block.insert("label".into(), json!(format!("Section {}", index + 1)));
                 block.insert("bodyPassages".into(), json!(passages));
+            }
+        }
+    }
+    if let Some(questions) = candidate.get_mut("questions").and_then(Value::as_array_mut) {
+        for (index, question) in questions.iter_mut().enumerate() {
+            if let Some(question) = question.as_object_mut() {
+                question.insert("label".into(), json!(format!("Question {}", index + 1)));
             }
         }
     }
@@ -422,6 +430,23 @@ mod tests {
         assert!(!compiled.is_valid(&response));
         let duplicate = r#"{"issues":[],"blockChecks":{"section-0":{},"section-0":{}}}"#;
         assert!(generation::parse_json::<Review>(duplicate).is_err());
+    }
+
+    #[test]
+    fn each_reviewed_part_carries_the_label_the_user_sees_beside_its_key() {
+        let original = json!({
+            "blocks":[{"body":"one","title":"First"},{"body":"two","title":"Second"}],
+            "questions":[{"prompt":"ask"},{"prompt":"again"}]
+        });
+        let (reviewed, ids) = review_candidate(&original);
+        assert_eq!(reviewed["blocks"][0]["label"], "Section 1");
+        assert_eq!(reviewed["blocks"][1]["label"], "Section 2");
+        assert_eq!(reviewed["questions"][0]["label"], "Question 1");
+        assert_eq!(reviewed["questions"][1]["label"], "Question 2");
+        assert_eq!(reviewed["blocks"][1]["index"], 1);
+        assert_eq!(ids[1], ["section-1-passage-0"]);
+        assert_eq!(reviewed["blocks"][1]["title"], "Second");
+        assert_eq!(original["blocks"][1].get("label"), None);
     }
 
     #[test]
