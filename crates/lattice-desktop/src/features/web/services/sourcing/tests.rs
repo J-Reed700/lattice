@@ -673,8 +673,10 @@ async fn following_a_page_names_the_status_it_answered_and_a_dead_server_as_netw
         .await;
     let gone = url::Url::parse(&format!("{}/gone", server.uri())).unwrap();
     let dead = {
-        let closed = MockServer::start().await;
-        url::Url::parse(&format!("{}/page", closed.uri())).unwrap()
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        url::Url::parse(&format!("http://127.0.0.1:{port}/page")).unwrap()
     };
     let owner = Arc::new(super::OwnerResolver::with_system_clock(
         Arc::new(Wikidata::new(plain_http())),
