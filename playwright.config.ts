@@ -36,6 +36,7 @@ export default defineConfig({
     },
     {
       name: 'webkit-smoke',
+      workers: 1,
       use: {
         ...devices['Desktop Safari'],
         viewport: { width: 1280, height: 720 },
