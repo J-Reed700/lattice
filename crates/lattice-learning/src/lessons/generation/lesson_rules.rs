@@ -251,7 +251,7 @@ fn names_a_choice(sentence: &str) -> bool {
         || lazy_regex::regex!(r"(?i:\b(?:option|choice|answer)s?)\s+\(?[A-H]\b\)?")
             .is_match(sentence)
         || lazy_regex::regex!(
-            r"(?i)\b(?:first|second|third|fourth|fifth|last|final)\s+(?:choice|option|answer)s?\b"
+            r"(?i)\b(?:first|second|third|fourth|fifth|last)\s+(?:choice|option)s?\b"
         )
         .is_match(sentence)
 }
