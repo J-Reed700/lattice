@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -9,9 +10,11 @@ on:
 # main. A main run waits hours for macOS runners, so the next merge used to
 # cancel it before the Intel desktop job could save main's Rust cache. On main
 # the running run finishes; only a run still waiting its turn is replaced.
+# A branch named *-reds (Linux) or *-reds-windows proves new tests fail before
+# their fix: each commit runs to the end, and only the tests run.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-${{ (endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,6 +23,7 @@ env:
   # same available runtime, including the path used after extraction.
   # sidecar-binaries.yml pins the same version.
   VULKAN_RUNTIME_VERSION: 1.4.363.0
+  REDS: ${{ (endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
 
 jobs:
   # Build on each supported platform to catch target-specific dependencies.
@@ -38,10 +42,14 @@ jobs:
       fail-fast: false
       # GitHub runs five macOS jobs at a time for the account, and every pull
       # request used to ask for five, so main's runs waited hours behind them.
-      # Intel Macs, the slowest runners, are checked on pushes to main only.
+      # Intel Macs, the slowest runners, are checked on pushes to main only,
+      # and a draft pull request gets its macOS jobs when it is marked ready.
       matrix:
         os: >-
-          ${{ fromJSON(format('["ubuntu-24.04", "macos-latest", "windows-latest"{0}]',
+          ${{ fromJSON((endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows'))
+          && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest"]' || '["ubuntu-24.04"]')
+          || format('["ubuntu-24.04", "windows-latest"{0}{1}]',
+          github.event.pull_request.draft != true && ', "macos-latest"' || '',
           github.event_name == 'push' && ', "macos-15-intel"' || '')) }}
     steps:
       - uses: actions/checkout@v4
@@ -98,13 +106,14 @@ jobs:
           esac
 
       - name: cargo fmt --check
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && env.REDS != 'true'
         run: cargo fmt --all -- --check
 
       # Clippy checks everything cargo check did, so it runs in its place, first.
       # The workspace defines additional safety lints in Cargo.toml. Existing
       # warnings are not promoted to errors yet.
       - name: cargo clippy
+        if: env.REDS != 'true'
         working-directory: crates/lattice-desktop
         run: cargo clippy --workspace --all-targets
 
@@ -158,18 +167,30 @@ jobs:
             Write-Host "OK $exe"
           }
 
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: All desktop Rust unit, command and integration tests
         working-directory: crates/lattice-desktop
-        run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
+        run: cargo nextest run --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
+
+      - name: Upload the test timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-test-timings-${{ matrix.os }}
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: warn
 
       - name: Execute C#, Rust, React and Python container exercises
-        if: matrix.os == 'ubuntu-24.04'
+        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
         working-directory: crates/lattice-desktop
         timeout-minutes: 20
         run: cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
 
       - name: Verify container staging and containment
-        if: matrix.os == 'ubuntu-24.04'
+        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
         working-directory: crates/lattice-desktop
         timeout-minutes: 5
         shell: bash
@@ -180,12 +201,14 @@ jobs:
             cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
 
       - name: generated bindings are current
+        if: env.REDS != 'true'
         working-directory: crates/lattice-desktop
         shell: bash
         run: ../../target/debug/export_bindings --check
 
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
     runs-on: ${{ matrix.os }}
     # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
     # job cancelled at a cap never saves its Rust cache, so main never got a
@@ -193,17 +216,19 @@ jobs:
     # too. GitHub's own six-hour limit still ends a hung job.
     strategy:
       fail-fast: false
-      # Intel Macs run on pushes to main only; see rust-check. The list is
+      # Macs run as in rust-check: Apple Silicon unless the pull request is a
+      # draft, Intel on pushes to main only. The list is
       # built whole because GitHub applies include after exclude, so an
       # excluded Intel entry would come back as its own job.
       # Hosted Windows runners use Server, not Windows 11. Keep the actual
       # runner visible; Windows 11 installation remains a release check.
       matrix:
         include: >-
-          ${{ fromJSON(format('[{0}{1}]',
-          '{"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false},
-          {"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
+          ${{ fromJSON(format('[{0}{1}{2}]',
+          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
           {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false}',
+          github.event.pull_request.draft != true
+          && ', {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false}' || '',
           github.event_name == 'push'
           && ', {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
     steps:
@@ -232,7 +257,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: Copy-Item "C:\VulkanSDK\$env:VULKAN_RUNTIME_VERSION\runtime\x64\vulkan-1.dll" "$env:SystemRoot\System32\vulkan-1.dll" -Force
-      - uses: Swatinem/rust-cache@v2
+      # Elsewhere the release build's time is the workspace crates, which the
+      # cache never holds, so their caches only crowded out rust-check's.
+      - if: matrix.intel
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
           key: desktop-compatibility-${{ matrix.name }}
@@ -291,6 +319,7 @@ jobs:
   # Syntax-aware layer checks complement the filesystem-state guard.
   repository-barrier:
     name: architecture boundary checks
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -307,6 +336,7 @@ jobs:
 
   dependency-audit:
     name: Dependency vulnerability audit
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -334,28 +364,34 @@ jobs:
       - run: npm ci
 
       - name: npm vulnerability audit
+        if: env.REDS != 'true'
         run: npm audit --audit-level=high
 
       - name: Verify bundled Python interpreter and standard library
+        continue-on-error: ${{ env.REDS == 'true' }}
         run: npm run learning:runtime:verify
 
       - name: Type-check
+        continue-on-error: ${{ env.REDS == 'true' }}
         run: npm run type-check
 
       - name: Type-check browser journeys
+        continue-on-error: ${{ env.REDS == 'true' }}
         run: npm run type-check:e2e
 
       - name: Generated IPC contract consumers
+        continue-on-error: ${{ env.REDS == 'true' }}
         run: npm run contracts:check
 
       - name: Lint
+        continue-on-error: ${{ env.REDS == 'true' }}
         run: npm run lint
 
       - name: Unit tests and enforced coverage floors
         run: npm run test:coverage
 
       - name: Upload frontend coverage report
-        if: always()
+        if: always() && env.REDS != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: frontend-coverage
@@ -364,19 +400,23 @@ jobs:
           retention-days: 14
 
       - name: Renderer production build
+        if: env.REDS != 'true'
         run: npx vite build
 
       - name: Initial renderer JavaScript budget
+        if: env.REDS != 'true'
         run: node scripts/check-initial-js-budget.mjs dist
 
       - name: Install browsers for smoke tests
+        if: env.REDS != 'true'
         run: npx playwright install --with-deps chromium webkit
 
       - name: Browser smoke tests
+        if: env.REDS != 'true'
         run: npm run test:e2e
 
       - name: Upload browser reports and failure artifacts
-        if: always()
+        if: always() && env.REDS != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: frontend-browser-results

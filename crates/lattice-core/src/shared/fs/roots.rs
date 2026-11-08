@@ -103,6 +103,19 @@ pub fn chat_images_root() -> Result<PathBuf> {
     Ok(lattice_home()?.join("chat-images"))
 }
 
+/// The app's log folder: `<LATTICE_HOME>/logs` if that is set, else
+/// `<local data dir>/lattice/logs`. Logs are not library content: no backup
+/// carries them.
+pub fn log_root() -> PathBuf {
+    match lattice_home_override() {
+        Some(home) => home.join("logs"),
+        None => dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("lattice")
+            .join("logs"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

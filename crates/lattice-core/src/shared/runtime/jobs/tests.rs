@@ -459,7 +459,14 @@ async fn the_same_failure_twice_with_nothing_saved_ends_the_job() -> Result<()> 
     assert_eq!(job.status, JobStatus::Failed);
     assert_eq!(job.error_code.as_deref(), Some(REPEATED_FAILURE));
     assert_eq!(job.retry_count, 1, "deferred once, then the repeat ends it");
-    assert!(job.error_message.unwrap().contains("HTTP 500"));
+    let message = job.error_message.unwrap();
+    assert!(message.contains("HTTP 500"));
+    assert!(
+        message.ends_with(
+            "The previous attempt failed the same way and nothing was saved in between, so Lattice stopped retrying it on its own."
+        ),
+        "{message}"
+    );
     runtime.close();
     runtime.drain().await;
     Ok(())

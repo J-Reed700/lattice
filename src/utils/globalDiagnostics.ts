@@ -3,6 +3,7 @@ import { redact, sanitizeErrorMessage } from './redact';
 import { toast } from '../stores/toastStore';
 
 
+const RESIZE_LOOP_NOTICE = /^ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)\.?$/;
 let installed = false;
 export function installGlobalDiagnostics(): () => void {
   if (installed) return () => {};
@@ -18,7 +19,13 @@ export function installGlobalDiagnostics(): () => void {
       duration: 8000,
     });
   };
-  const onError = (event: ErrorEvent) => report(event.error ?? event.message, 'Uncaught exception');
+  const onError = (event: ErrorEvent) => {
+    if (event.error == null && RESIZE_LOOP_NOTICE.test(event.message)) {
+      diagnostics.record('warn', event.message, 'Browser');
+      return;
+    }
+    report(event.error ?? event.message, 'Uncaught exception');
+  };
   const onRejection = (event: PromiseRejectionEvent) => report(event.reason, 'Unhandled promise');
   const onHide = () => diagnostics.flush();
   const originalError = console.error;
