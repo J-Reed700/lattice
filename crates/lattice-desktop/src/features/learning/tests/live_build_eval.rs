@@ -49,6 +49,7 @@ use crate::features::learning::drills::spec::DrillSpec;
 use crate::features::learning::embedded_runtime::BuiltinRuntimes;
 use crate::features::learning::persistence::{db, now};
 use crate::features::learning::tests::grading::live_grading_eval::model;
+use crate::infrastructure::persistence::database::migrate::reconcile_line_endings;
 
 /// What a drill's build planted, proved and dropped, and what its blind review added to the key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1025,6 +1026,7 @@ async fn copied_database(path: &str) -> Result<SqlitePool> {
         .map_err(db)?;
     let mut migrator = sqlx::migrate!("./migrations");
     migrator.set_ignore_missing(true);
+    reconcile_line_endings(&pool, &migrator).await?;
     migrator
         .run(&pool)
         .await
