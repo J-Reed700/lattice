@@ -348,11 +348,12 @@ pub trait CaseHarness: Send + Sync {
     fn results(&self, stdout: &str, nonce: &str) -> Vec<CaseResult>;
 }
 
-/// The counterpart: when it speaks, what it is told, and what a reply must satisfy.
-pub trait TurnPolicy: Send + Sync {
-    fn cue(&self, event: &SessionEvent, state: &SessionState) -> Option<Cue>;
-    fn system(&self, cue: &Cue) -> &str;
-    fn check(&self, reply: &Reply, state: &SessionState) -> Result<(), Rejection>;
+/// The counterpart: when it speaks, what it is told, and what a reply must satisfy. `S` is what it may read:
+/// a simulation's activity and transcript, or a coding session's `WorkspaceObservation`, never an answer key.
+pub trait TurnPolicy<S>: Send + Sync {
+    fn cue(&self, event: &SessionEvent, state: &S) -> Option<Cue>;
+    fn system(&self, cue: &Cue, state: &S) -> String;
+    fn check(&self, content: &str, cue: &Cue, state: &S) -> Result<()>;
 }
 
 /// What help a surface allows in a help level. Each surface keeps its own rungs and its own ledger.
@@ -367,11 +368,11 @@ pub trait Debriefer: Send + Sync {
 }
 ```
 
-The session holds its `Debriefer` beside its policy rather than reaching it through the policy, so a policy only decides when and how the counterpart speaks.
+The session holds its `Debriefer` beside its policy rather than reaching it through the policy, so a policy only decides when and how the counterpart speaks. A policy's `check` holds only its own rule on the text (an interviewer asks one question); the checks every reply gets, and the ones that run code, stay in the turn generator.
 
 `BuildSteps` is new and has one method. The build job implements it over `JobContext::progress` (`lattice-core/src/shared/runtime/jobs/runtime.rs:148`), and tests record the steps. `LearningLabFile` is the lab's existing file type (`runtime/lab_runtime.rs:133`).
 
-A setting is an enum, not a trait. `Setting::discloses(Hidden)` answers what the learner may see: a failing hidden case's input, an uncaught misreading, the worked solution. The DTO mapper applies it, so one stored session can be shown in any setting.
+A setting is an enum, not a trait. `Setting::discloses(hidden, submitted)` answers what the learner may see: a failing hidden case's input, an uncaught misreading, the worked solution (Coached shows it after the first submit). The DTO mapper applies it, so one stored session can be shown in any setting.
 
 How the SOLID principles land:
 
