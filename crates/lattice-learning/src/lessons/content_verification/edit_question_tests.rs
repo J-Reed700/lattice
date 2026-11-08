@@ -1148,3 +1148,79 @@ async fn the_longest_right_choice_of_two_is_not_refused() -> Result<()> {
     assert!(saved.changed);
     Ok(())
 }
+
+async fn set_status(course: &Course, prompt: &str, status: &str) -> Result<()> {
+    sqlx::query("UPDATE learning_assessment_candidates SET review_status=? WHERE lesson_id=? AND prompt=?")
+        .bind(status)
+        .bind(&course.lesson_id)
+        .bind(prompt)
+        .execute(&course.pool)
+        .await?;
+    Ok(())
+}
+
+async fn statuses(course: &Course) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT review_status FROM learning_assessment_candidates WHERE lesson_id=? ORDER BY rowid",
+    )
+    .bind(&course.lesson_id)
+    .fetch_all(&course.pool)
+    .await?)
+}
+
+#[tokio::test]
+async fn a_valid_save_returns_a_dropped_question_to_the_bank() -> Result<()> {
+    let course = published().await?;
+    set_status(&course, P0, "dropped").await?;
+    let after = QuestionText {
+        prompt: NEW_PROMPT.into(),
+        ..q0()
+    };
+
+    edit(&course, 0, q0(), after, false).await?;
+
+    assert_eq!(statuses(&course).await?, ["agreed", "agreed", "agreed"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_save_leaves_a_dropped_question_dropped() -> Result<()> {
+    let course = published().await?;
+    set_status(&course, P0, "dropped").await?;
+
+    let result = edit(&course, 0, q0(), right_choice_much_the_longest(), false).await;
+
+    assert_eq!(refused(result), LONGEST_REFUSAL);
+    assert_eq!(statuses(&course).await?, ["dropped", "agreed", "agreed"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_dry_run_leaves_a_dropped_question_dropped() -> Result<()> {
+    let course = published().await?;
+    set_status(&course, P0, "dropped").await?;
+    let after = QuestionText {
+        prompt: NEW_PROMPT.into(),
+        ..q0()
+    };
+
+    edit(&course, 0, q0(), after, true).await?;
+
+    assert_eq!(statuses(&course).await?, ["dropped", "agreed", "agreed"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_save_leaves_a_reported_question_reported() -> Result<()> {
+    let course = published().await?;
+    set_status(&course, P0, "reported").await?;
+    let after = QuestionText {
+        prompt: NEW_PROMPT.into(),
+        ..q0()
+    };
+
+    edit(&course, 0, q0(), after, false).await?;
+
+    assert_eq!(statuses(&course).await?, ["reported", "agreed", "agreed"]);
+    Ok(())
+}
