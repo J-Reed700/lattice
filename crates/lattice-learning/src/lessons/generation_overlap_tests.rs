@@ -218,6 +218,16 @@ async fn a_lesson_job_publishes_when_its_teaching_is_verified_and_queues_its_qui
     assert_eq!(
         count(
             &pool,
+            "SELECT count(*) FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' AND author_model=?",
+            &[lesson, "persistence-fixture"]
+        )
+        .await,
+        3,
+        "the lesson's own questions do not name the model that wrote them"
+    );
+    assert_eq!(
+        count(
+            &pool,
             "SELECT count(*) FROM learning_assessment_candidates WHERE lesson_id=? AND origin='bank'",
             &[lesson]
         )
