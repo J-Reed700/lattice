@@ -24,6 +24,13 @@ use super::web::is_blocked_ip;
 use lattice_core::shared::error::{AppError, Result};
 use std::net::IpAddr;
 
+/// Every webview in one WebView2 data folder must be given the same arguments.
+fn shared_browser_args(windows: &[tauri::utils::config::WindowConfig]) -> Option<&str> {
+    windows
+        .iter()
+        .find_map(|window| window.additional_browser_args.as_deref())
+}
+
 /// The reserved address the page reports back through. `.invalid` can never
 /// resolve (RFC 2606), so a report that somehow escaped would go nowhere.
 const REPORT_HOST: &str = "lattice-page-reader.invalid";
@@ -287,7 +294,7 @@ impl BrowserReader {
         // tick, so a long page is not read at one part per poll.
         let part_arrived = Arc::new(tokio::sync::Notify::new());
         let arrival = Arc::clone(&part_arrived);
-        let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(target))
+        let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(target))
             .title("Lattice page reader")
             .visible(false)
             .focused(false)
@@ -319,11 +326,14 @@ impl BrowserReader {
             .on_page_load(|_, payload| {
                 debug!(url = %payload.url(), event = ?payload.event(), "Page reader load");
             })
-            .on_download(|_, _| false)
-            .build()
-            .map_err(|e| {
-                AppError::InternalError(format!("could not open a browser window: {e}"))
-            })?;
+            .on_download(|_, _| false);
+        let builder = match shared_browser_args(&app.config().app.windows) {
+            Some(args) => builder.additional_browser_args(args),
+            None => builder,
+        };
+        let window = builder.build().map_err(|e| {
+            AppError::InternalError(format!("could not open a browser window: {e}"))
+        })?;
 
         // The check is driven from here, not from timers inside the page: a
         // challenge page replaces its document mid-check, and anything injected
