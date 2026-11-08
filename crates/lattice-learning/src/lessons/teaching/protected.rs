@@ -37,7 +37,7 @@ fn unit_of(candidate: &Value, finding: &ReviewFinding) -> Option<usize> {
 }
 
 /// The section at unit `unit` in `candidate`.
-fn section_at<'a>(candidate: &'a Value, unit: usize) -> Option<&'a Value> {
+fn section_at(candidate: &Value, unit: usize) -> Option<&Value> {
     let (field, index) = sections(candidate).get(unit).copied()?;
     candidate.pointer(&format!("/{field}/{index}"))
 }

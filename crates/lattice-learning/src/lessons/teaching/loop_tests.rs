@@ -855,7 +855,7 @@ fn whole_lesson_and_fully_guarded_section_findings_wait_when_claims_are_protecte
         "no contrast block",
     );
     let section_finding = ReviewFinding::new(
-        FindingKind::Instructional,
+        FindingKind::Teaching,
         Some(FindingSite::Section(0)),
         "expand on the explanation",
     );
