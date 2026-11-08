@@ -26,9 +26,56 @@ env:
   REDS: ${{ (endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
 
 jobs:
+  # A pull request runs only the jobs its files can affect. Any doubt, an
+  # unknown path or a failure here runs everything.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      contents: read
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      web: ${{ steps.paths.outputs.web }}
+      all: ${{ steps.paths.outputs.all }}
+    steps:
+      - id: paths
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          fail_safe() { echo rust=true >> "$GITHUB_OUTPUT"; echo web=true >> "$GITHUB_OUTPUT"; echo all=true >> "$GITHUB_OUTPUT"; }
+          if [ "$EVENT" != "pull_request" ]; then fail_safe; exit 0; fi
+          if ! gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename' > files.txt; then
+            fail_safe; exit 0
+          fi
+          python3 - <<'PYCODE' || fail_safe
+          import os
+          files = [line.strip() for line in open('files.txt') if line.strip()]
+          rust_dirs = ('crates/', 'scripts/', 'evals/', '.cargo/', '.config/')
+          rust_names = {'Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml', 'clippy.toml', 'rustfmt.toml', 'deny.toml', 'src/lib/bindings.ts'}
+          web_dirs = ('src/', 'e2e/', 'public/', 'scripts/')
+          def is_rust(f):
+              if f.startswith('evals/') and 'results' in f.split('/'):
+                  return False
+              return f.startswith(rust_dirs) or f in rust_names
+          def is_web(f):
+              return f.startswith(web_dirs) or ('/' not in f and not f.endswith('.md'))
+          def is_quiet(f):
+              return f.startswith(('docs/', 'evals/')) or f.endswith('.md')
+          rust = any(is_rust(f) for f in files)
+          web = any(is_web(f) for f in files)
+          every = not files or len(files) >= 3000 or any(f.startswith('.github/') or not (is_rust(f) or is_web(f) or is_quiet(f)) for f in files)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              print('rust=' + str(rust).lower(), 'web=' + str(web).lower(), 'all=' + str(every).lower(), sep=chr(10), file=out)
+          PYCODE
+
   # Build on each supported platform to catch target-specific dependencies.
   rust-check:
     name: cargo check (${{ matrix.os }})
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true' }}
     runs-on: ${{ matrix.os }}
     # Intel source checks precede publication of its first sidecar. This
     # debug-only override cannot produce a release bundle; the package job
@@ -208,7 +255,8 @@ jobs:
 
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ${{ matrix.os }}
     # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
     # job cancelled at a cap never saves its Rust cache, so main never got a
@@ -326,7 +374,8 @@ jobs:
   # Syntax-aware layer checks complement the filesystem-state guard.
   repository-barrier:
     name: architecture boundary checks
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -343,7 +392,8 @@ jobs:
 
   dependency-audit:
     name: Dependency vulnerability audit
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -356,6 +406,8 @@ jobs:
 
   frontend:
     name: frontend (type-check, lint, test)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true' }}
     # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
     runs-on: ubuntu-24.04
     steps:
@@ -437,7 +489,7 @@ jobs:
   # Main's caches sit at the 10 GB limit; PR caches and superseded main caches evicted the useful ones.
   prune-caches:
     name: prune caches
-    needs: [rust-check, desktop-compatibility, repository-barrier, dependency-audit, frontend]
+    needs: [changes, rust-check, desktop-compatibility, repository-barrier, dependency-audit, frontend]
     if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
