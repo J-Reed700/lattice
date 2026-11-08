@@ -14,8 +14,14 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'scripts'))
 import sqlx_migrations  # noqa: E402
-# The app and the core crate; core holds the job store's SQL.
-SOURCE_ROOTS = ('crates/lattice-desktop/src', 'crates/lattice-core/src')
+# The app, the core crate (the job store's SQL) and the crates split out of the app.
+SOURCE_ROOTS = (
+    'crates/lattice-desktop/src',
+    'crates/lattice-core/src',
+    'crates/lattice-index/src',
+    'crates/lattice-learning/src',
+    'crates/lattice-store/src',
+)
 
 def prepare(connection, sql):
     try:

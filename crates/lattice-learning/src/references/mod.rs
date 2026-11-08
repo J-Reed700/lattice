@@ -1,0 +1,16 @@
+//! References capabilities owned by Learning Studio.
+
+pub(crate) mod admission;
+pub mod course_index;
+pub(crate) mod gathering;
+#[cfg(test)]
+mod gathering_tests;
+pub mod source_identity;
+pub mod source_library;
+pub mod source_selector;
+pub mod source_workflows;
+pub mod sources;
+pub mod trust;
+pub mod web_research;
+#[cfg(test)]
+mod web_research_tests;
