@@ -165,12 +165,19 @@ trap 'rm -rf "$STAGING"' EXIT
 echo "Fetching $RELEASE from $REPO"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   for file in "${FILES[@]}" SHA256SUMS.txt; do
-    gh release download "$RELEASE" --repo "$REPO" --pattern "$file" --dir "$STAGING"
+    attempt=1
+    until gh release download "$RELEASE" --repo "$REPO" --pattern "$file" --dir "$STAGING" --clobber; do
+      [[ $attempt -lt 8 ]] || die "downloading $file failed after $attempt attempts"
+      attempt=$((attempt + 1))
+      echo "Download of $file failed; attempt $attempt of 8 in 15 s"
+      sleep 15
+    done
   done
 else
   command -v curl >/dev/null 2>&1 || die "install gh or curl to download the binaries"
   for file in "${FILES[@]}" SHA256SUMS.txt; do
-    curl --fail --location --silent --show-error --retry 3 \
+    curl --fail --location --silent --show-error \
+      --retry 8 --retry-delay 15 --retry-max-time 300 --retry-connrefused \
       --output "$STAGING/$file" \
       "https://github.com/$REPO/releases/download/$RELEASE/$file"
   done
