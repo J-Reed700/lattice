@@ -25,6 +25,7 @@ use apparatus::strip_citation_apparatus;
 pub(crate) use apparatus::strip_draft_apparatus;
 mod citations;
 mod claim_ledger;
+pub(crate) use citations::names_a_source;
 use citations::{
     overlaps, restates, section_citations, source_mentions, take_cited, Citations, CITED,
 };
