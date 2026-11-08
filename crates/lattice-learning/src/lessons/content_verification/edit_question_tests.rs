@@ -571,6 +571,22 @@ async fn removing_a_choice_compares_the_slots_that_follow_it_and_ends_the_statem
     let moved_up = at(C0[3], "options/2");
     assert_eq!(moved_up.len(), 1);
     assert!(matches!(moved_up[0].state(), ClaimState::Confirmed { .. }));
+    let slot_one_new = at(C0[2], "options/1");
+    assert_eq!(slot_one_new.len(), 1);
+    assert!(matches!(
+        slot_one_new[0].state(),
+        ClaimState::Confirmed { .. }
+    ));
+    let old_slot_one = at(C0[1], "options/1");
+    assert_eq!(old_slot_one.len(), 1);
+    match old_slot_one[0].state() {
+        ClaimState::Edited {
+            successor: Some(id),
+            by: Actor::User,
+            ..
+        } => assert_eq!(id, slot_one_new[0].claim_id()),
+        other => panic!("{other:?}"),
+    }
     let old_slot_two = at(C0[2], "options/2");
     assert_eq!(old_slot_two.len(), 1);
     match old_slot_two[0].state() {
@@ -578,7 +594,7 @@ async fn removing_a_choice_compares_the_slots_that_follow_it_and_ends_the_statem
             successor: Some(id),
             by: Actor::User,
             ..
-        } => assert_eq!(id, at(C0[2], "options/1")[0].claim_id()),
+        } => assert_eq!(id, moved_up[0].claim_id()),
         other => panic!("{other:?}"),
     }
     assert_eq!(
