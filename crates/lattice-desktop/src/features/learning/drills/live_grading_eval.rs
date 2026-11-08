@@ -1,7 +1,13 @@
 //! How far the judge agrees with a careful human (docs/design/2026-11-04-code-review-drills.md §6). Runs
-//! `JudgeGrader` on the configured model over every case in `tests/fixtures/drill_grading` (or, with
-//! `LATTICE_DRILL_GRADING_SET=drill_grading_passage`, the passage cases of the 2026-11-05 design, §7) and reports its agreement
+//! `JudgeGrader` on the configured model over every case in `tests/fixtures/drill_grading` and reports its agreement
 //! with the labels per issue (found, half found, missed) and per finding outcome, every disagreement shown whole.
+//! `LATTICE_DRILL_GRADING_SET` picks another set: `drill_grading_passage` for the passage cases of the 2026-11-05
+//! design, §7, or `drill_grading_lesson` for ten reviews of code whose keys tie issues to a lesson's sentences
+//! (docs/design/2026-11-07-drills-in-the-course.md §3 and §9). A lesson case is derived from a case of the first set and
+//! adds a lesson link to one or two of its issues. Its kind says what it tests: `lesson_words` (a finding names the
+//! broken idea in the lesson's words, not the pattern's name: found), `lesson_vague` (a finding only gestures at the
+//! lesson: half found), `lesson_misapplied` (a finding cites the lesson where the code follows it: a false positive,
+//! and the lesson's issue missed) and `mixed`.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;

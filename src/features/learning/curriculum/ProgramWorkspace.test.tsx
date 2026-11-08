@@ -162,7 +162,9 @@ describe('Course page', () => {
       expect(screen.getByRole('tab', { name: 'Review drills' })).toHaveAttribute('aria-selected', 'true');
       expect(screen.getByText('Review drills of program-1')).toBeVisible();
       expect(screen.queryByText('›')).not.toBeInTheDocument();
-      expect(screen.queryByText('Circulation')).not.toBeInTheDocument();
+      expect(screen.getAllByText('Circulation')).toEqual([
+        screen.getByRole('heading', { level: 2, name: 'Circulation' }),
+      ]);
 
       await user.click(screen.getByRole('tab', { name: 'Written practice' }));
       expect(screen.getByText('›')).toBeInTheDocument();
